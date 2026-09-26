@@ -10,12 +10,17 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 SOURCE_DIR_NAME: str = 'source'
+INCOMING_DIR_NAME: str = 'incoming'
 CACHE_DIR_NAME: str = 'cache'
 
 
 @frozen(kw_only=True)
 class ProjectStorage:
-    """Resolve and manage the directory tree ``<root>/<project id>/{source,cache}``."""
+    """Resolve and manage the directory tree ``<root>/<project id>/{source,incoming,cache}``.
+
+    A new source is written to ``incoming`` and replaces ``source`` only once it proved readable, so a failed
+    replacement never loses the book that was already imported.
+    """
 
     root: Path
 
@@ -31,13 +36,29 @@ class ProjectStorage:
         """Return the directory with derived files that can be regenerated at any time."""
         return self.project_dir(project_id) / CACHE_DIR_NAME
 
-    async def reset_source(self, project_id: int) -> Path:
-        """Remove the previous source and its cache, then return an empty source directory."""
-        await self._remove_tree(self.source_dir(project_id))
-        await self._remove_tree(self.cache_dir(project_id))
+    def incoming_dir(self, project_id: int) -> Path:
+        """Return the directory where a new source is written before it replaces the current one."""
+        return self.project_dir(project_id) / INCOMING_DIR_NAME
+
+    async def start_incoming(self, project_id: int) -> Path:
+        """Return an empty incoming directory, dropping whatever an interrupted upload left there."""
+        incoming_dir = self.incoming_dir(project_id)
+        await self._remove_tree(incoming_dir)
+        incoming_dir.mkdir(parents=True)
+        return incoming_dir
+
+    async def promote_incoming(self, project_id: int) -> Path:
+        """Replace the source with the incoming files, drop the cache rendered from the old one, return the source."""
         source_dir = self.source_dir(project_id)
-        source_dir.mkdir(parents=True)
+        await self._remove_tree(source_dir)
+        await self._remove_tree(self.cache_dir(project_id))
+        # A rename within one directory is atomic, so the source is never half replaced
+        self.incoming_dir(project_id).rename(source_dir)
         return source_dir
+
+    async def discard_incoming(self, project_id: int) -> None:
+        """Remove a rejected upload, leaving the current source untouched."""
+        await self._remove_tree(self.incoming_dir(project_id))
 
     async def delete_project(self, project_id: int) -> None:
         """Remove every file of the project."""

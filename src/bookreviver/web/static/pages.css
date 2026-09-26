@@ -1,0 +1,55 @@
+/* Import stage and page viewer. */
+
+.error { padding: 8px 12px; border: 1px solid var(--danger); color: var(--danger); border-radius: 4px; }
+.hint { color: var(--muted); font-size: 0.9em; }
+
+.upload-form { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.upload-form label { display: flex; flex-direction: column; gap: 4px; }
+
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; }
+
+.metadata, .page-facts { border-collapse: collapse; }
+.metadata th, .metadata td, .page-facts th, .page-facts td {
+  padding: 4px 12px 4px 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.metadata th, .page-facts th { color: var(--muted); font-weight: normal; }
+.page-facts caption { text-align: left; font-weight: 700; padding-bottom: 8px; }
+
+/* Thumbnails keep a fixed aspect box, so the grid does not jump while lazy images load */
+.thumbnails, .strip { list-style: none; margin: 0; padding: 0; }
+.thumbnails { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px; }
+.thumbnails a, .strip a { display: flex; flex-direction: column; gap: 4px; text-decoration: none; color: var(--fg); }
+.thumb-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 3 / 4;
+  background: var(--line);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.thumb-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.caption { font-size: 0.85em; color: var(--muted); }
+.caption strong { color: var(--fg); margin-right: 4px; }
+
+.pager { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+.pager .position { font-weight: 700; }
+
+.strip { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 16px; }
+.strip li { flex: 0 0 72px; }
+.strip li.current .thumb-box { outline: 2px solid var(--accent); }
+.strip .caption { text-align: center; }
+
+.viewer { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 320px); gap: 24px; align-items: start; }
+.preview { margin: 0; }
+.preview img { display: block; max-width: 100%; height: auto; max-height: 85vh; object-fit: contain; }
+
+@media (max-width: 800px) {
+  .viewer { grid-template-columns: 1fr; }
+}
