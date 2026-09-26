@@ -9,10 +9,12 @@ from fastapi import APIRouter, FastAPI
 from fastapi_pagination import add_pagination
 from fastapi_problem.handler import add_exception_handler
 
+from bookreviver.api.auth import signed_in_user
 from bookreviver.api.problems import problem_handler
 from bookreviver.api.routing import ROUTERS
 from bookreviver.app.container import build_container
-from bookreviver.app.security import install_security
+from bookreviver.app.providers.accounts import account_routes
+from bookreviver.app.security import install_security, sign_in_throttle
 from bookreviver.app.settings import Settings
 
 if TYPE_CHECKING:
@@ -54,10 +56,13 @@ def create_app(settings: Settings | None = None, extra_providers: Sequence[Provi
     app = FastAPI(title='BookReviver', lifespan=lifespan)
     add_exception_handler(app, problem_handler(logger))
     add_pagination(app)
-    install_security(app, resolved)
+    accounts = account_routes(resolved, sign_in_throttle())
     api = APIRouter(prefix=API_PREFIX)
     for router in ROUTERS:
         api.include_router(router)
+    api.include_router(accounts.router())
     app.include_router(api)
+    app.dependency_overrides[signed_in_user] = accounts.current_user
+    install_security(app, resolved)
     setup_dishka(container, app)
     return app
