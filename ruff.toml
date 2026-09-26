@@ -19,8 +19,8 @@ inline-quotes = "single"
 strict = true
 # SQLAlchemy resolves `Mapped[...]` annotations of declarative classes at runtime
 runtime-evaluated-base-classes = ["bookreviver.models.Base", "sqlalchemy.orm.DeclarativeBase"]
-# FastAPI resolves route and dependency annotations at runtime
-exempt-modules = ["typing", "typing_extensions", "fastapi"]
+# FastAPI resolves route and dependency annotations at runtime, including our Annotated dependency aliases
+exempt-modules = ["typing", "typing_extensions", "fastapi", "bookreviver.web.dependencies"]
 
 [lint.flake8-tidy-imports]
 ban-relative-imports = "all"
