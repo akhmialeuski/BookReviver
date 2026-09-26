@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% from "pages/_macros.html" import image_url, dpi %}
+
+{% block title %}{{ project.title }}: page {{ number }} · BookReviver{% endblock %}
+
+{% block head %}
+  <link rel="stylesheet" href="{{ url_for('static', path='pages.css') }}">
+  <script src="{{ url_for('static', path='viewer.js') }}" defer></script>
+{% endblock %}
+
+{% block content %}
+  {% include "_project_tabs.html" %}
+
+  <nav class="pager" aria-label="Pages">
+    {% if number > 1 %}
+      <a href="/projects/{{ project.id }}/pages/1" data-hotkey="Home">First</a>
+      <a href="/projects/{{ project.id }}/pages/{{ number - 1 }}" rel="prev" data-hotkey="ArrowLeft">Previous</a>
+    {% endif %}
+    <span class="position">Page {{ number }} of {{ page_count }}</span>
+    {% if number < page_count %}
+      <a href="/projects/{{ project.id }}/pages/{{ number + 1 }}" rel="next" data-hotkey="ArrowRight">Next</a>
+      <a href="/projects/{{ project.id }}/pages/{{ page_count }}" data-hotkey="End">Last</a>
+    {% endif %}
+    <a href="/projects/{{ project.id }}/stages/import">All pages</a>
+  </nav>
+
+  <ol class="strip" aria-label="Neighbouring pages">
+    {% for neighbour in strip %}
+      {% set neighbour_number = neighbour.index + 1 %}
+      <li{% if neighbour_number == number %} class="current"{% endif %}>
+        <a href="/projects/{{ project.id }}/pages/{{ neighbour_number }}"
+           {% if neighbour_number == number %}aria-current="page"{% endif %}>
+          <span class="thumb-box">
+            <img src="{{ image_url(project, neighbour_number, 'thumb') }}" alt="Page {{ neighbour_number }}" loading="lazy">
+          </span>
+          <span class="caption">{{ neighbour_number }}</span>
+        </a>
+      </li>
+    {% endfor %}
+  </ol>
+
+  <div class="viewer">
+    <figure class="preview">
+      <img src="{{ image_url(project, number, 'preview') }}" alt="Page {{ number }}"
+           width="{{ page.width_px }}" height="{{ page.height_px }}">
+    </figure>
+
+    <table class="page-facts">
+      <caption>Page facts</caption>
+      <tbody>
+        <tr><th scope="row">Pixel size</th><td>{{ page.width_px }} × {{ page.height_px }} px</td></tr>
+        <tr><th scope="row">Resolution</th><td>{{ dpi(page) }}</td></tr>
+        <tr>
+          <th scope="row">Physical size</th>
+          <td>
+            {% if page.width_mm is not none and page.height_mm is not none %}
+              {{ '%.1f' | format(page.width_mm) }} × {{ '%.1f' | format(page.height_mm) }} mm
+            {% else %}
+              Unknown
+            {% endif %}
+          </td>
+        </tr>
+        <tr><th scope="row">Colour mode</th><td>{{ color_labels[page.color_mode] }}</td></tr>
+        <tr><th scope="row">Bits per component</th><td>{{ page.bits_per_component if page.bits_per_component is not none else 'Unknown' }}</td></tr>
+        <tr><th scope="row">Format</th><td>{{ page.image_format or 'Unknown' }}</td></tr>
+        <tr><th scope="row">Text layer</th><td>{{ 'Yes' if page.has_text_layer else 'No' }}</td></tr>
+        <tr><th scope="row">Source file</th><td>{{ page.source_file or project.source_name }}</td></tr>
+        {% for key, value in page.extra.items() %}
+          <tr><th scope="row">{{ key }}</th><td>{{ value }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}
