@@ -12,9 +12,10 @@ from bookreviver.domain.entities import Actor
 from tests.helpers.builders import new_account_id
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Sequence
     from pathlib import Path
 
+    from dishka import Provider
     from fastapi import FastAPI
 
 TEST_BASE_URL: str = 'http://testserver'
@@ -44,9 +45,17 @@ def fx_actor() -> Actor:
 
 
 @pytest.fixture
-async def fx_app(fx_settings: Settings, fx_actor: Actor) -> AsyncIterator[FastAPI]:
-    """Run the application lifespan with ``fx_actor`` signed in."""
-    app = create_app(fx_settings)
+def fx_extra_providers() -> Sequence[Provider]:
+    """Return providers that override the application's own; a test module overrides this fixture with fakes."""
+    return ()
+
+
+@pytest.fixture
+async def fx_app(
+    fx_settings: Settings, fx_actor: Actor, fx_extra_providers: Sequence[Provider]
+) -> AsyncIterator[FastAPI]:
+    """Run the application lifespan with ``fx_actor`` signed in and ``fx_extra_providers`` applied."""
+    app = create_app(fx_settings, fx_extra_providers)
     app.dependency_overrides[current_actor] = lambda: fx_actor
     async with app.router.lifespan_context(app):
         yield app

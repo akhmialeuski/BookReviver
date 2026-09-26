@@ -16,16 +16,22 @@ from bookreviver.app.security import install_security
 from bookreviver.app.settings import Settings
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Sequence
+
+    from dishka import Provider
 
 API_PREFIX: str = '/api/v1'
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    """Build the API application; the container is closed when the application shuts down."""
+def create_app(settings: Settings | None = None, extra_providers: Sequence[Provider] = ()) -> FastAPI:
+    """Build the API application; the container is closed when the application shuts down.
+
+    :param settings:        Configuration, read from the environment when omitted.
+    :param extra_providers: Providers added last, overriding earlier ones; tests use them to inject fakes.
+    """
     resolved = settings or Settings()
-    container = build_container(resolved)
+    container = build_container(resolved, extra_providers)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:

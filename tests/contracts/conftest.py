@@ -7,6 +7,7 @@ import pytest
 from dishka import make_async_container
 
 from bookreviver.app.providers.core import CoreProvider
+from bookreviver.app.providers.database import DatabaseProvider
 from bookreviver.app.providers.persistence import PERSISTENCE_PROVIDERS
 from bookreviver.app.settings import Settings
 from bookreviver.ports.persistence import UnitOfWork
@@ -22,6 +23,7 @@ async def fx_uow_factory(request: pytest.FixtureRequest, fx_settings: Settings) 
     """Yield a function opening a new unit of work, built by the application's own provider of one backend."""
     container = make_async_container(
         CoreProvider(),
+        DatabaseProvider(),
         PERSISTENCE_PROVIDERS[request.param](),
         context={Settings: fx_settings},
     )

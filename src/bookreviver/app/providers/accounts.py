@@ -1,7 +1,7 @@
-"""Provider of the Accounts: users, sessions, OAuth clients, mail and account settings."""
+"""Provider of the accounts feature: users, sessions, OAuth clients and mail."""
 
 from dishka import Provider
 
 
 class AccountsProvider(Provider):
-    """Accounts: users, sessions, OAuth clients, mail and account settings."""
+    """Builds the account adapters and the fastapi-users wiring."""
