@@ -38,8 +38,10 @@ npm --prefix frontend run check          # Biome, tsc and Vitest
 - `services` and `domain` never import SQLAlchemy, advanced-alchemy, FastAPI, fastapi-users, Pydantic, Taskiq,
   pydantic-ai, PyMuPDF, Pillow, pyvips or OpenCV. `api`, `adapters` and `plugins` never import each other. Adapter families never import each other. `import-linter` in the gate enforces
   all of this, and a contract failure is fixed by moving code, never by editing the contract.
-- A route validates input, calls one service method and returns a response schema. Domain errors map to HTTP in one
-  exception handler.
+- A route validates input, calls one service method and returns a typed response: the resource schema, or
+  fastapi-pagination's `Page[T]` for a collection. Every error is an RFC 9457 problem from fastapi-problem, mapped from
+  domain errors in the one handler registered in `app`.
+- HTTP status codes come from `fastapi.status` or `http.HTTPStatus`, never as number literals, in code and in tests.
 - Everything is async: ports, API, SQLAlchemy `AsyncSession`, files, HTTP. Blocking library calls go through
   `asyncer.asyncify` inside adapters. Heavy work (parsing, rasterising, tiling, OCR, LLM calls) runs only in
   background jobs, whose entry points live in `app` and call one service method.

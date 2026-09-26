@@ -46,6 +46,8 @@ What each concern reuses, and therefore what we do not write ourselves.
 | Rate limiting              | slowapi                                                         | Throttling of sign-in and registration           |
 | CSRF                       | starlette-csrf                                                  | Double-submit cookie check                       |
 | Persistence                | SQLAlchemy 2.0 async with advanced-alchemy repositories         | Generic CRUD, pagination, filters, audit columns |
+| Collection responses       | fastapi-pagination `Page[T]` and its `Params`                   | Paging schema and query parameters               |
+| Error responses            | fastapi-problem (RFC 9457 problem details)                      | Error format, error schemas in OpenAPI           |
 | Migrations                 | Alembic through advanced-alchemy's integration                  | Schema versioning                                |
 | Secrets at rest            | advanced-alchemy `EncryptedString` with the Fernet backend      | Encryption of provider keys                      |
 | Settings                   | pydantic-settings                                               | Environment and `.env` parsing                   |
@@ -105,6 +107,7 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Processing  | `Stage`, `Recipe`, `Step`, `Variant`, `Artifact`, `ArtifactKind`, `Provenance`             |
 | Edits       | `PageEdit` with geometry (`Rect`, `Quad`, `Mesh`, `Region` with `RegionKind`) or a mask    |
 | Jobs        | `Job`, `JobKind`, `JobState`, `Progress`, `WorkerPool` (cpu, gpu, llm)                     |
+| Queries     | `Slice[T]` (items and total), `SliceRequest` (offset and limit)                            |
 | Errors      | `DomainError`, `NotFoundError`, `PermissionDeniedError`, `UploadRejectedError`, and others |
 
 ## Ports
@@ -246,6 +249,19 @@ client is generated from it.
 | Images     | `GET /iiif/{asset}/...` as immutable static files                                                         |
 
 On a server, a reverse proxy serves `/iiif` straight from disk or object storage, after an access check by the API.
+
+### Response conventions
+
+- Every route declares a typed Pydantic response. The shapes are the same everywhere: a single resource is its
+  schema, a collection is fastapi-pagination's `Page[T]` (`items`, `total`, `page`, `size`, `pages`), and every error,
+  including validation errors, is an RFC 9457 problem (`application/problem+json` with `type`, `title`, `status`,
+  `detail`, `instance`) produced by fastapi-problem.
+- Domain errors map to problems in one place, the exception handler registered in `app`. Routes never build error
+  responses themselves.
+- Status codes come from `fastapi.status` or `http.HTTPStatus`, never as number literals. A pre-commit `pygrep` hook
+  rejects a literal status code in Python code.
+- Services return domain objects and `Slice` results (items and total), and the API maps them to schemas and pages, so
+  paging never reaches into a database query from a route.
 
 ## Frontend
 
