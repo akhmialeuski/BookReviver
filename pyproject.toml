@@ -1,0 +1,97 @@
+[project]
+name = "bookreviver"
+version = "0.1.0"
+description = "Digitisation workbench for old printed books, one project per book"
+readme = "README.md"
+requires-python = ">=3.14"
+
+# Every pin below is the latest release on PyPI as of 2026-09-26.
+dependencies = [
+    # Runtime dependencies
+    "alembic==1.20.0",
+    "aiosqlite==0.22.1",
+    "anyio==4.15.1",
+    "attrs==26.1.0",
+    "fastapi==0.141.1",
+    "jinja2==3.1.6",
+    "natsort==8.4.0",
+    "pillow==12.3.0",
+    "pydantic-settings==2.15.0",
+    "pymupdf==1.28.2",
+    "python-multipart==0.0.32",
+    "sqlalchemy[asyncio]==2.1.1",
+    "uvicorn[standard]==0.54.0",
+    # Dev and test dependencies
+    "delayed-assert==0.4.2",
+    "httpx==0.28.1",
+    "pre-commit==4.6.2",
+    "pytest==9.1.1",
+    # UV build backend
+    "uv_build==0.12.19",
+    # Linters and type checkers
+    "mypy==2.3.1",
+    "pyrefly==1.3.1",
+    "ruff==0.16.9",
+    "ty==0.0.84",
+]
+
+[project.scripts]
+bookreviver = "bookreviver.__main__:main"
+
+[tool.uv]
+link-mode = "copy"
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bookreviver"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers --strict-config"
+testpaths = ["tests"]
+
+# Type-checker configuration
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[tool.pyrefly]
+project-excludes = [
+    "tests",
+]
+
+[tool.ty.rules]
+# TY rules at https://docs.astral.sh/ty/reference/rules/
+deprecated = "error"
+all = "error"
+ambiguous-protocol-member = "error"
+division-by-zero = "error"
+ignore-comment-unknown-rule = "error"
+invalid-ignore-comment = "error"
+possibly-missing-attribute = "error"
+possibly-missing-implicit-call = "error"
+possibly-missing-import = "error"
+possibly-unresolved-reference = "error"
+redundant-cast = "error"
+undefined-reveal = "error"
+unresolved-global = "error"
+unresolved-import = "error"
+unsupported-base = "error"
+unused-ignore-comment = "error"
+useless-overload-body = "error"
+
+[[tool.ty.overrides]]
+# SQLAlchemy's documented `x: Mapped[T] = mapped_column()` form assigns a MappedColumn, which is
+# assignable to Mapped but not a subtype of it; mypy and pyrefly accept the idiom
+include = ["src/bookreviver/models.py"]
+
+[tool.ty.overrides.rules]
+unsound-assignment = "ignore"
+
+[tool.ty.src]
+include = [
+    "src",
+    "tests",
+]

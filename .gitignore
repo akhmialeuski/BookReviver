@@ -72,9 +72,6 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# pyenv
-.python-version
-
 # celery beat schedule file
 celerybeat-schedule
 
@@ -112,6 +109,15 @@ dmypy.json
 *.swo
 *~
 
+# Cursor IDE
+.cursor/
+
 # OS
 .DS_Store
 Thumbs.db
+
+# Ruff
+.ruff_cache/
+
+# Application data: database, uploaded books and render cache
+/data/

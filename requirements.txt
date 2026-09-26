@@ -1,4 +1,0 @@
-# Production dependencies for BookReviver project
-
-# Core dependencies
-# Add your main application dependencies here

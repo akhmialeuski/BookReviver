@@ -1,0 +1,173 @@
+# Same as Black.
+line-length = 120
+indent-width = 4
+target-version = "py314"  # Match pyupgrade --py314-plus; requires-python is the minimum interpreter version
+fix = false # do not fix by default, for CI checks
+
+[format]
+quote-style = "single"
+indent-style = "space"
+docstring-code-format = true
+docstring-code-line-length = 120
+
+[lint.flake8-quotes]
+avoid-escape = false
+docstring-quotes = "double"
+inline-quotes = "single"
+
+[lint.flake8-type-checking]
+strict = true
+# SQLAlchemy resolves `Mapped[...]` annotations of declarative classes at runtime
+runtime-evaluated-base-classes = ["bookreviver.models.Base", "sqlalchemy.orm.DeclarativeBase"]
+# FastAPI resolves route and dependency annotations at runtime
+exempt-modules = ["typing", "typing_extensions", "fastapi"]
+
+[lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[lint.pydocstyle]
+convention = "pep257"
+
+[lint]
+preview = true
+fixable = ["ALL"]
+unfixable = []
+
+select = [
+    "ALL", # Select all rules by default
+    "A", # https://docs.astral.sh/ruff/rules/#flake8-builtins-a
+    "AIR", # https://docs.astral.sh/ruff/rules/#airflow-air
+    "ANN", # https://docs.astral.sh/ruff/rules/#flake8-annotations-ann
+    "ARG", # https://docs.astral.sh/ruff/rules/#flake8-unused-arguments-arg
+    "ASYNC", # https://docs.astral.sh/ruff/rules/#flake8-async-async
+    "B", # https://docs.astral.sh/ruff/rules/#flake8-bugbear-b
+    "BLE", # https://docs.astral.sh/ruff/rules/#flake8-blind-except-ble
+    "C4", # https://docs.astral.sh/ruff/rules/#flake8-comprehensions-c4
+    "C90", # https://docs.astral.sh/ruff/rules/#mccabe-c90
+    "COM", # https://docs.astral.sh/ruff/rules/#flake8-commas-com
+    "D", # https://docs.astral.sh/ruff/rules/#pydocstyle-d
+    "DTZ", # https://docs.astral.sh/ruff/rules/#flake8-datetimez-dtz
+    "E", # https://docs.astral.sh/ruff/rules/#pycodestyle-e-w
+    "EM", # https://docs.astral.sh/ruff/rules/#flake8-errmsg-em
+    "ERA", # https://docs.astral.sh/ruff/rules/#eradicate-era
+    "EXE", # https://docs.astral.sh/ruff/rules/#flake8-executable-exe
+    "F", # https://docs.astral.sh/ruff/rules/#pyflakes-f
+    "FA", # https://docs.astral.sh/ruff/rules/#flake8-future-annotations-fa
+    "FBT", # https://docs.astral.sh/ruff/rules/#flake8-boolean-trap-fbt
+    "FIX", # https://docs.astral.sh/ruff/rules/#flake8-fixme-fix
+    "FLY", # https://docs.astral.sh/ruff/rules/#flynt-fly
+    "FURB", # https://docs.astral.sh/ruff/rules/#refurb-furb
+    "G", # https://docs.astral.sh/ruff/rules/#flake8-logging-format-g
+    "I", # https://docs.astral.sh/ruff/rules/#isort-i
+    "ICN", # https://docs.astral.sh/ruff/rules/#flake8-import-conventions-icn
+    "INP", # https://docs.astral.sh/ruff/rules/#flake8-no-pep420-inp
+    "INT", # https://docs.astral.sh/ruff/rules/#flake8-gettext-int
+    "ISC", # https://docs.astral.sh/ruff/rules/#flake8-implicit-str-concat-isc
+    "LOG", # https://docs.astral.sh/ruff/rules/#flake8-logging-log
+    "N", # https://docs.astral.sh/ruff/rules/#pep8-naming-n
+    "NPY", # https://docs.astral.sh/ruff/rules/#numpy-specific-rules-npy
+    "PERF", # https://docs.astral.sh/ruff/rules/#perflint-perf
+    "PGH", # https://docs.astral.sh/ruff/rules/#pygrep-hooks-pgh
+    "PIE", # https://docs.astral.sh/ruff/rules/#flake8-pie-pie
+    "PL", # https://docs.astral.sh/ruff/rules/#pylint-pl
+    "PLC", # https://docs.astral.sh/ruff/rules/#convention-c
+    "PLE", # https://docs.astral.sh/ruff/rules/#error-e_1
+    "PLR", # https://docs.astral.sh/ruff/rules/#refactor-r
+    "PLW", # https://docs.astral.sh/ruff/rules/#warning-w_1
+    "PT", # https://docs.astral.sh/ruff/rules/#flake8-pytest-style-pt
+    "PTH", # https://docs.astral.sh/ruff/rules/#flake8-use-pathlib-pth
+    "PYI", # https://docs.astral.sh/ruff/rules/#flake8-pyi-pyi
+    "Q", # https://docs.astral.sh/ruff/rules/#flake8-quotes-q
+    "RET", # https://docs.astral.sh/ruff/rules/#flake8-return-ret
+    "RSE", # https://docs.astral.sh/ruff/rules/#flake8-raise-rse
+    "RUF", # https://docs.astral.sh/ruff/rules/#ruff-specific-rules-ruf
+    "S", # https://docs.astral.sh/ruff/rules/#flake8-bandit-s
+    "SIM", # https://docs.astral.sh/ruff/rules/#flake8-simplify-sim
+    "SLF", # https://docs.astral.sh/ruff/rules/#flake8-self-slf
+    "SLOT", # https://docs.astral.sh/ruff/rules/#flake8-slots-slot
+    "T10", # https://docs.astral.sh/ruff/rules/#flake8-debugger-t10
+    "T20", # https://docs.astral.sh/ruff/rules/#flake8-print-t20
+    "TCH", # https://docs.astral.sh/ruff/rules/#flake8-type-checking-tch
+    "TD", # https://docs.astral.sh/ruff/rules/#flake8-todos-td
+    "TID", # https://docs.astral.sh/ruff/rules/#flake8-tidy-imports-tid
+    "TRY", # https://docs.astral.sh/ruff/rules/#tryceratops-try
+    "UP", # https://docs.astral.sh/ruff/rules/#pyupgrade-up
+    "W", # https://docs.astral.sh/ruff/rules/#pycodestyle-e-w
+    "YTT", # https://docs.astral.sh/ruff/rules/#flake8-2020-ytt
+]
+
+ignore = [
+    # Broad category ignores
+    "ERA", # eradicate: commented-out code detection (too noisy)
+    "FIX", # fixme: TODO/FIXME comments (tracked separately)
+    "S", # bandit: security checks (handled by security review, not linter)
+    "TD", # todos: TODO format enforcement (tracked separately)
+
+    # Formatter compatibility (required when using ruff format)
+    "missing-trailing-comma", # missing-trailing-comma
+    "prohibited-trailing-comma", # prohibited-trailing-comma
+    "docstring-tab-indentation", # indent-with-spaces
+    "indentation-with-invalid-multiple", # indentation-with-invalid-multiple
+    "indentation-with-invalid-multiple-comment", # indentation-with-invalid-multiple-comment
+    "over-indented", # over-indented
+    "bad-quotes-inline-string", # bad-quotes-inline-string
+    "bad-quotes-multiline-string", # bad-quotes-multiline-string
+    "bad-quotes-docstring", # bad-quotes-docstring
+    "avoidable-escaped-quote", # avoidable-escaped-quote
+
+    # Project-wide policy ignores
+    "undocumented-public-init", # missing docstring in __init__ (not required)
+    "multi-line-summary-second-line", # multi-line docstring summary at second line (conflicts with D212)
+    "docstring-missing-returns", # return not in docstring
+    "docstring-missing-yields", # yield not in docstring (pydoclint rules parse Google and NumPy sections only, not reST)
+    "docstring-missing-exception", # exception not in docstring
+    "missing-copyright-notice", # missing copyright header
+    "error-suffix-on-exception-name", # exception name Error suffix (too strict)
+    "no-self-use", # method could be function/static (too noisy)
+    "hardcoded-bind-all-interfaces", # binding to all interfaces (intentional in lab/CI)
+    "hardcoded-password-string", # hardcoded password (intentional in lab/CI)
+    "hardcoded-password-func-arg", # hardcoded password in argument (intentional in lab/CI)
+    "hardcoded-temp-file", # insecure temp file usage (acceptable in CI)
+    "suspicious-non-cryptographic-random-usage", # pseudo-random generators (not doing crypto)
+]
+
+# Rules to address over time — remove one by one and fix
+extend-ignore = [
+    "any-type", # typing.Any disallowed
+    "undocumented-param", # missing argument descriptions in docstring
+    "mixed-case-variable-in-class-scope", # mixedCase in class scope
+    "ambiguous-unicode-character-docstring", # ambiguous character in docstring
+]
+
+exclude = [
+    "*.pyi", ".bzr", ".direnv", ".eggs", ".git", ".hg",
+    ".mypy_cache", ".nox", ".pants.d", ".pytest_cache",
+    ".ruff_cache", ".svn", ".tox", ".venv", "__pypackages__",
+    "_build", "buck-out", "build", "dist", "node_modules", "venv",
+]
+
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[lint.mccabe]
+max-complexity = 15
+
+[lint.per-file-ignores]
+# Invariant — every project has these two
+"__init__.py" = [
+    "module-import-not-at-top-of-file", # import violations
+    "unused-import", # unused imports
+]
+"tests/**" = [
+    "unused-lambda-argument", # unused lambda argument
+    "undocumented-public-method", # missing docstring in public method
+    "undocumented-public-package", # missing docstring in public package
+    "line-too-long", # line too long
+    "compare-to-empty-string", # compare to empty string
+    "unnecessary-dunder-call", # unnecessary encode
+    "magic-value-comparison", # magic value in comparison
+    "pytest-fixture-param-without-value", # fixture without value
+    "unnecessary-assign", # unnecessary assignment before return
+    "private-member-access", # private member access
+    "print", # `print` found — tests use prints
+    "typing-only-standard-library-import", # move import into TYPE_CHECKING
+]
