@@ -1,1 +1,1 @@
-"""Helpers shared by several test modules."""
+"""Tests: helpers."""

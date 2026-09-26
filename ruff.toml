@@ -17,10 +17,19 @@ inline-quotes = "single"
 
 [lint.flake8-type-checking]
 strict = true
-# SQLAlchemy resolves `Mapped[...]` annotations of declarative classes at runtime
-runtime-evaluated-base-classes = ["bookreviver.models.Base", "sqlalchemy.orm.DeclarativeBase"]
-# FastAPI resolves route and dependency annotations at runtime, including our Annotated dependency aliases
-exempt-modules = ["typing", "typing_extensions", "fastapi", "bookreviver.web.dependencies"]
+# Pydantic and SQLAlchemy resolve the annotations of these classes at runtime
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic_settings.BaseSettings",
+    "sqlalchemy.orm.DeclarativeBase",
+    "advanced_alchemy.base.AdvancedDeclarativeBase",
+    "bookreviver.api.schemas.base.RequestModel",
+    "bookreviver.api.schemas.base.ResponseModel",
+]
+# dishka resolves the return annotations of its providers at runtime
+runtime-evaluated-decorators = ["dishka.provide"]
+# FastAPI and dishka resolve route and dependency annotations at runtime, including our dependency aliases
+exempt-modules = ["typing", "typing_extensions", "fastapi", "dishka", "bookreviver.api.auth"]
 
 [lint.flake8-tidy-imports]
 ban-relative-imports = "all"

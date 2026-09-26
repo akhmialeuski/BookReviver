@@ -11,8 +11,9 @@ when a change alters what it describes.
 
 ```bash
 uv sync                                  # backend environment
-uv run bookreviver                       # API on http://127.0.0.1:8000, data in ./data
-uv run pytest tests/services             # one test package, e.g. services against in-memory adapters
+uv run fastapi dev                       # API on http://127.0.0.1:8000, data in ./data, needs .env
+uv run pytest tests/contracts            # port contracts, run against every adapter of the port
+uv run lint-imports                      # the layer contracts on their own
 uv run pre-commit run --all-files        # the gate: ruff, ty, mypy, pyrefly, import-linter, file fixers
 npm --prefix frontend run dev            # frontend on http://127.0.0.1:5173, proxies /api to the backend
 npm --prefix frontend run check          # Biome, tsc and Vitest

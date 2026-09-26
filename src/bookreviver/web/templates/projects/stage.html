@@ -1,7 +1,0 @@
-{% extends "base.html" %}
-{% block title %}{{ active_stage.label }}: {{ project.title }}{% endblock %}
-{% block head %}{% include "projects/_head.html" %}{% endblock %}
-{% block content %}
-{% include "_project_tabs.html" %}
-<p class="placeholder">The {{ active_stage.label }} stage is not implemented yet.</p>
-{% endblock %}
