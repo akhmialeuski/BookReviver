@@ -1,4 +1,4 @@
-"""Fixtures of the API tests: the application runs on fakes of the storage, imaging and event adapters."""
+"""Fixtures of the import and job API tests: the application runs on fakes of the storage, imaging and event adapters."""
 
 from typing import TYPE_CHECKING
 
