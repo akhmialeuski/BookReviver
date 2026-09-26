@@ -104,7 +104,7 @@ every closed set of values is a `StrEnum` carrying its own label.
 | ----------- | ------------------------------------------------------------------------------------------ |
 | Accounts    | `AccountId`, `Actor`, `AccountSettings` (default engine and model per `AiTask`)            |
 | Credentials | `ProviderCredential` with a masked secret, never printed or logged                         |
-| Books       | `Project`, `BookDetails`, `SourceSummary`, `Page`, `PageFacts`                             |
+| Books       | `Project`, `BookDetails`, `BookDetailsChanges`, `SourceSummary`, `Page`, `PageFacts`       |
 | Processing  | `Stage`, `Recipe`, `Step`, `Variant`, `Artifact`, `ArtifactKind`, `Provenance`             |
 | Edits       | `PageEdit` with geometry (`Rect`, `Quad`, `Mesh`, `Region` with `RegionKind`) or a mask    |
 | Jobs        | `Job`, `JobKind`, `JobState`, `Progress`, `WorkerPool` (cpu, gpu, llm)                     |
@@ -214,6 +214,8 @@ indistinguishable to the application.
 
 Storage keys, not paths, cross the ports. The local adapter maps them to `data/`, and an S3 adapter maps them to a
 bucket when workers run on other machines.
+`ProjectKeys` in the domain owns the `projects/<id>/` prefix: deleting a project removes it, and the IIIF route
+serves a key only when it lies inside a project of the signed-in account.
 
 - `projects/<id>/incoming/` holds an upload until its analysis succeeds, then replaces `source/` atomically.
 - `projects/<id>/source/` holds the upload exactly as received.
@@ -244,7 +246,7 @@ client is generated from it.
 | Account    | `GET /users/me`, `GET, PATCH /me/settings`, `GET, PUT, DELETE /me/credentials/{provider}`                 |
 | Catalogue  | `GET /engines`, `GET /processors`                                                                         |
 | Projects   | `GET, POST /projects`, `GET, PATCH, DELETE /projects/{id}`, `POST /projects/{id}/source`                  |
-| Pages      | `GET /projects/{id}/pages`, `GET, PUT /projects/{id}/pages/{index}/edits/{stage}`                         |
+| Pages      | `GET /projects/{id}/pages`, `GET /projects/{id}/pages/{index}`, `GET, PUT .../{index}/edits/{stage}`      |
 | Processing | `GET, PUT /projects/{id}/stages/{stage}/recipe`, `POST .../preview`, `POST .../run`, `GET .../variants`   |
 | Jobs       | `GET /jobs/{id}`, `DELETE /jobs/{id}`, `GET /projects/{id}/events` as SSE                                 |
 | Images     | `GET /iiif/{asset}/...` as immutable static files                                                         |
