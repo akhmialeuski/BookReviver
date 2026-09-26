@@ -41,6 +41,9 @@ npm --prefix frontend run check          # Biome, tsc and Vitest
 - A route validates input, calls one service method and returns a typed response: the resource schema, or
   fastapi-pagination's `Page[T]` for a collection. Every error is an RFC 9457 problem from fastapi-problem, mapped from
   domain errors in the one handler registered in `app`.
+- All request input is validated by Pydantic before the route runs: bodies, query models (`Annotated[Model, Query()]`),
+  forms and headers, built on the shared `RequestModel` base and the constrained types in `api/schemas/types.py`.
+  Handlers never check raw input by hand.
 - HTTP status codes come from `fastapi.status` or `http.HTTPStatus`, never as number literals, in code and in tests.
 - Everything is async: ports, API, SQLAlchemy `AsyncSession`, files, HTTP. Blocking library calls go through
   `asyncer.asyncify` inside adapters. Heavy work (parsing, rasterising, tiling, OCR, LLM calls) runs only in

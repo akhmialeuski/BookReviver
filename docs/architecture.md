@@ -46,6 +46,7 @@ What each concern reuses, and therefore what we do not write ourselves.
 | Rate limiting              | slowapi                                                         | Throttling of sign-in and registration           |
 | CSRF                       | starlette-csrf                                                  | Double-submit cookie check                       |
 | Persistence                | SQLAlchemy 2.0 async with advanced-alchemy repositories         | Generic CRUD, pagination, filters, audit columns |
+| Request validation         | Pydantic 2 models and constrained types, email-validator        | Parsing and checking input                       |
 | Collection responses       | fastapi-pagination `Page[T]` and its `Params`                   | Paging schema and query parameters               |
 | Error responses            | fastapi-problem (RFC 9457 problem details)                      | Error format, error schemas in OpenAPI           |
 | Migrations                 | Alembic through advanced-alchemy's integration                  | Schema versioning                                |
@@ -250,8 +251,22 @@ client is generated from it.
 
 On a server, a reverse proxy serves `/iiif` straight from disk or object storage, after an access check by the API.
 
-### Response conventions
+### Request and response conventions
 
+- Every input is a Pydantic model or a constrained `Annotated` type, validated by FastAPI before the route runs:
+  bodies as models, query parameters as a model bound with `Annotated[Model, Query()]`, forms with `Form()`, headers
+  with `Header()`, uploads as `UploadFile` with the file set checked by a model of their names and sizes. Handlers
+  never parse or check raw input by hand.
+- Constraints are declared, not coded: `Field` limits, `StringConstraints`, enums, `EmailStr`, `AnyHttpUrl`, and
+  `field_validator` or `model_validator` only for a rule no declaration expresses. Reused constrained types (a title,
+  a year, a page number) are defined once in `api/schemas/types.py`.
+- Two base classes carry the shared configuration, so no schema repeats it. `RequestModel` forbids unknown fields and
+  strips whitespace. `ResponseModel` reads attributes, so a schema is built straight from a domain object with
+  `model_validate`.
+- Following FastAPI's guide: no `...` as a default, no `RootModel` (an `Annotated` list with `Field` instead), and
+  `Annotated` for every parameter and dependency.
+- Pydantic stays at the edges: request and response schemas in `api`, settings in `app`. Domain invariants are
+  `attrs` validators, so the core does not depend on Pydantic.
 - Every route declares a typed Pydantic response. The shapes are the same everywhere: a single resource is its
   schema, a collection is fastapi-pagination's `Page[T]` (`items`, `total`, `page`, `size`, `pages`), and every error,
   including validation errors, is an RFC 9457 problem (`application/problem+json` with `type`, `title`, `status`,
