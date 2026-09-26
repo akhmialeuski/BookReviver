@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block head %}{% include "projects/_head.html" %}{% endblock %}
+{% block content %}
+<h1>Projects</h1>
+
+<form class="create-project" method="post" action="/projects" novalidate>
+  <label for="new-title">New book title</label>
+  <div class="create-project-row">
+    <input id="new-title" name="title" type="text" value="{{ title }}" autofocus required
+           {% if error %}aria-invalid="true" aria-describedby="new-title-error"{% endif %}>
+    <button type="submit">Create project</button>
+  </div>
+  {% if error %}<p class="field-error" id="new-title-error">{{ error }}</p>{% endif %}
+</form>
+
+{% if projects %}
+  <div class="table-scroll">
+    <table class="project-list">
+      <thead>
+        <tr>
+          <th scope="col">Title</th>
+          <th scope="col">Authors</th>
+          <th scope="col">Year</th>
+          <th scope="col" class="number">Pages</th>
+          <th scope="col">Last update, UTC</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for project, page_count in projects %}
+          <tr>
+            <td><a href="/projects/{{ project.id }}">{{ project.title }}</a></td>
+            <td>{{ project.authors }}</td>
+            <td>{{ project.publication_year }}</td>
+            <td class="number">{{ page_count }}</td>
+            <td><time datetime="{{ project.updated_at.isoformat() }}">{{ project.updated_at.strftime('%Y-%m-%d %H:%M') }}</time></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <p class="empty-state">No projects yet. Enter the title of a book above to create the first one, then import its scan.</p>
+{% endif %}
+{% endblock %}
