@@ -1,10 +1,9 @@
-"""In-memory unit of work: repositories work on a copy of the database that ``commit`` publishes."""
+"""In-memory unit of work: repositories work on a copy of the database, and ``commit`` publishes only the changes."""
 
-import copy
 from operator import attrgetter
 from typing import TYPE_CHECKING, override
 
-from attrs import define, evolve, field
+from attrs import define, evolve, field, fields
 
 from bookreviver.domain.entities import Job, Project, ProjectOverview
 from bookreviver.domain.errors import NotFoundError
@@ -147,22 +146,39 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
 
 
 class InMemoryUnitOfWork(UnitOfWork):
-    """A transaction over a private copy of the database, published on commit."""
+    """A transaction over a private copy of the database that publishes only its own changes on commit.
+
+    Rows are frozen entities, so a changed row is a different object: comparing identities against the snapshot taken
+    when the transaction began finds exactly what this unit added, replaced or removed.
+    """
 
     def __init__(self, database: InMemoryDatabase) -> None:
         self._database = database
         self._begin()
 
+    @staticmethod
+    def _copy(tables: InMemoryTables) -> InMemoryTables:
+        """Copy every table; the rows themselves are immutable and shared."""
+        return InMemoryTables(**{table.name: dict(getattr(tables, table.name)) for table in fields(InMemoryTables)})
+
     def _begin(self) -> None:
-        """Start from a fresh copy of the committed state."""
-        self._tables = copy.deepcopy(self._database.tables)
+        """Start a transaction from the committed state."""
+        self._snapshot = self._copy(self._database.tables)
+        self._tables = self._copy(self._database.tables)
         self.projects = InMemoryProjectRepository(self._tables)
         self.pages = InMemoryPageRepository(self._tables)
         self.jobs = InMemoryJobRepository(self._tables)
 
     @override
     async def commit(self) -> None:
-        self._database.tables = copy.deepcopy(self._tables)
+        committed = self._database.tables
+        for table in fields(InMemoryTables):
+            before, after = getattr(self._snapshot, table.name), getattr(self._tables, table.name)
+            target = getattr(committed, table.name)
+            for key in before.keys() - after.keys():
+                target.pop(key, None)
+            target.update({key: row for key, row in after.items() if before.get(key) is not row})
+        self._begin()
 
     @override
     async def rollback(self) -> None:

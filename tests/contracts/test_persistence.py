@@ -159,3 +159,21 @@ class TestJobRepository:
         await uow.commit()
         active = await (await fx_uow_factory()).jobs.list_for_project(project.id, {JobState.QUEUED, JobState.RUNNING})
         assert [job.id for job in active] == [new.id, old.id]
+
+
+class TestUnitOfWork:
+    """Contract of UnitOfWork isolation between concurrent units."""
+
+    async def test_concurrent_commits_keep_each_others_changes(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify a commit publishes only its own changes and never reverts another unit's commit."""
+        owner_id = new_account_id()
+        first, second = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        # Both units start before either commits, as two overlapping requests do
+        early = await fx_uow_factory()
+        late = await fx_uow_factory()
+        await late.projects.add(second)
+        await late.commit()
+        await early.projects.add(first)
+        await early.commit()
+        listed = await (await fx_uow_factory()).projects.list_for_owner(owner_id, SliceRequest())
+        assert {item.project.id for item in listed.items} == {first.id, second.id}
