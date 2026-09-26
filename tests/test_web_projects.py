@@ -355,7 +355,8 @@ class TestDeleteProject:
         kept_id = await fx_create_project(title=SECOND_TITLE, page_count=1)
         storage = fx_app.state.storage
         assert isinstance(storage, ProjectStorage)
-        source_dir = await storage.reset_source(project_id)
+        source_dir = storage.source_dir(project_id)
+        source_dir.mkdir(parents=True)
         (source_dir / SOURCE_FILE_NAME).write_bytes(b'%PDF')
 
         response = await fx_client.post(DELETE_URL.format(project_id=project_id))
@@ -403,8 +404,9 @@ class TestShowStage:
 
     @pytest.mark.parametrize(
         ('project_exists', 'stage_value'),
-        [(True, 'binding'), (True, Stage.IMPORT.value), (False, Stage.CLEANUP.value)],
-        ids=['unknown-stage', 'import-stage', 'unknown-project'],
+        # The Import stage is left out: in the assembled app the pages router serves it before this one
+        [(True, 'binding'), (False, Stage.CLEANUP.value)],
+        ids=['unknown-stage', 'unknown-project'],
     )
     async def test_unknown_target_shows_not_found_page(
         self,
@@ -414,7 +416,7 @@ class TestShowStage:
         project_exists: bool,
         stage_value: str,
     ) -> None:
-        """Verify an unknown stage, the Import stage or a missing project answers with the readable 404 page."""
+        """Verify an unknown stage or a missing project answers with the readable 404 page."""
         project_id = await fx_create_project(title=FIRST_TITLE) if project_exists else MISSING_PROJECT_ID
         response = await fx_client.get(STAGE_URL.format(project_id=project_id, stage=stage_value))
         expect(response.status_code == HTTPStatus.NOT_FOUND)
