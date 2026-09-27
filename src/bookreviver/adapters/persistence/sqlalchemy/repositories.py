@@ -1,7 +1,8 @@
 """Port repositories over advanced-alchemy's async repository, which supplies every generic query."""
 
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, Any, override
 
+from advanced_alchemy.exceptions import NotFoundError as MissingRowError
 from advanced_alchemy.filters import CollectionFilter, LimitOffset
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
 from attrs import evolve
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
     from advanced_alchemy.base import ModelProtocol
+    from advanced_alchemy.repository.typing import PrimaryKeyType
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
@@ -27,18 +29,17 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import AccountId
     from bookreviver.domain.values import SliceRequest
 
-MISSING_ROW: str = 'No row has this key'
-
 
 class RowRepository[RowT: ModelProtocol](SQLAlchemyAsyncRepository[RowT]):
     """advanced-alchemy's repository of one table, reporting a missing row as the domain's NotFoundError."""
 
     @override
-    @staticmethod
-    def check_not_found[ItemT](item_or_none: ItemT | None) -> ItemT:
-        if item_or_none is None:
-            raise NotFoundError(MISSING_ROW)
-        return item_or_none
+    async def get(self, item_id: PrimaryKeyType, **options: Any) -> RowT:
+        # The library's update and delete look the row up through this method, so all three report the key
+        try:
+            return await super().get(item_id, **options)
+        except MissingRowError as error:
+            raise NotFoundError(item_id) from error
 
 
 class ProjectRows(RowRepository[ProjectRow]):
@@ -62,7 +63,7 @@ class JobRows(RowRepository[JobRow]):
 class SqlAlchemyRepository[EntityT, IdT, RowT: ModelProtocol](Repository[EntityT, IdT]):
     """The generic operations of a port repository, delegated to advanced-alchemy and mapped to entities."""
 
-    def __init__(self, rows: RowRepository[RowT], mapper: RowMapper[EntityT, RowT]) -> None:
+    def __init__(self, *, rows: RowRepository[RowT], mapper: RowMapper[EntityT, RowT]) -> None:
         self._rows = rows
         self._mapper = mapper
 
@@ -88,7 +89,7 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
     """Projects, listed per owner together with their page counts."""
 
     def __init__(self, session: AsyncSession) -> None:
-        super().__init__(ProjectRows(session=session), ProjectMapper())
+        super().__init__(rows=ProjectRows(session=session), mapper=ProjectMapper())
 
     @override
     async def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:
@@ -143,12 +144,12 @@ class SqlAlchemyJobRepository(SqlAlchemyRepository[Job, JobId, JobRow], JobRepos
     """Jobs, listed per project and state."""
 
     def __init__(self, session: AsyncSession) -> None:
-        super().__init__(JobRows(session=session), JobMapper())
+        super().__init__(rows=JobRows(session=session), mapper=JobMapper())
 
     @override
     async def list_for_project(self, project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:
         rows = await self._rows.get_many(
-            CollectionFilter(field_name='state', values=states),
+            CollectionFilter(field_name=JobRow.state, values=states),
             order_by=JobRow.created_at.desc(),
             project_id=project_id,
         )

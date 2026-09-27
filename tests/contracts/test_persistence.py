@@ -52,11 +52,11 @@ class TestProjectRepository:
 
     @pytest.mark.parametrize('operation', ['get', 'update', 'delete'])
     async def test_missing_project_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory, operation: str) -> None:
-        """Verify every single-entity operation on an unknown project raises NotFoundError."""
+        """Verify every single-entity operation on an unknown project raises NotFoundError naming the project."""
         project = make_project(owner_id=new_account_id())
         repository = (await fx_uow_factory()).projects
         argument = project if operation == 'update' else project.id
-        with pytest.raises(NotFoundError):
+        with pytest.raises(NotFoundError, match=str(project.id)):
             await getattr(repository, operation)(argument)
 
     async def test_list_for_owner_orders_pages_and_counts(self, fx_uow_factory: UnitOfWorkFactory) -> None:
@@ -135,11 +135,11 @@ class TestPageRepository:
         assert await (await fx_uow_factory()).pages.get(project.id, 0) == ready
 
     async def test_missing_page_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify reading a page that does not exist raises NotFoundError."""
+        """Verify reading a page that does not exist raises NotFoundError naming its project."""
         project = make_project(owner_id=new_account_id())
         uow = await fx_uow_factory()
         await uow.projects.add(project)
-        with pytest.raises(NotFoundError):
+        with pytest.raises(NotFoundError, match=str(project.id)):
             await uow.pages.get(project.id, 0)
 
 

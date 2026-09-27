@@ -11,8 +11,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from bookreviver.domain.enums import ColorMode, JobKind, JobState, Orthography, SourceKind
 
-# Target of the foreign keys that tie pages and jobs to their project
-PROJECT_KEY: str = 'projects.id'
 # Referential action that lets the database remove a project's pages and jobs with it
 CASCADE: str = 'CASCADE'
 
@@ -65,7 +63,7 @@ class PageRow(DefaultBase):
 
     __tablename__ = 'pages'
 
-    project_id: Mapped[UUID] = mapped_column(ForeignKey(PROJECT_KEY, ondelete=CASCADE), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), primary_key=True)
     index: Mapped[int] = mapped_column(primary_key=True)
     width_px: Mapped[int]
     height_px: Mapped[int]
@@ -88,7 +86,7 @@ class JobRow(UUIDBase):
 
     __tablename__ = 'jobs'
 
-    project_id: Mapped[UUID] = mapped_column(ForeignKey(PROJECT_KEY, ondelete=CASCADE), index=True)
+    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), index=True)
     kind: Mapped[JobKind] = mapped_column(enum_by_value(JobKind))
     state: Mapped[JobState] = mapped_column(enum_by_value(JobState))
     progress_done: Mapped[int]
