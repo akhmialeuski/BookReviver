@@ -9,7 +9,10 @@ repository adds only the queries specific to BookReviver, such as the page count
 The database's own checks are reported as the domain errors the in-memory adapter raises, so services never see an
 advanced-alchemy exception. A missing row is a :class:`~bookreviver.domain.errors.NotFoundError` naming its key. A row
 whose key is already stored is a :class:`~bookreviver.domain.errors.ConflictError` naming that key, and a row whose
-parent row is missing is a ``NotFoundError`` naming the parent's key.
+parent row is missing is a ``NotFoundError`` naming the parent's key. advanced-alchemy's own Litestar handler answers
+409 for every integrity error, but here every foreign key points at the owning project, so a violated one means the
+project the caller addressed does not exist, which is a 404. Any other integrity error means the adapter wrote a row
+the schema forbids, a defect that propagates unchanged.
 """
 
 from contextlib import contextmanager
