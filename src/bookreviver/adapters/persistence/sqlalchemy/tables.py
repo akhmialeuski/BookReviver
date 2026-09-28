@@ -31,12 +31,14 @@ CASCADE: Final = 'CASCADE'
 CHILD_CASCADE: Final = 'all, delete'
 # Loading strategy that raises instead of emitting hidden SQL, which an AsyncSession cannot run
 NO_IMPLICIT_LOAD: Final = 'raise'
-# Name of the page table, and of the project's relationship to its pages
-PAGES: Final = 'pages'
-# Name of the job table, and of the project's relationship to its jobs
-JOBS: Final = 'jobs'
-# Name of the relationship from a page or a job back to its project
-PROJECT: Final = 'project'
+
+
+class Relation(enum.StrEnum):
+    """Attribute names of the relationships, which ``back_populates`` refers to by name."""
+
+    PAGES = 'pages'
+    JOBS = 'jobs'
+    PROJECT = 'project'
 
 
 def enum_by_value[EnumT: enum.Enum](enum_type: type[EnumT]) -> Enum:
@@ -113,10 +115,10 @@ class ProjectRow(DefaultBase):
     updated_at: Mapped[datetime] = mapped_column(index=True)
 
     pages: Mapped[list[PageRow]] = relationship(
-        back_populates=PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
+        back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
     jobs: Mapped[list[JobRow]] = relationship(
-        back_populates=PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
+        back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
 
 
@@ -144,7 +146,7 @@ class PageRow(DefaultBase):
     :ivar project: Project owning the page, never loaded implicitly.
     """
 
-    __tablename__ = PAGES
+    __tablename__ = 'pages'
 
     project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), primary_key=True)
     index: Mapped[int] = mapped_column(primary_key=True)
@@ -163,7 +165,7 @@ class PageRow(DefaultBase):
     assets_ready: Mapped[bool]
     assets_version: Mapped[int]
 
-    project: Mapped[ProjectRow] = relationship(back_populates=PAGES, lazy=NO_IMPLICIT_LOAD)
+    project: Mapped[ProjectRow] = relationship(back_populates=Relation.PAGES, lazy=NO_IMPLICIT_LOAD)
 
 
 class JobRow(DefaultBase):
@@ -182,7 +184,7 @@ class JobRow(DefaultBase):
     :ivar project: Project owning the job, never loaded implicitly.
     """
 
-    __tablename__ = JOBS
+    __tablename__ = 'jobs'
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), index=True)
@@ -195,4 +197,4 @@ class JobRow(DefaultBase):
     started_at: Mapped[datetime | None]
     finished_at: Mapped[datetime | None]
 
-    project: Mapped[ProjectRow] = relationship(back_populates=JOBS, lazy=NO_IMPLICIT_LOAD)
+    project: Mapped[ProjectRow] = relationship(back_populates=Relation.JOBS, lazy=NO_IMPLICIT_LOAD)
