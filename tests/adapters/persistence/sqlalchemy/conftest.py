@@ -3,26 +3,26 @@
 from typing import TYPE_CHECKING
 
 import pytest
+from dishka import make_async_container
 
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+from bookreviver.app.providers.core import CoreProvider
+from bookreviver.app.providers.database import DatabaseProvider
+from bookreviver.app.settings import Settings
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from bookreviver.app.settings import Settings
-
 
 @pytest.fixture
 async def fx_database(fx_settings: Settings) -> AsyncIterator[SqlDatabase]:
-    """Open the SQLite database the application would use for the test's data directory, with its schema.
+    """Open the database through the application's own provider, for the test's data directory.
 
     :param fx_settings: Settings pointing at a fresh data directory of the test.
     :type fx_settings: Settings
-    :returns: Iterator yielding the open database and disposing of its engine afterwards.
+    :returns: Iterator yielding the open database and closing it with the container afterwards.
     :rtype: AsyncIterator[SqlDatabase]
     """
-    fx_settings.data_dir.mkdir(parents=True, exist_ok=True)
-    database = SqlDatabase(fx_settings.resolved_database_url)
-    await database.create_schema()
-    yield database
-    await database.dispose()
+    container = make_async_container(CoreProvider(), DatabaseProvider(), context={Settings: fx_settings})
+    yield await container.get(SqlDatabase)
+    await container.close()
