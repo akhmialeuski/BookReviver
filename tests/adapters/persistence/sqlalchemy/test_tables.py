@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING
 
 import pytest
+from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
@@ -19,10 +20,14 @@ pytestmark = pytest.mark.anyio
 
 
 class TestProjectRow:
-    """Tests for the foreign keys pointing at ProjectRow."""
+    """Tests for ProjectRow together with the foreign keys and relationships of its pages and jobs."""
 
     async def test_database_deletes_pages_and_jobs_with_their_project(self, fx_database: SqlDatabase) -> None:
-        """Verify a plain SQL delete of a project row removes its pages and jobs through the foreign keys."""
+        """Verify a plain SQL delete of a project row removes its pages and jobs through the foreign keys.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        """
         project = make_project(owner_id=new_account_id())
         async with fx_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
@@ -38,8 +43,33 @@ class TestProjectRow:
             expect(await session.scalar(select(func.count()).select_from(JobRow)) == 0)
         assert_expectations()
 
+    async def test_update_keeps_pages_and_jobs(self, fx_database: SqlDatabase) -> None:
+        """Verify updating a project leaves its pages and jobs, which the relationships must not merge away.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        """
+        project = make_project(owner_id=new_account_id())
+        async with fx_database.sessions() as session:
+            uow = SqlAlchemyUnitOfWork(session)
+            await uow.projects.add(project)
+            await uow.pages.replace_for_project(project.id, [make_page(project_id=project.id, index=0)])
+            await uow.jobs.add(make_job(project_id=project.id))
+            await uow.commit()
+        async with fx_database.sessions() as session:
+            uow = SqlAlchemyUnitOfWork(session)
+            await uow.projects.update(evolve(project, details=evolve(project.details, title='Renamed')))
+            await uow.commit()
+            expect(await session.scalar(select(func.count()).select_from(PageRow)) == 1)
+            expect(await session.scalar(select(func.count()).select_from(JobRow)) == 1)
+        assert_expectations()
+
     async def test_sqlite_rejects_a_page_of_a_missing_project(self, fx_database: SqlDatabase) -> None:
-        """Verify SQLite enforces the foreign key, which it ignores unless the connection turns it on."""
+        """Verify SQLite enforces the foreign key, which it ignores unless the connection turns it on.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        """
         orphan = PageMapper().to_row(make_page(project_id=make_project(owner_id=new_account_id()).id, index=0))
         async with fx_database.sessions() as session:
             session.add(orphan)

@@ -143,7 +143,12 @@ The persistence adapter keeps its table classes private and maps rows to domain 
 Each port repository wraps an advanced-alchemy `SQLAlchemyAsyncRepository`, so generic queries come from the library
 and each repository adds only its own. A missing row is reported as the domain's `NotFoundError` naming its key.
 The library's audit columns are not used, because the domain sets `updated_at` through its `Clock`.
-Adapters are selected by settings read once in `app` (`BOOKREVIVER_DATABASE_URL`, `BOOKREVIVER_STORAGE`, `BOOKREVIVER_JOB_BROKER` and so on).
+Tables are SQLAlchemy 2.0 declarative classes on advanced-alchemy's `DefaultBase`, which brings the shared metadata
+and the portable `GUID`, `DateTimeUTC` and `JsonB` column types. Keys are declared on each table, and a project's
+pages and jobs are relationships with `lazy="raise"`, so an `AsyncSession` never loads them implicitly, and with
+`passive_deletes=True`, so their deletion is left to the `ON DELETE CASCADE` foreign keys.
+Adapters are selected by settings read once in `app` (`BOOKREVIVER_DATABASE_URL`, `BOOKREVIVER_STORAGE`,
+`BOOKREVIVER_JOB_BROKER` and so on).
 
 ## Services
 

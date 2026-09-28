@@ -1,4 +1,17 @@
-"""Mappers between table rows and frozen domain entities, one per aggregate."""
+"""Mappers between table rows and frozen domain entities, one per aggregate.
+
+A domain entity and a table row have different shapes, and neither can stand in for the other. The entity is a frozen
+``attrs`` class with nested value objects: a :class:`~bookreviver.domain.entities.Project` holds a
+:class:`~bookreviver.domain.values.BookDetails` and an optional :class:`~bookreviver.domain.values.SourceSummary`. The
+row is a flat, mutable class instrumented by SQLAlchemy, which assigns its attributes on load and tracks their changes.
+The domain may not import SQLAlchemy, which import-linter enforces, so the translation lives here: ``to_row`` spreads
+the value objects over columns and ``to_entity`` gathers them back.
+
+This is the Data Mapper pattern with explicit code. Imperative mapping of the domain classes is ruled out because the
+ORM cannot assign attributes of a frozen class, and ``composite()`` is ruled out because it needs positional
+constructors and a ``__composite_values__`` method on domain classes, which are keyword-only and must stay free of
+storage concerns.
+"""
 
 from abc import ABC, abstractmethod
 from typing import override
@@ -10,22 +23,48 @@ from bookreviver.domain.values import BookDetails, PageAssets, PageFacts, Progre
 
 
 class RowMapper[EntityT, RowT](ABC):
-    """Turns a row into its domain entity and an entity into a new, unattached row."""
+    """Translation between one kind of domain entity and the row of its table.
+
+    The generic repository of the adapter holds a mapper of this type, so one repository class serves every pair of
+    entity and row.
+    """
 
     @abstractmethod
     def to_entity(self, row: RowT) -> EntityT:
-        """Build the domain entity stored in ``row``."""
+        """Build the domain entity stored in ``row``.
+
+        :param row: Row loaded from the database.
+        :type row: RowT
+        :returns: Frozen entity holding every value of the row.
+        :rtype: EntityT
+        """
 
     @abstractmethod
     def to_row(self, entity: EntityT) -> RowT:
-        """Build a row holding every field of ``entity``."""
+        """Build a new, unattached row holding every field of ``entity``.
+
+        :param entity: Domain entity to store.
+        :type entity: EntityT
+        :returns: Transient row, ready to be added or merged into a session.
+        :rtype: RowT
+        """
 
 
 class ProjectMapper(RowMapper[Project, ProjectRow]):
-    """Flattens the description and the optional source summary into project columns."""
+    """Translation of a project, whose description and optional source summary are flattened into project columns."""
 
     @override
     def to_entity(self, row: ProjectRow) -> Project:
+        """Build the project stored in ``row``.
+
+        The source summary is rebuilt only when both its kind and its import time are set, which is the state after
+        the first import. Before it the project has no source.
+
+        :param row: Project row loaded from the database.
+        :type row: ProjectRow
+        :returns: Project with its description and, after the first import, its source summary.
+        :rtype: Project
+        """
         source = None
         if row.source_kind is not None and row.source_imported_at is not None:
             source = SourceSummary(
@@ -59,6 +98,13 @@ class ProjectMapper(RowMapper[Project, ProjectRow]):
 
     @override
     def to_row(self, entity: Project) -> ProjectRow:
+        """Build the row of ``entity``, writing null kind and import time and empty values when it has no source.
+
+        :param entity: Project to store.
+        :type entity: Project
+        :returns: Transient project row.
+        :rtype: ProjectRow
+        """
         details, source = entity.details, entity.source
         return ProjectRow(
             id=entity.id,
@@ -85,10 +131,17 @@ class ProjectMapper(RowMapper[Project, ProjectRow]):
 
 
 class PageMapper(RowMapper[Page, PageRow]):
-    """Flattens the facts and the asset state of a page into page columns."""
+    """Translation of a page, whose facts and asset state are flattened into page columns."""
 
     @override
     def to_entity(self, row: PageRow) -> Page:
+        """Build the page stored in ``row``.
+
+        :param row: Page row loaded from the database.
+        :type row: PageRow
+        :returns: Page with its facts and asset state.
+        :rtype: Page
+        """
         facts = PageFacts(
             width_px=row.width_px,
             height_px=row.height_px,
@@ -112,6 +165,13 @@ class PageMapper(RowMapper[Page, PageRow]):
 
     @override
     def to_row(self, entity: Page) -> PageRow:
+        """Build the row of ``entity``.
+
+        :param entity: Page to store.
+        :type entity: Page
+        :returns: Transient page row.
+        :rtype: PageRow
+        """
         facts = entity.facts
         return PageRow(
             project_id=entity.project_id,
@@ -134,10 +194,17 @@ class PageMapper(RowMapper[Page, PageRow]):
 
 
 class JobMapper(RowMapper[Job, JobRow]):
-    """Flattens the progress of a job into job columns."""
+    """Translation of a job, whose progress is flattened into job columns."""
 
     @override
     def to_entity(self, row: JobRow) -> Job:
+        """Build the job stored in ``row``.
+
+        :param row: Job row loaded from the database.
+        :type row: JobRow
+        :returns: Job with its state, progress and timestamps.
+        :rtype: Job
+        """
         return Job(
             id=JobId(row.id),
             project_id=ProjectId(row.project_id),
@@ -152,6 +219,13 @@ class JobMapper(RowMapper[Job, JobRow]):
 
     @override
     def to_row(self, entity: Job) -> JobRow:
+        """Build the row of ``entity``.
+
+        :param entity: Job to store.
+        :type entity: Job
+        :returns: Transient job row.
+        :rtype: JobRow
+        """
         return JobRow(
             id=entity.id,
             project_id=entity.project_id,

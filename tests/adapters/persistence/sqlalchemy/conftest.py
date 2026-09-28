@@ -14,7 +14,13 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 async def fx_database(fx_settings: Settings) -> AsyncIterator[SqlDatabase]:
-    """Open the SQLite database the application would use for the test's data directory, with its schema."""
+    """Open the SQLite database the application would use for the test's data directory, with its schema.
+
+    :param fx_settings: Settings pointing at a fresh data directory of the test.
+    :type fx_settings: Settings
+    :returns: Iterator yielding the open database and disposing of its engine afterwards.
+    :rtype: AsyncIterator[SqlDatabase]
+    """
     fx_settings.data_dir.mkdir(parents=True, exist_ok=True)
     database = SqlDatabase(fx_settings.resolved_database_url)
     await database.create_schema()

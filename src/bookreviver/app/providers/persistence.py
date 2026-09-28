@@ -24,11 +24,21 @@ class MemoryPersistenceProvider(Provider):
 
 
 class SqlAlchemyPersistenceProvider(Provider):
-    """SQL persistence: one unit of work per request over the request session of ``DatabaseProvider``."""
+    """SQL persistence: one unit of work per request over the request session of ``DatabaseProvider``.
+
+    The provider builds only the unit of work. The engine and the session come from ``DatabaseProvider``, which the
+    account tables share, so selecting this backend adds no second connection pool.
+    """
 
     @provide(scope=Scope.REQUEST)
     def unit_of_work(self, session: AsyncSession) -> UnitOfWork:
-        """Open a unit of work over the session of the current request or job."""
+        """Open a unit of work over the session of the current request or job.
+
+        :param session: Session of the current request or job, provided by ``DatabaseProvider``.
+        :type session: AsyncSession
+        :returns: Unit of work whose repositories share ``session``.
+        :rtype: UnitOfWork
+        """
         return SqlAlchemyUnitOfWork(session)
 
 
