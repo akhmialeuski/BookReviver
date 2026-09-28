@@ -30,6 +30,14 @@ class InMemoryTables:
     pages: dict[PageKey, Page] = field(factory=dict)
     jobs: dict[JobId, Job] = field(factory=dict)
 
+    def require_project(self, project_id: ProjectId) -> None:
+        """Mirror the foreign key from a page or a job to its project.
+
+        :raises NotFoundError: If the project is not stored.
+        """
+        if project_id not in self.projects:
+            raise NotFoundError(project_id)
+
 
 @define
 class InMemoryDatabase:
@@ -124,9 +132,7 @@ class InMemoryPageRepository(PageRepository):
 
     @override
     async def replace_for_project(self, project_id: ProjectId, pages: Sequence[Page]) -> None:
-        # Mirror the foreign key from a page to its project
-        if project_id not in self._tables.projects:
-            raise NotFoundError(project_id)
+        self._tables.require_project(project_id)
         for page_key in [key for key in self._tables.pages if key[0] == project_id]:
             del self._tables.pages[page_key]
         self._tables.pages.update({(project_id, page.index): evolve(page, project_id=project_id) for page in pages})
@@ -147,9 +153,7 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
 
     @override
     async def add(self, entity: Job) -> Job:
-        # Mirror the foreign key from a job to its project
-        if entity.project_id not in self._tables.projects:
-            raise NotFoundError(entity.project_id)
+        self._tables.require_project(entity.project_id)
         return await super().add(entity)
 
     @override
