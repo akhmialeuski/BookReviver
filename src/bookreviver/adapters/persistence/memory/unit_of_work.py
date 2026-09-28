@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, override
 from attrs import define, evolve, field, fields
 
 from bookreviver.domain.entities import Job, Project, ProjectOverview
-from bookreviver.domain.errors import NotFoundError
+from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import JobId, ProjectId
 from bookreviver.domain.values import Slice
 from bookreviver.ports.persistence import JobRepository, PageRepository, ProjectRepository, Repository, UnitOfWork
@@ -53,7 +53,9 @@ class InMemoryRepository[EntityT, IdT](Repository[EntityT, IdT]):
 
     @override
     async def add(self, entity: EntityT) -> EntityT:
-        self._rows[self._identify(entity)] = entity
+        if (entity_id := self._identify(entity)) in self._rows:
+            raise ConflictError(entity_id)
+        self._rows[entity_id] = entity
         return entity
 
     @override
@@ -121,6 +123,9 @@ class InMemoryPageRepository(PageRepository):
 
     @override
     async def replace_for_project(self, project_id: ProjectId, pages: Sequence[Page]) -> None:
+        # Mirror the foreign key from a page to its project
+        if project_id not in self._tables.projects:
+            raise NotFoundError(project_id)
         for page_key in [key for key in self._tables.pages if key[0] == project_id]:
             del self._tables.pages[page_key]
         self._tables.pages.update({(project_id, page.index): evolve(page, project_id=project_id) for page in pages})
@@ -138,6 +143,13 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
     def __init__(self, tables: InMemoryTables) -> None:
         super().__init__(tables.jobs, attrgetter('id'))
         self._tables = tables
+
+    @override
+    async def add(self, entity: Job) -> Job:
+        # Mirror the foreign key from a job to its project
+        if entity.project_id not in self._tables.projects:
+            raise NotFoundError(entity.project_id)
+        return await super().add(entity)
 
     @override
     async def list_for_project(self, project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:

@@ -141,7 +141,9 @@ Every repository method takes the acting account, so a query can never cross acc
 
 The persistence adapter keeps its table classes private and maps rows to domain entities in one mapper per entity.
 Each port repository wraps an advanced-alchemy `SQLAlchemyAsyncRepository`, so generic queries come from the library
-and each repository adds only its own. A missing row is reported as the domain's `NotFoundError` naming its key.
+and each repository adds only its own. The database's checks surface as domain errors naming the keys involved: a
+missing row or a missing parent row as `NotFoundError`, and a key already stored as `ConflictError`. The port states
+both, so the in-memory adapter raises the same errors.
 The library's audit columns are not used, because the domain sets `updated_at` through its `Clock`.
 Tables are SQLAlchemy 2.0 declarative classes on advanced-alchemy's `DefaultBase`, which brings the shared metadata
 and the portable `GUID`, `DateTimeUTC` and `JsonB` column types. Keys are declared on each table, and a project's

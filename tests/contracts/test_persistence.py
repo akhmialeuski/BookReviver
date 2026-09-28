@@ -7,7 +7,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import JobState
-from bookreviver.domain.errors import NotFoundError
+from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.values import BookDetails, SliceRequest
 from tests.helpers.builders import make_job, make_page, make_project, new_account_id
 
@@ -49,6 +49,17 @@ class TestProjectRepository:
         await uow.projects.update(renamed)
         await uow.commit()
         assert (await (await fx_uow_factory()).projects.get(project.id)).details == renamed.details
+
+    async def test_adding_a_stored_project_raises_conflict(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify adding a project under an identifier already stored is a ConflictError, never a silent overwrite."""
+        project = make_project(owner_id=new_account_id())
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.commit()
+        duplicate = evolve(project, details=BookDetails(title='Other'))
+        uow = await fx_uow_factory()
+        with pytest.raises(ConflictError, match=str(project.id)):
+            await uow.projects.add(duplicate)
 
     @pytest.mark.parametrize('operation', ['get', 'update', 'delete'])
     async def test_missing_project_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory, operation: str) -> None:
@@ -134,6 +145,15 @@ class TestPageRepository:
         await uow.commit()
         assert await (await fx_uow_factory()).pages.get(project.id, 0) == ready
 
+    async def test_replacing_pages_of_a_missing_project_raises_not_found(
+        self, fx_uow_factory: UnitOfWorkFactory
+    ) -> None:
+        """Verify pages cannot be stored for a project that does not exist, so no page outlives its book."""
+        project_id = make_project(owner_id=new_account_id()).id
+        uow = await fx_uow_factory()
+        with pytest.raises(NotFoundError, match=str(project_id)):
+            await uow.pages.replace_for_project(project_id, [make_page(project_id=project_id, index=0)])
+
     async def test_missing_page_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
         """Verify reading a page that does not exist raises NotFoundError naming its project."""
         project = make_project(owner_id=new_account_id())
@@ -159,6 +179,13 @@ class TestJobRepository:
         await uow.commit()
         active = await (await fx_uow_factory()).jobs.list_for_project(project.id, {JobState.QUEUED, JobState.RUNNING})
         assert [job.id for job in active] == [new.id, old.id]
+
+    async def test_job_of_a_missing_project_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify a job cannot be stored for a project that does not exist, so no job outlives its book."""
+        project_id = make_project(owner_id=new_account_id()).id
+        uow = await fx_uow_factory()
+        with pytest.raises(NotFoundError, match=str(project_id)):
+            await uow.jobs.add(make_job(project_id=project_id))
 
 
 class TestUnitOfWork:

@@ -6,12 +6,16 @@ primary key including the composite key of pages, add, update, delete, filtered 
 A mapper from :mod:`bookreviver.adapters.persistence.sqlalchemy.mappers` turns its rows into domain entities. The port
 repository adds only the queries specific to BookReviver, such as the page count of every project in a listing.
 
-A missing row is reported as the domain's :class:`~bookreviver.domain.errors.NotFoundError` naming its key, the same
-error the in-memory adapter raises, so services never see an advanced-alchemy exception.
+The database's own checks are reported as the domain errors the in-memory adapter raises, so services never see an
+advanced-alchemy exception. A missing row is a :class:`~bookreviver.domain.errors.NotFoundError` naming its key. A row
+whose key is already stored is a :class:`~bookreviver.domain.errors.ConflictError` naming that key, and a row whose
+parent row is missing is a ``NotFoundError`` naming the parent's key.
 """
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, override
 
+from advanced_alchemy.exceptions import DuplicateKeyError, ForeignKeyError
 from advanced_alchemy.exceptions import NotFoundError as MissingRowError
 from advanced_alchemy.filters import CollectionFilter, LimitOffset
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
@@ -21,13 +25,13 @@ from sqlalchemy import func, select
 from bookreviver.adapters.persistence.sqlalchemy.mappers import JobMapper, PageMapper, ProjectMapper
 from bookreviver.adapters.persistence.sqlalchemy.tables import JobRow, PageRow, ProjectRow
 from bookreviver.domain.entities import Job, Project, ProjectOverview
-from bookreviver.domain.errors import NotFoundError
+from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import JobId, ProjectId
 from bookreviver.domain.values import Slice
 from bookreviver.ports.persistence import JobRepository, PageRepository, ProjectRepository, Repository
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Sequence
+    from collections.abc import Collection, Iterator, Sequence
 
     from advanced_alchemy.base import ModelProtocol
     from advanced_alchemy.repository.typing import PrimaryKeyType
@@ -41,7 +45,7 @@ if TYPE_CHECKING:
 
 
 class RowRepository[RowT: ModelProtocol](SQLAlchemyAsyncRepository[RowT]):
-    """Repository of one table from advanced-alchemy, reporting a missing row as the domain's NotFoundError."""
+    """Repository of one table from advanced-alchemy, reporting the database's checks as domain errors."""
 
     @override
     async def get(self, item_id: PrimaryKeyType, **options: Any) -> RowT:
@@ -62,6 +66,64 @@ class RowRepository[RowT: ModelProtocol](SQLAlchemyAsyncRepository[RowT]):
             return await super().get(item_id, **options)
         except MissingRowError as error:
             raise NotFoundError(item_id) from error
+
+    @override
+    async def add(self, data: RowT, **options: Any) -> RowT:
+        """Insert one row.
+
+        :param data: Transient row to insert.
+        :type data: RowT
+        :param options: Keyword options of :meth:`SQLAlchemyAsyncRepository.add`, passed through unchanged.
+        :type options: Any
+        :returns: The row, attached to the session.
+        :rtype: RowT
+        :raises ConflictError: If a row with this primary key is already stored.
+        :raises NotFoundError: If a row this one refers to through a foreign key is not stored.
+        """
+        with self._reporting_integrity_errors([data]):
+            return await super().add(data, **options)
+
+    @override
+    async def add_many(self, data: list[RowT], **options: Any) -> Sequence[RowT]:
+        """Insert several rows in one statement.
+
+        :param data: Transient rows to insert.
+        :type data: list[RowT]
+        :param options: Keyword options of :meth:`SQLAlchemyAsyncRepository.add_many`, passed through unchanged.
+        :type options: Any
+        :returns: The rows, attached to the session.
+        :rtype: Sequence[RowT]
+        :raises ConflictError: If a row with one of these primary keys is already stored.
+        :raises NotFoundError: If a row these refer to through a foreign key is not stored.
+        """
+        with self._reporting_integrity_errors(data):
+            return await super().add_many(data, **options)
+
+    @contextmanager
+    def _reporting_integrity_errors(self, rows: Sequence[RowT]) -> Iterator[None]:
+        """Report the database rejecting ``rows`` as the domain error for the constraint they broke.
+
+        The database does not say which row broke the constraint, so each error names the candidate keys: the
+        primary keys of the rows for a conflict, and the distinct values of their foreign keys for a missing parent.
+
+        :param rows: Rows being inserted.
+        :type rows: Sequence[RowT]
+        :returns: Iterator yielding once around the insert.
+        :rtype: Iterator[None]
+        :raises ConflictError: If a primary key of ``rows`` is already stored.
+        :raises NotFoundError: If a row that ``rows`` refer to is not stored.
+        """
+        try:
+            yield
+        except DuplicateKeyError as error:
+            raise ConflictError(*(self.get_primary_key_value(row) for row in rows)) from error
+        except ForeignKeyError as error:
+            references = [
+                attribute.key
+                for attribute in self.model_type.__mapper__.column_attrs
+                if attribute.columns[0].foreign_keys
+            ]
+            raise NotFoundError(*dict.fromkeys(getattr(row, key) for row in rows for key in references)) from error
 
 
 class ProjectRows(RowRepository[ProjectRow]):
