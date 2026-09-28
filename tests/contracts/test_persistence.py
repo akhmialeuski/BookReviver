@@ -154,6 +154,36 @@ class TestPageRepository:
         expect([page.index for page in tail.items] == list(range(1, PAGE_COUNT)))
         assert_expectations()
 
+    async def test_slice_past_the_end_reports_the_full_total(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify an empty slice past the last page still reports every page, which pagination controls rely on."""
+        project = make_project(owner_id=new_account_id())
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.pages.replace_for_project(
+            project.id, [make_page(project_id=project.id, index=i) for i in range(PAGE_COUNT)]
+        )
+        await uow.commit()
+        beyond = await (await fx_uow_factory()).pages.list_for_project(
+            project.id, SliceRequest(offset=PAGE_COUNT, limit=1)
+        )
+        expect(list(beyond.items) == [])
+        expect(beyond.total == PAGE_COUNT)
+        assert_expectations()
+
+    async def test_replace_stores_pages_under_the_given_project(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify a page naming another project is stored under the replaced one, so no caller writes across books."""
+        owner_id = new_account_id()
+        target, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        uow = await fx_uow_factory()
+        for project in (target, other):
+            await uow.projects.add(project)
+        await uow.pages.replace_for_project(target.id, [make_page(project_id=other.id, index=0)])
+        await uow.commit()
+        pages = (await fx_uow_factory()).pages
+        expect((await pages.list_for_project(target.id, SliceRequest())).total == 1)
+        expect((await pages.list_for_project(other.id, SliceRequest())).total == 0)
+        assert_expectations()
+
     async def test_update_and_get_round_trip(self, fx_uow_factory: UnitOfWorkFactory) -> None:
         """Verify an updated page, including its assets, reads back unchanged."""
         project = make_project(owner_id=new_account_id())
