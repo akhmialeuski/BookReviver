@@ -23,6 +23,8 @@ runtime-evaluated-base-classes = [
     "pydantic_settings.BaseSettings",
     "sqlalchemy.orm.DeclarativeBase",
     "advanced_alchemy.base.AdvancedDeclarativeBase",
+    # Ruff resolves base classes only within one file, so the advanced-alchemy base the tables inherit is named too
+    "advanced_alchemy.base.DefaultBase",
     "bookreviver.api.schemas.base.RequestModel",
     "bookreviver.api.schemas.base.ResponseModel",
 ]

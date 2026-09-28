@@ -1,5 +1,6 @@
 """Contract of the persistence ports, run against every adapter registered in the conftest."""
 
+from operator import attrgetter
 from typing import TYPE_CHECKING
 
 import pytest
@@ -7,7 +8,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import JobState
-from bookreviver.domain.errors import NotFoundError
+from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.values import BookDetails, SliceRequest
 from tests.helpers.builders import make_job, make_page, make_project, new_account_id
 
@@ -50,13 +51,24 @@ class TestProjectRepository:
         await uow.commit()
         assert (await (await fx_uow_factory()).projects.get(project.id)).details == renamed.details
 
+    async def test_adding_a_stored_project_raises_conflict(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify adding a project under an identifier already stored is a ConflictError, never a silent overwrite."""
+        project = make_project(owner_id=new_account_id())
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.commit()
+        duplicate = evolve(project, details=BookDetails(title='Other'))
+        uow = await fx_uow_factory()
+        with pytest.raises(ConflictError, match=str(project.id)):
+            await uow.projects.add(duplicate)
+
     @pytest.mark.parametrize('operation', ['get', 'update', 'delete'])
     async def test_missing_project_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory, operation: str) -> None:
-        """Verify every single-entity operation on an unknown project raises NotFoundError."""
+        """Verify every single-entity operation on an unknown project raises NotFoundError naming the project."""
         project = make_project(owner_id=new_account_id())
         repository = (await fx_uow_factory()).projects
         argument = project if operation == 'update' else project.id
-        with pytest.raises(NotFoundError):
+        with pytest.raises(NotFoundError, match=str(project.id)):
             await getattr(repository, operation)(argument)
 
     async def test_list_for_owner_orders_pages_and_counts(self, fx_uow_factory: UnitOfWorkFactory) -> None:
@@ -78,6 +90,26 @@ class TestProjectRepository:
         expect(full.total == 2)
         expect([item.project.id for item in second.items] == [older.id])
         expect(second.total == 2)
+        assert_expectations()
+
+    async def test_list_for_owner_breaks_ties_by_identifier(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify projects updated at the same moment list by identifier, so offset paging never skips or repeats one."""
+        owner_id = new_account_id()
+        tied = sorted((make_project(owner_id=owner_id, minutes=1) for _ in range(PAGE_COUNT)), key=attrgetter('id'))
+        uow = await fx_uow_factory()
+        # Insert against the expected order, so neither insertion nor storage order can pass for it
+        for project in reversed(tied):
+            await uow.projects.add(project)
+        await uow.commit()
+        repository = (await fx_uow_factory()).projects
+        full = await repository.list_for_owner(owner_id, SliceRequest())
+        paged = [
+            item.project.id
+            for offset in range(PAGE_COUNT)
+            for item in (await repository.list_for_owner(owner_id, SliceRequest(offset=offset, limit=1))).items
+        ]
+        expect([item.project.id for item in full.items] == [project.id for project in tied])
+        expect(paged == [project.id for project in tied])
         assert_expectations()
 
     async def test_delete_cascades_to_pages_and_jobs(self, fx_uow_factory: UnitOfWorkFactory) -> None:
@@ -122,6 +154,36 @@ class TestPageRepository:
         expect([page.index for page in tail.items] == list(range(1, PAGE_COUNT)))
         assert_expectations()
 
+    async def test_slice_past_the_end_reports_the_full_total(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify an empty slice past the last page still reports every page, which pagination controls rely on."""
+        project = make_project(owner_id=new_account_id())
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.pages.replace_for_project(
+            project.id, [make_page(project_id=project.id, index=i) for i in range(PAGE_COUNT)]
+        )
+        await uow.commit()
+        beyond = await (await fx_uow_factory()).pages.list_for_project(
+            project.id, SliceRequest(offset=PAGE_COUNT, limit=1)
+        )
+        expect(list(beyond.items) == [])
+        expect(beyond.total == PAGE_COUNT)
+        assert_expectations()
+
+    async def test_replace_stores_pages_under_the_given_project(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify a page naming another project is stored under the replaced one, so no caller writes across books."""
+        owner_id = new_account_id()
+        target, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        uow = await fx_uow_factory()
+        for project in (target, other):
+            await uow.projects.add(project)
+        await uow.pages.replace_for_project(target.id, [make_page(project_id=other.id, index=0)])
+        await uow.commit()
+        pages = (await fx_uow_factory()).pages
+        expect((await pages.list_for_project(target.id, SliceRequest())).total == 1)
+        expect((await pages.list_for_project(other.id, SliceRequest())).total == 0)
+        assert_expectations()
+
     async def test_update_and_get_round_trip(self, fx_uow_factory: UnitOfWorkFactory) -> None:
         """Verify an updated page, including its assets, reads back unchanged."""
         project = make_project(owner_id=new_account_id())
@@ -134,12 +196,21 @@ class TestPageRepository:
         await uow.commit()
         assert await (await fx_uow_factory()).pages.get(project.id, 0) == ready
 
+    async def test_replacing_pages_of_a_missing_project_raises_not_found(
+        self, fx_uow_factory: UnitOfWorkFactory
+    ) -> None:
+        """Verify pages cannot be stored for a project that does not exist, so no page outlives its book."""
+        project_id = make_project(owner_id=new_account_id()).id
+        uow = await fx_uow_factory()
+        with pytest.raises(NotFoundError, match=str(project_id)):
+            await uow.pages.replace_for_project(project_id, [make_page(project_id=project_id, index=0)])
+
     async def test_missing_page_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify reading a page that does not exist raises NotFoundError."""
+        """Verify reading a page that does not exist raises NotFoundError naming its project."""
         project = make_project(owner_id=new_account_id())
         uow = await fx_uow_factory()
         await uow.projects.add(project)
-        with pytest.raises(NotFoundError):
+        with pytest.raises(NotFoundError, match=str(project.id)):
             await uow.pages.get(project.id, 0)
 
 
@@ -159,6 +230,13 @@ class TestJobRepository:
         await uow.commit()
         active = await (await fx_uow_factory()).jobs.list_for_project(project.id, {JobState.QUEUED, JobState.RUNNING})
         assert [job.id for job in active] == [new.id, old.id]
+
+    async def test_job_of_a_missing_project_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify a job cannot be stored for a project that does not exist, so no job outlives its book."""
+        project_id = make_project(owner_id=new_account_id()).id
+        uow = await fx_uow_factory()
+        with pytest.raises(NotFoundError, match=str(project_id)):
+            await uow.jobs.add(make_job(project_id=project_id))
 
 
 class TestUnitOfWork:

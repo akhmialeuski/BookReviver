@@ -121,3 +121,6 @@ Thumbs.db
 
 # Application data: database, uploaded books and render cache
 /data/
+
+# Claude Code local settings
+.claude/

@@ -1,7 +1,7 @@
 """Persistence ports: repositories per aggregate and the unit of work that commits them together."""
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from bookreviver.domain.entities import Job, Project
 from bookreviver.domain.ids import JobId, ProjectId
@@ -27,7 +27,10 @@ class Repository[EntityT, IdT](ABC):
 
     @abstractmethod
     async def add(self, entity: EntityT) -> EntityT:
-        """Store a new entity and return it as stored."""
+        """Store a new entity and return it as stored.
+
+        :raises ConflictError: If an entity with this identifier is already stored.
+        """
 
     @abstractmethod
     async def update(self, entity: EntityT) -> EntityT:
@@ -49,7 +52,7 @@ class ProjectRepository(Repository[Project, ProjectId]):
 
     @abstractmethod
     async def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:
-        """Return the owner's projects with their page counts, most recently updated first."""
+        """Return the owner's projects with their page counts, most recently updated first, ties by identifier."""
 
 
 class PageRepository(ABC):
@@ -68,7 +71,10 @@ class PageRepository(ABC):
 
     @abstractmethod
     async def replace_for_project(self, project_id: ProjectId, pages: Sequence[Page]) -> None:
-        """Replace every page of a project with the given pages."""
+        """Replace every page of a project with the given pages.
+
+        :raises NotFoundError: If the project is not stored.
+        """
 
     @abstractmethod
     async def update(self, page: Page) -> Page:
@@ -80,6 +86,15 @@ class PageRepository(ABC):
 
 class JobRepository(Repository[Job, JobId]):
     """Background jobs."""
+
+    @abstractmethod
+    @override
+    async def add(self, entity: Job) -> Job:
+        """Store a new job of a stored project and return it as stored.
+
+        :raises ConflictError: If a job with this identifier is already stored.
+        :raises NotFoundError: If the job's project is not stored.
+        """
 
     @abstractmethod
     async def list_for_project(self, project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:

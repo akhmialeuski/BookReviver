@@ -45,7 +45,7 @@ What each concern reuses, and therefore what we do not write ourselves.
 | Social sign-in             | httpx-oauth: Google, Facebook, and X on its `BaseOAuth2`        | OAuth 2.0 protocol, PKCE, state                  |
 | Rate limiting              | slowapi                                                         | Throttling of sign-in and registration           |
 | CSRF                       | starlette-csrf                                                  | Double-submit cookie check                       |
-| Persistence                | SQLAlchemy 2.0 async with advanced-alchemy repositories         | Generic CRUD, pagination, filters, audit columns |
+| Persistence                | SQLAlchemy 2.0 async with advanced-alchemy repositories         | Generic CRUD, pagination, filters, column types  |
 | Request validation         | Pydantic 2 models and constrained types, email-validator        | Parsing and checking input                       |
 | Collection responses       | fastapi-pagination `Page[T]` and its `Params`                   | Paging schema and query parameters               |
 | Error responses            | fastapi-problem (RFC 9457 problem details)                      | Error format, error schemas in OpenAPI           |
@@ -141,8 +141,16 @@ Every repository method takes the acting account, so a query can never cross acc
 
 The persistence adapter keeps its table classes private and maps rows to domain entities in one mapper per entity.
 Each port repository wraps an advanced-alchemy `SQLAlchemyAsyncRepository`, so generic queries come from the library
-and each repository adds only its own. Adapters are selected by settings read once in `app`
-(`BOOKREVIVER_DATABASE_URL`, `BOOKREVIVER_STORAGE`, `BOOKREVIVER_JOB_BROKER` and so on).
+and each repository adds only its own. The database's checks surface as domain errors naming the keys involved: a
+missing row or a missing parent row as `NotFoundError`, and a key already stored as `ConflictError`. The port states
+both, so the in-memory adapter raises the same errors.
+The library's audit columns are not used, because the domain sets `updated_at` through its `Clock`.
+Tables are SQLAlchemy 2.0 declarative classes on advanced-alchemy's `DefaultBase`, which brings the shared metadata
+and the portable `GUID`, `DateTimeUTC` and `JsonB` column types. Keys are declared on each table, and a project's
+pages and jobs are relationships with `lazy="raise"`, so an `AsyncSession` never loads them implicitly, and with
+`passive_deletes=True`, so their deletion is left to the `ON DELETE CASCADE` foreign keys.
+Adapters are selected by settings read once in `app` (`BOOKREVIVER_DATABASE_URL`, `BOOKREVIVER_STORAGE`,
+`BOOKREVIVER_JOB_BROKER` and so on).
 
 ## Services
 

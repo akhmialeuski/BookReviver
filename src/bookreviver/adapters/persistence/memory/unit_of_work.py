@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, override
 from attrs import define, evolve, field, fields
 
 from bookreviver.domain.entities import Job, Project, ProjectOverview
-from bookreviver.domain.errors import NotFoundError
+from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import JobId, ProjectId
 from bookreviver.domain.values import Slice
 from bookreviver.ports.persistence import JobRepository, PageRepository, ProjectRepository, Repository, UnitOfWork
@@ -29,6 +29,14 @@ class InMemoryTables:
     projects: dict[ProjectId, Project] = field(factory=dict)
     pages: dict[PageKey, Page] = field(factory=dict)
     jobs: dict[JobId, Job] = field(factory=dict)
+
+    def require_project(self, project_id: ProjectId) -> None:
+        """Mirror the foreign key from a page or a job to its project.
+
+        :raises NotFoundError: If the project is not stored.
+        """
+        if project_id not in self.projects:
+            raise NotFoundError(project_id)
 
 
 @define
@@ -53,7 +61,9 @@ class InMemoryRepository[EntityT, IdT](Repository[EntityT, IdT]):
 
     @override
     async def add(self, entity: EntityT) -> EntityT:
-        self._rows[self._identify(entity)] = entity
+        if (entity_id := self._identify(entity)) in self._rows:
+            raise ConflictError(entity_id)
+        self._rows[entity_id] = entity
         return entity
 
     @override
@@ -87,11 +97,12 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
 
     @override
     async def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:
-        owned = sorted(
+        by_id = sorted(
             (project for project in self._tables.projects.values() if project.owner_id == owner_id),
-            key=attrgetter('updated_at'),
-            reverse=True,
+            key=attrgetter('id'),
         )
+        # A stable sort keeps the identifier order among projects updated at the same moment
+        owned = sorted(by_id, key=attrgetter('updated_at'), reverse=True)
         window = owned[request.offset : request.offset + request.limit]
         overviews = [
             ProjectOverview(project=project, page_count=sum(key[0] == project.id for key in self._tables.pages))
@@ -121,6 +132,7 @@ class InMemoryPageRepository(PageRepository):
 
     @override
     async def replace_for_project(self, project_id: ProjectId, pages: Sequence[Page]) -> None:
+        self._tables.require_project(project_id)
         for page_key in [key for key in self._tables.pages if key[0] == project_id]:
             del self._tables.pages[page_key]
         self._tables.pages.update({(project_id, page.index): evolve(page, project_id=project_id) for page in pages})
@@ -138,6 +150,11 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
     def __init__(self, tables: InMemoryTables) -> None:
         super().__init__(tables.jobs, attrgetter('id'))
         self._tables = tables
+
+    @override
+    async def add(self, entity: Job) -> Job:
+        self._tables.require_project(entity.project_id)
+        return await super().add(entity)
 
     @override
     async def list_for_project(self, project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:
