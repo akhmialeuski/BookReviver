@@ -89,11 +89,12 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
 
     @override
     async def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:
-        owned = sorted(
+        by_id = sorted(
             (project for project in self._tables.projects.values() if project.owner_id == owner_id),
-            key=attrgetter('updated_at'),
-            reverse=True,
+            key=attrgetter('id'),
         )
+        # A stable sort keeps the identifier order among projects updated at the same moment
+        owned = sorted(by_id, key=attrgetter('updated_at'), reverse=True)
         window = owned[request.offset : request.offset + request.limit]
         overviews = [
             ProjectOverview(project=project, page_count=sum(key[0] == project.id for key in self._tables.pages))

@@ -1,5 +1,6 @@
 """Contract of the persistence ports, run against every adapter registered in the conftest."""
 
+from operator import attrgetter
 from typing import TYPE_CHECKING
 
 import pytest
@@ -89,6 +90,26 @@ class TestProjectRepository:
         expect(full.total == 2)
         expect([item.project.id for item in second.items] == [older.id])
         expect(second.total == 2)
+        assert_expectations()
+
+    async def test_list_for_owner_breaks_ties_by_identifier(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify projects updated at the same moment list by identifier, so offset paging never skips or repeats one."""
+        owner_id = new_account_id()
+        tied = sorted((make_project(owner_id=owner_id, minutes=1) for _ in range(PAGE_COUNT)), key=attrgetter('id'))
+        uow = await fx_uow_factory()
+        # Insert against the expected order, so neither insertion nor storage order can pass for it
+        for project in reversed(tied):
+            await uow.projects.add(project)
+        await uow.commit()
+        repository = (await fx_uow_factory()).projects
+        full = await repository.list_for_owner(owner_id, SliceRequest())
+        paged = [
+            item.project.id
+            for offset in range(PAGE_COUNT)
+            for item in (await repository.list_for_owner(owner_id, SliceRequest(offset=offset, limit=1))).items
+        ]
+        expect([item.project.id for item in full.items] == [project.id for project in tied])
+        expect(paged == [project.id for project in tied])
         assert_expectations()
 
     async def test_delete_cascades_to_pages_and_jobs(self, fx_uow_factory: UnitOfWorkFactory) -> None:

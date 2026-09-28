@@ -52,7 +52,7 @@ class ProjectRepository(Repository[Project, ProjectId]):
 
     @abstractmethod
     async def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:
-        """Return the owner's projects with their page counts, most recently updated first."""
+        """Return the owner's projects with their page counts, most recently updated first, ties by identifier."""
 
 
 class PageRepository(ABC):
