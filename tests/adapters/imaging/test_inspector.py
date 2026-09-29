@@ -1,0 +1,682 @@
+"""Tests for the PyMuPDF and Pillow source inspector."""
+
+import hashlib
+import json
+import re
+from typing import TYPE_CHECKING, Any, NamedTuple
+from unittest.mock import patch
+
+import pytest
+from delayed_assert import assert_expectations, expect
+from PIL import ExifTags
+
+from bookreviver.adapters.imaging.common import FactKey
+from bookreviver.domain.enums import ColorMode, SourceKind
+from bookreviver.domain.errors import UnsupportedSourceError
+from bookreviver.domain.values import MetadataSuggestion
+from tests.adapters.imaging.samples import PdfPage, ScanImage, encode_image, gradient_image, write_image, write_pdf
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    from bookreviver.ports.imaging import SourceInspector
+
+pytestmark = pytest.mark.anyio
+
+IMAGE_FILE_LOAD_PATCH: str = 'PIL.ImageFile.ImageFile.load'
+
+CASE_ARG: str = 'case'
+SUFFIX_ARG: str = 'suffix'
+PDF_NAME: str = 'book.pdf'
+PAGE_STEM: str = 'page'
+TIF_SUFFIX: str = '.tif'
+PNG_SUFFIX: str = '.png'
+JPG_SUFFIX: str = '.jpg'
+JP2_SUFFIX: str = '.jp2'
+RESOLUTION_SUFFIXES: tuple[str, ...] = (TIF_SUFFIX, PNG_SUFFIX, JPG_SUFFIX)
+JPEG: str = 'JPEG'
+PNG: str = 'PNG'
+RGB_MODE: str = 'RGB'
+CMYK_MODE: str = 'CMYK'
+GRAY_16_MODE: str = 'I;16'
+
+# 8 x 10 inches, so an image of 1200 x 1500 pixels filling it is exactly 150 DPI
+SCAN_PAGE_SIZE_PT: tuple[float, float] = (576.0, 720.0)
+# The same page in landscape, holding the same scan turned a quarter
+LANDSCAPE_PAGE_SIZE_PT: tuple[float, float] = (720.0, 576.0)
+QUARTER_TURN_DEGREES: int = 90
+# EXIF orientation telling a viewer to turn the stored image a quarter clockwise
+QUARTER_TURN_ORIENTATION: int = 6
+SCAN_SIZE_PX: tuple[int, int] = (1200, 1500)
+SCAN_DPI: float = 150.0
+SCAN_PAGE_WIDTH_MM: float = 203.2
+SCAN_PAGE_HEIGHT_MM: float = 254.0
+SMALL_SIZE_PX: tuple[int, int] = (64, 48)
+PAGE_TEXT: str = 'Printed text'
+
+DOCUMENT_TITLE: str = 'Slutsk Gospels'
+PADDED_DOCUMENT_TITLE: str = f'  {DOCUMENT_TITLE} '
+DOCUMENT_AUTHOR: str = 'Unknown scribe'
+TITLE_KEY: str = 'title'
+SUBJECT_KEY: str = 'subject'
+DOCUMENT_INFO_KEY: str = 'document_info'
+HAS_OUTLINE_KEY: str = 'has_outline'
+REPAIRED_KEY: str = 'repaired'
+PAGE_COUNT_KEY: str = 'page_count'
+# Named so that only a natural sort puts part 2 before part 10
+EARLIER_PART_NAME: str = 'part2.pdf'
+LATER_PART_NAME: str = 'part10.pdf'
+# Page sizes in points of a book split into two parts, equal to the pixel sizes the inspector reports for them
+PART_PAGE_SIZES_PT: tuple[tuple[int, int], ...] = ((300, 400), (320, 420), (340, 440))
+OUTLINE_TITLES: tuple[str, ...] = ('Preface', 'Chapter one')
+PASSWORD: str = 'secret'
+NOT_A_PDF_MATCH: str = 'is not a PDF'
+
+NATURAL_ORDER_NAMES: tuple[str, ...] = ('page1.png', 'page2.png', 'page10.png')
+EXIF_MAKE: str = 'Scanner Co'
+EXIF_MODEL: str = 'Book Scanner 3000'
+
+
+def _pdf_extra(*, image_count: int, text_chars: int) -> dict[str, Any]:
+    """Return the ``extra`` expected for an unrotated PDF page.
+
+    :param image_count: Number of image placements on the page.
+    :type image_count: int
+    :param text_chars: Number of characters in the page's text layer.
+    :type text_chars: int
+    :returns: The extra facts the inspector must report, under the keys it stores.
+    :rtype: dict[str, Any]
+    """
+    return {'image_count': image_count, 'rotation': 0, 'text_chars': text_chars}
+
+
+def _write_bytes(path: Path, content: bytes) -> Path:
+    """Write raw bytes under a name whose suffix promises another format.
+
+    :param path: Where to write, with a misleading suffix.
+    :type path: Path
+    :param content: Bytes that are not of the format the suffix promises.
+    :type content: bytes
+    :returns: The written path.
+    :rtype: Path
+    """
+    path.write_bytes(content)
+    return path
+
+
+def _write_truncated_pdf(path: Path, *, page: PdfPage) -> Path:
+    """Write the first half of a valid one-page PDF.
+
+    :param path: Where to write the file.
+    :type path: Path
+    :param page: The page of the PDF before truncation.
+    :type page: PdfPage
+    :returns: The written path.
+    :rtype: Path
+    """
+    write_pdf(path, pages=[page])
+    content = path.read_bytes()
+    path.write_bytes(content[: len(content) // 2])
+    return path
+
+
+def _write_multi_frame_tiff(path: Path) -> Path:
+    """Write a TIFF holding three pages.
+
+    :param path: Where to write the file.
+    :type path: Path
+    :returns: The written path.
+    :rtype: Path
+    """
+    frame = gradient_image(mode='L', size=SMALL_SIZE_PX)
+    frame.save(path, save_all=True, append_images=[frame.copy(), frame.copy()])
+    return path
+
+
+class RejectedPdfCase(NamedTuple):
+    """A PDF source the inspector must refuse, and the message it must give.
+
+    :ivar build: Function writing the source files into a directory and returning their paths.
+    :ivar match: Regular expression the error message must match.
+    """
+
+    build: Callable[[Path], Sequence[Path]]
+    match: str
+
+
+class RejectedImagesCase(NamedTuple):
+    """An image set the inspector must refuse, and the message it must give.
+
+    :ivar build: Function writing the page images into a directory and returning their paths.
+    :ivar match: Regular expression the error message must match.
+    """
+
+    build: Callable[[Path], Sequence[Path]]
+    match: str
+
+
+class PdfImageCase(NamedTuple):
+    """An image placed in a PDF, and the facts expected from it.
+
+    :ivar mode: Pillow mode of the placed image.
+    :ivar image_format: Pillow format the image is encoded in before placing it.
+    :ivar color_mode: Colour mode the inspector must report.
+    :ivar bits: Bits per component the inspector must report.
+    :ivar filter_name: Human name of the PDF image filter the inspector must report.
+    """
+
+    mode: str
+    image_format: str
+    color_mode: ColorMode
+    bits: int
+    filter_name: str
+
+
+class ImageModeCase(NamedTuple):
+    """A Pillow mode stored in a file, and the facts expected from it.
+
+    :ivar mode: Pillow mode of the stored image.
+    :ivar suffix: File suffix selecting the image format.
+    :ivar color_mode: Colour mode the inspector must report.
+    :ivar bits_per_component: Bits per component the inspector must report, or None when unknown.
+    """
+
+    mode: str
+    suffix: str
+    color_mode: ColorMode
+    bits_per_component: int | None
+
+
+class TestInspectPdf:
+    """Tests for SourceInspector.inspect() of a PDF source, served by PdfFormat."""
+
+    async def test_describes_every_page_in_order(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Verify one entry per page, in page order.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        sizes = [(300, 400), (320, 420), (340, 440)]
+        pages = [PdfPage(images=[ScanImage(mode='L', size_px=size, image_format=JPEG)]) for size in sizes]
+        path = write_pdf(tmp_path / PDF_NAME, pages=pages)
+
+        analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
+
+        expect(analysis.kind == SourceKind.PDF)
+        expect([(page.width_px, page.height_px) for page in analysis.pages] == sizes)
+        assert_expectations()
+
+    async def test_describes_page_by_dominant_image(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Verify the largest image gives the pixel facts and effective DPI, and the page gives the size.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        scan = ScanImage(mode='L', size_px=SCAN_SIZE_PX, image_format=JPEG)
+        # A small colour stamp in the corner must not be taken for the page scan
+        stamp = ScanImage(mode=RGB_MODE, size_px=SMALL_SIZE_PX, image_format=PNG, rect=(0, 0, 40, 30))
+        path = write_pdf(tmp_path / PDF_NAME, pages=[PdfPage(size_pt=SCAN_PAGE_SIZE_PT, images=[scan, stamp])])
+
+        page = (await fx_inspector.inspect(SourceKind.PDF, [path])).pages[0]
+
+        expect((page.width_px, page.height_px) == SCAN_SIZE_PX)
+        expect((page.dpi_x, page.dpi_y) == (SCAN_DPI, SCAN_DPI))
+        expect(page.color_mode == ColorMode.GRAY)
+        expect(page.bits_per_component == 8)
+        expect(page.image_format == JPEG)
+        expect((page.width_mm, page.height_mm) == (SCAN_PAGE_WIDTH_MM, SCAN_PAGE_HEIGHT_MM))
+        expect(page.has_text_layer is False)
+        expect(page.extra == _pdf_extra(image_count=2, text_chars=0))
+        assert_expectations()
+
+    async def test_measures_dpi_of_quarter_turned_scan(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Verify a scan placed turned a quarter gets its DPI along its own axes, not the page's.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        scan = ScanImage(mode='L', size_px=SCAN_SIZE_PX, image_format=JPEG, rotate=QUARTER_TURN_DEGREES)
+        path = write_pdf(tmp_path / PDF_NAME, pages=[PdfPage(size_pt=LANDSCAPE_PAGE_SIZE_PT, images=[scan])])
+
+        page = (await fx_inspector.inspect(SourceKind.PDF, [path])).pages[0]
+
+        # Measured along the page axes the DPI would be 120 and 187.5
+        assert (page.dpi_x, page.dpi_y) == (SCAN_DPI, SCAN_DPI)
+
+    @pytest.mark.parametrize(
+        CASE_ARG,
+        [
+            # PyMuPDF stores inserted PNG data without a filter
+            PdfImageCase(mode='1', image_format=PNG, color_mode=ColorMode.BILEVEL, bits=1, filter_name=''),
+            PdfImageCase(mode='L', image_format=JPEG, color_mode=ColorMode.GRAY, bits=8, filter_name=JPEG),
+            PdfImageCase(mode=RGB_MODE, image_format=JPEG, color_mode=ColorMode.COLOR, bits=8, filter_name=JPEG),
+            PdfImageCase(mode=CMYK_MODE, image_format=JPEG, color_mode=ColorMode.COLOR, bits=8, filter_name=JPEG),
+        ],
+        ids=lambda case: case.mode,
+    )
+    async def test_maps_image_colour_space(
+        self, fx_inspector: SourceInspector, tmp_path: Path, case: PdfImageCase
+    ) -> None:
+        """Verify colour mode, depth and format of the dominant image.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: An image placed in a PDF, and the facts expected from it.
+        :type case: PdfImageCase
+        """
+        scan = ScanImage(mode=case.mode, size_px=SMALL_SIZE_PX, image_format=case.image_format)
+        path = write_pdf(tmp_path / PDF_NAME, pages=[PdfPage(images=[scan])])
+
+        page = (await fx_inspector.inspect(SourceKind.PDF, [path])).pages[0]
+
+        expect(page.color_mode == case.color_mode)
+        expect(page.bits_per_component == case.bits)
+        expect(page.image_format == case.filter_name)
+        assert_expectations()
+
+    async def test_describes_born_digital_page_by_its_size(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Verify a page without images reports its size in points and its text layer.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        path = write_pdf(tmp_path / PDF_NAME, pages=[PdfPage(text=PAGE_TEXT)])
+
+        page = (await fx_inspector.inspect(SourceKind.PDF, [path])).pages[0]
+
+        expect((page.width_px, page.height_px) == (612, 792))
+        expect((page.dpi_x, page.dpi_y) == (None, None))
+        expect(page.color_mode == ColorMode.UNKNOWN)
+        expect(page.image_format == '')
+        expect((page.width_mm, page.height_mm) == (215.9, 279.4))
+        expect(page.has_text_layer is True)
+        expect(page.extra == _pdf_extra(image_count=0, text_chars=len(PAGE_TEXT)))
+        assert_expectations()
+
+    async def test_reports_file_metadata_and_suggestion(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Verify document metadata, outline, checksum and the suggested title and authors.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        path = write_pdf(
+            tmp_path / PDF_NAME,
+            pages=[PdfPage(text=PAGE_TEXT), PdfPage()],
+            metadata={TITLE_KEY: PADDED_DOCUMENT_TITLE, 'author': f'{DOCUMENT_AUTHOR}\n', SUBJECT_KEY: ''},
+            outline=OUTLINE_TITLES,
+        )
+
+        analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
+        metadata = analysis.file_metadata
+        part = metadata[FactKey.FILES][0]
+
+        expect(analysis.suggestion == MetadataSuggestion(title=DOCUMENT_TITLE, authors=DOCUMENT_AUTHOR))
+        expect(metadata[FactKey.FILE_COUNT] == 1)
+        expect(metadata[FactKey.TOTAL_SIZE_BYTES] == path.stat().st_size)
+        expect(metadata[PAGE_COUNT_KEY] == 2)
+        expect(part[FactKey.FILE_NAME] == PDF_NAME)
+        expect(part[DOCUMENT_INFO_KEY].get(TITLE_KEY) == PADDED_DOCUMENT_TITLE)
+        expect(SUBJECT_KEY not in part[DOCUMENT_INFO_KEY])
+        expect(part['pdf_version'].startswith('PDF '))
+        expect(part[PAGE_COUNT_KEY] == 2)
+        expect(part[HAS_OUTLINE_KEY] is True)
+        expect(part['outline_entries'] == len(OUTLINE_TITLES))
+        expect(part['has_xmp_metadata'] is False)
+        expect(part[REPAIRED_KEY] is False)
+        expect(part[FactKey.FILE_SIZE_BYTES] == path.stat().st_size)
+        expect(part['sha256'] == hashlib.sha256(path.read_bytes()).hexdigest())
+        expect(json.loads(json.dumps(metadata)) == metadata)
+        assert_expectations()
+
+    async def test_suggests_nothing_without_metadata(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Verify a PDF without a title or author yields an empty suggestion and no outline.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        path = write_pdf(tmp_path / PDF_NAME, pages=[PdfPage()])
+
+        analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
+
+        expect(analysis.suggestion == MetadataSuggestion())
+        expect(analysis.file_metadata[FactKey.FILES][0][HAS_OUTLINE_KEY] is False)
+        assert_expectations()
+
+    async def test_flags_repaired_pdf(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Verify a truncated PDF MuPDF can rebuild is inspected and flagged as repaired.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        # Truncation inside the content stream leaves enough structure for MuPDF to rebuild the page tree
+        path = _write_truncated_pdf(tmp_path / PDF_NAME, page=PdfPage(text=PAGE_TEXT))
+
+        analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
+
+        expect(analysis.file_metadata[FactKey.FILES][0][REPAIRED_KEY] is True)
+        expect(len(analysis.pages) == 1)
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        CASE_ARG,
+        [
+            RejectedPdfCase(build=lambda d: [_write_bytes(d / PDF_NAME, b'plain text')], match=NOT_A_PDF_MATCH),
+            RejectedPdfCase(build=lambda d: [_write_bytes(d / PDF_NAME, b'')], match=NOT_A_PDF_MATCH),
+            RejectedPdfCase(build=lambda d: [_write_truncated_pdf(d / PDF_NAME, page=PdfPage())], match='damaged'),
+            RejectedPdfCase(
+                build=lambda d: [
+                    _write_bytes(
+                        d / PDF_NAME, encode_image(gradient_image(mode='L', size=SMALL_SIZE_PX), image_format=PNG)
+                    )
+                ],
+                match=NOT_A_PDF_MATCH,
+            ),
+            RejectedPdfCase(
+                build=lambda d: [write_pdf(d / PDF_NAME, pages=[PdfPage()], user_password=PASSWORD)],
+                match='protected by a password',
+            ),
+        ],
+        ids=['text', 'empty-file', 'truncated', 'image', 'password'],
+    )
+    async def test_rejects_unreadable_pdf(
+        self, fx_inspector: SourceInspector, tmp_path: Path, case: RejectedPdfCase
+    ) -> None:
+        """Reject files that are not an openable PDF with a message naming the file.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: A PDF source the inspector must refuse, and the message it must give.
+        :type case: RejectedPdfCase
+        """
+        files = case.build(tmp_path)
+
+        with pytest.raises(UnsupportedSourceError, match=rf'^book\.pdf .*{case.match}'):
+            await fx_inspector.inspect(SourceKind.PDF, files)
+
+    async def test_joins_parts_in_natural_order(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Verify a book split into PDF parts is one run of pages, part2 before part10, each page naming its part.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        # Passed in reverse, so only the natural order of the names can put the parts right
+        later = write_pdf(tmp_path / LATER_PART_NAME, pages=[PdfPage(size_pt=PART_PAGE_SIZES_PT[2])])
+        earlier = write_pdf(
+            tmp_path / EARLIER_PART_NAME,
+            pages=[PdfPage(size_pt=size, text=PAGE_TEXT) for size in PART_PAGE_SIZES_PT[:2]],
+            metadata={TITLE_KEY: DOCUMENT_TITLE},
+        )
+
+        analysis = await fx_inspector.inspect(SourceKind.PDF, [later, earlier])
+        metadata = analysis.file_metadata
+
+        expect([(page.width_px, page.height_px) for page in analysis.pages] == list(PART_PAGE_SIZES_PT))
+        expect([page.source_file for page in analysis.pages] == [EARLIER_PART_NAME, EARLIER_PART_NAME, LATER_PART_NAME])
+        expect(metadata[FactKey.FILE_COUNT] == 2)
+        expect(metadata[PAGE_COUNT_KEY] == len(PART_PAGE_SIZES_PT))
+        expect(metadata[FactKey.TOTAL_SIZE_BYTES] == earlier.stat().st_size + later.stat().st_size)
+        expect([part[FactKey.FILE_NAME] for part in metadata[FactKey.FILES]] == [EARLIER_PART_NAME, LATER_PART_NAME])
+        expect([part[PAGE_COUNT_KEY] for part in metadata[FactKey.FILES]] == [2, 1])
+        # The title of the book comes from its first part
+        expect(analysis.suggestion == MetadataSuggestion(title=DOCUMENT_TITLE))
+        assert_expectations()
+
+    async def test_rejects_empty_source(self, fx_inspector: SourceInspector) -> None:
+        """Reject a PDF source without any file.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        """
+        with pytest.raises(UnsupportedSourceError, match=r'^No PDF was uploaded'):
+            await fx_inspector.inspect(SourceKind.PDF, [])
+
+    async def test_rejects_book_with_unreadable_part(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Reject the whole book when one of its parts is not a PDF, naming that part.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        files = [
+            write_pdf(tmp_path / EARLIER_PART_NAME, pages=[PdfPage()]),
+            _write_bytes(tmp_path / LATER_PART_NAME, b'plain text'),
+        ]
+
+        with pytest.raises(UnsupportedSourceError, match=rf'^{re.escape(LATER_PART_NAME)} .*{NOT_A_PDF_MATCH}'):
+            await fx_inspector.inspect(SourceKind.PDF, files)
+
+
+class TestInspectImages:
+    """Tests for SourceInspector.inspect() of an image set, served by ImageSetFormat."""
+
+    async def test_orders_pages_naturally(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Verify page2 comes before page10 whatever the upload order.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        paths = [write_image(tmp_path / name, mode='L', size=SMALL_SIZE_PX) for name in reversed(NATURAL_ORDER_NAMES)]
+
+        analysis = await fx_inspector.inspect(SourceKind.IMAGES, paths)
+
+        expect(analysis.kind == SourceKind.IMAGES)
+        expect(tuple(page.source_file for page in analysis.pages) == NATURAL_ORDER_NAMES)
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        CASE_ARG,
+        [
+            ImageModeCase(mode='1', suffix=TIF_SUFFIX, color_mode=ColorMode.BILEVEL, bits_per_component=1),
+            ImageModeCase(mode='L', suffix=PNG_SUFFIX, color_mode=ColorMode.GRAY, bits_per_component=8),
+            ImageModeCase(mode='LA', suffix=PNG_SUFFIX, color_mode=ColorMode.GRAY, bits_per_component=8),
+            ImageModeCase(mode=GRAY_16_MODE, suffix=TIF_SUFFIX, color_mode=ColorMode.GRAY, bits_per_component=16),
+            ImageModeCase(mode=GRAY_16_MODE, suffix=PNG_SUFFIX, color_mode=ColorMode.GRAY, bits_per_component=16),
+            ImageModeCase(mode=RGB_MODE, suffix=JPG_SUFFIX, color_mode=ColorMode.COLOR, bits_per_component=8),
+            ImageModeCase(mode='RGBA', suffix=PNG_SUFFIX, color_mode=ColorMode.COLOR, bits_per_component=8),
+            ImageModeCase(mode=CMYK_MODE, suffix='.jpeg', color_mode=ColorMode.COLOR, bits_per_component=8),
+            ImageModeCase(mode='LAB', suffix='.tiff', color_mode=ColorMode.COLOR, bits_per_component=8),
+            ImageModeCase(mode='P', suffix=PNG_SUFFIX, color_mode=ColorMode.COLOR, bits_per_component=8),
+            ImageModeCase(mode='L', suffix=JP2_SUFFIX, color_mode=ColorMode.GRAY, bits_per_component=8),
+            ImageModeCase(mode=RGB_MODE, suffix=JP2_SUFFIX, color_mode=ColorMode.COLOR, bits_per_component=8),
+            # A 32-bit float scan has no mapping and must not be guessed
+            ImageModeCase(mode='F', suffix=TIF_SUFFIX, color_mode=ColorMode.UNKNOWN, bits_per_component=None),
+        ],
+        ids=lambda case: f'{case.mode}{case.suffix}',
+    )
+    async def test_maps_pillow_mode(self, fx_inspector: SourceInspector, tmp_path: Path, case: ImageModeCase) -> None:
+        """Verify colour mode and bits per component follow the stored Pillow mode.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: A Pillow mode stored in a file, and the facts expected from it.
+        :type case: ImageModeCase
+        """
+        path = write_image(tmp_path / f'{PAGE_STEM}{case.suffix}', mode=case.mode, size=SMALL_SIZE_PX)
+
+        page = (await fx_inspector.inspect(SourceKind.IMAGES, [path])).pages[0]
+
+        expect(page.extra['pillow_mode'] == case.mode)
+        expect(page.color_mode == case.color_mode)
+        expect(page.bits_per_component == case.bits_per_component)
+        assert_expectations()
+
+    @pytest.mark.parametrize(SUFFIX_ARG, RESOLUTION_SUFFIXES)
+    async def test_reads_dpi_and_physical_size(
+        self, fx_inspector: SourceInspector, tmp_path: Path, suffix: str
+    ) -> None:
+        """Verify the recorded DPI gives the physical page size.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param suffix: File suffix selecting the image format.
+        :type suffix: str
+        """
+        path = write_image(tmp_path / f'{PAGE_STEM}{suffix}', mode='L', size=SCAN_SIZE_PX, dpi=SCAN_DPI)
+
+        page = (await fx_inspector.inspect(SourceKind.IMAGES, [path])).pages[0]
+
+        expect((page.width_px, page.height_px) == SCAN_SIZE_PX)
+        expect((page.dpi_x, page.dpi_y) == (SCAN_DPI, SCAN_DPI))
+        expect((page.width_mm, page.height_mm) == (SCAN_PAGE_WIDTH_MM, SCAN_PAGE_HEIGHT_MM))
+        assert_expectations()
+
+    @pytest.mark.parametrize(SUFFIX_ARG, RESOLUTION_SUFFIXES)
+    async def test_leaves_dpi_empty_when_not_recorded(
+        self, fx_inspector: SourceInspector, tmp_path: Path, suffix: str
+    ) -> None:
+        """Verify a file without a resolution gets no DPI and no size, even a TIFF Pillow calls 1 DPI.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param suffix: File suffix selecting the image format.
+        :type suffix: str
+        """
+        path = write_image(tmp_path / f'{PAGE_STEM}{suffix}', mode='L', size=SMALL_SIZE_PX)
+
+        page = (await fx_inspector.inspect(SourceKind.IMAGES, [path])).pages[0]
+
+        expect((page.dpi_x, page.dpi_y) == (None, None))
+        expect((page.width_mm, page.height_mm) == (None, None))
+        assert_expectations()
+
+    async def test_records_format_and_exif_subset(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Verify the format name, file size and the scanner EXIF tags are recorded as strings.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        exif = {ExifTags.Base.Make: EXIF_MAKE, ExifTags.Base.Model: EXIF_MODEL, ExifTags.Base.Artist: 'Nobody'}
+        path = write_image(tmp_path / 'page.jpg', mode=RGB_MODE, size=SMALL_SIZE_PX, exif=exif)
+
+        page = (await fx_inspector.inspect(SourceKind.IMAGES, [path])).pages[0]
+
+        expect(page.image_format == JPEG)
+        expect(page.extra[FactKey.FILE_SIZE_BYTES] == path.stat().st_size)
+        expect(page.extra['exif'] == {'Make': EXIF_MAKE, 'Model': EXIF_MODEL})
+        assert_expectations()
+
+    async def test_describes_oriented_image_as_shown(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Verify a quarter-turn EXIF orientation swaps the size, DPI and physical size to those a viewer shows.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        exif = {ExifTags.Base.Orientation: QUARTER_TURN_ORIENTATION}
+        path = write_image(tmp_path / f'{PAGE_STEM}{JPG_SUFFIX}', mode='L', size=SCAN_SIZE_PX, dpi=SCAN_DPI, exif=exif)
+
+        page = (await fx_inspector.inspect(SourceKind.IMAGES, [path])).pages[0]
+
+        expect((page.width_px, page.height_px) == SCAN_SIZE_PX[::-1])
+        expect((page.width_mm, page.height_mm) == (SCAN_PAGE_HEIGHT_MM, SCAN_PAGE_WIDTH_MM))
+        assert_expectations()
+
+    async def test_reports_file_metadata(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Verify the file count, total size and the sorted set of formats.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        names = ('1.tif', '2.png', '3.png', '4.jpg')
+        paths = [write_image(tmp_path / name, mode='L', size=SMALL_SIZE_PX) for name in names]
+
+        metadata = (await fx_inspector.inspect(SourceKind.IMAGES, paths)).file_metadata
+
+        expect(metadata['file_count'] == len(paths))
+        expect(metadata['total_size_bytes'] == sum(path.stat().st_size for path in paths))
+        expect(metadata['formats'] == [JPEG, PNG, 'TIFF'])
+        assert_expectations()
+
+    @pytest.mark.parametrize(SUFFIX_ARG, RESOLUTION_SUFFIXES)
+    @patch(IMAGE_FILE_LOAD_PATCH, autospec=True)
+    async def test_reads_headers_only(
+        self, mock_load: MagicMock, fx_inspector: SourceInspector, tmp_path: Path, suffix: str
+    ) -> None:
+        """Verify no pixel data is decoded, since a book holds hundreds of large scans.
+
+        :param mock_load: Autospec mock of Pillow's ``ImageFile.load``, which decodes pixel data.
+        :type mock_load: MagicMock
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param suffix: File suffix selecting the image format.
+        :type suffix: str
+        """
+        path = write_image(tmp_path / f'{PAGE_STEM}{suffix}', mode='L', size=SMALL_SIZE_PX, dpi=SCAN_DPI)
+
+        await fx_inspector.inspect(SourceKind.IMAGES, [path])
+
+        mock_load.assert_not_called()
+
+    @pytest.mark.parametrize(
+        CASE_ARG,
+        [
+            RejectedImagesCase(build=lambda d: [], match=r'^No page images were uploaded'),
+            RejectedImagesCase(
+                build=lambda d: [write_image(d / 'page.gif', mode='P', size=SMALL_SIZE_PX)],
+                match=r'^page\.gif is not a supported page image',
+            ),
+            RejectedImagesCase(
+                build=lambda d: [_write_bytes(d / 'page.png', b'not an image')],
+                match=r'^page\.png cannot be read as an image',
+            ),
+            RejectedImagesCase(
+                build=lambda d: [_write_multi_frame_tiff(d / 'pages.tif')],
+                match=r'^pages\.tif holds several pages',
+            ),
+        ],
+        ids=['empty-set', 'suffix', 'unreadable', 'multi-frame'],
+    )
+    async def test_rejects_unsupported_images(
+        self, fx_inspector: SourceInspector, tmp_path: Path, case: RejectedImagesCase
+    ) -> None:
+        """Reject an empty set, a wrong suffix, an unreadable file and a multi-frame image.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: An image set the inspector must refuse, and the message it must give.
+        :type case: RejectedImagesCase
+        """
+        files = case.build(tmp_path)
+
+        with pytest.raises(UnsupportedSourceError, match=case.match):
+            await fx_inspector.inspect(SourceKind.IMAGES, files)
