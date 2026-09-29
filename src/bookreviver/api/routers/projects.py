@@ -19,20 +19,15 @@ from bookreviver.domain.ids import ProjectId
 from bookreviver.services.projects import ProjectService
 
 LOCATION_HEADER: str = 'Location'
-
-# Parameter and dependency aliases; FastAPI and dishka read route annotations at runtime
-ProjectIdPath = Annotated[ProjectId, Path(description='Identifier of the project')]
-PagingDep = Annotated[Params, Depends()]
-ProjectServiceDep = FromDishka[ProjectService]
-ProjectCreateBody = Annotated[ProjectCreate, Body()]
-ProjectUpdateBody = Annotated[ProjectUpdate, Body()]
-ProjectPage = Page[ProjectSchema]
+PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
 
 router = APIRouter(prefix='/projects', tags=['projects'], route_class=DishkaRoute)
 
 
 @router.get('')
-async def list_projects(actor: ActorDep, params: PagingDep, projects: ProjectServiceDep) -> ProjectPage:
+async def list_projects(
+    actor: ActorDep, params: Annotated[Params, Depends()], projects: FromDishka[ProjectService]
+) -> Page[ProjectSchema]:
     """List the projects of the signed-in account, most recently updated first.
 
     \N{FORM FEED}
@@ -51,7 +46,11 @@ async def list_projects(actor: ActorDep, params: PagingDep, projects: ProjectSer
 
 @router.post('', status_code=status.HTTP_201_CREATED)
 async def create_project(
-    body: ProjectCreateBody, actor: ActorDep, request: Request, response: Response, projects: ProjectServiceDep
+    body: Annotated[ProjectCreate, Body()],
+    actor: ActorDep,
+    request: Request,
+    response: Response,
+    projects: FromDishka[ProjectService],
 ) -> ProjectSchema:
     """Create a project from the description of its book, and point to it in the ``Location`` header.
 
@@ -75,7 +74,11 @@ async def create_project(
 
 
 @router.get('/{project_id}', name=RouteName.PROJECT)
-async def get_project(project_id: ProjectIdPath, actor: ActorDep, projects: ProjectServiceDep) -> ProjectSchema:
+async def get_project(
+    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    actor: ActorDep,
+    projects: FromDishka[ProjectService],
+) -> ProjectSchema:
     """Return one project of the signed-in account.
 
     \N{FORM FEED}
@@ -93,7 +96,10 @@ async def get_project(project_id: ProjectIdPath, actor: ActorDep, projects: Proj
 
 @router.patch('/{project_id}')
 async def update_project(
-    project_id: ProjectIdPath, body: ProjectUpdateBody, actor: ActorDep, projects: ProjectServiceDep
+    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    body: Annotated[ProjectUpdate, Body()],
+    actor: ActorDep,
+    projects: FromDishka[ProjectService],
 ) -> ProjectSchema:
     """Merge the body into the book description, as JSON Merge Patch (RFC 7396) defines.
 
@@ -115,7 +121,11 @@ async def update_project(
 
 
 @router.delete('/{project_id}', status_code=status.HTTP_204_NO_CONTENT)
-async def delete_project(project_id: ProjectIdPath, actor: ActorDep, projects: ProjectServiceDep) -> None:
+async def delete_project(
+    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    actor: ActorDep,
+    projects: FromDishka[ProjectService],
+) -> None:
     """Delete a project with its pages, jobs and files.
 
     \N{FORM FEED}

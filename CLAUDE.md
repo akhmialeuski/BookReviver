@@ -29,6 +29,12 @@ npm --prefix frontend run check          # Biome, tsc and Vitest
 - FastAPI specifics: `Annotated` dependency aliases, prefix and tags on the `APIRouter`, return types instead of
   `response_model` where they match, `EventSourceResponse` for SSE, `app.frontend()` for the built frontend,
   `fastapi dev` and `fastapi run` with the `[tool.fastapi]` entrypoint.
+- A route annotates its parameters in place (`Annotated[ProjectId, Path()]`, `FromDishka[ProjectService]`), with no
+  module-level alias made only to keep an import at runtime. `ruff.toml` lists the `fastapi.APIRouter` methods and
+  `dishka.integrations.fastapi.inject` under `runtime-evaluated-decorators`, and ruff resolves `@router.get` to
+  them, so it keeps the imports those annotations need. A dependency shared by many routers, such as `ActorDep`,
+  stays an alias in its own module. A route docstring puts a form feed (`\N{FORM FEED}`) before its reST fields,
+  because FastAPI ends the OpenAPI description there.
 
 ## Architecture rules
 
