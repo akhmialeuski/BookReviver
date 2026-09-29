@@ -1,9 +1,10 @@
 # BookReviver architecture
 
 BookReviver turns scans of old printed books into corrected, re-typeset editions. One project is one book, owned by
-an account. A book moves through stages (import, page split, geometry, cleanup, layout, background, recognition,
-proofreading, typesetting), and every stage stays viewable and re-runnable at any time. Processing steps are plugins,
-OCR engines and language models are interchangeable, and heavy work runs on workers that can live on other machines.
+an account, and it is kept apart from the files it was assembled from. A book moves through stages (import, page
+split, page order, geometry, cleanup, layout, background, recognition, proofreading, typesetting), and every stage
+stays viewable and re-runnable at any time. Processing steps are plugins, OCR engines and language models are
+interchangeable, and heavy work runs on workers that can live on other machines.
 
 This document is the source of truth for structure and contracts. `CLAUDE.md` holds the working rules derived from
 it. A change that contradicts this document updates the document in the same pull request.
@@ -55,6 +56,9 @@ What each concern reuses, and therefore what we do not write ourselves.
 | Background jobs            | Taskiq, in-process broker locally, Redis on a server            | Queueing, retries, worker processes              |
 | Mail                       | aiosmtplib                                                      | SMTP                                             |
 | PDF and images             | PyMuPDF, Pillow                                                 | Parsing and rasterising                          |
+| DjVu                       | DjVuLibre command-line tools: `djvused`, `ddjvu`, `djvutxt`     | DjVu parsing, rendering and text extraction      |
+| XMP metadata               | defusedxml                                                      | XML parsing safe against hostile documents       |
+| Page order                 | fractional-indexing                                             | Order keys that sort between two neighbours      |
 | Tiles                      | pyvips `dzsave` with the IIIF 3 layout                          | Tile pyramids and `info.json`                    |
 | Image processing plugins   | OpenCV, scikit-image                                            | Geometry, filtering, morphology                  |
 | Language and vision models | pydantic-ai                                                     | Provider clients, structured output validation   |
@@ -100,16 +104,329 @@ flowchart TD
 Pure Python with `attrs`. Entities are frozen and changed through `attrs.evolve`. Identifiers are `NewType`s, and
 every closed set of values is a `StrEnum` carrying its own label.
 
-| Area        | Types                                                                                      |
-| ----------- | ------------------------------------------------------------------------------------------ |
-| Accounts    | `AccountId`, `Actor`, `AccountSettings` (default engine and model per `AiTask`)            |
-| Credentials | `ProviderCredential` with a masked secret, never printed or logged                         |
-| Books       | `Project`, `BookDetails`, `SourceSummary`, `Page`, `PageFacts`                             |
-| Processing  | `Stage`, `Recipe`, `Step`, `Variant`, `Artifact`, `ArtifactKind`, `Provenance`             |
-| Edits       | `PageEdit` with geometry (`Rect`, `Quad`, `Mesh`, `Region` with `RegionKind`) or a mask    |
-| Jobs        | `Job`, `JobKind`, `JobState`, `Progress`, `WorkerPool` (cpu, gpu, llm)                     |
-| Queries     | `Slice[T]` (items and total), `SliceRequest` (offset and limit)                            |
-| Errors      | `DomainError`, `NotFoundError`, `PermissionDeniedError`, `UploadRejectedError`, and others |
+| Area         | Types                                                                                         |
+| ------------ | --------------------------------------------------------------------------------------------- |
+| Identifiers  | `AccountId`, `ProjectId`, `SourceId`, `ScanId`, `PageId`, `PageVersionId`, `JobId`            |
+| Accounts     | `Actor`, `AccountSettings` (default engine and model per `AiTask`)                            |
+| Credentials  | `ProviderCredential` with a masked secret, never printed or logged                            |
+| Books        | `Project`, `ProjectOverview`, `BookDetails`, `ImagePolicy`                                    |
+| Sources      | `Source`, `SourceFile`, `SourceKind`, `FileType`, `MetadataSuggestion`                        |
+| Scans        | `Scan`, `ScanFacts`, `Renditions`                                                             |
+| Pages        | `Page`, `PageKind`, `PageOrigin`, `PageVersion`, `VersionState`, `Transform`, `PageStage`     |
+| Storage keys | `StorageKey`, and `ProjectKeys` in `domain/keys.py`, the one builder of every key             |
+| Processing   | `Stage`, `ProcessorRef`, `Recipe`, `Step`, `Variant`, `ArtifactKind`, `Artifact`              |
+| Edits        | `PageEdit` with geometry (`Rect`, `Quad`, `Mesh`, `Region` with `RegionKind`) or a mask       |
+| Events       | `JobChanged`, `SourceImported`, `ScanReady`, `PagesChanged`, `PageVersionReady`, and others   |
+| Jobs         | `Job`, `JobKind`, `JobState`, `Progress`, `WorkerPool` (cpu, gpu, llm)                        |
+| Queries      | `Slice[T]` (items and total), `SliceRequest` (offset and limit)                               |
+| Errors       | `DomainError`, `NotFoundError`, `PermissionDeniedError`, `UploadRejectedError`, and others    |
+
+### The book and its sources
+
+A project describes one book, and the book does not depend on which files it was assembled from. A source can lack
+some pages or the cover, the cover and missing pages can come from another copy, and one scan of a spread becomes two
+pages of the book. The model therefore has five objects, each with its own identity and metadata:
+
+- A **project** (`Project`) is the book: its bibliographic description (`BookDetails`) and the fields of the work on
+  it.
+- A **source** (`Source`) is one uploaded file, never changed after import, with its technical metadata.
+- A **scan** (`Scan`) is one image inside a source: a page of a PDF or DjVu document, a frame of a multi-page TIFF, or
+  the single image of a JPEG file.
+- A **page** (`Page`) is a page of the book in book order, with its own copy of the image, its printed number and its
+  kind. It does not depend on its source, and its link to a scan only records where it came from.
+- A **page version** (`PageVersion`) is the result of one processing step on one page: the image in several sizes,
+  the data of the step and the transform of coordinates from its input.
+
+In the diagram a green outline marks objects that never change after they are written, and a purple outline marks
+objects the user edits.
+
+```mermaid
+flowchart TD
+    P["Project<br/>book description"] -- "1..n" --> S["Source<br/>one uploaded file"]
+    S -- "1..n" --> C["Scan<br/>one image of the source"]
+    P -- "ordered 1..n" --> G["Page<br/>page of the book"]
+    C -. "0..n slots" .-> G
+    G -- "per stage and step" --> V["PageVersion<br/>result of one step"]
+    style P stroke:#5b3fd1,stroke-width:2px
+    style G stroke:#5b3fd1,stroke-width:2px
+    style S stroke:#1e7a4d,stroke-width:2px
+    style C stroke:#1e7a4d,stroke-width:2px
+    style V stroke:#1e7a4d,stroke-width:2px
+```
+
+Scans and pages are separate objects because their numbers differ. A scan of a spread gives two pages, a cover from
+another copy gives a page with no scan in the main source, and a page missed during scanning stays in the book as a
+placeholder without a scan. Versions belong to the page and not to the scan, because the printed number, the order,
+manual edits and recognised text have to survive a re-run of any stage.
+
+The boundary between the sources and the book is the creation of pages. Before it everything depends on the kind of
+source: PDF, DjVu and image files are read by different formats and give scans with different metadata. After it a
+page stands on its own, with its own copy of the image and its own versions, and a PDF, a DjVu and a TIFF source look
+the same to it. The stages run in this order, where the green ones depend on the kind of source and the purple ones
+work only with pages of the book:
+
+```mermaid
+flowchart TD
+    I["import<br/>sources and scans"] --> S["page-split, can be skipped<br/>pages from scans"]
+    S --> O["page-order<br/>order, labels, placeholders"]
+    O --> G["geometry, cleanup,<br/>layout, background"]
+    G --> R["recognition, proofreading,<br/>typesetting"]
+    style I stroke:#1e7a4d,stroke-width:2px
+    style S stroke:#1e7a4d,stroke-width:2px
+    style O stroke:#5b3fd1,stroke-width:2px
+    style G stroke:#5b3fd1,stroke-width:2px
+    style R stroke:#5b3fd1,stroke-width:2px
+```
+
+The page split creates pages from scans, so it still looks at the scan, and when it is skipped every scan becomes one
+page. In the page order stage, `Stage.PAGE_ORDER` (`'page-order', 'Page order'`) right after `Stage.PAGE_SPLIT`, the
+user arranges the pages and adds what the scans lack: missing pages, covers, title pages, blank leaves after the
+cover and endpapers. Every later stage works only with pages of the book.
+
+### Project and book description
+
+A project holds two kinds of data. The book description belongs to the printed edition alone and is filled in by
+hand or from the metadata of the sources, and the project fields belong to the work on the project. `BookDetails` has
+eleven string fields in the code today. The extended description below, with contributors by role, identifiers and
+the physical description, is part of the model and arrives with its own task, so the table marks what exists now.
+
+| Group                | Fields                                                                                   | In the code now                  |
+| -------------------- | ---------------------------------------------------------------------------------------- | -------------------------------- |
+| Title                | `title`, `subtitle`, `parallel_titles`, `original_title`                                 | only `title`                     |
+| Contributors         | `contributors`: pairs of a name and a role                                               | one `authors` string             |
+| Imprint              | `publisher`, `printer`, `publication_place`, `publication_year`, `edition`, `censorship` | without `printer`, `censorship`  |
+| Series and volume    | `series`, `series_number`, `volume`                                                      | without `series_number`          |
+| Language and script  | `languages`, `orthography`, `script` (Cyrillic, Latin)                                   | one `language`, `orthography`    |
+| Physical description | `printed_pagination`, `height_cm`, `illustrations`, `binding`                            | none                             |
+| Identifiers          | `identifiers`: pairs of a scheme and a value (ISBN, OCLC, shelfmark, URL of a copy)      | none                             |
+| Subject and rights   | `subjects`, `rights` (public domain or not)                                              | none                             |
+| Copy                 | `copy_holder` (whose copy was scanned), `copy_notes` (bookplates, marks)                 | none                             |
+| Notes                | `notes`                                                                                  | present                          |
+
+Contributor roles are author, editor, compiler, translator, illustrator, engraver, author of the preface and
+commentator, taken from the [MARC Relator](https://www.loc.gov/marc/relators/relaterm.html) codes. Field names follow
+the [DCMI Metadata Terms](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/), so an export to library
+formats later needs no translation of concepts. `printer` is the printing house, `censorship` the censor's permit
+that pre-reform Russian books print, and `printed_pagination` the pagination as a catalogue states it, such as
+"XII, 340 p., 8 l. of plates". Languages are ISO 639-3 codes.
+
+The project fields are these:
+
+- `id`, `owner_id` (the owning account), `created_at` and `updated_at`.
+- `cover_page_id`, the page whose thumbnail the project list shows, or empty for the first page.
+- `image_policy`, how the images of page versions are stored, `compact` or `lossless`, described with page versions
+  below.
+- `page_count` (pages of the book without the excluded ones), `source_count` and `scan_count`, computed when read
+  and returned in `ProjectOverview`.
+
+### Source
+
+One file is one source. The model of a source is the same for every kind: a kind, its files, technical metadata and
+an ordered list of scans. The one exception is an indirect DjVu document, whose index file and page files are not
+documents on their own, so the whole set is stored as one source with several files. The metadata of a file stays in
+its source and is never copied into the project, and the description values a source suggests fill only empty fields
+of `BookDetails`.
+
+| Upload                                                  | Sources             | Scans in a source          |
+| ------------------------------------------------------- | ------------------- | -------------------------- |
+| One PDF holding the whole book                          | 1                   | one per PDF page           |
+| A book in three PDF parts                               | 3                   | one per page of each part  |
+| One bundled DjVu document                               | 1                   | one per page               |
+| An indirect DjVu document: an index and 300 page files  | 1, with 301 files   | 300                        |
+| 300 single-page DjVu files                              | 300                 | 1                          |
+| A directory of 400 TIFF, JPEG or PNG scans              | 400                 | 1                          |
+| A multi-page TIFF                                       | 1                   | one per frame              |
+| A separate `cover.jpg` from another copy                | 1                   | 1                          |
+
+| Field           | Type                   | Meaning                                                                            |
+| --------------- | ---------------------- | ---------------------------------------------------------------------------------- |
+| `id`            | `SourceId`             | Identifier of the source, also the name of its storage directory                   |
+| `project_id`    | `ProjectId`            | Project owning the source                                                          |
+| `kind`          | `SourceKind`           | `pdf`, `djvu` or `image`                                                           |
+| `file_type`     | `FileType`             | Exact format: `pdf`, `djvu`, `tiff`, `jpeg`, `jpeg-2000`, `png`                    |
+| `file_name`     | `str`                  | Name the browser sent, with the relative path of a directory upload sanitised      |
+| `files`         | `Sequence[SourceFile]` | Stored files with name, size and SHA-256; more than one only for indirect DjVu     |
+| `size_bytes`    | `int`                  | Total size of the files                                                            |
+| `sha256`        | `str`                  | Hash of the main file, which refuses a second upload of the same file              |
+| `scan_count`    | `int`                  | Number of scans                                                                    |
+| `metadata`      | `MetadataMap`          | Technical metadata of the format                                                   |
+| `suggestion`    | `MetadataSuggestion`   | Values of the book description found in the file                                   |
+| `import_job_id` | `JobId \| None`        | Import job that created the source                                                 |
+| `imported_at`   | `datetime`             | When the source became part of the project                                         |
+
+Each format reads its technical metadata with its own library:
+
+| Format                     | Library                                    |
+| -------------------------- | ------------------------------------------ |
+| PDF                        | PyMuPDF (`pymupdf.Document`)               |
+| DjVu                       | DjVuLibre (`djvused`, `ddjvu`, `djvutxt`)  |
+| TIFF, JPEG, JPEG 2000, PNG | Pillow (`PIL.Image`)                       |
+
+A PDF source records the PDF version, the Info dictionary (Title, Author, Subject, Keywords, Creator, Producer and
+the dates), whether it has XMP metadata, the page count, the page labels, the outline, whether the file had to be
+repaired and whether it is encrypted. XMP is parsed with defusedxml. A DjVu source records whether the document is
+bundled or indirect, the page count, the `print-meta` metadata, the `print-outline` outline and whether it has a text
+layer, and it suggests a publication year only from `print-meta`. An image source records the format, the Pillow
+mode, the frame count, the compression, the ICC profile, the EXIF data with `Orientation`, and the DPI.
+
+### Scan
+
+A scan is one image of a source as the file holds it. It is created by the import, never changes and holds the facts
+of the image in `ScanFacts`. The source file of a scan is known from its source, so `ScanFacts` has no field naming
+it.
+
+| Field          | Type         | Meaning                                                                                  |
+| -------------- | ------------ | ---------------------------------------------------------------------------------------- |
+| `id`           | `ScanId`     | Identifier of the scan                                                                   |
+| `source_id`    | `SourceId`   | Source holding the scan                                                                  |
+| `number`       | `int`        | Number of the scan in its source from zero: the PDF or DjVu page, the TIFF frame         |
+| `source_label` | `str`        | Page label the file itself gives, such as the PDF page label `xii`, or empty             |
+| `facts`        | `ScanFacts`  | Size in pixels, DPI, physical size, colour mode, bit depth, text layer, `extra`          |
+| `renditions`   | `Renditions` | Readiness and version of the derived files                                               |
+
+A scan has four derived files, and a page version has the same four:
+
+- `full` at native resolution, in the format the project's `image_policy` selects. A bilevel image is always a 1-bit
+  PNG, and a gray or colour image is a JPEG under `compact` and a PNG under `lossless`. A PDF page or an image file
+  that already is a fitting JPEG is copied byte for byte.
+- `preview`, 2048 px on the longer side, for interactive previews of steps within the budget of under 1 s on the
+  visible page.
+- `thumb`, `imaging.thumbnail_long_side_px` on the longer side, 320 px by default.
+- `iiif`, an IIIF Image API 3 level 0 tile pyramid cut by pyvips `dzsave`.
+
+`preview` and `thumb` are always JPEG.
+
+### Page
+
+A page of the book is created from a scan by the page split, or added by the user in the page order stage, and from
+then on it stands on its own. It has its own copy of the image, its own versions per step and its own metadata, and
+nothing about it depends on the kind of source. Its link to a scan records where it came from and is needed only to
+split the scan again. The identity of a page is stable: reordering, splitting again and re-running stages keep its
+`PageId`, so its storage keys, manual edits and recognised text stay attached to it.
+
+| Field                      | Type             | Meaning                                                                       |
+| -------------------------- | ---------------- | ----------------------------------------------------------------------------- |
+| `id`                       | `PageId`         | Identifier of the page                                                        |
+| `project_id`               | `ProjectId`      | Project owning the page                                                       |
+| `order_key`                | `str`            | Position in the book as a fractional index string                             |
+| `label`                    | `str`            | Printed number, such as `xii`, `12` or `[4]`, or empty for an unnumbered page |
+| `kind`                     | `PageKind`       | Role of the page in the book                                                  |
+| `origin`                   | `PageOrigin`     | Where the image comes from: `scan`, `blank` or `placeholder`                  |
+| `scan_id`                  | `ScanId \| None` | Scan of origin of a `scan` page, or empty                                     |
+| `slot`                     | `int`            | Part of the scan the page shows                                               |
+| `included`                 | `bool`           | Whether the page is part of the book                                          |
+| `notes`                    | `str`            | Notes of the user                                                             |
+| `created_at`, `updated_at` | `datetime`       | When the page was created and last changed                                    |
+
+`PageKind` is `cover`, `back-cover`, `endpaper`, `frontispiece`, `title`, `text`, `plate`, `blank` or `other`. A
+`scan` page holds a copy of a part of a scan, a `blank` page holds a generated blank leaf, and a `placeholder` holds
+no image and waits for a scan. `scan_id` is empty for the last two, and for a `scan` page whose source was deleted.
+`slot` is `0` for the whole scan, `1` and `2` for the left and right halves of a spread, and higher for fold-outs.
+`included` is off for a page kept out of the book, such as a colour chart or a duplicate. The pair
+`(scan_id, slot)` is unique, so one part of a scan never becomes two pages. The life cycle of a page follows these
+rules:
+
+- After an import the page split creates pages from the new scans. When the split is skipped, every scan gives one
+  page with `slot = 0`, whose base version is a copy of the scan's `full` image. Pages of new scans are appended to
+  the end of the book in upload order, and their printed number is the scan's `source_label`.
+- Splitting a spread keeps the existing page as the left half (`slot = 1`) and inserts the right half (`slot = 2`)
+  right after it. Each half gets its own copy of its part of the scan. Moving the split line recreates the base
+  versions of both pages and marks their later stages stale. Undoing the split deletes the right page with its
+  versions and edits, so the interface asks for confirmation.
+- In the page order stage a blank leaf (`origin = blank`), such as the back of the cover, an endpaper or the empty
+  leaf after the title, gets a generated white image of the median page size of the book and then passes the stages
+  like any page. A missing page, cover or title page without a scan (`origin = placeholder`) stays without an image
+  until a scan from a new source is bound to it, and then it becomes a `scan` page whose base version is a copy of
+  that scan.
+- Deleting a source leaves the pages of the book alone, because they hold their own copies of the images. The pages
+  of that source lose their `scan_id`, and splitting them again is no longer possible.
+
+The split line of a spread is stored as the `transform` of the base version, so moving it recreates only the base
+versions of the two pages and marks their later stages stale. From then on the two pages live independently of each
+other and of the scan.
+
+### Page versions
+
+Stages are made of steps, and a step is one processor of the stage's recipe. A page version is recorded per step and
+not per stage, because binarisation and despeckling are separate results, as the processing plugins below require.
+The stages follow ScanTailor's order: split, deskew, content selection, cleanup, output.
+
+A version is not a new page but a record of a page, a stage, a step and its parameters. A page object per stage would
+have to carry the number, the order and the edits across every re-run, and the question "what is page 12 after
+deskewing" would become a search along a chain. Versions never change: a re-run with other parameters creates a new
+version, and the old one stays cached and returns at once when the user restores the old parameters.
+
+| Field        | Type                    | Meaning                                                                          |
+| ------------ | ----------------------- | -------------------------------------------------------------------------------- |
+| `id`         | `PageVersionId`         | Hash of what produced the version, which is also the cache key of its result     |
+| `page_id`    | `PageId`                | Page of the book                                                                 |
+| `stage`      | `Stage`                 | Stage of the step                                                                |
+| `processor`  | `ProcessorRef`          | Key and version of the processor, such as `geometry.deskew` 1.2                  |
+| `input_id`   | `PageVersionId \| None` | Input version; empty for the base version, whose input is a scan or nothing      |
+| `params`     | `MetadataMap`           | Parameters of the step, following the processor's JSON Schema                    |
+| `transform`  | `Transform`             | Transform of coordinates from the input to the output                            |
+| `data`       | `MetadataMap`           | Data of the step: angle, frames, removed areas, thresholds, confidence           |
+| `renditions` | `Renditions \| None`    | The image in the same four sizes as a scan, or empty for a step without an image |
+| `state`      | `VersionState`          | `pending`, `running`, `ready` or `failed`                                        |
+| `created_at` | `datetime`              | When the version was created                                                     |
+
+The identifier hashes the page, the processor key and version, the parameters, the input version and the manual
+edit, cut to 16 hexadecimal digits. A `Transform` is `identity`, `crop(quad)`, `rotate(angle)`, `perspective(quad)`
+or `mesh(key)`.
+
+The first version of every page is its base version. For a page cut from a scan the `page-split` stage creates it,
+with the step `split.spread` for a half of a spread or `split.none` when the split is skipped and the page is the
+whole scan. For a blank leaf the `page-order` stage creates it with the step `pages.blank`. The base version holds its
+own copy of the image, so the page does not depend on the files of the scan and survives the deletion of its source.
+
+Metadata of the whole page lives in `Page`, and data of one step lives in `PageVersion.data` and
+`PageVersion.transform`. The chain of transforms from the scan to any version maps coordinates back to the scan,
+which is how recognised words are highlighted on the original and illustrations are cut for typesetting from the
+colour scan instead of the binarised page.
+
+| Stage         | Step                   | `transform`                | `data`                                                      |
+| ------------- | ---------------------- | -------------------------- | ----------------------------------------------------------- |
+| `page-split`  | `split.none`           | `identity`                 | copy of the whole scan, split skipped                       |
+| `page-split`  | `split.spread`         | `crop(quad)` of a half     | position of the spine, confidence                           |
+| `page-order`  | `pages.blank`          | `identity`                 | size of the generated blank leaf                            |
+| `geometry`    | `geometry.deskew`      | `rotate(angle)`            | angle in degrees, method, confidence                        |
+| `geometry`    | `geometry.perspective` | `perspective(quad)`        | four corners of the page                                    |
+| `geometry`    | `geometry.dewarp`      | `mesh(key)`                | key of the mesh, root mean square error                     |
+| `geometry`    | `geometry.crop`        | `crop(quad)`               | content frame, margins                                      |
+| `cleanup`     | `cleanup.despeckle`    | `identity`                 | number of removed specks, key of the mask `mask.png`        |
+| `cleanup`     | `cleanup.binarize`     | `identity`                 | method (Otsu, Sauvola), threshold or window                 |
+| `cleanup`     | `cleanup.eraser`       | `identity`                 | key of the mask from the manual edit                        |
+| `layout`      | `layout.regions`       | `identity`, no image       | text and illustration regions as polygons                   |
+| `recognition` | `recognition.ocr`      | `identity`, no image       | engine, model, confidence, key of the hOCR or ALTO text     |
+
+The chain of versions of one page looks like this. The left half of a spread passes the split, deskewing, cropping
+and cleanup, and each step refers to the one before. Recognition continues the same chain with a version without an
+image.
+
+```mermaid
+flowchart TD
+    C["Scan 12 of kniga-ch1.pdf<br/>full, preview, thumb, iiif"] --> A["page-split: split.spread<br/>slot 1, quad of the left half"]
+    A --> B["geometry: geometry.deskew<br/>rotate 0.8°"]
+    B --> D["geometry: geometry.crop<br/>content frame"]
+    D --> E["cleanup: cleanup.despeckle<br/>mask.png of removed specks"]
+    E --> F["cleanup: cleanup.binarize<br/>Sauvola, window 31"]
+    style C stroke:#1e7a4d,stroke-width:2px
+```
+
+The current version of a stage is kept in a separate `PageStage` record per page and stage: a reference to the
+latest version of the stage's active recipe and a state, `fresh`, `stale` or `failed`. A change of an earlier version
+marks the later stages of that page stale without deleting them, so the interface can show the old result until it
+is recomputed. Recipes, variants and manual edits (`PageEdit`) are described under the processing plugins.
+
+The format of `full` is set by the project setting `image_policy`, chosen when the project is created or in the stage
+that creates pages:
+
+- `compact`, the default: a bilevel page is a lossless PNG, and a gray or colour page a JPEG with the quality from the
+  settings. A PNG of a colour scan at 600 DPI takes hundreds of megabytes per page, which is why this is the default.
+- `lossless`: every version is a lossless PNG, so re-encoding between steps loses nothing. A colour book with five
+  steps takes tens of gigabytes.
+
+Changing the setting after pages exist applies only to new versions, and old ones are not re-encoded.
 
 ## Ports
 
@@ -234,17 +551,23 @@ indistinguishable to the application.
 | `spec`              | Key (`cleanup.despeckle`), version, title, `Stage`, scope (page or whole book)    |
 | inputs and outputs  | `ArtifactKind`s it reads and writes: page image, mask, regions, text              |
 | parameters          | A JSON Schema, from which the interface builds the settings form                  |
-| editor              | The `EditorKind` it needs (none, rect, quad, rotation, mesh, brush mask, regions) |
+| editor              | Its `EditorKind`: none, line, rect, quad, rotation, mesh, brush mask, regions     |
 | worker pool         | cpu, gpu or llm, which routes its jobs to the right workers                       |
 | `run`, `preview`    | Full run, and a fast run on a downscaled page for interactive tuning              |
 
 - A **recipe** is the ordered list of steps with parameters for one stage, saved per project, with presets per
   account. A **variant** is an alternative recipe for the same stage, and one variant per stage feeds the next.
-- Every result is an **artifact** with provenance: processor key and version, parameter hash, input artifacts. Their
-  hash is the cache key, so re-running a recipe recomputes only changed steps, and changing a stage marks the
-  artifacts of later stages stale.
+- Every result of a page step is a **page version** with its provenance: processor key and version, parameters,
+  input version and manual edit. Their hash is the version's identifier and the cache key, so re-running a recipe
+  recomputes only changed steps, and changing a stage marks the later stages of the page stale. A result of a
+  whole-book step, such as typesetting, is an **artifact** with the same provenance.
 - Manual edits are inputs: a frame or mesh drawn by the user becomes the geometry a crop or dewarp processor reads,
-  and an eraser stroke becomes a mask.
+  an eraser stroke becomes a mask, and the split line of a spread, drawn with the `line` editor, becomes the geometry
+  of `split.spread`.
+- A preview of a step runs as a background job, like every heavy computation, and its result reaches the browser
+  over SSE.
+- The base steps `split.none` and `pages.blank` are ordinary processors. Until the plugin framework exists, the
+  import and the page order stage produce the same base versions with interim code that the processors replace.
 - First plugins, in delivery order: page split, deskew, perspective crop by quad, dewarp by mesh, despeckle,
   binarisation (a cleanup step of its own, so the despeckled and the binarised page are separate artifacts), eraser
   mask, layout regions (text versus illustration), background separation, background unification (white, aged paper
