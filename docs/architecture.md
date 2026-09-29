@@ -432,23 +432,56 @@ Changing the setting after pages exist applies only to new versions, and old one
 
 Ports are abstract base classes, so every adapter names its parent explicitly and the type checkers verify it.
 
-| Group       | Ports                                                                                  |
-| ----------- | -------------------------------------------------------------------------------------- |
-| Persistence | `Repository[EntityT, IdT]` and one child per aggregate, `UnitOfWork`                   |
-| Storage     | `SourceStore` (stage, promote, discard an upload), `AssetStore` (derived files by key) |
-| Mail        | `Mailer`                                                                               |
-| Imaging     | `SourceInspector`, `PageRasterizer`, `Tiler`                                           |
-| AI engines  | `TextRecognizer`, `LayoutAnalyzer`, `LanguageModel`, each with an engine catalogue     |
-| Processing  | `Processor` (the plugin contract), `ProcessorCatalog`                                  |
-| Runtime     | `JobQueue`, `EventPublisher`, `EventStream`, `Clock`                                   |
+| Group       | Ports                                                                                            |
+| ----------- | ------------------------------------------------------------------------------------------------ |
+| Persistence | `Repository[EntityT, IdT]` and one child per aggregate, `UnitOfWork`                             |
+| Ordering    | `OrderKeys`: the key after the last page and the key between two neighbours                      |
+| Storage     | `SourceStore` (uploads and the files of each source), `AssetStore` (derived files by key)        |
+| Mail        | `Mailer`                                                                                         |
+| Imaging     | `SourceInspector` (group an upload into sources, inspect one), `PageRasterizer`, `Tiler`         |
+| AI engines  | `TextRecognizer`, `LayoutAnalyzer`, `LanguageModel`, each with an engine catalogue               |
+| Processing  | `Processor` (the plugin contract), `ProcessorCatalog`                                            |
+| Runtime     | `JobQueue`, `EventPublisher`, `EventStream`, `Clock`                                             |
 
 Every repository method takes the acting account, so a query can never cross account boundaries.
+
+The persistence ports address data through the source, the scan and the page of the book. `ProjectRepository`,
+`SourceRepository`, `ScanRepository`, `PageRepository` and `JobRepository` share the `UnitOfWork`, so one use case
+changes all of them in one transaction. `PageRepository` addresses a page by its `PageId` and lists the pages of a
+project in `order_key` order, and the position of a page in the book is computed when it is read, never stored.
+`OrderKeys` is a port with an adapter on fractional-indexing, because the domain imports only the standard library
+and attrs.
+
+The storage ports divide the files of a project by prefix. `SourceStore` owns `incoming/` and `sources/`, and
+`AssetStore` owns `assets/`, so each port can delete everything of a project it holds:
+
+| Port and method                                 | Target                                                                        |
+| ----------------------------------------------- | ----------------------------------------------------------------------------- |
+| `SourceStore.stage`                             | `(project_id, job_id, files, max_bytes) -> Sequence[StagedFile]`              |
+| `SourceStore.promote`                           | `(project_id, job_id, source_id, names)`                                      |
+| `SourceStore.discard`                           | `(project_id, job_id)`                                                        |
+| `SourceStore.staged_files`, `source_files`      | Local paths of the files of one job, or of one source                         |
+| `SourceStore.delete_source`                     | `(project_id, source_id)`                                                     |
+| `SourceStore.delete_project`                    | Removes `sources/` and `incoming/` of a project                               |
+| `AssetStore.writable`, `readable`               | Only keys under `projects/<id>/assets/`                                       |
+| `AssetStore.delete_prefix`                      | Only prefixes under `projects/<id>/assets/`                                   |
+| `AssetStore.delete_project`                     | Removes `assets/` of the project                                              |
+
+`stage` reports the name and the size of every staged file, so no service reads file sizes itself, and it no longer
+refuses an upload to a project that has sources. `promote` moves the files of one source from the job's directory to
+the source's own directory.
+
+The imaging ports work on one source at a time. `SourceInspector.group(files)` splits the files of an upload into
+sources and assembles an indirect DjVu document from its index file and page files, because which files make one
+source is a property of the format. `SourceInspector.inspect` describes one source and its scans, and
+`PageRasterizer.extract` writes one scan of one source.
 
 ## Adapters
 
 | Port family | Adapter now                                                     | Test adapter   | Later                  |
 | ----------- | --------------------------------------------------------------- | -------------- | ---------------------- |
 | Persistence | advanced-alchemy repositories on SQLAlchemy 2.0, aiosqlite      | in-memory      | PostgreSQL by URL only |
+| Ordering    | fractional-indexing                                             | the same       |                        |
 | Storage     | Local directory tree under `data/`                              | local, tmp dir | S3-compatible storage  |
 | Mail        | Log mailer, aiosmtplib over SMTP                                | recording fake |                        |
 | Imaging     | Source reader with PDF, image-set, DjVu formats, pyvips tiler   | fake images    | remote workers         |
@@ -475,10 +508,75 @@ both, so the in-memory adapter raises the same errors.
 The library's audit columns are not used, because the domain sets `updated_at` through its `Clock`.
 Tables are SQLAlchemy 2.0 declarative classes on advanced-alchemy's `DefaultBase`, which brings the shared metadata
 and the portable `GUID`, `DateTimeUTC` and `JsonB` column types. Keys are declared on each table, and a project's
-pages and jobs are relationships with `lazy="raise"`, so an `AsyncSession` never loads them implicitly, and with
-`passive_deletes=True`, so their deletion is left to the `ON DELETE CASCADE` foreign keys.
+sources, pages and jobs are relationships with `lazy="raise"`, so an `AsyncSession` never loads them implicitly, and
+with `passive_deletes=True`, so their deletion is left to the `ON DELETE CASCADE` foreign keys.
 Adapters are selected by settings read once in `app` (`BOOKREVIVER_DATABASE_URL`, `BOOKREVIVER_STORAGE`,
 `BOOKREVIVER_JOB_BROKER` and so on).
+
+### Database tables
+
+The first diagram shows the book and its sources and leaves out the link from `projects` to `jobs`, and the second
+shows the processing tables of page versions. The `recipes` table belongs to the project and is left out of the
+second diagram. The diagrams show only keys and links, and the list below them gives the constraints and columns.
+
+```mermaid
+erDiagram
+    projects }o--|| user : "owned by"
+    projects ||--o{ sources : has
+    projects ||--o{ pages : orders
+    sources ||--o{ scans : holds
+    pages }o--o| scans : shows
+    sources }o--o| jobs : "imported by"
+```
+
+```mermaid
+erDiagram
+    pages ||--o{ page_versions : has
+    pages ||--o{ page_stages : tracks
+    page_stages |o--o| page_versions : head
+    page_versions |o--o{ page_versions : feeds
+    pages ||--o{ page_edits : has
+```
+
+- `projects` has the primary key `id`, and `owner_id` references `user.id` with `ON DELETE RESTRICT`. Its columns are
+  the `BookDetails` fields, `cover_page_id`, `image_policy`, `created_at` and `updated_at`.
+- `sources` has the primary key `id`, `project_id` with `ON DELETE CASCADE`, `import_job_id` with
+  `ON DELETE SET NULL`, and a unique `(project_id, sha256)`. Its columns are `kind`, `file_type`, `file_name`, `files`
+  as JSON, `size_bytes`, `sha256`, `scan_count`, `metadata` and `suggestion` as JSON, and `imported_at`.
+- `scans` has the primary key `id`, `source_id` and `project_id` with `ON DELETE CASCADE`, and a unique
+  `(source_id, number)`. Its columns are `number`, `source_label`, one column per field of `ScanFacts`,
+  `renditions_ready` and `renditions_version`.
+- `pages` has the primary key `id`, `project_id` with `ON DELETE CASCADE`, `scan_id` with `ON DELETE SET NULL`, and
+  the unique pairs `(project_id, order_key)` and `(scan_id, slot)`. Its columns are `order_key`, `label`, `kind`,
+  `origin`, `slot`, `included`, `notes`, `created_at` and `updated_at`.
+- `jobs` keeps its columns and gains a partial unique index on `project_id`
+  `WHERE kind = 'import-source' AND state IN ('queued', 'running')`, so a project runs one import at a time.
+- `page_versions` has the primary key `id`, `page_id` with `ON DELETE CASCADE`, `input_id` with `ON DELETE SET NULL`,
+  and an index on `(page_id, stage)`. Its columns are `stage`, `processor_key`, `processor_version`, `params`,
+  `transform` and `data` as JSON, `renditions_ready`, `state` and `created_at`.
+- `page_stages` has the primary key `(page_id, stage)` and `head_version_id` with `ON DELETE SET NULL`. Its columns
+  are `recipe_id`, `state` and `updated_at`.
+- `page_edits` has the primary key `(page_id, stage, processor_key)`. Its columns are `kind`, `geometry` as JSON,
+  `mask_key` and `updated_at`.
+- `recipes` has the primary key `id` and `project_id` with `ON DELETE CASCADE`. Its columns are `stage`, `name`,
+  `steps` as JSON and `active`.
+
+`order_key` holds a fractional index string from the fractional-indexing package, such as `a0`, `a0V` or `a1`, so
+inserting a page between two neighbours writes one row instead of renumbering the book. Keys compare byte by byte,
+which is SQLite's `BINARY` collation and needs `COLLATE "C"` on the column in PostgreSQL. The API returns the
+computed position of a page and never the key.
+
+The owner's foreign key uses `RESTRICT` because a cascade would delete the rows of the projects but not their files,
+so an account is deleted only after `ProjectService` has deleted its projects with their files. Only the SQLAlchemy
+adapter checks this key: its contract fixtures create `user` rows, and `test_tables.py` pins the `RESTRICT`, while
+the in-memory adapter has no accounts and there is no accounts port.
+
+The tables `sources`, `scans`, `pages` and `page_versions` come with the book model, because a page gets its base
+version with its own copy of the image when it is created. `page_stages`, `page_edits` and `recipes` come with the
+processing framework, through an Alembic migration. Until the first migration exists the schema changes in place,
+and the local database in `./data` is created again. Migrations are applied only by hand with advanced-alchemy's
+`alchemy upgrade head` command, and the application only compares the database revision with its own at start-up
+and refuses to start when they differ.
 
 ## Services
 
