@@ -22,6 +22,7 @@ PAGE_NAME: str = 'page.png'
 PAGE_CONTENT: bytes = b'page'
 MAX_BYTES: int = 1024
 FILE_KEY: StorageKey = StorageKey('projects/book/pages/0/v1/full.jpg')
+PROJECT_PAGE_KEY: StorageKey = StorageKey(f'projects/{PROJECT_ID}/pages/0/v0/full.jpg')
 OLD_SOURCE_NAME: str = 'old.pdf'
 
 
@@ -100,3 +101,39 @@ class TestLocalAssetStore:
 
         with pytest.raises(ValueError, match='does not name a path inside the storage root'):
             await store.delete_prefix(StorageKey(key))
+
+    async def test_project_deletion_keeps_source_directories(self, tmp_path: Path) -> None:
+        """Verify ``source/`` and ``incoming/`` stay, since removing them is the source store's job.
+
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        store = LocalAssetStore(root=tmp_path)
+        project_dir = tmp_path / 'projects' / str(PROJECT_ID)
+        for area in ('source', 'incoming'):
+            (project_dir / area).mkdir(parents=True)
+            (project_dir / area / PAGE_NAME).write_bytes(PAGE_CONTENT)
+        async with store.writable(PROJECT_PAGE_KEY) as path:
+            path.write_bytes(PAGE_CONTENT)
+
+        await store.delete_project(PROJECT_ID)
+
+        assert sorted(path.name for path in project_dir.iterdir()) == ['incoming', 'source']
+
+    async def test_both_stores_leave_no_project_directory(self, tmp_path: Path) -> None:
+        """Verify deleting a project from the source store and then the asset store leaves nothing of it on disk.
+
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        sources = LocalSourceStore(root=tmp_path)
+        assets = LocalAssetStore(root=tmp_path)
+        await sources.stage(PROJECT_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await sources.promote(PROJECT_ID)
+        async with assets.writable(PROJECT_PAGE_KEY) as path:
+            path.write_bytes(PAGE_CONTENT)
+
+        await sources.delete_project(PROJECT_ID)
+        await assets.delete_project(PROJECT_ID)
+
+        assert list((tmp_path / 'projects').iterdir()) == []

@@ -152,3 +152,15 @@ class AssetStore(ABC):
         :type prefix: StorageKey
         :raises ValueError: If the prefix leaves the storage root or reaches the files of the ``SourceStore``.
         """
+
+    @abstractmethod
+    async def delete_project(self, project_id: ProjectId) -> None:
+        """Remove every derived file of the project; a project without any is not an error.
+
+        The store knows where the keys of a project lie, so a caller never builds a project-wide prefix, which would
+        also name the files of the ``SourceStore``. The source and the staged upload are left to
+        ``SourceStore.delete_project``.
+
+        :param project_id: Project whose derived files are removed.
+        :type project_id: ProjectId
+        """
