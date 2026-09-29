@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from typing import TYPE_CHECKING, Any, NamedTuple
 from unittest.mock import patch
 
@@ -63,6 +64,12 @@ SUBJECT_KEY: str = 'subject'
 DOCUMENT_INFO_KEY: str = 'document_info'
 HAS_OUTLINE_KEY: str = 'has_outline'
 REPAIRED_KEY: str = 'repaired'
+PAGE_COUNT_KEY: str = 'page_count'
+# Named so that only a natural sort puts part 2 before part 10
+EARLIER_PART_NAME: str = 'part2.pdf'
+LATER_PART_NAME: str = 'part10.pdf'
+# Page sizes in points of a book split into two parts, equal to the pixel sizes the inspector reports for them
+PART_PAGE_SIZES_PT: tuple[tuple[int, int], ...] = ((300, 400), (320, 420), (340, 440))
 OUTLINE_TITLES: tuple[str, ...] = ('Preface', 'Chapter one')
 PASSWORD: str = 'secret'
 NOT_A_PDF_MATCH: str = 'is not a PDF'
@@ -315,18 +322,23 @@ class TestInspectPdf:
 
         analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
         metadata = analysis.file_metadata
+        part = metadata[FactKey.FILES][0]
 
         expect(analysis.suggestion == MetadataSuggestion(title=DOCUMENT_TITLE, authors=DOCUMENT_AUTHOR))
-        expect(metadata[DOCUMENT_INFO_KEY].get(TITLE_KEY) == PADDED_DOCUMENT_TITLE)
-        expect(SUBJECT_KEY not in metadata[DOCUMENT_INFO_KEY])
-        expect(metadata['pdf_version'].startswith('PDF '))
-        expect(metadata['page_count'] == 2)
-        expect(metadata[HAS_OUTLINE_KEY] is True)
-        expect(metadata['outline_entries'] == len(OUTLINE_TITLES))
-        expect(metadata['has_xmp_metadata'] is False)
-        expect(metadata[REPAIRED_KEY] is False)
-        expect(metadata[FactKey.FILE_SIZE_BYTES] == path.stat().st_size)
-        expect(metadata['sha256'] == hashlib.sha256(path.read_bytes()).hexdigest())
+        expect(metadata[FactKey.FILE_COUNT] == 1)
+        expect(metadata[FactKey.TOTAL_SIZE_BYTES] == path.stat().st_size)
+        expect(metadata[PAGE_COUNT_KEY] == 2)
+        expect(part[FactKey.FILE_NAME] == PDF_NAME)
+        expect(part[DOCUMENT_INFO_KEY].get(TITLE_KEY) == PADDED_DOCUMENT_TITLE)
+        expect(SUBJECT_KEY not in part[DOCUMENT_INFO_KEY])
+        expect(part['pdf_version'].startswith('PDF '))
+        expect(part[PAGE_COUNT_KEY] == 2)
+        expect(part[HAS_OUTLINE_KEY] is True)
+        expect(part['outline_entries'] == len(OUTLINE_TITLES))
+        expect(part['has_xmp_metadata'] is False)
+        expect(part[REPAIRED_KEY] is False)
+        expect(part[FactKey.FILE_SIZE_BYTES] == path.stat().st_size)
+        expect(part['sha256'] == hashlib.sha256(path.read_bytes()).hexdigest())
         expect(json.loads(json.dumps(metadata)) == metadata)
         assert_expectations()
 
@@ -343,7 +355,7 @@ class TestInspectPdf:
         analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
 
         expect(analysis.suggestion == MetadataSuggestion())
-        expect(analysis.file_metadata[HAS_OUTLINE_KEY] is False)
+        expect(analysis.file_metadata[FactKey.FILES][0][HAS_OUTLINE_KEY] is False)
         assert_expectations()
 
     async def test_flags_repaired_pdf(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
@@ -359,7 +371,7 @@ class TestInspectPdf:
 
         analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
 
-        expect(analysis.file_metadata[REPAIRED_KEY] is True)
+        expect(analysis.file_metadata[FactKey.FILES][0][REPAIRED_KEY] is True)
         expect(len(analysis.pages) == 1)
         assert_expectations()
 
@@ -401,17 +413,59 @@ class TestInspectPdf:
         with pytest.raises(UnsupportedSourceError, match=rf'^book\.pdf .*{case.match}'):
             await fx_inspector.inspect(SourceKind.PDF, files)
 
-    async def test_rejects_several_files(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
-        """Reject a PDF source made of more than one file.
+    async def test_joins_parts_in_natural_order(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Verify a book split into PDF parts is one run of pages, part2 before part10, each page naming its part.
 
         :param fx_inspector: Source inspector built by the application's imaging provider.
         :type fx_inspector: SourceInspector
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        files = [write_pdf(tmp_path / name, pages=[PdfPage()]) for name in ('one.pdf', 'two.pdf')]
+        # Passed in reverse, so only the natural order of the names can put the parts right
+        later = write_pdf(tmp_path / LATER_PART_NAME, pages=[PdfPage(size_pt=PART_PAGE_SIZES_PT[2])])
+        earlier = write_pdf(
+            tmp_path / EARLIER_PART_NAME,
+            pages=[PdfPage(size_pt=size, text=PAGE_TEXT) for size in PART_PAGE_SIZES_PT[:2]],
+            metadata={TITLE_KEY: DOCUMENT_TITLE},
+        )
 
-        with pytest.raises(UnsupportedSourceError, match=r'^A PDF source is exactly one PDF file, not 2 files'):
+        analysis = await fx_inspector.inspect(SourceKind.PDF, [later, earlier])
+        metadata = analysis.file_metadata
+
+        expect([(page.width_px, page.height_px) for page in analysis.pages] == list(PART_PAGE_SIZES_PT))
+        expect([page.source_file for page in analysis.pages] == [EARLIER_PART_NAME, EARLIER_PART_NAME, LATER_PART_NAME])
+        expect(metadata[FactKey.FILE_COUNT] == 2)
+        expect(metadata[PAGE_COUNT_KEY] == len(PART_PAGE_SIZES_PT))
+        expect(metadata[FactKey.TOTAL_SIZE_BYTES] == earlier.stat().st_size + later.stat().st_size)
+        expect([part[FactKey.FILE_NAME] for part in metadata[FactKey.FILES]] == [EARLIER_PART_NAME, LATER_PART_NAME])
+        expect([part[PAGE_COUNT_KEY] for part in metadata[FactKey.FILES]] == [2, 1])
+        # The title of the book comes from its first part
+        expect(analysis.suggestion == MetadataSuggestion(title=DOCUMENT_TITLE))
+        assert_expectations()
+
+    async def test_rejects_empty_source(self, fx_inspector: SourceInspector) -> None:
+        """Reject a PDF source without any file.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        """
+        with pytest.raises(UnsupportedSourceError, match=r'^No PDF was uploaded'):
+            await fx_inspector.inspect(SourceKind.PDF, [])
+
+    async def test_rejects_book_with_unreadable_part(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Reject the whole book when one of its parts is not a PDF, naming that part.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        files = [
+            write_pdf(tmp_path / EARLIER_PART_NAME, pages=[PdfPage()]),
+            _write_bytes(tmp_path / LATER_PART_NAME, b'plain text'),
+        ]
+
+        with pytest.raises(UnsupportedSourceError, match=rf'^{re.escape(LATER_PART_NAME)} .*{NOT_A_PDF_MATCH}'):
             await fx_inspector.inspect(SourceKind.PDF, files)
 
 

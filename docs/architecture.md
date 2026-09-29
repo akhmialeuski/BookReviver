@@ -255,8 +255,15 @@ serves its own viewer, so the path is the deliberate choice.
 ## Import pipeline
 
 1. `POST /api/v1/projects/{id}/source` streams the upload into `incoming/`, validates the file set, records a job and
-   enqueues it. The response returns the job at once. `SourceKind.of_files` decides the kind from the file names: one
-   PDF, one DjVu file, or any number of TIFF, JPEG, JPEG 2000 and PNG page images, such as a directory of scans.
+   enqueues it. The response returns the job at once. `SourceKind.of_files` decides the kind from the file names, and
+   files of different kinds in one upload are refused. The kinds are:
+   - PDF files: one document with the whole book, or the book split into parts.
+   - DjVu files: one bundled document, an indirect document with an index file and a file per page, or single-page
+     DjVu files.
+   - Page images: any number of TIFF, JPEG, JPEG 2000 and PNG files, such as a directory of scans.
+
+   The files of a source are read in the natural order of their names, so `part2.pdf` precedes `part10.pdf`, and
+   pages are numbered through the whole book.
 2. The job inspects the source, promotes it, replaces the page rows and fills only empty description fields. A
    job retried after a crash first deletes the project's `pages/` prefix, which removes the pages it cut and any
    partial files it left, and cuts every page again.

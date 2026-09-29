@@ -1,13 +1,21 @@
-"""Facts, limits and JPEG rules shared by every source format of the imaging adapters.
+"""Facts, limits, ordering and JPEG rules shared by every source format of the imaging adapters.
 
 The facts a format reports beyond the typed ``PageFacts`` fields go into ``extra`` and ``file_metadata`` under the keys
-of ``FactKey``, so every format spells a key the same way. ``is_portable_jpeg`` is the one rule deciding whether a
-stored JPEG may be copied as the page image, whether it comes from a PDF page or from a page image.
+of ``FactKey``, so every format spells a key the same way. ``natural_order`` is the one book order of the files of a
+source, whether they are page images or the parts of a document. ``is_portable_jpeg`` is the one rule deciding whether
+a stored JPEG may be copied as the page image, whether it comes from a PDF page or from a page image.
 """
 
 import enum
+from operator import attrgetter
+from typing import TYPE_CHECKING
 
+from natsort import natsorted
 from PIL import ExifTags, Image
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
 
 # Pillow refuses images above this many pixels as decompression bombs, and raises outright above twice as many.
 # Its default of about 89 million pixels rejects a broadsheet newspaper scanned at 600 DPI, while an A1 sheet at
@@ -27,6 +35,9 @@ UPRIGHT_ORIENTATION: int = 1
 class FactKey(enum.StrEnum):
     """Keys of the file metadata and the page extras the source formats report."""
 
+    # Facts of each file of a document source, in book order, since a book may come in several parts
+    FILES = 'files'
+    FILE_NAME = 'file_name'
     DOCUMENT_INFO = 'document_info'
     PDF_VERSION = 'pdf_version'
     PAGE_COUNT = 'page_count'
@@ -44,6 +55,17 @@ class FactKey(enum.StrEnum):
     TEXT_CHARS = 'text_chars'
     PILLOW_MODE = 'pillow_mode'
     EXIF = 'exif'
+
+
+def natural_order(files: Sequence[Path]) -> list[Path]:
+    """Return the files of a source in book order, the natural sort of their names, so ``page2`` precedes ``page10``.
+
+    :param files: Files of the source in any order.
+    :type files: Sequence[Path]
+    :returns: The same paths in book order.
+    :rtype: list[Path]
+    """
+    return natsorted(files, key=attrgetter('name'))
 
 
 def to_mm(length: float, *, units_per_inch: float) -> float:

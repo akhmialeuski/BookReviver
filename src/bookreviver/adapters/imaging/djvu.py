@@ -1,7 +1,9 @@
 """DjVu sources: accepted as uploads and registered as a format, while reading them is still to be written.
 
-An upload of one DjVu file is classified as a DjVu source and reaches this format through ``SourceReader``, so the
-import reports a clear refusal instead of treating the file as something else. Reading the pages is the task
+An upload of DjVu files is classified as a DjVu source and reaches this format through ``SourceReader``, so the
+import reports a clear refusal instead of treating the files as something else. The source is one bundled document
+holding the whole book, an indirect document split into an index file and one file per page, or a directory of
+single-page DjVu files, and reading it has to tell these apart. Reading the pages is the task
 "BR - Task - DjVu source import", which fills in both methods without touching the ports or the other formats.
 """
 

@@ -57,24 +57,21 @@ class SourceKind(LabeledStrEnum):
     DJVU = 'djvu', 'DjVu document'
     IMAGES = 'images', 'Page images'
 
-    @property
-    def is_single_file(self) -> bool:
-        """Whether a source of this kind is one document file rather than a set of page images."""
-        return self is not SourceKind.IMAGES
-
     @classmethod
     def of_files(cls, names: Collection[str]) -> SourceKind:
         """Return the kind of source an upload makes, judged by the suffixes of its file names.
 
-        One PDF makes a PDF source and one DjVu file a DjVu source. Any number of page images, in any mix of the
-        accepted image types, makes an image set, such as the files of a directory of scans.
+        PDF files make a PDF source, whether one document holding the whole book or the book split into parts.
+        DjVu files make a DjVu source, whether one bundled document holding the whole book, an indirect document
+        split into an index file and one file per page, or a directory of single-page DjVu files. Any number of page
+        images, in any mix of the accepted image types, makes an image set, such as the files of a directory of scans.
 
         :param names: Names of the uploaded files.
         :type names: Collection[str]
         :returns: The kind of source the files make.
         :rtype: SourceKind
-        :raises UploadRejectedError: If there are no files, a file type is not accepted, or a document file comes
-                                     together with other files.
+        :raises UploadRejectedError: If there are no files, a file type is not accepted, or files of different kinds
+                                     are mixed.
         """
         if not names:
             raise UploadRejectedError(UploadProblem.NO_FILES)
@@ -82,10 +79,9 @@ class SourceKind(LabeledStrEnum):
         if None in file_types:
             raise UploadRejectedError(UploadProblem.UNSUPPORTED_TYPE)
         kinds = {file_type.source_kind for file_type in file_types if file_type is not None}
-        kind = kinds.pop()
-        if kinds or (kind.is_single_file and len(names) > 1):
+        if len(kinds) > 1:
             raise UploadRejectedError(UploadProblem.MIXED_TYPES)
-        return kind
+        return kinds.pop()
 
 
 class ColorMode(LabeledStrEnum):
@@ -137,13 +133,10 @@ class WorkerPool(LabeledStrEnum):
 class UploadProblem(LabeledStrEnum):
     """Why an upload cannot become a source."""
 
-    NO_FILES = 'no-files', 'Choose a PDF or DjVu file, or page images, to upload.'
+    NO_FILES = 'no-files', 'Choose PDF files, DjVu files or page images to upload.'
     EMPTY_NAME = 'empty-name', 'Every uploaded file needs a name.'
     DUPLICATE_NAME = 'duplicate-name', 'Two uploaded files have the same name.'
-    MIXED_TYPES = (
-        'mixed-types',
-        'Upload exactly one PDF or DjVu file, or one or more page images, without mixing them.',
-    )
+    MIXED_TYPES = 'mixed-types', 'Upload the PDF files, the DjVu files or the page images of one book, not a mix.'
     UNSUPPORTED_TYPE = 'unsupported-type', 'Only PDF, DjVu, TIFF, JPEG, JPEG 2000 and PNG files are accepted.'
     TOO_LARGE = 'too-large', 'The upload is larger than the allowed size.'
 

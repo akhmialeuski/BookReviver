@@ -12,6 +12,7 @@ NAMES_ARG: str = 'names'
 PDF_NAME: str = 'book.pdf'
 DJVU_NAME: str = 'book.djvu'
 TIFF_NAME: str = 'page.tif'
+COVER_NAME: str = 'cover.jpg'
 
 
 class TestLabeledStrEnum:
@@ -84,15 +85,20 @@ class TestSourceKindOfFiles:
         (NAMES_ARG, EXPECTED_ARG),
         [
             ((PDF_NAME,), SourceKind.PDF),
+            # A book split into parts, one PDF per part
+            (('part1.pdf', 'part2.PDF'), SourceKind.PDF),
+            # A bundled DjVu document holds the whole book in one file
             (('book.DJVU',), SourceKind.DJVU),
+            # An indirect DjVu document is an index file and one file per page
+            (('index.djvu', 'p0001.djvu', 'p0002.djv'), SourceKind.DJVU),
             ((TIFF_NAME,), SourceKind.IMAGES),
             # A directory of scans mixing every accepted image type is one image set
             (('001.tif', '002.jpg', '003.png', '004.jp2'), SourceKind.IMAGES),
         ],
-        ids=['one-pdf', 'one-djvu', 'one-image', 'mixed-images'],
+        ids=['one-pdf', 'pdf-parts', 'bundled-djvu', 'indirect-djvu', 'one-image', 'mixed-images'],
     )
     def test_detects_kind_of_upload(self, names: tuple[str, ...], expected: SourceKind) -> None:
-        """Verify one document file makes a source of its kind and any set of page images makes an image set.
+        """Verify one or several PDF files, DjVu files, and any set of page images each make a source of their kind.
 
         :param names: File names of the upload.
         :type names: tuple[str, ...]
@@ -106,14 +112,14 @@ class TestSourceKindOfFiles:
         [
             ((), UploadProblem.NO_FILES),
             ((TIFF_NAME, 'Thumbs.db'), UploadProblem.UNSUPPORTED_TYPE),
-            ((PDF_NAME, 'b.pdf'), UploadProblem.MIXED_TYPES),
-            ((DJVU_NAME, 'cover.jpg'), UploadProblem.MIXED_TYPES),
+            ((PDF_NAME, COVER_NAME), UploadProblem.MIXED_TYPES),
+            ((DJVU_NAME, COVER_NAME), UploadProblem.MIXED_TYPES),
             ((PDF_NAME, DJVU_NAME), UploadProblem.MIXED_TYPES),
         ],
-        ids=['empty', 'unsupported', 'two-pdfs', 'djvu-with-image', 'pdf-with-djvu'],
+        ids=['empty', 'unsupported', 'pdf-with-image', 'djvu-with-image', 'pdf-with-djvu'],
     )
     def test_rejects_upload_breaking_a_rule(self, names: tuple[str, ...], problem: UploadProblem) -> None:
-        """Reject an empty upload, an unaccepted type, and a document file together with other files.
+        """Reject an empty upload, an unaccepted type, and files of different kinds.
 
         :param names: File names of the upload.
         :type names: tuple[str, ...]

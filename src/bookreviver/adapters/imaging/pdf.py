@@ -1,5 +1,9 @@
 """PDF sources read with PyMuPDF: the facts of every page, and each page written as JPEG.
 
+A book may come as one PDF or split into several parts, which are joined in the natural order of their file names,
+so ``part2.pdf`` precedes ``part10.pdf``. Pages are numbered through the whole book, each page names the part it
+comes from in ``source_file``, and the document facts of each part are reported under ``FactKey.FILES``.
+
 A scanned PDF page is described by its dominant raster image, the one covering the largest area, because its pixel
 size and placement give the resolution the page was scanned at. A page without images is described by its own size
 in points. The dictionaries PyMuPDF returns are read through the keys of ``PyMuPdfKey``, so no key is spelled twice.
@@ -20,7 +24,7 @@ import pymupdf
 from attrs import evolve
 from PIL import Image
 
-from bookreviver.adapters.imaging.common import SHA256, FactKey, is_portable_jpeg, to_mm
+from bookreviver.adapters.imaging.common import SHA256, FactKey, is_portable_jpeg, natural_order, to_mm
 from bookreviver.adapters.imaging.reader import SourceFormat
 from bookreviver.domain.enums import ColorMode, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
@@ -100,78 +104,116 @@ class PdfFormat(SourceFormat):
 
     @override
     def inspect(self, files: Sequence[Path]) -> SourceAnalysis:
-        """Describe every page of the one PDF of a source and extract its document metadata.
+        """Describe every page of a book made of one or more PDF parts, and extract the metadata of each part.
 
-        :param files: Local paths of the source files, which must be exactly one PDF.
+        :param files: Local paths of the PDF parts, in any order.
         :type files: Sequence[Path]
-        :returns: Facts of every page, the document information, outline and integrity facts, and the title and
-                  authors found in the document information.
+        :returns: Facts of every page through the whole book, the file count, total size and page count, the
+                  document information, outline and integrity facts of each part, and the title and authors found in
+                  the document information of the first part.
         :rtype: SourceAnalysis
-        :raises UnsupportedSourceError: If the source is not exactly one readable PDF without a password.
+        :raises UnsupportedSourceError: If there is no file, or a part is not a readable PDF without a password.
         """
-        if len(files) != 1:
-            err_msg = f'A PDF source is exactly one PDF file, not {len(files)} files. Upload a single PDF.'
+        if not files:
+            err_msg = 'No PDF was uploaded. Upload the PDF of the book, or all of its parts.'
             raise UnsupportedSourceError(err_msg)
-        path = files[0]
-        try:
-            document = pymupdf.open(path, filetype=PDF_FILETYPE)
-        except pymupdf.FileDataError as error:
-            err_msg = f'{path.name} cannot be read as a PDF: the file is damaged or is not a PDF. Upload an intact PDF.'
-            raise UnsupportedSourceError(err_msg) from error
-        with document:
-            # PyMuPDF opens an image as a one-page document even when asked for a PDF
-            if not document.is_pdf:
-                err_msg = f'{path.name} is not a PDF. Upload a PDF, or upload page images as an image set.'
-                raise UnsupportedSourceError(err_msg)
-            if document.needs_pass:
-                err_msg = f'{path.name} is protected by a password. Remove the password and upload the PDF again.'
-                raise UnsupportedSourceError(err_msg)
-            pages = [_page_facts(page) for page in document.pages()]
-            metadata = document.metadata or {}
-            outline = document.get_toc()
-            file_metadata: dict[str, Any] = {
-                FactKey.DOCUMENT_INFO: {
-                    key: value for key, value in metadata.items() if value and key != PyMuPdfKey.PDF_VERSION
-                },
-                FactKey.PDF_VERSION: metadata.get(PyMuPdfKey.PDF_VERSION, ''),
-                FactKey.PAGE_COUNT: document.page_count,
-                FactKey.HAS_OUTLINE: bool(outline),
-                FactKey.OUTLINE_ENTRIES: len(outline),
-                FactKey.HAS_XMP_METADATA: document.xref_xml_metadata() > 0,
-                # MuPDF silently rebuilds a damaged cross-reference table; pages past the damage may be missing
-                FactKey.REPAIRED: document.is_repaired,
-            }
-
-        with path.open('rb') as file:
-            file_metadata[FactKey.SHA256] = hashlib.file_digest(file, SHA256).hexdigest()
-        file_metadata[FactKey.FILE_SIZE_BYTES] = path.stat().st_size
+        ordered = natural_order(files)
+        pages: list[PageFacts] = []
+        parts: list[dict[str, Any]] = []
+        for path in ordered:
+            part_pages, part_metadata = _inspect_part(path)
+            pages.extend(part_pages)
+            parts.append(part_metadata)
+        first_info = parts[0][FactKey.DOCUMENT_INFO]
         suggestion = MetadataSuggestion(
-            title=(metadata.get(PyMuPdfKey.TITLE) or '').strip(),
-            authors=(metadata.get(PyMuPdfKey.AUTHOR) or '').strip(),
+            title=(first_info.get(PyMuPdfKey.TITLE) or '').strip(),
+            authors=(first_info.get(PyMuPdfKey.AUTHOR) or '').strip(),
         )
+        file_metadata: dict[str, Any] = {
+            FactKey.FILE_COUNT: len(ordered),
+            FactKey.TOTAL_SIZE_BYTES: sum(part[FactKey.FILE_SIZE_BYTES] for part in parts),
+            FactKey.PAGE_COUNT: len(pages),
+            FactKey.FILES: parts,
+        }
         return SourceAnalysis(kind=SourceKind.PDF, pages=pages, file_metadata=file_metadata, suggestion=suggestion)
 
     @override
     def extract(self, files: Sequence[Path], *, index: int, target: Path) -> None:
         """Copy the page's embedded JPEG, or render the page at the resolution of its dominant image.
 
-        :param files: Local paths of the source files, of which the first is the PDF.
+        :param files: Local paths of the PDF parts, in any order.
         :type files: Sequence[Path]
-        :param index: Position of the page in the PDF, starting at 0.
+        :param index: Position of the page through the whole book, starting at 0.
         :type index: int
         :param target: Path to write the JPEG at.
         :type target: Path
+        :raises IndexError: If the book has fewer pages than ``index + 1``.
         """
-        with pymupdf.open(files[0]) as document:
-            page = document[index]
-            if (jpeg := _embedded_jpeg(document, page)) is not None:
-                target.write_bytes(jpeg)
-                return
-            facts = _page_facts(page)
-            dpi = max(filter(None, (facts.dpi_x, facts.dpi_y)), default=BORN_DIGITAL_DPI)
-            gray = facts.color_mode in {ColorMode.GRAY, ColorMode.BILEVEL}
-            pixmap = page.get_pixmap(dpi=round(dpi), colorspace=pymupdf.csGRAY if gray else pymupdf.csRGB)
-        pixmap.save(target, output=PYMUPDF_JPEG_OUTPUT, jpg_quality=self._jpeg_quality)
+        # Position of the page inside the part that holds it, found by skipping the pages of earlier parts
+        part_index = index
+        for path in natural_order(files):
+            with pymupdf.open(path) as document:
+                if part_index >= document.page_count:
+                    part_index -= document.page_count
+                    continue
+                page = document[part_index]
+                if (jpeg := _embedded_jpeg(document, page)) is not None:
+                    target.write_bytes(jpeg)
+                    return
+                facts = _page_facts(page)
+                dpi = max(filter(None, (facts.dpi_x, facts.dpi_y)), default=BORN_DIGITAL_DPI)
+                gray = facts.color_mode in {ColorMode.GRAY, ColorMode.BILEVEL}
+                pixmap = page.get_pixmap(dpi=round(dpi), colorspace=pymupdf.csGRAY if gray else pymupdf.csRGB)
+            pixmap.save(target, output=PYMUPDF_JPEG_OUTPUT, jpg_quality=self._jpeg_quality)
+            return
+        err_msg = f'The book has no page {index}: its parts hold {index - part_index} pages.'
+        raise IndexError(err_msg)
+
+
+def _inspect_part(path: Path) -> tuple[list[PageFacts], dict[str, Any]]:
+    """Describe the pages of one PDF part and extract its document metadata.
+
+    :param path: The PDF part.
+    :type path: Path
+    :returns: Facts of every page of the part, each naming the part as its source file, and the file name,
+              document information, outline, integrity facts, checksum and size of the part.
+    :rtype: tuple[list[PageFacts], dict[str, Any]]
+    :raises UnsupportedSourceError: If the part is not a readable PDF without a password.
+    """
+    try:
+        document = pymupdf.open(path, filetype=PDF_FILETYPE)
+    except pymupdf.FileDataError as error:
+        err_msg = f'{path.name} cannot be read as a PDF: the file is damaged or is not a PDF. Upload an intact PDF.'
+        raise UnsupportedSourceError(err_msg) from error
+    with document:
+        # PyMuPDF opens an image as a one-page document even when asked for a PDF
+        if not document.is_pdf:
+            err_msg = f'{path.name} is not a PDF. Upload a PDF, or upload page images as an image set.'
+            raise UnsupportedSourceError(err_msg)
+        if document.needs_pass:
+            err_msg = f'{path.name} is protected by a password. Remove the password and upload the PDF again.'
+            raise UnsupportedSourceError(err_msg)
+        pages = [evolve(_page_facts(page), source_file=path.name) for page in document.pages()]
+        metadata = document.metadata or {}
+        outline = document.get_toc()
+        part_metadata: dict[str, Any] = {
+            FactKey.FILE_NAME: path.name,
+            FactKey.DOCUMENT_INFO: {
+                key: value for key, value in metadata.items() if value and key != PyMuPdfKey.PDF_VERSION
+            },
+            FactKey.PDF_VERSION: metadata.get(PyMuPdfKey.PDF_VERSION, ''),
+            FactKey.PAGE_COUNT: document.page_count,
+            FactKey.HAS_OUTLINE: bool(outline),
+            FactKey.OUTLINE_ENTRIES: len(outline),
+            FactKey.HAS_XMP_METADATA: document.xref_xml_metadata() > 0,
+            # MuPDF silently rebuilds a damaged cross-reference table; pages past the damage may be missing
+            FactKey.REPAIRED: document.is_repaired,
+        }
+
+    with path.open('rb') as file:
+        part_metadata[FactKey.SHA256] = hashlib.file_digest(file, SHA256).hexdigest()
+    part_metadata[FactKey.FILE_SIZE_BYTES] = path.stat().st_size
+    return pages, part_metadata
 
 
 def _page_facts(page: pymupdf.Page) -> PageFacts:

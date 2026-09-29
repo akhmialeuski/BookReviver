@@ -250,6 +250,39 @@ class TestExtractPdf:
         with Image.open(target) as rendered:
             assert rendered.size == SECOND_PDF_PAGE_SIZE_PX
 
+    async def test_counts_pages_through_parts(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
+        """Verify the index runs through the parts of a book in natural order, so page 1 is the first of part 10.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        # Passed in reverse, so only the natural order of the names puts the one-page part 2 first
+        later = write_pdf(tmp_path / 'part10.pdf', pages=[PdfPage(size_pt=size) for size in PAGE_SIZES_PT[::-1]])
+        earlier = write_pdf(tmp_path / 'part2.pdf', pages=[PdfPage(size_pt=PAGE_SIZES_PT[0])])
+        target = tmp_path / TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.PDF, [later, earlier], 1, target)
+
+        with Image.open(target) as rendered:
+            assert rendered.size == SECOND_PDF_PAGE_SIZE_PX
+
+    async def test_rejects_index_past_last_part(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
+        """Reject a page index past the end of the book and write nothing.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        pdf = write_pdf(tmp_path / PDF_NAME, pages=[PdfPage(size_pt=size) for size in PAGE_SIZES_PT])
+        target = tmp_path / TARGET_NAME
+
+        with pytest.raises(IndexError, match=r'^The book has no page 2: its parts hold 2 pages'):
+            await fx_rasterizer.extract(SourceKind.PDF, [pdf], len(PAGE_SIZES_PT), target)
+        assert not target.exists()
+
 
 class TestExtractImages:
     """Tests for PageRasterizer.extract() of an image set, served by ImageSetFormat."""

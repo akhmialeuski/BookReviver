@@ -10,13 +10,11 @@ clipped, and its colour profile kept unless the conversion changes the colour sp
 """
 
 import shutil
-from operator import attrgetter
 from typing import TYPE_CHECKING, Any, override
 
-from natsort import natsorted
 from PIL import ExifTags, Image, ImageOps
 
-from bookreviver.adapters.imaging.common import JPEG_FORMAT, FactKey, is_portable_jpeg, to_mm
+from bookreviver.adapters.imaging.common import JPEG_FORMAT, FactKey, is_portable_jpeg, natural_order, to_mm
 from bookreviver.adapters.imaging.reader import SourceFormat
 from bookreviver.domain.enums import ColorMode, FileType, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
@@ -105,7 +103,7 @@ class ImageSetFormat(SourceFormat):
         if not files:
             err_msg = f'No page images were uploaded. Upload at least one {IMAGE_TYPE_NAMES} file.'
             raise UnsupportedSourceError(err_msg)
-        ordered = _natural_order(files)
+        ordered = natural_order(files)
         pages = [_page_facts(path) for path in ordered]
         file_metadata: dict[str, Any] = {
             FactKey.FILE_COUNT: len(ordered),
@@ -127,7 +125,7 @@ class ImageSetFormat(SourceFormat):
         :param target: Path to write the JPEG at.
         :type target: Path
         """
-        path = _natural_order(files)[index]
+        path = natural_order(files)[index]
         with Image.open(path) as image:
             if is_portable_jpeg(image):
                 shutil.copyfile(path, target)
@@ -140,17 +138,6 @@ class ImageSetFormat(SourceFormat):
                 converted = upright.convert(GRAY_JPEG_MODES.get(upright.mode, RGB_MODE))
             profile = None if image.mode in PROFILE_CHANGING_MODES else image.info.get(ICC_PROFILE_KEY)
             converted.save(target, format=JPEG_FORMAT, quality=self._jpeg_quality, icc_profile=profile)
-
-
-def _natural_order(files: Sequence[Path]) -> list[Path]:
-    """Return page images in book order, the natural sort of their names, so ``page2`` precedes ``page10``.
-
-    :param files: Page images in any order.
-    :type files: Sequence[Path]
-    :returns: The same paths in book order.
-    :rtype: list[Path]
-    """
-    return natsorted(files, key=attrgetter('name'))
 
 
 def _page_facts(path: Path) -> PageFacts:
