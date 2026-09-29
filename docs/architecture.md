@@ -801,25 +801,52 @@ serves its own viewer, so the path is the deliberate choice.
 
 ## Import pipeline
 
-1. `POST /api/v1/projects/{id}/source` streams the upload into `incoming/`, validates the file set, records a job and
-   enqueues it. The response returns the job at once. `SourceKind.of_files` decides the kind from the file names, and
-   files of different kinds in one upload are refused. The kinds are:
-   - PDF files: one document with the whole book, or the book split into parts.
-   - DjVu files: one bundled document, an indirect document with an index file and a file per page, or single-page
-     DjVu files.
-   - Page images: any number of TIFF, JPEG, JPEG 2000 and PNG files, such as a directory of scans.
+An import handles every file of an upload on its own, so one broken file does not cancel the others. One import
+runs this way, where the purple steps are done by the storage ports and the green one by the imaging ports:
 
-   The files of a source are read in the natural order of their names, so `part2.pdf` precedes `part10.pdf`, and
-   pages are numbered through the whole book. The frontend offers two ways to choose them, a whole directory or
-   individual files, and both reach the API as the same list of files, so the backend has one upload path for both.
-2. The job inspects the source, promotes it, replaces the page rows and fills only empty description fields. A
-   job retried after a crash first deletes the project's `pages/` prefix, which removes the pages it cut and any
-   partial files it left, and cuts every page again.
-3. Every page gets `full.jpg`. A scanned PDF page whose content is one JPEG image is copied byte for byte. Anything
-   else is rasterised once at its native resolution.
-4. pyvips cuts `full.jpg` into an IIIF Image API 3 level 0 pyramid and a thumbnail, in a bounded pool. Each page is
-   marked ready as soon as it is done, so the viewer shows the first pages while the rest are being cut.
-5. Every step publishes progress events, which reach the browser over SSE.
+```mermaid
+flowchart TD
+    U(["POST /projects/id/sources<br/>N files"]) --> St["SourceStore.stage<br/>→ incoming/job/"]
+    St --> Ch{{"for each file:<br/>new SHA-256 and readable?"}}
+    Ch -- no --> R["rejected file,<br/>reason kept in the job"]
+    Ch -- yes --> S["Source row,<br/>promote → sources/id/"]
+    S --> C["Scan rows, full,<br/>iiif, preview, thumb"]
+    C --> P["page-split skipped:<br/>one page per new scan"]
+    style St stroke:#5b3fd1,stroke-width:2px
+    style S stroke:#5b3fd1,stroke-width:2px
+    style C stroke:#1e7a4d,stroke-width:2px
+```
+
+1. `POST /api/v1/projects/{id}/sources` streams the upload into `incoming/<job_id>/`, records an import job and
+   enqueues it, and the response returns the job at once. The frontend offers two ways to choose files, a whole
+   directory or individual files, and both reach the API as the same list of files, so the backend has one upload
+   path for both. An upload holds at most `max_upload_files` files, 10000 by default, and `max_upload_bytes`, 4 GiB
+   by default, and a larger one is refused with an RFC 9457 problem.
+2. `SourceInspector.group` splits the upload into sources. `FileType.from_name` decides the type of every file, and
+   any mix of types is accepted, because each file is a source of its own. An indirect DjVu document is assembled
+   from its index file, and one that lacks some of its page files is rejected as a whole, with the list of missing
+   files, while the other files of the upload are still imported. The files are taken in the natural order of their
+   names, so `part2.pdf` precedes `part10.pdf`, and this order becomes the order of their pages in the book.
+3. A file whose SHA-256 is already stored in the project is rejected with the name of the existing source.
+4. Every source is inspected, promoted to `sources/<source_id>/` and committed with its scans in a transaction of its
+   own. A job retried after a crash skips the sources already committed, and deletes only the version directories of
+   scans that are not marked ready.
+5. Every scan gets `full`: a scanned PDF page whose content is one fitting JPEG image, or an image file that is one,
+   is copied byte for byte, and anything else is rasterised once at its native resolution. pyvips cuts `full` into
+   the IIIF pyramid, the preview and the thumbnail, in a bounded pool. Each scan is marked ready as soon as it is done,
+   so the viewer shows the first pages while the rest are being cut. An import job that was cancelled leaves scans
+   without renditions, and the next import job of the project cuts them first.
+6. The job then runs the page split skipped: every new scan becomes a page at the end of the book, with a base
+   version `split.none` that holds a copy of the scan's image and the scan's `source_label` as its printed number.
+   The user splits spreads and arranges the pages later, in the `page-split` and `page-order` stages.
+7. Empty fields of `BookDetails` are filled from the `suggestion` of the first source that has a value for them. The
+   title is never overwritten.
+8. The job succeeds when at least one file was imported. Its result lists the files it skipped as `skipped`, each
+   with the reason, and every step publishes progress events, which reach the browser over SSE.
+
+A project runs one import at a time: a second upload while one is queued or running gets a 409 problem, and so does
+deleting a source during an import. When the DjVuLibre tools are not installed the application starts with a
+warning in its log, and every DjVu source is rejected with a message asking to install `djvulibre`.
 
 ## HTTP API
 
