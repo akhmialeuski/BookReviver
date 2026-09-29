@@ -42,7 +42,7 @@ What each concern reuses, and therefore what we do not write ourselves.
 | Running                    | `fastapi dev`, `fastapi run`, `[tool.fastapi]` entrypoint       | Server bootstrap                                 |
 | Dependency injection       | dishka, with its FastAPI and Taskiq integrations                | Container, scopes, wiring of workers             |
 | Accounts                   | fastapi-users: register, verify, reset, cookie sessions, OAuth  | Auth flows, password hashing (pwdlib argon2)     |
-| Social sign-in             | httpx-oauth: Google, Facebook, and X on its `BaseOAuth2`        | OAuth 2.0 protocol, PKCE, state                  |
+| Social sign-in             | httpx-oauth: ready-made Google and Facebook clients             | OAuth 2.0 protocol, state                        |
 | Rate limiting              | slowapi                                                         | Throttling of sign-in and registration           |
 | CSRF                       | starlette-csrf                                                  | Double-submit cookie check                       |
 | Persistence                | SQLAlchemy 2.0 async with advanced-alchemy repositories         | Generic CRUD, pagination, filters, column types  |
@@ -133,7 +133,7 @@ Every repository method takes the acting account, so a query can never cross acc
 | ----------- | --------------------------------------------------------------- | -------------- | ---------------------- |
 | Persistence | advanced-alchemy repositories on SQLAlchemy 2.0, aiosqlite      | in-memory      | PostgreSQL by URL only |
 | Storage     | Local directory tree under `data/`                              | local, tmp dir | S3-compatible storage  |
-| Mail        | Log mailer                                                      | recording fake | aiosmtplib over SMTP   |
+| Mail        | Log mailer, aiosmtplib over SMTP                                | recording fake |                        |
 | Imaging     | Source reader with PDF, image-set, DjVu formats, pyvips tiler   | fake images    | remote workers         |
 | AI engines  | pydantic-ai for cloud and Ollama models, local Surya, Tesseract | scripted fakes | more providers         |
 | Jobs        | Taskiq with the in-process broker                               | inline runner  | Taskiq with Redis      |
@@ -182,12 +182,44 @@ sign-in, verification and password reset are fastapi-users routers, whose user m
 
 ## Accounts and security
 
-- Sign-in with email and password (verified email required), or with Google, Facebook and X. A provider is enabled
-  by configuring its client identifier and secret. X gives an email address only to apps approved for it, so an X
-  sign-in without one asks the user to add and verify an email.
-- fastapi-users cookie transport with its database strategy: an opaque token in an `HttpOnly`, `Secure`,
-  `SameSite=Lax` cookie, stored server-side and revocable. No tokens in browser storage.
-- starlette-csrf guards every mutating request, slowapi throttles sign-in, registration and reset.
+Accounts use FastAPI Users instead of hand-written sign-in code, because registration, verification, password reset,
+hashing, sessions and the OAuth flow are what it already maintains. The rules that are ours sit in the user manager
+(`app/providers/accounts.py`) and in `app/security.py`.
+
+- **Sign-in.** Email and password with a verified address, or Google and Facebook. A provider is enabled by
+  configuring its client identifier and secret. A provider that returns no email address gets the error
+  `400 OAUTH_NOT_AVAILABLE_EMAIL`.
+- **Sign-in with X, future work.** X needs a fresh PKCE verifier on every authorization request, which the shared
+  OAuth router cannot supply, so it returns as a router of its own. The scenario in which a user adds and confirms an
+  address after a provider returned none comes back together with X.
+- **Session.** An opaque token in the `bookreviver_session` cookie, which is `HttpOnly` and `SameSite=Lax`, and
+  `Secure` unless `cookie_secure` is off for local development over HTTP. The database strategy stores the token in
+  the `accesstoken` table, so deleting the row revokes the session at once, which a signed token cannot do before it
+  expires. No tokens in browser storage.
+- **CSRF.** starlette-csrf with the Double Submit Cookie pattern. The check applies to every mutating request that
+  carries the `bookreviver_session` cookie, because only such a request can act as a user, and always to the six
+  sign-in paths (login, register, request verification, verify, forgot password, reset password), so a forged form
+  cannot sign a visitor into an account of the attacker. A mutating request without a session is not checked. OAuth
+  callbacks are exempt because a provider redirects to them with a GET, and FastAPI Users compares their state with
+  a cookie of its own. The frontend reads the `csrftoken` cookie and sends its value in the `x-csrftoken` header.
+  A failed check is answered with a 403 RFC 9457 problem. `ProblemCSRFMiddleware` subclasses the starlette-csrf
+  middleware and overrides its private `_get_error_response`, so its signature has to be checked whenever
+  starlette-csrf is upgraded.
+- **Rate limit.** The sign-in routes accept `10/minute;100/hour` per client address and path, and the counters are
+  kept in process memory. A server behind a reverse proxy, or one that runs several processes, needs a Redis store
+  and the real client address, otherwise every client shares the proxy's address and each process counts alone. The
+  limit is a router dependency, `include_router(..., dependencies=[throttle])`, and not a `@limiter.limit`
+  decorator, because FastAPI Users builds the routes. The empty function `count_sign_in_attempt(request)` carries
+  the decorator, since SlowApi finds the request by the parameter named `request`.
+- **Registered addresses stay private.** Registering an address that already has an account returns a response
+  indistinguishable from a new registration and mails the owner instead. `PATCH /users/me` refuses an email change
+  with 422, so an "address taken" answer cannot reveal which addresses are registered.
+- **Linking a provider to an account.** A provider sign-in whose address matches an unconfirmed account joins that
+  account. The address becomes confirmed and the password is replaced by an unknown one, so whoever registered the
+  address before anyone proved owning it can no longer sign in with that password.
+- **Password rules.** At least 12 characters, and the password must not contain the email address.
+- **Mail links.** Account messages link to `/verify-email`, `/reset-password` and `/sign-in` under
+  `settings.public_url`. Stage 2 of the delivery plan builds these pages.
 - Provider API keys are stored with `EncryptedString`, returned only masked, and decrypted only by the adapter that
   calls the provider.
 
@@ -362,8 +394,9 @@ On a server, a reverse proxy serves `/iiif` straight from disk or object storage
 ## Delivery plan
 
 1. **Core, accounts, import.** Domain, ports, services, persistence and storage adapters with contract tests,
-   accounts with email and Google (Facebook and X are configuration of the same adapter), the JSON API for projects
-   and pages, the import job with tiling, SSE, import-linter. The Jinja interface is removed.
+   accounts with email, Google and Facebook (ready-made httpx-oauth clients, while X is deferred until it has its own
+   PKCE router), the JSON API for projects and pages, the import job with tiling, SSE, import-linter. The Jinja
+   interface is removed.
 2. **Frontend shell.** Sign-in and registration, settings, project list and book details, upload with live progress.
 3. **Viewer.** OpenSeadragon book viewer with spreads, navigation, zoom, preloading and the page panel.
 4. **Processing framework.** Plugin contract and catalogue, recipes, artifacts, previews, variants, the editor layer,
