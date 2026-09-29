@@ -17,6 +17,8 @@ SIGN_IN_REQUIRED: str = 'Sign in to continue.'
 def current_actor() -> Actor:
     """Return the signed-in account.
 
+    :returns: The acting account; never returned until the accounts feature provides sign-in.
+    :rtype: Actor
     :raises Unauthorized: Until the accounts feature provides sign-in.
     """
     raise Unauthorized(SIGN_IN_REQUIRED)

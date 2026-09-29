@@ -27,8 +27,16 @@ class UnsupportedSourceError(DomainError):
 
 
 class UploadRejectedError(DomainError):
-    """The uploaded file set breaks an upload rule."""
+    """The uploaded file set breaks an upload rule.
+
+    :ivar problem: The rule the upload breaks, whose label is the error message.
+    """
 
     def __init__(self, problem: UploadProblem) -> None:
+        """Report the broken rule.
+
+        :param problem: The rule the upload breaks.
+        :type problem: UploadProblem
+        """
         super().__init__(problem.label)
         self.problem = problem

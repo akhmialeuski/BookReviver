@@ -14,12 +14,22 @@ class MemoryPersistenceProvider(Provider):
 
     @provide(scope=Scope.APP)
     def database(self) -> InMemoryDatabase:
-        """Create the empty in-memory database of the application."""
+        """Create the empty in-memory database of the application.
+
+        :returns: Database shared by every unit of work of the application.
+        :rtype: InMemoryDatabase
+        """
         return InMemoryDatabase()
 
     @provide(scope=Scope.REQUEST)
     def unit_of_work(self, database: InMemoryDatabase) -> UnitOfWork:
-        """Open a unit of work over the application's in-memory database."""
+        """Open a unit of work over the application's in-memory database.
+
+        :param database: The application's in-memory database.
+        :type database: InMemoryDatabase
+        :returns: Unit of work over a private copy of the database.
+        :rtype: UnitOfWork
+        """
         return InMemoryUnitOfWork(database)
 
 

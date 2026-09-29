@@ -19,13 +19,20 @@ pytestmark = pytest.mark.anyio
 
 PAGE_COUNT: int = 3
 EVERY_STATE: frozenset[JobState] = frozenset(JobState)
+OPERATION_ARG: str = 'operation'
+# The one single-entity operation that takes the entity rather than its identifier
+UPDATE_OPERATION: str = 'update'
 
 
 class TestProjectRepository:
     """Contract of ProjectRepository."""
 
     async def test_added_project_reads_back_after_commit(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify a committed project is visible to a later unit of work, unchanged."""
+        """Verify a committed project is visible to a later unit of work, unchanged.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
         project = make_project(owner_id=new_account_id())
         uow = await fx_uow_factory()
         await uow.projects.add(project)
@@ -33,7 +40,11 @@ class TestProjectRepository:
         assert await (await fx_uow_factory()).projects.get(project.id) == project
 
     async def test_rolled_back_project_is_gone(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify rollback discards an uncommitted project."""
+        """Verify rollback discards an uncommitted project.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
         project = make_project(owner_id=new_account_id())
         uow = await fx_uow_factory()
         await uow.projects.add(project)
@@ -42,7 +53,11 @@ class TestProjectRepository:
             await (await fx_uow_factory()).projects.get(project.id)
 
     async def test_update_replaces_details(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify an update stores the new description."""
+        """Verify an update stores the new description.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
         project = make_project(owner_id=new_account_id())
         uow = await fx_uow_factory()
         await uow.projects.add(project)
@@ -52,7 +67,11 @@ class TestProjectRepository:
         assert (await (await fx_uow_factory()).projects.get(project.id)).details == renamed.details
 
     async def test_adding_a_stored_project_raises_conflict(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify adding a project under an identifier already stored is a ConflictError, never a silent overwrite."""
+        """Verify adding a project under an identifier already stored is a ConflictError, never a silent overwrite.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
         project = make_project(owner_id=new_account_id())
         uow = await fx_uow_factory()
         await uow.projects.add(project)
@@ -62,17 +81,27 @@ class TestProjectRepository:
         with pytest.raises(ConflictError, match=str(project.id)):
             await uow.projects.add(duplicate)
 
-    @pytest.mark.parametrize('operation', ['get', 'update', 'delete'])
+    @pytest.mark.parametrize(OPERATION_ARG, ['get', UPDATE_OPERATION, 'delete'])
     async def test_missing_project_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory, operation: str) -> None:
-        """Verify every single-entity operation on an unknown project raises NotFoundError naming the project."""
+        """Verify every single-entity operation on an unknown project raises NotFoundError naming the project.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param operation: Name of the repository method called with the unknown project.
+        :type operation: str
+        """
         project = make_project(owner_id=new_account_id())
         repository = (await fx_uow_factory()).projects
-        argument = project if operation == 'update' else project.id
+        argument = project if operation == UPDATE_OPERATION else project.id
         with pytest.raises(NotFoundError, match=str(project.id)):
             await getattr(repository, operation)(argument)
 
     async def test_list_for_owner_orders_pages_and_counts(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify the owner's projects come newest first, sliced, with page counts, and others are hidden."""
+        """Verify the owner's projects come newest first, sliced, with page counts, and others are hidden.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
         owner_id = new_account_id()
         older, newer = make_project(owner_id=owner_id, minutes=1), make_project(owner_id=owner_id, minutes=2)
         uow = await fx_uow_factory()
@@ -93,7 +122,11 @@ class TestProjectRepository:
         assert_expectations()
 
     async def test_list_for_owner_breaks_ties_by_identifier(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify projects updated at the same moment list by identifier, so offset paging never skips or repeats one."""
+        """Verify projects updated at the same moment list by identifier, so offset paging never skips or repeats one.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
         owner_id = new_account_id()
         tied = sorted((make_project(owner_id=owner_id, minutes=1) for _ in range(PAGE_COUNT)), key=attrgetter('id'))
         uow = await fx_uow_factory()
@@ -113,7 +146,11 @@ class TestProjectRepository:
         assert_expectations()
 
     async def test_delete_cascades_to_pages_and_jobs(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify deleting a project removes its pages and jobs and leaves other projects alone."""
+        """Verify deleting a project removes its pages and jobs and leaves other projects alone.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
         owner_id = new_account_id()
         doomed, kept = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         uow = await fx_uow_factory()
@@ -137,7 +174,11 @@ class TestPageRepository:
     """Contract of PageRepository."""
 
     async def test_replace_lists_in_book_order_and_slices(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify replacing pages drops the old set and lists the new one by index."""
+        """Verify replacing pages drops the old set and lists the new one by index.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
         project = make_project(owner_id=new_account_id())
         uow = await fx_uow_factory()
         await uow.projects.add(project)
@@ -155,7 +196,11 @@ class TestPageRepository:
         assert_expectations()
 
     async def test_slice_past_the_end_reports_the_full_total(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify an empty slice past the last page still reports every page, which pagination controls rely on."""
+        """Verify an empty slice past the last page still reports every page, which pagination controls rely on.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
         project = make_project(owner_id=new_account_id())
         uow = await fx_uow_factory()
         await uow.projects.add(project)
@@ -171,7 +216,11 @@ class TestPageRepository:
         assert_expectations()
 
     async def test_replace_stores_pages_under_the_given_project(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify a page naming another project is stored under the replaced one, so no caller writes across books."""
+        """Verify a page naming another project is stored under the replaced one, so no caller writes across books.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
         owner_id = new_account_id()
         target, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         uow = await fx_uow_factory()
@@ -185,7 +234,11 @@ class TestPageRepository:
         assert_expectations()
 
     async def test_update_and_get_round_trip(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify an updated page, including its assets, reads back unchanged."""
+        """Verify an updated page, including its assets, reads back unchanged.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
         project = make_project(owner_id=new_account_id())
         uow = await fx_uow_factory()
         await uow.projects.add(project)
@@ -199,14 +252,22 @@ class TestPageRepository:
     async def test_replacing_pages_of_a_missing_project_raises_not_found(
         self, fx_uow_factory: UnitOfWorkFactory
     ) -> None:
-        """Verify pages cannot be stored for a project that does not exist, so no page outlives its book."""
+        """Verify pages cannot be stored for a project that does not exist, so no page outlives its book.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
         project_id = make_project(owner_id=new_account_id()).id
         uow = await fx_uow_factory()
         with pytest.raises(NotFoundError, match=str(project_id)):
             await uow.pages.replace_for_project(project_id, [make_page(project_id=project_id, index=0)])
 
     async def test_missing_page_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify reading a page that does not exist raises NotFoundError naming its project."""
+        """Verify reading a page that does not exist raises NotFoundError naming its project.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
         project = make_project(owner_id=new_account_id())
         uow = await fx_uow_factory()
         await uow.projects.add(project)
@@ -218,7 +279,11 @@ class TestJobRepository:
     """Contract of JobRepository."""
 
     async def test_list_filters_by_state_newest_first(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify only jobs in the asked states are listed, newest first."""
+        """Verify only jobs in the asked states are listed, newest first.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
         project = make_project(owner_id=new_account_id())
         old = make_job(project_id=project.id, state=JobState.RUNNING, minutes=1)
         new = make_job(project_id=project.id, state=JobState.QUEUED, minutes=2)
@@ -232,7 +297,11 @@ class TestJobRepository:
         assert [job.id for job in active] == [new.id, old.id]
 
     async def test_job_of_a_missing_project_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify a job cannot be stored for a project that does not exist, so no job outlives its book."""
+        """Verify a job cannot be stored for a project that does not exist, so no job outlives its book.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
         project_id = make_project(owner_id=new_account_id()).id
         uow = await fx_uow_factory()
         with pytest.raises(NotFoundError, match=str(project_id)):
@@ -243,7 +312,11 @@ class TestUnitOfWork:
     """Contract of UnitOfWork isolation between concurrent units."""
 
     async def test_concurrent_commits_keep_each_others_changes(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify a commit publishes only its own changes and never reverts another unit's commit."""
+        """Verify a commit publishes only its own changes and never reverts another unit's commit.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
         owner_id = new_account_id()
         first, second = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         # Both units start before either commits, as two overlapping requests do

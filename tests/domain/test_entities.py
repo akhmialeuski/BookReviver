@@ -33,5 +33,13 @@ class TestProgress:
 
     @pytest.mark.parametrize(('done', 'total', 'fraction'), [(0, 0, 0.0), (1, 4, 0.25), (4, 4, 1.0)])
     def test_fraction(self, done: int, total: int, fraction: float) -> None:
-        """Verify the fraction is done over total, and zero while the total is unknown."""
+        """Verify the fraction is done over total, and zero while the total is unknown.
+
+        :param done: Steps completed.
+        :type done: int
+        :param total: Steps in all, zero while unknown.
+        :type total: int
+        :param fraction: Fraction the progress must report.
+        :type fraction: float
+        """
         assert Progress(done=done, total=total).fraction == fraction

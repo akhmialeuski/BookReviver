@@ -28,6 +28,7 @@ class TestInProcessEventBus:
         received: list[DomainEvent] = []
 
         async def listen() -> None:
+            """Record the first event delivered to the subscriber of ``mine`` and stop."""
             async for event in bus.subscribe(mine.id):
                 received.append(event)
                 return

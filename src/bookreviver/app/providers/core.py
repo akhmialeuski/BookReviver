@@ -18,5 +18,11 @@ class CoreProvider(Provider):
 
     @provide
     def event_bus(self, settings: Settings) -> AnyOf[InProcessEventBus, EventPublisher, EventStream]:
-        """Build the in-process event bus that serves both publishers and SSE subscribers."""
+        """Build the in-process event bus that serves both publishers and SSE subscribers.
+
+        :param settings: Application settings, of which ``event_queue_size`` is read.
+        :type settings: Settings
+        :returns: One bus provided as itself, as the publisher port and as the stream port.
+        :rtype: AnyOf[InProcessEventBus, EventPublisher, EventStream]
+        """
         return InProcessEventBus(queue_size=settings.event_queue_size)

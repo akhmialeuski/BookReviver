@@ -5,7 +5,10 @@ from typing import Self
 
 
 class LabeledStrEnum(enum.StrEnum):
-    """A string enum whose members are declared as ``(value, label)`` pairs."""
+    """A string enum whose members are declared as ``(value, label)`` pairs.
+
+    :ivar label: Human-readable name of the member, shown in the interface and in error messages.
+    """
 
     label: str
 
@@ -14,6 +17,13 @@ class LabeledStrEnum(enum.StrEnum):
 
         Looking a member up by value, as in ``Stage('import')``, does not call this, so the default only keeps that
         call well-typed.
+
+        :param value: String value of the member, stored and sent over the API.
+        :type value: str
+        :param label: Human-readable name of the member.
+        :type label: str
+        :returns: The new member.
+        :rtype: Self
         """
         member = str.__new__(cls, value)
         member._value_ = value
@@ -119,7 +129,13 @@ class FileType(LabeledStrEnum):
 
     @classmethod
     def from_name(cls, name: str) -> FileType | None:
-        """Return the type of a file by its name, or None when the suffix is not accepted."""
+        """Return the type of a file by its name, or None when the suffix is not accepted.
+
+        :param name: File name, compared by its suffix in any letter case.
+        :type name: str
+        :returns: The accepted file type with this suffix, or None.
+        :rtype: FileType | None
+        """
         suffix = name[name.rfind('.') :].lower() if '.' in name else ''
         return next((file_type for file_type in cls if suffix in file_type.suffixes), None)
 

@@ -82,6 +82,11 @@ class Unexpected(ApiProblem):
     http_status = HTTPStatus.INTERNAL_SERVER_ERROR
 
     def __init__(self, *_details: object) -> None:
+        """Create the problem with a fixed detail, whatever the error said.
+
+        :param _details: Arguments fastapi-problem passes from the unhandled error, deliberately ignored.
+        :type _details: object
+        """
         super().__init__(UNEXPECTED_DETAIL)
 
 
@@ -96,7 +101,13 @@ PROBLEM_BY_ERROR: dict[type[DomainError], type[ApiProblem]] = {
 
 
 def _problem_for(error: DomainError) -> Problem:
-    """Return the problem that reports ``error`` to an API client."""
+    """Return the problem that reports ``error`` to an API client.
+
+    :param error: Domain error a service raised.
+    :type error: DomainError
+    :returns: Problem of the error's class, whose detail is the error's message except for a missing resource.
+    :rtype: Problem
+    """
     if isinstance(error, UploadRejectedError) and error.problem is UploadProblem.TOO_LARGE:
         return ContentTooLarge(error.problem.label)
     if isinstance(error, NotFoundError):
@@ -107,12 +118,28 @@ def _problem_for(error: DomainError) -> Problem:
 
 
 def _handle(_handler: ExceptionHandler, _request: Request, error: DomainError) -> Problem:
-    """Adapt ``_problem_for`` to fastapi-problem's handler signature."""
+    """Adapt ``_problem_for`` to fastapi-problem's handler signature.
+
+    :param _handler: The exception handler calling this function, unused.
+    :type _handler: ExceptionHandler
+    :param _request: Request that raised the error, unused.
+    :type _request: Request
+    :param error: Domain error a service raised.
+    :type error: DomainError
+    :returns: Problem reporting the error.
+    :rtype: Problem
+    """
     return _problem_for(error)
 
 
 def problem_handler(logger: Logger) -> ExceptionHandler:
-    """Build the exception handler that answers every error with a problem document."""
+    """Build the exception handler that answers every error with a problem document.
+
+    :param logger: Logger receiving unhandled errors with their traceback.
+    :type logger: Logger
+    :returns: Handler registered once in ``app`` for every exception.
+    :rtype: ExceptionHandler
+    """
     handlers: dict[type[Exception], Callable[..., Problem]] = {DomainError: _handle}
     # The default wrapper would put ``str(exc)`` of an unhandled error into the response
     return new_exception_handler(logger=logger, handlers=handlers, unhandled_wrappers={'default': Unexpected})
