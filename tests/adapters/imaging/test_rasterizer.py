@@ -29,6 +29,7 @@ CMYK_MODE: str = 'CMYK'
 GRAY_16_MODE: str = 'I;16'
 TIF_SUFFIX: str = '.tif'
 PNG_SUFFIX: str = '.png'
+JP2_SUFFIX: str = '.jp2'
 TIFF_NAME: str = 'page.tif'
 PAGE_STEM: str = 'page'
 
@@ -112,7 +113,7 @@ def _gray_at(image: Image.Image, xy: tuple[int, int]) -> int:
 
 
 class TestExtractPdf:
-    """Tests for PdfImagePageRasterizer.extract() of a PDF page."""
+    """Tests for PageRasterizer.extract() of a PDF page, served by PdfFormat."""
 
     @pytest.mark.parametrize(
         CASE_ARG,
@@ -251,7 +252,7 @@ class TestExtractPdf:
 
 
 class TestExtractImages:
-    """Tests for PdfImagePageRasterizer.extract() of an image set."""
+    """Tests for PageRasterizer.extract() of an image set, served by ImageSetFormat."""
 
     async def test_picks_page_in_natural_order(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
         """Verify the index counts pages in the natural order of their names, not the upload order.
@@ -303,6 +304,8 @@ class TestExtractImages:
             ConvertedImageCase(mode='LAB', suffix=TIF_SUFFIX, jpeg_mode=RGB_MODE),
             # A CMYK JPEG is re-encoded, since browsers disagree on how to show one
             ConvertedImageCase(mode=CMYK_MODE, suffix='.jpg', jpeg_mode=RGB_MODE),
+            ConvertedImageCase(mode=GRAY_MODE, suffix=JP2_SUFFIX, jpeg_mode=GRAY_MODE),
+            ConvertedImageCase(mode=RGB_MODE, suffix=JP2_SUFFIX, jpeg_mode=RGB_MODE),
         ],
         ids=lambda case: f'{case.mode}{case.suffix}',
     )

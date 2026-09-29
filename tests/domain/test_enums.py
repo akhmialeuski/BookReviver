@@ -2,10 +2,16 @@
 
 import pytest
 
-from bookreviver.domain.enums import FileType, JobState, SourceKind, Stage
+from bookreviver.domain.enums import FileType, JobState, SourceKind, Stage, UploadProblem
+from bookreviver.domain.errors import UploadRejectedError
 
 # Written out rather than taken from the enum, so the test pins the value stored and sent over the API
 PAGE_SPLIT_VALUE: str = 'page-split'
+EXPECTED_ARG: str = 'expected'
+NAMES_ARG: str = 'names'
+PDF_NAME: str = 'book.pdf'
+DJVU_NAME: str = 'book.djvu'
+TIFF_NAME: str = 'page.tif'
 
 
 class TestLabeledStrEnum:
@@ -24,13 +30,17 @@ class TestFileType:
     """Tests for FileType.from_name()."""
 
     @pytest.mark.parametrize(
-        ('name', 'expected'),
+        ('name', EXPECTED_ARG),
         [
             ('book.PDF', FileType.PDF),
             ('scan_001.tif', FileType.TIFF),
             ('scan.TIFF', FileType.TIFF),
             ('page.jpeg', FileType.JPEG),
             ('page.png', FileType.PNG),
+            ('page.jp2', FileType.JPEG_2000),
+            ('page.J2K', FileType.JPEG_2000),
+            (DJVU_NAME, FileType.DJVU),
+            ('book.djv', FileType.DJVU),
             ('notes.txt', None),
             ('no-suffix', None),
         ],
@@ -47,10 +57,17 @@ class TestFileType:
 
     @pytest.mark.parametrize(
         ('file_type', 'kind'),
-        [(FileType.PDF, SourceKind.PDF), (FileType.TIFF, SourceKind.IMAGES), (FileType.PNG, SourceKind.IMAGES)],
+        [
+            (FileType.PDF, SourceKind.PDF),
+            (FileType.DJVU, SourceKind.DJVU),
+            (FileType.TIFF, SourceKind.IMAGES),
+            (FileType.JPEG, SourceKind.IMAGES),
+            (FileType.JPEG_2000, SourceKind.IMAGES),
+            (FileType.PNG, SourceKind.IMAGES),
+        ],
     )
     def test_source_kind(self, file_type: FileType, kind: SourceKind) -> None:
-        """Verify a PDF makes a PDF source and every image type makes an image set.
+        """Verify a PDF and a DjVu file make a source of their own kind, and every image type makes an image set.
 
         :param file_type: Accepted file type.
         :type file_type: FileType
@@ -58,6 +75,54 @@ class TestFileType:
         :type kind: SourceKind
         """
         assert file_type.source_kind == kind
+
+
+class TestSourceKindOfFiles:
+    """Tests for SourceKind.of_files()."""
+
+    @pytest.mark.parametrize(
+        (NAMES_ARG, EXPECTED_ARG),
+        [
+            ((PDF_NAME,), SourceKind.PDF),
+            (('book.DJVU',), SourceKind.DJVU),
+            ((TIFF_NAME,), SourceKind.IMAGES),
+            # A directory of scans mixing every accepted image type is one image set
+            (('001.tif', '002.jpg', '003.png', '004.jp2'), SourceKind.IMAGES),
+        ],
+        ids=['one-pdf', 'one-djvu', 'one-image', 'mixed-images'],
+    )
+    def test_detects_kind_of_upload(self, names: tuple[str, ...], expected: SourceKind) -> None:
+        """Verify one document file makes a source of its kind and any set of page images makes an image set.
+
+        :param names: File names of the upload.
+        :type names: tuple[str, ...]
+        :param expected: Kind of source the upload must make.
+        :type expected: SourceKind
+        """
+        assert SourceKind.of_files(names) == expected
+
+    @pytest.mark.parametrize(
+        (NAMES_ARG, 'problem'),
+        [
+            ((), UploadProblem.NO_FILES),
+            ((TIFF_NAME, 'Thumbs.db'), UploadProblem.UNSUPPORTED_TYPE),
+            ((PDF_NAME, 'b.pdf'), UploadProblem.MIXED_TYPES),
+            ((DJVU_NAME, 'cover.jpg'), UploadProblem.MIXED_TYPES),
+            ((PDF_NAME, DJVU_NAME), UploadProblem.MIXED_TYPES),
+        ],
+        ids=['empty', 'unsupported', 'two-pdfs', 'djvu-with-image', 'pdf-with-djvu'],
+    )
+    def test_rejects_upload_breaking_a_rule(self, names: tuple[str, ...], problem: UploadProblem) -> None:
+        """Reject an empty upload, an unaccepted type, and a document file together with other files.
+
+        :param names: File names of the upload.
+        :type names: tuple[str, ...]
+        :param problem: The upload rule the names break.
+        :type problem: UploadProblem
+        """
+        with pytest.raises(UploadRejectedError) as error:
+            SourceKind.of_files(names)
+        assert error.value.problem is problem
 
 
 class TestJobState:

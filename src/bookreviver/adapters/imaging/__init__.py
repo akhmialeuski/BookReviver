@@ -1,7 +1,9 @@
-"""Imaging adapters: PyMuPDF and Pillow read and rasterise sources, libvips cuts tiles."""
+"""Imaging adapters: one reader dispatching to a format per kind of source, and libvips cutting tiles."""
 
-from bookreviver.adapters.imaging.inspector import PdfImageSourceInspector
-from bookreviver.adapters.imaging.rasterizer import PdfImagePageRasterizer
+from bookreviver.adapters.imaging.djvu import DjvuFormat
+from bookreviver.adapters.imaging.images import ImageSetFormat
+from bookreviver.adapters.imaging.pdf import PdfFormat
+from bookreviver.adapters.imaging.reader import SourceFormat, SourceReader
 from bookreviver.adapters.imaging.tiler import VipsTiler
 
-__all__ = ['PdfImagePageRasterizer', 'PdfImageSourceInspector', 'VipsTiler']
+__all__ = ['DjvuFormat', 'ImageSetFormat', 'PdfFormat', 'SourceFormat', 'SourceReader', 'VipsTiler']

@@ -134,13 +134,21 @@ Every repository method takes the acting account, so a query can never cross acc
 | Persistence | advanced-alchemy repositories on SQLAlchemy 2.0, aiosqlite      | in-memory      | PostgreSQL by URL only |
 | Storage     | Local directory tree under `data/`                              | local, tmp dir | S3-compatible storage  |
 | Mail        | Log mailer                                                      | recording fake | aiosmtplib over SMTP   |
-| Imaging     | PyMuPDF and Pillow inspector and rasterizer, pyvips tiler       | fake images    | remote workers         |
+| Imaging     | Source reader with PDF, image-set, DjVu formats, pyvips tiler   | fake images    | remote workers         |
 | AI engines  | pydantic-ai for cloud and Ollama models, local Surya, Tesseract | scripted fakes | more providers         |
 | Jobs        | Taskiq with the in-process broker                               | inline runner  | Taskiq with Redis      |
 | Events      | In-process broadcast                                            | in-memory      | Redis pub/sub          |
 
 The storage ports hand out local paths for the imaging libraries to read and write, so the storage test adapter is
 the local one over a temporary directory rather than an in-memory store.
+
+One `SourceReader` implements both `SourceInspector` and `PageRasterizer`, and hands each call to the `SourceFormat`
+registered for the `SourceKind` of the source: `PdfFormat` (PyMuPDF), `ImageSetFormat` (Pillow) and `DjvuFormat`. Each
+format holds both the inspection and the page extraction of its kind, in a module of its own under
+`adapters/imaging/`. The imaging provider registers the formats, and the reader refuses to start unless every kind has
+exactly one. Supporting another kind of source is a new `SourceKind` member, a new format and one entry in the
+provider. `DjvuFormat` refuses every source for now, so a DjVu upload is accepted and fails its import with a clear
+message until reading DjVu pages is written.
 
 The persistence adapter keeps its table classes private and maps rows to domain entities in one mapper per entity.
 Each port repository wraps an advanced-alchemy `SQLAlchemyAsyncRepository`, so generic queries come from the library
@@ -241,13 +249,14 @@ instead of replacing the first. Asset keys never name or hold a project's `sourc
 the source store alone. A tile pyramid's `info.json`
 carries as `id` the path of the IIIF route that serves it, passed to the `Tiler` port, because the viewer builds tile
 URLs from it. The path has no scheme or host, so a change of domain, port or the address a device uses leaves the
-cut pyramids valid. IIIF formally asks for an absolute URI there; OpenSeadragon resolves a path, and BookReviver
+cut pyramids valid. IIIF formally asks for an absolute URI there, but OpenSeadragon resolves a path, and BookReviver
 serves its own viewer, so the path is the deliberate choice.
 
 ## Import pipeline
 
 1. `POST /api/v1/projects/{id}/source` streams the upload into `incoming/`, validates the file set, records a job and
-   enqueues it. The response returns the job at once.
+   enqueues it. The response returns the job at once. `SourceKind.of_files` decides the kind from the file names: one
+   PDF, one DjVu file, or any number of TIFF, JPEG, JPEG 2000 and PNG page images, such as a directory of scans.
 2. The job inspects the source, promotes it, replaces the page rows and fills only empty description fields. A
    job retried after a crash first deletes the project's `pages/` prefix, which removes the pages it cut and any
    partial files it left, and cuts every page again.

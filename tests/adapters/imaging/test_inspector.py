@@ -9,7 +9,7 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import ExifTags
 
-from bookreviver.adapters.imaging.inspector import FactKey
+from bookreviver.adapters.imaging.common import FactKey
 from bookreviver.domain.enums import ColorMode, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
 from bookreviver.domain.values import MetadataSuggestion
@@ -33,6 +33,7 @@ PAGE_STEM: str = 'page'
 TIF_SUFFIX: str = '.tif'
 PNG_SUFFIX: str = '.png'
 JPG_SUFFIX: str = '.jpg'
+JP2_SUFFIX: str = '.jp2'
 RESOLUTION_SUFFIXES: tuple[str, ...] = (TIF_SUFFIX, PNG_SUFFIX, JPG_SUFFIX)
 JPEG: str = 'JPEG'
 PNG: str = 'PNG'
@@ -182,7 +183,7 @@ class ImageModeCase(NamedTuple):
 
 
 class TestInspectPdf:
-    """Tests for PdfImageSourceInspector.inspect() of a PDF source."""
+    """Tests for SourceInspector.inspect() of a PDF source, served by PdfFormat."""
 
     async def test_describes_every_page_in_order(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
         """Verify one entry per page, in page order.
@@ -415,7 +416,7 @@ class TestInspectPdf:
 
 
 class TestInspectImages:
-    """Tests for PdfImageSourceInspector.inspect() of an image set."""
+    """Tests for SourceInspector.inspect() of an image set, served by ImageSetFormat."""
 
     async def test_orders_pages_naturally(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
         """Verify page2 comes before page10 whatever the upload order.
@@ -446,6 +447,8 @@ class TestInspectImages:
             ImageModeCase(mode=CMYK_MODE, suffix='.jpeg', color_mode=ColorMode.COLOR, bits_per_component=8),
             ImageModeCase(mode='LAB', suffix='.tiff', color_mode=ColorMode.COLOR, bits_per_component=8),
             ImageModeCase(mode='P', suffix=PNG_SUFFIX, color_mode=ColorMode.COLOR, bits_per_component=8),
+            ImageModeCase(mode='L', suffix=JP2_SUFFIX, color_mode=ColorMode.GRAY, bits_per_component=8),
+            ImageModeCase(mode=RGB_MODE, suffix=JP2_SUFFIX, color_mode=ColorMode.COLOR, bits_per_component=8),
             # A 32-bit float scan has no mapping and must not be guessed
             ImageModeCase(mode='F', suffix=TIF_SUFFIX, color_mode=ColorMode.UNKNOWN, bits_per_component=None),
         ],
