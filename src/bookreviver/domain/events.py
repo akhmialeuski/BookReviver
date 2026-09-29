@@ -11,21 +11,30 @@ if TYPE_CHECKING:
 
 @frozen(kw_only=True)
 class DomainEvent:
-    """Something that happened within one project."""
+    """Something that happened within one project.
+
+    :ivar project_id: Project the event belongs to, whose subscribers receive it.
+    """
 
     project_id: ProjectId
 
 
 @frozen(kw_only=True)
 class JobChanged(DomainEvent):
-    """A job changed state or progress."""
+    """A job changed state or progress.
+
+    :ivar job: The job in its new state.
+    """
 
     job: Job
 
 
 @frozen(kw_only=True)
 class PageReady(DomainEvent):
-    """The derived images of a page can be shown."""
+    """The derived images of a page can be shown.
+
+    :ivar page: The page whose assets are ready.
+    """
 
     page: Page
 
