@@ -205,7 +205,8 @@ indistinguishable to the application.
   artifacts of later stages stale.
 - Manual edits are inputs: a frame or mesh drawn by the user becomes the geometry a crop or dewarp processor reads,
   and an eraser stroke becomes a mask.
-- First plugins, in delivery order: page split, deskew, perspective crop by quad, dewarp by mesh, despeckle, eraser
+- First plugins, in delivery order: page split, deskew, perspective crop by quad, dewarp by mesh, despeckle,
+  binarisation (a cleanup step of its own, so the despeckled and the binarised page are separate artifacts), eraser
   mask, layout regions (text versus illustration), background separation, background unification (white, aged paper
   texture, custom colour, consistent across the book), recognition, proofreading.
 - Heavy plugins declare optional dependency groups (`bookreviver[cv]`, `[gpu]`, `[llm]`) installed only on the
