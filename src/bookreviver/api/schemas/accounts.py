@@ -29,6 +29,11 @@ class AccountUpdate(RequestModel, schemas.BaseUserUpdate):
     @field_validator('email')
     @classmethod
     def refuse_email_change(cls, email: str | None) -> None:
-        """Refuse a new address, since answering "address taken" would tell which addresses are registered."""
+        """Refuse a new address, since answering "address taken" would tell which addresses are registered.
+
+        :param email: New address of the request, or ``None`` when the request leaves it alone.
+        :type email: str | None
+        :raises ValueError: If an address is given; FastAPI reports it as a validation problem.
+        """
         if email is not None:
             raise ValueError(EMAIL_CHANGE_REFUSED)

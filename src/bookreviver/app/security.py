@@ -40,16 +40,31 @@ class ProblemCSRFMiddleware(CSRFMiddleware):
 
     @override
     def _get_error_response(self, request: Request) -> Response:
+        """Build the answer to a request that fails the CSRF check.
+
+        :param request: The refused request, unused since the answer does not depend on it.
+        :type request: Request
+        :returns: A 403 problem document.
+        :rtype: Response
+        """
         problem = Forbidden(CSRF_FAILED)
         return JSONResponse(problem.marshal(), status_code=problem.status, media_type=PROBLEM_MEDIA_TYPE)
 
 
 async def count_sign_in_attempt(request: Request) -> None:
-    """Count one attempt; the slowapi limit wrapped around this raises once the caller has used up the limit."""
+    """Count one attempt; the slowapi limit wrapped around this raises once the caller has used up the limit.
+
+    :param request: The request being counted; slowapi finds it by this parameter name.
+    :type request: Request
+    """
 
 
 def sign_in_throttle() -> params.Depends:
-    """Build the dependency that limits sign-in attempts per client address, with counters of its own."""
+    """Build the dependency that limits sign-in attempts per client address, with counters of its own.
+
+    :returns: Dependency to attach to the sign-in routers.
+    :rtype: params.Depends
+    """
     limiter = Limiter(key_func=get_remote_address)
     return params.Depends(limiter.limit(SIGN_IN_ATTEMPTS)(count_sign_in_attempt))
 

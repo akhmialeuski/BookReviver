@@ -38,14 +38,24 @@ AUTHORIZE_SUFFIX: str = '/authorize'
 
 
 class ProviderCase(NamedTuple):
-    """Providers configured in the settings and the sign-in routes the API then offers."""
+    """Providers configured in the settings and the sign-in routes the API then offers.
+
+    :ivar configured: Names of the providers whose credentials are set.
+    :ivar offered: Names of the providers that get sign-in routes.
+    """
 
     configured: frozenset[str]
     offered: frozenset[str]
 
 
 def _google_api(request: httpx.Request) -> httpx.Response:
-    """Answer the token exchange and the profile lookup as Google would."""
+    """Answer the token exchange and the profile lookup as Google would.
+
+    :param request: Request the OAuth client sends to Google.
+    :type request: httpx.Request
+    :returns: A token for the token endpoint, a profile for anything else.
+    :rtype: httpx.Response
+    """
     if str(request.url) == ACCESS_TOKEN_ENDPOINT:
         return httpx.Response(HTTPStatus.OK, json={ACCESS_TOKEN_FIELD: ACCESS_TOKEN, 'expires_in': 3600})
     profile = {'resourceName': PROVIDER_ACCOUNT_ID, 'emailAddresses': [{'value': EMAIL, 'metadata': {'primary': True}}]}
@@ -53,12 +63,24 @@ def _google_api(request: httpx.Request) -> httpx.Response:
 
 
 def _google_client(_client: object) -> httpx.AsyncClient:
-    """Return an HTTP client whose requests reach the fake Google instead of the network."""
+    """Return an HTTP client whose requests reach the fake Google instead of the network.
+
+    :param _client: The OAuth client this replaces ``get_httpx_client`` of, unused.
+    :type _client: object
+    :returns: Client over a mock transport answering as Google.
+    :rtype: httpx.AsyncClient
+    """
     return httpx.AsyncClient(transport=httpx.MockTransport(_google_api))
 
 
 def _query(url: str) -> dict[str, str]:
-    """Return the query parameters of ``url``, one value each."""
+    """Return the query parameters of ``url``, one value each.
+
+    :param url: URL to read.
+    :type url: str
+    :returns: Query parameter names with their first values.
+    :rtype: dict[str, str]
+    """
     return {name: values[0] for name, values in parse_qs(urlsplit(url).query).items()}
 
 
@@ -75,7 +97,13 @@ class TestOAuthRouters:
         ids=['none', 'google', 'all'],
     )
     def test_only_configured_providers_are_offered(self, fx_settings: Settings, case: ProviderCase) -> None:
-        """Verify a provider gets sign-in routes exactly when its client identifier and secret are set."""
+        """Verify a provider gets sign-in routes exactly when its client identifier and secret are set.
+
+        :param fx_settings: Settings of the suite.
+        :type fx_settings: Settings
+        :param case: Providers to configure and the ones expected to be offered.
+        :type case: ProviderCase
+        """
         auth = fx_settings.auth.model_copy(update=dict.fromkeys(case.configured, CONFIGURED))
         app = create_app(fx_settings.model_copy(update={AUTH_SETTINGS: auth}))
         paths = app.openapi()['paths']
@@ -88,11 +116,23 @@ class TestGoogleSignIn:
 
     @pytest.fixture
     def fx_settings(self, fx_settings: Settings) -> Settings:
-        """Return the suite's settings with Google sign-in configured."""
+        """Return the suite's settings with Google sign-in configured.
+
+        :param fx_settings: Settings of the suite, which this fixture extends.
+        :type fx_settings: Settings
+        :returns: The same settings with Google credentials set.
+        :rtype: Settings
+        """
         return fx_settings.model_copy(update={AUTH_SETTINGS: fx_settings.auth.model_copy(update={GOOGLE: CONFIGURED})})
 
     async def _sign_in_with_google(self, client: httpx.AsyncClient) -> httpx.Response:
-        """Start the sign-in, then come back to the callback as Google's redirect would, without a CSRF token."""
+        """Start the sign-in, then come back to the callback as Google's redirect would, without a CSRF token.
+
+        :param client: Signed-out client of the application.
+        :type client: httpx.AsyncClient
+        :returns: Response of the callback route.
+        :rtype: httpx.Response
+        """
         authorize = await client.get(f'{AUTH_PATH}/{GOOGLE}{AUTHORIZE_SUFFIX}')
         state = _query(authorize.json()['authorization_url'])[STATE]
         params = {'code': AUTHORIZATION_CODE, STATE: state}
@@ -102,7 +142,13 @@ class TestGoogleSignIn:
     async def test_callback_creates_verified_account_and_signs_in(
         self, fx_visitor: Visitor, fx_mailer: RecordingMailer
     ) -> None:
-        """Verify a first Google sign-in creates a verified account, signs it in and sends no mail."""
+        """Verify a first Google sign-in creates a verified account, signs it in and sends no mail.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        :param fx_mailer: Recording mailer of the application.
+        :type fx_mailer: RecordingMailer
+        """
         callback = await self._sign_in_with_google(fx_visitor.client)
         me = await fx_visitor.client.get(ME_PATH)
         account = AccountRead.model_validate(me.json())
@@ -115,7 +161,11 @@ class TestGoogleSignIn:
 
     @patch(GOOGLE_HTTP_CLIENT, _google_client)
     async def test_callback_takes_over_unverified_account_of_the_address(self, fx_visitor: Visitor) -> None:
-        """Verify Google joins the unverified account of its address, verifies it and retires its password."""
+        """Verify Google joins the unverified account of its address, verifies it and retires its password.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        """
         registered = AccountRead.model_validate((await fx_visitor.register(EMAIL)).json())
         await self._sign_in_with_google(fx_visitor.client)
         account = AccountRead.model_validate((await fx_visitor.client.get(ME_PATH)).json())

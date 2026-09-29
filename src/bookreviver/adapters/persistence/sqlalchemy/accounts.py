@@ -40,6 +40,11 @@ class AccountDatabase(SQLAlchemyUserDatabase[AccountTable, UUID]):
     """Users and their linked provider accounts in the request's session."""
 
     def __init__(self, session: AsyncSession) -> None:
+        """Read and write users through ``session``.
+
+        :param session: Session of the current request.
+        :type session: AsyncSession
+        """
         super().__init__(session, AccountTable, OAuthAccountTable)
 
 
@@ -47,4 +52,9 @@ class AccessTokenDatabase(SQLAlchemyAccessTokenDatabase[AccessTokenTable]):
     """Session tokens in the request's session."""
 
     def __init__(self, session: AsyncSession) -> None:
+        """Read and write session tokens through ``session``.
+
+        :param session: Session of the current request.
+        :type session: AsyncSession
+        """
         super().__init__(session, AccessTokenTable)

@@ -16,4 +16,9 @@ class LogMailer(Mailer):
 
     @override
     async def send(self, message: MailMessage) -> None:
+        """Write the message to the log at info level.
+
+        :param message: Message to log, recipient, subject and body.
+        :type message: MailMessage
+        """
         logger.info('Mail to %s: %s\n%s', message.to, message.subject, message.body)

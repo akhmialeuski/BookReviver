@@ -32,7 +32,11 @@ class TestLogMailer:
     """Tests for LogMailer.send()."""
 
     async def test_message_is_logged_in_full(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Verify the recipient, subject and body, link included, reach the log."""
+        """Verify the recipient, subject and body, link included, reach the log.
+
+        :param caplog: Pytest's log capture.
+        :type caplog: pytest.LogCaptureFixture
+        """
         with caplog.at_level(logging.INFO):
             await LogMailer().send(MESSAGE)
         expect(MESSAGE.to in caplog.text)
@@ -49,7 +53,15 @@ class TestSmtpMailer:
     async def test_message_goes_to_the_configured_server(
         self, mock_send: AsyncMock, login: str, expected_login: str | None
     ) -> None:
-        """Verify the message is addressed from the sender and handed to the server, logging in only with a user."""
+        """Verify the message is addressed from the sender and handed to the server, logging in only with a user.
+
+        :param mock_send: Replacement of ``aiosmtplib.send``, recording what the mailer hands to it.
+        :type mock_send: AsyncMock
+        :param login: User name and password of the server, empty for an open one.
+        :type login: str
+        :param expected_login: Credentials ``aiosmtplib.send`` should receive, ``None`` for none.
+        :type expected_login: str | None
+        """
         server = SmtpServer(host=SMTP_HOST, port=SMTP_PORT, username=login, password=login, sender=SENDER)
         await SmtpMailer(server).send(MESSAGE)
         (email, *_), options = mock_send.await_args_list[0]
@@ -67,7 +79,15 @@ class TestMailerProvider:
     async def test_smtp_host_selects_the_adapter(
         self, fx_settings: Settings, host: str, mailer_class: type[Mailer]
     ) -> None:
-        """Verify mail goes over SMTP when a host is configured and to the log otherwise."""
+        """Verify mail goes over SMTP when a host is configured and to the log otherwise.
+
+        :param fx_settings: Settings of the suite.
+        :type fx_settings: Settings
+        :param host: SMTP host to configure, empty for none.
+        :type host: str
+        :param mailer_class: Adapter the container should build for that host.
+        :type mailer_class: type[Mailer]
+        """
         mail = fx_settings.mail.model_copy(update={'smtp_host': host})
         container = build_container(fx_settings.model_copy(update={'mail': mail}))
         mailer = await container.get(Mailer)

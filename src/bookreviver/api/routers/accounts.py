@@ -27,7 +27,15 @@ router = APIRouter(tags=[ACCOUNTS_TAG], route_class=DishkaRoute)
 
 @frozen(kw_only=True)
 class AccountRoutes[UserT: UserProtocol[UUID]]:
-    """The fastapi-users routes under ``/auth`` and ``/users``, from objects the application builds from settings."""
+    """The fastapi-users routes under ``/auth`` and ``/users``, from objects the application builds from settings.
+
+    :ivar users: The fastapi-users object that builds the routers and the current-user dependency.
+    :ivar backend: Authentication backend, the cookie transport with the database strategy.
+    :ivar oauth_clients: Clients of the social providers to offer, one OAuth router each.
+    :ivar state_secret: Key signing the state parameter of the OAuth routes.
+    :ivar secure_cookies: Whether the OAuth CSRF cookie requires HTTPS.
+    :ivar throttle: Dependency counting attempts at the routes that take a password or a mailed token.
+    """
 
     users: FastAPIUsers[UserT, UUID]
     backend: AuthenticationBackend[UserT, UUID]
@@ -39,11 +47,19 @@ class AccountRoutes[UserT: UserProtocol[UUID]]:
 
     @property
     def current_user(self) -> Callable[..., Any]:
-        """The dependency returning the signed-in user, who must be active and verified."""
+        """The dependency returning the signed-in user, who must be active and verified.
+
+        :returns: Dependency that yields the user of the request's session cookie.
+        :rtype: Callable[..., Any]
+        """
         return self.users.current_user(active=True, verified=True)
 
     def router(self) -> APIRouter:
-        """Build the routes; signing in with a password requires a verified email address."""
+        """Build the routes; signing in with a password requires a verified email address.
+
+        :returns: Router holding sign-in, registration, verification, reset, OAuth and user routes.
+        :rtype: APIRouter
+        """
         auth = APIRouter(prefix='/auth', tags=[AUTH_TAG])
         throttled = [self.throttle]
         auth.include_router(
