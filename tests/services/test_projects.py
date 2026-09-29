@@ -9,13 +9,13 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.changes import BookDetailsChanges
-from bookreviver.domain.enums import Orthography, PageAsset
+from bookreviver.domain.enums import Orthography
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.values import BookDetails, SliceRequest
 from bookreviver.services.projects import ProjectService
 from tests.helpers.builders import EPOCH, make_page, make_project, new_account_id
 from tests.helpers.seeding import commit_project
-from tests.helpers.storage import upload
+from tests.helpers.storage import BookFiles
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -23,16 +23,12 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
-    from bookreviver.domain.entities import Actor, Page, Project
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.entities import Actor, Project
 
 pytestmark = pytest.mark.anyio
 
 NOW = EPOCH + timedelta(days=1)
 PAGE_COUNT: int = 2
-ASSET_CONTENT: bytes = b'jpeg'
-SOURCE_NAME: str = 'book.pdf'
-MAX_UPLOAD_BYTES: int = 1024
 NEW_TITLE: str = 'Renamed'
 
 
@@ -67,67 +63,6 @@ async def _stored(database: InMemoryDatabase, project: Project) -> Project:
     :rtype: Project
     """
     return await InMemoryUnitOfWork(database).projects.get(project.id)
-
-
-class BookFiles:
-    """The files of imported books in the two local stores, and what is left of them on disk."""
-
-    def __init__(self, *, sources: LocalSourceStore, assets: LocalAssetStore, root: Path) -> None:
-        """Work on the stores of the test.
-
-        :param sources: Source store receiving the uploads.
-        :type sources: LocalSourceStore
-        :param assets: Asset store receiving the page images.
-        :type assets: LocalAssetStore
-        :param root: Storage root both stores share.
-        :type root: Path
-        """
-        self._sources = sources
-        self._assets = assets
-        self._root = root
-
-    async def store(self, page: Page) -> None:
-        """Store a source for the page's project and the page's full image, as an import would.
-
-        :param page: Page whose project and image are stored.
-        :type page: Page
-        """
-        await self._sources.stage(page.project_id, [upload(SOURCE_NAME)], max_bytes=MAX_UPLOAD_BYTES)
-        await self._sources.promote(page.project_id)
-        async with self._assets.writable(page.asset_key(PageAsset.FULL)) as path:
-            path.write_bytes(ASSET_CONTENT)
-
-    def kept(self, page: Page) -> bool:
-        """Return whether the source of the page's project and the page's full image are still on disk.
-
-        :param page: Page stored earlier with ``store``.
-        :type page: Page
-        :returns: True when both files are there with their content.
-        :rtype: bool
-        """
-        source = self._project_dir(page.project_id) / 'source' / SOURCE_NAME
-        image = self._root / page.asset_key(PageAsset.FULL)
-        return source.is_file() and image.read_bytes() == ASSET_CONTENT
-
-    def gone(self, project_id: ProjectId) -> bool:
-        """Return whether nothing of the project, not even its directory, is left on disk.
-
-        :param project_id: Project whose files were deleted.
-        :type project_id: ProjectId
-        :returns: True when the project's directory does not exist.
-        :rtype: bool
-        """
-        return not self._project_dir(project_id).exists()
-
-    def _project_dir(self, project_id: ProjectId) -> Path:
-        """Return the directory of the project under the storage root.
-
-        :param project_id: Project owning the directory.
-        :type project_id: ProjectId
-        :returns: Path of ``projects/<id>`` under the root.
-        :rtype: Path
-        """
-        return self._root / 'projects' / str(project_id)
 
 
 @pytest.fixture
