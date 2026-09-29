@@ -32,7 +32,12 @@ UNLIMITED_BYTES: int = 1024**3
 
 
 class RejectedUploadCase(NamedTuple):
-    """An upload the store must refuse, and the problem it must report."""
+    """An upload the store must refuse, and the problem it must report.
+
+    :ivar files: Name and content of every uploaded file, a name of None meaning none was sent.
+    :ivar max_bytes: Size limit the upload is staged with.
+    :ivar problem: Upload problem the refusal must carry.
+    """
 
     files: Sequence[tuple[str | None, bytes]]
     max_bytes: int
@@ -40,24 +45,60 @@ class RejectedUploadCase(NamedTuple):
 
 
 async def _stage(store: SourceStore, project_id: ProjectId, *files: UploadFile) -> int:
-    """Stage the files without a practical size limit."""
+    """Stage the files without a practical size limit.
+
+    :param store: Source store to stage into.
+    :type store: SourceStore
+    :param project_id: Project receiving the upload.
+    :type project_id: ProjectId
+    :param files: Uploaded files.
+    :type files: UploadFile
+    :returns: Total size of the staged files in bytes.
+    :rtype: int
+    """
     return await store.stage(project_id, files, max_bytes=UNLIMITED_BYTES)
 
 
 async def _import(store: SourceStore, project_id: ProjectId, *files: UploadFile) -> None:
-    """Stage the files and promote them to the project's source."""
+    """Stage the files and promote them to the project's source.
+
+    :param store: Source store to import into.
+    :type store: SourceStore
+    :param project_id: Project receiving its source.
+    :type project_id: ProjectId
+    :param files: Uploaded files.
+    :type files: UploadFile
+    """
     await _stage(store, project_id, *files)
     await store.promote(project_id)
 
 
 async def _staged(store: SourceStore, project_id: ProjectId) -> dict[str, bytes]:
-    """Return the staged files of a project by name."""
+    """Return the staged files of a project by name.
+
+    :param store: Source store to read from.
+    :type store: SourceStore
+    :param project_id: Project whose staged upload is read.
+    :type project_id: ProjectId
+    :returns: Content of every staged file, by file name.
+    :rtype: dict[str, bytes]
+    :raises NotFoundError: If no upload is staged.
+    """
     async with store.staged_files(project_id) as paths:
         return {path.name: path.read_bytes() for path in paths}
 
 
 async def _source(store: SourceStore, project_id: ProjectId) -> dict[str, bytes]:
-    """Return the source files of a project by name."""
+    """Return the source files of a project by name.
+
+    :param store: Source store to read from.
+    :type store: SourceStore
+    :param project_id: Project whose source is read.
+    :type project_id: ProjectId
+    :returns: Content of every source file, by file name.
+    :rtype: dict[str, bytes]
+    :raises NotFoundError: If the project has no source.
+    """
     async with store.source_files(project_id) as paths:
         return {path.name: path.read_bytes() for path in paths}
 
@@ -66,7 +107,11 @@ class TestStage:
     """Contract of SourceStore.stage()."""
 
     async def test_streams_files_under_their_base_names(self, fx_source_store: SourceStore) -> None:
-        """Verify every file is kept whole under its base name, whatever path the browser sent."""
+        """Verify every file is kept whole under its base name, whatever path the browser sent.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
         files = [upload('scans/page1.png', content=OLD_CONTENT), upload('C:\\scans\\page2.png', content=LARGE_CONTENT)]
         total = len(OLD_CONTENT) + len(LARGE_CONTENT)
 
@@ -78,7 +123,11 @@ class TestStage:
         assert_expectations()
 
     async def test_replaces_previous_staged_upload(self, fx_source_store: SourceStore) -> None:
-        """Verify a new upload drops whatever an earlier upload left staged."""
+        """Verify a new upload drops whatever an earlier upload left staged.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
         await _stage(fx_source_store, PROJECT_ID, upload(OLD_NAME, content=OLD_CONTENT))
 
         await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, content=NEW_CONTENT))
@@ -86,7 +135,11 @@ class TestStage:
         assert await _staged(fx_source_store, PROJECT_ID) == {NEW_NAME: NEW_CONTENT}
 
     async def test_project_with_source_refuses_upload_unread(self, fx_source_store: SourceStore) -> None:
-        """Verify a project's book is never replaced, and the refused upload is not even read, since it can be huge."""
+        """Verify a project's book is never replaced, and the refused upload is not even read, since it can be huge.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
         await _import(fx_source_store, PROJECT_ID, upload(OLD_NAME, content=OLD_CONTENT))
         new_upload = upload(NEW_NAME, content=NEW_CONTENT)
 
@@ -100,7 +153,11 @@ class TestStage:
             await _staged(fx_source_store, PROJECT_ID)
 
     async def test_accepts_upload_after_project_deleted(self, fx_source_store: SourceStore) -> None:
-        """Verify deleting the project's files is the way to put another book in its place."""
+        """Verify deleting the project's files is the way to put another book in its place.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
         await _import(fx_source_store, PROJECT_ID, upload(OLD_NAME, content=OLD_CONTENT))
         await fx_source_store.delete_project(PROJECT_ID)
 
@@ -140,7 +197,13 @@ class TestStage:
     async def test_rejected_upload_leaves_nothing_staged(
         self, fx_source_store: SourceStore, case: RejectedUploadCase
     ) -> None:
-        """Verify a refused upload reports its problem and keeps nothing it wrote."""
+        """Verify a refused upload reports its problem and keeps nothing it wrote.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        :param case: An upload the store must refuse, and the problem it must report.
+        :type case: RejectedUploadCase
+        """
         files = [upload(name, content=content) for name, content in case.files]
 
         with pytest.raises(UploadRejectedError) as error:
@@ -155,7 +218,11 @@ class TestPromote:
     """Contract of SourceStore.promote()."""
 
     async def test_staged_upload_becomes_source(self, fx_source_store: SourceStore) -> None:
-        """Verify the staged files become the whole source and nothing stays staged."""
+        """Verify the staged files become the whole source and nothing stays staged.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
         await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, content=NEW_CONTENT))
 
         await fx_source_store.promote(PROJECT_ID)
@@ -165,7 +232,11 @@ class TestPromote:
             await _staged(fx_source_store, PROJECT_ID)
 
     async def test_nothing_staged_raises_not_found(self, fx_source_store: SourceStore) -> None:
-        """Reject a promotion when no upload is staged, keeping the current source."""
+        """Reject a promotion when no upload is staged, keeping the current source.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
         await _import(fx_source_store, PROJECT_ID, upload(OLD_NAME, content=OLD_CONTENT))
 
         with pytest.raises(NotFoundError):
@@ -178,7 +249,11 @@ class TestDiscard:
     """Contract of SourceStore.discard()."""
 
     async def test_removes_staged_upload_so_project_can_upload_again(self, fx_source_store: SourceStore) -> None:
-        """Verify an upload whose analysis failed is dropped and the project still accepts its first book."""
+        """Verify an upload whose analysis failed is dropped and the project still accepts its first book.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
         await _stage(fx_source_store, PROJECT_ID, upload(OLD_NAME, content=OLD_CONTENT))
 
         await fx_source_store.discard(PROJECT_ID)
@@ -189,7 +264,11 @@ class TestDiscard:
         assert await _source(fx_source_store, PROJECT_ID) == {NEW_NAME: NEW_CONTENT}
 
     async def test_nothing_staged_is_not_an_error(self, fx_source_store: SourceStore) -> None:
-        """Verify discarding twice succeeds, so a failed import can always clean up."""
+        """Verify discarding twice succeeds, so a failed import can always clean up.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
         await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, content=NEW_CONTENT))
         await fx_source_store.discard(PROJECT_ID)
 
@@ -203,7 +282,11 @@ class TestSourceFiles:
     """Contract of SourceStore.source_files()."""
 
     async def test_project_without_source_raises_not_found(self, fx_source_store: SourceStore) -> None:
-        """Verify a project that never imported has no source files to give."""
+        """Verify a project that never imported has no source files to give.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
         await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, content=NEW_CONTENT))
 
         with pytest.raises(NotFoundError):
@@ -214,7 +297,11 @@ class TestDeleteProject:
     """Contract of SourceStore.delete_project()."""
 
     async def test_removes_source_of_that_project_only(self, fx_source_store: SourceStore) -> None:
-        """Verify the project's source is gone and another project keeps its own."""
+        """Verify the project's source is gone and another project keeps its own.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
         for project_id in (PROJECT_ID, OTHER_PROJECT_ID):
             await _import(fx_source_store, project_id, upload(OLD_NAME, content=OLD_CONTENT))
 
@@ -225,7 +312,11 @@ class TestDeleteProject:
             await _source(fx_source_store, PROJECT_ID)
 
     async def test_removes_staged_upload(self, fx_source_store: SourceStore) -> None:
-        """Verify a project deleted while its upload was being analysed leaves no staged files."""
+        """Verify a project deleted while its upload was being analysed leaves no staged files.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
         await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, content=NEW_CONTENT))
 
         await fx_source_store.delete_project(PROJECT_ID)

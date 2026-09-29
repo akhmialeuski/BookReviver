@@ -1,4 +1,16 @@
-"""Native-resolution JPEG of one page: the embedded JPEG of a scanned PDF page, a rendered page, or a page image."""
+"""Native-resolution JPEG of one page: the embedded JPEG of a scanned PDF page, a rendered page, or a page image.
+
+A scan stored as JPEG is copied byte for byte when the copy looks exactly like the page, because re-encoding a JPEG
+loses quality and time. One predicate, ``_is_portable_jpeg``, decides that for PDF pages and page images alike: the
+JPEG must be gray or RGB, which every reader shows the same, and carry no EXIF orientation other than upright, which
+a browser applies while libvips ``dzsave`` and a PDF viewer do not. A PDF page must also show nothing but that one
+image, upright over exactly its area, without a mask or a decode array, since ``extract_image`` returns the stored
+stream without either.
+
+Every other PDF page is rendered by PyMuPDF at the resolution of its dominant image, or at ``BORN_DIGITAL_DPI`` when it
+has none. Every other page image is turned upright and encoded by Pillow with the same pixel values, 16-bit gray
+scaled rather than clipped, and its colour profile kept unless the conversion changes the colour space.
+"""
 
 import io
 import shutil
@@ -58,10 +70,26 @@ class PdfImagePageRasterizer(PageRasterizer):
     """Writes a page as JPEG, copying the bytes of a scan when the page is nothing but that scan."""
 
     def __init__(self, *, jpeg_quality: int) -> None:
+        """Encode rendered and converted pages at ``jpeg_quality``.
+
+        :param jpeg_quality: JPEG quality from 1 to 100 for every page that is not copied.
+        :type jpeg_quality: int
+        """
         self._jpeg_quality = jpeg_quality
 
     @override
     async def extract(self, kind: SourceKind, files: Sequence[Path], index: int, target: Path) -> None:
+        """Write one page as JPEG in a worker thread, since PyMuPDF and Pillow block.
+
+        :param kind: Whether the files are one PDF or a set of page images.
+        :type kind: SourceKind
+        :param files: Local paths of the source files; a PDF source is its first file.
+        :type files: Sequence[Path]
+        :param index: Position of the page in book order, starting at 0.
+        :type index: int
+        :param target: Path to write the JPEG at.
+        :type target: Path
+        """
         match kind:
             case SourceKind.PDF:
                 await asyncify(self._extract_pdf_page)(files[0], index=index, target=target)
@@ -71,7 +99,15 @@ class PdfImagePageRasterizer(PageRasterizer):
                 assert_never(kind)
 
     def _extract_pdf_page(self, path: Path, *, index: int, target: Path) -> None:
-        """Copy the page's embedded JPEG, or render the page at the resolution of its dominant image."""
+        """Copy the page's embedded JPEG, or render the page at the resolution of its dominant image.
+
+        :param path: PDF file of the source.
+        :type path: Path
+        :param index: Position of the page in the PDF, starting at 0.
+        :type index: int
+        :param target: Path to write the JPEG at.
+        :type target: Path
+        """
         with pymupdf.open(path) as document:
             page = document[index]
             if (jpeg := _embedded_jpeg(document, page)) is not None:
@@ -87,6 +123,11 @@ class PdfImagePageRasterizer(PageRasterizer):
         """Copy an upright gray or RGB JPEG as it is, and encode any other page image upright as JPEG.
 
         The pixels keep their values and their colour profile, unless the conversion changes the colour space.
+
+        :param path: Page image to write.
+        :type path: Path
+        :param target: Path to write the JPEG at.
+        :type target: Path
         """
         with Image.open(path) as image:
             if _is_portable_jpeg(image):
@@ -107,6 +148,11 @@ def _is_portable_jpeg(image: Image.Image) -> bool:
 
     A browser turns a JPEG by its EXIF orientation while libvips ``dzsave`` and a PDF viewer do not, so an oriented
     JPEG would give tiles, thumbnail and page that disagree.
+
+    :param image: Open image, of which only the header is read.
+    :type image: Image.Image
+    :returns: True when the file can be copied as the page image.
+    :rtype: bool
     """
     orientation = int(image.getexif().get(ExifTags.Base.Orientation, UPRIGHT_ORIENTATION))
     return image.format == JPEG_FORMAT and image.mode in PORTABLE_JPEG_MODES and orientation == UPRIGHT_ORIENTATION
@@ -118,6 +164,13 @@ def _embedded_jpeg(document: pymupdf.Document, page: pymupdf.Page) -> bytes | No
     Anything drawn beside or over the image, an image reaching past the page edges, a rotation, a mask, a decode
     array or a JPEG that is not portable would make the copied bytes differ from what the page looks like, so the
     page is rendered instead.
+
+    :param document: Open PDF holding the page.
+    :type document: pymupdf.Document
+    :param page: Page to examine.
+    :type page: pymupdf.Page
+    :returns: Bytes of the embedded JPEG to copy, or None when the page must be rendered.
+    :rtype: bytes | None
     """
     placements = page.get_image_info(xrefs=True)
     if page.rotation or len(placements) != 1 or page.first_annot is not None or page.get_drawings():

@@ -1,4 +1,15 @@
-"""Technical and bibliographic facts of a source: PDFs read with PyMuPDF, page images read from their headers."""
+"""Technical and bibliographic facts of a source: PDFs read with PyMuPDF, page images read from their headers.
+
+A scanned PDF page is described by its dominant raster image, the one covering the largest area, because its pixel
+size and placement give the resolution the page was scanned at. A page without images is described by its own size
+in points. Page images are described from their headers alone: ``Image.open`` in Pillow reads the header lazily and
+decodes no pixels, so a book of hundreds of large TIFFs is described without loading any of them.
+
+The facts the inspector reports beyond the typed ``PageFacts`` fields go into ``extra`` and ``file_metadata`` under
+the keys of ``FactKey``, and the dictionaries PyMuPDF returns are read through the keys of ``PyMuPdfKey``, so no key
+is spelled twice. The rasterizer reuses ``pdf_page_facts`` and ``natural_order``, so it renders a page at the same
+resolution and in the same order the inspector reported.
+"""
 
 import enum
 import hashlib
@@ -126,6 +137,16 @@ class PdfImageSourceInspector(SourceInspector):
 
     @override
     async def inspect(self, kind: SourceKind, files: Sequence[Path]) -> SourceAnalysis:
+        """Describe the source in a worker thread, since PyMuPDF and Pillow block.
+
+        :param kind: Whether the files are one PDF or a set of page images.
+        :type kind: SourceKind
+        :param files: Local paths of the source files.
+        :type files: Sequence[Path]
+        :returns: Facts of every page in book order, file metadata and suggested description fields.
+        :rtype: SourceAnalysis
+        :raises UnsupportedSourceError: If the files are not a readable source of this kind.
+        """
         match kind:
             case SourceKind.PDF:
                 return await asyncify(self._inspect_pdf)(files)
@@ -137,7 +158,12 @@ class PdfImageSourceInspector(SourceInspector):
     def _inspect_pdf(self, files: Sequence[Path]) -> SourceAnalysis:
         """Describe every page of the one PDF of a source and extract its document metadata.
 
-        :raises UnsupportedSourceError: If the source is not exactly one readable PDF.
+        :param files: Local paths of the source files, which must be exactly one PDF.
+        :type files: Sequence[Path]
+        :returns: Facts of every page, the document information, outline and integrity facts, and the title and
+                  authors found in the document information.
+        :rtype: SourceAnalysis
+        :raises UnsupportedSourceError: If the source is not exactly one readable PDF without a password.
         """
         if len(files) != 1:
             err_msg = f'A PDF source is exactly one PDF file, not {len(files)} files. Upload a single PDF.'
@@ -184,6 +210,10 @@ class PdfImageSourceInspector(SourceInspector):
     def _inspect_images(self, files: Sequence[Path]) -> SourceAnalysis:
         """Describe a set of page images in the natural order of their file names.
 
+        :param files: Local paths of the page images, in any order.
+        :type files: Sequence[Path]
+        :returns: Facts of every page in book order, and the file count, total size and formats of the set.
+        :rtype: SourceAnalysis
         :raises UnsupportedSourceError: If the set is empty or a file is not a readable single-page image.
         """
         if not files:
@@ -200,12 +230,25 @@ class PdfImageSourceInspector(SourceInspector):
 
 
 def natural_order(files: Sequence[Path]) -> list[Path]:
-    """Return page images in book order, the natural sort of their names, so ``page2`` precedes ``page10``."""
+    """Return page images in book order, the natural sort of their names, so ``page2`` precedes ``page10``.
+
+    :param files: Page images in any order.
+    :type files: Sequence[Path]
+    :returns: The same paths in book order.
+    :rtype: list[Path]
+    """
     return natsorted(files, key=attrgetter('name'))
 
 
 def pdf_page_facts(page: pymupdf.Page) -> PageFacts:
-    """Describe one PDF page by its dominant raster image, or by its own size when it has none."""
+    """Describe one PDF page by its dominant raster image, or by its own size when it has none.
+
+    :param page: Page of an open PyMuPDF document.
+    :type page: pymupdf.Page
+    :returns: Pixel size, resolution, colour mode, bit depth and image format of the dominant image, the physical size
+              of the page, whether it has a text layer, and its image count, rotation and character count.
+    :rtype: PageFacts
+    """
     rect = page.rect
     images = page.get_image_info(xrefs=True)
     text_chars = len(page.get_textpage(flags=pymupdf.TEXTFLAGS_TEXT).extractText().strip())
@@ -258,6 +301,11 @@ def _image_page_facts(path: Path) -> PageFacts:
     The size, resolution and physical size are those of the page as a viewer shows it, so an EXIF orientation that
     turns the stored image a quarter swaps them.
 
+    :param path: Page image to describe.
+    :type path: Path
+    :returns: Size, resolution, colour mode, bit depth, format and physical size of the page, and its Pillow mode,
+              file size and the scanner's EXIF tags.
+    :rtype: PageFacts
     :raises UnsupportedSourceError: If the file has a wrong suffix, cannot be read, or holds several frames.
     """
     if path.suffix.lower() not in IMAGE_SUFFIXES:
@@ -306,5 +354,13 @@ def _image_page_facts(path: Path) -> PageFacts:
 
 
 def _to_mm(length: float, *, units_per_inch: float) -> float:
-    """Convert a length in points or pixels to millimetres, rounded to 0.1 mm."""
+    """Convert a length in points or pixels to millimetres, rounded to 0.1 mm.
+
+    :param length: Length in points or pixels.
+    :type length: float
+    :param units_per_inch: Points or pixels per inch, 72 for points and the DPI for pixels.
+    :type units_per_inch: float
+    :returns: The length in millimetres.
+    :rtype: float
+    """
     return round(length / units_per_inch * MM_PER_INCH, 1)

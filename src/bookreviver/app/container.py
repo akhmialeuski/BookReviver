@@ -21,7 +21,15 @@ if TYPE_CHECKING:
 
 
 def build_container(settings: Settings, extra_providers: Sequence[Provider] = ()) -> AsyncContainer:
-    """Build the container with the adapters the settings select; ``extra_providers`` come last and override."""
+    """Build the container with the adapters the settings select; ``extra_providers`` come last and override.
+
+    :param settings: Application settings, which select the persistence and storage backends.
+    :type settings: Settings
+    :param extra_providers: Providers added after the application's own, such as test fakes replacing an adapter.
+    :type extra_providers: Sequence[Provider]
+    :returns: The async container, which the caller closes.
+    :rtype: AsyncContainer
+    """
     return make_async_container(
         CoreProvider(),
         DatabaseProvider(),

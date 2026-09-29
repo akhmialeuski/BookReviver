@@ -30,6 +30,7 @@ GRAY_16_MODE: str = 'I;16'
 TIF_SUFFIX: str = '.tif'
 PNG_SUFFIX: str = '.png'
 TIFF_NAME: str = 'page.tif'
+PAGE_STEM: str = 'page'
 
 # 8 x 10 inches, so an image of 1200 x 1500 pixels filling it is exactly 150 DPI
 SCAN_PAGE_SIZE_PT: tuple[float, float] = (576.0, 720.0)
@@ -70,7 +71,12 @@ LIGHT_LIMIT: int = 192
 
 
 class RenderedPageCase(NamedTuple):
-    """A PDF page that is more than one upright JPEG, and the image rendered from it."""
+    """A PDF page that is more than one upright JPEG, and the image rendered from it.
+
+    :ivar page: Page to render.
+    :ivar size_px: Width and height the rendered JPEG must have.
+    :ivar mode: Pillow mode the rendered JPEG must have.
+    """
 
     page: PdfPage
     size_px: tuple[int, int]
@@ -78,7 +84,12 @@ class RenderedPageCase(NamedTuple):
 
 
 class ConvertedImageCase(NamedTuple):
-    """A page image stored in some Pillow mode and format, and the JPEG mode it becomes."""
+    """A page image stored in some Pillow mode and format, and the JPEG mode it becomes.
+
+    :ivar mode: Pillow mode of the stored page image.
+    :ivar suffix: File suffix selecting the stored format.
+    :ivar jpeg_mode: Pillow mode the written JPEG must have.
+    """
 
     mode: str
     suffix: str
@@ -86,7 +97,15 @@ class ConvertedImageCase(NamedTuple):
 
 
 def _gray_at(image: Image.Image, xy: tuple[int, int]) -> int:
-    """Return the 8-bit gray value of one pixel of a written image."""
+    """Return the 8-bit gray value of one pixel of a written image.
+
+    :param image: Written page image in any mode.
+    :type image: Image.Image
+    :param xy: Column and row of the pixel.
+    :type xy: tuple[int, int]
+    :returns: Gray value from 0 to 255.
+    :rtype: int
+    """
     value = image.convert(GRAY_MODE).getpixel(xy)
     assert isinstance(value, int)
     return value
@@ -107,7 +126,15 @@ class TestExtractPdf:
     async def test_copies_embedded_jpeg_byte_for_byte(
         self, fx_rasterizer: PageRasterizer, tmp_path: Path, case: PdfPage
     ) -> None:
-        """Verify a page showing only one upright JPEG over its whole area yields that JPEG unchanged."""
+        """Verify a page showing only one upright JPEG over its whole area yields that JPEG unchanged.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: Page showing nothing but one upright gray or RGB JPEG over its whole area.
+        :type case: PdfPage
+        """
         pdf = write_pdf(tmp_path / PDF_NAME, pages=[case])
         target = tmp_path / TARGET_NAME
 
@@ -184,7 +211,15 @@ class TestExtractPdf:
     async def test_renders_page_at_native_resolution(
         self, fx_rasterizer: PageRasterizer, tmp_path: Path, case: RenderedPageCase
     ) -> None:
-        """Verify a page that is not just one upright JPEG is rendered at its scan's resolution, or 300 DPI."""
+        """Verify a page that is not just one upright JPEG is rendered at its scan's resolution, or 300 DPI.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: A PDF page that is more than one upright JPEG, and the image rendered from it.
+        :type case: RenderedPageCase
+        """
         pdf = write_pdf(tmp_path / PDF_NAME, pages=[case.page])
         target = tmp_path / TARGET_NAME
 
@@ -198,7 +233,13 @@ class TestExtractPdf:
         assert_expectations()
 
     async def test_extracts_requested_page(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
-        """Verify the page at the given index is the one written."""
+        """Verify the page at the given index is the one written.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
         pages = [PdfPage(size_pt=size) for size in PAGE_SIZES_PT]
         pdf = write_pdf(tmp_path / PDF_NAME, pages=pages)
         target = tmp_path / TARGET_NAME
@@ -213,7 +254,13 @@ class TestExtractImages:
     """Tests for PdfImagePageRasterizer.extract() of an image set."""
 
     async def test_picks_page_in_natural_order(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
-        """Verify the index counts pages in the natural order of their names, not the upload order."""
+        """Verify the index counts pages in the natural order of their names, not the upload order.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
         files = [
             write_image(tmp_path / name, mode=GRAY_MODE, size=size)
             for name, size in zip(NAMES_BY_UPLOAD_ORDER, SIZES_BY_UPLOAD_ORDER, strict=True)
@@ -227,7 +274,15 @@ class TestExtractImages:
 
     @pytest.mark.parametrize(MODE_ARG, [GRAY_MODE, RGB_MODE])
     async def test_copies_jpeg_byte_for_byte(self, fx_rasterizer: PageRasterizer, tmp_path: Path, mode: str) -> None:
-        """Verify a gray or RGB JPEG page is copied without re-encoding."""
+        """Verify a gray or RGB JPEG page is copied without re-encoding.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param mode: Pillow mode of the page image.
+        :type mode: str
+        """
         source = write_image(tmp_path / 'page.jpg', mode=mode, size=SMALL_SIZE_PX)
         target = tmp_path / TARGET_NAME
 
@@ -254,8 +309,16 @@ class TestExtractImages:
     async def test_converts_other_images_keeping_pixels(
         self, fx_rasterizer: PageRasterizer, tmp_path: Path, case: ConvertedImageCase
     ) -> None:
-        """Verify any other page image becomes a gray or RGB JPEG of the same pixel size."""
-        source = write_image(tmp_path / f'page{case.suffix}', mode=case.mode, size=SMALL_SIZE_PX)
+        """Verify any other page image becomes a gray or RGB JPEG of the same pixel size.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: A page image stored in some Pillow mode and format, and the JPEG mode it becomes.
+        :type case: ConvertedImageCase
+        """
+        source = write_image(tmp_path / f'{PAGE_STEM}{case.suffix}', mode=case.mode, size=SMALL_SIZE_PX)
         target = tmp_path / TARGET_NAME
 
         await fx_rasterizer.extract(SourceKind.IMAGES, [source], 0, target)
@@ -267,7 +330,13 @@ class TestExtractImages:
         assert_expectations()
 
     async def test_keeps_bilevel_areas(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
-        """Verify a bilevel scan keeps its black and white areas."""
+        """Verify a bilevel scan keeps its black and white areas.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
         source = tmp_path / TIFF_NAME
         bilevel = Image.new('1', SMALL_SIZE_PX, color=1)
         bilevel.paste(0, (0, 0, SMALL_SIZE_PX[0] // 2, SMALL_SIZE_PX[1]))
@@ -283,7 +352,13 @@ class TestExtractImages:
         assert_expectations()
 
     async def test_scales_sixteen_bit_samples(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
-        """Verify 16-bit gray is scaled to 8 bits rather than clipped to white."""
+        """Verify 16-bit gray is scaled to 8 bits rather than clipped to white.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
         source = tmp_path / TIFF_NAME
         Image.new(GRAY_16_MODE, SMALL_SIZE_PX, color=SIXTEEN_BIT_SAMPLE).save(source)
         target = tmp_path / TARGET_NAME
@@ -295,9 +370,15 @@ class TestExtractImages:
         assert abs(sample - EIGHT_BIT_SAMPLE) <= SAMPLE_TOLERANCE
 
     async def test_turns_oriented_jpeg_upright(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
-        """Verify a JPEG with a quarter-turn EXIF orientation is written upright, so tiles and thumbnail agree."""
+        """Verify a JPEG with a quarter-turn EXIF orientation is written upright, so tiles and thumbnail agree.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
         exif = {ExifTags.Base.Orientation: QUARTER_TURN_ORIENTATION}
-        source = write_image(tmp_path / f'page{JPG_SUFFIX}', mode=GRAY_MODE, size=SMALL_SIZE_PX, exif=exif)
+        source = write_image(tmp_path / f'{PAGE_STEM}{JPG_SUFFIX}', mode=GRAY_MODE, size=SMALL_SIZE_PX, exif=exif)
         target = tmp_path / TARGET_NAME
 
         await fx_rasterizer.extract(SourceKind.IMAGES, [source], 0, target)
@@ -308,7 +389,13 @@ class TestExtractImages:
         assert_expectations()
 
     async def test_keeps_colour_profile(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
-        """Verify a re-encoded page keeps its embedded colour profile, so its colours are shown as scanned."""
+        """Verify a re-encoded page keeps its embedded colour profile, so its colours are shown as scanned.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
         profile = ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')).tobytes()
         source = tmp_path / TIFF_NAME
         gradient_image(mode=RGB_MODE, size=SMALL_SIZE_PX).save(source, icc_profile=profile)

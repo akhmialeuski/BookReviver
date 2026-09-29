@@ -44,13 +44,25 @@ SMALL_SIZE_PX: tuple[int, int] = (120, 90)
 
 @pytest.fixture
 def fx_settings(fx_settings: Settings) -> Settings:
-    """Override the suite's settings with the tile and thumbnail sizes of these tests."""
+    """Override the suite's settings with the tile and thumbnail sizes of these tests.
+
+    :param fx_settings: Settings of the whole suite, with in-memory persistence and a fresh data directory.
+    :type fx_settings: Settings
+    :returns: The same settings with ``IMAGING`` as their imaging group.
+    :rtype: Settings
+    """
     return fx_settings.model_copy(update={'imaging': IMAGING})
 
 
 @pytest.fixture
 def fx_page_image(tmp_path: Path) -> Path:
-    """Write a gray page image larger than one tile."""
+    """Write a gray page image larger than one tile.
+
+    :param tmp_path: Temporary directory of the test.
+    :type tmp_path: Path
+    :returns: Path of the written ``full.jpg``.
+    :rtype: Path
+    """
     return write_image(tmp_path / FULL_NAME, mode=GRAY_MODE, size=PAGE_SIZE_PX)
 
 
@@ -58,7 +70,15 @@ class TestTile:
     """Tests for VipsTiler.tile()."""
 
     async def test_writes_iiif_3_pyramid(self, fx_tiler: Tiler, fx_page_image: Path, tmp_path: Path) -> None:
-        """Verify info.json declares the IIIF 3 context, the public id, the image size and the configured tile size."""
+        """Verify info.json declares the IIIF 3 context, the public id, the image size and the configured tile size.
+
+        :param fx_tiler: Tiler built by the application's imaging provider with the tile and thumbnail sizes of these tests.
+        :type fx_tiler: Tiler
+        :param fx_page_image: Gray page image larger than one tile.
+        :type fx_page_image: Path
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
         target_dir = tmp_path / PARTIAL_PYRAMID_NAME
 
         await fx_tiler.tile(fx_page_image, target_dir, resource_id=RESOURCE_ID)
@@ -73,7 +93,15 @@ class TestTile:
         assert_expectations()
 
     async def test_writes_nothing_beside_pyramid(self, fx_tiler: Tiler, fx_page_image: Path, tmp_path: Path) -> None:
-        """Verify the properties file libvips writes next to a pyramid does not land beside the target."""
+        """Verify the properties file libvips writes next to a pyramid does not land beside the target.
+
+        :param fx_tiler: Tiler built by the application's imaging provider with the tile and thumbnail sizes of these tests.
+        :type fx_tiler: Tiler
+        :param fx_page_image: Gray page image larger than one tile.
+        :type fx_page_image: Path
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
         await fx_tiler.tile(fx_page_image, tmp_path / PYRAMID_NAME, resource_id=RESOURCE_ID)
 
         assert sorted([path.name async for path in anyio.Path(tmp_path).iterdir()]) == [FULL_NAME, PYRAMID_NAME]
@@ -83,7 +111,15 @@ class TestThumbnail:
     """Tests for VipsTiler.thumbnail()."""
 
     async def test_fits_long_side(self, fx_tiler: Tiler, fx_page_image: Path, tmp_path: Path) -> None:
-        """Verify the thumbnail is a JPEG whose longer side is the configured length."""
+        """Verify the thumbnail is a JPEG whose longer side is the configured length.
+
+        :param fx_tiler: Tiler built by the application's imaging provider with the tile and thumbnail sizes of these tests.
+        :type fx_tiler: Tiler
+        :param fx_page_image: Gray page image larger than one tile.
+        :type fx_page_image: Path
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
         target = tmp_path / THUMBNAIL_NAME
 
         await fx_tiler.thumbnail(fx_page_image, target)
@@ -94,7 +130,13 @@ class TestThumbnail:
         assert_expectations()
 
     async def test_never_enlarges_small_image(self, fx_tiler: Tiler, tmp_path: Path) -> None:
-        """Verify an image smaller than the thumbnail keeps its own size."""
+        """Verify an image smaller than the thumbnail keeps its own size.
+
+        :param fx_tiler: Tiler built by the application's imaging provider with the tile and thumbnail sizes of these tests.
+        :type fx_tiler: Tiler
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
         image = write_image(tmp_path / FULL_NAME, mode=GRAY_MODE, size=SMALL_SIZE_PX)
         target = tmp_path / THUMBNAIL_NAME
 
