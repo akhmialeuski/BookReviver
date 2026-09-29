@@ -35,7 +35,13 @@ class Project:
     updated_at: datetime
 
     def is_owned_by(self, actor: Actor) -> bool:
-        """Whether the actor owns this project."""
+        """Return whether the actor owns this project.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :returns: True when the actor's account is the project's owner.
+        :rtype: bool
+        """
         return self.owner_id == actor.account_id
 
 
@@ -57,7 +63,13 @@ class Page:
     assets: PageAssets = field(factory=PageAssets)
 
     def asset_key(self, asset: PageAsset) -> StorageKey:
-        """Return the storage key of a derived file, unique per asset version so it can be cached forever."""
+        """Return the storage key of a derived file, unique per asset version so it can be cached forever.
+
+        :param asset: Derived file of the page, such as the full image, the thumbnail or the tile pyramid.
+        :type asset: PageAsset
+        :returns: Key of the form ``projects/<id>/pages/<index>/v<version>/<asset>``.
+        :rtype: StorageKey
+        """
         return StorageKey(f'projects/{self.project_id}/pages/{self.index}/v{self.assets.version}/{asset}')
 
 

@@ -14,7 +14,13 @@ class DatabaseProvider(Provider):
 
     @provide(scope=Scope.APP)
     async def database(self, settings: Settings) -> AsyncIterator[SqlDatabase]:
-        """Open the configured database, create missing tables, and close it with the application."""
+        """Open the configured database, create missing tables, and close it with the application.
+
+        :param settings: Application settings, of which the database URL and the data directory are read.
+        :type settings: Settings
+        :returns: Iterator yielding the open database and disposing of its engine afterwards.
+        :rtype: AsyncIterator[SqlDatabase]
+        """
         database = SqlDatabase(settings.resolved_database_url)
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         await database.create_schema()
@@ -23,7 +29,13 @@ class DatabaseProvider(Provider):
 
     @provide(scope=Scope.REQUEST)
     async def session(self, database: SqlDatabase) -> AsyncIterator[AsyncSession]:
-        """Open a session for one request or job, rolled back unless its owner committed."""
+        """Open a session for one request or job, rolled back unless its owner committed.
+
+        :param database: The application's database.
+        :type database: SqlDatabase
+        :returns: Iterator yielding the session and closing it afterwards.
+        :rtype: AsyncIterator[AsyncSession]
+        """
         # try/finally rather than `async with` around the yield: dishka drives this generator (ASYNC119)
         session = database.sessions()
         try:
