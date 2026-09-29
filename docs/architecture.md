@@ -688,20 +688,114 @@ indistinguishable to the application.
 Storage keys, not paths, cross the ports. The local adapter maps them to `data/`, and an S3 adapter maps them to a
 bucket when workers run on other machines.
 
-- `projects/<id>/incoming/` holds an upload until its analysis succeeds, then becomes `source/` in one rename.
-- `projects/<id>/source/` holds the upload exactly as received, and is written once. A project with a source refuses
-  another upload with a conflict before reading it: another book needs another project, or this project deleted with
-  everything processed from it and created again.
-- `projects/<id>/pages/<index>/` holds the imported page: `full.jpg` at native resolution, `thumb.jpg`, `iiif/`.
-- `projects/<id>/artifacts/<hash>/` holds each processing result, with its own tiles when it is an image.
+Every file of a project lives under `projects/<project_id>/`, divided between the two storage ports. `SourceStore`
+owns `incoming/` and `sources/`, and `AssetStore` owns `assets/`. An asset key always starts with
+`projects/<id>/assets/`, so one prefix check keeps asset keys away from the files of the sources, and one
+`delete_prefix` removes every derived file of a project. One class, `ProjectKeys` in `domain/keys.py`, builds every
+key and refuses a `..` segment, so the layout is written down in one place and keys are stable when pages move.
 
-Nothing stored is ever replaced. Derived assets are regenerable under a new key, the next version or content hash,
-which their URLs carry, so browsers cache them forever. Each is written under a hidden sibling name and moved onto
-its key once complete, in a step the file system refuses when the key is taken, so a second writer gets a conflict
-instead of replacing the first. Asset keys never name or hold a project's `source/` or `incoming/`, which belong to
-the source store alone. A tile pyramid's `info.json`
-carries as `id` the path of the IIIF route that serves it, passed to the `Tiler` port, because the viewer builds tile
-URLs from it. The path has no scheme or host, so a change of domain, port or the address a device uses leaves the
+- `incoming/<job_id>/` holds the upload of one import job while it is being received and checked.
+- `sources/<source_id>/` holds the files of one source exactly as uploaded, written once.
+- `assets/scans/<source_id>/<number>/v<n>/` holds the four renditions of one scan in version `n`.
+- `assets/pages/<page_id>/<stage>/<processor>/<version_id>/` holds one page version: its renditions, a mask or
+  a text such as `text.hocr`, and nothing for a step without output files.
+- `assets/pages/<page_id>/edits/<processor>/` holds the manual edits of a page that steps read as inputs.
+- `assets/book/` holds the results of whole-book steps, such as typesetting and export.
+
+The layout of a book made of two PDF parts, a cover from another copy and an indirect DjVu document that supplies
+missing pages looks like this:
+
+```text
+data/storage/
+└── projects/
+    └── 3f2a…c9/                               ProjectId
+        ├── incoming/                          SourceStore: uploads still being received
+        │   └── 7b1e…04/                       JobId of the import job owning the upload
+        │       └── cover.jpg
+        ├── sources/                           SourceStore: files as uploaded, written once
+        │   ├── 0c55…a1/                       SourceId: PDF, part 1
+        │   │   └── kniga-ch1.pdf
+        │   ├── 9d02…17/                       SourceId: PDF, part 2
+        │   │   └── kniga-ch2.pdf
+        │   ├── 51aa…e3/                       SourceId: cover from another copy
+        │   │   └── cover.jpg
+        │   └── e4b7…60/                       SourceId: indirect DjVu, index and pages
+        │       ├── index.djvu
+        │       ├── p0045.djvu
+        │       └── p0046.djvu
+        └── assets/                            AssetStore: derived files, written once
+            ├── scans/                         import stage: images of the scans
+            │   └── 0c55…a1/                   SourceId
+            │       ├── 0/                     number of the scan in its source
+            │       │   └── v1/                version of the scan's renditions
+            │       │       ├── full.jpg       native resolution
+            │       │       ├── preview.jpg    2048 px on the longer side
+            │       │       ├── thumb.jpg      320 px on the longer side
+            │       │       └── iiif/          IIIF Image API 3 level 0 pyramid
+            │       │           ├── info.json
+            │       │           └── 0,0,512,512/…
+            │       └── 12/
+            │           └── v1/…
+            ├── pages/                         pages of the book, from the split on
+            │   ├── 1d4b…90/                   PageId: whole scan 11, split skipped
+            │   │   └── page-split/
+            │   │       └── split.none/
+            │   │           └── 8c21f0d7e4a6b913/  base version: own copy of the scan
+            │   │               ├── full.jpg
+            │   │               ├── preview.jpg
+            │   │               ├── thumb.jpg
+            │   │               └── iiif/…
+            │   ├── 77e0…2b/                   PageId: blank leaf after the cover
+            │   │   └── page-order/
+            │   │       └── pages.blank/
+            │   │           └── 3a9c55e1b0f24d68/…  generated white leaf
+            │   └── a81c…5d/                   PageId: left half of scan 12
+            │       ├── page-split/
+            │       │   └── split.spread/
+            │       │       └── 4e9f0c2ab1d3e570/  base version: copy of the left half
+            │       │           ├── full.jpg
+            │       │           ├── preview.jpg
+            │       │           ├── thumb.jpg
+            │       │           └── iiif/…
+            │       ├── geometry/
+            │       │   ├── geometry.deskew/
+            │       │   │   ├── 71c2d09e5b44a0f3/  angle 0.8°
+            │       │   │   └── 0b93a1f7c2e85d19/  angle 1.1° after a manual edit
+            │       │   └── geometry.crop/
+            │       │       └── c3d1e8a04f77b2c6/…
+            │       ├── cleanup/
+            │       │   ├── cleanup.despeckle/
+            │       │   │   └── 9a4e61b2d0c3f845/
+            │       │   │       ├── full.jpg
+            │       │   │       ├── mask.png   removed specks
+            │       │   │       └── …
+            │       │   └── cleanup.binarize/
+            │       │       └── 2f60b7e9a15d8c07/
+            │       │           ├── full.png   bilevel, PNG under any image_policy
+            │       │           └── …
+            │       ├── recognition/
+            │       │   └── recognition.ocr/
+            │       │       └── 5d17c4a9e002f6b1/
+            │       │           └── text.hocr  no image
+            │       └── edits/                 manual edits as inputs of steps
+            │           └── cleanup.eraser/
+            │               └── e1f0…/mask.png
+            └── book/                          results of the whole book: typesetting, export
+                └── typesetting/…
+```
+
+Deleting a source removes its files, its scans and the renditions of its scans, and leaves the pages of the book
+with their copies of the images, their versions, labels and order. Deleting a project removes its rows and then
+calls `delete_project` on both storage ports.
+
+Nothing stored is ever replaced: a new version gets a new directory. Derived assets are regenerable under a new key,
+the next version or content hash, which their URLs carry, so browsers cache them forever. Each is written under a
+hidden sibling name and moved onto its key once complete, in a step the file system refuses when the key is taken,
+so a second writer gets a conflict instead of replacing the first.
+
+A tile pyramid's `info.json` carries as `id` the path of the IIIF route that serves it, passed to the `Tiler` port,
+because the viewer builds tile URLs from it, and the root of that path comes from `app`, where the routes are
+mounted. The path has no scheme or host, so a change of domain, port or the address a device uses leaves the
 cut pyramids valid. IIIF formally asks for an absolute URI there, but OpenSeadragon resolves a path, and BookReviver
 serves its own viewer, so the path is the deliberate choice.
 
