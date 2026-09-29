@@ -11,7 +11,10 @@ TOTAL: int = 25
 
 
 class NumberSchema(ResponseModel):
-    """A trivial response schema."""
+    """A trivial response schema.
+
+    :ivar value: The number the domain item carried.
+    """
 
     value: int
 
