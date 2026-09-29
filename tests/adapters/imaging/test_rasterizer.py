@@ -5,10 +5,10 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
-from PIL import Image
+from PIL import ExifTags, Image, ImageCms
 
 from bookreviver.domain.enums import SourceKind
-from tests.adapters.imaging.samples import PdfPage, ScanImage, write_image, write_pdf
+from tests.adapters.imaging.samples import PdfPage, ScanImage, gradient_image, write_image, write_pdf
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -42,6 +42,14 @@ LEFT_HALF_RECT_PT: tuple[float, float, float, float] = (0.0, 0.0, 288.0, 720.0)
 # US Letter at the 300 DPI of a born-digital page
 LETTER_AT_300_DPI_PX: tuple[int, int] = (2550, 3300)
 QUARTER_TURN_DEGREES: int = 90
+# One inch past every page edge, holding a 150 DPI scan of 10 x 12 inches
+OVERHANG_RECT_PT: tuple[float, float, float, float] = (-72.0, -72.0, 648.0, 792.0)
+OVERHANG_SCAN_SIZE_PX: tuple[int, int] = (1500, 1800)
+INVERTING_DECODE: str = '[1 0]'
+# EXIF orientation telling a viewer to turn the stored image a quarter clockwise
+QUARTER_TURN_ORIENTATION: int = 6
+UPRIGHT_ORIENTATION: int = 1
+JPG_SUFFIX: str = '.jpg'
 OCR_TEXT: str = 'Recognised text'
 PAGE_TEXT: str = 'Printed text'
 GRAY_SCAN: ScanImage = ScanImage(mode=GRAY_MODE, size_px=SCAN_SIZE_PX, image_format=JPEG)
@@ -136,8 +144,42 @@ class TestExtractPdf:
                 mode=RGB_MODE,
             ),
             RenderedPageCase(page=PdfPage(text=PAGE_TEXT), size_px=LETTER_AT_300_DPI_PX, mode=RGB_MODE),
+            # A crop box hides the scan's margins, so its bytes hold more than the page shows
+            RenderedPageCase(
+                page=PdfPage(
+                    size_pt=SCAN_PAGE_SIZE_PT,
+                    images=[evolve(GRAY_SCAN, size_px=OVERHANG_SCAN_SIZE_PX, rect=OVERHANG_RECT_PT)],
+                ),
+                size_px=SCAN_SIZE_PX,
+                mode=GRAY_MODE,
+            ),
+            # The stored samples are the negative of what the page shows
+            RenderedPageCase(
+                page=PdfPage(size_pt=SCAN_PAGE_SIZE_PT, images=[evolve(GRAY_SCAN, decode=INVERTING_DECODE)]),
+                size_px=SCAN_SIZE_PX,
+                mode=GRAY_MODE,
+            ),
+            # A browser would turn the copied JPEG while the page and the tiles would not
+            RenderedPageCase(
+                page=PdfPage(
+                    size_pt=SCAN_PAGE_SIZE_PT,
+                    images=[evolve(GRAY_SCAN, exif={ExifTags.Base.Orientation: QUARTER_TURN_ORIENTATION})],
+                ),
+                size_px=SCAN_SIZE_PX,
+                mode=GRAY_MODE,
+            ),
         ],
-        ids=['visible-text', 'png-scan', 'partial-cover', 'quarter-turn', 'cmyk', 'born-digital'],
+        ids=[
+            'visible-text',
+            'png-scan',
+            'partial-cover',
+            'quarter-turn',
+            'cmyk',
+            'born-digital',
+            'overhang',
+            'inverting-decode',
+            'exif-orientation',
+        ],
     )
     async def test_renders_page_at_native_resolution(
         self, fx_rasterizer: PageRasterizer, tmp_path: Path, case: RenderedPageCase
@@ -251,3 +293,28 @@ class TestExtractImages:
         with Image.open(target) as written:
             sample = _gray_at(written, (0, 0))
         assert abs(sample - EIGHT_BIT_SAMPLE) <= SAMPLE_TOLERANCE
+
+    async def test_turns_oriented_jpeg_upright(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
+        """Verify a JPEG with a quarter-turn EXIF orientation is written upright, so tiles and thumbnail agree."""
+        exif = {ExifTags.Base.Orientation: QUARTER_TURN_ORIENTATION}
+        source = write_image(tmp_path / f'page{JPG_SUFFIX}', mode=GRAY_MODE, size=SMALL_SIZE_PX, exif=exif)
+        target = tmp_path / TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.IMAGES, [source], 0, target)
+
+        with Image.open(target) as written:
+            expect(written.size == SMALL_SIZE_PX[::-1])
+            expect(written.getexif().get(ExifTags.Base.Orientation, UPRIGHT_ORIENTATION) == UPRIGHT_ORIENTATION)
+        assert_expectations()
+
+    async def test_keeps_colour_profile(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
+        """Verify a re-encoded page keeps its embedded colour profile, so its colours are shown as scanned."""
+        profile = ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')).tobytes()
+        source = tmp_path / TIFF_NAME
+        gradient_image(mode=RGB_MODE, size=SMALL_SIZE_PX).save(source, icc_profile=profile)
+        target = tmp_path / TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.IMAGES, [source], 0, target)
+
+        with Image.open(target) as written:
+            assert written.info.get('icc_profile') == profile

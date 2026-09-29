@@ -19,22 +19,25 @@ class VipsTiler(Tiler):
         self._jpeg_quality = jpeg_quality
 
     @override
-    async def tile(self, image: Path, target_dir: Path) -> None:
-        await asyncify(self._tile)(image, target_dir=target_dir)
+    async def tile(self, image: Path, target_dir: Path, *, resource_id: str) -> None:
+        await asyncify(self._tile)(image, target_dir=target_dir, resource_id=resource_id)
 
     @override
     async def thumbnail(self, image: Path, target: Path) -> None:
         await asyncify(self._thumbnail)(image, target=target)
 
-    def _tile(self, image: Path, *, target_dir: Path) -> None:
+    def _tile(self, image: Path, *, target_dir: Path, resource_id: str) -> None:
         """Cut the pyramid next to ``target_dir`` and move only the pyramid into place."""
+        # dzsave writes id as "<id>/<pyramid directory name>", so the pyramid is cut under the last segment
+        base_id, _, name = resource_id.rpartition('/')
         # dzsave also writes vips-properties.xml into the directory holding the pyramid, which must not leak
         with tempfile.TemporaryDirectory(dir=target_dir.parent) as scratch:
-            pyramid = Path(scratch) / target_dir.name
+            pyramid = Path(scratch) / name
             source = pyvips.Image.new_from_file(str(image), access=pyvips.enums.Access.SEQUENTIAL)
             source.dzsave(
                 str(pyramid),
                 layout=pyvips.enums.ForeignDzLayout.IIIF3,
+                id=base_id,
                 tile_size=self._tile_size_px,
                 Q=self._jpeg_quality,
             )

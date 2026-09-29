@@ -21,6 +21,7 @@ FIRST_OUTLINE_LEVEL: int = 1
 TEXT_ORIGIN_PT: tuple[float, float] = (72.0, 72.0)
 # PDF text render mode that draws nothing, as the OCR layer of a scan does
 INVISIBLE_RENDER_MODE: int = 3
+DECODE_KEY: str = 'Decode'
 
 
 def gradient_image(*, mode: str, size: tuple[int, int]) -> Image.Image:
@@ -32,10 +33,21 @@ def gradient_image(*, mode: str, size: tuple[int, int]) -> Image.Image:
     return gradient.convert(mode)
 
 
-def encode_image(image: Image.Image, *, image_format: str) -> bytes:
-    """Return the image encoded in a Pillow format such as ``JPEG`` or ``PNG``."""
+def exif_of(tags: Mapping[ExifTags.Base, str | int]) -> Image.Exif:
+    """Return an EXIF block holding the given tags."""
+    exif = Image.Exif()
+    for tag, value in tags.items():
+        exif[tag] = value
+    return exif
+
+
+def encode_image(
+    image: Image.Image, *, image_format: str, exif: Mapping[ExifTags.Base, str | int] | None = None
+) -> bytes:
+    """Return the image encoded in a Pillow format such as ``JPEG`` or ``PNG``, with the given EXIF tags."""
     buffer = io.BytesIO()
-    image.save(buffer, format=image_format)
+    options: dict[str, Any] = {'exif': exif_of(exif)} if exif else {}
+    image.save(buffer, format=image_format, **options)
     return buffer.getvalue()
 
 
@@ -50,10 +62,15 @@ class ScanImage:
     rect: tuple[float, float, float, float] | None = None
     # Quarter turns of the placement in degrees, as PyMuPDF's ``insert_image`` takes them
     rotate: int = 0
+    # PDF decode array of the image object, such as ``[1 0]`` to invert gray; None leaves it out
+    decode: str | None = None
+    # EXIF tags stored inside the encoded image
+    exif: Mapping[ExifTags.Base, str | int] = field(factory=dict)
 
     def encoded(self) -> bytes:
         """Return the image bytes exactly as they are embedded in the PDF."""
-        return encode_image(gradient_image(mode=self.mode, size=self.size_px), image_format=self.image_format)
+        image = gradient_image(mode=self.mode, size=self.size_px)
+        return encode_image(image, image_format=self.image_format, exif=self.exif)
 
 
 @frozen(kw_only=True)
@@ -89,7 +106,9 @@ def write_pdf(
             page = document.new_page(width=width, height=height)
             for image in spec.images:
                 rect = pymupdf.Rect(image.rect) if image.rect else page.rect
-                page.insert_image(rect, stream=image.encoded(), keep_proportion=False, rotate=image.rotate)
+                xref = page.insert_image(rect, stream=image.encoded(), keep_proportion=False, rotate=image.rotate)
+                if image.decode:
+                    document.xref_set_key(xref, DECODE_KEY, image.decode)
             if spec.text:
                 page.insert_text(TEXT_ORIGIN_PT, spec.text)
             if spec.ocr_text:
@@ -113,7 +132,7 @@ def write_image(
     mode: str,
     size: tuple[int, int],
     dpi: float | None = None,
-    exif: Mapping[ExifTags.Base, str] | None = None,
+    exif: Mapping[ExifTags.Base, str | int] | None = None,
 ) -> Path:
     """Write a gradient image; the file suffix selects the format.
 
@@ -129,9 +148,6 @@ def write_image(
     if dpi:
         options['dpi'] = (dpi, dpi)
     if exif:
-        exif_data = Image.Exif()
-        for tag, value in exif.items():
-            exif_data[tag] = value
-        options['exif'] = exif_data
+        options['exif'] = exif_of(exif)
     image.save(path, **options)
     return path

@@ -229,6 +229,10 @@ bucket when workers run on other machines.
 - `projects/<id>/artifacts/<hash>/` holds each processing result, with its own tiles when it is an image.
 
 Derived assets are regenerable, and their URLs carry the content hash or version, so browsers cache them forever.
+A tile pyramid's `info.json` carries as `id` the path of the IIIF route that serves it, passed to the `Tiler` port,
+because the viewer builds tile URLs from it. The path has no scheme or host, so a change of domain, port or the
+address a device uses leaves the cut pyramids valid. IIIF formally asks for an absolute URI there; OpenSeadragon
+resolves a path, and BookReviver serves its own viewer, so the path is the deliberate choice.
 
 ## Import pipeline
 

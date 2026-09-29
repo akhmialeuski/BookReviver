@@ -1,13 +1,14 @@
 """Native-resolution JPEG of one page: the embedded JPEG of a scanned PDF page, a rendered page, or a page image."""
 
+import io
 import shutil
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, assert_never, override
 
 import pymupdf
 from asyncer import asyncify
-from PIL import Image
+from PIL import ExifTags, Image, ImageOps
 
-from bookreviver.adapters.imaging.inspector import PDF_IMAGE_FILTER_INDEX, natural_order, pdf_page_facts
+from bookreviver.adapters.imaging.inspector import PDF_IMAGE_FILTER_INDEX, PyMuPdfKey, natural_order, pdf_page_facts
 from bookreviver.domain.enums import ColorMode, SourceKind
 from bookreviver.ports.imaging import PageRasterizer
 
@@ -21,6 +22,8 @@ JPEG_FORMAT: str = 'JPEG'
 PYMUPDF_JPEG_OUTPUT: str = 'jpeg'
 # Pillow modes a browser and libvips read from a JPEG file as they are
 PORTABLE_JPEG_MODES: frozenset[str] = frozenset({'L', 'RGB'})
+# EXIF orientation of an image stored the way it is meant to be seen
+UPRIGHT_ORIENTATION: int = 1
 # JPEG mode for the Pillow modes that do not become RGB
 GRAY_MODE: str = 'L'
 GRAY_JPEG_MODES: Mapping[str, str] = {'1': GRAY_MODE, 'L': GRAY_MODE, 'LA': GRAY_MODE, 'F': GRAY_MODE}
@@ -30,14 +33,18 @@ INT32_MODE: str = 'I'
 WIDE_GRAY_MODE_PREFIX: str = 'I'
 # Maps a 16-bit sample onto 0..255; a plain conversion to 'L' clips instead of scaling
 SIXTEEN_TO_EIGHT_BIT_SCALE: float = 1 / 256
+ICC_PROFILE_KEY: str = 'icc_profile'
+# Modes whose pixels Pillow converts into another colour space, so their embedded profile no longer describes them
+PROFILE_CHANGING_MODES: frozenset[str] = frozenset({'CMYK', 'LAB', 'YCbCr'})
 
 # Rules for copying the embedded JPEG of a PDF page instead of rendering the page
 DCT_FILTER: str = 'DCTDecode'
-# Colour components of a JPEG every reader shows as the page does: gray and RGB, not CMYK
-PORTABLE_JPEG_COMPONENTS: frozenset[int] = frozenset({1, 3})
+DECODE_KEY: str = 'Decode'
+# Type PyMuPDF reports for a key missing from a PDF dictionary
+PDF_NULL_TYPE: str = 'null'
 # Text render mode 3 draws nothing, as in the OCR layer of a scan
 INVISIBLE_TEXT_TYPE: int = 3
-# How far in points the image may fall short of a page edge and still count as covering it
+# How far in points the image and the page edges may disagree and still count as the same area
 COVER_TOLERANCE_PT: float = 1.0
 COVER_MARGIN: tuple[float, float, float, float] = (
     -COVER_TOLERANCE_PT,
@@ -60,6 +67,8 @@ class PdfImagePageRasterizer(PageRasterizer):
                 await asyncify(self._extract_pdf_page)(files[0], index=index, target=target)
             case SourceKind.IMAGES:
                 await asyncify(self._convert_image)(natural_order(files)[index], target=target)
+            case _:
+                assert_never(kind)
 
     def _extract_pdf_page(self, path: Path, *, index: int, target: Path) -> None:
         """Copy the page's embedded JPEG, or render the page at the resolution of its dominant image."""
@@ -75,44 +84,65 @@ class PdfImagePageRasterizer(PageRasterizer):
         pixmap.save(target, output=PYMUPDF_JPEG_OUTPUT, jpg_quality=self._jpeg_quality)
 
     def _convert_image(self, path: Path, *, target: Path) -> None:
-        """Copy a gray or RGB JPEG as it is, and encode any other page image as JPEG with the same pixels."""
+        """Copy an upright gray or RGB JPEG as it is, and encode any other page image upright as JPEG.
+
+        The pixels keep their values and their colour profile, unless the conversion changes the colour space.
+        """
         with Image.open(path) as image:
-            if image.format == JPEG_FORMAT and image.mode in PORTABLE_JPEG_MODES:
+            if _is_portable_jpeg(image):
                 shutil.copyfile(path, target)
                 return
-            if image.mode.startswith(WIDE_GRAY_MODE_PREFIX):
-                scaled = image.convert(INT32_MODE).point(lambda value: value * SIXTEEN_TO_EIGHT_BIT_SCALE)
+            upright = ImageOps.exif_transpose(image)
+            if upright.mode.startswith(WIDE_GRAY_MODE_PREFIX):
+                scaled = upright.convert(INT32_MODE).point(lambda value: value * SIXTEEN_TO_EIGHT_BIT_SCALE)
                 converted = scaled.convert(GRAY_MODE)
             else:
-                converted = image.convert(GRAY_JPEG_MODES.get(image.mode, RGB_MODE))
-            converted.save(target, format=JPEG_FORMAT, quality=self._jpeg_quality)
+                converted = upright.convert(GRAY_JPEG_MODES.get(upright.mode, RGB_MODE))
+            profile = None if image.mode in PROFILE_CHANGING_MODES else image.info.get(ICC_PROFILE_KEY)
+            converted.save(target, format=JPEG_FORMAT, quality=self._jpeg_quality, icc_profile=profile)
+
+
+def _is_portable_jpeg(image: Image.Image) -> bool:
+    """Return whether every reader shows the JPEG as its pixels are stored: gray or RGB, and upright.
+
+    A browser turns a JPEG by its EXIF orientation while libvips ``dzsave`` and a PDF viewer do not, so an oriented
+    JPEG would give tiles, thumbnail and page that disagree.
+    """
+    orientation = int(image.getexif().get(ExifTags.Base.Orientation, UPRIGHT_ORIENTATION))
+    return image.format == JPEG_FORMAT and image.mode in PORTABLE_JPEG_MODES and orientation == UPRIGHT_ORIENTATION
 
 
 def _embedded_jpeg(document: pymupdf.Document, page: pymupdf.Page) -> bytes | None:
-    """Return the JPEG a page shows, when the page shows nothing else and shows it upright over the whole page.
+    """Return the JPEG a page shows, when the page shows nothing else and shows it upright over exactly its area.
 
-    Anything drawn beside or over the image, a rotation, a mask or CMYK colour would make the copied bytes differ
-    from what the page looks like, so the page is rendered instead.
+    Anything drawn beside or over the image, an image reaching past the page edges, a rotation, a mask, a decode
+    array or a JPEG that is not portable would make the copied bytes differ from what the page looks like, so the
+    page is rendered instead.
     """
     placements = page.get_image_info(xrefs=True)
     if page.rotation or len(placements) != 1 or page.first_annot is not None or page.get_drawings():
         return None
     placement = placements[0]
-    xref = placement['xref']
-    scale_x, shear_y, shear_x, scale_y = placement['transform'][:4]
-    bbox = pymupdf.Rect(placement['bbox']) + COVER_MARGIN
+    xref = placement[PyMuPdfKey.XREF]
+    scale_x, shear_y, shear_x, scale_y = placement[PyMuPdfKey.TRANSFORM][:4]
+    image_rect = pymupdf.Rect(placement[PyMuPdfKey.BBOX])
     filters = {image[0]: image[PDF_IMAGE_FILTER_INDEX] for image in page.get_images(full=True)}
     only_upright_jpeg = (
         scale_x > 0
         and scale_y > 0
         and not shear_x
         and not shear_y
-        and bbox.contains(page.rect)
-        and not placement['has-mask']
-        and placement['colorspace'] in PORTABLE_JPEG_COMPONENTS
+        # The image covers the page and hides nothing past its edges, as a crop box would
+        and (image_rect + COVER_MARGIN).contains(page.rect)
+        and (page.rect + COVER_MARGIN).contains(image_rect)
+        and not placement[PyMuPdfKey.HAS_MASK]
         and filters.get(xref) == DCT_FILTER
-        and all(span['type'] == INVISIBLE_TEXT_TYPE for span in page.get_texttrace())
+        # extract_image returns the stream as stored, without the decode array a viewer applies to it
+        and document.xref_get_key(xref, DECODE_KEY)[0] == PDF_NULL_TYPE
+        and all(span[PyMuPdfKey.SPAN_TYPE] == INVISIBLE_TEXT_TYPE for span in page.get_texttrace())
     )
     if not only_upright_jpeg:
         return None
-    return bytes(document.extract_image(xref)['image'])
+    jpeg = bytes(document.extract_image(xref)[PyMuPdfKey.IMAGE])
+    with Image.open(io.BytesIO(jpeg)) as image:
+        return jpeg if _is_portable_jpeg(image) else None

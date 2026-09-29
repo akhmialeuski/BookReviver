@@ -23,6 +23,10 @@ IIIF_3_CONTEXT: str = 'http://iiif.io/api/image/3/context.json'
 INFO_NAME: str = 'info.json'
 WIDTH_KEY: str = 'width'
 PYRAMID_NAME: str = 'iiif'
+# The pyramid is cut into a hidden partial directory, as the asset store hands one out, and published under its key
+PARTIAL_PYRAMID_NAME: str = '.iiif-partial-0123'
+# A path without a host, so the browser resolves it against the address the viewer was opened from
+RESOURCE_ID: str = f'/api/v1/iiif/projects/book/pages/0/v1/{PYRAMID_NAME}'
 THUMBNAIL_NAME: str = 'thumb.jpg'
 FULL_NAME: str = 'full.jpg'
 GRAY_MODE: str = 'L'
@@ -54,13 +58,15 @@ class TestTile:
     """Tests for VipsTiler.tile()."""
 
     async def test_writes_iiif_3_pyramid(self, fx_tiler: Tiler, fx_page_image: Path, tmp_path: Path) -> None:
-        """Verify info.json declares the IIIF 3 context, the image size and the configured tile size."""
-        target_dir = tmp_path / PYRAMID_NAME
+        """Verify info.json declares the IIIF 3 context, the public id, the image size and the configured tile size."""
+        target_dir = tmp_path / PARTIAL_PYRAMID_NAME
 
-        await fx_tiler.tile(fx_page_image, target_dir)
+        await fx_tiler.tile(fx_page_image, target_dir, resource_id=RESOURCE_ID)
 
         info = json.loads((target_dir / INFO_NAME).read_text())
         expect(info['@context'] == IIIF_3_CONTEXT)
+        # A viewer builds every tile URL from the id, so it must be the public URL, not the partial directory
+        expect(info['id'] == RESOURCE_ID)
         expect((info[WIDTH_KEY], info['height']) == PAGE_SIZE_PX)
         expect(info['tiles'] == [{'scaleFactors': LEVEL_SCALE_FACTORS, WIDTH_KEY: IMAGING.tile_size_px}])
         expect(any(target_dir.rglob('default.jpg')))
@@ -68,7 +74,7 @@ class TestTile:
 
     async def test_writes_nothing_beside_pyramid(self, fx_tiler: Tiler, fx_page_image: Path, tmp_path: Path) -> None:
         """Verify the properties file libvips writes next to a pyramid does not land beside the target."""
-        await fx_tiler.tile(fx_page_image, tmp_path / PYRAMID_NAME)
+        await fx_tiler.tile(fx_page_image, tmp_path / PYRAMID_NAME, resource_id=RESOURCE_ID)
 
         assert sorted([path.name async for path in anyio.Path(tmp_path).iterdir()]) == [FULL_NAME, PYRAMID_NAME]
 

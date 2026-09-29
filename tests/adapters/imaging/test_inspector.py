@@ -9,7 +9,7 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import ExifTags
 
-from bookreviver.adapters.imaging.inspector import FILE_SIZE_KEY
+from bookreviver.adapters.imaging.inspector import FactKey
 from bookreviver.domain.enums import ColorMode, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
 from bookreviver.domain.values import MetadataSuggestion
@@ -45,6 +45,8 @@ SCAN_PAGE_SIZE_PT: tuple[float, float] = (576.0, 720.0)
 # The same page in landscape, holding the same scan turned a quarter
 LANDSCAPE_PAGE_SIZE_PT: tuple[float, float] = (720.0, 576.0)
 QUARTER_TURN_DEGREES: int = 90
+# EXIF orientation telling a viewer to turn the stored image a quarter clockwise
+QUARTER_TURN_ORIENTATION: int = 6
 SCAN_SIZE_PX: tuple[int, int] = (1200, 1500)
 SCAN_DPI: float = 150.0
 SCAN_PAGE_WIDTH_MM: float = 203.2
@@ -233,7 +235,7 @@ class TestInspectPdf:
         expect(metadata['outline_entries'] == len(OUTLINE_TITLES))
         expect(metadata['has_xmp_metadata'] is False)
         expect(metadata[REPAIRED_KEY] is False)
-        expect(metadata[FILE_SIZE_KEY] == path.stat().st_size)
+        expect(metadata[FactKey.FILE_SIZE_BYTES] == path.stat().st_size)
         expect(metadata['sha256'] == hashlib.sha256(path.read_bytes()).hexdigest())
         expect(json.loads(json.dumps(metadata)) == metadata)
         assert_expectations()
@@ -374,8 +376,19 @@ class TestInspectImages:
         page = (await fx_inspector.inspect(SourceKind.IMAGES, [path])).pages[0]
 
         expect(page.image_format == JPEG)
-        expect(page.extra[FILE_SIZE_KEY] == path.stat().st_size)
+        expect(page.extra[FactKey.FILE_SIZE_BYTES] == path.stat().st_size)
         expect(page.extra['exif'] == {'Make': EXIF_MAKE, 'Model': EXIF_MODEL})
+        assert_expectations()
+
+    async def test_describes_oriented_image_as_shown(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Verify a quarter-turn EXIF orientation swaps the size, DPI and physical size to those a viewer shows."""
+        exif = {ExifTags.Base.Orientation: QUARTER_TURN_ORIENTATION}
+        path = write_image(tmp_path / f'{PAGE_STEM}{JPG_SUFFIX}', mode='L', size=SCAN_SIZE_PX, dpi=SCAN_DPI, exif=exif)
+
+        page = (await fx_inspector.inspect(SourceKind.IMAGES, [path])).pages[0]
+
+        expect((page.width_px, page.height_px) == SCAN_SIZE_PX[::-1])
+        expect((page.width_mm, page.height_mm) == (SCAN_PAGE_HEIGHT_MM, SCAN_PAGE_WIDTH_MM))
         assert_expectations()
 
     async def test_reports_file_metadata(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:

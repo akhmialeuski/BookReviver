@@ -34,8 +34,15 @@ class Tiler(ABC):
     """Cuts a page image into a zoomable tile pyramid and a thumbnail."""
 
     @abstractmethod
-    async def tile(self, image: Path, target_dir: Path) -> None:
-        """Write an IIIF Image API level 0 pyramid of ``image`` into ``target_dir``."""
+    async def tile(self, image: Path, target_dir: Path, *, resource_id: str) -> None:
+        """Write an IIIF Image API level 0 pyramid of ``image`` into ``target_dir``.
+
+        :param image:       Page image to cut.
+        :param target_dir:  Directory to create for the pyramid.
+        :param resource_id: Path the pyramid is served from, such as ``/api/v1/iiif/<key>``, written as the ``id`` of
+                            its ``info.json``, since a viewer builds every tile URL from it. It carries no scheme
+                            or host, so the browser resolves it against the address the page was opened from.
+        """
 
     @abstractmethod
     async def thumbnail(self, image: Path, target: Path) -> None:
