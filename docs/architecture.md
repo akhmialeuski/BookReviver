@@ -263,7 +263,8 @@ serves its own viewer, so the path is the deliberate choice.
    - Page images: any number of TIFF, JPEG, JPEG 2000 and PNG files, such as a directory of scans.
 
    The files of a source are read in the natural order of their names, so `part2.pdf` precedes `part10.pdf`, and
-   pages are numbered through the whole book.
+   pages are numbered through the whole book. The frontend offers two ways to choose them, a whole directory or
+   individual files, and both reach the API as the same list of files, so the backend has one upload path for both.
 2. The job inspects the source, promotes it, replaces the page rows and fills only empty description fields. A
    job retried after a crash first deletes the project's `pages/` prefix, which removes the pages it cut and any
    partial files it left, and cuts every page again.
