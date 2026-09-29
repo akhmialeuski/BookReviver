@@ -633,6 +633,9 @@ hashing, sessions and the OAuth flow are what it already maintains. The rules th
   account. The address becomes confirmed and the password is replaced by an unknown one, so whoever registered the
   address before anyone proved owning it can no longer sign in with that password.
 - **Password rules.** At least 12 characters, and the password must not contain the email address.
+- **Deleting an account.** The user manager's `on_before_delete` hook first deletes every project of the user with
+  its files through `ProjectService`, and only then is the user deleted, because the `RESTRICT` key of
+  `projects.owner_id` refuses to leave projects without an owner.
 - **Mail links.** Account messages link to `/verify-email`, `/reset-password` and `/sign-in` under
   `settings.public_url`. Stage 2 of the delivery plan builds these pages.
 - Provider API keys are stored with `EncryptedString`, returned only masked, and decrypted only by the adapter that
@@ -965,14 +968,100 @@ The project list counts in `page_count` the included pages of the book, and show
 
 1. **Core, accounts, import.** Domain, ports, services, persistence and storage adapters with contract tests,
    accounts with email, Google and Facebook (ready-made httpx-oauth clients, while X is deferred until it has its own
-   PKCE router), the JSON API for projects and pages, the import job with tiling, SSE, import-linter. The Jinja
-   interface is removed.
+   PKCE router), the book model with sources, scans, pages and their base versions, the JSON API for projects,
+   sources and pages, the import job with tiling, SSE, import-linter. The Jinja interface is removed.
 2. **Frontend shell.** Sign-in and registration, settings, project list and book details, upload with live progress.
 3. **Viewer.** OpenSeadragon book viewer with spreads, navigation, zoom, preloading and the page panel.
-4. **Processing framework.** Plugin contract and catalogue, recipes, artifacts, previews, variants, the editor layer,
-   and the first geometry and cleanup plugins.
+4. **Processing framework.** Plugin contract and catalogue, recipes, page versions per step with their stage state,
+   previews, variants, the editor layer, the page split and page order stages, and the first geometry and cleanup
+   plugins.
 5. **Layout and background.** Region detection, background separation and unification.
 6. **Recognition and models.** Engine catalogue, account model settings, OCR engines, proofreading with LLMs.
 7. **Typesetting and export.** Later.
 
 Steps 2 and 3 start in parallel once the OpenAPI schema of step 1 is committed, and develop against it.
+
+## Decisions
+
+The book model rests on these decisions, each with its reason.
+
+1. **One page structure per project.** Stages and recipe variants do not create pages of their own, they create
+   versions of the same page, because the printed number, the order and the edits must not move with every run.
+2. **A page stands on its own.** A page keeps its own copy of its base image in its own directory, so deleting a
+   source does not break it. The price is about twice the space of the scans.
+3. **The page split creates pages.** The split is a step that creates pages from scans, and it can be skipped. The
+   split area lives in the `transform` of the base version of `split.spread`, and the `scan_id` and `slot` of a page
+   only record its origin, so moving the line changes versions and never the identity of a page.
+4. **Order by fractional index.** `order_key` is a fractional index string from the `fractional-indexing` package,
+   so moving or inserting a page writes one row and nothing is renumbered.
+5. **How pages appear.** An import with the split skipped appends one page per scan to the end of the book in upload
+   order, which is predictable, and the user arranges pages in the `page-order` stage.
+6. **Blank leaves and placeholders.** A blank leaf gets a generated white image of the median page size and passes
+   the stages like any page, because it is a real leaf of the printed book. A missing page, cover or title page
+   without a scan stays without an image until a scan is bound to it, since it has nothing to process.
+7. **Printed number.** Every page has its label as a string, and no numbering ranges are stored, because printed
+   numbering has exceptions that ranges would need rules for. An operation such as "number from this page in Roman
+   numerals from i" writes the labels, and the import takes PDF page labels through PyMuPDF's `Page.get_label`.
+8. **Storage layout.** Sources live in `sources/<source_id>/`, scans in `assets/scans/<source_id>/<number>/v<n>/`,
+   and page versions in `assets/pages/<page_id>/<stage>/<processor>/<version>/`, and both storage ports have
+   `delete_project`. Keys by identifier stay valid when pages move, and each port deletes a project with one prefix.
+9. **Events and page count.** The events are those of the HTTP API section. `page_count` counts the included pages,
+   because that is the size of the book, and the number of scans is shown separately.
+10. **Owner key.** `projects.owner_id` references `user.id` with `ON DELETE RESTRICT`. A cascade would delete the
+    rows of the projects but not their files, so an account is deleted only after its projects are deleted through
+    `ProjectService`.
+11. **Source boundary.** One file is one source, except an indirect DjVu document, because a file is what is
+    uploaded, recognised as a duplicate and deleted, while the files of an indirect DjVu are no documents alone.
+12. **Version granularity.** A version is recorded per step and the current version of a stage is kept in
+    `PageStage`, because steps such as despeckling and binarisation are separate results the user compares.
+13. **A page order stage.** `Stage` gains `PAGE_ORDER = 'page-order', 'Page order'` after `PAGE_SPLIT`, because
+    ordering pages, numbering them and adding placeholders is a step of its own between the split and the geometry.
+14. **Image format.** The project setting `image_policy` is `compact` by default or `lossless`, chosen when the
+    project is created or in the stage that creates pages, because lossless colour pages take hundreds of megabytes
+    each and not every book needs them.
+15. **Deleting an account.** The `UserManager.on_before_delete` hook first deletes every project of the user with
+    its files through `ProjectService`, and then the user is deleted, which the `RESTRICT` key requires.
+16. **Owner key in the in-memory adapter.** Only SQLAlchemy checks the owner key: its contract fixtures create `user`
+    rows and `test_tables.py` pins the `RESTRICT`. There is no accounts port, since fastapi-users owns the accounts.
+17. **Version identifier.** A hash of the `page_id`, the processor key and version, the parameters, the input version
+    and the manual edit, cut to 16 hexadecimal digits, so equal work gets the same identifier and hits the cache.
+18. **The `OrderKeys` port.** It comes with the domain and persistence part of the book model, with an adapter on
+    `fractional-indexing`, because the domain may not import a third-party library.
+19. **One import at a time.** A partial unique index on `jobs (project_id)` for queued and running imports gives a
+    second upload a 409, because two concurrent imports would race for the same order keys and duplicate checks.
+20. **Incomplete indirect DjVu.** Such a source is rejected as a whole with the list of missing files, because it is
+    not a readable document, and the other files of the upload are still imported, because they are independent.
+21. **Cancelled import.** The next import job of the project first cuts the renditions of scans that have none, so
+    no scan stays unviewable.
+22. **Format of a scan's `full`.** As for versions: a bilevel scan is always a 1-bit PNG, and a gray or colour scan
+    follows `image_policy`, so scans and pages share one rule.
+23. **Upload size.** The setting `max_upload_files = 10000` sits next to `max_upload_bytes = 4 GiB`, and exceeding
+    either gives an RFC 9457 problem, which bounds what one request can make the server hold.
+24. **DjVuLibre not installed.** The application starts with a warning in its log, and every DjVu source is rejected
+    with a message asking to install `djvulibre`, because the other kinds of source do not need it.
+25. **Grouping an upload into sources.** A new port method, `SourceInspector.group(files)`, splits an upload into
+    sources and assembles an indirect DjVu, because which files make a source depends on the format, which only the
+    imaging adapter knows.
+26. **Base steps.** `split.none` and `pages.blank` are ordinary processors, so base versions follow the same rules as
+    every other version. Until the plugin framework exists, the import and the page order stage do the same with
+    interim code that the processors replace.
+27. **PATCH.** JSON Merge Patch by RFC 7396: a field left out does not change, `null` clears it, and the title cannot
+    be cleared, because a standard format needs no schema of our own for partial updates.
+28. **Page manifest.** Up to 1000 pages per request through its own `Params`, excluded pages returned with their
+    `included` flag, and the filter `?included=true` for the viewer, which needs the whole book in few requests.
+29. **OpenAPI schema.** It is the file `docs/openapi.json`, and a test checks that it equals `app.openapi()`, because
+    the frontend client is generated from it and must not drift from the routes.
+30. **Processing.** A step preview runs as a background job with its result over SSE, because heavy work runs only
+    in jobs. OpenCV is the optional dependency group `bookreviver[cv]`, installed only where plugins need it. The
+    split line is edited with `EditorKind.line`. Binding a scan to a placeholder takes the scan away from the page
+    the import made of it with the flag `take_over`, since a pair of scan and slot belongs to one page.
+31. **Sign-in with X.** It is left out, and Google and Facebook remain. X returns in a task of its own with a fresh
+    PKCE verifier on every request, which the shared OAuth router cannot supply.
+32. **Migrations.** They are applied only by hand with advanced-alchemy's `alchemy upgrade head` command, and the
+    application at start-up only compares the revision and refuses to start on a mismatch, because a schema change
+    is a deliberate step and running against the wrong schema corrupts data.
+
+Smaller technical choices follow the same model. Languages are ISO 639-3 codes, XMP is parsed with defusedxml, the
+parameters of processing jobs are kept in `Job.params`, a DjVu source suggests a publication year only from its
+metadata, the result of an import lists its `skipped` files, the root of the IIIF paths comes from `app`, and deleting
+a source during an import gets a 409.
