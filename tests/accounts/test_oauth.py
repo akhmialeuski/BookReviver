@@ -1,7 +1,5 @@
-"""Tests for social sign-in: which providers are offered, the callback of one, and PKCE of the X client."""
+"""Tests for social sign-in: which providers are offered, and the callback of one."""
 
-import base64
-import hashlib
 from http import HTTPStatus
 from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import patch
@@ -14,7 +12,7 @@ from httpx_oauth.clients.google import ACCESS_TOKEN_ENDPOINT
 
 from bookreviver.api.schemas.accounts import AccountRead
 from bookreviver.app.main import create_app
-from bookreviver.app.providers.accounts import SESSION_COOKIE, X_PROFILE_ENDPOINT, X_TOKEN_ENDPOINT, XOAuth2
+from bookreviver.app.providers.accounts import SESSION_COOKIE
 from bookreviver.app.settings import OAuthClient
 from tests.helpers.fakes_accounts import AUTH_PATH, CSRF_HEADER, ME_PATH
 
@@ -30,16 +28,13 @@ ACCESS_TOKEN: str = 'provider-access-token'
 AUTHORIZATION_CODE: str = 'provider-code'
 CONFIGURED: OAuthClient = OAuthClient(client_id='client-id', client_secret='client-secret')
 GOOGLE_HTTP_CLIENT: str = 'httpx_oauth.clients.google.GoogleOAuth2.get_httpx_client'
-X_HTTP_CLIENT: str = 'bookreviver.app.providers.accounts.XOAuth2.get_httpx_client'
-REDIRECT_URI: str = 'https://bookreviver.example/api/v1/auth/x/callback'
-X_ACCOUNT_ID: str = '42'
 STATE: str = 'state'
 ACCESS_TOKEN_FIELD: str = 'access_token'
 AUTH_SETTINGS: str = 'auth'
 GOOGLE: str = 'google'
 FACEBOOK: str = 'facebook'
-X: str = 'x'
-PROVIDERS: frozenset[str] = frozenset({GOOGLE, FACEBOOK, X})
+PROVIDERS: frozenset[str] = frozenset({GOOGLE, FACEBOOK})
+AUTHORIZE_SUFFIX: str = '/authorize'
 
 
 class ProviderCase(NamedTuple):
@@ -67,11 +62,6 @@ def _query(url: str) -> dict[str, str]:
     return {name: values[0] for name, values in parse_qs(urlsplit(url).query).items()}
 
 
-def _s256(verifier: str) -> str:
-    """Return the PKCE S256 challenge of ``verifier``."""
-    return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
-
-
 class TestOAuthRouters:
     """Tests for the OAuth routers AccountRoutes.router() registers."""
 
@@ -89,7 +79,7 @@ class TestOAuthRouters:
         auth = fx_settings.auth.model_copy(update=dict.fromkeys(case.configured, CONFIGURED))
         app = create_app(fx_settings.model_copy(update={AUTH_SETTINGS: auth}))
         paths = app.openapi()['paths']
-        offered = {name for name in PROVIDERS if f'{AUTH_PATH}/{name}/authorize' in paths}
+        offered = {name for name in PROVIDERS if f'{AUTH_PATH}/{name}{AUTHORIZE_SUFFIX}' in paths}
         assert offered == case.offered
 
 
@@ -103,7 +93,7 @@ class TestGoogleSignIn:
 
     async def _sign_in_with_google(self, client: httpx.AsyncClient) -> httpx.Response:
         """Start the sign-in, then come back to the callback as Google's redirect would, without a CSRF token."""
-        authorize = await client.get(f'{AUTH_PATH}/{GOOGLE}/authorize')
+        authorize = await client.get(f'{AUTH_PATH}/{GOOGLE}{AUTHORIZE_SUFFIX}')
         state = _query(authorize.json()['authorization_url'])[STATE]
         params = {'code': AUTHORIZATION_CODE, STATE: state}
         return await client.get(f'{AUTH_PATH}/{GOOGLE}/callback', params=params, headers={CSRF_HEADER: ''})
@@ -132,44 +122,4 @@ class TestGoogleSignIn:
         expect(account.id == registered.id)
         expect(account.is_verified is True)
         expect((await fx_visitor.login(EMAIL)).status_code == HTTPStatus.BAD_REQUEST)
-        assert_expectations()
-
-
-class TestXOAuth2:
-    """Tests for XOAuth2."""
-
-    async def test_token_request_proves_the_challenge(self) -> None:
-        """Verify the authorization URL carries an S256 challenge that the token request's verifier answers."""
-        requests: list[httpx.Request] = []
-
-        def x_api(request: httpx.Request) -> httpx.Response:
-            requests.append(request)
-            return httpx.Response(HTTPStatus.OK, json={ACCESS_TOKEN_FIELD: ACCESS_TOKEN, 'token_type': 'bearer'})
-
-        client = XOAuth2(CONFIGURED.client_id, CONFIGURED.client_secret.get_secret_value())
-        url = _query(await client.get_authorization_url(REDIRECT_URI, STATE))
-        with patch(X_HTTP_CLIENT, lambda _self: httpx.AsyncClient(transport=httpx.MockTransport(x_api))):
-            await client.get_access_token(AUTHORIZATION_CODE, REDIRECT_URI)
-        token_request = requests[0]
-        form = {name: values[0] for name, values in parse_qs(token_request.content.decode()).items()}
-        expect(url['code_challenge_method'] == 'S256')
-        expect(str(token_request.url) == X_TOKEN_ENDPOINT)
-        expect(_s256(form['code_verifier']) == url['code_challenge'])
-        assert_expectations()
-
-    @pytest.mark.parametrize('email', [EMAIL, None], ids=['confirmed', 'without-email'])
-    async def test_id_email_reads_the_confirmed_address(self, email: str | None) -> None:
-        """Verify the account identifier and confirmed address are read from X's profile, if X gives one."""
-        requests: list[httpx.Request] = []
-
-        def x_api(request: httpx.Request) -> httpx.Response:
-            requests.append(request)
-            profile = {'id': X_ACCOUNT_ID} | ({'confirmed_email': email} if email else {})
-            return httpx.Response(HTTPStatus.OK, json={'data': profile})
-
-        client = XOAuth2(CONFIGURED.client_id, CONFIGURED.client_secret.get_secret_value())
-        with patch(X_HTTP_CLIENT, lambda _self: httpx.AsyncClient(transport=httpx.MockTransport(x_api))):
-            found = await client.get_id_email(ACCESS_TOKEN)
-        expect(found == (X_ACCOUNT_ID, email))
-        expect(str(requests[0].url).startswith(X_PROFILE_ENDPOINT))
         assert_expectations()

@@ -52,7 +52,6 @@ class AuthSettings(BaseModel):
     :ivar cookie_secure: Whether the session cookie requires HTTPS; off only for local development over HTTP.
     :ivar google: OAuth application for Google sign-in.
     :ivar facebook: OAuth application for Facebook sign-in.
-    :ivar x: OAuth application for X sign-in.
     """
 
     secret: SecretStr = Field(description='Signs verification and reset tokens, and the CSRF cookie')
@@ -60,7 +59,6 @@ class AuthSettings(BaseModel):
     cookie_secure: bool = True
     google: OAuthClient = OAuthClient()
     facebook: OAuthClient = OAuthClient()
-    x: OAuthClient = OAuthClient()
 
 
 class MailSettings(BaseModel):

@@ -1,10 +1,7 @@
 """Provider of the accounts feature: users, sessions, OAuth clients and mail, all on fastapi-users."""
 
 import enum
-import hashlib
-import hmac
-from base64 import urlsafe_b64encode
-from typing import TYPE_CHECKING, Any, Literal, override
+from typing import TYPE_CHECKING, Any, override
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
 
@@ -15,9 +12,6 @@ from fastapi_users.authentication import AuthenticationBackend, CookieTransport
 from fastapi_users.authentication.strategy.db import DatabaseStrategy
 from httpx_oauth.clients.facebook import FacebookOAuth2
 from httpx_oauth.clients.google import GoogleOAuth2
-from httpx_oauth.exceptions import GetIdEmailError
-from httpx_oauth.oauth2 import BaseOAuth2
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bookreviver.adapters.mail.log import LogMailer
@@ -38,7 +32,7 @@ if TYPE_CHECKING:
 
     from fastapi import Request, Response, params
     from fastapi_users.schemas import BaseUserCreate
-    from httpx_oauth.oauth2 import OAuth2ClientAuthMethod, OAuth2Token
+    from httpx_oauth.oauth2 import BaseOAuth2
 
     from bookreviver.app.settings import AuthSettings, OAuthClient
 
@@ -48,18 +42,6 @@ SESSION_COOKIE: str = 'bookreviver_session'
 AUTH_BACKEND: str = 'cookie'
 PASSWORD_TOO_SHORT: str = 'Use a password of at least {length} characters.'
 PASSWORD_CONTAINS_EMAIL: str = 'The password must not contain the email address.'
-
-X_AUTHORIZE_ENDPOINT: str = 'https://x.com/i/oauth2/authorize'
-X_TOKEN_ENDPOINT: str = 'https://api.x.com/2/oauth2/token'
-X_REVOKE_ENDPOINT: str = 'https://api.x.com/2/oauth2/revoke'
-X_PROFILE_ENDPOINT: str = 'https://api.x.com/2/users/me'
-# users.email lets X return the confirmed address, and X grants users.read only together with tweet.read
-X_SCOPES: list[str] = ['users.read', 'tweet.read', 'users.email']
-X_EMAIL_FIELD: str = 'confirmed_email'
-# X authenticates a confidential client at its token and revocation endpoints with HTTP Basic
-X_CLIENT_AUTH: OAuth2ClientAuthMethod = 'client_secret_basic'
-PKCE_METHOD: Literal['S256'] = 'S256'
-PKCE_CONTEXT: bytes = b'bookreviver:x:pkce-verifier'
 
 
 class AccountMail(enum.Enum):
@@ -167,69 +149,6 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         await self.user_db.update(user, {'is_verified': True, 'hashed_password': unknown_password})
 
 
-class XAccount(BaseModel):
-    """The part of X's ``users/me`` answer that identifies the account."""
-
-    id: str
-    confirmed_email: str | None = None
-
-
-class XOAuth2(BaseOAuth2[dict[str, Any]]):
-    """Sign-in with X over OAuth 2.0: httpx-oauth ships no X client, so its base client is pointed at X.
-
-    X requires PKCE, and fastapi-users' OAuth routes pass no verifier through, so the client derives one from its
-    secret. The verifier never leaves the server, so an intercepted code stays useless, as PKCE intends.
-    """
-
-    display_name = 'X'
-
-    def __init__(self, client_id: str, client_secret: str) -> None:
-        super().__init__(
-            client_id,
-            client_secret,
-            X_AUTHORIZE_ENDPOINT,
-            X_TOKEN_ENDPOINT,
-            X_TOKEN_ENDPOINT,
-            X_REVOKE_ENDPOINT,
-            name='x',
-            base_scopes=X_SCOPES,
-            token_endpoint_auth_method=X_CLIENT_AUTH,
-            revocation_endpoint_auth_method=X_CLIENT_AUTH,
-        )
-        digest = hmac.new(client_secret.encode(), PKCE_CONTEXT, hashlib.sha256).digest()
-        self._code_verifier = urlsafe_b64encode(digest).rstrip(b'=').decode()
-
-    @override
-    async def get_authorization_url(
-        self,
-        redirect_uri: str,
-        state: str | None = None,
-        scope: list[str] | None = None,
-        code_challenge: str | None = None,
-        code_challenge_method: Literal['plain', 'S256'] | None = None,
-        extras_params: dict[str, Any] | None = None,
-    ) -> str:
-        challenge = urlsafe_b64encode(hashlib.sha256(self._code_verifier.encode()).digest()).rstrip(b'=').decode()
-        return await super().get_authorization_url(redirect_uri, state, scope, challenge, PKCE_METHOD, extras_params)
-
-    @override
-    async def get_access_token(self, code: str, redirect_uri: str, code_verifier: str | None = None) -> OAuth2Token:
-        return await super().get_access_token(code, redirect_uri, code_verifier or self._code_verifier)
-
-    @override
-    async def get_id_email(self, token: str) -> tuple[str, str | None]:
-        async with self.get_httpx_client() as client:
-            response = await client.get(
-                X_PROFILE_ENDPOINT,
-                params={'user.fields': X_EMAIL_FIELD},
-                headers={**self.request_headers, 'Authorization': f'Bearer {token}'},
-            )
-        if response.is_error:
-            raise GetIdEmailError(response=response)
-        account = XAccount.model_validate(response.json()['data'])
-        return account.id, account.confirmed_email
-
-
 class AccountsProvider(Provider):
     """Builds the mailer, and per request the fastapi-users user manager and session strategy."""
 
@@ -280,7 +199,6 @@ def oauth_clients(auth: AuthSettings) -> list[BaseOAuth2[Any]]:
     providers: list[tuple[Callable[[str, str], BaseOAuth2[Any]], OAuthClient]] = [
         (GoogleOAuth2, auth.google),
         (FacebookOAuth2, auth.facebook),
-        (XOAuth2, auth.x),
     ]
     return [
         client_class(credentials.client_id, credentials.client_secret.get_secret_value())
