@@ -110,6 +110,7 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Accounts     | `Actor`, `AccountSettings` (default engine and model per `AiTask`)                            |
 | Credentials  | `ProviderCredential` with a masked secret, never printed or logged                            |
 | Books        | `Project`, `ProjectOverview`, `BookDetails`, `ImagePolicy`                                    |
+| Changes      | `BookDetailsChanges`, the description fields a change replaces, None keeping a field          |
 | Sources      | `Source`, `SourceFile`, `SourceKind`, `FileType`, `MetadataSuggestion`                        |
 | Scans        | `Scan`, `ScanFacts`, `Renditions`                                                             |
 | Pages        | `Page`, `PageKind`, `PageOrigin`, `PageVersion`, `VersionState`, `Transform`, `PageStage`     |
@@ -909,8 +910,10 @@ The project list counts in `page_count` the included pages of the book, and show
   `model_validate`.
 - Following FastAPI's guide: no `...` as a default, no `RootModel` (an `Annotated` list with `Field` instead), and
   `Annotated` for every parameter and dependency.
-- `PATCH` follows JSON Merge Patch, RFC 7396: a field left out stays as it is, and `null` clears it. The title of a
-  book cannot be cleared.
+- `PATCH` follows JSON Merge Patch, RFC 7396: a field left out stays as it is, and `null` clears it to the value a
+  new resource has for it. The title of a book cannot be cleared. The body is sent as `application/merge-patch+json`
+  or `application/json`. The service receives a domain change such as `BookDetailsChanges`, in which None keeps a
+  field, so clearing needs no third state in the domain.
 - Pydantic stays at the edges: request and response schemas in `api`, settings in `app`. Domain invariants are
   `attrs` validators, so the core does not depend on Pydantic.
 - Every route declares a typed Pydantic response. The shapes are the same everywhere: a single resource is its
