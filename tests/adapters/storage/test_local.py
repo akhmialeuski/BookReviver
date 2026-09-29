@@ -7,8 +7,9 @@ import anyio
 import pytest
 
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
+from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.ids import ProjectId, StorageKey
-from tests.adapters.storage.samples import WriterFailedError, abandon_write, upload
+from tests.helpers.storage import WriterFailedError, abandon_write, upload
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -21,6 +22,7 @@ PAGE_NAME: str = 'page.png'
 PAGE_CONTENT: bytes = b'page'
 MAX_BYTES: int = 1024
 FILE_KEY: StorageKey = StorageKey('projects/book/pages/0/v1/full.jpg')
+OLD_SOURCE_NAME: str = 'old.pdf'
 
 
 class TestLocalSourceStore:
@@ -30,9 +32,22 @@ class TestLocalSourceStore:
         """Verify an upload lands in ``projects/<id>/incoming/`` under the root, as the architecture lays out."""
         store = LocalSourceStore(root=tmp_path)
 
-        await store.stage(PROJECT_ID, [upload(PAGE_NAME, PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await store.stage(PROJECT_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
 
         assert (tmp_path / 'projects' / str(PROJECT_ID) / 'incoming' / PAGE_NAME).read_bytes() == PAGE_CONTENT
+
+    async def test_promotion_never_replaces_source(self, tmp_path: Path) -> None:
+        """Verify a staged upload is refused rather than moved over a source, however the two came to coexist."""
+        store = LocalSourceStore(root=tmp_path)
+        project_dir = tmp_path / 'projects' / str(PROJECT_ID)
+        for area, name in (('source', OLD_SOURCE_NAME), ('incoming', PAGE_NAME)):
+            (project_dir / area).mkdir(parents=True)
+            (project_dir / area / name).write_bytes(PAGE_CONTENT)
+
+        with pytest.raises(ConflictError):
+            await store.promote(PROJECT_ID)
+
+        assert [path.name for path in (project_dir / 'source').iterdir()] == [OLD_SOURCE_NAME]
 
 
 class TestLocalAssetStore:
@@ -52,7 +67,7 @@ class TestLocalAssetStore:
         store = LocalAssetStore(root=tmp_path)
 
         with pytest.raises(WriterFailedError):
-            await abandon_write(store, FILE_KEY, PAGE_CONTENT)
+            await abandon_write(store, key=FILE_KEY, content=PAGE_CONTENT)
 
         assert [path async for path in anyio.Path(tmp_path / FILE_KEY).parent.iterdir()] == []
 

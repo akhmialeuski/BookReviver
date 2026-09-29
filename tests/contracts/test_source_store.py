@@ -1,6 +1,5 @@
-"""Contract of the SourceStore port, run against every storage adapter registered in the conftest."""
+"""Contract of the SourceStore port, run against every storage backend the application registers."""
 
-from itertools import starmap
 from typing import TYPE_CHECKING, NamedTuple
 from uuid import uuid4
 
@@ -8,9 +7,9 @@ import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import UploadProblem
-from bookreviver.domain.errors import NotFoundError, UploadRejectedError
+from bookreviver.domain.errors import ConflictError, NotFoundError, UploadRejectedError
 from bookreviver.domain.ids import ProjectId
-from tests.adapters.storage.samples import LARGE_CONTENT, upload
+from tests.helpers.storage import LARGE_CONTENT, upload
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -68,7 +67,7 @@ class TestStage:
 
     async def test_streams_files_under_their_base_names(self, fx_source_store: SourceStore) -> None:
         """Verify every file is kept whole under its base name, whatever path the browser sent."""
-        files = [upload('scans/page1.png', OLD_CONTENT), upload('C:\\scans\\page2.png', LARGE_CONTENT)]
+        files = [upload('scans/page1.png', content=OLD_CONTENT), upload('C:\\scans\\page2.png', content=LARGE_CONTENT)]
         total = len(OLD_CONTENT) + len(LARGE_CONTENT)
 
         # A limit equal to the upload size admits it
@@ -80,19 +79,34 @@ class TestStage:
 
     async def test_replaces_previous_staged_upload(self, fx_source_store: SourceStore) -> None:
         """Verify a new upload drops whatever an earlier upload left staged."""
-        await _stage(fx_source_store, PROJECT_ID, upload(OLD_NAME, OLD_CONTENT))
+        await _stage(fx_source_store, PROJECT_ID, upload(OLD_NAME, content=OLD_CONTENT))
 
-        await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, NEW_CONTENT))
+        await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, content=NEW_CONTENT))
 
         assert await _staged(fx_source_store, PROJECT_ID) == {NEW_NAME: NEW_CONTENT}
 
-    async def test_keeps_current_source(self, fx_source_store: SourceStore) -> None:
-        """Verify staging leaves the imported source as it is."""
-        await _import(fx_source_store, PROJECT_ID, upload(OLD_NAME, OLD_CONTENT))
+    async def test_project_with_source_refuses_upload_unread(self, fx_source_store: SourceStore) -> None:
+        """Verify a project's book is never replaced, and the refused upload is not even read, since it can be huge."""
+        await _import(fx_source_store, PROJECT_ID, upload(OLD_NAME, content=OLD_CONTENT))
+        new_upload = upload(NEW_NAME, content=NEW_CONTENT)
 
-        await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, NEW_CONTENT))
+        with pytest.raises(ConflictError):
+            await _stage(fx_source_store, PROJECT_ID, new_upload)
 
-        assert await _source(fx_source_store, PROJECT_ID) == {OLD_NAME: OLD_CONTENT}
+        expect(new_upload.file.tell() == 0)
+        expect(await _source(fx_source_store, PROJECT_ID) == {OLD_NAME: OLD_CONTENT})
+        assert_expectations()
+        with pytest.raises(NotFoundError):
+            await _staged(fx_source_store, PROJECT_ID)
+
+    async def test_accepts_upload_after_project_deleted(self, fx_source_store: SourceStore) -> None:
+        """Verify deleting the project's files is the way to put another book in its place."""
+        await _import(fx_source_store, PROJECT_ID, upload(OLD_NAME, content=OLD_CONTENT))
+        await fx_source_store.delete_project(PROJECT_ID)
+
+        await _import(fx_source_store, PROJECT_ID, upload(NEW_NAME, content=NEW_CONTENT))
+
+        assert await _source(fx_source_store, PROJECT_ID) == {NEW_NAME: NEW_CONTENT}
 
     @pytest.mark.parametrize(
         CASE_ARG,
@@ -114,22 +128,25 @@ class TestStage:
                 max_bytes=UNLIMITED_BYTES,
                 problem=UploadProblem.DUPLICATE_NAME,
             ),
+            # A case-insensitive file system would store both under one name
+            RejectedUploadCase(
+                files=[('Page.JPG', OLD_CONTENT), ('page.jpg', NEW_CONTENT)],
+                max_bytes=UNLIMITED_BYTES,
+                problem=UploadProblem.DUPLICATE_NAME,
+            ),
         ],
-        ids=['too-large', 'no-name', 'empty-name', 'parent-directory', 'same-base-name'],
+        ids=['too-large', 'no-name', 'empty-name', 'parent-directory', 'same-base-name', 'same-name-other-case'],
     )
     async def test_rejected_upload_leaves_nothing_staged(
         self, fx_source_store: SourceStore, case: RejectedUploadCase
     ) -> None:
-        """Verify a refused upload reports its problem, keeps nothing it wrote and leaves the source alone."""
-        await _import(fx_source_store, PROJECT_ID, upload(OLD_NAME, OLD_CONTENT))
-        files = list(starmap(upload, case.files))
+        """Verify a refused upload reports its problem and keeps nothing it wrote."""
+        files = [upload(name, content=content) for name, content in case.files]
 
         with pytest.raises(UploadRejectedError) as error:
             await fx_source_store.stage(PROJECT_ID, files, max_bytes=case.max_bytes)
 
-        expect(error.value.problem == case.problem)
-        expect(await _source(fx_source_store, PROJECT_ID) == {OLD_NAME: OLD_CONTENT})
-        assert_expectations()
+        assert error.value.problem == case.problem
         with pytest.raises(NotFoundError):
             await _staged(fx_source_store, PROJECT_ID)
 
@@ -137,10 +154,9 @@ class TestStage:
 class TestPromote:
     """Contract of SourceStore.promote()."""
 
-    async def test_replaces_source_with_staged_upload(self, fx_source_store: SourceStore) -> None:
+    async def test_staged_upload_becomes_source(self, fx_source_store: SourceStore) -> None:
         """Verify the staged files become the whole source and nothing stays staged."""
-        await _import(fx_source_store, PROJECT_ID, upload(OLD_NAME, OLD_CONTENT))
-        await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, NEW_CONTENT))
+        await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, content=NEW_CONTENT))
 
         await fx_source_store.promote(PROJECT_ID)
 
@@ -148,17 +164,9 @@ class TestPromote:
         with pytest.raises(NotFoundError):
             await _staged(fx_source_store, PROJECT_ID)
 
-    async def test_first_promotion_creates_source(self, fx_source_store: SourceStore) -> None:
-        """Verify promotion works when the project had no source yet."""
-        await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, NEW_CONTENT))
-
-        await fx_source_store.promote(PROJECT_ID)
-
-        assert await _source(fx_source_store, PROJECT_ID) == {NEW_NAME: NEW_CONTENT}
-
     async def test_nothing_staged_raises_not_found(self, fx_source_store: SourceStore) -> None:
         """Reject a promotion when no upload is staged, keeping the current source."""
-        await _import(fx_source_store, PROJECT_ID, upload(OLD_NAME, OLD_CONTENT))
+        await _import(fx_source_store, PROJECT_ID, upload(OLD_NAME, content=OLD_CONTENT))
 
         with pytest.raises(NotFoundError):
             await fx_source_store.promote(PROJECT_ID)
@@ -169,20 +177,20 @@ class TestPromote:
 class TestDiscard:
     """Contract of SourceStore.discard()."""
 
-    async def test_removes_staged_upload_and_keeps_source(self, fx_source_store: SourceStore) -> None:
-        """Verify discarding drops the staged files and leaves the source untouched."""
-        await _import(fx_source_store, PROJECT_ID, upload(OLD_NAME, OLD_CONTENT))
-        await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, NEW_CONTENT))
+    async def test_removes_staged_upload_so_project_can_upload_again(self, fx_source_store: SourceStore) -> None:
+        """Verify an upload whose analysis failed is dropped and the project still accepts its first book."""
+        await _stage(fx_source_store, PROJECT_ID, upload(OLD_NAME, content=OLD_CONTENT))
 
         await fx_source_store.discard(PROJECT_ID)
 
-        assert await _source(fx_source_store, PROJECT_ID) == {OLD_NAME: OLD_CONTENT}
         with pytest.raises(NotFoundError):
             await _staged(fx_source_store, PROJECT_ID)
+        await _import(fx_source_store, PROJECT_ID, upload(NEW_NAME, content=NEW_CONTENT))
+        assert await _source(fx_source_store, PROJECT_ID) == {NEW_NAME: NEW_CONTENT}
 
     async def test_nothing_staged_is_not_an_error(self, fx_source_store: SourceStore) -> None:
         """Verify discarding twice succeeds, so a failed import can always clean up."""
-        await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, NEW_CONTENT))
+        await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, content=NEW_CONTENT))
         await fx_source_store.discard(PROJECT_ID)
 
         await fx_source_store.discard(PROJECT_ID)
@@ -196,7 +204,7 @@ class TestSourceFiles:
 
     async def test_project_without_source_raises_not_found(self, fx_source_store: SourceStore) -> None:
         """Verify a project that never imported has no source files to give."""
-        await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, NEW_CONTENT))
+        await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, content=NEW_CONTENT))
 
         with pytest.raises(NotFoundError):
             await _source(fx_source_store, PROJECT_ID)
@@ -205,15 +213,22 @@ class TestSourceFiles:
 class TestDeleteProject:
     """Contract of SourceStore.delete_project()."""
 
-    async def test_removes_source_and_staged_upload_of_that_project_only(self, fx_source_store: SourceStore) -> None:
-        """Verify the project's source and staged files are gone and another project keeps its own."""
+    async def test_removes_source_of_that_project_only(self, fx_source_store: SourceStore) -> None:
+        """Verify the project's source is gone and another project keeps its own."""
         for project_id in (PROJECT_ID, OTHER_PROJECT_ID):
-            await _import(fx_source_store, project_id, upload(OLD_NAME, OLD_CONTENT))
-        await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, NEW_CONTENT))
+            await _import(fx_source_store, project_id, upload(OLD_NAME, content=OLD_CONTENT))
 
         await fx_source_store.delete_project(PROJECT_ID)
 
         assert await _source(fx_source_store, OTHER_PROJECT_ID) == {OLD_NAME: OLD_CONTENT}
-        for read in (_source, _staged):
-            with pytest.raises(NotFoundError):
-                await read(fx_source_store, PROJECT_ID)
+        with pytest.raises(NotFoundError):
+            await _source(fx_source_store, PROJECT_ID)
+
+    async def test_removes_staged_upload(self, fx_source_store: SourceStore) -> None:
+        """Verify a project deleted while its upload was being analysed leaves no staged files."""
+        await _stage(fx_source_store, PROJECT_ID, upload(NEW_NAME, content=NEW_CONTENT))
+
+        await fx_source_store.delete_project(PROJECT_ID)
+
+        with pytest.raises(NotFoundError):
+            await _staged(fx_source_store, PROJECT_ID)

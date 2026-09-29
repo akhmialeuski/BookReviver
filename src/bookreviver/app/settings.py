@@ -15,6 +15,12 @@ class PersistenceBackend(enum.StrEnum):
     MEMORY = 'memory'
 
 
+class StorageBackend(enum.StrEnum):
+    """Which storage adapters the container builds for sources and derived files."""
+
+    LOCAL = 'local'
+
+
 class JobBroker(enum.StrEnum):
     """Which Taskiq broker runs background jobs."""
 
@@ -78,6 +84,7 @@ class Settings(BaseSettings):
     data_dir: Path = Path('data')
     database_url: str = ''
     persistence: PersistenceBackend = PersistenceBackend.SQLALCHEMY
+    storage: StorageBackend = StorageBackend.LOCAL
     job_broker: JobBroker = JobBroker.IN_PROCESS
     redis_url: str = 'redis://localhost:6379/0'
     max_upload_bytes: PositiveInt = 4 * 1024**3

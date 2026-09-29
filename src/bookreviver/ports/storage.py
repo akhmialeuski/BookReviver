@@ -22,22 +22,31 @@ class IncomingFile(Protocol):
 
 
 class SourceStore(ABC):
-    """The uploaded source of each project, replaced only after a new upload proved readable."""
+    """The uploaded source of each project, written once and never replaced.
+
+    Another book needs another project, or this project deleted with everything processed from it and created again.
+    """
 
     @abstractmethod
     async def stage(self, project_id: ProjectId, files: Sequence[IncomingFile], *, max_bytes: int) -> int:
-        """Receive an upload next to the current source and return its total size in bytes.
+        """Receive an upload for a project without a source and return its total size in bytes.
 
-        :raises UploadRejectedError: If the upload grows past ``max_bytes``; nothing is kept then.
+        :raises ConflictError:       If the project already has a source; nothing of the upload is read then.
+        :raises UploadRejectedError: If the upload breaks an upload rule, such as growing past ``max_bytes``; nothing
+                                     is kept then.
         """
 
     @abstractmethod
     async def promote(self, project_id: ProjectId) -> None:
-        """Make the staged upload the project's source, replacing the previous one atomically."""
+        """Make the staged upload the project's source in one step, so the source is never half written.
+
+        :raises NotFoundError: If no upload is staged.
+        :raises ConflictError: If the project already has a source, which is never replaced.
+        """
 
     @abstractmethod
     async def discard(self, project_id: ProjectId) -> None:
-        """Remove a staged upload, leaving the current source untouched."""
+        """Remove a staged upload; a project without one is not an error."""
 
     @abstractmethod
     def staged_files(self, project_id: ProjectId) -> AbstractAsyncContextManager[Sequence[Path]]:
@@ -53,11 +62,18 @@ class SourceStore(ABC):
 
 
 class AssetStore(ABC):
-    """Derived files addressed by storage keys, such as page images and tile pyramids."""
+    """Derived files addressed by storage keys, such as page images and tile pyramids, each written once.
+
+    A regenerated file gets a new key, such as the next page version, so a stored file is never replaced. Keys never
+    reach the source or staged upload of a project, which belong to the ``SourceStore``.
+    """
 
     @abstractmethod
     def writable(self, key: StorageKey) -> AbstractAsyncContextManager[Path]:
-        """Give a local path to write the file or directory at ``key``, published when the context exits."""
+        """Give a local path to write the file or directory at ``key``, published when the context exits.
+
+        :raises ConflictError: If something is stored at ``key``, when the context opens or when it publishes.
+        """
 
     @abstractmethod
     def readable(self, key: StorageKey) -> AbstractAsyncContextManager[Path]:
@@ -68,4 +84,8 @@ class AssetStore(ABC):
 
     @abstractmethod
     async def delete_prefix(self, prefix: StorageKey) -> None:
-        """Remove every file whose key starts with ``prefix``."""
+        """Remove the file or directory at ``prefix`` and everything under it.
+
+        The prefix matches whole path segments, so ``pages/1`` removes ``pages/1/full.jpg`` and keeps
+        ``pages/10/full.jpg``; a missing prefix is not an error.
+        """

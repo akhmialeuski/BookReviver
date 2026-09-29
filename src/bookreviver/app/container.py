@@ -11,7 +11,7 @@ from bookreviver.app.providers.imaging import ImagingProvider
 from bookreviver.app.providers.imports import ImportsProvider
 from bookreviver.app.providers.persistence import PERSISTENCE_PROVIDERS
 from bookreviver.app.providers.projects import ProjectsProvider
-from bookreviver.app.providers.storage import StorageProvider
+from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.settings import Settings
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ def build_container(settings: Settings, extra_providers: Sequence[Provider] = ()
         CoreProvider(),
         DatabaseProvider(),
         PERSISTENCE_PROVIDERS[settings.persistence](),
-        StorageProvider(),
+        STORAGE_PROVIDERS[settings.storage](),
         ImagingProvider(),
         AccountsProvider(),
         ImportsProvider(),

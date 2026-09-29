@@ -17,12 +17,12 @@ class WriterFailedError(Exception):
     """Raised by a test writer to abandon a write half-way."""
 
 
-def upload(name: str | None, content: bytes = b'page') -> UploadFile:
+def upload(name: str | None, *, content: bytes = b'page') -> UploadFile:
     """Return an in-memory upload named as a browser would send it."""
     return UploadFile(file=io.BytesIO(content), filename=name)
 
 
-async def abandon_write(store: AssetStore, key: StorageKey, content: bytes) -> None:
+async def abandon_write(store: AssetStore, *, key: StorageKey, content: bytes) -> None:
     """Start writing ``content`` at ``key`` and fail before the write completes.
 
     :raises WriterFailedError: Always, from inside the write.

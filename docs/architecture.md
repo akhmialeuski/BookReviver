@@ -132,12 +132,15 @@ Every repository method takes the acting account, so a query can never cross acc
 | Port family | Adapter now                                                     | Test adapter   | Later                  |
 | ----------- | --------------------------------------------------------------- | -------------- | ---------------------- |
 | Persistence | advanced-alchemy repositories on SQLAlchemy 2.0, aiosqlite      | in-memory      | PostgreSQL by URL only |
-| Storage     | Local directory tree under `data/`                              | in-memory      | S3-compatible storage  |
+| Storage     | Local directory tree under `data/`                              | local, tmp dir | S3-compatible storage  |
 | Mail        | Log mailer                                                      | recording fake | aiosmtplib over SMTP   |
 | Imaging     | PyMuPDF and Pillow inspector and rasterizer, pyvips tiler       | fake images    | remote workers         |
 | AI engines  | pydantic-ai for cloud and Ollama models, local Surya, Tesseract | scripted fakes | more providers         |
 | Jobs        | Taskiq with the in-process broker                               | inline runner  | Taskiq with Redis      |
 | Events      | In-process broadcast                                            | in-memory      | Redis pub/sub          |
+
+The storage ports hand out local paths for the imaging libraries to read and write, so the storage test adapter is
+the local one over a temporary directory rather than an in-memory store.
 
 The persistence adapter keeps its table classes private and maps rows to domain entities in one mapper per entity.
 Each port repository wraps an advanced-alchemy `SQLAlchemyAsyncRepository`, so generic queries come from the library
@@ -223,22 +226,30 @@ indistinguishable to the application.
 Storage keys, not paths, cross the ports. The local adapter maps them to `data/`, and an S3 adapter maps them to a
 bucket when workers run on other machines.
 
-- `projects/<id>/incoming/` holds an upload until its analysis succeeds, then replaces `source/` atomically.
-- `projects/<id>/source/` holds the upload exactly as received.
+- `projects/<id>/incoming/` holds an upload until its analysis succeeds, then becomes `source/` in one rename.
+- `projects/<id>/source/` holds the upload exactly as received, and is written once. A project with a source refuses
+  another upload with a conflict before reading it: another book needs another project, or this project deleted with
+  everything processed from it and created again.
 - `projects/<id>/pages/<index>/` holds the imported page: `full.jpg` at native resolution, `thumb.jpg`, `iiif/`.
 - `projects/<id>/artifacts/<hash>/` holds each processing result, with its own tiles when it is an image.
 
-Derived assets are regenerable, and their URLs carry the content hash or version, so browsers cache them forever.
-A tile pyramid's `info.json` carries as `id` the path of the IIIF route that serves it, passed to the `Tiler` port,
-because the viewer builds tile URLs from it. The path has no scheme or host, so a change of domain, port or the
-address a device uses leaves the cut pyramids valid. IIIF formally asks for an absolute URI there; OpenSeadragon
-resolves a path, and BookReviver serves its own viewer, so the path is the deliberate choice.
+Nothing stored is ever replaced. Derived assets are regenerable under a new key, the next version or content hash,
+which their URLs carry, so browsers cache them forever. Each is written under a hidden sibling name and moved onto
+its key once complete, in a step the file system refuses when the key is taken, so a second writer gets a conflict
+instead of replacing the first. Asset keys never name or hold a project's `source/` or `incoming/`, which belong to
+the source store alone. A tile pyramid's `info.json`
+carries as `id` the path of the IIIF route that serves it, passed to the `Tiler` port, because the viewer builds tile
+URLs from it. The path has no scheme or host, so a change of domain, port or the address a device uses leaves the
+cut pyramids valid. IIIF formally asks for an absolute URI there; OpenSeadragon resolves a path, and BookReviver
+serves its own viewer, so the path is the deliberate choice.
 
 ## Import pipeline
 
 1. `POST /api/v1/projects/{id}/source` streams the upload into `incoming/`, validates the file set, records a job and
    enqueues it. The response returns the job at once.
-2. The job inspects the source, promotes it, replaces the page rows and fills only empty description fields.
+2. The job inspects the source, promotes it, replaces the page rows and fills only empty description fields. A
+   job retried after a crash first deletes the project's `pages/` prefix, which removes the pages it cut and any
+   partial files it left, and cuts every page again.
 3. Every page gets `full.jpg`. A scanned PDF page whose content is one JPEG image is copied byte for byte. Anything
    else is rasterised once at its native resolution.
 4. pyvips cuts `full.jpg` into an IIIF Image API 3 level 0 pyramid and a thumbnail, in a bounded pool. Each page is
