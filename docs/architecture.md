@@ -850,21 +850,47 @@ warning in its log, and every DjVu source is rejected with a message asking to i
 
 ## HTTP API
 
-All endpoints live under `/api/v1`. The OpenAPI schema is generated from the routers and committed, and the frontend
-client is generated from it.
+All endpoints live under `/api/v1`. The OpenAPI schema is generated from the routers and committed as
+`docs/openapi.json`, a test checks that it equals `app.openapi()`, and the frontend client is generated from it.
 
 | Area       | Endpoints                                                                                                 |
 | ---------- | --------------------------------------------------------------------------------------------------------- |
 | Auth       | fastapi-users routers under `/auth`: cookie login and logout, register, verify, reset, OAuth per provider |
 | Account    | `GET /users/me`, `GET, PATCH /me/settings`, `GET, PUT, DELETE /me/credentials/{provider}`                 |
 | Catalogue  | `GET /engines`, `GET /processors`                                                                         |
-| Projects   | `GET, POST /projects`, `GET, PATCH, DELETE /projects/{id}`, `POST /projects/{id}/source`                  |
-| Pages      | `GET /projects/{id}/pages`, `GET, PUT /projects/{id}/pages/{index}/edits/{stage}`                         |
+| Projects   | `GET, POST /projects`, `GET, PATCH, DELETE /projects/{id}`                                                |
+| Sources    | `GET, POST /projects/{id}/sources`, `GET, DELETE /projects/{id}/sources/{source_id}`                      |
+| Scans      | `GET /projects/{id}/scans`                                                                                |
+| Pages      | `GET, POST /projects/{id}/pages`, `GET, PATCH, DELETE /projects/{id}/pages/{page_id}`                     |
+| Page order | `POST /projects/{id}/pages/{page_id}/move`, `PUT /projects/{id}/pages/{page_id}/scan`                     |
+| Edits      | `GET, PUT /projects/{id}/pages/{page_id}/edits/{stage}`                                                   |
 | Processing | `GET, PUT /projects/{id}/stages/{stage}/recipe`, `POST .../preview`, `POST .../run`, `GET .../variants`   |
 | Jobs       | `GET /jobs/{id}`, `DELETE /jobs/{id}`, `GET /projects/{id}/events` as SSE                                 |
 | Images     | `GET /iiif/{asset}/...` as immutable static files                                                         |
 
 On a server, a reverse proxy serves `/iiif` straight from disk or object storage, after an access check by the API.
+
+Pages are addressed by their `PageId`, never by their position. `POST /projects/{id}/pages` adds a placeholder or a
+blank leaf, `POST .../move` moves a page to another position, and `PUT .../scan` binds a scan to a placeholder. A
+scan that the import already made into a page of its own is bound with the flag `take_over`, which moves the scan
+from that page to the placeholder. `POST /projects/{id}/source`, a `source` field of the project schema and page
+addresses by index are never published, because the frontend client is generated from the OpenAPI schema and would
+carry them.
+
+The page manifest, `GET /projects/{id}/pages`, returns up to 1000 pages per request through its own `Params`, with
+the computed position of every page and never its order key. Excluded pages are returned with `included` false, and
+the viewer asks for `?included=true`.
+
+The events of a project reach the browser over `GET /projects/{id}/events`:
+
+- `JobChanged` when a job changes state or progress.
+- `SourceImported` when a source and its scans are committed.
+- `ScanReady` when the renditions of a scan can be shown.
+- `PagesChanged` when pages are added, removed or moved, or their labels or kinds change.
+- `PageVersionReady` when a page version is ready.
+- `ProjectChanged` when the book description changes.
+
+The project list counts in `page_count` the included pages of the book, and shows the number of scans separately.
 
 ### Request and response conventions
 
@@ -880,6 +906,8 @@ On a server, a reverse proxy serves `/iiif` straight from disk or object storage
   `model_validate`.
 - Following FastAPI's guide: no `...` as a default, no `RootModel` (an `Annotated` list with `Field` instead), and
   `Annotated` for every parameter and dependency.
+- `PATCH` follows JSON Merge Patch, RFC 7396: a field left out stays as it is, and `null` clears it. The title of a
+  book cannot be cleared.
 - Pydantic stays at the edges: request and response schemas in `api`, settings in `app`. Domain invariants are
   `attrs` validators, so the core does not depend on Pydantic.
 - Every route declares a typed Pydantic response. The shapes are the same everywhere: a single resource is its
