@@ -139,7 +139,7 @@ class PageRow(DefaultBase):
     :ivar width_mm: Physical width in millimetres, or null when the resolution is unknown.
     :ivar height_mm: Physical height in millimetres, or null when the resolution is unknown.
     :ivar has_text_layer: Whether the source page carries a text layer.
-    :ivar source_file: File of the page inside the source, for image sets.
+    :ivar source_file: Name of the source file holding the page, such as a page image or a part of a PDF.
     :ivar extra: Further facts read from the source, as JSON.
     :ivar assets_ready: Whether the full image, thumbnail and tiles have been produced.
     :ivar assets_version: Version of the assets, part of their cache-busting URLs.

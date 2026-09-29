@@ -97,7 +97,8 @@ class PageFacts:
     :ivar width_mm: Physical width in millimetres, or None without a resolution.
     :ivar height_mm: Physical height in millimetres, or None without a resolution.
     :ivar has_text_layer: Whether the page carries text, such as the OCR layer of a scanned PDF.
-    :ivar source_file: File name inside an image set, empty for a PDF page.
+    :ivar source_file: Name of the source file holding the page: the page image, or the part of a document split
+                       into several files.
     :ivar extra: Further facts under the keys of the inspector that reported them.
     """
 

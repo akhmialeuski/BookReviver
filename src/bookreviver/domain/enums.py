@@ -1,7 +1,12 @@
 """Closed sets of values used across the application, each carrying a human label."""
 
 import enum
-from typing import Self
+from typing import TYPE_CHECKING, Self
+
+from bookreviver.domain.errors import UploadRejectedError
+
+if TYPE_CHECKING:
+    from collections.abc import Collection
 
 
 class LabeledStrEnum(enum.StrEnum):
@@ -49,7 +54,34 @@ class SourceKind(LabeledStrEnum):
     """What a book was imported from."""
 
     PDF = 'pdf', 'PDF document'
+    DJVU = 'djvu', 'DjVu document'
     IMAGES = 'images', 'Page images'
+
+    @classmethod
+    def of_files(cls, names: Collection[str]) -> SourceKind:
+        """Return the kind of source an upload makes, judged by the suffixes of its file names.
+
+        PDF files make a PDF source, whether one document holding the whole book or the book split into parts.
+        DjVu files make a DjVu source, whether one bundled document holding the whole book, an indirect document
+        split into an index file and one file per page, or a directory of single-page DjVu files. Any number of page
+        images, in any mix of the accepted image types, makes an image set, such as the files of a directory of scans.
+
+        :param names: Names of the uploaded files.
+        :type names: Collection[str]
+        :returns: The kind of source the files make.
+        :rtype: SourceKind
+        :raises UploadRejectedError: If there are no files, a file type is not accepted, or files of different kinds
+                                     are mixed.
+        """
+        if not names:
+            raise UploadRejectedError(UploadProblem.NO_FILES)
+        file_types = [FileType.from_name(name) for name in names]
+        if None in file_types:
+            raise UploadRejectedError(UploadProblem.UNSUPPORTED_TYPE)
+        kinds = {file_type.source_kind for file_type in file_types if file_type is not None}
+        if len(kinds) > 1:
+            raise UploadRejectedError(UploadProblem.MIXED_TYPES)
+        return kinds.pop()
 
 
 class ColorMode(LabeledStrEnum):
@@ -101,11 +133,11 @@ class WorkerPool(LabeledStrEnum):
 class UploadProblem(LabeledStrEnum):
     """Why an upload cannot become a source."""
 
-    NO_FILES = 'no-files', 'Choose a PDF file or page images to upload.'
+    NO_FILES = 'no-files', 'Choose PDF files, DjVu files or page images to upload.'
     EMPTY_NAME = 'empty-name', 'Every uploaded file needs a name.'
     DUPLICATE_NAME = 'duplicate-name', 'Two uploaded files have the same name.'
-    MIXED_TYPES = 'mixed-types', 'Upload exactly one PDF, or one or more page images, without mixing them.'
-    UNSUPPORTED_TYPE = 'unsupported-type', 'Only PDF, TIFF, JPEG and PNG files are accepted.'
+    MIXED_TYPES = 'mixed-types', 'Upload the PDF files, the DjVu files or the page images of one book, not a mix.'
+    UNSUPPORTED_TYPE = 'unsupported-type', 'Only PDF, DjVu, TIFF, JPEG, JPEG 2000 and PNG files are accepted.'
     TOO_LARGE = 'too-large', 'The upload is larger than the allowed size.'
 
 
@@ -113,8 +145,10 @@ class FileType(LabeledStrEnum):
     """A file type accepted as a book source."""
 
     PDF = 'pdf', 'PDF'
+    DJVU = 'djvu', 'DjVu'
     TIFF = 'tiff', 'TIFF'
     JPEG = 'jpeg', 'JPEG'
+    JPEG_2000 = 'jpeg-2000', 'JPEG 2000'
     PNG = 'png', 'PNG'
 
     @property
@@ -125,7 +159,13 @@ class FileType(LabeledStrEnum):
     @property
     def source_kind(self) -> SourceKind:
         """The kind of source a file of this type makes."""
-        return SourceKind.PDF if self is FileType.PDF else SourceKind.IMAGES
+        match self:
+            case FileType.PDF:
+                return SourceKind.PDF
+            case FileType.DJVU:
+                return SourceKind.DJVU
+            case _:
+                return SourceKind.IMAGES
 
     @classmethod
     def from_name(cls, name: str) -> FileType | None:
@@ -142,8 +182,10 @@ class FileType(LabeledStrEnum):
 
 FILE_TYPE_SUFFIXES: dict[FileType, frozenset[str]] = {
     FileType.PDF: frozenset({'.pdf'}),
+    FileType.DJVU: frozenset({'.djvu', '.djv'}),
     FileType.TIFF: frozenset({'.tif', '.tiff'}),
     FileType.JPEG: frozenset({'.jpg', '.jpeg'}),
+    FileType.JPEG_2000: frozenset({'.jp2', '.j2k'}),
     FileType.PNG: frozenset({'.png'}),
 }
 
