@@ -1,11 +1,14 @@
 """Entities: domain objects with an identity, frozen and changed through ``attrs.evolve``."""
 
+import hashlib
+import json
 import re
 from typing import TYPE_CHECKING, ClassVar
 
 from attrs import field, frozen, validators
 
 from bookreviver.domain.enums import ImagePolicy, JobState, PageKind, PageOrigin, VersionState
+from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.values import SHA256_PATTERN, MetadataSuggestion, Progress, Renditions, Transform
 
 if TYPE_CHECKING:
@@ -13,11 +16,12 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.domain.enums import FileType, JobKind, SourceKind, Stage
-    from bookreviver.domain.ids import AccountId, JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
+    from bookreviver.domain.ids import AccountId, JobId, PageId, ProjectId, ScanId, SourceId
     from bookreviver.domain.values import BookDetails, MetadataMap, ProcessorRef, ScanFacts, SourceFile
 
-# A page version identifier: a hash of what produced the version, cut to 16 hexadecimal digits
-VERSION_ID_PATTERN: str = r'[0-9a-f]{16}'
+# The length of a page version identifier: a hash cut to 16 hexadecimal digits
+VERSION_ID_LENGTH: int = 16
+VERSION_ID_PATTERN: str = rf'[0-9a-f]{{{VERSION_ID_LENGTH}}}'
 
 
 @frozen(kw_only=True)
@@ -234,6 +238,35 @@ class PageVersion:
         if self.renditions is not None and self.renditions.version != Renditions.FIRST_VERSION:
             err_msg = 'The renditions of a page version are written once and stay at their first version.'
             raise ValueError(err_msg)
+
+    @staticmethod
+    def identify(
+        *,
+        page_id: PageId,
+        processor: ProcessorRef,
+        params: MetadataMap | None = None,
+        input_id: PageVersionId | None = None,
+    ) -> PageVersionId:
+        """Return the identifier of the version a step produces, a hash of everything that produced it.
+
+        Equal work gets the same identifier, so a repeated step finds the files of its earlier result. The hash covers
+        the page, the processor key and version, the parameters and the input version; manual edits join it when
+        they exist.
+
+        :param page_id: Page the step runs on.
+        :type page_id: PageId
+        :param processor: Key and version of the processor running the step.
+        :type processor: ProcessorRef
+        :param params: Parameters of the step, which must be JSON-compatible, or None for none.
+        :type params: MetadataMap | None
+        :param input_id: Version the step reads, or None for a base version.
+        :type input_id: PageVersionId | None
+        :returns: The hash of the arguments, cut to 16 lower-case hexadecimal digits.
+        :rtype: PageVersionId
+        """
+        produced_by = [str(page_id), processor.key, processor.version, params or {}, input_id]
+        digest = hashlib.sha256(json.dumps(produced_by, sort_keys=True, separators=(',', ':')).encode())
+        return PageVersionId(digest.hexdigest()[:VERSION_ID_LENGTH])
 
 
 @frozen(kw_only=True)

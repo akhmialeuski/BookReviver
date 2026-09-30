@@ -169,6 +169,15 @@ class UploadProblem(LabeledStrEnum):
     DUPLICATE_NAME = 'duplicate-name', 'Two uploaded files have the same name.'
     UNSUPPORTED_TYPE = 'unsupported-type', 'Only PDF, DjVu, TIFF, JPEG, JPEG 2000 and PNG files are accepted.'
     TOO_LARGE = 'too-large', 'The upload is larger than the allowed size.'
+    TOO_MANY_FILES = 'too-many-files', 'The upload has more files than allowed.'
+
+
+class RejectionReason(LabeledStrEnum):
+    """Why one file of an upload was not imported, while the other files of the upload were."""
+
+    DUPLICATE = 'duplicate', 'The project already has this file.'
+    UNREADABLE = 'unreadable', 'The file cannot be read as a source.'
+    UNSUPPORTED_TYPE = 'unsupported-type', 'The type of the file is not accepted as a source.'
 
 
 class FileType(LabeledStrEnum):

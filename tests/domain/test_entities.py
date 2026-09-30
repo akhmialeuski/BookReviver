@@ -1,15 +1,19 @@
 """Tests for the domain entities and values."""
 
+import re
 from typing import Any
 from uuid import uuid4
 
 import pytest
 from attrs import evolve
 
+from bookreviver.domain.entities import VERSION_ID_PATTERN, PageVersion
 from bookreviver.domain.enums import PageOrigin, TransformKind
 from bookreviver.domain.ids import PageId, PageVersionId, ScanId, StorageKey
-from bookreviver.domain.values import BookDetails, Point, Progress, Quad, Renditions, Transform
-from tests.helpers.builders import make_page, make_page_version, make_project, new_account_id
+from bookreviver.domain.values import BookDetails, Point, ProcessorRef, Progress, Quad, Renditions, Transform
+from tests.helpers.builders import SPLIT_NONE, make_page, make_page_version, make_project, new_account_id
+
+PAGE_ID: PageId = PageId(uuid4())
 
 # The left half of a spread 2200 px wide and 1561 px high
 QUAD: Quad = Quad(
@@ -105,6 +109,43 @@ class TestPageVersion:
         """
         with pytest.raises(ValueError, match='page version id'):
             evolve(make_page_version(page_id=PageId(uuid4())), id=PageVersionId(version_id))
+
+
+class TestPageVersionIdentify:
+    """Tests for PageVersion.identify()."""
+
+    def test_equal_work_gets_the_same_identifier_of_16_hexadecimal_digits(self) -> None:
+        """Verify a repeated step gets the identifier of its first run, which is the cache key of its result."""
+        page_id = PageId(uuid4())
+        first = PageVersion.identify(page_id=page_id, processor=SPLIT_NONE)
+        again = PageVersion.identify(page_id=page_id, processor=SPLIT_NONE, params={})
+        assert (first == again, re.fullmatch(VERSION_ID_PATTERN, first) is not None) == (True, True)
+
+    @pytest.mark.parametrize(
+        'changed',
+        [
+            {'page_id': PageId(uuid4())},
+            {'processor': ProcessorRef(key='split.none', version='2')},
+            {'processor': ProcessorRef(key='split.spread', version='1')},
+            {'params': {'angle': 0.8}},
+            {'input_id': PageVersionId('0123456789abcdef')},
+        ],
+        ids=['page', 'processor-version', 'processor-key', 'params', 'input'],
+    )
+    def test_any_change_of_what_produced_the_version_changes_its_identifier(self, changed: dict[str, Any]) -> None:
+        """Verify each ingredient of the hash moves the identifier, so different work never shares a directory.
+
+        :param changed: Keyword arguments that replace one ingredient of the reference call.
+        :type changed: dict[str, Any]
+        """
+        reference: dict[str, Any] = {'page_id': PAGE_ID, 'processor': SPLIT_NONE}
+        assert PageVersion.identify(**reference) != PageVersion.identify(**{**reference, **changed})
+
+    def test_order_of_parameters_does_not_matter(self) -> None:
+        """Verify the same parameters written in another order are the same work."""
+        first = PageVersion.identify(page_id=PAGE_ID, processor=SPLIT_NONE, params={'a': 1, 'b': 2})
+        second = PageVersion.identify(page_id=PAGE_ID, processor=SPLIT_NONE, params={'b': 2, 'a': 1})
+        assert first == second
 
 
 class TestBookDetails:

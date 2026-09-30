@@ -92,6 +92,36 @@ class TestScanRendition:
             KEYS.scan_rendition(scan, Rendition.FULL_JPEG)
 
 
+class TestScanDirectory:
+    """Tests for ProjectKeys.scan_directory()."""
+
+    def test_directory_holds_every_rendition_of_the_scan(self) -> None:
+        """Verify the directory of a scan's renditions is the parent of each rendition's key, so one prefix removes them."""
+        scan = make_scan(source=make_source(project_id=PROJECT_ID), number=SCAN_NUMBER)
+        directory = KEYS.scan_directory(scan)
+        expect(directory == f'{PREFIX}assets/scans/{scan.source_id}/{SCAN_NUMBER}/v1')
+        expect(all(KEYS.scan_rendition(scan, rendition) == f'{directory}/{rendition}' for rendition in Rendition))
+        assert_expectations()
+
+    def test_directory_of_a_scan_of_another_project_is_refused(self) -> None:
+        """Verify a scan of another project gets no directory here, so nothing of it is removed from this book."""
+        scan = make_scan(source=make_source(project_id=OTHER_PROJECT_ID), number=0)
+        with pytest.raises(ValueError, match=str(OTHER_PROJECT_ID)):
+            KEYS.scan_directory(scan)
+
+
+class TestVersionDirectory:
+    """Tests for ProjectKeys.version_directory()."""
+
+    def test_directory_holds_every_rendition_of_the_version(self) -> None:
+        """Verify the directory of a version is the parent of each rendition's key, so one prefix removes them."""
+        version = make_page_version(page_id=PAGE_ID)
+        directory = KEYS.version_directory(version)
+        expect(directory == f'{PREFIX}assets/pages/{PAGE_ID}/page-split/split.none/{version.id}')
+        expect(all(KEYS.version_rendition(version, rendition) == f'{directory}/{rendition}' for rendition in Rendition))
+        assert_expectations()
+
+
 class TestVersionRendition:
     """Tests for ProjectKeys.version_rendition()."""
 
