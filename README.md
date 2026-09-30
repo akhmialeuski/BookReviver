@@ -14,11 +14,16 @@ Requires [uv](https://docs.astral.sh/uv/), which installs the pinned Python vers
 ```bash
 uv sync
 cp .env.example .env          # then set BOOKREVIVER_AUTH__SECRET
+uv run bookreviver-migrate upgrade head
 uv run fastapi dev
 ```
 
 The server listens on http://127.0.0.1:8000. The database, uploaded books and the render cache live in `data/`, and
 settings are read from `BOOKREVIVER_*` environment variables or a `.env` file, as listed in `.env.example`.
+
+The application never changes the database schema itself. After pulling code that adds a migration, copy `data/` if
+it holds anything worth keeping and run `uv run bookreviver-migrate upgrade head` again; until then the server
+refuses to start and names that command.
 
 ## Development
 

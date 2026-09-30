@@ -11,7 +11,9 @@ when a change alters what it describes.
 
 ```bash
 uv sync                                  # backend environment
-uv run fastapi dev                       # API on http://127.0.0.1:8000, data in ./data, needs .env
+uv run bookreviver-migrate upgrade head  # apply the schema migrations to the database of the settings, by hand only
+uv run fastapi dev                       # API on http://127.0.0.1:8000, data in ./data, needs .env and migrations
+uv run bookreviver-migrate make-migrations --autogenerate -m "Add the recipes table."  # revision from the tables
 uv run pytest tests/contracts            # port contracts, run against every adapter of the port
 uv run lint-imports                      # the layer contracts on their own
 uv run pre-commit run --all-files        # the gate: ruff, ty, mypy, pyrefly, import-linter, file fixers
@@ -70,6 +72,10 @@ npm --prefix frontend run check          # Biome, tsc and Vitest
 ## Conventions
 
 - Python 3.14 with deferred annotations. SQLAlchemy 2.0 async in the persistence adapter, its tables private to it.
+- A change of a table ships with an Alembic revision in `adapters/persistence/sqlalchemy/migrations/versions/`,
+  generated with `make-migrations --autogenerate`, read by eye for every key and index, and formatted by the gate.
+  `tests/adapters/persistence/sqlalchemy/test_migrations.py` fails until the revision matches the tables. The
+  application never migrates itself: it refuses to start until `bookreviver-migrate upgrade head` has run.
   ty's `unsound-assignment` is disabled only for the table module, because `Mapped[...] = mapped_column()` trips it.
 - Async tests use the anyio plugin (`@pytest.mark.anyio`).
 - The frontend client in `frontend/src/api/` is generated from the committed OpenAPI schema and never edited by hand.

@@ -50,7 +50,7 @@ What each concern reuses, and therefore what we do not write ourselves.
 | Request validation         | Pydantic 2 models and constrained types, email-validator        | Parsing and checking input                       |
 | Collection responses       | fastapi-pagination `Page[T]` and its `Params`                   | Paging schema and query parameters               |
 | Error responses            | fastapi-problem (RFC 9457 problem details)                      | Error format, error schemas in OpenAPI           |
-| Migrations                 | Alembic through advanced-alchemy's integration                  | Schema versioning                                |
+| Migrations                 | Alembic through advanced-alchemy's `AlembicCommands` and CLI    | Schema versioning, autogenerate, commands        |
 | Secrets at rest            | advanced-alchemy `EncryptedString` with the Fernet backend      | Encryption of provider keys                      |
 | Settings                   | pydantic-settings                                               | Environment and `.env` parsing                   |
 | Background jobs            | Taskiq, in-process broker locally, Redis on a server            | Queueing, retries, worker processes              |
@@ -509,7 +509,8 @@ Each port repository wraps an advanced-alchemy `SQLAlchemyAsyncRepository`, so g
 and each repository adds only its own. The database's checks surface as domain errors naming the keys involved: a
 missing row or a missing parent row as `NotFoundError`, and a key already stored as `ConflictError`. The port states
 both, so the in-memory adapter raises the same errors.
-The library's audit columns are not used, because the domain sets `updated_at` through its `Clock`.
+The library's audit columns are not used, because the domain sets `updated_at` through its `Clock`, and for the same
+reason the engine and sessions come from an advanced-alchemy `SQLAlchemyAsyncConfig` with its touch listener off.
 Tables are SQLAlchemy 2.0 declarative classes on advanced-alchemy's `DefaultBase`, which brings the shared metadata
 and the portable `GUID`, `DateTimeUTC` and `JsonB` column types. Keys are declared on each table, and a project's
 sources, pages and jobs are relationships with `lazy="raise"`, so an `AsyncSession` never loads them implicitly, and
@@ -578,11 +579,56 @@ adapter checks this key: its contract fixtures create `user` rows, and `test_tab
 the in-memory adapter has no accounts and there is no accounts port.
 
 The tables `sources`, `scans`, `pages` and `page_versions` come with the book model, because a page gets its base
-version with its own copy of the image when it is created. `page_stages`, `page_edits` and `recipes` come with the
-processing framework, through an Alembic migration. Until the first migration exists the schema changes in place,
-and the local database in `./data` is created again. Migrations are applied only by hand with advanced-alchemy's
-`alchemy upgrade head` command, and the application only compares the database revision with its own at start-up
-and refuses to start when they differ.
+version with its own copy of the image when it is created, and the baseline migration creates them. `page_stages`,
+`page_edits` and `recipes` come with the processing framework, and the partial unique index on `jobs` with the
+import job, each through a migration of its own.
+
+### Migrations
+
+The schema is versioned by Alembic revisions in `adapters/persistence/sqlalchemy/migrations/`, inside the package,
+because the tables are private to the adapter and the revisions ship with the code that reads them. The directory
+was created by advanced-alchemy's `init` with its asynchronous template. The first revision, the baseline, creates
+every table listed above together with the fastapi-users tables.
+
+```mermaid
+flowchart TD
+    A["fastapi dev / lifespan"] --> B{{"revision of the<br/>database == head?"}}
+    B -- yes --> C["app starts"]
+    B -- no --> D["refuse to start:<br/>run bookreviver-migrate"]
+    E["uv run bookreviver-migrate upgrade head"] --> F["env.py: foreign_keys=OFF,<br/>batch, foreign_key_check"]
+    style A stroke:#5b3fd1,stroke-width:2px
+    style B stroke:#5b3fd1,stroke-width:2px
+    style E stroke:#1e7a4d,stroke-width:2px
+    style F stroke:#1e7a4d,stroke-width:2px
+```
+
+- **Applying.** `uv run bookreviver-migrate upgrade head`, by hand only, after copying `data/` when it holds anything
+  worth keeping. `bookreviver-migrate` is a script of the project: advanced-alchemy's `alchemy` command group with
+  the database of the application's settings, because `alchemy` itself needs `--config` naming a configuration
+  object that exists at import. Every `alchemy` command works through it, such as `downgrade`, `check`, `stamp`
+  and `show-current-revision`. A database created before the baseline is recreated, or marked current with
+  `stamp head` when its tables already match.
+- **Start-up.** The lifespan opens the database, and `DatabaseProvider` compares the revisions of its version table
+  `alembic_versions` with the head of the directory through `SqlDatabase.schema_revisions`. On a mismatch the
+  application does not start and names the command. The check reads one table and runs no migration environment.
+- **Creating a revision.** Change the tables, then run
+  `uv run bookreviver-migrate make-migrations --autogenerate -m "Add the recipes table."` against a database at
+  head, read the revision for every key and index, and run the gate, which formats it. Autogenerate compares column
+  types, and `env.py` renders every type from outside SQLAlchemy by its own module, so fastapi-users' `GUID` and
+  advanced-alchemy's `GUID`, `DateTimeUTC` and `JsonB` import what they are. A key declared with `use_alter`, such
+  as the cover of a project, is added in a step of its own after the table it refers to, because PostgreSQL leaves
+  it out of `CREATE TABLE`.
+- **SQLite.** Batch mode, on by default, changes a table by copying it, dropping the old one and renaming the copy.
+  The engine turns foreign keys on for every connection, and dropping `projects` with keys on would cascade to every
+  source, scan, page and job, so `env.py` turns them off before the migrations begin their transaction, since SQLite
+  ignores the pragma inside one, and runs `PRAGMA foreign_key_check` afterwards, failing the command on a key that
+  points nowhere. A revision runs its statements outside a transaction, as advanced-alchemy's template does, so a
+  failed migration can leave part of its change behind, which is why `data/` is copied first. PostgreSQL needs
+  neither pragma.
+- **Tests.** `test_migrations.py` upgrades an empty database, runs `alembic check`, downgrades to base and upgrades
+  again, rebuilds `projects` in batch mode with a book stored, and checks that the application refuses an unmigrated
+  database. Every other test creates the tables from the models and stamps the head revision, which is much faster
+  and proven equal by `alembic check`.
 
 ## Services
 
@@ -960,6 +1006,7 @@ The project list counts in `page_count` the included pages of the book, and show
 | Domain         | Value rules and invariants                           | plain objects                       |
 | Services       | Use cases, business rules, authorisation             | in-memory adapters of every port    |
 | Port contracts | Every adapter behaves as its port promises           | each adapter, one shared test suite |
+| Migrations     | The revisions build the schema of the tables         | SQLite through the Alembic commands |
 | Plugins        | A processor's output on reference pages              | the plugin with sample images       |
 | API            | Routing, validation, auth, status codes, schemas     | the app with in-memory adapters     |
 | End to end     | Sign in, upload a real PDF, tiles appear, pages turn | the full stack, Playwright          |
@@ -1067,9 +1114,10 @@ The book model rests on these decisions, each with its reason.
     the import made of it with the flag `take_over`, since a pair of scan and slot belongs to one page.
 31. **Sign-in with X.** It is left out, and Google and Facebook remain. X returns in a task of its own with a fresh
     PKCE verifier on every request, which the shared OAuth router cannot supply.
-32. **Migrations.** They are applied only by hand with advanced-alchemy's `alchemy upgrade head` command, and the
-    application at start-up only compares the revision and refuses to start on a mismatch, because a schema change
-    is a deliberate step and running against the wrong schema corrupts data.
+32. **Migrations.** They are applied only by hand with the `upgrade head` command of advanced-alchemy's `alchemy`
+    group, run as `uv run bookreviver-migrate upgrade head`, and the application at start-up only compares the
+    revision and refuses to start on a mismatch, because a schema change is a deliberate step and running against
+    the wrong schema corrupts data.
 
 Smaller technical choices follow the same model. Languages are ISO 639-3 codes, XMP is parsed with defusedxml, the
 parameters of processing jobs are kept in `Job.params`, a DjVu source suggests a publication year only from its
