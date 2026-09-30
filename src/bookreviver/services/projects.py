@@ -19,11 +19,12 @@ from attrs import evolve
 from bookreviver.domain.entities import Project, ProjectOverview
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import ProjectId
+from bookreviver.domain.values import SliceRequest
 
 if TYPE_CHECKING:
     from bookreviver.domain.changes import BookDetailsChanges
     from bookreviver.domain.entities import Actor
-    from bookreviver.domain.values import BookDetails, Slice, SliceRequest
+    from bookreviver.domain.values import BookDetails, Slice
     from bookreviver.ports.persistence import ProjectRepository, UnitOfWork
     from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore, SourceStore
@@ -149,3 +150,17 @@ class ProjectService:
         await self._assets.delete_project(project_id)
         await self._uow.projects.delete(project_id)
         await self._uow.commit()
+
+    async def delete_all(self, actor: Actor) -> None:
+        """Delete every project of the actor with all its files, which must happen before its account is deleted.
+
+        Each project is deleted and committed on its own, files first, so a failure keeps the projects not yet
+        deleted, and calling this again deletes them. The first window of the actor's projects is read again after
+        every window, since the deleted projects leave it.
+
+        :param actor: Account whose projects are deleted.
+        :type actor: Actor
+        """
+        while projects := (await self._uow.projects.list_for_owner(actor.account_id, SliceRequest())).items:
+            for overview in projects:
+                await self.delete(actor, overview.project.id)

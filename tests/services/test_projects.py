@@ -389,3 +389,53 @@ class TestDelete:
         expect(await _stored(fx_database, project) == project)
         expect(fx_files.kept(page))
         assert_expectations()
+
+
+class TestDeleteAll:
+    """Tests for ProjectService.delete_all()."""
+
+    async def test_removes_every_project_of_the_actor_with_its_files(
+        self,
+        fx_service: Callable[[], ProjectService],
+        fx_database: InMemoryDatabase,
+        fx_files: BookFiles,
+        fx_actor: Actor,
+    ) -> None:
+        """Verify every project of the actor goes with its files, and another account's project stays.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], ProjectService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_files: Files of imported books in the stores the service deletes from.
+        :type fx_files: BookFiles
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        owned = [make_project(owner_id=fx_actor.account_id, minutes=minute) for minute in range(PAGE_COUNT + 1)]
+        kept = make_project(owner_id=new_account_id())
+        pages = {project.id: make_page(project_id=project.id) for project in (*owned, kept)}
+        for project in (*owned, kept):
+            await commit_project(fx_database, project, pages[project.id])
+            await fx_files.store(pages[project.id])
+
+        await fx_service().delete_all(fx_actor)
+
+        remaining = await InMemoryUnitOfWork(fx_database).projects.list_for_owner(fx_actor.account_id, SliceRequest())
+        expect(remaining.total == 0)
+        expect(all(fx_files.gone(project.id) for project in owned))
+        expect(await _stored(fx_database, kept) == kept)
+        expect(fx_files.kept(pages[kept.id]))
+        assert_expectations()
+
+    async def test_actor_without_projects_is_not_an_error(
+        self, fx_service: Callable[[], ProjectService], fx_actor: Actor
+    ) -> None:
+        """Verify deleting the projects of an account that has none succeeds, as for a fresh account.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], ProjectService]
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        await fx_service().delete_all(fx_actor)

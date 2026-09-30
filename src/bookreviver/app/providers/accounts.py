@@ -24,8 +24,11 @@ from bookreviver.adapters.persistence.sqlalchemy.accounts import (
 )
 from bookreviver.api.routers.accounts import AccountRoutes
 from bookreviver.app.settings import Settings
+from bookreviver.domain.entities import Actor
+from bookreviver.domain.ids import AccountId
 from bookreviver.domain.values import MailMessage
 from bookreviver.ports.runtime import Mailer
+from bookreviver.services.projects import ProjectService
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -113,20 +116,25 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
     """fastapi-users' account rules, with mail sent through the ``Mailer`` port.
 
     No answer reveals whether an address is registered: registering a taken address answers like a new
-    registration and mails the owner instead.
+    registration and mails the owner instead. An account is deleted only after its projects, whose owner key refuses
+    to leave them without an owner.
 
     :ivar password_min_length: Fewest characters a password may have.
     """
 
     password_min_length: int = 12
 
-    def __init__(self, user_db: AccountDatabase, *, mailer: Mailer, settings: Settings) -> None:
+    def __init__(
+        self, user_db: AccountDatabase, *, mailer: Mailer, projects: ProjectService, settings: Settings
+    ) -> None:
         """Build the manager over ``user_db``, signing tokens with the accounts secret.
 
         :param user_db: Users of the current request's session.
         :type user_db: AccountDatabase
         :param mailer: Port the verification, reset and already-registered messages go through.
         :type mailer: Mailer
+        :param projects: Project service of the request, which deletes an account's projects with their files.
+        :type projects: ProjectService
         :param settings: Application settings holding the token secret and the public URL of the web interface.
         :type settings: Settings
         """
@@ -135,6 +143,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         self.verification_token_secret = secret
         self.reset_password_token_secret = secret
         self._mailer = mailer
+        self._projects = projects
         self._public_url = settings.public_url
 
     @override
@@ -236,6 +245,20 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         unknown_password = self.password_helper.hash(self.password_helper.generate())
         await self.user_db.update(user, {'is_verified': True, 'hashed_password': unknown_password})
 
+    @override
+    async def on_before_delete(self, user: AccountTable, request: Request | None = None) -> None:
+        """Delete every project of the account with its files, so the account can be deleted after them.
+
+        A database cascade from the account would remove the rows of its projects and leave their files behind, so
+        the owner key restricts, and the projects are deleted here through ``ProjectService``.
+
+        :param user: Account about to be deleted.
+        :type user: AccountTable
+        :param request: Request that triggered the deletion, if any.
+        :type request: Request | None
+        """
+        await self._projects.delete_all(Actor(account_id=AccountId(user.id)))
+
 
 class AccountsProvider(Provider):
     """Builds the mailer, and per request the fastapi-users user manager and session strategy."""
@@ -262,19 +285,23 @@ class AccountsProvider(Provider):
         return SmtpMailer(server)
 
     @provide(scope=Scope.REQUEST)
-    def user_manager(self, session: AsyncSession, mailer: Mailer, settings: Settings) -> UserManager:
+    def user_manager(
+        self, session: AsyncSession, mailer: Mailer, projects: ProjectService, settings: Settings
+    ) -> UserManager:
         """Build the user manager over the request's session.
 
         :param session: Database session of the request.
         :type session: AsyncSession
         :param mailer: Port the account messages go through.
         :type mailer: Mailer
+        :param projects: Project service of the request, which deletes the projects of a deleted account.
+        :type projects: ProjectService
         :param settings: Application settings holding the secret and the public URL.
         :type settings: Settings
         :returns: The user manager of the request.
         :rtype: UserManager
         """
-        return UserManager(AccountDatabase(session), mailer=mailer, settings=settings)
+        return UserManager(AccountDatabase(session), mailer=mailer, projects=projects, settings=settings)
 
     @provide(scope=Scope.REQUEST)
     def session_strategy(self, session: AsyncSession, settings: Settings) -> SessionStrategy:

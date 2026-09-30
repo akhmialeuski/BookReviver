@@ -587,7 +587,7 @@ and refuses to start when they differ.
 | Service             | Use cases                                                                |
 | ------------------- | ------------------------------------------------------------------------ |
 | `AccountService`    | Account settings, provider credentials, default engines and models       |
-| `ProjectService`    | List, create, read, edit the description, delete with all files          |
+| `ProjectService`    | List, create, read, edit the description, delete one or all with files   |
 | `ImportService`     | Accept an upload and enqueue the import, run the import job step by step |
 | `PageService`       | Page manifest, facts of one page, asset locations for the viewer         |
 | `ProcessingService` | Recipes, previews, runs, variants, invalidation of later stages          |
