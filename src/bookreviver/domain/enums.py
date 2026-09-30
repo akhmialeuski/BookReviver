@@ -56,7 +56,7 @@ class SourceKind(LabeledStrEnum):
 
     PDF = 'pdf', 'PDF document'
     DJVU = 'djvu', 'DjVu document'
-    IMAGES = 'image', 'Image file'
+    IMAGE = 'image', 'Image file'
 
     @classmethod
     def of_files(cls, names: Collection[str]) -> SourceKind:
@@ -227,7 +227,7 @@ class FileType(LabeledStrEnum):
             case FileType.DJVU:
                 return SourceKind.DJVU
             case _:
-                return SourceKind.IMAGES
+                return SourceKind.IMAGE
 
     @classmethod
     def from_name(cls, name: str) -> FileType | None:

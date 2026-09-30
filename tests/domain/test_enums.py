@@ -70,10 +70,10 @@ class TestFileType:
         [
             (FileType.PDF, SourceKind.PDF),
             (FileType.DJVU, SourceKind.DJVU),
-            (FileType.TIFF, SourceKind.IMAGES),
-            (FileType.JPEG, SourceKind.IMAGES),
-            (FileType.JPEG_2000, SourceKind.IMAGES),
-            (FileType.PNG, SourceKind.IMAGES),
+            (FileType.TIFF, SourceKind.IMAGE),
+            (FileType.JPEG, SourceKind.IMAGE),
+            (FileType.JPEG_2000, SourceKind.IMAGE),
+            (FileType.PNG, SourceKind.IMAGE),
         ],
     )
     def test_source_kind(self, file_type: FileType, kind: SourceKind) -> None:
@@ -100,9 +100,9 @@ class TestSourceKindOfFiles:
             (('book.DJVU',), SourceKind.DJVU),
             # An indirect DjVu document is an index file and one file per page
             (('index.djvu', 'p0001.djvu', 'p0002.djv'), SourceKind.DJVU),
-            ((TIFF_NAME,), SourceKind.IMAGES),
+            ((TIFF_NAME,), SourceKind.IMAGE),
             # A directory of scans mixing every accepted image type is one image set
-            (('001.tif', '002.jpg', '003.png', '004.jp2'), SourceKind.IMAGES),
+            (('001.tif', '002.jpg', '003.png', '004.jp2'), SourceKind.IMAGE),
         ],
         ids=['one-pdf', 'pdf-parts', 'bundled-djvu', 'indirect-djvu', 'one-image', 'mixed-images'],
     )

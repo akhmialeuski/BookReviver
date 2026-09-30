@@ -301,7 +301,7 @@ class TestExtractImages:
         ]
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGES, files, 1, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, files, 1, target)
 
         with Image.open(target) as written:
             assert written.size == SECOND_PAGE_SIZE_PX
@@ -320,7 +320,7 @@ class TestExtractImages:
         source = write_image(tmp_path / 'page.jpg', mode=mode, size=SMALL_SIZE_PX)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGES, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
 
         assert target.read_bytes() == source.read_bytes()
 
@@ -357,7 +357,7 @@ class TestExtractImages:
         source = write_image(tmp_path / f'{PAGE_STEM}{case.suffix}', mode=case.mode, size=SMALL_SIZE_PX)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGES, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
 
         with Image.open(target) as written:
             expect(written.format == JPEG)
@@ -379,7 +379,7 @@ class TestExtractImages:
         bilevel.save(source)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGES, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
 
         with Image.open(target) as written:
             width, height = written.size
@@ -399,7 +399,7 @@ class TestExtractImages:
         Image.new(GRAY_16_MODE, SMALL_SIZE_PX, color=SIXTEEN_BIT_SAMPLE).save(source)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGES, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
 
         with Image.open(target) as written:
             sample = _gray_at(written, (0, 0))
@@ -417,7 +417,7 @@ class TestExtractImages:
         source = write_image(tmp_path / f'{PAGE_STEM}{JPG_SUFFIX}', mode=GRAY_MODE, size=SMALL_SIZE_PX, exif=exif)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGES, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
 
         with Image.open(target) as written:
             expect(written.size == SMALL_SIZE_PX[::-1])
@@ -437,7 +437,7 @@ class TestExtractImages:
         gradient_image(mode=RGB_MODE, size=SMALL_SIZE_PX).save(source, icc_profile=profile)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGES, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
 
         with Image.open(target) as written:
             assert written.info.get('icc_profile') == profile

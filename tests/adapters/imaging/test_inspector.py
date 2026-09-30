@@ -482,9 +482,9 @@ class TestInspectImages:
         """
         paths = [write_image(tmp_path / name, mode='L', size=SMALL_SIZE_PX) for name in reversed(NATURAL_ORDER_NAMES)]
 
-        analysis = await fx_inspector.inspect(SourceKind.IMAGES, paths)
+        analysis = await fx_inspector.inspect(SourceKind.IMAGE, paths)
 
-        expect(analysis.kind == SourceKind.IMAGES)
+        expect(analysis.kind == SourceKind.IMAGE)
         expect(tuple(page.source_file for page in analysis.pages) == NATURAL_ORDER_NAMES)
         assert_expectations()
 
@@ -520,7 +520,7 @@ class TestInspectImages:
         """
         path = write_image(tmp_path / f'{PAGE_STEM}{case.suffix}', mode=case.mode, size=SMALL_SIZE_PX)
 
-        page = (await fx_inspector.inspect(SourceKind.IMAGES, [path])).pages[0]
+        page = (await fx_inspector.inspect(SourceKind.IMAGE, [path])).pages[0]
 
         expect(page.extra['pillow_mode'] == case.mode)
         expect(page.color_mode == case.color_mode)
@@ -542,7 +542,7 @@ class TestInspectImages:
         """
         path = write_image(tmp_path / f'{PAGE_STEM}{suffix}', mode='L', size=SCAN_SIZE_PX, dpi=SCAN_DPI)
 
-        page = (await fx_inspector.inspect(SourceKind.IMAGES, [path])).pages[0]
+        page = (await fx_inspector.inspect(SourceKind.IMAGE, [path])).pages[0]
 
         expect((page.width_px, page.height_px) == SCAN_SIZE_PX)
         expect((page.dpi_x, page.dpi_y) == (SCAN_DPI, SCAN_DPI))
@@ -564,7 +564,7 @@ class TestInspectImages:
         """
         path = write_image(tmp_path / f'{PAGE_STEM}{suffix}', mode='L', size=SMALL_SIZE_PX)
 
-        page = (await fx_inspector.inspect(SourceKind.IMAGES, [path])).pages[0]
+        page = (await fx_inspector.inspect(SourceKind.IMAGE, [path])).pages[0]
 
         expect((page.dpi_x, page.dpi_y) == (None, None))
         expect((page.width_mm, page.height_mm) == (None, None))
@@ -581,7 +581,7 @@ class TestInspectImages:
         exif = {ExifTags.Base.Make: EXIF_MAKE, ExifTags.Base.Model: EXIF_MODEL, ExifTags.Base.Artist: 'Nobody'}
         path = write_image(tmp_path / 'page.jpg', mode=RGB_MODE, size=SMALL_SIZE_PX, exif=exif)
 
-        page = (await fx_inspector.inspect(SourceKind.IMAGES, [path])).pages[0]
+        page = (await fx_inspector.inspect(SourceKind.IMAGE, [path])).pages[0]
 
         expect(page.image_format == JPEG)
         expect(page.extra[FactKey.FILE_SIZE_BYTES] == path.stat().st_size)
@@ -599,7 +599,7 @@ class TestInspectImages:
         exif = {ExifTags.Base.Orientation: QUARTER_TURN_ORIENTATION}
         path = write_image(tmp_path / f'{PAGE_STEM}{JPG_SUFFIX}', mode='L', size=SCAN_SIZE_PX, dpi=SCAN_DPI, exif=exif)
 
-        page = (await fx_inspector.inspect(SourceKind.IMAGES, [path])).pages[0]
+        page = (await fx_inspector.inspect(SourceKind.IMAGE, [path])).pages[0]
 
         expect((page.width_px, page.height_px) == SCAN_SIZE_PX[::-1])
         expect((page.width_mm, page.height_mm) == (SCAN_PAGE_HEIGHT_MM, SCAN_PAGE_WIDTH_MM))
@@ -616,7 +616,7 @@ class TestInspectImages:
         names = ('1.tif', '2.png', '3.png', '4.jpg')
         paths = [write_image(tmp_path / name, mode='L', size=SMALL_SIZE_PX) for name in names]
 
-        metadata = (await fx_inspector.inspect(SourceKind.IMAGES, paths)).file_metadata
+        metadata = (await fx_inspector.inspect(SourceKind.IMAGE, paths)).file_metadata
 
         expect(metadata['file_count'] == len(paths))
         expect(metadata['total_size_bytes'] == sum(path.stat().st_size for path in paths))
@@ -641,7 +641,7 @@ class TestInspectImages:
         """
         path = write_image(tmp_path / f'{PAGE_STEM}{suffix}', mode='L', size=SMALL_SIZE_PX, dpi=SCAN_DPI)
 
-        await fx_inspector.inspect(SourceKind.IMAGES, [path])
+        await fx_inspector.inspect(SourceKind.IMAGE, [path])
 
         mock_load.assert_not_called()
 
@@ -679,4 +679,4 @@ class TestInspectImages:
         files = case.build(tmp_path)
 
         with pytest.raises(UnsupportedSourceError, match=case.match):
-            await fx_inspector.inspect(SourceKind.IMAGES, files)
+            await fx_inspector.inspect(SourceKind.IMAGE, files)

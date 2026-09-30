@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 type ModeDepth = tuple[ColorMode, int | None]
 
 IMAGE_FILE_TYPES: tuple[FileType, ...] = tuple(
-    file_type for file_type in FileType if file_type.source_kind is SourceKind.IMAGES
+    file_type for file_type in FileType if file_type.source_kind is SourceKind.IMAGE
 )
 IMAGE_SUFFIXES: frozenset[str] = frozenset(suffix for file_type in IMAGE_FILE_TYPES for suffix in file_type.suffixes)
 IMAGE_TYPE_NAMES: str = ', '.join(file_type.label for file_type in IMAGE_FILE_TYPES)
@@ -80,7 +80,7 @@ PROFILE_CHANGING_MODES: frozenset[str] = frozenset({'CMYK', 'LAB', 'YCbCr'})
 class ImageSetFormat(SourceFormat):
     """Describes a page image by its header alone, and copies or converts it as JPEG."""
 
-    kind = SourceKind.IMAGES
+    kind = SourceKind.IMAGE
 
     def __init__(self, *, jpeg_quality: int) -> None:
         """Encode converted pages at ``jpeg_quality``.
@@ -110,7 +110,7 @@ class ImageSetFormat(SourceFormat):
             FactKey.TOTAL_SIZE_BYTES: sum(path.stat().st_size for path in ordered),
             FactKey.FORMATS: sorted({page.image_format for page in pages}),
         }
-        return SourceAnalysis(kind=SourceKind.IMAGES, pages=pages, file_metadata=file_metadata)
+        return SourceAnalysis(kind=SourceKind.IMAGE, pages=pages, file_metadata=file_metadata)
 
     @override
     def extract(self, files: Sequence[Path], *, index: int, target: Path) -> None:
