@@ -96,9 +96,23 @@ class TestProblemHandler:
                 HTTPStatus.CONTENT_TOO_LARGE,
                 UploadProblem.TOO_LARGE.label,
             ),
+            ProblemCase(
+                UploadRejectedError(UploadProblem.TOO_MANY_FILES),
+                HTTPStatus.CONTENT_TOO_LARGE,
+                UploadProblem.TOO_MANY_FILES.label,
+            ),
             ProblemCase(RuntimeError(SECRET_DETAIL), HTTPStatus.INTERNAL_SERVER_ERROR, UNEXPECTED_DETAIL),
         ],
-        ids=['not-found', 'forbidden', 'conflict', 'unsupported', 'upload-rule', 'too-large', 'unhandled'],
+        ids=[
+            'not-found',
+            'forbidden',
+            'conflict',
+            'unsupported',
+            'upload-rule',
+            'too-large',
+            'too-many-files',
+            'unhandled',
+        ],
     )
     async def test_error_becomes_problem(
         self, fx_client: httpx.AsyncClient, fx_failing_route: Callable[[Exception], None], case: ProblemCase

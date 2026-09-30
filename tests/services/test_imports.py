@@ -39,7 +39,10 @@ from bookreviver.services.imports import (
 )
 from tests.helpers.builders import make_job, make_project, new_account_id
 from tests.helpers.fakes_imports import (
+    DEFAULT_PARALLEL_SCANS,
     IIIF_ROOT,
+    MAX_BYTES,
+    MAX_FILES,
     OVERLAP_SECONDS,
     ImportRig,
     WorkerCrashError,
@@ -144,7 +147,14 @@ def fx_book_files(fx_samples: Path) -> list[UploadFile]:
     ]
 
 
-async def _import(rig: ImportRig, actor: Actor, project_id: ProjectId, files: list[UploadFile], **limits: int) -> Job:
+async def _import(
+    rig: ImportRig,
+    actor: Actor,
+    project_id: ProjectId,
+    files: list[UploadFile],
+    *,
+    parallel_scans: int = DEFAULT_PARALLEL_SCANS,
+) -> Job:
     """Upload the files and run the job, each in a service of its own as a request and a worker would.
 
     :param rig: Adapters of the import.
@@ -155,13 +165,13 @@ async def _import(rig: ImportRig, actor: Actor, project_id: ProjectId, files: li
     :type project_id: ProjectId
     :param files: The uploaded files.
     :type files: list[UploadFile]
-    :param limits: Keyword arguments of ``ImportRig.service`` for the service that runs the job.
-    :type limits: int
+    :param parallel_scans: Largest number of scans the service that runs the job cuts at once.
+    :type parallel_scans: int
     :returns: The job as stored after the run.
     :rtype: Job
     """
     job = await rig.service().start_import(actor, project_id, files)
-    await rig.service(**limits).run_import(job.id)
+    await rig.service(parallel_scans=parallel_scans).run_import(job.id)
     return await rig.stored_job(job)
 
 
@@ -238,21 +248,23 @@ class UploadCase(NamedTuple):
     """An upload that a rule refuses, with the problem it is refused for.
 
     :ivar names: Names of the uploaded files.
-    :ivar limits: Keyword arguments of ``ImportRig.service`` that set the limits of the upload.
     :ivar problem: Rule the upload breaks.
+    :ivar max_files: Largest number of files the service allows.
+    :ivar max_bytes: Largest total size the service allows, in bytes.
     """
 
     names: list[str | None]
-    limits: dict[str, int]
     problem: UploadProblem
+    max_files: int = MAX_FILES
+    max_bytes: int = MAX_BYTES
 
 
 REFUSED_UPLOADS: list[UploadCase] = [
-    UploadCase(names=[], limits={}, problem=UploadProblem.NO_FILES),
-    UploadCase(names=['a.jpg', 'b.jpg', 'c.jpg'], limits={'max_files': 2}, problem=UploadProblem.TOO_MANY_FILES),
-    UploadCase(names=['a.jpg'], limits={'max_bytes': 3}, problem=UploadProblem.TOO_LARGE),
-    UploadCase(names=[None], limits={}, problem=UploadProblem.EMPTY_NAME),
-    UploadCase(names=['a.jpg', 'A.JPG'], limits={}, problem=UploadProblem.DUPLICATE_NAME),
+    UploadCase(names=[], problem=UploadProblem.NO_FILES),
+    UploadCase(names=['a.jpg', 'b.jpg', 'c.jpg'], problem=UploadProblem.TOO_MANY_FILES, max_files=2),
+    UploadCase(names=['a.jpg'], problem=UploadProblem.TOO_LARGE, max_bytes=3),
+    UploadCase(names=[None], problem=UploadProblem.EMPTY_NAME),
+    UploadCase(names=['a.jpg', 'A.JPG'], problem=UploadProblem.DUPLICATE_NAME),
 ]
 REFUSED_IDS: list[str] = ['no-files', 'too-many-files', 'too-large', 'empty-name', 'duplicate-name']
 
@@ -404,7 +416,9 @@ class TestStartImport:
         ]
 
         with pytest.raises(UploadRejectedError) as refusal:
-            await fx_rig.service(**case.limits).start_import(fx_owner, fx_project.id, files)
+            await fx_rig.service(max_files=case.max_files, max_bytes=case.max_bytes).start_import(
+                fx_owner, fx_project.id, files
+            )
 
         expect(refusal.value.problem is case.problem)
         expect(await fx_rig.open_uow().jobs.list_for_project(fx_project.id, set(JobState)) == [])

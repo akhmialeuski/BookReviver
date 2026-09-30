@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import JobId, ProjectId, SourceId
     from bookreviver.domain.values import SourceAnalysis, UploadedSource
     from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.storage import SourceStore
 
 TICK: timedelta = timedelta(seconds=1)
 PAGE_WIDTH_PX: int = 200
@@ -402,10 +403,20 @@ class ImportRig:
         return InMemoryUnitOfWork(self.database)
 
     def service(
-        self, *, parallel_scans: int = DEFAULT_PARALLEL_SCANS, max_files: int = MAX_FILES, max_bytes: int = MAX_BYTES
+        self,
+        *,
+        uow: UnitOfWork | None = None,
+        sources: SourceStore | None = None,
+        parallel_scans: int = DEFAULT_PARALLEL_SCANS,
+        max_files: int = MAX_FILES,
+        max_bytes: int = MAX_BYTES,
     ) -> ImportService:
         """Build an import service over a new unit of work, as a new request or job would get.
 
+        :param uow: Unit of work the service works in, or None for a new in-memory one over the rig's database.
+        :type uow: UnitOfWork | None
+        :param sources: Source store the service works with, or None for the rig's own.
+        :type sources: SourceStore | None
         :param parallel_scans: Largest number of scans cut at once.
         :type parallel_scans: int
         :param max_files: Largest number of files in an upload.
@@ -416,8 +427,8 @@ class ImportRig:
         :rtype: ImportService
         """
         return ImportService(
-            uow=self.open_uow(),
-            storage=ImportStorage(sources=self.sources, assets=self.assets),
+            uow=uow or self.open_uow(),
+            storage=ImportStorage(sources=sources or self.sources, assets=self.assets),
             imaging=ImportImaging(inspector=self.inspector, rasterizer=self.rasterizer, tiler=self.tiler),
             runtime=ImportRuntime(
                 publisher=self.fakes.events,

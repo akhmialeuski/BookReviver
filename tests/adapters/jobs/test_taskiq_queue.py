@@ -11,6 +11,7 @@ from dishka import make_async_container
 from taskiq.exceptions import SendTaskError
 
 from bookreviver.app.worker import JOB_TASKS
+from bookreviver.domain.enums import JobKind
 from bookreviver.domain.ids import ProjectId
 from tests.helpers.builders import make_job
 from tests.helpers.job_queues import PROBE_TASKS, Probe, ProbeProvider, running_taskiq_queue
@@ -70,12 +71,20 @@ class TestEnqueue:
         assert len({id(marker) for marker in fx_probe.scopes}) == len(jobs)
 
     async def test_kind_without_task_is_refused(self, fx_container: AsyncContainer) -> None:
-        """Verify the in-process broker refuses a job whose kind has no registered task, as with the empty registry.
+        """Verify the in-process broker refuses a job whose kind has no registered task, as with an empty registry.
 
         :param fx_container: Container of the worker.
         :type fx_container: AsyncContainer
         """
         job = make_job(project_id=PROJECT_ID)
-        async with running_taskiq_queue(fx_container, tasks=JOB_TASKS) as queue:
+        async with running_taskiq_queue(fx_container, tasks={}) as queue:
             with pytest.raises(SendTaskError):
                 await queue.enqueue(job)
+
+
+class TestJobTasks:
+    """Tests for the task registry of the worker."""
+
+    def test_every_job_kind_has_an_entry_point(self) -> None:
+        """Verify no job kind can be enqueued without a task to run it, so no job stays queued for ever."""
+        assert set(JOB_TASKS) == set(JobKind)
