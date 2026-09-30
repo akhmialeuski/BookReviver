@@ -571,6 +571,17 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
         return [self._mapper.to_entity(row) for row in rows]
 
     @override
+    async def count_before(self, page: Page) -> int:
+        """Count the project's pages whose order key is smaller, which the unique index of project and key answers.
+
+        :param page: Stored page of the project.
+        :type page: Page
+        :returns: The position of the page in the book, from zero.
+        :rtype: int
+        """
+        return await self._rows.count(PageRow.order_key < page.order_key, project_id=page.project_id)
+
+    @override
     async def last_order_key(self, project_id: ProjectId) -> str | None:
         """Return the greatest order key of the project's pages, read from the unique index of project and key.
 
@@ -607,6 +618,22 @@ class SqlAlchemyPageVersionRepository(
         """
         rows = await self._rows.get_many(
             order_by=[PageVersionRow.created_at.asc(), PageVersionRow.id.asc()], page_id=page_id
+        )
+        return [self._mapper.to_entity(row) for row in rows]
+
+    @override
+    async def list_base_versions(self, page_ids: Collection[PageId]) -> Sequence[PageVersion]:
+        """Return the versions of the given pages that have no input version, in one ``IN`` query.
+
+        :param page_ids: Pages whose base versions are read.
+        :type page_ids: Collection[PageId]
+        :returns: The base versions of those pages, the earliest first, ties by identifier.
+        :rtype: Sequence[PageVersion]
+        """
+        rows = await self._rows.get_many(
+            CollectionFilter(field_name=PageVersionRow.page_id, values=page_ids),
+            PageVersionRow.input_id.is_(None),
+            order_by=[PageVersionRow.created_at.asc(), PageVersionRow.id.asc()],
         )
         return [self._mapper.to_entity(row) for row in rows]
 

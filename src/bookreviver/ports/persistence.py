@@ -212,6 +212,18 @@ class PageRepository(Repository[Page, PageId]):
         """
 
     @abstractmethod
+    async def count_before(self, page: Page) -> int:
+        """Return how many pages of the page's project come before it in book order, which is its position.
+
+        Every page counts, whether it is included in the book or not, as in the windows ``list_for_project`` returns.
+
+        :param page: Stored page of the project.
+        :type page: Page
+        :returns: The number of the project's pages whose order key is smaller than the page's, from zero.
+        :rtype: int
+        """
+
+    @abstractmethod
     async def last_order_key(self, project_id: ProjectId) -> str | None:
         """Return the order key of the last page of a project, after which new pages are appended.
 
@@ -232,6 +244,19 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         :param page_id: Page owning the versions.
         :type page_id: PageId
         :returns: Every version of the page, the earliest first.
+        :rtype: Sequence[PageVersion]
+        """
+
+    @abstractmethod
+    async def list_base_versions(self, page_ids: Collection[PageId]) -> Sequence[PageVersion]:
+        """Return the base versions of several pages in one read, so a window of a book costs one query.
+
+        A base version is a version without an input version, the one a scan or nothing feeds. A page cut from a scan
+        again gets a new base version beside the old one, so a page can have several.
+
+        :param page_ids: Pages whose base versions are read.
+        :type page_ids: Collection[PageId]
+        :returns: The base versions of those pages, the earliest first, ties by identifier.
         :rtype: Sequence[PageVersion]
         """
 

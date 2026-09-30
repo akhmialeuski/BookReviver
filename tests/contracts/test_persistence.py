@@ -739,6 +739,31 @@ class TestPageRepository:
         expect(await pages.last_order_key(empty.id) is None)
         assert_expectations()
 
+    async def test_count_before_is_the_position_in_the_book(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a page counts the pages before it in byte order, excluded ones included, and none of another project.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        project, other = (make_project(owner_id=owner_id) for _ in range(2))
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.projects.add(other)
+        book = [make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS]
+        book[0] = evolve(book[0], included=False)
+        await uow.pages.add_many([*book, make_page(project_id=other.id, order_key='Zy')])
+        await uow.commit()
+        pages = (await fx_uow_factory()).pages
+        positions = [await pages.count_before(page) for page in book]
+        # The keys are stored as a1, a0v, a0V, a0, Zz and sort as Zz, a0, a0V, a0v, a1
+        expect(positions == [4, 3, 2, 1, 0])
+        assert_expectations()
+
     async def test_list_for_scan_returns_the_pages_of_that_scan_by_slot(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
@@ -909,6 +934,31 @@ class TestPageVersionRepository:
         versions = (await fx_uow_factory()).page_versions
         expect(await versions.get(later.id) == later)
         expect(await versions.list_for_page(page.id) == [base, later])
+        assert_expectations()
+
+    async def test_base_versions_of_several_pages_read_in_one_call(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify only the versions without an input come back, for the pages asked for, the earliest first.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        first, second, unasked = (make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1', 'a2'))
+        first_base = make_page_version(page_id=first.id, minutes=2)
+        second_base = make_page_version(page_id=second.id, minutes=1)
+        derived = evolve(make_page_version(page_id=first.id, minutes=3), input_id=first_base.id)
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.pages.add_many([first, second, unasked])
+        await uow.page_versions.add_many([first_base, second_base, derived, make_page_version(page_id=unasked.id)])
+        await uow.commit()
+        versions = (await fx_uow_factory()).page_versions
+        expect(await versions.list_base_versions([first.id, second.id]) == [second_base, first_base])
+        expect(await versions.list_base_versions([]) == [])
         assert_expectations()
 
     async def test_version_of_a_missing_parent_raises_not_found(

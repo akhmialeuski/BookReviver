@@ -528,6 +528,22 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         return sorted((page for page in self._rows.values() if page.scan_id == scan_id), key=attrgetter('slot'))
 
     @override
+    async def count_before(self, page: Page) -> int:
+        """Count the project's pages whose order key is smaller in byte order.
+
+        :param page: Stored page of the project.
+        :type page: Page
+        :returns: The position of the page in the book, from zero.
+        :rtype: int
+        """
+        before = page.order_key.encode()
+        return sum(
+            1
+            for other in self._rows.values()
+            if other.project_id == page.project_id and other.order_key.encode() < before
+        )
+
+    @override
     async def last_order_key(self, project_id: ProjectId) -> str | None:
         """Return the greatest order key of the project's pages in byte order.
 
@@ -583,6 +599,20 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
         """
         return sorted(
             (version for version in self._rows.values() if version.page_id == page_id),
+            key=attrgetter('created_at', ID_ATTRIBUTE),
+        )
+
+    @override
+    async def list_base_versions(self, page_ids: Collection[PageId]) -> Sequence[PageVersion]:
+        """Return the versions of the given pages that have no input version, the earliest first, ties by identifier.
+
+        :param page_ids: Pages whose base versions are read.
+        :type page_ids: Collection[PageId]
+        :returns: The base versions of those pages.
+        :rtype: Sequence[PageVersion]
+        """
+        return sorted(
+            (version for version in self._rows.values() if version.page_id in page_ids and version.input_id is None),
             key=attrgetter('created_at', ID_ATTRIBUTE),
         )
 
