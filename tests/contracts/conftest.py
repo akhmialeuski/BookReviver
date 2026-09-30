@@ -17,6 +17,7 @@ from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.storage import AssetStore, SourceStore
 from tests.helpers.builders import new_account_id
 from tests.helpers.job_queues import QueueAdapter
+from tests.helpers.schema import create_schema
 from tests.helpers.seeding import commit_account
 
 if TYPE_CHECKING:
@@ -52,6 +53,9 @@ async def fx_persistence(
 ) -> AsyncIterator[AsyncContainer]:
     """Yield a container holding the application's own provider of the backend under test.
 
+    The SQL backend gets its schema from the models, recorded at the head revision, rather than from the migrations,
+    which would make the suite several times slower; ``test_migrations.py`` proves the two schemas equal.
+
     :param fx_persistence_backend: Persistence backend under test.
     :type fx_persistence_backend: PersistenceBackend
     :param fx_settings: Settings with a fresh data directory of the test.
@@ -59,6 +63,8 @@ async def fx_persistence(
     :returns: Iterator yielding the container and closing it afterwards.
     :rtype: AsyncIterator[AsyncContainer]
     """
+    if fx_persistence_backend is PersistenceBackend.SQLALCHEMY:
+        await create_schema(fx_settings)
     container = make_async_container(
         CoreProvider(),
         DatabaseProvider(),

@@ -14,6 +14,7 @@ from bookreviver.domain.ids import AccountId
 from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.storage import AssetStore, SourceStore
 from tests.helpers.builders import make_page, make_project
+from tests.helpers.schema import create_schema
 from tests.helpers.seeding import commit_account
 from tests.helpers.storage import BookFiles
 
@@ -40,6 +41,7 @@ async def fx_container(fx_settings: Settings) -> AsyncIterator[AsyncContainer]:
     :returns: Iterator yielding the container and closing it afterwards.
     :rtype: AsyncIterator[AsyncContainer]
     """
+    await create_schema(fx_settings)
     container = build_container(fx_settings.model_copy(update={'persistence': PersistenceBackend.SQLALCHEMY}))
     yield container
     await container.close()

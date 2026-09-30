@@ -1,9 +1,11 @@
-"""Tests for the migrations: the baseline builds the schema of the models, and a migration keeps the rows of a book.
+"""Tests for the migrations, and for the application's refusal to start on a database they were not applied to.
 
-Alembic runs every command in an event loop of its own, which ``env.py`` starts with ``asyncio.run``, so the tests
+The baseline builds the schema of the models, a migration keeps the rows of a book, and the application starts only
+on a database at the head revision. Alembic runs every command in an event loop of its own, which ``env.py`` starts with ``asyncio.run``, so the tests
 run commands in a worker thread through ``_migrate``.
 """
 
+import re
 import shutil
 from typing import TYPE_CHECKING
 
@@ -25,6 +27,10 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     SourceRow,
 )
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
+from bookreviver.app.container import build_container
+from bookreviver.app.main import create_app
+from bookreviver.app.providers.database import MIGRATE_COMMAND
+from bookreviver.app.settings import PersistenceBackend
 from tests.helpers.builders import make_job, make_page, make_page_version, make_project, make_scan, make_source
 from tests.helpers.seeding import commit_account
 
@@ -33,6 +39,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from advanced_alchemy.base import CommonTableAttributes
+    from dishka import AsyncContainer
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.ids import ProjectId
@@ -65,6 +72,20 @@ REBUILD_PROJECTS: str = """    with op.batch_alter_table('projects', recreate='a
 DELETE_PROJECTS: str = "    op.execute('DELETE FROM projects')"
 # The tables holding the rows of a book, each of which refers to the project or to a row that does
 BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (ProjectRow, SourceRow, ScanRow, PageRow, PageVersionRow, JobRow)
+
+
+@pytest.fixture
+async def fx_container(fx_settings: Settings) -> AsyncIterator[AsyncContainer]:
+    """Yield the application's container on the SQL backend, with no schema created for it.
+
+    :param fx_settings: Settings pointing at a fresh data directory of the test.
+    :type fx_settings: Settings
+    :returns: Iterator yielding the container and closing it afterwards.
+    :rtype: AsyncIterator[AsyncContainer]
+    """
+    container = build_container(fx_settings.model_copy(update={'persistence': PersistenceBackend.SQLALCHEMY}))
+    yield container
+    await container.close()
 
 
 @pytest.fixture
@@ -164,6 +185,50 @@ class TestBaseline:
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
         await _migrate(fx_empty_database, migrations.check)
         assert left == [fx_empty_database.config.alembic_config.version_table_name]
+
+
+class TestDatabaseProvider:
+    """Tests for DatabaseProvider.database, which opens the database only at the head revision."""
+
+    async def test_refuses_a_database_no_revision_was_applied_to(self, fx_container: AsyncContainer) -> None:
+        """Verify the application does not start on an unmigrated database and names the command that migrates it.
+
+        :param fx_container: The application's container on the SQL backend, with no schema.
+        :type fx_container: AsyncContainer
+        """
+        head = ScriptDirectory(str(MIGRATIONS_DIR)).get_current_head()
+        expected = f'Database schema is at revision none, code expects {head}: run `{MIGRATE_COMMAND}`'
+        with pytest.raises(RuntimeError, match=re.escape(expected)):
+            await fx_container.get(SqlDatabase)
+
+    async def test_opens_a_database_at_the_head_revision(
+        self, fx_container: AsyncContainer, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify the application starts once the migrations are applied, and leaves the schema as they left it.
+
+        :param fx_container: The application's container on the SQL backend.
+        :type fx_container: AsyncContainer
+        :param fx_empty_database: The same database, which the test migrates first.
+        :type fx_empty_database: SqlDatabase
+        """
+        await _migrate(fx_empty_database, fx_empty_database.migrations.upgrade, 'head')
+        database = await fx_container.get(SqlDatabase)
+        assert (await database.schema_revisions()).is_current
+
+
+class TestCreateApp:
+    """Tests for the lifespan of the application create_app builds."""
+
+    async def test_does_not_start_on_a_database_no_revision_was_applied_to(self, fx_settings: Settings) -> None:
+        """Verify the application stops at start, before any request, when the database was never migrated.
+
+        :param fx_settings: Settings pointing at a fresh data directory of the test.
+        :type fx_settings: Settings
+        """
+        app = create_app(fx_settings)
+        with pytest.raises(RuntimeError, match=re.escape(MIGRATE_COMMAND)):
+            async with app.router.lifespan_context(app):
+                pass
 
 
 class TestEnv:

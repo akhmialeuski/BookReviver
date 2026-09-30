@@ -1,4 +1,4 @@
-"""Fixtures giving the SQLAlchemy adapter tests a fresh SQLite database with every table created and an owner."""
+"""Fixtures giving the SQLAlchemy adapter tests a fresh SQLite database at the head revision, and an owner."""
 
 from typing import TYPE_CHECKING
 
@@ -7,6 +7,7 @@ import pytest
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.app.container import build_container
 from bookreviver.app.settings import PersistenceBackend
+from tests.helpers.schema import create_schema
 from tests.helpers.seeding import commit_account
 
 if TYPE_CHECKING:
@@ -21,13 +22,14 @@ async def fx_database(fx_settings: Settings) -> AsyncIterator[SqlDatabase]:
     """Open the database through the application's own container, built for the SQL backend.
 
     Building the whole container, not only the database provider, also checks that the production dependency graph
-    with this backend resolves.
+    with this backend resolves. The schema is created from the models and recorded at the head revision first.
 
     :param fx_settings: Settings pointing at a fresh data directory of the test.
     :type fx_settings: Settings
     :returns: Iterator yielding the open database and closing it with the container afterwards.
     :rtype: AsyncIterator[SqlDatabase]
     """
+    await create_schema(fx_settings)
     container = build_container(fx_settings.model_copy(update={'persistence': PersistenceBackend.SQLALCHEMY}))
     yield await container.get(SqlDatabase)
     await container.close()
