@@ -85,8 +85,8 @@ def pdf_upload(
     return upload(name, content=path.read_bytes())
 
 
-def image_upload(directory: Path, name: str, *, width_px: int = PAGE_WIDTH_PX) -> UploadFile:
-    """Return an upload of a gray page image, whose format follows the suffix of its name.
+def image_upload(directory: Path, name: str, *, width_px: int = PAGE_WIDTH_PX, mode: str = GRAY_MODE) -> UploadFile:
+    """Return an upload of a page image, gray unless told otherwise, whose format follows the suffix of its name.
 
     :param directory: Existing directory to build the file in.
     :type directory: Path
@@ -94,10 +94,12 @@ def image_upload(directory: Path, name: str, *, width_px: int = PAGE_WIDTH_PX) -
     :type name: str
     :param width_px: Width of the image in pixels, so files of different widths differ in content.
     :type width_px: int
+    :param mode: Pillow mode of the image, such as ``1`` for a bilevel page or ``RGB`` for a colour one.
+    :type mode: str
     :returns: The upload, as FastAPI hands it to the source store.
     :rtype: UploadFile
     """
-    path = write_image(directory / name, mode=GRAY_MODE, size=(width_px, PAGE_HEIGHT_PX))
+    path = write_image(directory / name, mode=mode, size=(width_px, PAGE_HEIGHT_PX))
     return upload(name, content=path.read_bytes())
 
 

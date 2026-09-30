@@ -11,7 +11,7 @@ from fastapi_pagination import Page
 
 from bookreviver.api.pagination import MANIFEST_MAX_SIZE
 from bookreviver.api.schemas.pages import PageSchema
-from bookreviver.domain.enums import PageOrigin, Rendition
+from bookreviver.domain.enums import ImagePolicy, PageOrigin, Rendition
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import Renditions
 from tests.helpers.builders import make_page, make_page_version, make_project, make_scan, make_source, new_account_id
@@ -169,6 +169,36 @@ class TestListPages:
         expect(images.iiif_info == f'{IIIF_PATH}/{keys.version_rendition(version, Rendition.TILES)}/info.json')
         expect(served.content == THUMBNAIL_CONTENT)
         assert_expectations()
+
+    @pytest.mark.parametrize('full', [Rendition.FULL_JPEG, Rendition.FULL_PNG])
+    async def test_full_image_path_has_the_extension_of_the_format_recorded_with_the_version(
+        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor, full: Rendition
+    ) -> None:
+        """Verify the path of the full image names the format its version was stored in, whatever the project's policy.
+
+        The project's policy is the opposite of what the version records, as after a change of the policy.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param full: Format the base version of the page records for its full image.
+        :type full: Rendition
+        """
+        policy = ImagePolicy.LOSSLESS if full is Rendition.FULL_JPEG else ImagePolicy.COMPACT
+        project = evolve(make_project(owner_id=fx_actor.account_id), image_policy=policy)
+        page = make_page(project_id=project.id)
+        version = evolve(make_page_version(page_id=page.id), renditions=Renditions(ready=True, full=full))
+        await commit_project(fx_database, project, page, versions=[version])
+
+        response = await _list_pages(fx_client, f'{PROJECTS_PATH}/{project.id}/pages')
+
+        images = Page[PageSchema].model_validate_json(response.content).items[0].images
+        assert images is not None
+        expected = f'{IIIF_PATH}/{ProjectKeys(project.id).version_rendition(version, full)}'
+        assert images.full == expected
 
     async def test_pages_through_the_book_with_positions_of_the_whole_book(
         self, fx_client: httpx.AsyncClient, fx_book: Book

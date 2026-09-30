@@ -68,7 +68,9 @@ class PageSchema(ResponseModel):
         images = None
         if version is not None and version.renditions is not None and version.renditions.ready:
             keys = ProjectKeys(page.project_id)
-            images = ImagePathsSchema.of(request, lambda rendition: keys.version_rendition(version, rendition))
+            images = ImagePathsSchema.of(
+                request, lambda rendition: keys.version_rendition(version, rendition), full=version.renditions.full
+            )
         return cls(
             id=page.id,
             position=overview.position,

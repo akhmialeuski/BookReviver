@@ -381,9 +381,11 @@ class ImportRun:
     async def _cut(self, source: Source, scan: Scan) -> None:
         """Write the four renditions of a scan and the base version of its pages, then mark the scan ready.
 
-        What an earlier attempt left in the directories of the scan and of the versions is removed first, since a
-        stored file is never replaced. The scan and its versions are marked ready together, in one transaction with
-        the progress of the job.
+        The format of ``full`` is chosen here, from the colour of the scan and the image policy of the project as it is
+        now, and recorded with the scan, so a later change of the policy changes no stored path. The base version of a
+        page copies that format along with the image. What an earlier attempt left in the directories of the scan and
+        of the versions is removed first, since a stored file is never replaced. The scan and its versions are marked
+        ready together, in one transaction with the progress of the job.
 
         :param source: Source holding the scan.
         :type source: Source
@@ -396,14 +398,17 @@ class ImportRun:
             await self._record_progress()
             await self._commit()
             pages = await self._uow.pages.list_for_scan(scan.id)
-        of_scan = partial(self._keys.scan_rendition, scan)
+            project = await self._uow.projects.get(scan.project_id)
+        full = project.image_policy.full_format(scan.facts.color_mode)
+        ready = evolve(scan, renditions=Renditions(ready=True, version=scan.renditions.version, full=full))
+        of_scan = partial(self._keys.scan_rendition, ready)
         await self._assets.delete_prefix(self._keys.scan_directory(scan))
         async with (
             self._sources.source_files(scan.project_id, scan.source_id) as files,
-            self._assets.writable(of_scan(Rendition.FULL_JPEG)) as target,
+            self._assets.writable(of_scan(full)) as target,
         ):
-            await self._rasterizer.extract(source.kind, files, scan.number, target, full=Rendition.FULL_JPEG)
-        await self._derive(of_scan)
+            await self._rasterizer.extract(source.kind, files, scan.number, target, full=full)
+        await self._derive(of_scan, full=full)
         versions = []
         for page in pages:
             version = PageVersion(
@@ -411,16 +416,15 @@ class ImportRun:
                 page_id=page.id,
                 stage=Stage.PAGE_SPLIT,
                 processor=SPLIT_NONE,
-                renditions=Renditions(ready=True),
+                renditions=Renditions(ready=True, full=full),
                 state=VersionState.READY,
                 created_at=self._clock.now(),
             )
             of_version = partial(self._keys.version_rendition, version)
             await self._assets.delete_prefix(self._keys.version_directory(version))
-            await self._assets.copy(of_scan(Rendition.FULL_JPEG), of_version(Rendition.FULL_JPEG))
-            await self._derive(of_version)
+            await self._assets.copy(of_scan(full), of_version(full))
+            await self._derive(of_version, full=full)
             versions.append(version)
-        ready = evolve(scan, renditions=Renditions(ready=True, version=scan.renditions.version))
         async with self._lock:
             await self._record_progress(done=1)
             await self._uow.page_versions.add_many(versions)
@@ -428,13 +432,15 @@ class ImportRun:
             await self._commit()
             await self._publisher.publish(ScanReady(project_id=scan.project_id, scan=ready))
 
-    async def _derive(self, key: Callable[[Rendition], StorageKey]) -> None:
+    async def _derive(self, key: Callable[[Rendition], StorageKey], *, full: Rendition) -> None:
         """Cut the preview, the thumbnail and the tile pyramid from the ``full`` image stored under the keys.
 
         :param key: Function giving the storage key of each rendition of one scan or one page version.
         :type key: Callable[[Rendition], StorageKey]
+        :param full: Format the ``full`` image was written in, which names the file to cut from.
+        :type full: Rendition
         """
-        async with self._assets.readable(key(Rendition.FULL_JPEG)) as image:
+        async with self._assets.readable(key(full)) as image:
             async with self._assets.writable(key(Rendition.PREVIEW)) as target:
                 await self._tiler.preview(image, target)
             async with self._assets.writable(key(Rendition.THUMBNAIL)) as target:
