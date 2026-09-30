@@ -9,6 +9,7 @@ from fastapi import APIRouter, FastAPI
 from fastapi_pagination import add_pagination
 from fastapi_problem.handler import add_exception_handler
 
+from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.api.auth import signed_in_user
 from bookreviver.api.problems import problem_handler
 from bookreviver.api.routing import ROUTERS
@@ -41,14 +42,19 @@ def create_app(settings: Settings | None = None, extra_providers: Sequence[Provi
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        """Run the application and close the container when it shuts down.
+        """Open the database, run the application and close the container when it shuts down.
+
+        The container opens the database on first use, and opening it checks the schema revision, so the database is
+        opened here: a database the migrations were not applied to stops the start instead of failing a request.
 
         :param _app: The application, required by FastAPI's lifespan signature and unused.
         :type _app: FastAPI
         :returns: Iterator yielding once while the application runs.
         :rtype: AsyncIterator[None]
+        :raises RuntimeError: When the database is not at the head revision of the migrations.
         """
         try:
+            await container.get(SqlDatabase)
             yield
         finally:
             await container.close()

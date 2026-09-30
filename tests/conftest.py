@@ -10,6 +10,7 @@ from bookreviver.app.main import create_app
 from bookreviver.app.settings import AuthSettings, PersistenceBackend, Settings
 from bookreviver.domain.entities import Actor
 from tests.helpers.builders import new_account_id
+from tests.helpers.schema import create_schema
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
@@ -74,6 +75,8 @@ async def fx_app(
 ) -> AsyncIterator[FastAPI]:
     """Run the application lifespan with ``fx_actor`` signed in and ``fx_extra_providers`` applied.
 
+    The account tables live in the SQL database whatever the persistence backend, so its schema is created first.
+
     :param fx_settings: Settings with in-memory persistence and a fresh data directory.
     :type fx_settings: Settings
     :param fx_actor: Account every request acts as.
@@ -83,6 +86,7 @@ async def fx_app(
     :returns: Iterator yielding the running application and shutting it down afterwards.
     :rtype: AsyncIterator[FastAPI]
     """
+    await create_schema(fx_settings)
     app = create_app(fx_settings, fx_extra_providers)
     app.dependency_overrides[current_actor] = lambda: fx_actor
     async with app.router.lifespan_context(app):
