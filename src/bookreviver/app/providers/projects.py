@@ -1,4 +1,4 @@
-"""Provider of the projects feature: the services of projects and pages."""
+"""Provider of the projects feature: the services of projects, pages, sources and scans."""
 
 from dishka import Provider, Scope, provide
 
@@ -7,10 +7,11 @@ from bookreviver.ports.runtime import Clock
 from bookreviver.ports.storage import AssetStore, SourceStore
 from bookreviver.services.pages import PageService
 from bookreviver.services.projects import ProjectService
+from bookreviver.services.sources import SourceService
 
 
 class ProjectsProvider(Provider):
-    """Builds the project and page services, one per request."""
+    """Builds the project, page and source services, one per request."""
 
     scope = Scope.REQUEST
 
@@ -43,3 +44,18 @@ class ProjectsProvider(Provider):
         :rtype: PageService
         """
         return PageService(uow=uow, assets=assets)
+
+    @provide
+    def sources(self, uow: UnitOfWork, sources: SourceStore, assets: AssetStore) -> SourceService:
+        """Build the source service over the request's unit of work.
+
+        :param uow: Unit of work of the current request.
+        :type uow: UnitOfWork
+        :param sources: Source store of the application.
+        :type sources: SourceStore
+        :param assets: Asset store of the application.
+        :type assets: AssetStore
+        :returns: The source service of the request.
+        :rtype: SourceService
+        """
+        return SourceService(uow=uow, sources=sources, assets=assets)
