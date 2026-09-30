@@ -203,3 +203,43 @@ def write_image(
         options[EXIF_OPTION] = exif_of(exif)
     image.save(path, **options)
     return path
+
+
+@frozen(kw_only=True)
+class TiffFrame:
+    """One frame of a multi-page TIFF, with the save options only this frame is written with.
+
+    :ivar mode: Pillow mode of the frame.
+    :ivar size_px: Width and height of the frame in pixels.
+    :ivar options: Pillow save options of the frame, such as ``icc_profile``, ``dpi`` or raw tags under ``tiffinfo``.
+    """
+
+    mode: str
+    size_px: tuple[int, int]
+    options: Mapping[str, Any] = field(factory=dict)
+
+
+def write_tiff(path: Path, *, frames: Sequence[TiffFrame]) -> Path:
+    """Write a multi-page TIFF of gradient frames, each frame written with its own save options.
+
+    Pillow takes the options of each appended frame from its ``encoderinfo``, over the options the whole file is saved
+    with, which become the defaults of every frame. The first frame is therefore written without options, so that no
+    option of one frame reaches another.
+
+    :param path: Where to write the file.
+    :type path: Path
+    :param frames: Frames in page order, the first without options.
+    :type frames: Sequence[TiffFrame]
+    :returns: The written path.
+    :rtype: Path
+    :raises ValueError: If the first frame has options, which Pillow would give every frame.
+    """
+    first, *later = frames
+    if first.options:
+        err_msg = 'The options of the first frame would become the defaults of every frame; give it none.'
+        raise ValueError(err_msg)
+    images = [gradient_image(mode=frame.mode, size=frame.size_px) for frame in frames]
+    for image, frame in zip(images[1:], later, strict=True):
+        image.encoderinfo = dict(frame.options)
+    images[0].save(path, save_all=True, append_images=images[1:])
+    return path

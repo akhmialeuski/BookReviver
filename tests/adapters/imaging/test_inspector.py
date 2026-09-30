@@ -6,13 +6,22 @@ from unittest.mock import patch
 
 import pytest
 from delayed_assert import assert_expectations, expect
-from PIL import ExifTags
+from PIL import ExifTags, TiffImagePlugin
 
 from bookreviver.adapters.imaging.common import FactKey
 from bookreviver.domain.enums import ColorMode, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
 from bookreviver.domain.values import MetadataSuggestion
-from tests.adapters.imaging.samples import PdfPage, ScanImage, encode_image, gradient_image, write_image, write_pdf
+from tests.adapters.imaging.samples import (
+    PdfPage,
+    ScanImage,
+    TiffFrame,
+    encode_image,
+    gradient_image,
+    write_image,
+    write_pdf,
+    write_tiff,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -72,6 +81,30 @@ FILE_COUNT_ARG: str = 'file_count'
 # Gray, colour and bilevel frames of a multi-page TIFF, each of its own size
 FRAME_MODES: tuple[str, ...] = ('L', RGB_MODE, '1')
 FRAME_SIZES_PX: tuple[tuple[int, int], ...] = ((64, 48), (80, 60), (96, 72))
+MAX_FRAME_PIXELS_PATCH: str = 'bookreviver.adapters.imaging.images.MAX_FRAME_PIXELS'
+TIFF_NAME: str = 'pages.tif'
+TIFF_NAME_PATTERN: str = r'pages\.tif'
+PLAIN_FRAME: TiffFrame = TiffFrame(mode='L', size_px=SMALL_SIZE_PX)
+# A photometric interpretation TIFF does not define, which Pillow parses only on seeking to the frame
+UNKNOWN_PIXEL_MODE_FRAME: TiffFrame = TiffFrame(
+    mode='L', size_px=SMALL_SIZE_PX, options={'tiffinfo': {TiffImagePlugin.PHOTOMETRIC_INTERPRETATION: 99}}
+)
+# Admits the 64 x 48 frame and refuses the 128 x 96 one
+SMALL_FRAME_PIXELS: int = 64 * 48
+LARGE_FRAME: TiffFrame = TiffFrame(mode='L', size_px=(128, 96))
+# Resolution unit 1 means no absolute unit, so the frame has no DPI
+UNITLESS_RESOLUTION_TAGS: dict[int, int] = {
+    TiffImagePlugin.RESOLUTION_UNIT: 1,
+    TiffImagePlugin.X_RESOLUTION: 200,
+    TiffImagePlugin.Y_RESOLUTION: 200,
+}
+# 100 dots per centimetre, resolution unit 3
+CENTIMETRE_RESOLUTION_TAGS: dict[int, int] = {
+    TiffImagePlugin.RESOLUTION_UNIT: 3,
+    TiffImagePlugin.X_RESOLUTION: 100,
+    TiffImagePlugin.Y_RESOLUTION: 100,
+}
+CENTIMETRE_DPI: float = 254.0
 EXIF_MAKE: str = 'Scanner Co'
 EXIF_MODEL: str = 'Book Scanner 3000'
 
@@ -419,6 +452,64 @@ class TestInspectPdf:
 
 class TestInspectImages:
     """Tests for SourceInspector.inspect() of an image file, served by ImageFormat."""
+
+    async def test_refuses_tiff_whose_later_frame_header_is_damaged(
+        self, fx_inspector: SourceInspector, tmp_path: Path
+    ) -> None:
+        """Refuse a TIFF whose first frame reads but whose second has an unknown pixel mode, instead of crashing.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        path = write_tiff(tmp_path / TIFF_NAME, frames=[PLAIN_FRAME, UNKNOWN_PIXEL_MODE_FRAME])
+
+        with pytest.raises(UnsupportedSourceError, match=rf'^{TIFF_NAME_PATTERN} cannot be read as an image'):
+            await fx_inspector.inspect(SourceKind.IMAGE, [path])
+
+    @patch(MAX_FRAME_PIXELS_PATCH, SMALL_FRAME_PIXELS)
+    async def test_refuses_tiff_whose_later_frame_is_too_large(
+        self, fx_inspector: SourceInspector, tmp_path: Path
+    ) -> None:
+        """Refuse a TIFF whose second frame has more pixels than the bound, which Pillow checks for the first alone.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        path = write_tiff(tmp_path / TIFF_NAME, frames=[PLAIN_FRAME, LARGE_FRAME])
+
+        with pytest.raises(UnsupportedSourceError, match=rf'^{TIFF_NAME_PATTERN} .* frame 1 is damaged or too large'):
+            await fx_inspector.inspect(SourceKind.IMAGE, [path])
+
+    async def test_reads_resolution_of_each_tiff_frame_from_its_own_tags(
+        self, fx_inspector: SourceInspector, tmp_path: Path
+    ) -> None:
+        """Verify a frame without an absolute resolution does not inherit the resolution of the frame before it.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        frames = [
+            PLAIN_FRAME,
+            TiffFrame(mode='L', size_px=SMALL_SIZE_PX, options={'dpi': (SCAN_DPI, SCAN_DPI)}),
+            TiffFrame(mode='L', size_px=SMALL_SIZE_PX, options={'tiffinfo': UNITLESS_RESOLUTION_TAGS}),
+            TiffFrame(mode='L', size_px=SMALL_SIZE_PX, options={'tiffinfo': CENTIMETRE_RESOLUTION_TAGS}),
+        ]
+        path = write_tiff(tmp_path / TIFF_NAME, frames=frames)
+
+        scans = (await fx_inspector.inspect(SourceKind.IMAGE, [path])).scans
+
+        assert [(scan.dpi_x, scan.dpi_y) for scan in scans] == [
+            (None, None),
+            (SCAN_DPI, SCAN_DPI),
+            (None, None),
+            (CENTIMETRE_DPI, CENTIMETRE_DPI),
+        ]
 
     @patch(IMAGE_FILE_LOAD_PATCH, autospec=True)
     async def test_describes_every_frame_of_a_tiff(

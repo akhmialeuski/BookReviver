@@ -1,14 +1,24 @@
 """Tests for the PyMuPDF and Pillow page rasterizer."""
 
 from typing import TYPE_CHECKING, NamedTuple
+from unittest.mock import patch
 
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
-from PIL import ExifTags, Image, ImageCms
+from PIL import ExifTags, Image, ImageCms, TiffImagePlugin
 
 from bookreviver.domain.enums import SourceKind
-from tests.adapters.imaging.samples import PdfPage, ScanImage, gradient_image, write_image, write_pdf
+from bookreviver.domain.errors import UnsupportedSourceError
+from tests.adapters.imaging.samples import (
+    PdfPage,
+    ScanImage,
+    TiffFrame,
+    gradient_image,
+    write_image,
+    write_pdf,
+    write_tiff,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -68,6 +78,11 @@ EIGHT_BIT_SAMPLE: int = 156
 SAMPLE_TOLERANCE: int = 3
 DARK_LIMIT: int = 64
 LIGHT_LIMIT: int = 192
+SRGB_PROFILE: bytes = ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')).tobytes()
+MAX_FRAME_PIXELS_PATCH: str = 'bookreviver.adapters.imaging.images.MAX_FRAME_PIXELS'
+# Admits a frame of SMALL_SIZE_PX and refuses one of LARGE_FRAME_SIZE_PX
+SMALL_FRAME_PIXELS: int = SMALL_SIZE_PX[0] * SMALL_SIZE_PX[1]
+LARGE_FRAME_SIZE_PX: tuple[int, int] = (240, 180)
 
 
 class RenderedPageCase(NamedTuple):
@@ -81,6 +96,17 @@ class RenderedPageCase(NamedTuple):
     page: PdfPage
     size_px: tuple[int, int]
     mode: str
+
+
+class FrameProfileCase(NamedTuple):
+    """A frame of a multi-page TIFF, and the colour profile the JPEG written of it must carry.
+
+    :ivar number: Number of the frame in the TIFF.
+    :ivar profile: The profile the JPEG must embed, or None for none.
+    """
+
+    number: int
+    profile: bytes | None
 
 
 class ConvertedImageCase(NamedTuple):
@@ -456,3 +482,72 @@ class TestExtractImages:
 
         with Image.open(target) as written:
             assert written.info.get('icc_profile') == profile
+
+    @pytest.mark.parametrize(
+        CASE_ARG,
+        [
+            FrameProfileCase(number=1, profile=SRGB_PROFILE),
+            # Pillow keeps the profile of frame 1 in the file's info after seeking to frame 2, which has none
+            FrameProfileCase(number=2, profile=None),
+        ],
+        ids=['frame-with-profile', 'frame-after-it-without-one'],
+    )
+    async def test_embeds_the_profile_of_the_extracted_frame_only(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, case: FrameProfileCase
+    ) -> None:
+        """Verify a TIFF frame keeps its own colour profile and never gets the profile of an earlier frame.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: A frame of the TIFF, and the profile its JPEG must carry.
+        :type case: FrameProfileCase
+        """
+        frames = [
+            TiffFrame(mode=GRAY_MODE, size_px=SMALL_SIZE_PX),
+            TiffFrame(mode=RGB_MODE, size_px=SMALL_SIZE_PX, options={'icc_profile': SRGB_PROFILE}),
+            TiffFrame(mode=GRAY_MODE, size_px=SMALL_SIZE_PX),
+        ]
+        source = write_tiff(tmp_path / TIFF_NAME, frames=frames)
+        target = tmp_path / TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], case.number, target)
+
+        with Image.open(target) as written:
+            assert written.info.get('icc_profile') == case.profile
+
+    @pytest.mark.parametrize(
+        CASE_ARG,
+        [
+            TiffFrame(
+                mode=GRAY_MODE,
+                size_px=SMALL_SIZE_PX,
+                options={'tiffinfo': {TiffImagePlugin.PHOTOMETRIC_INTERPRETATION: 99}},
+            ),
+            TiffFrame(mode=GRAY_MODE, size_px=LARGE_FRAME_SIZE_PX),
+        ],
+        ids=['unknown-pixel-mode', 'too-large'],
+    )
+    @patch(MAX_FRAME_PIXELS_PATCH, SMALL_FRAME_PIXELS)
+    async def test_refuses_later_frame_it_cannot_read(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, case: TiffFrame
+    ) -> None:
+        """Refuse a TIFF frame with a broken header or too many pixels, and write nothing.
+
+        An uncompressed frame over the bound would otherwise be loaded whole, since Pillow checks the bound of a later
+        frame only when a decoder loads it.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: The second frame of the TIFF, which cannot be read as a scan.
+        :type case: TiffFrame
+        """
+        source = write_tiff(tmp_path / TIFF_NAME, frames=[TiffFrame(mode=GRAY_MODE, size_px=SMALL_SIZE_PX), case])
+        target = tmp_path / TARGET_NAME
+
+        with pytest.raises(UnsupportedSourceError, match=r'^page\.tif cannot be read as an image'):
+            await fx_rasterizer.extract(SourceKind.IMAGE, [source], 1, target)
+        assert not target.exists()

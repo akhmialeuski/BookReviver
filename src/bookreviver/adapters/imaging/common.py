@@ -23,7 +23,8 @@ if TYPE_CHECKING:
 # Pillow refuses images above this many pixels as decompression bombs, and raises outright above twice as many.
 # Its default of about 89 million pixels rejects a broadsheet newspaper scanned at 600 DPI, while an A1 sheet at
 # 600 DPI is about 279 million pixels; this bound admits that and still rejects absurd headers. Pillow keeps it
-# process-wide, and every format imports this module, so the bound holds for every page any of them opens.
+# process-wide, and every format imports this module, so the bound holds for every file any of them opens. Pillow
+# checks it when it opens a file, not when it seeks to a later TIFF frame, so ImageFormat holds each frame to it.
 MAX_IMAGE_PIXELS: int = 300_000_000
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 MM_PER_INCH: float = 25.4
