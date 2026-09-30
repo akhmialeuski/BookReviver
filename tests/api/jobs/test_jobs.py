@@ -29,21 +29,22 @@ pytestmark = pytest.mark.anyio
 JOB_PATH: str = '/api/v1/jobs/{job_id}'
 STREAM_TIMEOUT_SECONDS: float = 10
 EVENT_STREAM_TYPE: str = 'text/event-stream'
+HTTP_SCHEME: str = 'http'
 # Server-sent event framing
-EVENT_SEPARATOR: bytes = b'\n\n'
-FIELD_SEPARATOR: str = ': '
-COMMENT_PREFIX: str = ':'
-EVENT_FIELD: str = 'event'
-DATA_FIELD: str = 'data'
+SSE_EVENT_SEPARATOR: bytes = b'\n\n'
+SSE_FIELD_SEPARATOR: str = ': '
+SSE_COMMENT_PREFIX: str = ':'
+SSE_EVENT_FIELD: str = 'event'
+SSE_DATA_FIELD: str = 'data'
 # ASGI message keys and values
-TYPE: str = 'type'
-BODY: str = 'body'
-HTTP: str = 'http'
-RESPONSE_START: str = 'http.response.start'
-# Job schema fields
-ID: str = 'id'
-STATE: str = 'state'
-PROJECT_ID: str = 'project_id'
+ASGI_TYPE_KEY: str = 'type'
+ASGI_BODY_KEY: str = 'body'
+ASGI_HTTP_SCOPE: str = 'http'
+ASGI_RESPONSE_START: str = 'http.response.start'
+# Fields of the job and project-changed schemas in a JSON body
+JOB_ID_FIELD: str = 'id'
+JOB_STATE_FIELD: str = 'state'
+PROJECT_ID_FIELD: str = 'project_id'
 
 
 class StreamedEvent(NamedTuple):
@@ -91,11 +92,11 @@ class _EventStreamReader:
         :type path: str
         """
         scope = {
-            TYPE: HTTP,
+            ASGI_TYPE_KEY: ASGI_HTTP_SCOPE,
             'asgi': {'version': '3.0'},
             'http_version': '1.1',
             'method': 'GET',
-            'scheme': HTTP,
+            'scheme': HTTP_SCHEME,
             'path': path,
             'raw_path': path.encode(),
             'root_path': '',
@@ -115,9 +116,9 @@ class _EventStreamReader:
         """
         if not self._request_sent:
             self._request_sent = True
-            return {TYPE: 'http.request', BODY: b'', 'more_body': False}
+            return {ASGI_TYPE_KEY: 'http.request', ASGI_BODY_KEY: b'', 'more_body': False}
         await self._enough.wait()
-        return {TYPE: 'http.disconnect'}
+        return {ASGI_TYPE_KEY: 'http.disconnect'}
 
     async def _send(self, message: MutableMapping[str, Any]) -> None:
         """Record the response start, and split the body into events, skipping comment-only blocks such as pings.
@@ -125,17 +126,17 @@ class _EventStreamReader:
         :param message: ASGI message from the application.
         :type message: MutableMapping[str, Any]
         """
-        if message[TYPE] == RESPONSE_START:
+        if message[ASGI_TYPE_KEY] == ASGI_RESPONSE_START:
             self.status = message['status']
             self.content_type = dict(message['headers']).get(b'content-type', b'').decode()
-        self._buffer += message.get(BODY, b'')
-        while EVENT_SEPARATOR in self._buffer:
-            block, self._buffer = self._buffer.split(EVENT_SEPARATOR, 1)
-            lines = [line for line in block.decode().splitlines() if not line.startswith(COMMENT_PREFIX)]
+        self._buffer += message.get(ASGI_BODY_KEY, b'')
+        while SSE_EVENT_SEPARATOR in self._buffer:
+            block, self._buffer = self._buffer.split(SSE_EVENT_SEPARATOR, 1)
+            lines = [line for line in block.decode().splitlines() if not line.startswith(SSE_COMMENT_PREFIX)]
             if not lines:
                 continue
-            fields = dict(line.split(FIELD_SEPARATOR, 1) for line in lines)
-            self.events.append(StreamedEvent(name=fields[EVENT_FIELD], data=json.loads(fields[DATA_FIELD])))
+            fields = dict(line.split(SSE_FIELD_SEPARATOR, 1) for line in lines)
+            self.events.append(StreamedEvent(name=fields[SSE_EVENT_FIELD], data=json.loads(fields[SSE_DATA_FIELD])))
             if len(self.events) >= self._count:
                 self._enough.set()
         # A socket write is a suspension point of a real server; keep one so the test interleaves with the stream
@@ -187,8 +188,9 @@ class TestReadJob:
         """
         response = await fx_client.get(JOB_PATH.format(job_id=fx_queued_job.id))
         expect(response.status_code == HTTPStatus.OK)
-        expect((response.json()[ID], response.json()[STATE]) == (str(fx_queued_job.id), JobState.QUEUED))
-        expect(response.json()['progress'] == {'done': 0, 'total': 0, 'fraction': 0.0})
+        body = response.json()
+        expect((body[JOB_ID_FIELD], body[JOB_STATE_FIELD]) == (str(fx_queued_job.id), JobState.QUEUED))
+        expect(body['progress'] == {'done': 0, 'total': 0, 'fraction': 0.0})
         assert_expectations()
 
     async def test_job_of_another_account_is_not_found(
@@ -218,7 +220,7 @@ class TestCancelJob:
         """
         response = await fx_client.delete(JOB_PATH.format(job_id=fx_queued_job.id))
         expect(response.status_code == HTTPStatus.OK)
-        expect(response.json()[STATE] == JobState.CANCELLED)
+        expect(response.json()[JOB_STATE_FIELD] == JobState.CANCELLED)
         assert_expectations()
 
     async def test_finished_job_is_a_conflict(self, fx_client: httpx.AsyncClient, fx_queued_job: Job) -> None:
@@ -283,9 +285,9 @@ class TestStreamProjectEvents:
 
         expect((reader.status, reader.content_type.split(';')[0]) == (HTTPStatus.OK, EVENT_STREAM_TYPE))
         expect([event.name for event in reader.events] == [EventName.JOB_CHANGED, EventName.PROJECT_CHANGED])
-        expect(reader.events[0].data[ID] == str(fx_queued_job.id))
-        expect(reader.events[0].data[STATE] == JobState.CANCELLED)
-        expect(reader.events[1].data == {PROJECT_ID: str(project_id)})
+        expect(reader.events[0].data[JOB_ID_FIELD] == str(fx_queued_job.id))
+        expect(reader.events[0].data[JOB_STATE_FIELD] == JobState.CANCELLED)
+        expect(reader.events[1].data == {PROJECT_ID_FIELD: str(project_id)})
         expect(fx_fakes.events.open_subscriptions == 0)
         assert_expectations()
 
