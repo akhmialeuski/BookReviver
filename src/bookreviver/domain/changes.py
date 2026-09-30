@@ -2,15 +2,18 @@
 
 A change names only the fields to replace, and a field left as None keeps its current value. Clearing a field is a
 change to its empty value, such as an empty string, so the domain needs no third state between keeping and
-replacing. The API turns a field sent as null into that empty value.
+replacing. The API turns a field sent as null into that empty value. The one field with no empty value of its own is
+the cover page of a project, where None is the empty value, so its change is the object ``CoverChange``.
 """
 
 from typing import TYPE_CHECKING
 
-from attrs import asdict, evolve, frozen
+from attrs import asdict, evolve, field, frozen
 
 if TYPE_CHECKING:
-    from bookreviver.domain.enums import Orthography
+    from bookreviver.domain.entities import Project
+    from bookreviver.domain.enums import ImagePolicy, Orthography
+    from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import BookDetails
 
 
@@ -54,3 +57,49 @@ class BookDetailsChanges:
         """
         given = {name: value for name, value in asdict(self, recurse=False).items() if value is not None}
         return evolve(details, **given)
+
+
+@frozen
+class CoverChange:
+    """The new cover page of a project, or the removal of its cover.
+
+    A cover cannot be a plain optional page in a change, because None already means that the cover stays, so a change
+    of the cover is an object of its own whose page may be empty.
+
+    :ivar page_id: Page to show as the cover, or None to fall back to the first page of the book.
+    """
+
+    page_id: PageId | None
+
+
+@frozen(kw_only=True)
+class ProjectChanges:
+    """New values for some fields of a project; a field left as None keeps its current value.
+
+    :ivar details: New values for some fields of the book description.
+    :ivar image_policy: New way to store the images of new scans and page versions.
+    :ivar cover: New cover page, or None to keep the current one.
+    """
+
+    details: BookDetailsChanges = field(factory=BookDetailsChanges)
+    image_policy: ImagePolicy | None = None
+    cover: CoverChange | None = None
+
+    def apply_to(self, project: Project) -> Project:
+        """Return ``project`` with every given field replaced, its description checked like a new one.
+
+        The update time is left to the caller, which owns the clock, and a cover that is not a page of the project is
+        refused by the repository that stores the result.
+
+        :param project: Current state of the project.
+        :type project: Project
+        :returns: The project with the given fields replaced and the others kept.
+        :rtype: Project
+        :raises ValueError: If the changed description breaks one of its rules, such as an empty title.
+        """
+        changed = evolve(project, details=self.details.apply_to(project.details))
+        if self.image_policy is not None:
+            changed = evolve(changed, image_policy=self.image_policy)
+        if self.cover is not None:
+            changed = evolve(changed, cover_page_id=self.cover.page_id)
+        return changed

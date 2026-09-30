@@ -58,10 +58,12 @@ class Project:
     :ivar updated_at: When the project was last changed, which orders the owner's project list.
     """
 
+    DEFAULT_IMAGE_POLICY: ClassVar[ImagePolicy] = ImagePolicy.COMPACT
+
     id: ProjectId
     owner_id: AccountId
     details: BookDetails
-    image_policy: ImagePolicy = ImagePolicy.COMPACT
+    image_policy: ImagePolicy = DEFAULT_IMAGE_POLICY
     cover_page_id: PageId | None = None
     created_at: datetime
     updated_at: datetime
@@ -275,6 +277,21 @@ class PageVersion:
         produced_by = [str(page_id), processor.key, processor.version, params or {}, input_id]
         digest = hashlib.sha256(json.dumps(produced_by, sort_keys=True, separators=(',', ':')).encode())
         return PageVersionId(digest.hexdigest()[:VERSION_ID_LENGTH])
+
+
+@frozen(kw_only=True)
+class PageOverview:
+    """A page of the book with what a client shows of it: its place in the book and the image it starts from.
+
+    :ivar page: The page of the book.
+    :ivar position: Place of the page in the book from zero, counted over every page of the project, excluded or not.
+    :ivar base_version: The page's base version, whose renditions show the page, or None for a page that has no image
+                        yet, such as a placeholder.
+    """
+
+    page: Page
+    position: int = field(validator=validators.ge(0))
+    base_version: PageVersion | None = None
 
 
 @frozen(kw_only=True)

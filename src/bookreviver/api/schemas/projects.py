@@ -1,7 +1,8 @@
 """Schemas of projects: the book description sent by clients and the project resource returned to them.
 
-``ProjectUpdate`` is a JSON Merge Patch (RFC 7396) of the description: a field left out keeps its value, and a field
-sent as null is cleared to the empty value a new description has for it, an empty string or an unknown orthography.
+``ProjectUpdate`` is a JSON Merge Patch (RFC 7396) of the description and of the project's own settings: a field left
+out keeps its value, and a field sent as null is cleared to the value a new project has for it, an empty string, an
+unknown orthography, the compact image policy or no cover page.
 The title can be replaced but never cleared, so it is left out of the null variants of the OpenAPI schema and a null
 title is refused. Pydantic declares no field that may be omitted but not null outside its experimental ``MISSING``
 sentinel, which mypy cannot check yet, so a field validator states that one rule.
@@ -19,7 +20,8 @@ from pydantic.json_schema import SkipJsonSchema
 
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.api.schemas.types import LongText, ShortText, Title
-from bookreviver.domain.changes import BookDetailsChanges
+from bookreviver.domain.changes import BookDetailsChanges, CoverChange, ProjectChanges
+from bookreviver.domain.entities import Project
 from bookreviver.domain.enums import ImagePolicy, Orthography
 from bookreviver.domain.ids import PageId, ProjectId
 from bookreviver.domain.values import BookDetails
@@ -28,6 +30,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import ProjectOverview
 
 TITLE_FIELD: str = 'title'
+COVER_FIELD: str = 'cover_page_id'
+IMAGE_POLICY_FIELD: str = 'image_policy'
 TITLE_NOT_CLEARABLE: str = 'The title can be changed but not cleared.'
 
 
@@ -82,6 +86,8 @@ class ProjectUpdate(RequestModel):
     :ivar language: New language, or None to clear it.
     :ivar orthography: New orthography, or None to set it to unknown.
     :ivar notes: New notes, or None to clear them.
+    :ivar image_policy: New way to store the images of new scans and page versions, or None to set the default.
+    :ivar cover_page_id: New cover page, which must be a page of the project, or None to fall back to the first page.
     """
 
     title: Title | SkipJsonSchema[None] = None
@@ -95,6 +101,8 @@ class ProjectUpdate(RequestModel):
     language: ShortText | None = None
     orthography: Orthography | None = None
     notes: LongText | None = None
+    image_policy: ImagePolicy | None = None
+    cover_page_id: PageId | None = None
 
     @field_validator(TITLE_FIELD)
     @classmethod
@@ -111,18 +119,22 @@ class ProjectUpdate(RequestModel):
             raise ValueError(TITLE_NOT_CLEARABLE)
         return title
 
-    def to_changes(self) -> BookDetailsChanges:
+    def to_changes(self) -> ProjectChanges:
         """Return the fields the client sent as a domain change, a null field changed to its empty value.
 
         :returns: The change replacing exactly the fields present in the request body.
-        :rtype: BookDetailsChanges
+        :rtype: ProjectChanges
         """
-        empty = attrs.fields_dict(BookDetails)
         sent = self.model_dump(exclude_unset=True)
-        changes: dict[str, Any] = {
+        cover = CoverChange(page_id=sent.pop(COVER_FIELD)) if COVER_FIELD in sent else None
+        image_policy = None
+        if IMAGE_POLICY_FIELD in sent:
+            image_policy = sent.pop(IMAGE_POLICY_FIELD) or Project.DEFAULT_IMAGE_POLICY
+        empty = attrs.fields_dict(BookDetails)
+        details: dict[str, Any] = {
             name: empty[name].default if value is None else value for name, value in sent.items()
         }
-        return BookDetailsChanges(**changes)
+        return ProjectChanges(details=BookDetailsChanges(**details), image_policy=image_policy, cover=cover)
 
 
 class BookDetailsSchema(ResponseModel):

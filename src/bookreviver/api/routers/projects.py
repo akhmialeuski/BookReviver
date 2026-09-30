@@ -101,9 +101,10 @@ async def update_project(
     actor: ActorDep,
     projects: FromDishka[ProjectService],
 ) -> ProjectSchema:
-    """Merge the body into the book description, as JSON Merge Patch (RFC 7396) defines.
+    """Merge the body into the project, as JSON Merge Patch (RFC 7396) defines.
 
-    A field left out keeps its value and a field sent as null is cleared; the title cannot be cleared.
+    A field left out keeps its value and a field sent as null is cleared to the value a new project has for it; the
+    title cannot be cleared, and the cover must be a page of the project.
 
     \N{FORM FEED}
     :param project_id: Identifier of the project.
@@ -117,7 +118,7 @@ async def update_project(
     :returns: The changed project.
     :rtype: ProjectSchema
     """
-    return ProjectSchema.from_overview(await projects.update_details(actor, project_id, body.to_changes()))
+    return ProjectSchema.from_overview(await projects.update(actor, project_id, body.to_changes()))
 
 
 @router.delete('/{project_id}', status_code=status.HTTP_204_NO_CONTENT)
