@@ -22,7 +22,7 @@ from advanced_alchemy.exceptions import DuplicateKeyError, ForeignKeyError
 from advanced_alchemy.exceptions import NotFoundError as MissingRowError
 from advanced_alchemy.filters import CollectionFilter, LimitOffset
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
-from sqlalchemy import Table, UniqueConstraint, func, inspect, select, update
+from sqlalchemy import Table, UniqueConstraint, exists, func, inspect, select, update
 
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     JobMapper,
@@ -311,6 +311,49 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
         :type session: AsyncSession
         """
         super().__init__(rows=ProjectRows(session=session), mapper=ProjectMapper())
+
+    @override
+    async def add(self, entity: Project) -> Project:
+        """Store a new project whose cover, if any, is one of its own pages.
+
+        :param entity: Project to store, with its identifier already assigned.
+        :type entity: Project
+        :returns: The project as stored.
+        :rtype: Project
+        :raises NotFoundError: If the cover page is not a page of the project, or the owner is not stored.
+        :raises ConflictError: If a project with this identifier is already stored.
+        """
+        await self._require_own_cover(entity)
+        return await super().add(entity)
+
+    @override
+    async def update(self, entity: Project) -> Project:
+        """Replace the stored state of a project whose cover, if any, is one of its own pages.
+
+        :param entity: Project with its new state.
+        :type entity: Project
+        :returns: The project as stored.
+        :rtype: Project
+        :raises NotFoundError: If the project is not stored, or the cover page is not a page of the project.
+        """
+        await self._require_own_cover(entity)
+        return await super().update(entity)
+
+    async def _require_own_cover(self, project: Project) -> None:
+        """Refuse a cover that is not a page of the project.
+
+        The foreign key of the cover proves only that the page exists and empties the cover when the page goes. A
+        key over the pair of project and page cannot empty the cover alone on SQLite, so the project is checked here.
+
+        :param project: Project about to be stored.
+        :type project: Project
+        :raises NotFoundError: If the cover page is not stored or belongs to another project.
+        """
+        if (cover_id := project.cover_page_id) is None:
+            return
+        own_page = exists().where(PageRow.id == cover_id, PageRow.project_id == project.id)
+        if not await self._rows.session.scalar(select(own_page)):
+            raise NotFoundError(cover_id)
 
     @override
     async def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:

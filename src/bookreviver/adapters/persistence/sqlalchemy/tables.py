@@ -60,6 +60,7 @@ METADATA_COLUMN: Final = 'metadata'
 CHILD_CASCADE: Final = 'all, delete'
 # Loading strategy that raises instead of emitting hidden SQL, which an AsyncSession cannot run
 NO_IMPLICIT_LOAD: Final = 'raise'
+PAGES_TABLE: Final = 'pages'
 PAGE_VERSIONS_TABLE: Final = 'page_versions'
 # Length of a page version identifier, a hash cut to 16 hexadecimal digits
 VERSION_ID_LENGTH: Final = 16
@@ -146,15 +147,23 @@ class ProjectRow(DefaultBase):
     orthography: Mapped[Orthography] = mapped_column(enum_by_value(Orthography))
     notes: Mapped[str]
     image_policy: Mapped[ImagePolicy] = mapped_column(enum_by_value(ImagePolicy))
-    cover_page_id: Mapped[UUID | None]
+    # By table name, and added after both tables exist, since the pages table refers back to this one
+    cover_page_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(f'{PAGES_TABLE}.id', ondelete=SET_NULL, use_alter=True)
+    )
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime] = mapped_column(index=True)
 
     sources: Mapped[list[SourceRow]] = relationship(
         back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
+    # The project's own key of its pages, not the cover's key the other way
     pages: Mapped[list[PageRow]] = relationship(
-        back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
+        back_populates=Relation.PROJECT,
+        cascade=CHILD_CASCADE,
+        passive_deletes=True,
+        lazy=NO_IMPLICIT_LOAD,
+        foreign_keys=lambda: [PageRow.project_id],
     )
     jobs: Mapped[list[JobRow]] = relationship(
         back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
@@ -313,7 +322,7 @@ class PageRow(DefaultBase):
     :ivar versions: Versions of the page, never loaded implicitly.
     """
 
-    __tablename__ = 'pages'
+    __tablename__ = PAGES_TABLE
     __table_args__ = (UniqueConstraint('project_id', 'order_key'), UniqueConstraint('scan_id', 'slot'))
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
@@ -329,7 +338,9 @@ class PageRow(DefaultBase):
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
 
-    project: Mapped[ProjectRow] = relationship(back_populates=Relation.PAGES, lazy=NO_IMPLICIT_LOAD)
+    project: Mapped[ProjectRow] = relationship(
+        back_populates=Relation.PAGES, lazy=NO_IMPLICIT_LOAD, foreign_keys=lambda: [PageRow.project_id]
+    )
     versions: Mapped[list[PageVersionRow]] = relationship(
         back_populates=Relation.PAGE, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )

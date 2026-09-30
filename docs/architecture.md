@@ -543,7 +543,9 @@ erDiagram
 ```
 
 - `projects` has the primary key `id`, and `owner_id` references `user.id` with `ON DELETE RESTRICT`. Its columns are
-  the `BookDetails` fields, `cover_page_id`, `image_policy`, `created_at` and `updated_at`.
+  the `BookDetails` fields, `cover_page_id`, `image_policy`, `created_at` and `updated_at`. `cover_page_id`
+  references `pages.id` with `ON DELETE SET NULL`, so a deleted cover falls back to the first page, and the
+  repository refuses a cover that is not a page of the project, which a key over both columns could not empty alone.
 - `sources` has the primary key `id`, `project_id` with `ON DELETE CASCADE`, `import_job_id` with
   `ON DELETE SET NULL`, and a unique `(project_id, sha256)`. Its columns are `kind`, `file_type`, `file_name`, `files`
   as JSON, `size_bytes`, `sha256`, `scan_count`, `metadata` and `suggestion` as JSON, and `imported_at`.

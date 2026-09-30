@@ -63,6 +63,34 @@ class TestProjectRow:
             expect(await session.scalar(select(func.count()).select_from(JobRow)) == 0)
         assert_expectations()
 
+    async def test_database_deletes_a_project_with_a_cover(
+        self, fx_database: SqlDatabase, fx_owner_id: AccountId
+    ) -> None:
+        """Verify a plain SQL delete of a project whose cover is set removes it and its pages, despite the cycle.
+
+        The project refers to its cover page and the page to its project, so the cascade to the pages empties the
+        cover of the row being deleted.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
+        """
+        project = make_project(owner_id=fx_owner_id)
+        cover = make_page(project_id=project.id)
+        async with fx_database.sessions() as session:
+            uow = SqlAlchemyUnitOfWork(session)
+            await uow.projects.add(project)
+            await uow.pages.add(cover)
+            await uow.projects.update(evolve(project, cover_page_id=cover.id))
+            await uow.commit()
+        async with fx_database.sessions() as session:
+            await session.execute(delete(ProjectRow).where(ProjectRow.id == project.id))
+            await session.commit()
+            expect(await session.scalar(select(func.count()).select_from(ProjectRow)) == 0)
+            expect(await session.scalar(select(func.count()).select_from(PageRow)) == 0)
+        assert_expectations()
+
     async def test_update_keeps_pages_and_jobs(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
         """Verify updating a project leaves its pages and jobs, which the relationships must not merge away.
 

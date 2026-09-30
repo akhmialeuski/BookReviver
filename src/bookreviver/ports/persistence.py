@@ -84,7 +84,11 @@ class Repository[EntityT, IdT](ABC):
 
 
 class ProjectRepository(Repository[Project, ProjectId]):
-    """Projects, listed per owning account."""
+    """Projects, listed per owning account.
+
+    A project's cover is one of its own pages: ``add`` and ``update`` raise ``NotFoundError`` naming a cover page that
+    is not stored or belongs to another project, and deleting the cover page leaves the project without a cover.
+    """
 
     @abstractmethod
     async def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:

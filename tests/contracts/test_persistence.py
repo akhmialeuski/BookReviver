@@ -224,6 +224,53 @@ class TestProjectRepository:
         expect(paged == [project.id for project in tied])
         assert_expectations()
 
+    async def test_deleted_cover_page_leaves_the_project_without_a_cover(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify deleting the cover page empties the project's cover, so the list falls back to the first page.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        cover = make_page(project_id=project.id)
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.pages.add(cover)
+        await uow.projects.update(evolve(project, cover_page_id=cover.id))
+        await uow.commit()
+        uow = await fx_uow_factory()
+        await uow.pages.delete(cover.id)
+        await uow.commit()
+        assert (await (await fx_uow_factory()).projects.get(project.id)).cover_page_id is None
+
+    async def test_cover_outside_the_project_raises_not_found(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a project's cover must be one of its own stored pages, not a missing page or another book's.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        foreign = make_page(project_id=other.id)
+        missing = make_page(project_id=project.id)
+        uow = await fx_uow_factory()
+        for owned in (project, other):
+            await uow.projects.add(owned)
+        await uow.pages.add(foreign)
+        await uow.commit()
+        for page in (foreign, missing):
+            uow = await fx_uow_factory()
+            with pytest.raises(NotFoundError, match=str(page.id)):
+                await uow.projects.update(evolve(project, cover_page_id=page.id))
+            await uow.rollback()
+
     async def test_delete_cascades_to_every_row_of_the_book(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:

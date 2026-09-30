@@ -5,12 +5,13 @@ reproduces the behaviour services rely on rather than only storing rows. It mirr
 transaction isolation:
 
 - Foreign keys: a source, a scan, a page or a job needs its project, a scan its source, a version its page, and a
-  source, a page or a version the import job, scan or input version it names. The owner of a project is not
-  checked, because accounts belong to fastapi-users and have no port.
+  source, a page or a version the import job, scan or input version it names. A project's cover is one of its own
+  pages. The owner of a project is not checked, because accounts belong to fastapi-users and have no port.
 - Unique keys: the digest of a source's main file within its project, the number of a scan within its source, the
   order key of a page within its project, and the pair of a scan and a slot.
 - Referential actions: a project takes its sources, scans, pages and jobs with it, a source its scans, and a page
-  its versions. A deleted scan leaves its pages without their scan, a deleted job leaves the sources it imported
+  its versions. A deleted cover page leaves its project without a cover, a deleted scan leaves its pages without
+  their scan, a deleted job leaves the sources it imported
   without their import job, and a deleted version leaves the versions it fed without their input.
 - Isolation: a unit of work reads and writes a private copy of the tables, and ``commit`` merges only the rows it
   added, replaced or removed, so two units of work touching different rows do not overwrite each other.
@@ -247,6 +248,19 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
         super().__init__(tables.projects, tables)
 
     @override
+    def _check(self, entity: Project) -> None:
+        """Require the project's cover to be one of its own stored pages.
+
+        :param entity: Project about to be stored.
+        :type entity: Project
+        :raises NotFoundError: If the cover page is not stored or belongs to another project.
+        """
+        if (cover_id := entity.cover_page_id) is None:
+            return
+        if (cover := self._tables.pages.get(cover_id)) is None or cover.project_id != entity.id:
+            raise NotFoundError(cover_id)
+
+    @override
     def _cascade(self, entity: Project) -> None:
         """Remove the project's sources, scans, pages with their versions, and jobs, as the database cascade does.
 
@@ -462,12 +476,14 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
 
     @override
     def _cascade(self, entity: Page) -> None:
-        """Remove the page's versions, as the database cascade does.
+        """Remove the page's versions and leave a project it was the cover of without a cover, as the database does.
 
         :param entity: Page just removed.
         :type entity: Page
         """
         remove_where(self._tables.page_versions, lambda version: version.page_id == entity.id)
+        if (project := self._tables.projects.get(entity.project_id)) is not None and project.cover_page_id == entity.id:
+            self._tables.projects[project.id] = evolve(project, cover_page_id=None)
 
     @override
     async def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Page]:
