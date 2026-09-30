@@ -532,6 +532,19 @@ holding one. The imaging provider registers the formats, and the reader refuses 
 exactly one. Supporting another kind of source is a new `SourceKind` member, a new format and one entry in the
 provider.
 
+Colour is managed where a page leaves its source, and nowhere after it, so every stage receives a gray or RGB `full`
+image, tagged sRGB when its colour was converted. A CMYK, LAB or YCbCr page of an image file changes its colour space
+when it becomes RGB, so the profile embedded in the file stops describing its pixels. `ImageFormat` therefore converts
+such a page from its embedded profile to sRGB with Little CMS, through Pillow's `ImageCms.profileToProfile`, with the
+relative colorimetric intent, which keeps the tones of paper and ink that sRGB can show and does not compress the gamut
+as the perceptual intent would. A page without a profile, or with one that does not apply to its pixels, is converted
+by Pillow's own formula, and the second case is logged. Either result is tagged with the sRGB profile, which the
+converted page is in. Little CMS is used through Pillow and not through `pyvips`, so the image format keeps to one
+library; the tests use libvips as the independent reference, and its built-in CMYK profile builds the CMYK samples, so
+no profile file is committed. MuPDF converts the CMYK images of a PDF page itself when `PdfFormat` renders it, and its
+colour management is switched on by default in the PyMuPDF in use, which a test pins, so the adapter never calls
+`pymupdf.TOOLS.set_icc`.
+
 `DjvuFormat` runs the DjVuLibre tools, which the provider finds with `shutil.which` when the container is built. It
 tells the three kinds of DjVu file apart, a bundled document, an indirect index and a single page, from the first 27
 bytes of the file before it runs any tool, so the kind is the `DjvuDocumentKind` in the metadata of the source. It
