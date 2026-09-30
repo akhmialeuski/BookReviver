@@ -15,6 +15,7 @@ from bookreviver.adapters.persistence.memory.unit_of_work import InMemoryJobRepo
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import (
     ColorMode,
+    ContributorRole,
     DjvuDocumentKind,
     JobState,
     PageOrigin,
@@ -35,7 +36,7 @@ from bookreviver.domain.events import (
     SourceImported,
 )
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import SliceRequest
+from bookreviver.domain.values import Contributor, SliceRequest
 from bookreviver.services.imports import (
     IMPORT_ACTIVE,
     NO_SOURCE_IMPORTED,
@@ -990,7 +991,7 @@ class TestRunImportChecks:
 
         project = await fx_rig.open_uow().projects.get(fx_project.id)
         expect(project.details.title == fx_project.details.title)
-        expect(project.details.authors == 'First Author')
+        expect(project.details.contributors == (Contributor(name='First Author', role=ContributorRole.AUTHOR),))
         expect(len(_events_of(fx_rig, ProjectChanged)) == 1)
         assert_expectations()
 
@@ -1005,7 +1006,8 @@ class TestRunImportChecks:
         :type fx_samples: Path
         """
         project = make_project(owner_id=fx_owner.account_id)
-        described = evolve(project, details=evolve(project.details, authors='Owner Author'))
+        owner_author = (Contributor(name='Owner Author', role=ContributorRole.AUTHOR),)
+        described = evolve(project, details=evolve(project.details, contributors=owner_author))
         await fx_rig.fakes.store(described)
 
         await _import(

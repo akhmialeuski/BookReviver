@@ -11,11 +11,11 @@ from fastapi import status
 from fastapi_pagination import Page
 
 from bookreviver.api.schemas.projects import BookDetailsSchema, ProjectCreate, ProjectSchema, ProjectUpdate
-from bookreviver.api.schemas.types import TITLE_MAX_LENGTH
-from bookreviver.domain.enums import ImagePolicy, Orthography
-from bookreviver.domain.values import BookDetails
+from bookreviver.api.schemas.types import CONTRIBUTORS_MAX_LENGTH, HEIGHT_CM_MAX, TITLE_MAX_LENGTH
+from bookreviver.domain.enums import ContributorRole, IdentifierScheme, ImagePolicy, Orthography
+from bookreviver.domain.values import BookDetails, Contributor
 from tests.conftest import TEST_BASE_URL
-from tests.helpers.builders import make_page, make_project, make_scan, make_source, new_account_id
+from tests.helpers.builders import FULL_DETAILS, make_page, make_project, make_scan, make_source, new_account_id
 from tests.helpers.seeding import commit_project
 
 if TYPE_CHECKING:
@@ -34,7 +34,13 @@ MERGE_PATCH_MEDIA_TYPE: str = 'application/merge-patch+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
 LOCATION_HEADER: str = 'location'
 TITLE_FIELD: str = 'title'
-AUTHORS_FIELD: str = 'authors'
+CONTRIBUTORS_FIELD: str = 'contributors'
+IDENTIFIERS_FIELD: str = 'identifiers'
+LANGUAGES_FIELD: str = 'languages'
+HEIGHT_FIELD: str = 'height_cm'
+SUBJECTS_FIELD: str = 'subjects'
+PUBLISHER_FIELD: str = 'publisher'
+SCRIPT_FIELD: str = 'script'
 NOTES_FIELD: str = 'notes'
 COVER_FIELD: str = 'cover_page_id'
 IMAGE_POLICY_FIELD: str = 'image_policy'
@@ -48,8 +54,12 @@ CASE_ARG: str = 'case'
 PROJECT_COUNT: int = 3
 PAGE_SIZE: int = 2
 TITLE: str = 'Slovo o polku'
-AUTHORS: str = 'Anonymous'
+AUTHOR: dict[str, str] = {'name': 'Anonymous', 'role': 'aut'}
+EDITOR: dict[str, str] = {'name': 'N. N. Ivanov', 'role': 'edt'}
 NOTES: str = 'Bought in Vilnia'
+VALID_ISBN: str = '0-306-40615-2'
+NORMALIZED_ISBN: str = '0306406152'
+WRONG_ISBN: str = '0-306-40615-3'
 
 
 class InvalidBody(NamedTuple):
@@ -63,20 +73,51 @@ class InvalidBody(NamedTuple):
     field: str
 
 
+INVALID_FIELD_BODIES: list[dict[str, Any]] = [
+    {IDENTIFIERS_FIELD: [{'scheme': 'isbn', 'value': WRONG_ISBN}]},
+    {IDENTIFIERS_FIELD: [{'scheme': 'url', 'value': 'ftp://example.org'}]},
+    {CONTRIBUTORS_FIELD: [{'name': 'Anonymous', 'role': 'xyz'}]},
+    {CONTRIBUTORS_FIELD: [{'name': ' ', 'role': 'aut'}]},
+    {CONTRIBUTORS_FIELD: [AUTHOR] * (CONTRIBUTORS_MAX_LENGTH + 1)},
+    {LANGUAGES_FIELD: ['ru']},
+    {LANGUAGES_FIELD: ['rus', 'rus']},
+    {HEIGHT_FIELD: 0},
+    {HEIGHT_FIELD: HEIGHT_CM_MAX + 1},
+    {SCRIPT_FIELD: 'runic'},
+]
 INVALID_CREATE_CASES: list[InvalidBody] = [
-    InvalidBody({AUTHORS_FIELD: AUTHORS}, TITLE_FIELD),
+    InvalidBody({PUBLISHER_FIELD: 'Publisher'}, TITLE_FIELD),
     InvalidBody({TITLE_FIELD: '   '}, TITLE_FIELD),
     InvalidBody({TITLE_FIELD: 'x' * (TITLE_MAX_LENGTH + 1)}, TITLE_FIELD),
     InvalidBody({TITLE_FIELD: TITLE, ORTHOGRAPHY_FIELD: 'phonetic'}, ORTHOGRAPHY_FIELD),
     InvalidBody({TITLE_FIELD: TITLE, UNKNOWN_FIELD: str(new_account_id())}, UNKNOWN_FIELD),
+    *(InvalidBody({TITLE_FIELD: TITLE, **body}, next(iter(body))) for body in INVALID_FIELD_BODIES),
 ]
-INVALID_CREATE_IDS: list[str] = ['no-title', 'blank-title', 'long-title', 'unknown-orthography', 'unknown-field']
+INVALID_CREATE_IDS: list[str] = [
+    'no-title',
+    'blank-title',
+    'long-title',
+    'unknown-orthography',
+    'unknown-field',
+    'wrong-isbn',
+    'non-web-url',
+    'unknown-role',
+    'blank-name',
+    'too-many-contributors',
+    'two-letter-language',
+    'repeated-language',
+    'zero-height',
+    'too-high',
+    'unknown-script',
+]
 INVALID_UPDATE_CASES: list[InvalidBody] = [
     InvalidBody({TITLE_FIELD: ' '}, TITLE_FIELD),
     InvalidBody({TITLE_FIELD: None}, TITLE_FIELD),
     InvalidBody({UNKNOWN_FIELD: str(new_account_id())}, UNKNOWN_FIELD),
+    InvalidBody({IDENTIFIERS_FIELD: [{'scheme': 'isbn', 'value': WRONG_ISBN}]}, IDENTIFIERS_FIELD),
+    InvalidBody({HEIGHT_FIELD: -3}, HEIGHT_FIELD),
 ]
-INVALID_UPDATE_IDS: list[str] = ['blank-title', 'null-title', 'unknown-field']
+INVALID_UPDATE_IDS: list[str] = ['blank-title', 'null-title', 'unknown-field', 'wrong-isbn', 'negative-height']
 
 
 def _project_path(project_id: object) -> str:
@@ -124,7 +165,7 @@ class TestSchemas:
         [
             (ProjectCreate, frozenset[str]()),
             (ProjectUpdate, frozenset({COVER_FIELD, IMAGE_POLICY_FIELD})),
-            (BookDetailsSchema, frozenset[str]()),
+            (BookDetailsSchema, frozenset({'primary_author'})),
         ],
         ids=['create', 'update', 'details'],
     )
@@ -214,6 +255,57 @@ class TestCreateProject:
         expect(ProjectSchema.model_validate_json((await fx_client.get(location)).content) == created)
         assert_expectations()
 
+    async def test_stores_the_full_description_with_normalized_identifiers(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify every group of fields is stored, an ISBN comes back without hyphens and the first author is named.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        body = {
+            TITLE_FIELD: TITLE,
+            'subtitle': 'with notes',
+            'parallel_titles': ['Zbiór'],
+            CONTRIBUTORS_FIELD: [EDITOR, AUTHOR],
+            'printer': 'Government press',
+            'censorship': 'Permitted by the censor. Vilna, 12 May 1896',
+            LANGUAGES_FIELD: ['bel', 'rus'],
+            SCRIPT_FIELD: 'cyrillic',
+            HEIGHT_FIELD: 22,
+            IDENTIFIERS_FIELD: [
+                {'scheme': 'isbn', 'value': f' {VALID_ISBN} '},
+                {'scheme': 'shelfmark', 'value': '18.1'},
+            ],
+            SUBJECTS_FIELD: ['Folklore'],
+            'rights': 'public-domain',
+            'copy_holder': 'Private collection',
+        }
+
+        response = await fx_client.post(PROJECTS_PATH, json=body)
+
+        details = ProjectSchema.model_validate_json(response.content).details
+        expect(response.status_code == status.HTTP_201_CREATED)
+        expect(
+            [(person.name, person.role) for person in details.contributors]
+            == [
+                (EDITOR['name'], ContributorRole.EDITOR),
+                (AUTHOR['name'], ContributorRole.AUTHOR),
+            ]
+        )
+        expect(details.primary_author == AUTHOR['name'])
+        expect(
+            [(item.scheme, item.value) for item in details.identifiers]
+            == [
+                (IdentifierScheme.ISBN, NORMALIZED_ISBN),
+                (IdentifierScheme.SHELFMARK, '18.1'),
+            ]
+        )
+        expect((details.languages, details.height_cm, details.printer) == (['bel', 'rus'], 22, 'Government press'))
+        expect(
+            (details.parallel_titles, details.subjects, details.copy_holder)
+            == (['Zbiór'], ['Folklore'], 'Private collection')
+        )
+        assert_expectations()
+
     @pytest.mark.parametrize(CASE_ARG, INVALID_CREATE_CASES, ids=INVALID_CREATE_IDS)
     async def test_invalid_body_is_a_problem(self, fx_client: httpx.AsyncClient, case: InvalidBody) -> None:
         """Verify each broken constraint answers 422 as a problem naming the field, and nothing is created.
@@ -287,12 +379,78 @@ class TestUpdateProject:
         project = make_project(owner_id=fx_actor.account_id, title=TITLE)
         await commit_project(fx_database, project)
 
-        response = await fx_client.patch(_project_path(project.id), json={AUTHORS_FIELD: f' {AUTHORS} '})
+        response = await fx_client.patch(_project_path(project.id), json={PUBLISHER_FIELD: ' Press '})
 
         updated = ProjectSchema.model_validate_json(response.content)
         expect(response.status_code == status.HTTP_200_OK)
-        expect((updated.details.title, updated.details.authors) == (TITLE, AUTHORS))
+        expect((updated.details.title, updated.details.publisher) == (TITLE, 'Press'))
         expect((await _read_project(fx_client, project.id)).details == updated.details)
+        assert_expectations()
+
+    async def test_a_sent_list_replaces_the_whole_list_and_omitted_fields_keep_their_values(
+        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
+    ) -> None:
+        """Verify a list is replaced as a whole and a normalized identifier is stored, while unsent fields stay.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        """
+        project = attrs.evolve(make_project(owner_id=fx_actor.account_id), details=FULL_DETAILS)
+        await commit_project(fx_database, project)
+
+        response = await fx_client.patch(
+            _project_path(project.id),
+            json={CONTRIBUTORS_FIELD: [AUTHOR], IDENTIFIERS_FIELD: [{'scheme': 'isbn', 'value': VALID_ISBN}]},
+        )
+
+        details = ProjectSchema.model_validate_json(response.content).details
+        expect(response.status_code == status.HTTP_200_OK)
+        expect([person.name for person in details.contributors] == [AUTHOR['name']])
+        expect(
+            [(item.scheme, item.value) for item in details.identifiers] == [(IdentifierScheme.ISBN, NORMALIZED_ISBN)]
+        )
+        expect(
+            (details.languages, details.height_cm, details.subjects)
+            == (['bel', 'rus'], 22, ['Фольклор', 'Народные песни'])
+        )
+        expect((details.title, details.printer) == (FULL_DETAILS.title, FULL_DETAILS.printer))
+        assert_expectations()
+
+    async def test_null_clears_lists_the_height_and_enums_and_omitted_fields_stay(
+        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
+    ) -> None:
+        """Verify null empties a list, clears the height and sets an enum to unknown, and other fields stay.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        """
+        project = attrs.evolve(make_project(owner_id=fx_actor.account_id), details=FULL_DETAILS)
+        await commit_project(fx_database, project)
+
+        response = await fx_client.patch(
+            _project_path(project.id),
+            json={
+                CONTRIBUTORS_FIELD: None,
+                HEIGHT_FIELD: None,
+                SCRIPT_FIELD: None,
+                LANGUAGES_FIELD: None,
+                'printer': None,
+            },
+        )
+
+        details = ProjectSchema.model_validate_json(response.content).details
+        expect(response.status_code == status.HTTP_200_OK)
+        expect((details.contributors, details.languages, details.height_cm) == ([], [], None))
+        expect((details.script.value, details.printer, details.primary_author) == ('unknown', '', ''))
+        expect((details.publisher, details.subjects) == (FULL_DETAILS.publisher, ['Фольклор', 'Народные песни']))
         assert_expectations()
 
     async def test_null_clears_a_field_as_a_merge_patch(
@@ -307,19 +465,20 @@ class TestUpdateProject:
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        details = BookDetails(title=TITLE, authors=AUTHORS, notes=NOTES, orthography=Orthography.PRE_REFORM)
+        author = (Contributor(name=AUTHOR['name'], role=ContributorRole.AUTHOR),)
+        details = BookDetails(title=TITLE, contributors=author, notes=NOTES, orthography=Orthography.PRE_REFORM)
         project = attrs.evolve(make_project(owner_id=fx_actor.account_id), details=details)
         await commit_project(fx_database, project)
 
         response = await fx_client.patch(
             _project_path(project.id),
-            content=json.dumps({AUTHORS_FIELD: None, ORTHOGRAPHY_FIELD: None}),
+            content=json.dumps({CONTRIBUTORS_FIELD: None, ORTHOGRAPHY_FIELD: None}),
             headers={CONTENT_TYPE_HEADER: MERGE_PATCH_MEDIA_TYPE},
         )
 
         updated = ProjectSchema.model_validate_json(response.content)
         expect(response.status_code == status.HTTP_200_OK)
-        expect((updated.details.authors, updated.details.orthography) == ('', Orthography.UNKNOWN))
+        expect((updated.details.contributors, updated.details.orthography) == ([], Orthography.UNKNOWN))
         expect((updated.details.title, updated.details.notes) == (TITLE, NOTES))
         assert_expectations()
 
@@ -413,7 +572,7 @@ class TestUpdateProject:
         project = make_project(owner_id=new_account_id())
         await commit_project(fx_database, project)
 
-        response = await fx_client.patch(_project_path(project.id), json={AUTHORS_FIELD: AUTHORS})
+        response = await fx_client.patch(_project_path(project.id), json={PUBLISHER_FIELD: 'Press'})
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 

@@ -5,11 +5,62 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from bookreviver.domain.entities import Job, Page, PageVersion, Project, Scan, Source
-from bookreviver.domain.enums import ColorMode, FileType, JobKind, JobState, PageOrigin, SourceKind, Stage
+from bookreviver.domain.enums import (
+    ColorMode,
+    ContributorRole,
+    FileType,
+    IdentifierScheme,
+    JobKind,
+    JobState,
+    Orthography,
+    PageOrigin,
+    RightsStatus,
+    Script,
+    SourceKind,
+    Stage,
+)
 from bookreviver.domain.ids import AccountId, JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
-from bookreviver.domain.values import BookDetails, ProcessorRef, ScanFacts, SourceFile
+from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor, ProcessorRef, ScanFacts, SourceFile
 
 EPOCH: datetime = datetime(2026, 1, 1, tzinfo=UTC)
+# A description with every field filled in, in the shape of a pre-reform Belarusian edition
+FULL_DETAILS: BookDetails = BookDetails(
+    title='Беларускія народныя казкі',
+    subtitle='съ примѣчаніями',
+    parallel_titles=('Białoruskie baśnie ludowe',),
+    original_title='Народныя казкі',
+    contributors=(
+        Contributor(name='Я. Карскі', role=ContributorRole.AUTHOR),
+        Contributor(name='И. И. Ивановъ', role=ContributorRole.EDITOR),
+        Contributor(name='П. П. Петровъ', role=ContributorRole.ENGRAVER),
+    ),
+    publisher='Изданіе автора',
+    printer='Типографія губернскаго правленія',
+    publication_place='Вільня',
+    publication_year='[1905]',
+    edition='Выданне другое',
+    censorship='Дозволено цензурою. Вильна, 12 мая 1905',
+    series='Этнаграфічны зборнік',
+    series_number='12',
+    volume='II',
+    languages=('bel', 'rus'),
+    orthography=Orthography.PRE_REFORM,
+    script=Script.CYRILLIC,
+    printed_pagination='XII, 340 стр., 8 л. ил.',
+    height_cm=22,
+    illustrations='8 л. ил., 1 л. карт.',
+    binding='Издательская обложка',
+    identifiers=(
+        BookIdentifier.parse(IdentifierScheme.SHELFMARK, '18.123.4.56'),
+        BookIdentifier.parse(IdentifierScheme.ISBN, '0-306-40615-2'),
+        BookIdentifier.parse(IdentifierScheme.URL, 'https://example.org/books/karski'),
+    ),
+    subjects=('Фольклор', 'Народные песни'),
+    rights=RightsStatus.PUBLIC_DOMAIN,
+    copy_holder='Частное собрание',
+    copy_notes='Экслибрис на форзаце, карандашные пометы',
+    notes='Scanned from the library copy',
+)
 PAGE_WIDTH_PX: int = 2200
 PAGE_HEIGHT_PX: int = 1561
 SOURCE_SIZE_BYTES: int = 4096

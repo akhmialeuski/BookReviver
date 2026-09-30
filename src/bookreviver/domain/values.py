@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 from attrs import field, frozen, validators
 
-from bookreviver.domain.enums import Orthography, TransformKind
+from bookreviver.domain.enums import ContributorRole, Orthography, RightsStatus, Script, TransformKind
 from bookreviver.domain.errors import InvalidIdentifierError
 
 if TYPE_CHECKING:
@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.enums import (
         ColorMode,
-        ContributorRole,
         FileType,
         IdentifierScheme,
         RejectionReason,
@@ -89,32 +88,76 @@ class BookIdentifier:
 
 @frozen(kw_only=True)
 class BookDetails:
-    """Bibliographic description of a printed book.
+    """Bibliographic description of a printed book, down to the copy that was scanned.
 
-    :ivar title: Title of the book, the one field that may not be empty.
-    :ivar authors: Authors as printed, in one string.
-    :ivar publisher: Publisher or printing house.
+    The fields follow the `DCMI Metadata Terms <https://www.dublincore.org/specifications/dublin-core/dcmi-terms/>`_,
+    so an export to library formats needs no translation of concepts. Text fields are empty when unknown, lists are
+    tuples, and the title is the one field that may not be empty.
+
+    :ivar title: Title of the book.
+    :ivar subtitle: Words of the title page that explain the title.
+    :ivar parallel_titles: Titles in other languages that the title page prints beside the title.
+    :ivar original_title: Title of the original work, for a translation.
+    :ivar contributors: People who made the book, each with a role, in the order of the title page.
+    :ivar publisher: Publisher of the book.
+    :ivar printer: Printing house, which old books name apart from the publisher.
     :ivar publication_place: City of publication.
     :ivar publication_year: Year of publication as printed, which may be a range or an estimate.
     :ivar edition: Edition statement.
+    :ivar censorship: Censor's permit printed in the book, whose date dates a book that names no year.
     :ivar series: Series the book belongs to.
+    :ivar series_number: Number of the book in its series.
     :ivar volume: Volume or part within a multi-volume work.
-    :ivar language: Language of the text.
+    :ivar languages: ISO 639-3 codes of the languages of the text.
     :ivar orthography: Spelling system of the print, such as pre-reform Russian.
+    :ivar script: Writing system of the print.
+    :ivar printed_pagination: Pagination as a catalogue states it, such as ``XII, 340 p., 8 l. of plates``.
+    :ivar height_cm: Height of the book in centimetres, or None when unknown.
+    :ivar illustrations: Illustrations as a catalogue states them.
+    :ivar binding: Binding or cover of the copy.
+    :ivar identifiers: Numbers and addresses that identify the book or the copy, such as a shelfmark.
+    :ivar subjects: Topics of the book.
+    :ivar rights: Whether the result of the work may be published.
+    :ivar copy_holder: Owner of the copy that was scanned.
+    :ivar copy_notes: Marks of the copy that was scanned, such as bookplates and annotations.
     :ivar notes: Free-form notes of the owner.
     """
 
     title: str = field(validator=validators.min_len(1))
-    authors: str = ''
+    subtitle: str = ''
+    parallel_titles: tuple[str, ...] = ()
+    original_title: str = ''
+    contributors: tuple[Contributor, ...] = ()
     publisher: str = ''
+    printer: str = ''
     publication_place: str = ''
     publication_year: str = ''
     edition: str = ''
+    censorship: str = ''
     series: str = ''
+    series_number: str = ''
     volume: str = ''
-    language: str = ''
+    languages: tuple[str, ...] = ()
     orthography: Orthography = Orthography.UNKNOWN
+    script: Script = Script.UNKNOWN
+    printed_pagination: str = ''
+    height_cm: int | None = field(default=None, validator=validators.optional(validators.gt(0)))
+    illustrations: str = ''
+    binding: str = ''
+    identifiers: tuple[BookIdentifier, ...] = ()
+    subjects: tuple[str, ...] = ()
+    rights: RightsStatus = RightsStatus.UNKNOWN
+    copy_holder: str = ''
+    copy_notes: str = ''
     notes: str = ''
+
+    @property
+    def primary_author(self) -> str:
+        """The first author, else the first contributor of any role, else an empty string."""
+        for person in self.contributors:
+            if person.role is ContributorRole.AUTHOR:
+                return person.name
+        return self.contributors[0].name if self.contributors else ''
 
 
 @frozen(kw_only=True)

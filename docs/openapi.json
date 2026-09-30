@@ -2741,13 +2741,39 @@
             "type": "string",
             "title": "Title"
           },
-          "authors": {
+          "subtitle": {
             "type": "string",
-            "title": "Authors"
+            "title": "Subtitle"
+          },
+          "parallel_titles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Parallel Titles"
+          },
+          "original_title": {
+            "type": "string",
+            "title": "Original Title"
+          },
+          "contributors": {
+            "items": {
+              "$ref": "#/components/schemas/ContributorSchema"
+            },
+            "type": "array",
+            "title": "Contributors"
+          },
+          "primary_author": {
+            "type": "string",
+            "title": "Primary Author"
           },
           "publisher": {
             "type": "string",
             "title": "Publisher"
+          },
+          "printer": {
+            "type": "string",
+            "title": "Printer"
           },
           "publication_place": {
             "type": "string",
@@ -2761,20 +2787,82 @@
             "type": "string",
             "title": "Edition"
           },
+          "censorship": {
+            "type": "string",
+            "title": "Censorship"
+          },
           "series": {
             "type": "string",
             "title": "Series"
+          },
+          "series_number": {
+            "type": "string",
+            "title": "Series Number"
           },
           "volume": {
             "type": "string",
             "title": "Volume"
           },
-          "language": {
-            "type": "string",
-            "title": "Language"
+          "languages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Languages"
           },
           "orthography": {
             "$ref": "#/components/schemas/Orthography"
+          },
+          "script": {
+            "$ref": "#/components/schemas/Script"
+          },
+          "printed_pagination": {
+            "type": "string",
+            "title": "Printed Pagination"
+          },
+          "height_cm": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height Cm"
+          },
+          "illustrations": {
+            "type": "string",
+            "title": "Illustrations"
+          },
+          "binding": {
+            "type": "string",
+            "title": "Binding"
+          },
+          "identifiers": {
+            "items": {
+              "$ref": "#/components/schemas/IdentifierSchema"
+            },
+            "type": "array",
+            "title": "Identifiers"
+          },
+          "subjects": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Subjects"
+          },
+          "rights": {
+            "$ref": "#/components/schemas/RightsStatus"
+          },
+          "copy_holder": {
+            "type": "string",
+            "title": "Copy Holder"
+          },
+          "copy_notes": {
+            "type": "string",
+            "title": "Copy Notes"
           },
           "notes": {
             "type": "string",
@@ -2784,19 +2872,36 @@
         "type": "object",
         "required": [
           "title",
-          "authors",
+          "subtitle",
+          "parallel_titles",
+          "original_title",
+          "contributors",
+          "primary_author",
           "publisher",
+          "printer",
           "publication_place",
           "publication_year",
           "edition",
+          "censorship",
           "series",
+          "series_number",
           "volume",
-          "language",
+          "languages",
           "orthography",
+          "script",
+          "printed_pagination",
+          "height_cm",
+          "illustrations",
+          "binding",
+          "identifiers",
+          "subjects",
+          "rights",
+          "copy_holder",
+          "copy_notes",
           "notes"
         ],
         "title": "BookDetailsSchema",
-        "description": "Bibliographic description of a book.\n\n:ivar title: Title of the book.\n:ivar authors: Authors as printed, in one string.\n:ivar publisher: Publisher or printing house.\n:ivar publication_place: City of publication.\n:ivar publication_year: Year of publication as printed.\n:ivar edition: Edition statement.\n:ivar series: Series the book belongs to.\n:ivar volume: Volume or part within a multi-volume work.\n:ivar language: Language of the text.\n:ivar orthography: Spelling system of the print.\n:ivar notes: Free-form notes of the owner."
+        "description": "Bibliographic description of a book.\n\n:ivar title: Title of the book.\n:ivar subtitle: Words of the title page that explain the title.\n:ivar parallel_titles: Titles in other languages that the title page prints beside the title.\n:ivar original_title: Title of the original work, for a translation.\n:ivar contributors: People who made the book, each with a role, in the order of the title page.\n:ivar primary_author: The first author, else the first contributor of any role, else an empty string.\n:ivar publisher: Publisher of the book.\n:ivar printer: Printing house.\n:ivar publication_place: City of publication.\n:ivar publication_year: Year of publication as printed.\n:ivar edition: Edition statement.\n:ivar censorship: Censor's permit printed in the book.\n:ivar series: Series the book belongs to.\n:ivar series_number: Number of the book in its series.\n:ivar volume: Volume or part within a multi-volume work.\n:ivar languages: ISO 639-3 codes of the languages of the text.\n:ivar orthography: Spelling system of the print.\n:ivar script: Writing system of the print.\n:ivar printed_pagination: Pagination as a catalogue states it.\n:ivar height_cm: Height of the book in centimetres, or None when unknown.\n:ivar illustrations: Illustrations as a catalogue states them.\n:ivar binding: Binding or cover of the copy.\n:ivar identifiers: Numbers and addresses that identify the book or the copy, in normalized form.\n:ivar subjects: Topics of the book.\n:ivar rights: Whether the result of the work may be published.\n:ivar copy_holder: Owner of the copy that was scanned.\n:ivar copy_notes: Marks of the copy that was scanned.\n:ivar notes: Free-form notes of the owner."
       },
       "ColorMode": {
         "type": "string",
@@ -2808,6 +2913,49 @@
         ],
         "title": "ColorMode",
         "description": "Colour depth of a page image as stored in the source."
+      },
+      "ContributorRole": {
+        "type": "string",
+        "enum": [
+          "aut",
+          "edt",
+          "com",
+          "trl",
+          "ill",
+          "egr",
+          "ltg",
+          "pht",
+          "wpr",
+          "win",
+          "ann",
+          "cmm",
+          "dte",
+          "ctb",
+          "oth"
+        ],
+        "title": "ContributorRole",
+        "description": "Role of a person in the making of a book.\n\nThe value of a member is its code in the `MARC Code List for Relators <https://www.loc.gov/marc/relators/>`_ and\nthe label is the term of that list, so an export to library formats writes the codes without a translation table."
+      },
+      "ContributorSchema": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "role": {
+            "$ref": "#/components/schemas/ContributorRole"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "role"
+        ],
+        "title": "ContributorSchema",
+        "description": "A person who took part in the making of a book, with the role they had.\n\n:ivar name: Name as printed in the book.\n:ivar role: Role of the person, a code of the MARC list of relators."
       },
       "ErrorModel": {
         "properties": {
@@ -2874,6 +3022,39 @@
           "errors"
         ],
         "title": "RequestValidationError"
+      },
+      "IdentifierSchema": {
+        "properties": {
+          "scheme": {
+            "$ref": "#/components/schemas/IdentifierScheme"
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Value"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scheme",
+          "value"
+        ],
+        "title": "IdentifierSchema",
+        "description": "A number or an address that identifies a book or a copy of it.\n\n:ivar scheme: Kind of the identifier.\n:ivar value: The identifier in any spelling its scheme accepts, which the resource shows normalized."
+      },
+      "IdentifierScheme": {
+        "type": "string",
+        "enum": [
+          "isbn",
+          "oclc",
+          "lccn",
+          "shelfmark",
+          "url"
+        ],
+        "title": "IdentifierScheme",
+        "description": "Kind of number or address that identifies a book or one copy of it, each with its rule of writing."
       },
       "ImagePathsSchema": {
         "properties": {
@@ -3394,16 +3575,46 @@
             "minLength": 1,
             "title": "Title"
           },
-          "authors": {
+          "subtitle": {
             "type": "string",
             "maxLength": 300,
-            "title": "Authors",
+            "title": "Subtitle",
             "default": ""
+          },
+          "parallel_titles": {
+            "items": {
+              "type": "string",
+              "maxLength": 300,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Parallel Titles"
+          },
+          "original_title": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Original Title",
+            "default": ""
+          },
+          "contributors": {
+            "items": {
+              "$ref": "#/components/schemas/ContributorSchema"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Contributors"
           },
           "publisher": {
             "type": "string",
             "maxLength": 300,
             "title": "Publisher",
+            "default": ""
+          },
+          "printer": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Printer",
             "default": ""
           },
           "publication_place": {
@@ -3424,10 +3635,22 @@
             "title": "Edition",
             "default": ""
           },
+          "censorship": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Censorship",
+            "default": ""
+          },
           "series": {
             "type": "string",
             "maxLength": 300,
             "title": "Series",
+            "default": ""
+          },
+          "series_number": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Series Number",
             "default": ""
           },
           "volume": {
@@ -3436,15 +3659,87 @@
             "title": "Volume",
             "default": ""
           },
-          "language": {
-            "type": "string",
-            "maxLength": 300,
-            "title": "Language",
-            "default": ""
+          "languages": {
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z]{3}$"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Languages"
           },
           "orthography": {
             "$ref": "#/components/schemas/Orthography",
             "default": "unknown"
+          },
+          "script": {
+            "$ref": "#/components/schemas/Script",
+            "default": "unknown"
+          },
+          "printed_pagination": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Printed Pagination",
+            "default": ""
+          },
+          "height_cm": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 200.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height Cm"
+          },
+          "illustrations": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Illustrations",
+            "default": ""
+          },
+          "binding": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Binding",
+            "default": ""
+          },
+          "identifiers": {
+            "items": {
+              "$ref": "#/components/schemas/IdentifierSchema"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Identifiers"
+          },
+          "subjects": {
+            "items": {
+              "type": "string",
+              "maxLength": 300,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Subjects"
+          },
+          "rights": {
+            "$ref": "#/components/schemas/RightsStatus",
+            "default": "unknown"
+          },
+          "copy_holder": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Copy Holder",
+            "default": ""
+          },
+          "copy_notes": {
+            "type": "string",
+            "maxLength": 10000,
+            "title": "Copy Notes",
+            "default": ""
           },
           "notes": {
             "type": "string",
@@ -3459,7 +3754,7 @@
           "title"
         ],
         "title": "ProjectCreate",
-        "description": "The description of a new book; only the title is required.\n\n:ivar title: Title of the book.\n:ivar authors: Authors as printed, in one string.\n:ivar publisher: Publisher or printing house.\n:ivar publication_place: City of publication.\n:ivar publication_year: Year of publication as printed, which may be a range or an estimate.\n:ivar edition: Edition statement.\n:ivar series: Series the book belongs to.\n:ivar volume: Volume or part within a multi-volume work.\n:ivar language: Language of the text.\n:ivar orthography: Spelling system of the print.\n:ivar notes: Free-form notes of the owner."
+        "description": "The description of a new book; only the title is required.\n\n:ivar title: Title of the book.\n:ivar subtitle: Words of the title page that explain the title.\n:ivar parallel_titles: Titles in other languages that the title page prints beside the title.\n:ivar original_title: Title of the original work, for a translation.\n:ivar contributors: People who made the book, each with a role, in the order of the title page.\n:ivar publisher: Publisher of the book.\n:ivar printer: Printing house.\n:ivar publication_place: City of publication.\n:ivar publication_year: Year of publication as printed, which may be a range or an estimate.\n:ivar edition: Edition statement.\n:ivar censorship: Censor's permit printed in the book.\n:ivar series: Series the book belongs to.\n:ivar series_number: Number of the book in its series.\n:ivar volume: Volume or part within a multi-volume work.\n:ivar languages: ISO 639-3 codes of the languages of the text.\n:ivar orthography: Spelling system of the print.\n:ivar script: Writing system of the print.\n:ivar printed_pagination: Pagination as a catalogue states it.\n:ivar height_cm: Height of the book in centimetres.\n:ivar illustrations: Illustrations as a catalogue states them.\n:ivar binding: Binding or cover of the copy.\n:ivar identifiers: Numbers and addresses that identify the book or the copy.\n:ivar subjects: Topics of the book.\n:ivar rights: Whether the result of the work may be published.\n:ivar copy_holder: Owner of the copy that was scanned.\n:ivar copy_notes: Marks of the copy that was scanned.\n:ivar notes: Free-form notes of the owner."
       },
       "ProjectSchema": {
         "properties": {
@@ -3532,7 +3827,7 @@
             "minLength": 1,
             "title": "Title"
           },
-          "authors": {
+          "subtitle": {
             "anyOf": [
               {
                 "type": "string",
@@ -3542,7 +3837,51 @@
                 "type": "null"
               }
             ],
-            "title": "Authors"
+            "title": "Subtitle"
+          },
+          "parallel_titles": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 300,
+                  "minLength": 1
+                },
+                "type": "array",
+                "maxItems": 10
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parallel Titles"
+          },
+          "original_title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Title"
+          },
+          "contributors": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ContributorSchema"
+                },
+                "type": "array",
+                "maxItems": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contributors"
           },
           "publisher": {
             "anyOf": [
@@ -3555,6 +3894,18 @@
               }
             ],
             "title": "Publisher"
+          },
+          "printer": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Printer"
           },
           "publication_place": {
             "anyOf": [
@@ -3592,6 +3943,18 @@
             ],
             "title": "Edition"
           },
+          "censorship": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Censorship"
+          },
           "series": {
             "anyOf": [
               {
@@ -3603,6 +3966,18 @@
               }
             ],
             "title": "Series"
+          },
+          "series_number": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Series Number"
           },
           "volume": {
             "anyOf": [
@@ -3616,17 +3991,21 @@
             ],
             "title": "Volume"
           },
-          "language": {
+          "languages": {
             "anyOf": [
               {
-                "type": "string",
-                "maxLength": 300
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z]{3}$"
+                },
+                "type": "array",
+                "maxItems": 10
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Language"
+            "title": "Languages"
           },
           "orthography": {
             "anyOf": [
@@ -3637,6 +4016,131 @@
                 "type": "null"
               }
             ]
+          },
+          "script": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Script"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "printed_pagination": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Printed Pagination"
+          },
+          "height_cm": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 200.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height Cm"
+          },
+          "illustrations": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Illustrations"
+          },
+          "binding": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding"
+          },
+          "identifiers": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/IdentifierSchema"
+                },
+                "type": "array",
+                "maxItems": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identifiers"
+          },
+          "subjects": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 300,
+                  "minLength": 1
+                },
+                "type": "array",
+                "maxItems": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subjects"
+          },
+          "rights": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RightsStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "copy_holder": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Copy Holder"
+          },
+          "copy_notes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 10000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Copy Notes"
           },
           "notes": {
             "anyOf": [
@@ -3676,7 +4180,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "ProjectUpdate",
-        "description": "A JSON Merge Patch of a book description: an omitted field is kept and a null one is cleared.\n\n:ivar title: New title, which may be omitted but not null.\n:ivar authors: New authors, or None to clear them.\n:ivar publisher: New publisher, or None to clear it.\n:ivar publication_place: New city of publication, or None to clear it.\n:ivar publication_year: New year of publication, or None to clear it.\n:ivar edition: New edition statement, or None to clear it.\n:ivar series: New series, or None to clear it.\n:ivar volume: New volume, or None to clear it.\n:ivar language: New language, or None to clear it.\n:ivar orthography: New orthography, or None to set it to unknown.\n:ivar notes: New notes, or None to clear them.\n:ivar image_policy: New way to store the images of new scans and page versions, or None to set the default.\n:ivar cover_page_id: New cover page, which must be a page of the project, or None to fall back to the first page."
+        "description": "A JSON Merge Patch of a book description: an omitted field is kept and a null one is cleared.\n\n:ivar title: New title, which may be omitted but not null.\n:ivar subtitle: New subtitle, or None to clear it.\n:ivar parallel_titles: New titles in other languages, replacing the list, or None to empty it.\n:ivar original_title: New title of the original work, or None to clear it.\n:ivar contributors: New people who made the book, replacing the list, or None to empty it.\n:ivar publisher: New publisher, or None to clear it.\n:ivar printer: New printing house, or None to clear it.\n:ivar publication_place: New city of publication, or None to clear it.\n:ivar publication_year: New year of publication, or None to clear it.\n:ivar edition: New edition statement, or None to clear it.\n:ivar censorship: New censor's permit, or None to clear it.\n:ivar series: New series, or None to clear it.\n:ivar series_number: New number in the series, or None to clear it.\n:ivar volume: New volume, or None to clear it.\n:ivar languages: New ISO 639-3 codes, replacing the list, or None to empty it.\n:ivar orthography: New orthography, or None to set it to unknown.\n:ivar script: New writing system, or None to set it to unknown.\n:ivar printed_pagination: New pagination, or None to clear it.\n:ivar height_cm: New height in centimetres, or None to clear it.\n:ivar illustrations: New statement of the illustrations, or None to clear it.\n:ivar binding: New binding, or None to clear it.\n:ivar identifiers: New identifiers, replacing the list, or None to empty it.\n:ivar subjects: New topics, replacing the list, or None to empty it.\n:ivar rights: New publishing rights, or None to set them to unknown.\n:ivar copy_holder: New owner of the scanned copy, or None to clear it.\n:ivar copy_notes: New marks of the scanned copy, or None to clear them.\n:ivar notes: New notes, or None to clear them.\n:ivar image_policy: New way to store the images of new scans and page versions, or None to set the default.\n:ivar cover_page_id: New cover page, which must be a page of the project, or None to fall back to the first page."
       },
       "RejectedFileSchema": {
         "properties": {
@@ -3710,6 +4214,16 @@
         ],
         "title": "RejectionReason",
         "description": "Why one file of an upload was not imported, while the other files of the upload were."
+      },
+      "RightsStatus": {
+        "type": "string",
+        "enum": [
+          "unknown",
+          "public-domain",
+          "in-copyright"
+        ],
+        "title": "RightsStatus",
+        "description": "Whether the result of the work on a book may be published."
       },
       "ScanFactsSchema": {
         "properties": {
@@ -3855,6 +4369,17 @@
         ],
         "title": "ScanSchema",
         "description": "One image of a source, as the file holds it.\n\n:ivar id: Identifier of the scan.\n:ivar source_id: Source holding the scan.\n:ivar number: Position of the scan in its source, starting at 0.\n:ivar source_label: Page label the file itself gives, such as the PDF page label ``xii``, or empty.\n:ivar facts: Technical facts of the image.\n:ivar images: Paths of the derived images of the scan, or None until they are cut."
+      },
+      "Script": {
+        "type": "string",
+        "enum": [
+          "unknown",
+          "cyrillic",
+          "latin",
+          "mixed"
+        ],
+        "title": "Script",
+        "description": "Writing system of the printed text, which is separate from its spelling norm."
       },
       "SourceFileSchema": {
         "properties": {

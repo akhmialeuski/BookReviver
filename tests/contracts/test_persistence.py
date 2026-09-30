@@ -26,6 +26,7 @@ from bookreviver.domain.values import (
     SourceFile,
 )
 from tests.helpers.builders import (
+    FULL_DETAILS,
     make_job,
     make_page,
     make_page_version,
@@ -111,7 +112,7 @@ class TestProjectRepository:
             await (await fx_uow_factory()).projects.get(project.id)
 
     async def test_update_replaces_details(self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
-        """Verify an update stores the new description.
+        """Verify an update stores the new description, whose contributors and identifiers come back in their order.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -121,10 +122,30 @@ class TestProjectRepository:
         project = make_project(owner_id=await fx_new_owner())
         uow = await fx_uow_factory()
         await uow.projects.add(project)
-        renamed = evolve(project, details=BookDetails(title='Renamed', authors='A. Author'))
-        await uow.projects.update(renamed)
+        described = evolve(project, details=FULL_DETAILS)
+        await uow.projects.update(described)
         await uow.commit()
-        assert (await (await fx_uow_factory()).projects.get(project.id)).details == renamed.details
+        assert (await (await fx_uow_factory()).projects.get(project.id)).details == FULL_DETAILS
+
+    async def test_update_clears_lists_and_height(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify an update to empty lists and no height is stored, so a cleared field does not come back.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = evolve(make_project(owner_id=await fx_new_owner()), details=FULL_DETAILS)
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        cleared = evolve(project, details=BookDetails(title=FULL_DETAILS.title))
+        await uow.projects.update(cleared)
+        await uow.commit()
+        assert (await (await fx_uow_factory()).projects.get(project.id)).details == BookDetails(
+            title=FULL_DETAILS.title
+        )
 
     async def test_adding_a_stored_project_raises_conflict(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory

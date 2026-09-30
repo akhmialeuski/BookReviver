@@ -29,10 +29,12 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     SourceRow,
 )
 from bookreviver.domain.entities import Job, Page, PageVersion, Project, Scan, Source
-from bookreviver.domain.enums import RejectionReason, TransformKind
+from bookreviver.domain.enums import ContributorRole, IdentifierScheme, RejectionReason, TransformKind
 from bookreviver.domain.ids import AccountId, JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId, StorageKey
 from bookreviver.domain.values import (
     BookDetails,
+    BookIdentifier,
+    Contributor,
     ImportRequest,
     ImportResult,
     MetadataSuggestion,
@@ -108,15 +110,36 @@ class ProjectMapper(RowMapper[Project, ProjectRow]):
         """
         details = BookDetails(
             title=row.title,
-            authors=row.authors,
+            subtitle=row.subtitle,
+            parallel_titles=tuple(row.parallel_titles),
+            original_title=row.original_title,
+            contributors=tuple(
+                Contributor(name=stored['name'], role=ContributorRole(stored['role'])) for stored in row.contributors
+            ),
             publisher=row.publisher,
+            printer=row.printer,
             publication_place=row.publication_place,
             publication_year=row.publication_year,
             edition=row.edition,
+            censorship=row.censorship,
             series=row.series,
+            series_number=row.series_number,
             volume=row.volume,
-            language=row.language,
+            languages=tuple(row.languages),
             orthography=row.orthography,
+            script=row.script,
+            printed_pagination=row.printed_pagination,
+            height_cm=row.height_cm,
+            illustrations=row.illustrations,
+            binding=row.binding,
+            identifiers=tuple(
+                BookIdentifier(scheme=IdentifierScheme(stored['scheme']), value=stored['value'])
+                for stored in row.identifiers
+            ),
+            subjects=tuple(row.subjects),
+            rights=row.rights,
+            copy_holder=row.copy_holder,
+            copy_notes=row.copy_notes,
             notes=row.notes,
         )
         return Project(
@@ -143,15 +166,31 @@ class ProjectMapper(RowMapper[Project, ProjectRow]):
             id=entity.id,
             owner_id=entity.owner_id,
             title=details.title,
-            authors=details.authors,
+            subtitle=details.subtitle,
+            parallel_titles=list(details.parallel_titles),
+            original_title=details.original_title,
+            contributors=[{'name': person.name, 'role': person.role.value} for person in details.contributors],
             publisher=details.publisher,
+            printer=details.printer,
             publication_place=details.publication_place,
             publication_year=details.publication_year,
             edition=details.edition,
+            censorship=details.censorship,
             series=details.series,
+            series_number=details.series_number,
             volume=details.volume,
-            language=details.language,
+            languages=list(details.languages),
             orthography=details.orthography,
+            script=details.script,
+            printed_pagination=details.printed_pagination,
+            height_cm=details.height_cm,
+            illustrations=details.illustrations,
+            binding=details.binding,
+            identifiers=[{'scheme': item.scheme.value, 'value': item.value} for item in details.identifiers],
+            subjects=list(details.subjects),
+            rights=details.rights,
+            copy_holder=details.copy_holder,
+            copy_notes=details.copy_notes,
             notes=details.notes,
             image_policy=entity.image_policy,
             cover_page_id=entity.cover_page_id,

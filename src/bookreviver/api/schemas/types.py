@@ -1,12 +1,26 @@
 """Constrained types reused by request schemas and parameters, declared once so every endpoint applies one rule."""
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
-from pydantic import StringConstraints
+from pydantic import AfterValidator, Field, StringConstraints
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 TITLE_MAX_LENGTH: int = 500
 TEXT_MAX_LENGTH: int = 300
 NOTES_MAX_LENGTH: int = 10_000
+IDENTIFIER_MAX_LENGTH: int = 2_048
+LANGUAGE_CODE_PATTERN: str = r'^[a-z]{3}$'
+HEIGHT_CM_MIN: int = 1
+HEIGHT_CM_MAX: int = 200
+# Longest lists a description accepts, so one request cannot turn the row of a project into megabytes of JSON
+CONTRIBUTORS_MAX_LENGTH: int = 50
+IDENTIFIERS_MAX_LENGTH: int = 20
+LANGUAGES_MAX_LENGTH: int = 10
+SUBJECTS_MAX_LENGTH: int = 50
+TITLES_MAX_LENGTH: int = 10
+REPEATED_ITEMS: str = 'The list may not repeat an item.'
 ASSET_KEY_MAX_LENGTH: int = 1_024
 # Slash-separated names that never start with a dot, so a key cannot climb out of its directory; commas appear in
 # IIIF tile paths such as ``0,0,512,512/512,/0/default.jpg``
@@ -20,3 +34,36 @@ ShortText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=T
 LongText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=NOTES_MAX_LENGTH)]
 # The storage key of a derived file, as found in the addresses of a page or a scan
 AssetKey = Annotated[str, StringConstraints(max_length=ASSET_KEY_MAX_LENGTH, pattern=ASSET_KEY_PATTERN)]
+# The name of a contributor as printed, which is checked for length alone because the forms of names in old books
+# are too varied for a rule
+PersonName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=TEXT_MAX_LENGTH)]
+# The value of an identifier as a person writes it, which its scheme then checks and normalizes
+IdentifierValue = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=IDENTIFIER_MAX_LENGTH)
+]
+# The ISO 639-3 code of a language, such as ``rus`` or ``bel``
+LanguageCode = Annotated[str, StringConstraints(pattern=LANGUAGE_CODE_PATTERN)]
+# The height of a book in centimetres
+HeightCm = Annotated[int, Field(ge=HEIGHT_CM_MIN, le=HEIGHT_CM_MAX)]
+# One title or one subject of a list, which is never empty
+ListedText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=TEXT_MAX_LENGTH)]
+
+
+def _refuse_repeats(items: Sequence[str]) -> Sequence[str]:
+    """Refuse a list that holds the same item twice.
+
+    :param items: The items of the list.
+    :type items: Sequence[str]
+    :returns: The items unchanged.
+    :rtype: Sequence[str]
+    :raises ValueError: If an item appears more than once.
+    """
+    if len(set(items)) != len(items):
+        raise ValueError(REPEATED_ITEMS)
+    return items
+
+
+# The languages of a book without repeats
+LanguageList = Annotated[list[LanguageCode], Field(max_length=LANGUAGES_MAX_LENGTH), AfterValidator(_refuse_repeats)]
+SubjectList = Annotated[list[ListedText], Field(max_length=SUBJECTS_MAX_LENGTH)]
+TitleList = Annotated[list[ListedText], Field(max_length=TITLES_MAX_LENGTH)]

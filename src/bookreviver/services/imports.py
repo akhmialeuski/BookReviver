@@ -24,7 +24,7 @@ written through the imaging and asset ports.
 import asyncio
 import logging
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from attrs import asdict, evolve, frozen
@@ -32,6 +32,7 @@ from attrs import asdict, evolve, frozen
 from bookreviver.domain.changes import BookDetailsChanges
 from bookreviver.domain.entities import Job, Page, PageVersion, Scan, Source
 from bookreviver.domain.enums import (
+    ContributorRole,
     FileType,
     JobKind,
     JobState,
@@ -52,7 +53,15 @@ from bookreviver.domain.errors import (
 from bookreviver.domain.events import JobChanged, PagesChanged, ProjectChanged, ScanReady, SourceImported
 from bookreviver.domain.ids import JobId, PageId, ScanId, SourceId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import ImportRequest, ImportResult, ProcessorRef, Progress, RejectedFile, Renditions
+from bookreviver.domain.values import (
+    Contributor,
+    ImportRequest,
+    ImportResult,
+    ProcessorRef,
+    Progress,
+    RejectedFile,
+    Renditions,
+)
 from bookreviver.services.projects import owned_project
 
 if TYPE_CHECKING:
@@ -73,6 +82,8 @@ NOT_QUEUED: str = 'The import could not be queued. Upload the files again.'
 UNEXPECTED_FAILURE: str = 'The import stopped because of an unexpected error. It has been logged.'
 # Kinds of job that import files, of which a project runs one at a time
 IMPORT_JOBS: frozenset[JobKind] = frozenset({JobKind.IMPORT_SOURCE})
+# The text fields a source suggests that the description has under the same name
+SUGGESTED_FIELDS: frozenset[str] = frozenset({'publisher', 'publication_year'})
 # The step that gives a page its base version while the page split is skipped, until its processor exists
 SPLIT_NONE: ProcessorRef = ProcessorRef(key='split.none', version='1')
 
@@ -342,11 +353,13 @@ class ImportRun:
         :rtype: bool
         """
         project = await self._uow.projects.get(self.job.project_id)
-        found = {
+        found: dict[str, Any] = {
             name: value
             for name, value in asdict(suggestion).items()
-            if name != 'title' and value and not getattr(project.details, name)
+            if name in SUGGESTED_FIELDS and value and not getattr(project.details, name)
         }
+        if suggestion.authors and not project.details.contributors:
+            found['contributors'] = (Contributor(name=suggestion.authors, role=ContributorRole.AUTHOR),)
         if not found:
             return False
         details = BookDetailsChanges(**found).apply_to(project.details)
