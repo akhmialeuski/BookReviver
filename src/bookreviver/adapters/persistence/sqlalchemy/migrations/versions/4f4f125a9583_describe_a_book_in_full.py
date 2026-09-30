@@ -10,6 +10,10 @@ apart. A ``language`` that looks like a three-letter lower-case code becomes the
 other value is appended to ``notes`` as a line ``Language: ...`` so that it is not lost. The two old columns are then
 dropped, and the downgrade rebuilds them from the first author and the first language.
 
+The description values a source suggests, stored as JSON in ``sources.suggestion``, follow the same change: ``authors``
+becomes the contributor list, ``language`` becomes ``languages`` when it is a code and is dropped otherwise, and the
+keys ``identifiers`` and ``subjects`` start empty. The downgrade turns the first author and the first language back.
+
 Revision ID: 4f4f125a9583
 Revises: 6446f5ce697c
 Create Date: 2026-09-30 16:38:42.770696
@@ -55,6 +59,9 @@ PROJECTS = sa.table(
     sa.column('notes', sa.String()),
     sa.column('contributors', JSON_LIST),
     sa.column('languages', JSON_LIST),
+)
+SOURCES = sa.table(
+    'sources', sa.column('id', advanced_alchemy.types.guid.GUID(length=16)), sa.column('suggestion', JSON_LIST)
 )
 
 
@@ -156,6 +163,18 @@ def data_upgrades() -> None:
             values['notes'] = '\n'.join(part for part in (row.notes, f'Language: {row.language}') if part)
         if values:
             bind.execute(PROJECTS.update().where(PROJECTS.c.id == row.id).values(**values))
+    for source in bind.execute(sa.select(SOURCES.c.id, SOURCES.c.suggestion)).all():
+        old = source.suggestion
+        suggestion = {
+            'title': old.get('title', ''),
+            'contributors': [{'name': old['authors'], 'role': AUTHOR_ROLE}] if old.get('authors') else [],
+            'publisher': old.get('publisher', ''),
+            'publication_year': old.get('publication_year', ''),
+            'languages': [old['language']] if LANGUAGE_CODE.fullmatch(old.get('language', '')) else [],
+            'identifiers': [],
+            'subjects': [],
+        }
+        bind.execute(SOURCES.update().where(SOURCES.c.id == source.id).values(suggestion=suggestion))
 
 
 def data_downgrades() -> None:
@@ -169,3 +188,14 @@ def data_downgrades() -> None:
             bind.execute(
                 PROJECTS.update().where(PROJECTS.c.id == row.id).values(authors=first_person, language=first_language)
             )
+    for source in bind.execute(sa.select(SOURCES.c.id, SOURCES.c.suggestion)).all():
+        new = source.suggestion
+        authors = [person['name'] for person in new.get('contributors', []) if person['role'] == AUTHOR_ROLE]
+        suggestion = {
+            'title': new.get('title', ''),
+            'authors': authors[0] if authors else '',
+            'publisher': new.get('publisher', ''),
+            'publication_year': new.get('publication_year', ''),
+            'language': next(iter(new.get('languages', [])), ''),
+        }
+        bind.execute(SOURCES.update().where(SOURCES.c.id == source.id).values(suggestion=suggestion))

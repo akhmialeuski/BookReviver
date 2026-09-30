@@ -24,15 +24,13 @@ written through the imaging and asset ports.
 import asyncio
 import logging
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from attrs import asdict, evolve, frozen
+from attrs import evolve, frozen
 
-from bookreviver.domain.changes import BookDetailsChanges
 from bookreviver.domain.entities import Job, Page, PageVersion, Scan, Source
 from bookreviver.domain.enums import (
-    ContributorRole,
     FileType,
     JobKind,
     JobState,
@@ -53,15 +51,7 @@ from bookreviver.domain.errors import (
 from bookreviver.domain.events import JobChanged, PagesChanged, ProjectChanged, ScanReady, SourceImported
 from bookreviver.domain.ids import JobId, PageId, ScanId, SourceId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import (
-    Contributor,
-    ImportRequest,
-    ImportResult,
-    ProcessorRef,
-    Progress,
-    RejectedFile,
-    Renditions,
-)
+from bookreviver.domain.values import ImportRequest, ImportResult, ProcessorRef, Progress, RejectedFile, Renditions
 from bookreviver.services.projects import owned_project
 
 if TYPE_CHECKING:
@@ -81,10 +71,9 @@ NO_SOURCE_IMPORTED: str = 'None of the uploaded files could be imported.'
 NOT_QUEUED: str = 'The import could not be queued. Upload the files again.'
 UNEXPECTED_FAILURE: str = 'The import stopped because of an unexpected error. It has been logged.'
 # Kinds of job that import files, of which a project runs one at a time
-IMPORT_JOBS: frozenset[JobKind] = frozenset({JobKind.IMPORT_SOURCE})
-# The text fields a source suggests that the description has under the same name
-SUGGESTED_FIELDS: frozenset[str] = frozenset({'publisher', 'publication_year'})
-# The step that gives a page its base version while the page split is skipped, until its processor exists
+IMPORT_JOBS: frozenset[JobKind] = frozenset(
+    {JobKind.IMPORT_SOURCE}
+)  # The step that gives a page its base version while the page split is skipped, until its processor exists
 SPLIT_NONE: ProcessorRef = ProcessorRef(key='split.none', version='1')
 
 logger = logging.getLogger(__name__)
@@ -353,16 +342,9 @@ class ImportRun:
         :rtype: bool
         """
         project = await self._uow.projects.get(self.job.project_id)
-        found: dict[str, Any] = {
-            name: value
-            for name, value in asdict(suggestion).items()
-            if name in SUGGESTED_FIELDS and value and not getattr(project.details, name)
-        }
-        if suggestion.authors and not project.details.contributors:
-            found['contributors'] = (Contributor(name=suggestion.authors, role=ContributorRole.AUTHOR),)
-        if not found:
+        details = project.details.fill_from(suggestion)
+        if details == project.details:
             return False
-        details = BookDetailsChanges(**found).apply_to(project.details)
         await self._uow.projects.update(evolve(project, details=details, updated_at=self._clock.now()))
         return True
 

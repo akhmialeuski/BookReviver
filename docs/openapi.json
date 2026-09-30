@@ -3275,9 +3275,12 @@
             "type": "string",
             "title": "Title"
           },
-          "authors": {
-            "type": "string",
-            "title": "Authors"
+          "contributors": {
+            "items": {
+              "$ref": "#/components/schemas/ContributorSchema"
+            },
+            "type": "array",
+            "title": "Contributors"
           },
           "publisher": {
             "type": "string",
@@ -3287,21 +3290,40 @@
             "type": "string",
             "title": "Publication Year"
           },
-          "language": {
-            "type": "string",
-            "title": "Language"
+          "languages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Languages"
+          },
+          "identifiers": {
+            "items": {
+              "$ref": "#/components/schemas/IdentifierSchema"
+            },
+            "type": "array",
+            "title": "Identifiers"
+          },
+          "subjects": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Subjects"
           }
         },
         "type": "object",
         "required": [
           "title",
-          "authors",
+          "contributors",
           "publisher",
           "publication_year",
-          "language"
+          "languages",
+          "identifiers",
+          "subjects"
         ],
         "title": "MetadataSuggestionSchema",
-        "description": "Description fields found in a source; an empty string means nothing was found.\n\n:ivar title: Title found in the source.\n:ivar authors: Authors found in the source.\n:ivar publisher: Publisher found in the source.\n:ivar publication_year: Year of publication found in the source.\n:ivar language: Language found in the source."
+        "description": "Description fields found in a source; an empty string or list means nothing was found.\n\n:ivar title: Title found in the source.\n:ivar contributors: People found in the source, each with the role the metadata gives them.\n:ivar publisher: Publisher found in the source.\n:ivar publication_year: Year of publication found in the source.\n:ivar languages: ISO 639-3 codes of the languages found in the source.\n:ivar identifiers: Valid ISBNs and web addresses found in the source.\n:ivar subjects: Topics found in the source."
       },
       "Orthography": {
         "type": "string",

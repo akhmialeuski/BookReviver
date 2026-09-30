@@ -25,9 +25,9 @@ from PIL import Image
 
 from bookreviver.adapters.imaging.common import FactKey, is_portable_jpeg, only_file, to_mm
 from bookreviver.adapters.imaging.reader import SourceFormat
-from bookreviver.domain.enums import ColorMode, SourceKind
+from bookreviver.domain.enums import ColorMode, ContributorRole, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
-from bookreviver.domain.values import MetadataSuggestion, ScanFacts, SourceAnalysis
+from bookreviver.domain.values import Contributor, MetadataSuggestion, ScanFacts, SourceAnalysis
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -141,8 +141,10 @@ class PdfFormat(SourceFormat):
                 # MuPDF silently rebuilds a damaged cross-reference table; pages past the damage may be missing
                 FactKey.REPAIRED: document.is_repaired,
             }
+        author = (info.get(PyMuPdfKey.AUTHOR) or '').strip()
         suggestion = MetadataSuggestion(
-            title=(info.get(PyMuPdfKey.TITLE) or '').strip(), authors=(info.get(PyMuPdfKey.AUTHOR) or '').strip()
+            title=(info.get(PyMuPdfKey.TITLE) or '').strip(),
+            contributors=(Contributor(name=author, role=ContributorRole.AUTHOR),) if author else (),
         )
         return SourceAnalysis(kind=SourceKind.PDF, scans=scans, file_metadata=file_metadata, suggestion=suggestion)
 

@@ -1005,8 +1005,9 @@ flowchart TD
    lose the upload. A promotion that fails with an error, and not with a crash, takes the source back whole, its pages
    first since deleting the source only empties their scan, and takes its scans out of the progress, so no source is
    left without files. The job's own progress is only what was committed, so a job that fails counts no step that
-   never was. The same transaction fills the empty fields of `BookDetails` from the `suggestion` of the source,
-   so the first source that has a value for a field is the one that gives it, and the title is never overwritten. A
+   never was. The same transaction fills the empty fields of `BookDetails` from the `suggestion` of the source
+   with `BookDetails.fill_from`, which fills only empty strings and empty lists, so the first source that has a value
+   for a field is the one that gives it, and the title is never overwritten. A
    source adds its scans to `Progress.total` when it is committed, and each cut scan adds one to `Progress.done`.
 5. Once every source is committed, the job cuts the images of every scan of the project whose renditions are not
    ready, which covers its own scans, the scans a cancelled import left and the scans of a delivery that crashed. It

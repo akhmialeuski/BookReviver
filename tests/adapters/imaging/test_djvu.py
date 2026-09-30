@@ -13,9 +13,9 @@ from PIL import Image
 from bookreviver.adapters.imaging import DjvuFormat, DjvuLibreTools
 from bookreviver.adapters.imaging.common import FactKey, to_mm
 from bookreviver.adapters.imaging.djvu import HEADER_LAYOUT
-from bookreviver.domain.enums import ColorMode, DjvuDocumentKind, FileType, SourceKind
+from bookreviver.domain.enums import ColorMode, ContributorRole, DjvuDocumentKind, FileType, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
-from bookreviver.domain.values import ScanFacts, UploadedSource
+from bookreviver.domain.values import Contributor, ScanFacts, UploadedSource
 from bookreviver.ports.imaging import SourceInspector
 from tests.adapters.imaging.samples import (
     DjvuPage,
@@ -217,7 +217,10 @@ class TestInspect:
         analysis = await fx_inspector.inspect(SourceKind.DJVU, [book])
 
         suggestion = analysis.suggestion
-        assert (suggestion.title, suggestion.authors) == (CYRILLIC_TITLE, CYRILLIC_AUTHOR)
+        assert (suggestion.title, suggestion.contributors) == (
+            CYRILLIC_TITLE,
+            (Contributor(name=CYRILLIC_AUTHOR, role=ContributorRole.AUTHOR),),
+        )
         assert (suggestion.publisher, suggestion.publication_year) == ('Синодальная типография', '1902')
         assert analysis.file_metadata[FactKey.DOCUMENT_INFO]['title'] == CYRILLIC_TITLE
 

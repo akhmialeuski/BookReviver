@@ -12,7 +12,9 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import ProjectMapper
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.enums import (
     ColorMode,
+    ContributorRole,
     FileType,
+    IdentifierScheme,
     ImagePolicy,
     JobState,
     PageKind,
@@ -22,6 +24,8 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.ids import StorageKey
 from bookreviver.domain.values import (
+    BookIdentifier,
+    Contributor,
     MetadataSuggestion,
     Point,
     ProcessorRef,
@@ -77,7 +81,19 @@ FULL_FILES: list[SourceFile] = [
 ]
 FULL_METADATA: dict[str, Any] = {'document': 'indirect', 'pages': 2, 'meta': {'year': '1905'}, 'text_layer': False}
 FULL_SUGGESTION: MetadataSuggestion = MetadataSuggestion(
-    title='Беларускія народныя казкі', authors='Я. Карскі', publisher='', publication_year='1905', language='bel'
+    title='Беларускія народныя казкі',
+    contributors=(
+        Contributor(name='Я. Карскі', role=ContributorRole.AUTHOR),
+        Contributor(name='П. П. Петровъ', role=ContributorRole.CONTRIBUTOR),
+    ),
+    publisher='',
+    publication_year='1905',
+    languages=('bel', 'rus'),
+    identifiers=(
+        BookIdentifier.parse(IdentifierScheme.ISBN, '978-0-306-40615-7'),
+        BookIdentifier.parse(IdentifierScheme.URL, 'https://example.org/books/karski'),
+    ),
+    subjects=('Фольклор', 'Казкі'),
 )
 FULL_PROGRESS: Progress = Progress(done=7, total=12)
 

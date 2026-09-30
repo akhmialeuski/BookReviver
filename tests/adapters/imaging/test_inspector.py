@@ -9,9 +9,9 @@ from delayed_assert import assert_expectations, expect
 from PIL import ExifTags, TiffImagePlugin
 
 from bookreviver.adapters.imaging.common import FactKey
-from bookreviver.domain.enums import ColorMode, SourceKind
+from bookreviver.domain.enums import ColorMode, ContributorRole, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
-from bookreviver.domain.values import MetadataSuggestion
+from bookreviver.domain.values import Contributor, MetadataSuggestion
 from tests.adapters.imaging.samples import (
     PdfPage,
     ScanImage,
@@ -366,7 +366,12 @@ class TestInspectPdf:
         analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
         metadata = analysis.file_metadata
 
-        expect(analysis.suggestion == MetadataSuggestion(title=DOCUMENT_TITLE, authors=DOCUMENT_AUTHOR))
+        expect(
+            analysis.suggestion
+            == MetadataSuggestion(
+                title=DOCUMENT_TITLE, contributors=(Contributor(name=DOCUMENT_AUTHOR, role=ContributorRole.AUTHOR),)
+            )
+        )
         expect(metadata[DOCUMENT_INFO_KEY].get(TITLE_KEY) == PADDED_DOCUMENT_TITLE)
         expect(SUBJECT_KEY not in metadata[DOCUMENT_INFO_KEY])
         expect(metadata['pdf_version'].startswith('PDF '))

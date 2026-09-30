@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, ClassVar, Self
 
-from attrs import field, frozen, validators
+from attrs import evolve, field, fields_dict, frozen, validators
 
 from bookreviver.domain.enums import ContributorRole, Orthography, RightsStatus, Script, TransformKind
 from bookreviver.domain.errors import InvalidIdentifierError
@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 
 # JSON-compatible metadata as read from a source file
 type MetadataMap = Mapping[str, Any]
+# The description field a suggestion never fills
+TITLE_FIELD: str = 'title'
 # A SHA-256 digest as lower-case hexadecimal digits
 SHA256_PATTERN: str = r'[0-9a-f]{64}'
 
@@ -151,6 +153,24 @@ class BookDetails:
     copy_notes: str = ''
     notes: str = ''
 
+    def fill_from(self, suggestion: MetadataSuggestion) -> BookDetails:
+        """Return the description with every empty field the suggestion has a value for filled in.
+
+        A field that holds a value, even a wrong one, is never replaced, and the title is never touched, because it is
+        required when the project is created and a file can only guess it.
+
+        :param suggestion: Description fields found in a source.
+        :type suggestion: MetadataSuggestion
+        :returns: The description with its empty fields filled, or an equal description when nothing was empty.
+        :rtype: BookDetails
+        """
+        found = {
+            name: value
+            for name in fields_dict(MetadataSuggestion)
+            if name != TITLE_FIELD and (value := getattr(suggestion, name)) and not getattr(self, name)
+        }
+        return evolve(self, **found)
+
     @property
     def primary_author(self) -> str:
         """The first author, else the first contributor of any role, else an empty string."""
@@ -162,20 +182,27 @@ class BookDetails:
 
 @frozen(kw_only=True)
 class MetadataSuggestion:
-    """Description fields found in a source; an empty string means nothing was found.
+    """Description fields found in the metadata of a source file; an empty string or list means nothing was found.
+
+    Only the fields that file metadata can give are here, with the types they have in ``BookDetails``. A year comes
+    only from metadata that states one, never from the date a file was created or changed.
 
     :ivar title: Title found in the source.
-    :ivar authors: Authors found in the source.
+    :ivar contributors: People found in the source, each with the role the metadata gives them.
     :ivar publisher: Publisher found in the source.
     :ivar publication_year: Year of publication found in the source.
-    :ivar language: Language found in the source.
+    :ivar languages: ISO 639-3 codes of the languages found in the source.
+    :ivar identifiers: Valid ISBNs and web addresses found in the source.
+    :ivar subjects: Topics found in the source.
     """
 
     title: str = ''
-    authors: str = ''
+    contributors: tuple[Contributor, ...] = ()
     publisher: str = ''
     publication_year: str = ''
-    language: str = ''
+    languages: tuple[str, ...] = ()
+    identifiers: tuple[BookIdentifier, ...] = ()
+    subjects: tuple[str, ...] = ()
 
 
 @frozen(kw_only=True)

@@ -3,13 +3,21 @@
 import attrs
 import pytest
 
-from bookreviver.domain.enums import ContributorRole, Orthography, RightsStatus, Script
-from bookreviver.domain.values import BookDetails, Contributor
+from bookreviver.domain.enums import ContributorRole, IdentifierScheme, Orthography, RightsStatus, Script
+from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor, MetadataSuggestion
+from tests.helpers.builders import FULL_DETAILS
 
 TITLE: str = 'Сборникъ народныхъ пѣсенъ'
 AUTHOR: Contributor = Contributor(name='И. И. Ивановъ', role=ContributorRole.AUTHOR)
 EDITOR: Contributor = Contributor(name='П. П. Петровъ', role=ContributorRole.EDITOR)
-ENGRAVER: Contributor = Contributor(name='С. С. Сидоровъ', role=ContributorRole.ENGRAVER)
+ENGRAVER: Contributor = Contributor(name='Ф. Ф. Фёдоровъ', role=ContributorRole.ENGRAVER)
+# The description fields that hold text, and those that hold a list, which are all empty in a new description
+TEXT_FIELDS: list[str] = [
+    *('subtitle', 'original_title', 'publisher', 'printer', 'publication_place', 'publication_year', 'edition'),
+    *('censorship', 'series', 'series_number', 'volume', 'printed_pagination', 'illustrations', 'binding'),
+    *('copy_holder', 'copy_notes', 'notes'),
+]
+LIST_FIELDS: list[str] = ['parallel_titles', 'contributors', 'languages', 'identifiers', 'subjects']
 
 
 class TestBookDetails:
@@ -19,23 +27,15 @@ class TestBookDetails:
         """Verify a description of a title alone has empty text, empty lists, no height and unknown enums."""
         details = BookDetails(title=TITLE)
 
-        empty = {name for name in attrs.fields_dict(BookDetails) if name != 'title'}
-        assert {name: getattr(details, name) for name in empty} == {
-            **dict.fromkeys(
-                ['subtitle', 'original_title', 'publisher', 'printer', 'publication_place', 'publication_year']
-                + ['edition', 'censorship', 'series', 'series_number', 'volume', 'printed_pagination']
-                + ['illustrations', 'binding', 'copy_holder', 'copy_notes', 'notes'],
-                '',
-            ),
-            **dict.fromkeys(
-                ['parallel_titles', 'contributors', 'languages', 'identifiers', 'subjects'],
-                (),
-            ),
+        empty = {
+            **dict.fromkeys(TEXT_FIELDS, ''),
+            **dict.fromkeys(LIST_FIELDS, ()),
             'height_cm': None,
             'orthography': Orthography.UNKNOWN,
             'script': Script.UNKNOWN,
             'rights': RightsStatus.UNKNOWN,
         }
+        assert {name: getattr(details, name) for name in attrs.fields_dict(BookDetails) if name != 'title'} == empty
 
     @pytest.mark.parametrize('height', [0, -1])
     def test_height_that_is_not_positive_is_rejected(self, height: int) -> None:
@@ -90,3 +90,63 @@ class TestPrimaryAuthor:
         :type expected: str
         """
         assert BookDetails(title=TITLE, contributors=contributors).primary_author == expected
+
+
+class TestFillFrom:
+    """Tests for BookDetails.fill_from()."""
+
+    def test_fills_every_empty_field_the_suggestion_has_a_value_for(self) -> None:
+        """Verify text fields and lists that are empty take the values a source suggests."""
+        suggestion = MetadataSuggestion(
+            title='Other title',
+            contributors=(AUTHOR,),
+            publisher='Synodal press',
+            publication_year='1902',
+            languages=('rus',),
+            identifiers=(BookIdentifier.parse(IdentifierScheme.ISBN, '0-306-40615-2'),),
+            subjects=('Folklore',),
+        )
+
+        filled = BookDetails(title=TITLE).fill_from(suggestion)
+
+        assert filled == BookDetails(
+            title=TITLE,
+            contributors=suggestion.contributors,
+            publisher='Synodal press',
+            publication_year='1902',
+            languages=('rus',),
+            identifiers=suggestion.identifiers,
+            subjects=('Folklore',),
+        )
+
+    def test_never_replaces_a_field_that_holds_a_value(self) -> None:
+        """Verify what the owner entered stays, for a text field and for a list, and only empty fields are filled."""
+        details = BookDetails(title=TITLE, publisher='Owner press', contributors=(EDITOR,))
+        suggestion = MetadataSuggestion(
+            contributors=(AUTHOR,), publisher='Synodal press', publication_year='1902', languages=('rus',)
+        )
+
+        filled = details.fill_from(suggestion)
+
+        assert (filled.publisher, filled.contributors, filled.publication_year, filled.languages) == (
+            'Owner press',
+            (EDITOR,),
+            '1902',
+            ('rus',),
+        )
+
+    def test_never_touches_the_title(self) -> None:
+        """Verify a title the file suggests does not replace the one the project was created with."""
+        assert BookDetails(title=TITLE).fill_from(MetadataSuggestion(title='From the file')).title == TITLE
+
+    def test_an_empty_suggestion_changes_nothing(self) -> None:
+        """Verify a suggestion that found nothing returns an equal description."""
+        assert FULL_DETAILS.fill_from(MetadataSuggestion()) == FULL_DETAILS
+
+    def test_leaves_the_fields_a_file_cannot_suggest_alone(self) -> None:
+        """Verify fields such as the printer and the notes are never part of what a suggestion fills."""
+        suggestion = MetadataSuggestion(publisher='Synodal press')
+
+        filled = BookDetails(title=TITLE, notes='Kept').fill_from(suggestion)
+
+        assert (filled.notes, filled.printer, filled.censorship) == ('Kept', '', '')

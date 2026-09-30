@@ -40,9 +40,9 @@ from PIL import Image, ImageChops
 
 from bookreviver.adapters.imaging.common import FactKey, to_mm
 from bookreviver.adapters.imaging.reader import SourceFormat
-from bookreviver.domain.enums import ColorMode, DjvuDocumentKind, SourceKind
+from bookreviver.domain.enums import ColorMode, ContributorRole, DjvuDocumentKind, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
-from bookreviver.domain.values import MetadataSuggestion, ScanFacts, SourceAnalysis
+from bookreviver.domain.values import Contributor, MetadataSuggestion, ScanFacts, SourceAnalysis
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -297,9 +297,10 @@ class DjvuFormat(SourceFormat):
         }
         if header.component_count is not None:
             file_metadata[FactKey.COMPONENT_COUNT] = header.component_count
+        author = _first(info, DjvuMetaKey.AUTHOR)
         suggestion = MetadataSuggestion(
             title=_first(info, DjvuMetaKey.TITLE),
-            authors=_first(info, DjvuMetaKey.AUTHOR),
+            contributors=(Contributor(name=author, role=ContributorRole.AUTHOR),) if author else (),
             publisher=_first(info, DjvuMetaKey.PUBLISHER),
             publication_year=_first(info, DjvuMetaKey.YEAR),
         )

@@ -9,7 +9,7 @@ import json
 import re
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import uuid4
 
 import pytest
@@ -396,6 +396,38 @@ INSERT_OLD_PROJECT: TextClause = text(
     " VALUES (:id, :owner_id, :title, :authors, '', '', '', '', '', '', :language, 'unknown', :notes, 'compact',"
     ' :moment, :moment)'
 )
+OLD_SUGGESTIONS: list[dict[str, str]] = [
+    {'title': 'A', 'authors': 'Я. Карскі', 'publisher': 'P', 'publication_year': '1905', 'language': 'bel'},
+    {'title': 'B', 'authors': '', 'publisher': '', 'publication_year': '', 'language': 'Belarusian'},
+]
+NEW_SUGGESTIONS: list[dict[str, Any]] = [
+    {
+        'title': 'A',
+        'contributors': [{'name': 'Я. Карскі', 'role': 'aut'}],
+        'publisher': 'P',
+        'publication_year': '1905',
+        'languages': ['bel'],
+        'identifiers': [],
+        'subjects': [],
+    },
+    {
+        'title': 'B',
+        'contributors': [],
+        'publisher': '',
+        'publication_year': '',
+        'languages': [],
+        'identifiers': [],
+        'subjects': [],
+    },
+]
+# A suggestion that lost its language name keeps no trace of it when it is turned back
+OLD_SUGGESTIONS_AFTER_DOWNGRADE: list[dict[str, str]] = [OLD_SUGGESTIONS[0], {**OLD_SUGGESTIONS[1], 'language': ''}]
+INSERT_OLD_SOURCE: TextClause = text(
+    'INSERT INTO sources (id, project_id, kind, file_type, file_name, files, size_bytes, sha256, scan_count,'
+    ' metadata, suggestion, import_job_id, imported_at)'
+    " VALUES (:id, :project_id, 'pdf', 'pdf', :file_name, '[]', 0, :sha256, 0, '{}', :suggestion, NULL, :moment)"
+)
+SELECT_SUGGESTIONS: TextClause = text('SELECT suggestion FROM sources ORDER BY file_name')
 SELECT_NEW_PROJECTS: TextClause = text('SELECT title, contributors, languages, notes FROM projects ORDER BY title')
 SELECT_OLD_PROJECTS: TextClause = text('SELECT title, authors, language FROM projects ORDER BY title')
 
@@ -446,4 +478,54 @@ class TestDescriptionRevision:
                 ('Named language without notes', '', ''),
             ]
         )
+        assert_expectations()
+
+    async def test_moves_the_suggestion_of_a_source_into_the_new_shape_and_back(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify a stored suggestion gets contributors and languages, and the downgrade restores the old keys.
+
+        A suggestion with an author and a language code keeps both, and one whose language is a name loses it, since
+        a suggestion is offered and not entered by the owner.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        previous = ScriptDirectory(str(MIGRATIONS_DIR)).get_revision(DESCRIPTION_REVISION).down_revision
+        await _migrate(fx_empty_database, migrations.upgrade, str(previous))
+        project_id = uuid4().bytes
+        async with fx_empty_database.sessions() as session:
+            await session.execute(
+                INSERT_OLD_PROJECT,
+                {
+                    'id': project_id,
+                    'owner_id': str(await commit_account(fx_empty_database)),
+                    'moment': EPOCH,
+                    **OLD_PROJECTS[0]._asdict(),
+                },
+            )
+            for position, suggestion in enumerate(OLD_SUGGESTIONS):
+                await session.execute(
+                    INSERT_OLD_SOURCE,
+                    {
+                        'id': uuid4().bytes,
+                        'project_id': project_id,
+                        'file_name': f'{position}.pdf',
+                        'sha256': str(position) * 64,
+                        'moment': EPOCH,
+                        'suggestion': json.dumps(suggestion),
+                    },
+                )
+            await session.commit()
+
+        await _migrate(fx_empty_database, migrations.upgrade, DESCRIPTION_REVISION)
+        async with fx_empty_database.sessions() as session:
+            upgraded = [json.loads(row[0]) for row in await session.execute(SELECT_SUGGESTIONS)]
+        await _migrate(fx_empty_database, migrations.downgrade, str(previous))
+        async with fx_empty_database.sessions() as session:
+            downgraded = [json.loads(row[0]) for row in await session.execute(SELECT_SUGGESTIONS)]
+
+        expect(upgraded == NEW_SUGGESTIONS)
+        expect(downgraded == OLD_SUGGESTIONS_AFTER_DOWNGRADE)
         assert_expectations()
