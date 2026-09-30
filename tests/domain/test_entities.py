@@ -8,7 +8,7 @@ import pytest
 from attrs import evolve
 
 from bookreviver.domain.entities import VERSION_ID_PATTERN, PageVersion
-from bookreviver.domain.enums import PageOrigin, TransformKind
+from bookreviver.domain.enums import PageOrigin, Rendition, TransformKind
 from bookreviver.domain.ids import PageId, PageVersionId, ScanId, StorageKey
 from bookreviver.domain.values import BookDetails, Point, ProcessorRef, Progress, Quad, Renditions, Transform
 from tests.helpers.builders import SPLIT_NONE, make_page, make_page_version, make_project, new_account_id
@@ -172,3 +172,21 @@ class TestProgress:
         :type fraction: float
         """
         assert Progress(done=done, total=total).fraction == fraction
+
+
+class TestRenditions:
+    """Tests for the format of the ``full`` image that Renditions records."""
+
+    def test_full_defaults_to_jpeg(self) -> None:
+        """Verify renditions written before the format was recorded read as JPEG."""
+        assert Renditions().full is Rendition.FULL_JPEG
+
+    @pytest.mark.parametrize('full', [Rendition.PREVIEW, Rendition.THUMBNAIL, Rendition.TILES])
+    def test_full_that_is_not_a_full_format_is_rejected(self, full: Rendition) -> None:
+        """Reject a ``full`` that names a preview, a thumbnail or a pyramid, which no image of full size can be.
+
+        :param full: Rendition that is not a format of the ``full`` image.
+        :type full: Rendition
+        """
+        with pytest.raises(ValueError, match='full'):
+            Renditions(full=full)
