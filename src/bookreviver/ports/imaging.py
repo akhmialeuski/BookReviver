@@ -91,11 +91,21 @@ class Tiler(ABC):
         """
 
     @abstractmethod
-    async def thumbnail(self, image: Path, target: Path) -> None:
-        """Write a small JPEG preview of ``image`` at ``target``.
+    async def preview(self, image: Path, target: Path) -> None:
+        """Write a JPEG of ``image`` for interactive previews at ``target``, never larger than the image.
 
         :param image: Page image to shrink.
         :type image: Path
         :param target: Path to write the preview at.
+        :type target: Path
+        """
+
+    @abstractmethod
+    async def thumbnail(self, image: Path, target: Path) -> None:
+        """Write a small JPEG thumbnail of ``image`` at ``target``.
+
+        :param image: Page image to shrink.
+        :type image: Path
+        :param target: Path to write the thumbnail at.
         :type target: Path
         """

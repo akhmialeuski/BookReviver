@@ -82,15 +82,17 @@ class ImagingSettings(BaseModel):
     """Page extraction and tiling.
 
     :ivar tile_size_px: Side of a square IIIF tile in pixels.
+    :ivar preview_long_side_px: Longer side of a preview in pixels, for interactive previews of processing steps.
     :ivar thumbnail_long_side_px: Longer side of a page thumbnail in pixels.
-    :ivar jpeg_quality: JPEG quality from 1 to 100 of rendered pages, tiles and thumbnails.
-    :ivar parallel_pages: Largest number of pages an import cuts at the same time.
+    :ivar jpeg_quality: JPEG quality from 1 to 100 of rendered pages, tiles, previews and thumbnails.
+    :ivar parallel_scans: Largest number of scans an import cuts at the same time.
     """
 
     tile_size_px: PositiveInt = 512
+    preview_long_side_px: PositiveInt = 2048
     thumbnail_long_side_px: PositiveInt = 320
     jpeg_quality: int = Field(default=90, ge=1, le=100)
-    parallel_pages: PositiveInt = 4
+    parallel_scans: PositiveInt = 4
 
 
 class Settings(BaseSettings):
@@ -104,6 +106,7 @@ class Settings(BaseSettings):
     :ivar job_broker: Taskiq broker that runs background jobs.
     :ivar redis_url: Redis address of the Redis job broker.
     :ivar max_upload_bytes: Largest total size of one upload, 4 GiB by default.
+    :ivar max_upload_files: Largest number of files in one upload, 10000 by default.
     :ivar event_queue_size: Undelivered events each event subscriber keeps before dropping the oldest.
     :ivar auth: Accounts, sessions and social sign-in; required, since it holds the signing secret.
     :ivar mail: Outgoing mail.
@@ -125,6 +128,7 @@ class Settings(BaseSettings):
     job_broker: JobBroker = JobBroker.IN_PROCESS
     redis_url: str = 'redis://localhost:6379/0'
     max_upload_bytes: PositiveInt = 4 * 1024**3
+    max_upload_files: PositiveInt = 10_000
     event_queue_size: PositiveInt = 256
     auth: AuthSettings
     mail: MailSettings = MailSettings()

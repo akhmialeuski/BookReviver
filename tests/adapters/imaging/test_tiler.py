@@ -32,11 +32,14 @@ FULL_NAME: str = 'full.jpg'
 GRAY_MODE: str = 'L'
 JPEG: str = 'JPEG'
 # Other than the defaults, so the tests prove the provider passes the settings on
-IMAGING: ImagingSettings = ImagingSettings(tile_size_px=256, thumbnail_long_side_px=200)
+IMAGING: ImagingSettings = ImagingSettings(tile_size_px=256, preview_long_side_px=600, thumbnail_long_side_px=200)
 # Larger than one tile, so the pyramid has several levels
 PAGE_SIZE_PX: tuple[int, int] = (1200, 1500)
 # Halved until the longer side fits one tile: 1500, 750, 375, 188
 LEVEL_SCALE_FACTORS: list[int] = [1, 2, 4, 8]
+# 600 over 1500 of the height, applied to the width
+PREVIEW_SIZE_PX: tuple[int, int] = (480, 600)
+PREVIEW_NAME: str = 'preview.jpg'
 # 200 over 1500 of the height, applied to the width
 THUMBNAIL_SIZE_PX: tuple[int, int] = (160, 200)
 SMALL_SIZE_PX: tuple[int, int] = (120, 90)
@@ -105,6 +108,45 @@ class TestTile:
         await fx_tiler.tile(fx_page_image, tmp_path / PYRAMID_NAME, resource_id=RESOURCE_ID)
 
         assert sorted([path.name async for path in anyio.Path(tmp_path).iterdir()]) == [FULL_NAME, PYRAMID_NAME]
+
+
+class TestPreview:
+    """Tests for VipsTiler.preview()."""
+
+    async def test_fits_long_side(self, fx_tiler: Tiler, fx_page_image: Path, tmp_path: Path) -> None:
+        """Verify the preview is a JPEG whose longer side is the configured length, larger than a thumbnail.
+
+        :param fx_tiler: Tiler built by the application's imaging provider with the sizes of these tests.
+        :type fx_tiler: Tiler
+        :param fx_page_image: Gray page image larger than one tile.
+        :type fx_page_image: Path
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        target = tmp_path / PREVIEW_NAME
+
+        await fx_tiler.preview(fx_page_image, target)
+
+        with Image.open(target) as preview:
+            expect(preview.format == JPEG)
+            expect(preview.size == PREVIEW_SIZE_PX)
+        assert_expectations()
+
+    async def test_never_enlarges_small_image(self, fx_tiler: Tiler, tmp_path: Path) -> None:
+        """Verify an image smaller than the preview keeps its own size.
+
+        :param fx_tiler: Tiler built by the application's imaging provider with the sizes of these tests.
+        :type fx_tiler: Tiler
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        image = write_image(tmp_path / FULL_NAME, mode=GRAY_MODE, size=SMALL_SIZE_PX)
+        target = tmp_path / PREVIEW_NAME
+
+        await fx_tiler.preview(image, target)
+
+        with Image.open(target) as preview:
+            assert preview.size == SMALL_SIZE_PX
 
 
 class TestThumbnail:

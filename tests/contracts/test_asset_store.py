@@ -28,6 +28,8 @@ FILE_KEY: StorageKey = KEYS.version_rendition(make_page_version(page_id=PAGE_ID)
 DIRECTORY_KEY: StorageKey = KEYS.version_rendition(make_page_version(page_id=PAGE_ID), Rendition.TILES)
 # Shares the prefix as a string but not as a path segment, so it must survive deleting the prefix
 SIBLING_KEY: StorageKey = StorageKey(f'{PAGE_PREFIX}0/{Rendition.FULL_JPEG}')
+# A key beside the file and the directory, in a directory of its own so deleting their prefix leaves it
+COPY_KEY: StorageKey = KEYS.version_rendition(make_page_version(page_id=PageId(uuid4())), Rendition.FULL_JPEG)
 TILE_NAME: str = 'info.json'
 CASE_ARG: str = 'case'
 KEY_ARG: str = 'key'
@@ -281,6 +283,80 @@ class TestReadable:
         """
         with pytest.raises(NotFoundError):
             await _read_file(fx_asset_store, FILE_KEY)
+
+
+class TestCopy:
+    """Contract of AssetStore.copy()."""
+
+    @pytest.mark.parametrize(CASE_ARG, STORED_KEY_CASES, ids=STORED_KEY_IDS)
+    async def test_copies_a_file_or_directory_and_keeps_the_original(
+        self, fx_asset_store: AssetStore, case: StoredKeyCase
+    ) -> None:
+        """Verify the copy has the content of the original and the original stays where it was.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        :param case: A key holding a file or a directory, with how to store content there and read it back.
+        :type case: StoredKeyCase
+        """
+        await case.store(fx_asset_store, key=case.key, content=NEW_CONTENT)
+
+        await fx_asset_store.copy(case.key, COPY_KEY)
+
+        expect(await case.read(fx_asset_store, COPY_KEY) == NEW_CONTENT)
+        expect(await case.read(fx_asset_store, case.key) == NEW_CONTENT)
+        assert_expectations()
+
+    async def test_copy_survives_the_deletion_of_the_original(self, fx_asset_store: AssetStore) -> None:
+        """Verify deleting the original leaves the copy, which is how a page outlives the scan it was cut from.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        await _store_file(fx_asset_store, key=FILE_KEY, content=NEW_CONTENT)
+        await fx_asset_store.copy(FILE_KEY, COPY_KEY)
+
+        await fx_asset_store.delete_prefix(PAGE_PREFIX)
+
+        expect(not await _is_stored(fx_asset_store, FILE_KEY))
+        expect(await _read_file(fx_asset_store, COPY_KEY) == NEW_CONTENT)
+        assert_expectations()
+
+    async def test_missing_source_raises_not_found_and_stores_nothing(self, fx_asset_store: AssetStore) -> None:
+        """Verify copying a key nothing was written to raises NotFoundError and leaves the target free.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        with pytest.raises(NotFoundError):
+            await fx_asset_store.copy(FILE_KEY, COPY_KEY)
+
+        assert not await _is_stored(fx_asset_store, COPY_KEY)
+
+    async def test_stored_target_raises_conflict_and_keeps_its_content(self, fx_asset_store: AssetStore) -> None:
+        """Verify a copy never replaces what is stored at its target.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        await _store_file(fx_asset_store, key=FILE_KEY, content=NEW_CONTENT)
+        await _store_file(fx_asset_store, key=COPY_KEY, content=OLD_CONTENT)
+
+        with pytest.raises(ConflictError):
+            await fx_asset_store.copy(FILE_KEY, COPY_KEY)
+
+        assert await _read_file(fx_asset_store, COPY_KEY) == OLD_CONTENT
+
+    async def test_refuses_a_target_outside_assets(self, fx_asset_store: AssetStore) -> None:
+        """Verify a copy cannot land among the sources of a project.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        await _store_file(fx_asset_store, key=FILE_KEY, content=NEW_CONTENT)
+
+        with pytest.raises(ValueError, match=OUTSIDE_ASSETS_MATCH):
+            await fx_asset_store.copy(FILE_KEY, StorageKey(f'{KEYS.source(SourceId(uuid4()))}/book.pdf'))
 
 
 class TestDeletePrefix:

@@ -34,7 +34,7 @@ class ImagingProvider(Provider):
 
     @provide
     def tiler(self, settings: Settings) -> Tiler:
-        """Build the tiler with the configured tile size, thumbnail size and JPEG quality.
+        """Build the tiler with the configured tile, preview and thumbnail sizes and JPEG quality.
 
         :param settings: Application settings, of which the ``imaging`` group is read.
         :type settings: Settings
@@ -44,6 +44,7 @@ class ImagingProvider(Provider):
         imaging = settings.imaging
         return VipsTiler(
             tile_size_px=imaging.tile_size_px,
+            preview_long_side_px=imaging.preview_long_side_px,
             thumbnail_long_side_px=imaging.thumbnail_long_side_px,
             jpeg_quality=imaging.jpeg_quality,
         )
