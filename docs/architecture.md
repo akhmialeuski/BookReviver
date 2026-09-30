@@ -905,11 +905,14 @@ flowchart TD
    files it received (`Job.request`) and enqueues it, and the response returns the job at once. The frontend offers
    two ways to choose files, a whole directory or individual files, and both reach the API as the same list of files,
    so the backend has one upload path for both. An upload holds at most `max_upload_files` files, 10000 by default,
-   and `max_upload_bytes`, 4 GiB by default, and a larger one is refused with a 413 RFC 9457 problem. The route
-   class parses the multipart body with that file limit, since Starlette's parser stops at 1000 files, and lets the
-   parser take one file more than the rule, so an upload of one file too many is answered by the service with the
-   413 problem and an upload of two files too many by the parser with a 400. The project is checked for a queued or
-   running import before any file is received, so a refused upload is not streamed first.
+   and `max_upload_bytes`, 4 GiB by default, and a larger one is refused with a 413 RFC 9457 problem. FastAPI parses
+   a declared body before it runs any dependency, which would spool the upload to disk before the caller is known to
+   be signed in, to own the project or to be allowed another import. The route therefore declares no body: a
+   dependency reads the form after `ImportService.authorize_upload` has checked the owner (404) and that no import is
+   queued or running (409), and `openapi_extra` gives the schema its multipart body. The form is parsed with the file
+   limit of the rule, since Starlette's parser stops at 1000 files, and with one file more, so an upload of one file
+   too many is answered by the service with the 413 problem and an upload of two files too many by the parser with a
+   400.
 2. `SourceInspector.group` splits the upload into sources. `FileType.from_name` decides the type of every file, and
    any mix of the accepted types is fine, because each file is a source of its own. A file of a type no source can be
    is rejected on its own as `unsupported-type`, so it does not stop the others. An indirect DjVu document is
@@ -922,7 +925,10 @@ flowchart TD
 4. Every source is inspected, and one that cannot be read is rejected as `unreadable`, with the message of the error.
    A readable one is committed with its scans, its pages and the progress of the job in a transaction of its own, and
    only then are its files promoted to `sources/<source_id>/`, since a commit that failed after a promotion would
-   lose the upload. The same transaction fills the empty fields of `BookDetails` from the `suggestion` of the source,
+   lose the upload. A promotion that fails with an error, and not with a crash, takes the source back whole, its pages
+   first since deleting the source only empties their scan, and takes its scans out of the progress, so no source is
+   left without files. The job's own progress is only what was committed, so a job that fails counts no step that
+   never was. The same transaction fills the empty fields of `BookDetails` from the `suggestion` of the source,
    so the first source that has a value for a field is the one that gives it, and the title is never overwritten. A
    source adds its scans to `Progress.total` when it is committed, and each cut scan adds one to `Progress.done`.
 5. Once every source is committed, the job cuts the images of every scan of the project whose renditions are not
@@ -950,7 +956,10 @@ renditions wait for the next import, and the files that never became sources are
 and named in `skipped`. A job that is delivered again after a crash runs the same steps: it skips the sources it
 committed, promotes the files of one whose promotion the crash cut short, and writes the directories of unready scans
 and of their base versions again, after deleting what an earlier attempt left in them, since a stored file is never
-replaced. A job that has already finished, such as one cancelled while it was queued, only has its upload removed.
+replaced. A job that has already finished, such as one cancelled while it was queued, only has its upload removed, and
+so does one that was cancelled between a worker reading it and starting it, which nothing delivers again. When
+scans stop in the same moment, a fault is reported before a cancellation, so a cancelled job does not hide a failure
+from the log.
 
 A project runs one import at a time: a second upload while one is queued or running gets a 409 problem, checked
 before the upload is received, and the partial unique index of `jobs` refuses the second of two uploads that pass that

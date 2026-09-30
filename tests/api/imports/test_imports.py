@@ -2,12 +2,15 @@
 
 from http import HTTPStatus
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock, patch
 
 import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
+from fastapi import Request
 
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
+from bookreviver.api.auth import current_actor
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import EventName
 from bookreviver.domain.enums import JobKind, JobState, RejectionReason
@@ -268,3 +271,117 @@ class TestUploadSources:
         expect('/api/v1/projects/{project_id}/sources' in paths)
         expect('/api/v1/projects/{project_id}/source' not in paths)
         assert_expectations()
+
+    async def test_schema_describes_the_multipart_body_although_the_route_declares_none(self, fx_app: FastAPI) -> None:
+        """Verify the schema names the files as a required array of file parts, which the client is generated from.
+
+        The route reads its body in a dependency, so the schema comes from ``openapi_extra``, not from a parameter.
+
+        :param fx_app: The running application.
+        :type fx_app: FastAPI
+        """
+        operation = fx_app.openapi()['paths']['/api/v1/projects/{project_id}/sources']['post']
+        body = operation['requestBody']
+        schema = body['content']['multipart/form-data']['schema']
+        expect(body['required'] is True)
+        expect(schema['required'] == ['files'])
+        expect(schema['properties']['files']['type'] == 'array')
+        expect(
+            schema['properties']['files']['items'] == {'type': 'string', 'contentMediaType': 'application/octet-stream'}
+        )
+        expect(schema['properties']['files']['minItems'] == 1)
+        assert_expectations()
+
+    async def test_files_field_that_holds_text_is_a_validation_problem(
+        self, fx_client: httpx.AsyncClient, fx_project: Project
+    ) -> None:
+        """Verify a ``files`` field that is text and not a file is refused with 422 and nothing is imported.
+
+        :param fx_client: Client of the signed-in account.
+        :type fx_client: httpx.AsyncClient
+        :param fx_project: Project of the signed-in account.
+        :type fx_project: Project
+        """
+        response = await fx_client.post(
+            SOURCES_PATH.format(project_id=fx_project.id), files=[(FILES_FIELD, (None, b'plain text'))]
+        )
+
+        expect(response.status_code == HTTPStatus.UNPROCESSABLE_CONTENT)
+        expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
+        assert_expectations()
+
+
+class UploadParsedError(Exception):
+    """Raised by the patched body parser, so a test learns that a request body was read at all."""
+
+
+@patch.object(Request, 'form', AsyncMock(side_effect=UploadParsedError))
+class TestUploadIsRefusedBeforeItsBodyIsRead:
+    """Tests that a request the server will refuse is refused before its body is parsed and spooled to disk."""
+
+    async def test_project_of_another_account_is_refused_unread(
+        self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, tmp_path: Path
+    ) -> None:
+        """Verify a non-owner gets 404 without the server reading the files it sent.
+
+        :param fx_client: Client of the signed-in account.
+        :type fx_client: httpx.AsyncClient
+        :param fx_fakes: Adapters the application runs on.
+        :type fx_fakes: JobFakes
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        stranger_project = make_project(owner_id=new_account_id())
+        await fx_fakes.store(stranger_project)
+
+        response = await fx_client.post(
+            SOURCES_PATH.format(project_id=stranger_project.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])
+        )
+
+        assert response.status_code == HTTPStatus.NOT_FOUND
+
+    async def test_project_that_is_importing_is_refused_unread(
+        self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_project: Project, tmp_path: Path
+    ) -> None:
+        """Verify an upload to a project that already imports gets 409 without its files being read.
+
+        :param fx_client: Client of the signed-in account.
+        :type fx_client: httpx.AsyncClient
+        :param fx_fakes: Adapters the application runs on.
+        :type fx_fakes: JobFakes
+        :param fx_project: Project of the signed-in account.
+        :type fx_project: Project
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        uow = InMemoryUnitOfWork(fx_fakes.database)
+        await uow.jobs.add(make_job(project_id=fx_project.id, state=JobState.QUEUED))
+        await uow.commit()
+
+        response = await fx_client.post(
+            SOURCES_PATH.format(project_id=fx_project.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])
+        )
+
+        assert response.status_code == HTTPStatus.CONFLICT
+
+    async def test_caller_who_is_not_signed_in_is_refused_unread(
+        self, fx_app: FastAPI, fx_client: httpx.AsyncClient, fx_project: Project, tmp_path: Path
+    ) -> None:
+        """Verify a caller with no session gets 401 without the server reading the files it sent.
+
+        :param fx_app: The running application, whose test sign-in is taken off.
+        :type fx_app: FastAPI
+        :param fx_client: Client without a session.
+        :type fx_client: httpx.AsyncClient
+        :param fx_project: Project of the account the test otherwise signs in as.
+        :type fx_project: Project
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        fx_app.dependency_overrides.pop(current_actor)
+
+        response = await fx_client.post(
+            SOURCES_PATH.format(project_id=fx_project.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])
+        )
+
+        assert response.status_code == HTTPStatus.UNAUTHORIZED

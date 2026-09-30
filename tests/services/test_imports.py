@@ -1,5 +1,6 @@
 """Tests for the import service: receiving an upload, and running the job it becomes, source by source."""
 
+import asyncio
 from operator import itemgetter
 from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import AsyncMock, patch
@@ -9,6 +10,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.jobs.recording import RecordingJobQueue
+from bookreviver.adapters.persistence.memory.unit_of_work import InMemoryJobRepository, InMemoryScanRepository
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import (
     JobState,
@@ -36,6 +38,8 @@ from bookreviver.services.imports import (
     NOT_QUEUED,
     SPLIT_NONE,
     UNEXPECTED_FAILURE,
+    ImportCancelledError,
+    ImportRun,
 )
 from tests.helpers.builders import make_job, make_project, new_account_id
 from tests.helpers.fakes_imports import (
@@ -57,7 +61,7 @@ if TYPE_CHECKING:
     from fastapi import UploadFile
 
     from bookreviver.domain.entities import Job, Page, Project, Scan, Source
-    from bookreviver.domain.ids import ProjectId, StorageKey
+    from bookreviver.domain.ids import JobId, ProjectId, StorageKey
     from bookreviver.ports.storage import AssetStore
 
 pytestmark = pytest.mark.anyio
@@ -75,6 +79,7 @@ SOURCE_COUNT: int = 3
 THREE_PAGES: int = 3
 LONG_BOOK_PAGES: int = 6
 PARALLEL_SCANS: int = 2
+SECRET_FAULT: str = 'secret detail of the failure'
 BROKEN_PDF: bytes = b'this is not a pdf'
 DJVU_HEADER: bytes = b'AT&TFORM'
 
@@ -450,6 +455,60 @@ class TestStartImport:
         expect(job.finished_at is not None)
         expect(not any((tmp_path / 'storage').rglob('a.jpg')))
         assert_expectations()
+
+
+class TestAuthorizeUpload:
+    """Tests for ImportService.authorize_upload(), which the API runs before it reads the body of a request."""
+
+    async def test_owner_of_an_idle_project_may_upload(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project
+    ) -> None:
+        """Verify the owner of a project with no import running is allowed, and nothing is stored or enqueued.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        """
+        await fx_rig.service().authorize_upload(fx_owner, fx_project.id)
+
+        expect(await fx_rig.open_uow().jobs.list_for_project(fx_project.id, set(JobState)) == [])
+        expect(fx_rig.queue.enqueued == [])
+        assert_expectations()
+
+    async def test_another_account_is_told_the_project_does_not_exist(
+        self, fx_rig: ImportRig, fx_project: Project
+    ) -> None:
+        """Verify an account that does not own the project learns nothing about it.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_project: Project of another account.
+        :type fx_project: Project
+        """
+        with pytest.raises(NotFoundError):
+            await fx_rig.service().authorize_upload(Actor(account_id=new_account_id()), fx_project.id)
+
+    @pytest.mark.parametrize('state', [JobState.QUEUED, JobState.RUNNING], ids=str)
+    async def test_project_that_imports_is_a_conflict(
+        self, fx_rig: ImportRig, fx_owner: Actor, state: JobState
+    ) -> None:
+        """Verify a project with an import queued or running is refused with the conflict of the upload rule.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param state: Active state of the import already there.
+        :type state: JobState
+        """
+        project = make_project(owner_id=fx_owner.account_id)
+        await fx_rig.fakes.store(project, make_job(project_id=project.id, state=state))
+
+        with pytest.raises(ConflictError, match=IMPORT_ACTIVE):
+            await fx_rig.service().authorize_upload(fx_owner, project.id)
 
 
 class TestRunImport:
@@ -1086,10 +1145,226 @@ class TestRunImportLifecycle:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        fx_rig.rasterizer.failures[0] = RuntimeError('secret detail of the failure')
+        fx_rig.rasterizer.failures[0] = RuntimeError(SECRET_FAULT)
 
         job = await _import(fx_rig, fx_owner, fx_project.id, [image_upload(fx_samples, 'a.jpg')])
 
         expect((job.state, job.error) == (JobState.FAILED, UNEXPECTED_FAILURE))
         expect((await fx_rig.open_uow().jobs.list_for_project(fx_project.id, JobState.active())) == [])
+        assert_expectations()
+
+
+class TestRunImportFailures:
+    """Tests for what ImportService.run_import() leaves behind when a step fails or races another."""
+
+    async def test_job_cancelled_before_it_starts_has_its_upload_removed(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path, tmp_path: Path
+    ) -> None:
+        """Verify a job cancelled between the worker reading it and starting it leaves no upload behind.
+
+        Nothing delivers a cancelled job again, so the run that found it cancelled is the only one that can remove the
+        files the job received.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        :param tmp_path: Temporary directory of the test, holding the storage root.
+        :type tmp_path: Path
+        """
+        job = await fx_rig.service().start_import(fx_owner, fx_project.id, [image_upload(fx_samples, 'a.jpg')])
+        read = InMemoryJobRepository.get
+        armed: list[bool] = []
+        cancelled: list[Job] = []
+
+        async def get_then_cancel(repository: InMemoryJobRepository, job_id: JobId) -> Job:
+            """Read the job as the worker does, and let the account holder cancel it right after, once.
+
+            :param repository: Repository the worker reads from.
+            :type repository: InMemoryJobRepository
+            :param job_id: Identifier of the job.
+            :type job_id: JobId
+            :returns: The job as it was read, still queued.
+            :rtype: Job
+            """
+            stored = await read(repository, job_id)
+            if not armed:
+                # Disarmed first, since cancelling reads the job through this same method
+                armed.append(True)
+                cancelled.append(await fx_rig.fakes.job_service().cancel(fx_owner, job_id))
+            return stored
+
+        with patch.object(InMemoryJobRepository, 'get', get_then_cancel):
+            await fx_rig.service().run_import(job.id)
+
+        expect(await fx_rig.stored_job(job) == cancelled[0])
+        expect(await _sources(fx_rig, fx_project.id) == [])
+        expect(not any((tmp_path / 'storage').rglob('incoming/*')))
+        assert_expectations()
+
+    async def test_job_that_another_delivery_started_keeps_its_upload(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify a delivery that lost the race to start the job leaves the files the winner is importing.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        job = await fx_rig.service().start_import(fx_owner, fx_project.id, [image_upload(fx_samples, 'a.jpg')])
+        read = InMemoryJobRepository.get
+        started: list[bool] = []
+
+        async def get_then_let_another_delivery_start(repository: InMemoryJobRepository, job_id: JobId) -> Job:
+            """Read the job as this delivery does, and let another delivery start it right after, once.
+
+            :param repository: Repository this delivery reads from.
+            :type repository: InMemoryJobRepository
+            :param job_id: Identifier of the job.
+            :type job_id: JobId
+            :returns: The job as it was read, still queued.
+            :rtype: Job
+            """
+            stored = await read(repository, job_id)
+            if not started:
+                started.append(True)
+                other = fx_rig.open_uow()
+                await other.jobs.update_if_state(evolve(stored, state=JobState.RUNNING), expected=(JobState.QUEUED,))
+                await other.commit()
+            return stored
+
+        with patch.object(InMemoryJobRepository, 'get', get_then_let_another_delivery_start):
+            await fx_rig.service().run_import(job.id)
+
+        async with fx_rig.sources.staged_files(fx_project.id, job.id) as staged:
+            expect([path.name for path in staged] == ['a.jpg'])
+        expect((await fx_rig.stored_job(job)).state is JobState.RUNNING)
+        assert_expectations()
+
+    async def test_source_whose_files_cannot_be_promoted_is_withdrawn_whole(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify a failed promotion leaves no source without files: no source, scan or page, and no counted scans.
+
+        The source was committed before its files moved, so the run takes it back with its pages, which a bare delete
+        of the source would leave behind without a scan.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        fx_rig.sources.fail_on_promote = OSError('disk full')
+
+        job = await _import(fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=THREE_PAGES)])
+
+        expect(job.state is JobState.FAILED)
+        expect(job.error == UNEXPECTED_FAILURE)
+        expect(await _sources(fx_rig, fx_project.id) == [])
+        expect(await _scans(fx_rig, fx_project.id) == [])
+        expect(await _pages(fx_rig, fx_project.id) == [])
+        expect((job.progress.done, job.progress.total) == (0, 0))
+        expect(job.result is not None and list(job.result.imported) == [])
+        assert_expectations()
+
+    async def test_failed_job_counts_only_the_scans_that_were_committed(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify a step that fails before its commit leaves its scans out of the progress of the failed job.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        failure = UnsupportedSourceError('scans refused')
+        with patch.object(InMemoryScanRepository, 'add_many', AsyncMock(side_effect=failure)):
+            job = await _import(fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=THREE_PAGES)])
+
+        stored = await fx_rig.open_uow().jobs.get(job.id)
+        expect((job.state, job.error) == (JobState.FAILED, 'scans refused'))
+        expect((job.progress.done, job.progress.total) == (0, 0))
+        expect(stored.progress == job.progress)
+        expect(await _sources(fx_rig, fx_project.id) == [])
+        assert_expectations()
+
+    async def test_real_failure_is_reported_when_another_scan_finds_the_job_cancelled(
+        self,
+        fx_rig: ImportRig,
+        fx_owner: Actor,
+        fx_project: Project,
+        fx_samples: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Verify two scans that stop at the same moment, one on a cancellation and one on a fault, fail the job.
+
+        The cancellation must not hide the fault, which would end the job as cancelled and leave nothing in the log.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        :param caplog: Fixture capturing what the service logs.
+        :type caplog: pytest.LogCaptureFixture
+        """
+        second_arrived = asyncio.Event()
+        arrivals: list[Scan] = []
+
+        async def stop_together(_run: ImportRun, _source: Source, scan: Scan) -> None:
+            """Stop two scans in the same turn of the event loop, the scan that arrives first on a cancellation.
+
+            The first scan waits for the second, which releases it and gives up its turn once, so the first scan
+            wakes and stops before the second does, and both stop before the group can cancel the second. The group
+            then lists the cancellation before the fault. The scans stop at once, outside any cleanup, because a scan
+            that unwinds through the asset store awaits, and the group may cancel it before its fault is listed.
+
+            :param _run: Run cutting the scan, which the patched step replaces.
+            :type _run: ImportRun
+            :param _source: Source holding the scan.
+            :type _source: Source
+            :param scan: The scan to cut.
+            :type scan: Scan
+            :raises ImportCancelledError: For the scan that arrives first.
+            :raises RuntimeError: For the scan that arrives second.
+            """
+            arrivals.append(scan)
+            if len(arrivals) < PARALLEL_SCANS:
+                await second_arrived.wait()
+                raise ImportCancelledError
+            second_arrived.set()
+            await asyncio.sleep(0)
+            raise RuntimeError(SECRET_FAULT)
+
+        with patch.object(ImportRun, '_cut', stop_together):
+            job = await _import(
+                fx_rig,
+                fx_owner,
+                fx_project.id,
+                [pdf_upload(fx_samples, 'a.pdf', pages=PARALLEL_SCANS)],
+                parallel_scans=PARALLEL_SCANS,
+            )
+
+        expect((job.state, job.error) == (JobState.FAILED, UNEXPECTED_FAILURE))
+        expect(SECRET_FAULT in caplog.text)
         assert_expectations()

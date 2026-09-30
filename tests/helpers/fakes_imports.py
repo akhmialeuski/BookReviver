@@ -304,12 +304,14 @@ class WatchedTiler(Tiler):
 
 
 class CrashingSourceStore(LocalSourceStore):
-    """The local source store, whose next promotion can crash the worker.
+    """The local source store, whose next promotion can crash the worker or fail with an error.
 
     :ivar crash_on_promote: Whether the next ``promote`` raises ``WorkerCrashError``, once.
+    :ivar fail_on_promote: Error the next ``promote`` raises, once, leaving the files staged as a refused one does.
     """
 
     crash_on_promote: bool = False
+    fail_on_promote: Exception | None = None
 
     @override
     async def promote(self, project_id: ProjectId, job_id: JobId, source_id: SourceId, *, names: Sequence[str]) -> None:
@@ -324,10 +326,14 @@ class CrashingSourceStore(LocalSourceStore):
         :param names: Names of the staged files that make the source.
         :type names: Sequence[str]
         :raises WorkerCrashError: If a crash was asked for, which is then forgotten.
+        :raises Exception: The error asked for, which is then forgotten.
         """
         if self.crash_on_promote:
             self.crash_on_promote = False
             raise WorkerCrashError
+        if (failure := self.fail_on_promote) is not None:
+            self.fail_on_promote = None
+            raise failure
         await super().promote(project_id, job_id, source_id, names=names)
 
 

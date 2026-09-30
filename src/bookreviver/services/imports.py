@@ -184,7 +184,7 @@ class ImportRun:
         self._imported: list[SourceId] = []
         self._rejected: list[RejectedFile] = []
         self._handled: set[str] = set()
-        self._progress_pending = False
+        self._uncommitted: Job | None = None
 
     @property
     def result(self) -> ImportResult:
@@ -312,7 +312,17 @@ class ImportRun:
         await self._uow.pages.add_many(pages)
         described = await self._describe_book(analysis.suggestion)
         await self._commit()
-        await self._sources.promote(source.project_id, self.job.id, source.id, names=list(uploaded.names))
+        try:
+            await self._sources.promote(source.project_id, self.job.id, source.id, names=list(uploaded.names))
+        except Exception:
+            # The source is committed and its files are not moved, and nothing would repair it once the job ends, so
+            # it is taken back whole. Its pages go first, since deleting the source only empties their scan.
+            for page in pages:
+                await self._uow.pages.delete(page.id)
+            await self._uow.sources.delete(source.id)
+            await self._record_progress(total=-len(scans))
+            await self._commit()
+            raise
         self._imported.append(source.id)
         self._handled.update(uploaded.names)
         await self._publisher.publish(SourceImported(project_id=source.project_id, source=source))
@@ -363,8 +373,10 @@ class ImportRun:
                 for _ in range(min(self._limits.parallel_scans, len(scans))):
                     group.create_task(worker())
         except ExceptionGroup as errors:
-            # One scan failed or the job was cancelled, and the group stopped the workers of the others
-            raise errors.exceptions[0] from errors
+            # Workers that stop in the same moment are all in the group, in no meaningful order. A cancellation is
+            # only the job's own state, so it must not hide a fault, which would end the job as cancelled unlogged.
+            faults = [error for error in errors.exceptions if not isinstance(error, ImportCancelledError)]
+            raise (faults or errors.exceptions)[0] from errors
 
     async def _cut(self, source: Source, scan: Scan) -> None:
         """Write the four renditions of a scan and the base version of its pages, then mark the scan ready.
@@ -460,22 +472,24 @@ class ImportRun:
         saved = await self._uow.jobs.update_if_state(evolve(self.job, progress=progress), expected=(JobState.RUNNING,))
         if saved is None:
             raise ImportCancelledError
-        self.job = saved
-        # A write that changes nothing only checks the state, and is not worth an event
-        self._progress_pending = self._progress_pending or bool(done or total)
+        # ``job`` is only what was committed, since a job that fails after this write is stored with its own copy of
+        # the progress, and a step that never committed must not be counted in it. A write that changes nothing only
+        # checks the state, and is not worth an event.
+        self._uncommitted = saved if done or total else None
 
     async def _commit(self) -> None:
-        """Commit the open transaction and announce the progress it wrote.
+        """Commit the open transaction, take on the progress it wrote and announce it.
 
         :raises ImportCancelledError: If the job was cancelled and committed so since the run wrote its progress,
                                       which an adapter without locks reports as a conflict.
         """
+        uncommitted, self._uncommitted = self._uncommitted, None
         try:
             await self._uow.commit()
         except ConflictError as error:
             raise ImportCancelledError from error
-        if self._progress_pending:
-            self._progress_pending = False
+        if uncommitted is not None:
+            self.job = uncommitted
             await self._publisher.publish(JobChanged(project_id=self.job.project_id, job=self.job))
 
 
@@ -513,6 +527,24 @@ class ImportService:
         self._clock = runtime.clock
         self._limits = runtime.limits
 
+    async def authorize_upload(self, actor: Actor, project_id: ProjectId) -> None:
+        """Refuse an upload the actor may not make, or the project cannot take now, before any file is read.
+
+        The API calls this before it parses the body of the request, so a refused caller costs the server no upload
+        to spool, and ``start_import`` repeats it, since a caller of the service needs no API.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Project to import into.
+        :type project_id: ProjectId
+        :raises NotFoundError: If the actor has no such project.
+        :raises ConflictError: If the project already has an import queued or running.
+        """
+        await owned_project(self._uow.projects, actor, project_id)
+        active = await self._uow.jobs.list_for_project(project_id, JobState.active())
+        if any(job.kind in IMPORT_JOBS for job in active):
+            raise ConflictError(IMPORT_ACTIVE)
+
     async def start_import(self, actor: Actor, project_id: ProjectId, files: Sequence[IncomingFile]) -> Job:
         """Receive an upload into the directory of a new import job, record the job and enqueue it.
 
@@ -533,14 +565,11 @@ class ImportService:
                                      with another, or the upload is larger than allowed.
         :raises ConflictError: If the project already has an import queued or running.
         """
-        await owned_project(self._uow.projects, actor, project_id)
+        await self.authorize_upload(actor, project_id)
         if not files:
             raise UploadRejectedError(UploadProblem.NO_FILES)
         if len(files) > self._limits.max_files:
             raise UploadRejectedError(UploadProblem.TOO_MANY_FILES)
-        active = await self._uow.jobs.list_for_project(project_id, JobState.active())
-        if any(job.kind in IMPORT_JOBS for job in active):
-            raise ConflictError(IMPORT_ACTIVE)
         job_id = JobId(uuid4())
         staged = await self._storage.sources.stage(project_id, job_id, files, max_bytes=self._limits.max_bytes)
         job = Job(
@@ -590,6 +619,11 @@ class ImportService:
         if job.state is JobState.QUEUED:
             started = evolve(job, state=JobState.RUNNING, started_at=self._clock.now())
             if (running := await self._uow.jobs.update_if_state(started, expected=(JobState.QUEUED,))) is None:
+                # The job left the queue since it was read: another delivery started it, whose upload this one must
+                # leave, or it was cancelled, which nothing delivers again, so its upload is removed here
+                await self._uow.rollback()
+                if (await self._uow.jobs.get(job.id)).state.is_final:
+                    await self._storage.sources.discard(job.project_id, job.id)
                 return
             job = running
             await self._uow.commit()

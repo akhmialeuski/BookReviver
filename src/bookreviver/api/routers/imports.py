@@ -4,67 +4,88 @@
 records an import job and answers 202 with it at once. The files are imported in the background, and the job, its
 result and the events of the project tell the browser how it goes.
 
-Starlette's multipart parser refuses more than 1000 files unless told otherwise, which is fewer than an upload may
-hold, so the route class parses the body of its requests first, with the limit of the upload rule. FastAPI then finds
-the parsed form on the request. The parser is allowed one file more than the rule, so an upload past the rule reaches
+FastAPI parses a declared body before it runs any dependency, so a route with a ``File()`` parameter would spool the
+upload to disk before the caller is known to be signed in, to own the project or to be allowed another import. The
+route therefore declares no body. A dependency reads the form after the actor and the project have been checked, and
+the schema of the body is given to OpenAPI by ``openapi_extra``. The form is parsed with the file limit of the upload
+rule, since Starlette's parser stops at 1000 files, and with one file more, so an upload past the rule reaches
 ``ImportService.start_import`` and is answered with its 413 problem rather than with the parser's own 400. An upload
 of two files past the rule is still refused by the parser.
 """
 
-from typing import TYPE_CHECKING, Annotated, override
+from collections.abc import AsyncIterator
+from typing import Annotated
 
-from dishka.integrations.fastapi import DishkaRoute, FromDishka
-from fastapi import APIRouter, File, Path, Request, UploadFile, status
+from dishka.integrations.fastapi import DishkaRoute, FromDishka, inject
+from fastapi import APIRouter, Depends, Path, Request, UploadFile, status
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 
 from bookreviver.api.auth import ActorDep
+from bookreviver.api.schemas.imports import UploadForm
 from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.domain.ids import ProjectId
 from bookreviver.services.imports import ImportLimits, ImportService
 
-if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
-    from typing import Any
-
-    from fastapi import Response
-
 MULTIPART_FILES_OVER_THE_RULE: int = 1
+MULTIPART_MEDIA_TYPE: str = 'multipart/form-data'
+FILES_FIELD: str = 'files'
 
 
-class UploadRoute(DishkaRoute):
-    """A route that parses its multipart body with the file limit of the upload rule."""
+@inject
+async def read_upload(
+    request: Request,
+    project_id: Annotated[ProjectId, Path(description='Identifier of the project')],
+    actor: ActorDep,
+    imports: FromDishka[ImportService],
+    limits: FromDishka[ImportLimits],
+) -> AsyncIterator[list[UploadFile]]:
+    """Read the uploaded files of the request, once the caller may import into the project.
 
-    @override
-    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
-        """Return the route's handler, which first parses the body with the limit of the upload rule.
+    The form is closed when the response has been sent, which removes the temporary files it spooled.
 
-        :returns: Handler that parses the form of the request and then runs the route's own handler.
-        :rtype: Callable[[Request], Coroutine[Any, Any, Response]]
-        """
-        handler = super().get_route_handler()
+    :param request: The request, whose multipart body holds the files.
+    :type request: Request
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param imports: Import service of the request.
+    :type imports: ImportService
+    :param limits: Bounds of an upload, of which the number of files is read.
+    :type limits: ImportLimits
+    :returns: Iterator yielding once the uploaded files, and closing the form afterwards.
+    :rtype: AsyncIterator[list[UploadFile]]
+    :raises RequestValidationError: If the form holds no file, or a ``files`` field that is not one.
+    """
+    await imports.authorize_upload(actor, project_id)
+    form = await request.form(max_files=limits.max_files + MULTIPART_FILES_OVER_THE_RULE)
+    # try/finally rather than a context manager around the yield, because FastAPI drives this generator
+    try:
+        try:
+            yield UploadForm.model_validate({FILES_FIELD: form.getlist(FILES_FIELD)}).files
+        except ValidationError as error:
+            raise RequestValidationError(error.errors()) from error
+    finally:
+        await form.close()
 
-        async def upload_handler(request: Request) -> Response:
-            """Parse the multipart body of the request, then run the route's handler on it.
 
-            :param request: The request received.
-            :type request: Request
-            :returns: The response of the route.
-            :rtype: Response
-            """
-            limits = await request.state.dishka_container.get(ImportLimits)
-            # The request keeps the parsed form, so the route's own read of it finds this one
-            await request.form(max_files=limits.max_files + MULTIPART_FILES_OVER_THE_RULE)
-            return await handler(request)
-
-        return upload_handler
+router = APIRouter(prefix='/projects', tags=['imports'], route_class=DishkaRoute)
 
 
-router = APIRouter(prefix='/projects', tags=['imports'], route_class=UploadRoute)
-
-
-@router.post('/{project_id}/sources', status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    '/{project_id}/sources',
+    status_code=status.HTTP_202_ACCEPTED,
+    openapi_extra={
+        'requestBody': {
+            'required': True,
+            'content': {MULTIPART_MEDIA_TYPE: {'schema': UploadForm.model_json_schema()}},
+        }
+    },
+)
 async def upload_sources(
     project_id: Annotated[ProjectId, Path(description='Identifier of the project')],
-    files: Annotated[list[UploadFile], File(description='The files to import, each one a source of its own')],
+    files: Annotated[list[UploadFile], Depends(read_upload)],
     actor: ActorDep,
     imports: FromDishka[ImportService],
 ) -> JobSchema:
@@ -76,7 +97,7 @@ async def upload_sources(
     \N{FORM FEED}
     :param project_id: Identifier of the project.
     :type project_id: ProjectId
-    :param files: The uploaded files, from a directory or chosen one by one.
+    :param files: The uploaded files, read once the caller was checked.
     :type files: list[UploadFile]
     :param actor: The signed-in account.
     :type actor: Actor
