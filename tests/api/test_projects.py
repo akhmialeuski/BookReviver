@@ -2,6 +2,7 @@
 
 import json
 from typing import TYPE_CHECKING, Any, NamedTuple
+from uuid import uuid4
 
 import attrs
 import pytest
@@ -35,11 +36,14 @@ LOCATION_HEADER: str = 'location'
 TITLE_FIELD: str = 'title'
 AUTHORS_FIELD: str = 'authors'
 NOTES_FIELD: str = 'notes'
+COVER_FIELD: str = 'cover_page_id'
+IMAGE_POLICY_FIELD: str = 'image_policy'
 ORTHOGRAPHY_FIELD: str = 'orthography'
 UNKNOWN_FIELD: str = 'owner_id'
 PAGE_SIZE_PARAM: str = 'size'
 PAGE_NUMBER_PARAM: str = 'page'
 SCHEMA_ARG: str = 'schema'
+EXTRAS_ARG: str = 'extras'
 CASE_ARG: str = 'case'
 PROJECT_COUNT: int = 3
 PAGE_SIZE: int = 2
@@ -115,14 +119,24 @@ async def _list_projects(client: httpx.AsyncClient, params: dict[str, int]) -> P
 class TestSchemas:
     """Tests for the project schemas against the domain description."""
 
-    @pytest.mark.parametrize(SCHEMA_ARG, [ProjectCreate, ProjectUpdate, BookDetailsSchema])
-    def test_schema_covers_every_description_field(self, schema: type[BaseModel]) -> None:
-        """Verify each schema carries exactly the fields of a book description, so they never drift apart.
+    @pytest.mark.parametrize(
+        (SCHEMA_ARG, EXTRAS_ARG),
+        [
+            (ProjectCreate, frozenset[str]()),
+            (ProjectUpdate, frozenset({COVER_FIELD, IMAGE_POLICY_FIELD})),
+            (BookDetailsSchema, frozenset[str]()),
+        ],
+        ids=['create', 'update', 'details'],
+    )
+    def test_schema_covers_every_description_field(self, schema: type[BaseModel], extras: frozenset[str]) -> None:
+        """Verify each schema carries exactly the fields of a book description and its own, so they never drift apart.
 
         :param schema: Schema of a description in a request or a response.
         :type schema: type[BaseModel]
+        :param extras: Fields of the schema beyond the description, such as the project settings a patch changes.
+        :type extras: frozenset[str]
         """
-        assert schema.model_fields.keys() == attrs.fields_dict(BookDetails).keys()
+        assert schema.model_fields.keys() == attrs.fields_dict(BookDetails).keys() | extras
 
 
 class TestListProjects:
@@ -307,6 +321,57 @@ class TestUpdateProject:
         expect(response.status_code == status.HTTP_200_OK)
         expect((updated.details.authors, updated.details.orthography) == ('', Orthography.UNKNOWN))
         expect((updated.details.title, updated.details.notes) == (TITLE, NOTES))
+        assert_expectations()
+
+    async def test_sets_the_cover_and_the_image_policy_and_null_clears_them(
+        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
+    ) -> None:
+        """Verify a page of the project becomes the cover and the policy changes, and null restores their defaults.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        page = make_page(project_id=project.id)
+        await commit_project(fx_database, project, page)
+
+        set_response = await fx_client.patch(
+            _project_path(project.id), json={COVER_FIELD: str(page.id), IMAGE_POLICY_FIELD: ImagePolicy.LOSSLESS}
+        )
+        cleared_response = await fx_client.patch(
+            _project_path(project.id), json={COVER_FIELD: None, IMAGE_POLICY_FIELD: None}
+        )
+
+        was, now = (
+            ProjectSchema.model_validate_json(response.content) for response in (set_response, cleared_response)
+        )
+        expect((was.cover_page_id, was.image_policy) == (page.id, ImagePolicy.LOSSLESS))
+        expect((now.cover_page_id, now.image_policy) == (None, ImagePolicy.COMPACT))
+        assert_expectations()
+
+    async def test_cover_that_is_not_a_page_of_the_project_is_not_found(
+        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
+    ) -> None:
+        """Verify a page identifier the project does not have is refused with 404 and the cover stays empty.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        await commit_project(fx_database, project)
+
+        response = await fx_client.patch(_project_path(project.id), json={COVER_FIELD: str(uuid4())})
+
+        expect(response.status_code == status.HTTP_404_NOT_FOUND)
+        expect((await _read_project(fx_client, project.id)).cover_page_id is None)
         assert_expectations()
 
     @pytest.mark.parametrize(CASE_ARG, INVALID_UPDATE_CASES, ids=INVALID_UPDATE_IDS)

@@ -110,10 +110,11 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Accounts     | `Actor`, `AccountSettings` (default engine and model per `AiTask`)                            |
 | Credentials  | `ProviderCredential` with a masked secret, never printed or logged                            |
 | Books        | `Project`, `ProjectOverview`, `BookDetails`, `ImagePolicy`                                    |
-| Changes      | `BookDetailsChanges`, the description fields a change replaces, None keeping a field          |
+| Changes      | `BookDetailsChanges`, `ProjectChanges` and `CoverChange`, None keeping a field               |
 | Sources      | `Source`, `SourceFile`, `SourceKind`, `FileType`, `MetadataSuggestion`                        |
 | Scans        | `Scan`, `ScanFacts`, `Renditions`                                                             |
-| Pages        | `Page`, `PageKind`, `PageOrigin`, `PageVersion`, `VersionState`, `Transform`, `PageStage`     |
+| Pages        | `Page`, `PageOverview`, `PageKind`, `PageOrigin`, `PageVersion`, `VersionState`, `Transform`, |
+|              | `PageStage`                                                                                   |
 | Storage keys | `StorageKey`, and `ProjectKeys` in `domain/keys.py`, the one builder of every key             |
 | Processing   | `Stage`, `ProcessorRef`, `Recipe`, `Step`, `Variant`, `ArtifactKind`, `Artifact`              |
 | Edits        | `PageEdit` with geometry (`Rect`, `Quad`, `Mesh`, `Region` with `RegionKind`) or a mask       |
@@ -452,7 +453,10 @@ The persistence ports address data through the source, the scan and the page of 
 `SourceRepository`, `ScanRepository`, `PageRepository`, `PageVersionRepository` and `JobRepository` share the
 `UnitOfWork`, so one use case changes all of them in one transaction. `PageRepository` addresses a page by its
 `PageId`, lists the pages of a project in `order_key` order and gives the last key of a book, and the position of a
-page in the book is computed when it is read, never stored. `ProjectRepository.overview` counts the book of one
+page in the book is computed when it is read, never stored: a window of the manifest numbers its pages from its
+offset, and `count_before` counts the pages before one page read alone. `PageVersionRepository.list_base_versions`
+reads the base versions of a whole window in one call, so the manifest costs no query per page.
+`ProjectRepository.overview` counts the book of one
 project, and the project listing counts every project of a window in the same query.
 `OrderKeys` is a port with an adapter on fractional-indexing, because the domain imports only the standard library
 and attrs. Like `Clock.now`, its methods are synchronous, because they compute a string and wait on nothing.
@@ -659,15 +663,16 @@ flowchart TD
 
 ## Services
 
-| Service             | Use cases                                                                |
-| ------------------- | ------------------------------------------------------------------------ |
-| `AccountService`    | Account settings, provider credentials, default engines and models       |
-| `ProjectService`    | List, create, read, edit the description, delete one or all with files   |
-| `ImportService`     | Accept an upload and enqueue the import, run the import job step by step |
-| `PageService`       | Page manifest, facts of one page, asset locations for the viewer         |
-| `ProcessingService` | Recipes, previews, runs, variants, invalidation of later stages          |
-| `EditService`       | Save and load manual page edits (frames, meshes, masks, regions)         |
-| `JobService`        | Job state, cancellation, the event stream of a project                   |
+| Service             | Use cases                                                                           |
+| ------------------- | ----------------------------------------------------------------------------------- |
+| `AccountService`    | Account settings, provider credentials, default engines and models                  |
+| `ProjectService`    | List, create, read, edit the description, cover and image policy, delete with files |
+| `ImportService`     | Accept an upload and enqueue the import, run the import job step by step            |
+| `SourceService`     | List and read the sources and scans of a book, delete a source with its files       |
+| `PageService`       | Page manifest, one page by identifier, asset locations for the viewer               |
+| `ProcessingService` | Recipes, previews, runs, variants, invalidation of later stages                     |
+| `EditService`       | Save and load manual page edits (frames, meshes, masks, regions)                    |
+| `JobService`        | Job state, cancellation, the event stream of a project                              |
 
 Each service is a class constructed with the ports it needs and nothing else, and each checks that the acting
 account may touch what it asks for. A use case that needs two services is composed by the caller. Registration,
@@ -775,6 +780,8 @@ owns `incoming/` and `sources/`, and `AssetStore` owns `assets/`. An asset key a
 `projects/<id>/assets/`, so one prefix check keeps asset keys away from the files of the sources, and one
 `delete_prefix` removes every derived file of a project. One class, `ProjectKeys` in `domain/keys.py`, builds every
 key and refuses a `..` segment, so the layout is written down in one place and keys are stable when pages move.
+`ProjectKeys.owning` attributes a key to a project only when it lies under `assets/`, so a key a client sends under
+`sources/` or `incoming/` is no derived file and is answered like a missing one before any store is read.
 
 - `incoming/<job_id>/` holds the upload of one import job while it is being received and checked.
 - `sources/<source_id>/` holds the files of one source exactly as uploaded, written once.
@@ -866,11 +873,14 @@ data/storage/
                 └── typesetting/…
 ```
 
-Deleting a source removes its files, its scans and the renditions of its scans, and leaves the pages of the book
-with their copies of the images, their versions, labels and order. Deleting a project calls `delete_project` on both
-storage ports and then removes its rows. Both methods treat a project without files as deleted, so a deletion that
-fails part-way keeps the project, and repeating it finishes the job. Removing the rows first would leave the files of
-a failed deletion where no request can reach them, because every request finds a project by its row.
+Deleting a source removes its files, the renditions of its scans under `assets/scans/<source_id>`, and then the source
+with its scans, and leaves the pages of the book with their copies of the images, their versions, labels and order. A
+source is not deleted while the project imports, and that answers 409. Deleting a project calls `delete_project` on
+both storage ports and then removes its rows. Both deletions treat missing files as deleted, so one that fails part-way
+keeps the project or the source, and repeating it finishes the job. Removing the rows first would leave the files of a
+failed deletion where no request can reach them, because every request finds a project or a source by its row. This is
+also how a user gets out of an import that keeps failing on one scan: the job result names the scan, and the user
+deletes the source by hand, since nothing skips a scan automatically.
 
 Nothing stored is ever replaced: a new version gets a new directory. Derived assets are regenerable under a new key,
 the next version or content hash, which their URLs carry, so browsers cache them forever. Each is written under a
@@ -881,7 +891,10 @@ A tile pyramid's `info.json` carries as `id` the path of the IIIF route that ser
 because the viewer builds tile URLs from it, and the root of that path comes from `app`, where the routes are
 mounted. The path has no scheme or host, so a change of domain, port or the address a device uses leaves the
 cut pyramids valid. IIIF formally asks for an absolute URI there, but OpenSeadragon resolves a path, and BookReviver
-serves its own viewer, so the path is the deliberate choice.
+serves its own viewer, so the path is the deliberate choice. The route serves `info.json` exactly as the tiler wrote
+it, with the IIIF media type, and neither parses nor rewrites it. Every image address in an API response follows the
+same rule: it is the path of the IIIF route below the API prefix, built from the storage key with the route's name, and
+has no scheme or host.
 
 ## Import pipeline
 
@@ -970,24 +983,42 @@ application starts with a warning in its log, and every DjVu source is rejected 
 ## HTTP API
 
 All endpoints live under `/api/v1`. The OpenAPI schema is generated from the routers and committed as
-`docs/openapi.json`, a test checks that it equals `app.openapi()`, and the frontend client is generated from it.
+`docs/openapi.json`, a test checks that it equals `app.openapi()`, `uv run bookreviver-openapi` writes it again, and
+the frontend client is generated from it. These endpoints of books, jobs and images are served:
+
+| Endpoint under `/api/v1`                    | Route                   | Service method               | Answer                                          |
+| ------------------------------------------- | ----------------------- | ---------------------------- | ----------------------------------------------- |
+| `GET /projects`                             | `list_projects`         | `ProjectService.list`        | 200 `Page[ProjectSchema]`, latest changes first |
+| `POST /projects`                            | `create_project`        | `ProjectService.create`      | 201 `ProjectSchema`, `Location`                 |
+| `GET /projects/{id}`                        | `get_project`           | `ProjectService.get`         | 200 `ProjectSchema`                             |
+| `PATCH /projects/{id}`                      | `update_project`        | `ProjectService.update`      | 200 `ProjectSchema`                             |
+| `DELETE /projects/{id}`                     | `delete_project`        | `ProjectService.delete`      | 204                                             |
+| `GET /projects/{id}/sources`                | `list_sources`          | `SourceService.list`         | 200 `Page[SourceSchema]`                        |
+| `POST /projects/{id}/sources`               | `upload_sources`        | `ImportService.start_import` | 202 `JobSchema`                                 |
+| `GET /projects/{id}/sources/{source_id}`    | `get_source`            | `SourceService.get`          | 200 `SourceSchema`                              |
+| `DELETE /projects/{id}/sources/{source_id}` | `delete_source`         | `SourceService.delete`       | 204, 409 while importing                        |
+| `GET /projects/{id}/scans`                  | `list_scans`            | `SourceService.scans`        | 200 `Page[ScanSchema]`, `?source_id`            |
+| `GET /projects/{id}/pages`                  | `list_pages`            | `PageService.manifest`       | 200 `ManifestPage[PageSchema]`                  |
+| `GET /projects/{id}/pages/{page_id}`        | `get_page`              | `PageService.get`            | 200 `PageSchema`                                |
+| `GET /iiif/{key}`                           | `iiif_file`             | `PageService.open_asset`     | the file as stored, immutable                   |
+| `GET /jobs/{id}`                            | `read_job`              | `JobService.get`             | 200 `JobSchema`                                 |
+| `DELETE /jobs/{id}`                         | `cancel_job`            | `JobService.cancel`          | 200 `JobSchema`                                 |
+| `GET /projects/{id}/events`                 | `stream_project_events` | `JobService.events`          | SSE                                             |
+
+The rest of the design is not served yet, apart from the fastapi-users routers:
 
 | Area       | Endpoints                                                                                                 |
 | ---------- | --------------------------------------------------------------------------------------------------------- |
 | Auth       | fastapi-users routers under `/auth`: cookie login and logout, register, verify, reset, OAuth per provider |
 | Account    | `GET /users/me`, `GET, PATCH /me/settings`, `GET, PUT, DELETE /me/credentials/{provider}`                 |
 | Catalogue  | `GET /engines`, `GET /processors`                                                                         |
-| Projects   | `GET, POST /projects`, `GET, PATCH, DELETE /projects/{id}`                                                |
-| Sources    | `GET, POST /projects/{id}/sources`, `GET, DELETE /projects/{id}/sources/{source_id}`                      |
-| Scans      | `GET /projects/{id}/scans`                                                                                |
-| Pages      | `GET, POST /projects/{id}/pages`, `GET, PATCH, DELETE /projects/{id}/pages/{page_id}`                     |
+| Pages      | `POST /projects/{id}/pages`, `PATCH, DELETE /projects/{id}/pages/{page_id}`                               |
 | Page order | `POST /projects/{id}/pages/{page_id}/move`, `PUT /projects/{id}/pages/{page_id}/scan`                     |
 | Edits      | `GET, PUT /projects/{id}/pages/{page_id}/edits/{stage}`                                                   |
 | Processing | `GET, PUT /projects/{id}/stages/{stage}/recipe`, `POST .../preview`, `POST .../run`, `GET .../variants`   |
-| Jobs       | `GET /jobs/{id}`, `DELETE /jobs/{id}`, `GET /projects/{id}/events` as SSE                                 |
-| Images     | `GET /iiif/{asset}/...` as immutable static files                                                         |
 
-On a server, a reverse proxy serves `/iiif` straight from disk or object storage, after an access check by the API.
+Every image address in a response is a path of `/iiif/{key}` without scheme or host. On a server, a reverse proxy
+serves `/iiif` straight from disk or object storage, after an access check by the API.
 
 `POST /projects/{id}/sources` takes the files as a multipart body and answers 202 with the queued job, 409 while the
 project imports, 413 for an upload past `max_upload_files` or `max_upload_bytes`, and 404 for a project of another
@@ -1002,8 +1033,16 @@ addresses by index are never published, because the frontend client is generated
 carry them.
 
 The page manifest, `GET /projects/{id}/pages`, returns up to 1000 pages per request through its own `Params`, with
-the computed position of every page and never its order key. Excluded pages are returned with `included` false, and
-the viewer asks for `?included=true`.
+the computed position of every page and never its order key. Because fastapi-pagination checks the query against the
+parameters of the response's page class too, the manifest answers with a customized page class, `ManifestPage`, that
+carries the same limit. Excluded pages are returned with `included` false, and the viewer asks for `?included=true`,
+a filter that is not served yet. A page carries `images`, the paths of its four images, once its base version has them
+cut, and none before, for a placeholder too.
+
+`DELETE /projects/{id}/sources/{source_id}` answers 204 and leaves the pages of the book with their images. It answers
+409 while an import of the project is queued or running, and 404 for a source of another project or account.
+`GET /projects/{id}/scans` lists the scans of the project source by source, or those of one source with
+`?source_id=`.
 
 The events of a project reach the browser over `GET /projects/{id}/events`:
 
@@ -1032,8 +1071,10 @@ The project list counts in `page_count` the included pages of the book, and show
   `Annotated` for every parameter and dependency.
 - `PATCH` follows JSON Merge Patch, RFC 7396: a field left out stays as it is, and `null` clears it to the value a
   new resource has for it. The title of a book cannot be cleared. The body is sent as `application/merge-patch+json`
-  or `application/json`. The service receives a domain change such as `BookDetailsChanges`, in which None keeps a
-  field, so clearing needs no third state in the domain.
+  or `application/json`. The service receives a domain change such as `ProjectChanges`, in which None keeps a field,
+  so clearing needs no third state in the domain. The one field whose cleared value is None itself, the cover page,
+  is changed with a `CoverChange` object, whose page is empty to remove the cover. `PATCH /projects/{id}` changes the
+  description, `image_policy` and `cover_page_id`, and a cover that is not a page of the project answers 404.
 - Pydantic stays at the edges: request and response schemas in `api`, settings in `app`. Domain invariants are
   `attrs` validators, so the core does not depend on Pydantic.
 - Every route declares a typed Pydantic response. The shapes are the same everywhere: a single resource is its

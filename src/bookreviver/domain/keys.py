@@ -54,8 +54,8 @@ class ProjectKeys:
     SEPARATOR: ClassVar[str] = '/'
     # Prefix of the directory of one version of a scan's renditions, as in ``v1``
     VERSION_PREFIX: ClassVar[str] = 'v'
-    # A key made of the root, the project and at least one name inside the project
-    MIN_SEGMENTS: ClassVar[int] = 3
+    # A key of a derived file: the root, the project, ``assets`` and at least one name inside it
+    MIN_SEGMENTS: ClassVar[int] = 4
     # Segments that would address the parent of a key or climb out of it
     UNSAFE_SEGMENTS: ClassVar[frozenset[str]] = frozenset({'', '.', '..'})
 
@@ -203,18 +203,23 @@ class ProjectKeys:
 
     @classmethod
     def owning(cls, key: StorageKey) -> Self | None:
-        """Return the key space that ``key`` belongs to, or None when it is not a well-formed key inside a project.
+        """Return the key space that a derived file at ``key`` belongs to, or None when it is not a well-formed one.
+
+        Only keys under ``assets/`` are attributed, since those are the files the ``AssetStore`` serves. A key under
+        ``incoming/`` or ``sources/`` belongs to the ``SourceStore`` and to no client, so it belongs to no one here.
 
         :param key: Key to attribute, such as one a client sent.
         :type key: StorageKey
         :returns: The keys of the project holding ``key``, or None for a key outside every project, naming a project
-                  itself, or holding an empty, ``.`` or ``..`` segment.
+                  or its ``assets`` directory itself, lying outside ``assets``, or holding an empty, ``.`` or ``..``
+                  segment.
         :rtype: Self | None
         """
         segments = key.split(cls.SEPARATOR)
         if (
             len(segments) < cls.MIN_SEGMENTS
             or segments[0] != KeySegment.PROJECTS
+            or segments[2] != KeySegment.ASSETS
             or cls.UNSAFE_SEGMENTS.intersection(segments)
         ):
             return None

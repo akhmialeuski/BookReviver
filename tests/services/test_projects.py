@@ -10,8 +10,8 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.adapters.storage import LocalSourceStore
-from bookreviver.domain.changes import BookDetailsChanges
-from bookreviver.domain.enums import Orthography
+from bookreviver.domain.changes import BookDetailsChanges, CoverChange, ProjectChanges
+from bookreviver.domain.enums import ImagePolicy, Orthography
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.values import BookDetails, SliceRequest
 from bookreviver.services.projects import ProjectService
@@ -242,8 +242,56 @@ class TestGet:
             await fx_service().get(fx_actor, project.id)
 
 
-class TestUpdateDetails:
-    """Tests for ProjectService.update_details()."""
+class TestUpdate:
+    """Tests for ProjectService.update()."""
+
+    async def test_sets_and_clears_the_cover_and_sets_the_image_policy(
+        self, fx_service: Callable[[], ProjectService], fx_database: InMemoryDatabase, fx_actor: Actor
+    ) -> None:
+        """Verify a page of the project becomes its cover, an empty cover change removes it, and the policy changes.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], ProjectService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        page = make_page(project_id=project.id)
+        await commit_project(fx_database, project, page)
+
+        covered = await fx_service().update(
+            fx_actor, project.id, ProjectChanges(cover=CoverChange(page_id=page.id), image_policy=ImagePolicy.LOSSLESS)
+        )
+        cleared = await fx_service().update(fx_actor, project.id, ProjectChanges(cover=CoverChange(page_id=None)))
+
+        expect((covered.project.cover_page_id, covered.project.image_policy) == (page.id, ImagePolicy.LOSSLESS))
+        expect((cleared.project.cover_page_id, cleared.project.image_policy) == (None, ImagePolicy.LOSSLESS))
+        assert_expectations()
+
+    async def test_cover_outside_the_project_is_not_found_and_changes_nothing(
+        self, fx_service: Callable[[], ProjectService], fx_database: InMemoryDatabase, fx_actor: Actor
+    ) -> None:
+        """Verify a page of another project cannot become the cover, and the project keeps its state.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], ProjectService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        other = make_project(owner_id=fx_actor.account_id)
+        foreign = make_page(project_id=other.id)
+        await commit_project(fx_database, project)
+        await commit_project(fx_database, other, foreign)
+
+        with pytest.raises(NotFoundError):
+            await fx_service().update(fx_actor, project.id, ProjectChanges(cover=CoverChange(page_id=foreign.id)))
+
+        assert await _stored(fx_database, project) == project
 
     async def test_changes_given_fields_and_touches_the_project(
         self, fx_service: Callable[[], ProjectService], fx_database: InMemoryDatabase, fx_actor: Actor
@@ -260,7 +308,9 @@ class TestUpdateDetails:
         project = make_project(owner_id=fx_actor.account_id, title='Old')
         await commit_project(fx_database, project)
 
-        overview = await fx_service().update_details(fx_actor, project.id, BookDetailsChanges(title=NEW_TITLE))
+        overview = await fx_service().update(
+            fx_actor, project.id, ProjectChanges(details=BookDetailsChanges(title=NEW_TITLE))
+        )
 
         stored = await _stored(fx_database, project)
         expect(stored == overview.project)
@@ -284,7 +334,7 @@ class TestUpdateDetails:
         await commit_project(fx_database, project)
 
         with pytest.raises(NotFoundError):
-            await fx_service().update_details(fx_actor, project.id, BookDetailsChanges(title=NEW_TITLE))
+            await fx_service().update(fx_actor, project.id, ProjectChanges(details=BookDetailsChanges(title=NEW_TITLE)))
 
         assert await _stored(fx_database, project) == project
 

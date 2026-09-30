@@ -1,8 +1,16 @@
 """The routers of every feature, in the order the application includes them, and where they are mounted."""
 
-from bookreviver.api.routers import accounts, iiif, imports, jobs, pages, projects
+from bookreviver.api.routers import accounts, iiif, imports, jobs, pages, projects, sources
 
-ROUTERS = (accounts.router, projects.router, pages.router, imports.router, jobs.router, iiif.router)
+ROUTERS = (
+    accounts.router,
+    projects.router,
+    sources.router,
+    pages.router,
+    imports.router,
+    jobs.router,
+    iiif.router,
+)
 # Every endpoint lives below this prefix
 API_PREFIX: str = '/api/v1'
 # The path the IIIF routes are served from, with which the import cuts the pyramids' ``info.json`` ids

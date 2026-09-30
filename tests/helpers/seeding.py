@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Page, Project, Scan, Source
+    from bookreviver.domain.entities import Page, PageVersion, Project, Scan, Source
     from bookreviver.domain.ids import AccountId
 
 # Domain of the addresses of seeded accounts, reserved for examples by RFC 2606
@@ -48,8 +48,9 @@ async def commit_project(
     *pages: Page,
     sources: Sequence[Source] = (),
     scans: Sequence[Scan] = (),
+    versions: Sequence[PageVersion] = (),
 ) -> None:
-    """Commit a project with its sources, their scans and its pages in one unit of work.
+    """Commit a project with its sources, their scans, its pages and their versions in one unit of work.
 
     :param database: In-memory database to commit into.
     :type database: InMemoryDatabase
@@ -61,10 +62,13 @@ async def commit_project(
     :type sources: Sequence[Source]
     :param scans: Scans of those sources.
     :type scans: Sequence[Scan]
+    :param versions: Versions of those pages.
+    :type versions: Sequence[PageVersion]
     """
     uow = InMemoryUnitOfWork(database)
     await uow.projects.add(project)
     await uow.sources.add_many(sources)
     await uow.scans.add_many(scans)
     await uow.pages.add_many(pages)
+    await uow.page_versions.add_many(versions)
     await uow.commit()

@@ -22,7 +22,7 @@ from bookreviver.domain.ids import ProjectId
 from bookreviver.domain.values import SliceRequest
 
 if TYPE_CHECKING:
-    from bookreviver.domain.changes import BookDetailsChanges
+    from bookreviver.domain.changes import ProjectChanges
     from bookreviver.domain.entities import Actor
     from bookreviver.domain.values import BookDetails, Slice
     from bookreviver.ports.persistence import ProjectRepository, UnitOfWork
@@ -113,22 +113,22 @@ class ProjectService:
         """
         return await self._uow.projects.overview(await owned_project(self._uow.projects, actor, project_id))
 
-    async def update_details(self, actor: Actor, project_id: ProjectId, changes: BookDetailsChanges) -> ProjectOverview:
-        """Change some fields of the project's description and mark the project as updated.
+    async def update(self, actor: Actor, project_id: ProjectId, changes: ProjectChanges) -> ProjectOverview:
+        """Change some fields of the project, such as its description or its cover, and mark it as updated.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param changes: New values of the fields to change.
-        :type changes: BookDetailsChanges
+        :type changes: ProjectChanges
         :returns: The changed project with the counts of its book.
         :rtype: ProjectOverview
-        :raises NotFoundError: If the actor has no such project.
+        :raises NotFoundError: If the actor has no such project, or the new cover is not a page of the project.
         :raises ValueError: If the changed description breaks one of its rules, such as an empty title.
         """
         project = await owned_project(self._uow.projects, actor, project_id)
-        changed = evolve(project, details=changes.apply_to(project.details), updated_at=self._clock.now())
+        changed = evolve(changes.apply_to(project), updated_at=self._clock.now())
         stored = await self._uow.projects.update(changed)
         await self._uow.commit()
         return await self._uow.projects.overview(stored)

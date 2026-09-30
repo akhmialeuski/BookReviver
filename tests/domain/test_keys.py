@@ -7,7 +7,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import Rendition
-from bookreviver.domain.ids import JobId, PageId, ProjectId, StorageKey
+from bookreviver.domain.ids import JobId, PageId, ProjectId, SourceId, StorageKey
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import ProcessorRef, Renditions
 from tests.helpers.builders import make_page_version, make_scan, make_source
@@ -178,6 +178,10 @@ class TestOwning:
             f'{PREFIX}../{OTHER_PROJECT_ID}/assets/book',
             f'{PREFIX}./assets/book',
             f'{PREFIX}/assets',
+            f'{PREFIX}assets',
+            f'{KEYS.source(SourceId(uuid4()))}/book.pdf',
+            f'{KEYS.incoming(JOB_ID)}/book.pdf',
+            f'{PREFIX}notes/assets/book',
             '',
         ],
         ids=[
@@ -188,13 +192,20 @@ class TestOwning:
             'climbs-out',
             'dot-segment',
             'empty-segment',
+            'assets-directory-itself',
+            'source-file',
+            'staged-upload',
+            'assets-below-another-directory',
             'empty',
         ],
     )
     def test_malformed_key_belongs_to_no_project(self, key: str) -> None:
-        """Verify a key that is not safely inside one project is not attributed to any.
+        """Verify a key that is not safely inside a project's derived files is not attributed to any project.
 
-        :param key: Key that is not a well-formed key inside a project.
+        A source file and a staged upload lie inside the project but belong to the source store, so they are refused
+        like a key that climbs out of it.
+
+        :param key: Key that is not a well-formed key of a derived file.
         :type key: str
         """
         assert ProjectKeys.owning(StorageKey(key)) is None
