@@ -161,6 +161,24 @@ class JobRepository(Repository[Job, JobId]):
         :rtype: Sequence[Job]
         """
 
+    @abstractmethod
+    async def update_if_state(self, entity: Job, *, expected: Collection[JobState]) -> Job | None:
+        """Replace the stored job only while its state is one of ``expected``, checking and writing as one step.
+
+        A job changes state from two places at once, a worker finishing it and an account holder cancelling it, so
+        a read followed by ``update`` could overwrite a state committed in between. Here the check reads the latest
+        committed state, as a database ``UPDATE ... WHERE`` does, and a job changed by another transaction since this
+        one read it is judged by that newer state.
+
+        :param entity: Job with its new state.
+        :type entity: Job
+        :param expected: States the stored job must be in for the replacement to happen.
+        :type expected: Collection[JobState]
+        :returns: The job as stored, or None when its stored state is not one of ``expected`` and nothing changed.
+        :rtype: Job | None
+        :raises NotFoundError: If the job is not stored.
+        """
+
 
 class UnitOfWork(ABC):
     """One transaction over every repository; nothing is visible to others before ``commit``.
@@ -176,7 +194,15 @@ class UnitOfWork(ABC):
 
     @abstractmethod
     async def commit(self) -> None:
-        """Make every change since the last commit durable and visible."""
+        """Make every change since the last commit durable and visible.
+
+        A job written by ``JobRepository.update_if_state`` keeps its guarded state until this commit: a database holds
+        the row locked, so another writer waits, and an adapter without locks refuses the commit instead when another
+        transaction changed that job in the meantime.
+
+        :raises ConflictError: If a job this transaction wrote by ``update_if_state`` was changed and committed by
+                               another transaction since; nothing of this transaction is kept then.
+        """
 
     @abstractmethod
     async def rollback(self) -> None:

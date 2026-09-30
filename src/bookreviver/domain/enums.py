@@ -121,6 +121,15 @@ class JobState(LabeledStrEnum):
         """Whether the job will not change state any more."""
         return self in {JobState.SUCCEEDED, JobState.FAILED, JobState.CANCELLED}
 
+    @classmethod
+    def active(cls) -> frozenset[JobState]:
+        """Return the states of a job that has not finished, which a worker or a cancellation may still leave.
+
+        :returns: Every state that is not final.
+        :rtype: frozenset[JobState]
+        """
+        return frozenset(state for state in cls if not state.is_final)
+
 
 class WorkerPool(LabeledStrEnum):
     """Class of worker a job needs, which routes it to the right queue."""

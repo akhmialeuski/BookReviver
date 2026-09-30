@@ -132,7 +132,7 @@ class TestSourceKindOfFiles:
 
 
 class TestJobState:
-    """Tests for JobState.is_final."""
+    """Tests for JobState.is_final and JobState.active()."""
 
     def test_only_finished_states_are_final(self) -> None:
         """Verify exactly the succeeded, failed and cancelled states are final."""
@@ -141,3 +141,7 @@ class TestJobState:
             JobState.FAILED,
             JobState.CANCELLED,
         }
+
+    def test_active_states_are_queued_and_running(self) -> None:
+        """Verify the active states are exactly the queued and running ones, the complement of the final states."""
+        assert JobState.active() == {JobState.QUEUED, JobState.RUNNING}

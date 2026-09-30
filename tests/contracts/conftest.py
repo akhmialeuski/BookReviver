@@ -13,6 +13,7 @@ from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.settings import Settings
 from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.storage import AssetStore, SourceStore
+from tests.helpers.job_queues import QueueAdapter
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
@@ -52,6 +53,18 @@ async def fx_uow_factory(request: pytest.FixtureRequest, fx_settings: Settings) 
 
         yield open_unit_of_work
     await container.close()
+
+
+@pytest.fixture(params=list(QueueAdapter), ids=str)
+def fx_queue_adapter(request: pytest.FixtureRequest) -> QueueAdapter:
+    """Return each adapter of the JobQueue port in turn.
+
+    :param request: Request of the parametrized fixture, whose ``param`` is the adapter.
+    :type request: pytest.FixtureRequest
+    :returns: The adapter under test, set up by ``open_queue_under_test``.
+    :rtype: QueueAdapter
+    """
+    return QueueAdapter(request.param)
 
 
 @pytest.fixture(params=list(STORAGE_PROVIDERS), ids=str)
