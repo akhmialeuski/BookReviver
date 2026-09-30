@@ -50,6 +50,8 @@ dependencies = [
 [project.scripts]
 # advanced-alchemy's migration commands on the database the settings name, such as `bookreviver-migrate upgrade head`
 bookreviver-migrate = "bookreviver.app.migrate:migrate"
+# Writes the OpenAPI schema the frontend client is generated from to docs/openapi.json
+bookreviver-openapi = "bookreviver.app.openapi:main"
 
 [tool.fastapi]
 entrypoint = "bookreviver.app.asgi:app"

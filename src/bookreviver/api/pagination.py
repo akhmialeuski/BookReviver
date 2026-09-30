@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from fastapi import Query
 from fastapi_pagination import Page, Params
-from fastapi_pagination.customization import CustomizedPage, UseParams
+from fastapi_pagination.customization import CustomizedPage, UseName, UseParams
 from pydantic import BaseModel
 
 from bookreviver.domain.values import SliceRequest
@@ -18,6 +18,8 @@ PageItemT = TypeVar('PageItemT')
 MANIFEST_DEFAULT_SIZE: int = 50
 # A viewer needs the whole book in few requests, so a manifest page may hold ten times the 100 pages Params allows
 MANIFEST_MAX_SIZE: int = 1_000
+# Name of the page class in the OpenAPI schema, which the generated client takes its type name from
+MANIFEST_PAGE_NAME: str = 'ManifestPage'
 
 
 class ManifestParams(Params):
@@ -32,7 +34,7 @@ class ManifestParams(Params):
 
 # fastapi-pagination checks the query against the parameters of the response's page class as well as against those of
 # the route, so the limit has to be raised on the page class too, or a window of more than 100 pages is refused
-ManifestPage = CustomizedPage[Page[PageItemT], UseParams(ManifestParams)]
+ManifestPage = CustomizedPage[Page[PageItemT], UseParams(ManifestParams), UseName(MANIFEST_PAGE_NAME)]
 
 
 class Pager[ItemT, SchemaT: BaseModel]:
