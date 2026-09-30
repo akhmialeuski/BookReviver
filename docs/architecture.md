@@ -119,6 +119,7 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Edits        | `PageEdit` with geometry (`Rect`, `Quad`, `Mesh`, `Region` with `RegionKind`) or a mask       |
 | Events       | `JobChanged`, `SourceImported`, `ScanReady`, `PagesChanged`, `PageVersionReady`, and others   |
 | Jobs         | `Job`, `JobKind`, `JobState`, `Progress`, `WorkerPool` (cpu, gpu, llm)                        |
+| Imports      | `ImportRequest`, `ImportResult`, `RejectedFile`, `RejectionReason`, `UploadProblem`           |
 | Queries      | `Slice[T]` (items and total), `SliceRequest` (offset and limit)                               |
 | Errors       | `DomainError`, `NotFoundError`, `PermissionDeniedError`, `UploadRejectedError`, and others    |
 
@@ -468,6 +469,7 @@ The storage ports divide the files of a project by prefix. `SourceStore` owns `i
 | `SourceStore.delete_source`                     | `(project_id, source_id)`                                                     |
 | `SourceStore.delete_project`                    | Removes `sources/` and `incoming/` of a project                               |
 | `AssetStore.writable`, `readable`               | Only keys under `projects/<id>/assets/`                                       |
+| `AssetStore.copy`                               | `(source, target)`, both under `assets/`, the copy standing on its own        |
 | `AssetStore.delete_prefix`                      | Only prefixes under `projects/<id>/assets/`                                   |
 | `AssetStore.delete_project`                     | Removes `assets/` of the project                                              |
 
@@ -479,7 +481,12 @@ source's own directory in one rename, and a refused promotion leaves the files s
 The imaging ports work on one source at a time. `SourceInspector.group(files)` splits the files of an upload into
 sources and assembles an indirect DjVu document from its index file and page files, because which files make one
 source is a property of the format. `SourceInspector.inspect` describes one source and its scans, and
-`PageRasterizer.extract` writes one scan of one source.
+`PageRasterizer.extract` writes one scan of one source. `Tiler` cuts the IIIF pyramid (`tile`), the preview
+(`preview`) and the thumbnail (`thumbnail`) of an image, each at the size the imaging settings give.
+
+The persistence ports answer the two questions an import retry asks. `ScanRepository.list_unready` returns the scans of
+a project whose renditions are not ready, source by source in import order, and `PageRepository.list_for_scan` returns
+the pages cut from one scan by their slot.
 
 ## Adapters
 
@@ -562,8 +569,11 @@ erDiagram
 - `pages` has the primary key `id`, `project_id` with `ON DELETE CASCADE`, `scan_id` with `ON DELETE SET NULL`, and
   the unique pairs `(project_id, order_key)` and `(scan_id, slot)`. Its columns are `order_key`, `label`, `kind`,
   `origin`, `slot`, `included`, `notes`, `created_at` and `updated_at`.
-- `jobs` keeps its columns and gains a partial unique index on `project_id`
-  `WHERE kind = 'import-source' AND state IN ('queued', 'running')`, so a project runs one import at a time.
+- `jobs` has the primary key `id` and `project_id` with `ON DELETE CASCADE`. Its columns are `kind`, `state`,
+  `progress_done`, `progress_total`, `error`, `request` and `result` as JSON, both empty for a job that has none,
+  `created_at`, `started_at` and `finished_at`. The partial unique index `ix_jobs_one_active_import` on `project_id`
+  `WHERE kind = 'import-source' AND state IN ('queued', 'running')` keeps a project to one import at a time, and
+  both adapters report its violation as a `ConflictError` when the job is added.
 - `page_versions` has the primary key `id`, `page_id` with `ON DELETE CASCADE`, `input_id` with `ON DELETE SET NULL`,
   and an index on `(page_id, stage)`. Its columns are `stage`, `processor_key`, `processor_version`, `params`,
   `transform` and `data` as JSON, `renditions_ready`, `state` and `created_at`.
@@ -586,8 +596,8 @@ the in-memory adapter has no accounts and there is no accounts port.
 
 The tables `sources`, `scans`, `pages` and `page_versions` come with the book model, because a page gets its base
 version with its own copy of the image when it is created, and the baseline migration creates them. `page_stages`,
-`page_edits` and `recipes` come with the processing framework, and the partial unique index on `jobs` with the
-import job, each through a migration of its own.
+`page_edits` and `recipes` come with the processing framework, each through a migration of its own. The `request` and
+`result` columns and the partial unique index of `jobs` came with the import job, in their own revision.
 
 ### Migrations
 
@@ -883,44 +893,70 @@ flowchart TD
     U(["POST /projects/id/sources<br/>N files"]) --> St["SourceStore.stage<br/>→ incoming/job/"]
     St --> Ch{{"for each file:<br/>new SHA-256 and readable?"}}
     Ch -- no --> R["rejected file,<br/>reason kept in the job"]
-    Ch -- yes --> S["Source row,<br/>promote → sources/id/"]
-    S --> C["Scan rows, full,<br/>iiif, preview, thumb"]
-    C --> P["page-split skipped:<br/>one page per new scan"]
+    Ch -- yes --> S["Source, scans, pages<br/>committed, then<br/>promote → sources/id/"]
+    S --> C["Scans without images:<br/>full, iiif, preview, thumb"]
+    C --> P["page-split skipped:<br/>split.none of each page"]
     style St stroke:#5b3fd1,stroke-width:2px
     style S stroke:#5b3fd1,stroke-width:2px
     style C stroke:#1e7a4d,stroke-width:2px
 ```
 
-1. `POST /api/v1/projects/{id}/sources` streams the upload into `incoming/<job_id>/`, records an import job and
-   enqueues it, and the response returns the job at once. The frontend offers two ways to choose files, a whole
-   directory or individual files, and both reach the API as the same list of files, so the backend has one upload
-   path for both. An upload holds at most `max_upload_files` files, 10000 by default, and `max_upload_bytes`, 4 GiB
-   by default, and a larger one is refused with an RFC 9457 problem.
+1. `POST /api/v1/projects/{id}/sources` streams the upload into `incoming/<job_id>/`, records an import job with the
+   files it received (`Job.request`) and enqueues it, and the response returns the job at once. The frontend offers
+   two ways to choose files, a whole directory or individual files, and both reach the API as the same list of files,
+   so the backend has one upload path for both. An upload holds at most `max_upload_files` files, 10000 by default,
+   and `max_upload_bytes`, 4 GiB by default, and a larger one is refused with a 413 RFC 9457 problem. The route
+   class parses the multipart body with that file limit, since Starlette's parser stops at 1000 files, and lets the
+   parser take one file more than the rule, so an upload of one file too many is answered by the service with the
+   413 problem and an upload of two files too many by the parser with a 400. The project is checked for a queued or
+   running import before any file is received, so a refused upload is not streamed first.
 2. `SourceInspector.group` splits the upload into sources. `FileType.from_name` decides the type of every file, and
-   any mix of types is accepted, because each file is a source of its own. An indirect DjVu document is assembled
-   from its index file, and one that lacks some of its page files is rejected as a whole, with the list of missing
-   files, while the other files of the upload are still imported. The files are taken in the natural order of their
-   names, so `part2.pdf` precedes `part10.pdf`, and this order becomes the order of their pages in the book.
-3. A file whose SHA-256 is already stored in the project is rejected with the name of the existing source.
-4. Every source is inspected, promoted to `sources/<source_id>/` and committed with its scans in a transaction of its
-   own. A job retried after a crash skips the sources already committed, and deletes only the version directories of
-   scans that are not marked ready.
-5. Every scan gets `full`: a scanned PDF page whose content is one fitting JPEG image, or an image file that is one,
-   is copied byte for byte, and anything else is rasterised once at its native resolution. pyvips cuts `full` into
-   the IIIF pyramid, the preview and the thumbnail, in a bounded pool. Each scan is marked ready as soon as it is done,
-   so the viewer shows the first pages while the rest are being cut. An import job that was cancelled leaves scans
-   without renditions, and the next import job of the project cuts them first.
-6. The job then runs the page split skipped: every new scan becomes a page at the end of the book, with a base
-   version `split.none` that holds a copy of the scan's image and the scan's `source_label` as its printed number.
-   The user splits spreads and arranges the pages later, in the `page-split` and `page-order` stages.
-7. Empty fields of `BookDetails` are filled from the `suggestion` of the first source that has a value for them. The
-   title is never overwritten.
-8. The job succeeds when at least one file was imported. Its result lists the files it skipped as `skipped`, each
-   with the reason, and every step publishes progress events, which reach the browser over SSE.
+   any mix of the accepted types is fine, because each file is a source of its own. A file of a type no source can be
+   is rejected on its own as `unsupported-type`, so it does not stop the others. An indirect DjVu document is
+   assembled from its index file, and one that lacks some of its page files is rejected as a whole, with the list of
+   missing files, while the other files of the upload are still imported. The sources are taken in the natural order
+   of the names of their main files, so `part2.pdf` precedes `part10.pdf`, and this order becomes the order of their
+   pages in the book, whatever the order of the upload.
+3. A file whose SHA-256 is already stored in the project is rejected as `duplicate`, with the name of the existing
+   source. The digest comes from the staged file's record, so no service reads a file.
+4. Every source is inspected, and one that cannot be read is rejected as `unreadable`, with the message of the error.
+   A readable one is committed with its scans, its pages and the progress of the job in a transaction of its own, and
+   only then are its files promoted to `sources/<source_id>/`, since a commit that failed after a promotion would
+   lose the upload. The same transaction fills the empty fields of `BookDetails` from the `suggestion` of the source,
+   so the first source that has a value for a field is the one that gives it, and the title is never overwritten. A
+   source adds its scans to `Progress.total` when it is committed, and each cut scan adds one to `Progress.done`.
+5. Once every source is committed, the job cuts the images of every scan of the project whose renditions are not
+   ready, which covers its own scans, the scans a cancelled import left and the scans of a delivery that crashed. It
+   cuts at most `imaging.parallel_scans` at once, in the order of the book. Every scan gets `full`: a scanned PDF page
+   whose content is one fitting JPEG image, or an image file that is one, is copied byte for byte, and anything else
+   is rasterised once at its native resolution. `full` is always a JPEG for now, since `PageRasterizer` writes
+   JPEG, so the PNG that decision 22 asks for a bilevel scan arrives with the format the rasteriser writes. pyvips
+   then cuts `preview`, `thumb` and the IIIF pyramid from `full`. The pyramid's `info.json` carries as its `id` the
+   IIIF root, `/api/v1/iiif`, and the key of the pyramid's directory, which `ProjectKeys` builds.
+6. The page split is skipped: every new scan is a page at the end of the book, made in the transaction of its
+   source, with the scan's `source_label` as its printed number, which is empty until the page order task reads the
+   PDF page labels. When a scan is cut, its page gets the base version `split.none`: `AssetStore.copy` copies `full`
+   into the version's own directory, and the four renditions are cut from that copy, so the page holds its own
+   image and its own pyramid. The scan and its versions are marked ready in one transaction with the progress of the
+   job, and `ScanReady` follows, so the viewer shows the first pages while the rest are being cut. The user splits
+   spreads and arranges the pages later, in the `page-split` and `page-order` stages.
+7. The job succeeds when at least one source was imported and fails otherwise, with the message that no file could be
+   imported. `Job.result` lists the imported sources, the rejected files with their reasons, and the names of the
+   files a cancelled job never reached as `skipped`. Every step publishes events, which reach the browser over SSE.
 
-A project runs one import at a time: a second upload while one is queued or running gets a 409 problem, and so does
-deleting a source during an import. When the DjVuLibre tools are not installed the application starts with a
-warning in its log, and every DjVu source is rejected with a message asking to install `djvulibre`.
+The job reads its own state before every source and every scan, through the write of its progress, which is guarded
+by the state, so it stops at the first step that finds it cancelled. The sources it committed stay, their scans without
+renditions wait for the next import, and the files that never became sources are removed from `incoming/<job_id>/`
+and named in `skipped`. A job that is delivered again after a crash runs the same steps: it skips the sources it
+committed, promotes the files of one whose promotion the crash cut short, and writes the directories of unready scans
+and of their base versions again, after deleting what an earlier attempt left in them, since a stored file is never
+replaced. A job that has already finished, such as one cancelled while it was queued, only has its upload removed.
+
+A project runs one import at a time: a second upload while one is queued or running gets a 409 problem, checked
+before the upload is received, and the partial unique index of `jobs` refuses the second of two uploads that pass that
+check together. Deleting a source during an import gets a 409 as well. When the DjVuLibre tools are not installed the
+application starts with a warning in its log, and every DjVu source is rejected with a message asking to install
+`djvulibre`.
 
 ## HTTP API
 
@@ -944,6 +980,11 @@ All endpoints live under `/api/v1`. The OpenAPI schema is generated from the rou
 
 On a server, a reverse proxy serves `/iiif` straight from disk or object storage, after an access check by the API.
 
+`POST /projects/{id}/sources` takes the files as a multipart body and answers 202 with the queued job, 409 while the
+project imports, 413 for an upload past `max_upload_files` or `max_upload_bytes`, and 404 for a project of another
+account. The job's `result` lists the sources imported, the files rejected with their reasons and the files a cancelled
+job skipped.
+
 Pages are addressed by their `PageId`, never by their position. `POST /projects/{id}/pages` adds a placeholder or a
 blank leaf, `POST .../move` moves a page to another position, and `PUT .../scan` binds a scan to a placeholder. A
 scan that the import already made into a page of its own is bound with the flag `take_over`, which moves the scan
@@ -957,7 +998,7 @@ the viewer asks for `?included=true`.
 
 The events of a project reach the browser over `GET /projects/{id}/events`:
 
-- `JobChanged` when a job changes state or progress.
+- `JobChanged` when a job changes state or progress, its last one carrying the result of an import.
 - `SourceImported` when a source and its scans are committed.
 - `ScanReady` when the renditions of a scan can be shown.
 - `PagesChanged` when pages are added, removed or moved, or their labels or kinds change.
