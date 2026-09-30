@@ -1,19 +1,39 @@
 """Entities: domain objects with an identity, frozen and changed through ``attrs.evolve``."""
 
+import re
 from typing import TYPE_CHECKING
 
-from attrs import field, frozen
+from attrs import field, frozen, validators
 
-from bookreviver.domain.enums import JobState
+from bookreviver.domain.enums import JobState, VersionState
 from bookreviver.domain.ids import StorageKey
-from bookreviver.domain.values import PageAssets, Progress
+from bookreviver.domain.values import (
+    SHA256_PATTERN,
+    MetadataSuggestion,
+    PageAssets,
+    Progress,
+    Renditions,
+    Transform,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import datetime
 
-    from bookreviver.domain.enums import JobKind, PageAsset
-    from bookreviver.domain.ids import AccountId, JobId, ProjectId
-    from bookreviver.domain.values import BookDetails, PageFacts, SourceSummary
+    from bookreviver.domain.enums import FileType, JobKind, PageAsset, SourceKind, Stage
+    from bookreviver.domain.ids import AccountId, JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
+    from bookreviver.domain.values import (
+        BookDetails,
+        MetadataMap,
+        PageFacts,
+        ProcessorRef,
+        ScanFacts,
+        SourceFile,
+        SourceSummary,
+    )
+
+# A page version identifier: a hash of what produced the version, cut to 16 hexadecimal digits
+VERSION_ID_PATTERN: str = r'[0-9a-f]{16}'
 
 
 @frozen(kw_only=True)
@@ -92,6 +112,111 @@ class Page:
         :rtype: StorageKey
         """
         return StorageKey(f'projects/{self.project_id}/pages/{self.index}/v{self.assets.version}/{asset}')
+
+
+@frozen(kw_only=True)
+class Source:
+    """One uploaded file of a book, or the files of one indirect DjVu document, never changed after its import.
+
+    :ivar id: Identifier of the source, which also names its storage directory.
+    :ivar project_id: Project owning the source.
+    :ivar kind: Kind of the source, which selects the format that reads it.
+    :ivar file_type: Exact format of the main file.
+    :ivar file_name: Name the browser sent, with the relative path of a directory upload sanitised.
+    :ivar files: Stored files, the main file first; more than one only for an indirect DjVu document.
+    :ivar size_bytes: Total size of the files in bytes.
+    :ivar sha256: SHA-256 digest of the main file, which refuses a second upload of the same file to the project.
+    :ivar scan_count: Number of scans the source holds.
+    :ivar metadata: Technical metadata of the format, which stays here and is never copied into the project.
+    :ivar suggestion: Values of the book description found in the file, which fill only empty description fields.
+    :ivar import_job_id: Import job that created the source, or None once that job is deleted.
+    :ivar imported_at: When the source became part of the project.
+    """
+
+    id: SourceId
+    project_id: ProjectId
+    kind: SourceKind
+    file_type: FileType
+    file_name: str = field(validator=validators.min_len(1))
+    files: Sequence[SourceFile] = field(validator=validators.min_len(1))
+    size_bytes: int = field(validator=validators.ge(0))
+    sha256: str = field(validator=validators.matches_re(SHA256_PATTERN))
+    scan_count: int = field(validator=validators.ge(0))
+    metadata: MetadataMap = field(factory=dict)
+    suggestion: MetadataSuggestion = field(factory=MetadataSuggestion)
+    import_job_id: JobId | None = None
+    imported_at: datetime
+
+
+@frozen(kw_only=True)
+class Scan:
+    """One image of a source as the file holds it: a page of a PDF or DjVu document, or a frame of an image file.
+
+    A scan is created by the import and never changes, apart from the state of its derived files.
+
+    :ivar id: Identifier of the scan.
+    :ivar project_id: Project owning the scan's source, which lists the scans of a book without reading its sources.
+    :ivar source_id: Source holding the scan.
+    :ivar number: Position of the scan in its source, starting at 0.
+    :ivar source_label: Page label the file itself gives, such as the PDF page label ``xii``, or empty.
+    :ivar facts: Technical facts of the image.
+    :ivar renditions: Readiness and version of the derived files.
+    """
+
+    id: ScanId
+    project_id: ProjectId
+    source_id: SourceId
+    number: int = field(validator=validators.ge(0))
+    source_label: str = ''
+    facts: ScanFacts
+    renditions: Renditions = field(factory=Renditions)
+
+
+@frozen(kw_only=True)
+class PageVersion:
+    """The result of one processing step on one page of the book, never changed once ready.
+
+    A version is identified by a hash of the page, the processor, its parameters, the input version and the manual
+    edit, so equal work gets the same identifier and its cached result. The first version of a page, its base version,
+    has no input version: its input is a scan or, for a blank leaf, nothing.
+
+    :ivar id: Identifier of the version, the hash of what produced it.
+    :ivar page_id: Page of the book the version belongs to.
+    :ivar stage: Stage of the step.
+    :ivar processor: Key and version of the processor that ran the step.
+    :ivar input_id: Version the step read, or None for a base version.
+    :ivar params: Parameters of the step, following the processor's JSON Schema.
+    :ivar transform: Transform of coordinates from the input to this version.
+    :ivar data: Data the step found, such as an angle, a frame or a confidence.
+    :ivar renditions: State of the version's image files, or None for a step without an image.
+    :ivar state: Where the version is in its lifecycle.
+    :ivar created_at: When the version was created.
+    """
+
+    id: PageVersionId
+    page_id: PageId
+    stage: Stage
+    processor: ProcessorRef
+    input_id: PageVersionId | None = None
+    params: MetadataMap = field(factory=dict)
+    transform: Transform = field(factory=Transform)
+    data: MetadataMap = field(factory=dict)
+    renditions: Renditions | None = field(factory=Renditions)
+    state: VersionState = VersionState.PENDING
+    created_at: datetime
+
+    def __attrs_post_init__(self) -> None:
+        """Check the identifier and the renditions, which place the version's files in storage.
+
+        :raises ValueError: If the identifier is not 16 lower-case hexadecimal digits, or the renditions are past their
+                            first version, since a version is written once into the directory of its identifier.
+        """
+        if not re.fullmatch(VERSION_ID_PATTERN, self.id):
+            err_msg = f'A page version id is 16 lower-case hexadecimal digits, not {self.id!r}.'
+            raise ValueError(err_msg)
+        if self.renditions is not None and self.renditions.version != Renditions.FIRST_VERSION:
+            err_msg = 'The renditions of a page version are written once and stay at their first version.'
+            raise ValueError(err_msg)
 
 
 @frozen(kw_only=True)

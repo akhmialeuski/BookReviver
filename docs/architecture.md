@@ -279,6 +279,7 @@ it.
 | Field          | Type         | Meaning                                                                                  |
 | -------------- | ------------ | ---------------------------------------------------------------------------------------- |
 | `id`           | `ScanId`     | Identifier of the scan                                                                   |
+| `project_id`   | `ProjectId`  | Project owning the source, so the scans of a book are listed without its sources         |
 | `source_id`    | `SourceId`   | Source holding the scan                                                                  |
 | `number`       | `int`        | Number of the scan in its source from zero: the PDF or DjVu page, the TIFF frame         |
 | `source_label` | `str`        | Page label the file itself gives, such as the PDF page label `xii`, or empty             |
@@ -451,7 +452,7 @@ The persistence ports address data through the source, the scan and the page of 
 changes all of them in one transaction. `PageRepository` addresses a page by its `PageId` and lists the pages of a
 project in `order_key` order, and the position of a page in the book is computed when it is read, never stored.
 `OrderKeys` is a port with an adapter on fractional-indexing, because the domain imports only the standard library
-and attrs.
+and attrs. Like `Clock.now`, its methods are synchronous, because they compute a string and wait on nothing.
 
 The storage ports divide the files of a project by prefix. `SourceStore` owns `incoming/` and `sources/`, and
 `AssetStore` owns `assets/`, so each port can delete everything of a project it holds:

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 from dishka import make_async_container
 
+from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.app.providers.core import CoreProvider
 from bookreviver.app.providers.database import DatabaseProvider
 from bookreviver.app.providers.persistence import PERSISTENCE_PROVIDERS
@@ -20,7 +21,12 @@ if TYPE_CHECKING:
 
     from dishka import AsyncContainer
 
+    from bookreviver.ports.ordering import OrderKeys
+
 type UnitOfWorkFactory = Callable[[], Awaitable[UnitOfWork]]
+
+# Every adapter of the OrderKeys port by name; each computes keys in memory, so none needs a provider
+ORDER_KEYS_ADAPTERS: dict[str, type[OrderKeys]] = {'fractional-indexing': FractionalOrderKeys}
 
 
 @pytest.fixture(params=list(PERSISTENCE_PROVIDERS), ids=str)
@@ -53,6 +59,18 @@ async def fx_uow_factory(request: pytest.FixtureRequest, fx_settings: Settings) 
 
         yield open_unit_of_work
     await container.close()
+
+
+@pytest.fixture(params=list(ORDER_KEYS_ADAPTERS), ids=str)
+def fx_order_keys(request: pytest.FixtureRequest) -> OrderKeys:
+    """Return each adapter of the OrderKeys port in turn.
+
+    :param request: Request of the parametrized fixture, whose ``param`` names the adapter.
+    :type request: pytest.FixtureRequest
+    :returns: The adapter under test.
+    :rtype: OrderKeys
+    """
+    return ORDER_KEYS_ADAPTERS[request.param]()
 
 
 @pytest.fixture(params=list(QueueAdapter), ids=str)

@@ -1,20 +1,23 @@
 """Immutable value objects of the domain."""
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from attrs import field, frozen, validators
 
-from bookreviver.domain.enums import Orthography
+from bookreviver.domain.enums import Orthography, TransformKind
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
     from bookreviver.domain.enums import ColorMode, SourceKind
+    from bookreviver.domain.ids import StorageKey
 
 # JSON-compatible metadata as read from a source file
 type MetadataMap = Mapping[str, Any]
+# A SHA-256 digest as lower-case hexadecimal digits
+SHA256_PATTERN: str = r'[0-9a-f]{64}'
 
 
 @frozen(kw_only=True)
@@ -126,6 +129,147 @@ class PageAssets:
 
     ready: bool = False
     version: int = 0
+
+
+@frozen(kw_only=True)
+class SourceFile:
+    """One stored file of a source, as uploaded.
+
+    :ivar name: Name of the file inside the source's directory.
+    :ivar size_bytes: Size of the file in bytes.
+    :ivar sha256: SHA-256 digest of the file's content as lower-case hexadecimal digits.
+    """
+
+    name: str = field(validator=validators.min_len(1))
+    size_bytes: int = field(validator=validators.ge(0))
+    sha256: str = field(validator=validators.matches_re(SHA256_PATTERN))
+
+
+@frozen(kw_only=True)
+class ScanFacts:
+    """Technical facts of one scan, the image a source holds; the file holding it is known from the source.
+
+    :ivar width_px: Width of the image in pixels.
+    :ivar height_px: Height of the image in pixels.
+    :ivar color_mode: Whether the image is bilevel, gray or colour.
+    :ivar dpi_x: Horizontal resolution in dots per inch, or None when the source does not record it.
+    :ivar dpi_y: Vertical resolution in dots per inch, or None when the source does not record it.
+    :ivar bits_per_component: Bit depth of one colour component, or None when unknown.
+    :ivar image_format: Human name of the image format, such as ``JPEG`` or ``TIFF``.
+    :ivar width_mm: Physical width in millimetres, or None without a resolution.
+    :ivar height_mm: Physical height in millimetres, or None without a resolution.
+    :ivar has_text_layer: Whether the scan carries text, such as the OCR layer of a scanned PDF page.
+    :ivar extra: Further facts under the keys of the inspector that reported them.
+    """
+
+    width_px: int = field(validator=validators.gt(0))
+    height_px: int = field(validator=validators.gt(0))
+    color_mode: ColorMode
+    dpi_x: float | None = None
+    dpi_y: float | None = None
+    bits_per_component: int | None = None
+    image_format: str = ''
+    width_mm: float | None = None
+    height_mm: float | None = None
+    has_text_layer: bool = False
+    extra: MetadataMap = field(factory=dict)
+
+
+@frozen(kw_only=True)
+class Renditions:
+    """State of the derived files of a scan or a page version: full image, preview, thumbnail and tile pyramid.
+
+    A scan whose files are cut again gets the next version, so the keys of the new files differ from the old ones and
+    no cache serves a stale image. A page version is written once into the directory of its own identifier, so its
+    renditions stay at the first version.
+
+    :ivar ready: Whether every derived file of the current version is published.
+    :ivar version: Version of the derived files, part of their storage keys.
+    """
+
+    FIRST_VERSION: ClassVar[int] = 1
+
+    ready: bool = False
+    version: int = field(default=FIRST_VERSION, validator=validators.ge(FIRST_VERSION))
+
+
+@frozen(kw_only=True)
+class ProcessorRef:
+    """The processor that made a page version, by key and version.
+
+    :ivar key: Key of the processor, such as ``geometry.deskew``, which also names its storage directory.
+    :ivar version: Version of the processor, such as ``1.2``; a new version computes new page versions.
+    """
+
+    key: str = field(validator=validators.min_len(1))
+    version: str = field(validator=validators.min_len(1))
+
+
+@frozen(kw_only=True)
+class Point:
+    """A point in the pixel coordinates of an image, whose origin is its top left corner.
+
+    :ivar x: Distance from the left edge in pixels.
+    :ivar y: Distance from the top edge in pixels.
+    """
+
+    x: float
+    y: float
+
+
+@frozen(kw_only=True)
+class Quad:
+    """A quadrilateral in the pixel coordinates of an image, such as a half of a spread or a skewed page.
+
+    :ivar top_left: Corner at the top left of the area.
+    :ivar top_right: Corner at the top right of the area.
+    :ivar bottom_right: Corner at the bottom right of the area.
+    :ivar bottom_left: Corner at the bottom left of the area.
+    """
+
+    top_left: Point
+    top_right: Point
+    bottom_right: Point
+    bottom_left: Point
+
+
+@frozen(kw_only=True)
+class Transform:
+    """The transform of coordinates a processing step applies from its input image to its output image.
+
+    The chain of transforms from a scan to any page version maps coordinates of the version back to the scan. Each kind
+    takes its own argument: a crop and a perspective correction a quadrilateral, a rotation an angle, and a dewarping
+    the key of its stored mesh. The identity takes none.
+
+    :ivar kind: Kind of the transform.
+    :ivar quad: Area of the input that becomes the output, for a crop or a perspective correction.
+    :ivar angle: Angle of a rotation in degrees, counter-clockwise.
+    :ivar mesh_key: Storage key of the mesh a dewarping follows.
+    """
+
+    ARGUMENTS: ClassVar[Mapping[TransformKind, frozenset[str]]] = {
+        TransformKind.IDENTITY: frozenset(),
+        TransformKind.CROP: frozenset({'quad'}),
+        TransformKind.ROTATE: frozenset({'angle'}),
+        TransformKind.PERSPECTIVE: frozenset({'quad'}),
+        TransformKind.MESH: frozenset({'mesh_key'}),
+    }
+
+    kind: TransformKind = TransformKind.IDENTITY
+    quad: Quad | None = None
+    angle: float | None = None
+    mesh_key: StorageKey | None = None
+
+    def __attrs_post_init__(self) -> None:
+        """Check that exactly the arguments of the kind are given.
+
+        :raises ValueError: If an argument of the kind is missing or an argument of another kind is given.
+        """
+        every_argument = frozenset[str]().union(*self.ARGUMENTS.values())
+        given = {name for name in every_argument if getattr(self, name) is not None}
+        if given != (expected := self.ARGUMENTS[self.kind]):
+            err_msg = f'A {self.kind} transform takes {sorted(expected) or "no arguments"}, not {sorted(given)}.'
+            raise ValueError(err_msg)
 
 
 @frozen(kw_only=True)
