@@ -309,6 +309,21 @@ class LocalAssetStore(_LocalTree, AssetStore):
         yield Path(path)
 
     @override
+    async def copy(self, source: StorageKey, target: StorageKey) -> None:
+        """Copy the file or directory tree at ``source`` into a hidden sibling of ``target``, then publish it.
+
+        :param source: Key the file or directory is stored at.
+        :type source: StorageKey
+        :param target: Key to store the copy at.
+        :type target: StorageKey
+        :raises NotFoundError: If nothing is stored at ``source``.
+        :raises ConflictError: If something is stored at ``target``, before the copy starts or when it publishes.
+        :raises ValueError: If either key does not lie under ``projects/<id>/assets/``.
+        """
+        async with self.readable(source) as origin, self.writable(target) as destination:
+            await asyncify(_copy_tree)(origin, destination)
+
+    @override
     async def delete_prefix(self, prefix: StorageKey) -> None:
         """Remove the file or directory tree at ``prefix``, if there is one.
 
@@ -414,6 +429,20 @@ async def _publish(staged: anyio.Path, *, target: anyio.Path, conflict_message: 
         if error.errno != errno.ENOTEMPTY:
             raise
         raise ConflictError(conflict_message) from error
+
+
+def _copy_tree(origin: Path, destination: Path) -> None:
+    """Copy a file, or a directory with everything in it, to a path that does not exist yet.
+
+    :param origin: Existing file or directory to copy.
+    :type origin: Path
+    :param destination: Path to create, whose parent exists.
+    :type destination: Path
+    """
+    if origin.is_dir():
+        shutil.copytree(origin, destination)
+    else:
+        shutil.copyfile(origin, destination)
 
 
 async def _remove(path: anyio.Path) -> None:

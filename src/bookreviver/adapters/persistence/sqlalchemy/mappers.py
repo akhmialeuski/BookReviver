@@ -16,6 +16,7 @@ storage concerns.
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, override
+from uuid import UUID
 
 from attrs import asdict
 
@@ -28,15 +29,18 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     SourceRow,
 )
 from bookreviver.domain.entities import Job, Page, PageVersion, Project, Scan, Source
-from bookreviver.domain.enums import TransformKind
+from bookreviver.domain.enums import RejectionReason, TransformKind
 from bookreviver.domain.ids import AccountId, JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId, StorageKey
 from bookreviver.domain.values import (
     BookDetails,
+    ImportRequest,
+    ImportResult,
     MetadataSuggestion,
     Point,
     ProcessorRef,
     Progress,
     Quad,
+    RejectedFile,
     Renditions,
     ScanFacts,
     SourceFile,
@@ -45,6 +49,21 @@ from bookreviver.domain.values import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+
+def json_value(_owner: object, _field: object, value: object) -> object:
+    """Turn a value of a stored value object into one JSON can hold, as ``attrs.asdict`` calls it for every value.
+
+    :param _owner: Instance the value belongs to, which ``asdict`` passes and this rule does not need.
+    :type _owner: object
+    :param _field: Field of the instance that holds the value, likewise unused.
+    :type _field: object
+    :param value: The value to store.
+    :type value: object
+    :returns: The text of an identifier, which JSON has no type for, and any other value unchanged.
+    :rtype: object
+    """
+    return str(value) if isinstance(value, UUID) else value
 
 
 class RowMapper[EntityT, RowT](ABC):
@@ -383,7 +402,7 @@ class ScanMapper(RowMapper[Scan, ScanRow]):
 
 
 class JobMapper(RowMapper[Job, JobRow]):
-    """Translation of a job, whose progress is flattened into job columns."""
+    """Translation of a job, whose progress is flattened into job columns and whose request and result are JSON."""
 
     @override
     def to_entity(self, row: JobRow) -> Job:
@@ -391,9 +410,10 @@ class JobMapper(RowMapper[Job, JobRow]):
 
         :param row: Job row loaded from the database.
         :type row: JobRow
-        :returns: Job with its state, progress and timestamps.
+        :returns: Job with its state, progress, request, result and timestamps.
         :rtype: Job
         """
+        request, result = row.request, row.result
         return Job(
             id=JobId(row.id),
             project_id=ProjectId(row.project_id),
@@ -401,6 +421,21 @@ class JobMapper(RowMapper[Job, JobRow]):
             state=row.state,
             progress=Progress(done=row.progress_done, total=row.progress_total),
             error=row.error,
+            request=None if request is None else ImportRequest(files=[SourceFile(**file) for file in request['files']]),
+            result=None
+            if result is None
+            else ImportResult(
+                imported=[SourceId(UUID(source_id)) for source_id in result['imported']],
+                rejected=[
+                    RejectedFile(
+                        file_name=rejected['file_name'],
+                        reason=RejectionReason(rejected['reason']),
+                        detail=rejected['detail'],
+                    )
+                    for rejected in result['rejected']
+                ],
+                skipped=result['skipped'],
+            ),
             created_at=row.created_at,
             started_at=row.started_at,
             finished_at=row.finished_at,
@@ -423,6 +458,9 @@ class JobMapper(RowMapper[Job, JobRow]):
             progress_done=entity.progress.done,
             progress_total=entity.progress.total,
             error=entity.error,
+            request=None if entity.request is None else asdict(entity.request),
+            # A source identifier is a UUID, which JSON has no type for
+            result=None if entity.result is None else asdict(entity.result, value_serializer=json_value),
             created_at=entity.created_at,
             started_at=entity.started_at,
             finished_at=entity.finished_at,

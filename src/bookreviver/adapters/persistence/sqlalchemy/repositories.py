@@ -507,6 +507,23 @@ class SqlAlchemyScanRepository(SqlAlchemyRepository[Scan, ScanId, ScanRow], Scan
             items=[self._mapper.to_entity(row) for row in rows], total=await self._rows.count(project_id=project_id)
         )
 
+    @override
+    async def list_unready(self, project_id: ProjectId) -> Sequence[Scan]:
+        """Return the project's scans whose renditions are not ready, in the order ``list_for_project`` lists them.
+
+        :param project_id: Project owning the scans.
+        :type project_id: ProjectId
+        :returns: The scans without ready renditions.
+        :rtype: Sequence[Scan]
+        """
+        statement = (
+            select(ScanRow)
+            .join(SourceRow, ScanRow.source_id == SourceRow.id)
+            .where(ScanRow.project_id == project_id, ScanRow.renditions_ready.is_(False))
+            .order_by(SourceRow.imported_at, SourceRow.id, ScanRow.number)
+        )
+        return [self._mapper.to_entity(row) for row in (await self._rows.session.scalars(statement)).all()]
+
 
 class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], PageRepository):
     """Pages of the book, listed in the byte order of their order keys."""
@@ -540,6 +557,18 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
             project_id=project_id,
         )
         return Slice(items=[self._mapper.to_entity(row) for row in rows], total=total)
+
+    @override
+    async def list_for_scan(self, scan_id: ScanId) -> Sequence[Page]:
+        """Return the pages cut from one scan by their slot.
+
+        :param scan_id: Scan the pages were cut from.
+        :type scan_id: ScanId
+        :returns: Every page that names the scan.
+        :rtype: Sequence[Page]
+        """
+        rows = await self._rows.get_many(order_by=PageRow.slot.asc(), scan_id=scan_id)
+        return [self._mapper.to_entity(row) for row in rows]
 
     @override
     async def last_order_key(self, project_id: ProjectId) -> str | None:

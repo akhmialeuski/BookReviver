@@ -6,14 +6,25 @@ project that is never stored takes a bare account identifier.
 
 from operator import attrgetter
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import JobState, PageKind
+from bookreviver.domain.enums import JobState, PageKind, RejectionReason
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.values import BookDetails, MetadataSuggestion, Renditions, SliceRequest
+from bookreviver.domain.ids import SourceId
+from bookreviver.domain.values import (
+    BookDetails,
+    ImportRequest,
+    ImportResult,
+    MetadataSuggestion,
+    RejectedFile,
+    Renditions,
+    SliceRequest,
+    SourceFile,
+)
 from tests.helpers.builders import (
     make_job,
     make_page,
@@ -35,6 +46,7 @@ PAGE_COUNT: int = 3
 # Included pages, sources and scans of the book _add_book stores
 BOOK: tuple[int, int, int] = (PAGE_COUNT - 1, 1, PAGE_COUNT)
 EVERY_STATE: frozenset[JobState] = frozenset(JobState)
+FINAL_STATES: list[JobState] = [state for state in JobState if state.is_final]
 OPERATION_ARG: str = 'operation'
 # The one single-entity operation that takes the entity rather than its identifier
 UPDATE_OPERATION: str = 'update'
@@ -579,6 +591,64 @@ class TestScanRepository:
         await uow.commit()
         assert await (await fx_uow_factory()).scans.get(scan.id) == ready
 
+    async def test_list_unready_returns_the_scans_without_ready_renditions_in_import_order(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the unready scans of a project list source by source and by number, without ready or foreign ones.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        first = make_source(project_id=project.id, name='a.pdf', minutes=1)
+        second = make_source(project_id=project.id, name='b.pdf', minutes=2)
+        foreign = make_source(project_id=other.id, name='c.pdf', minutes=0)
+        ready = Renditions(ready=True)
+        scans = [
+            make_scan(source=second, number=0),
+            make_scan(source=second, number=1),
+            evolve(make_scan(source=first, number=0), renditions=ready),
+            make_scan(source=first, number=1),
+            make_scan(source=first, number=2),
+        ]
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.projects.add(other)
+        await uow.sources.add_many([second, first, foreign])
+        await uow.scans.add_many([*scans, make_scan(source=foreign, number=0)])
+        await uow.commit()
+        unready = await (await fx_uow_factory()).scans.list_unready(project.id)
+        assert [(scan.source_id, scan.number) for scan in unready] == [
+            (first.id, 1),
+            (first.id, 2),
+            (second.id, 0),
+            (second.id, 1),
+        ]
+
+    async def test_list_unready_is_empty_for_a_project_with_every_scan_ready(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a project whose scans are all ready, or that has none, has nothing left to cut.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        source = make_source(project_id=project.id)
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        expect(await uow.scans.list_unready(project.id) == [])
+        await uow.sources.add(source)
+        await uow.scans.add(evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True)))
+        await uow.commit()
+        expect(await (await fx_uow_factory()).scans.list_unready(project.id) == [])
+        assert_expectations()
+
     async def test_same_number_twice_in_a_source_raises_conflict(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
@@ -667,6 +737,34 @@ class TestPageRepository:
         pages = (await fx_uow_factory()).pages
         expect(await pages.last_order_key(project.id) == 'a1')
         expect(await pages.last_order_key(empty.id) is None)
+        assert_expectations()
+
+    async def test_list_for_scan_returns_the_pages_of_that_scan_by_slot(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the halves of a split scan list by slot, without the pages of other scans or of no scan.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        source = make_source(project_id=project.id)
+        spread, other = make_scan(source=source, number=0), make_scan(source=source, number=1)
+        right = evolve(make_page(project_id=project.id, order_key='a1', scan=spread), slot=2)
+        left = evolve(make_page(project_id=project.id, order_key='a2', scan=spread), slot=1)
+        elsewhere = make_page(project_id=project.id, order_key='a3', scan=other)
+        placeholder = make_page(project_id=project.id, order_key='a4')
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.sources.add(source)
+        await uow.scans.add_many([spread, other])
+        await uow.pages.add_many([right, left, elsewhere, placeholder])
+        await uow.commit()
+        pages = (await fx_uow_factory()).pages
+        expect(await pages.list_for_scan(spread.id) == [left, right])
+        expect(await pages.list_for_scan(other.id) == [elsewhere])
         assert_expectations()
 
     async def test_updated_page_reads_back(self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
@@ -875,7 +973,7 @@ class TestJobRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project(owner_id=await fx_new_owner())
-        old = make_job(project_id=project.id, state=JobState.RUNNING, minutes=1)
+        old = make_job(project_id=project.id, state=JobState.FAILED, minutes=1)
         new = make_job(project_id=project.id, state=JobState.QUEUED, minutes=2)
         done = make_job(project_id=project.id, state=JobState.SUCCEEDED, minutes=3)
         uow = await fx_uow_factory()
@@ -883,8 +981,122 @@ class TestJobRepository:
         for job in (old, new, done):
             await uow.jobs.add(job)
         await uow.commit()
-        active = await (await fx_uow_factory()).jobs.list_for_project(project.id, {JobState.QUEUED, JobState.RUNNING})
-        assert [job.id for job in active] == [new.id, old.id]
+        listed = await (await fx_uow_factory()).jobs.list_for_project(project.id, {JobState.QUEUED, JobState.FAILED})
+        assert [job.id for job in listed] == [new.id, old.id]
+
+    @pytest.mark.parametrize('first_state', sorted(JobState.active()), ids=str)
+    async def test_second_active_import_of_a_project_raises_conflict(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory, first_state: JobState
+    ) -> None:
+        """Verify a project stores one queued or running import, so two uploads that raced cannot both be kept.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        :param first_state: Active state of the import already stored.
+        :type first_state: JobState
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        setup = await fx_uow_factory()
+        await setup.projects.add(project)
+        await setup.jobs.add(make_job(project_id=project.id, state=first_state))
+        await setup.commit()
+        uow = await fx_uow_factory()
+        with pytest.raises(ConflictError):
+            await uow.jobs.add(make_job(project_id=project.id, state=JobState.QUEUED))
+
+    @pytest.mark.parametrize('finished_state', FINAL_STATES, ids=str)
+    async def test_finished_import_leaves_room_for_the_next_one(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory, finished_state: JobState
+    ) -> None:
+        """Verify a finished import, whatever its final state, does not keep the project from importing again.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        :param finished_state: Final state of the earlier imports.
+        :type finished_state: JobState
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        # Two finished imports share the project, and an active one joins them
+        await uow.jobs.add(make_job(project_id=project.id, state=finished_state, minutes=1))
+        await uow.jobs.add(make_job(project_id=project.id, state=finished_state, minutes=2))
+        await uow.jobs.add(make_job(project_id=project.id, state=JobState.QUEUED, minutes=3))
+        await uow.commit()
+        active = await (await fx_uow_factory()).jobs.list_for_project(project.id, JobState.active())
+        assert len(active) == 1
+
+    async def test_active_imports_of_different_projects_are_stored(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the one-import rule is per project, so two books import at the same time.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        first, second = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        uow = await fx_uow_factory()
+        for project in (first, second):
+            await uow.projects.add(project)
+            await uow.jobs.add(make_job(project_id=project.id, state=JobState.RUNNING))
+        await uow.commit()
+        for project in (first, second):
+            assert len(await (await fx_uow_factory()).jobs.list_for_project(project.id, JobState.active())) == 1
+
+    async def test_import_request_and_result_read_back(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the files an import was asked for, and what it did with them, read back as they were stored.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        request = ImportRequest(files=[SourceFile(name='book.pdf', size_bytes=4096, sha256='0' * 64)])
+        result = ImportResult(
+            imported=[SourceId(uuid4())],
+            rejected=[
+                RejectedFile(file_name='again.pdf', reason=RejectionReason.DUPLICATE, detail='Same as book.pdf.')
+            ],
+            skipped=['later.pdf'],
+        )
+        job = evolve(make_job(project_id=project.id, state=JobState.SUCCEEDED), request=request, result=result)
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.jobs.add(job)
+        await uow.commit()
+        stored = await (await fx_uow_factory()).jobs.get(job.id)
+        expect(stored == job)
+        expect(stored.request is not None and list(stored.request.files) == list(request.files))
+        assert_expectations()
+
+    async def test_job_without_a_request_or_result_reads_back_without_them(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a job that carries no request or result, such as a queued one, reads back with neither.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        job = make_job(project_id=project.id)
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.jobs.add(job)
+        await uow.commit()
+        stored = await (await fx_uow_factory()).jobs.get(job.id)
+        assert (stored.request, stored.result) == (None, None)
 
     async def test_job_of_a_missing_project_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
         """Verify a job cannot be stored for a project that does not exist, so no job outlives its book.

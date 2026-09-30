@@ -114,14 +114,12 @@ class ProjectKeys:
         """
         return self._key(KeySegment.ASSETS, KeySegment.SCANS, str(source_id))
 
-    def scan_rendition(self, scan: Scan, rendition: Rendition) -> StorageKey:
-        """Return the key of one rendition of a scan in the scan's current version of renditions.
+    def scan_directory(self, scan: Scan) -> StorageKey:
+        """Return the directory of every rendition of a scan in the scan's current version of renditions.
 
-        :param scan: Scan of the project, whose source, number and renditions version place the file.
+        :param scan: Scan of the project, whose source, number and renditions version place the directory.
         :type scan: Scan
-        :param rendition: Derived file of the scan.
-        :type rendition: Rendition
-        :returns: Key of ``assets/scans/<source_id>/<number>/v<version>/<rendition>``.
+        :returns: Key of ``assets/scans/<source_id>/<number>/v<version>``.
         :rtype: StorageKey
         :raises ValueError: If the scan belongs to another project.
         """
@@ -134,8 +132,20 @@ class ProjectKeys:
             str(scan.source_id),
             str(scan.number),
             f'{self.VERSION_PREFIX}{scan.renditions.version}',
-            rendition,
         )
+
+    def scan_rendition(self, scan: Scan, rendition: Rendition) -> StorageKey:
+        """Return the key of one rendition of a scan in the scan's current version of renditions.
+
+        :param scan: Scan of the project, whose source, number and renditions version place the file.
+        :type scan: Scan
+        :param rendition: Derived file of the scan.
+        :type rendition: Rendition
+        :returns: Key of ``assets/scans/<source_id>/<number>/v<version>/<rendition>``.
+        :rtype: StorageKey
+        :raises ValueError: If the scan belongs to another project.
+        """
+        return StorageKey(f'{self.scan_directory(scan)}{self.SEPARATOR}{rendition}')
 
     def page(self, page_id: PageId) -> StorageKey:
         """Return the directory of every version and edit of one page of the book, removed with the page.
@@ -146,6 +156,24 @@ class ProjectKeys:
         :rtype: StorageKey
         """
         return self._key(KeySegment.ASSETS, KeySegment.PAGES, str(page_id))
+
+    def version_directory(self, version: PageVersion) -> StorageKey:
+        """Return the directory of every rendition and output file of a page version.
+
+        :param version: Page version, whose page, stage, processor and identifier place the directory.
+        :type version: PageVersion
+        :returns: Key of ``assets/pages/<page_id>/<stage>/<processor>/<version_id>``.
+        :rtype: StorageKey
+        :raises ValueError: If the processor key is not a safe directory name.
+        """
+        return self._key(
+            KeySegment.ASSETS,
+            KeySegment.PAGES,
+            str(version.page_id),
+            version.stage,
+            version.processor.key,
+            version.id,
+        )
 
     def version_rendition(self, version: PageVersion, rendition: Rendition) -> StorageKey:
         """Return the key of one rendition of a page version, the version being a page of this project.
@@ -158,15 +186,7 @@ class ProjectKeys:
         :rtype: StorageKey
         :raises ValueError: If the processor key is not a safe directory name.
         """
-        return self._key(
-            KeySegment.ASSETS,
-            KeySegment.PAGES,
-            str(version.page_id),
-            version.stage,
-            version.processor.key,
-            version.id,
-            rendition,
-        )
+        return StorageKey(f'{self.version_directory(version)}{self.SEPARATOR}{rendition}')
 
     def page_edits(self, page_id: PageId, processor_key: str) -> StorageKey:
         """Return the directory of the manual edits of one page that one processor reads.

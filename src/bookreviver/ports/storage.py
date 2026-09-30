@@ -178,6 +178,22 @@ class AssetStore(ABC):
         """
 
     @abstractmethod
+    async def copy(self, source: StorageKey, target: StorageKey) -> None:
+        """Store a copy of the file or directory at ``source`` at ``target``, published whole like a written file.
+
+        The copy stands on its own, so deleting either one leaves the other, which is how a page keeps its image when
+        the scan it was cut from is deleted.
+
+        :param source: Key the file or directory is stored at.
+        :type source: StorageKey
+        :param target: Key to store the copy at.
+        :type target: StorageKey
+        :raises NotFoundError: If nothing is stored at ``source``.
+        :raises ConflictError: If something is stored at ``target``, which is never replaced.
+        :raises ValueError: If either key does not lie under ``projects/<id>/assets/``.
+        """
+
+    @abstractmethod
     async def delete_prefix(self, prefix: StorageKey) -> None:
         """Remove the file or directory at ``prefix`` and everything under it.
 

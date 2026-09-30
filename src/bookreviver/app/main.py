@@ -12,7 +12,7 @@ from fastapi_problem.handler import add_exception_handler
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.api.auth import signed_in_user
 from bookreviver.api.problems import problem_handler
-from bookreviver.api.routing import ROUTERS
+from bookreviver.api.routing import API_PREFIX, ROUTERS
 from bookreviver.app.container import build_container
 from bookreviver.app.providers.accounts import account_routes
 from bookreviver.app.security import install_security, sign_in_throttle
@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 
     from dishka import Provider
 
-API_PREFIX: str = '/api/v1'
 logger = logging.getLogger(__name__)
 
 

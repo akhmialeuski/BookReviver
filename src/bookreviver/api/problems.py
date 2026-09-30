@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     from fastapi_problem.handler import ExceptionHandler
     from starlette.requests import Request
 
+# The upload rules whose breach is answered as a content too large problem
+OVERSIZED_UPLOADS: frozenset[UploadProblem] = frozenset({UploadProblem.TOO_LARGE, UploadProblem.TOO_MANY_FILES})
 NOT_FOUND_DETAIL: str = 'The requested resource does not exist.'
 UNEXPECTED_DETAIL: str = 'An unexpected error occurred. It has been logged.'
 
@@ -108,7 +110,7 @@ def _problem_for(error: DomainError) -> Problem:
     :returns: Problem of the error's class, whose detail is the error's message except for a missing resource.
     :rtype: Problem
     """
-    if isinstance(error, UploadRejectedError) and error.problem is UploadProblem.TOO_LARGE:
+    if isinstance(error, UploadRejectedError) and error.problem in OVERSIZED_UPLOADS:
         return ContentTooLarge(error.problem.label)
     if isinstance(error, NotFoundError):
         # Never echo identifiers of resources the caller may not know exist

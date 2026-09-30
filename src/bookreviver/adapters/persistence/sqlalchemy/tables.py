@@ -30,7 +30,7 @@ from uuid import UUID
 
 from advanced_alchemy.base import DefaultBase
 from advanced_alchemy.types import JsonB
-from sqlalchemy import Enum, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import Enum, ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
@@ -67,6 +67,10 @@ VERSION_ID_LENGTH: Final = 16
 POSTGRESQL_DIALECT: Final = 'postgresql'
 # Order keys compare byte by byte: SQLite's default BINARY collation does, and PostgreSQL needs the C collation
 ORDER_KEY_TYPE: Final = String().with_variant(String(collation='C'), POSTGRESQL_DIALECT)
+# The rows of the partial unique index of ``jobs``: the imports that are queued or running
+ACTIVE_IMPORT: Final = text(
+    f"kind = '{JobKind.IMPORT_SOURCE}' AND state IN ('{JobState.QUEUED}', '{JobState.RUNNING}')"
+)
 
 
 class Relation(enum.StrEnum):
@@ -180,6 +184,8 @@ class JobRow(DefaultBase):
     :ivar progress_done: Number of finished units of work.
     :ivar progress_total: Number of units of work in the job.
     :ivar error: Message of the failure, empty unless the job failed.
+    :ivar request: The files an import job was asked to import, as JSON, or null for a job that takes none.
+    :ivar result: What an import job did with them, as JSON, or null until it has finished.
     :ivar created_at: Time the job was queued.
     :ivar started_at: Time the job started, or null while queued.
     :ivar finished_at: Time the job ended, or null while it runs.
@@ -187,6 +193,17 @@ class JobRow(DefaultBase):
     """
 
     __tablename__ = 'jobs'
+    # A project runs one import at a time, and only the database can keep two uploads that both passed a check
+    # before either committed from being both stored
+    __table_args__ = (
+        Index(
+            'ix_jobs_one_active_import',
+            'project_id',
+            unique=True,
+            sqlite_where=ACTIVE_IMPORT,
+            postgresql_where=ACTIVE_IMPORT,
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), index=True)
@@ -195,6 +212,8 @@ class JobRow(DefaultBase):
     progress_done: Mapped[int]
     progress_total: Mapped[int]
     error: Mapped[str]
+    request: Mapped[dict[str, Any] | None]
+    result: Mapped[dict[str, Any] | None]
     created_at: Mapped[datetime]
     started_at: Mapped[datetime | None]
     finished_at: Mapped[datetime | None]

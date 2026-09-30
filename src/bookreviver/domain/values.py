@@ -10,8 +10,8 @@ from bookreviver.domain.enums import Orthography, TransformKind
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.enums import ColorMode, FileType, SourceKind
-    from bookreviver.domain.ids import StorageKey
+    from bookreviver.domain.enums import ColorMode, FileType, RejectionReason, SourceKind
+    from bookreviver.domain.ids import SourceId, StorageKey
 
 # JSON-compatible metadata as read from a source file
 type MetadataMap = Mapping[str, Any]
@@ -236,6 +236,44 @@ class SourceAnalysis:
     scans: Sequence[ScanFacts]
     file_metadata: MetadataMap = field(factory=dict)
     suggestion: MetadataSuggestion = field(factory=MetadataSuggestion)
+
+
+@frozen(kw_only=True)
+class ImportRequest:
+    """The files an import job was asked to import, as they were staged.
+
+    :ivar files: Name, size and SHA-256 digest of every staged file, in upload order.
+    """
+
+    files: Sequence[SourceFile]
+
+
+@frozen(kw_only=True)
+class RejectedFile:
+    """A file of an upload that was not imported, with the reason shown to the user.
+
+    :ivar file_name: Name of the staged file, or of the main file of its source.
+    :ivar reason: Why the file was not imported.
+    :ivar detail: Text for the user that says more than the reason, such as the name of the existing source.
+    """
+
+    file_name: str = field(validator=validators.min_len(1))
+    reason: RejectionReason
+    detail: str = ''
+
+
+@frozen(kw_only=True)
+class ImportResult:
+    """What an import job did with the files of its upload.
+
+    :ivar imported: Sources the job committed to the project, in book order.
+    :ivar rejected: Files no check let through, each with its reason.
+    :ivar skipped: Names of the files a cancelled job never reached, which no check rejected.
+    """
+
+    imported: Sequence[SourceId] = ()
+    rejected: Sequence[RejectedFile] = ()
+    skipped: Sequence[str] = ()
 
 
 @frozen(kw_only=True)
