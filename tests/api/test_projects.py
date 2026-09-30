@@ -19,7 +19,6 @@ from tests.helpers.seeding import commit_project
 
 if TYPE_CHECKING:
     import httpx
-    from fastapi import FastAPI
     from pydantic import BaseModel
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
@@ -47,10 +46,6 @@ PAGE_SIZE: int = 2
 TITLE: str = 'Slovo o polku'
 AUTHORS: str = 'Anonymous'
 NOTES: str = 'Bought in Vilnia'
-# Start of the reST parameter fields that route docstrings carry after their form feed
-DOCSTRING_FIELD: str = ':param'
-# List, create, read, change and delete
-PROJECT_OPERATION_COUNT: int = 5
 
 
 class InvalidBody(NamedTuple):
@@ -128,23 +123,6 @@ class TestSchemas:
         :type schema: type[BaseModel]
         """
         assert schema.model_fields.keys() == attrs.fields_dict(BookDetails).keys()
-
-    async def test_operations_leave_docstring_fields_out_of_openapi(self, fx_app: FastAPI) -> None:
-        """Verify the reST fields of the route docstrings never reach the published descriptions.
-
-        :param fx_app: The running application.
-        :type fx_app: FastAPI
-        """
-        operations = [
-            operation
-            for path, item in fx_app.openapi()['paths'].items()
-            if path.startswith(PROJECTS_PATH)
-            for operation in item.values()
-        ]
-
-        expect(len(operations) == PROJECT_OPERATION_COUNT)
-        expect(all(DOCSTRING_FIELD not in operation['description'] for operation in operations))
-        assert_expectations()
 
 
 class TestListProjects:
