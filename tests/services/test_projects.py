@@ -1,13 +1,14 @@
 """Tests for the project use cases, against in-memory persistence and the local stores over a temporary directory."""
 
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
+from bookreviver.adapters.storage import LocalSourceStore
 from bookreviver.domain.changes import BookDetailsChanges
 from bookreviver.domain.enums import Orthography
 from bookreviver.domain.errors import NotFoundError
@@ -22,8 +23,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
-    from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
+    from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Project
+    from bookreviver.domain.ids import ProjectId
 
 pytestmark = pytest.mark.anyio
 
@@ -49,6 +51,57 @@ def fx_service(
     """
     return lambda: ProjectService(
         uow=InMemoryUnitOfWork(fx_database), clock=FixedClock(NOW), sources=fx_source_store, assets=fx_asset_store
+    )
+
+
+class StoreFailedError(OSError):
+    """Raised by the source store of a test in place of a real storage failure."""
+
+
+class SourceStoreFailingOnce(LocalSourceStore):
+    """The local source store, whose first project deletion fails before it removes anything."""
+
+    def __init__(self, *, root: Path) -> None:
+        """Keep the sources under ``root`` and fail the first deletion.
+
+        :param root: Storage root shared with the asset store.
+        :type root: Path
+        """
+        super().__init__(root=root)
+        self._failed = False
+
+    @override
+    async def delete_project(self, project_id: ProjectId) -> None:
+        """Fail on the first call, as a storage outage would, and remove the project's source on the later ones.
+
+        :param project_id: Project whose source files are removed.
+        :type project_id: ProjectId
+        :raises StoreFailedError: On the first call, with nothing removed.
+        """
+        if not self._failed:
+            self._failed = True
+            raise StoreFailedError
+        await super().delete_project(project_id)
+
+
+@pytest.fixture
+def fx_flaky_service(
+    fx_database: InMemoryDatabase, fx_asset_store: LocalAssetStore, fx_storage_root: Path
+) -> Callable[[], ProjectService]:
+    """Return a function building the service for one request over a source store whose first deletion fails.
+
+    :param fx_database: In-memory database every request of the test shares.
+    :type fx_database: InMemoryDatabase
+    :param fx_asset_store: Local asset store over the test's storage root.
+    :type fx_asset_store: LocalAssetStore
+    :param fx_storage_root: Storage root both stores share.
+    :type fx_storage_root: Path
+    :returns: Function building a service over a new unit of work and the one failing source store.
+    :rtype: Callable[[], ProjectService]
+    """
+    sources = SourceStoreFailingOnce(root=fx_storage_root)
+    return lambda: ProjectService(
+        uow=InMemoryUnitOfWork(fx_database), clock=FixedClock(NOW), sources=sources, assets=fx_asset_store
     )
 
 
@@ -261,6 +314,40 @@ class TestDelete:
         expect(fx_files.gone(doomed.id))
         expect(fx_files.kept(kept_page))
         assert_expectations()
+
+    async def test_failed_deletion_can_be_repeated_until_nothing_is_left(
+        self,
+        fx_flaky_service: Callable[[], ProjectService],
+        fx_database: InMemoryDatabase,
+        fx_files: BookFiles,
+        fx_actor: Actor,
+    ) -> None:
+        """Verify a deletion stopped by a storage failure keeps the project, and repeating it removes everything.
+
+        :param fx_flaky_service: Function building the service over a source store whose first deletion fails.
+        :type fx_flaky_service: Callable[[], ProjectService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_files: Files of imported books in the stores the service deletes from.
+        :type fx_files: BookFiles
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        page = make_page(project_id=project.id, index=0)
+        await commit_project(fx_database, project, page)
+        await fx_files.store(page)
+
+        with pytest.raises(StoreFailedError):
+            await fx_flaky_service().delete(fx_actor, project.id)
+
+        expect(await _stored(fx_database, project) == project)
+        assert_expectations()
+        await fx_flaky_service().delete(fx_actor, project.id)
+
+        with pytest.raises(NotFoundError):
+            await _stored(fx_database, project)
+        assert fx_files.gone(project.id)
 
     async def test_another_accounts_project_is_not_found_and_kept(
         self,

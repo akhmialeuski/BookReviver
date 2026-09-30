@@ -789,8 +789,10 @@ data/storage/
 ```
 
 Deleting a source removes its files, its scans and the renditions of its scans, and leaves the pages of the book
-with their copies of the images, their versions, labels and order. Deleting a project removes its rows and then
-calls `delete_project` on both storage ports.
+with their copies of the images, their versions, labels and order. Deleting a project calls `delete_project` on both
+storage ports and then removes its rows. Both methods treat a project without files as deleted, so a deletion that
+fails part-way keeps the project, and repeating it finishes the job. Removing the rows first would leave the files of
+a failed deletion where no request can reach them, because every request finds a project by its row.
 
 Nothing stored is ever replaced: a new version gets a new directory. Derived assets are regenerable under a new key,
 the next version or content hash, which their URLs carry, so browsers cache them forever. Each is written under a

@@ -4,8 +4,11 @@ Every lookup of a project goes through ``owned_project``, which reports a projec
 missing one. An answer of "forbidden" would confirm that a project with that identifier exists, so the identifiers
 of other accounts' projects could be probed.
 
-A project is deleted row first and files second. The files go only once the deletion of the row is committed, so a
-failing store leaves orphan files, which a repeated deletion removes, and never a project whose files are gone.
+A project is deleted files first and row last. Every lookup, a repeated deletion included, needs the row, so a row
+deleted first would leave the files of a failed deletion out of every request's reach for good. Both stores treat a
+project without files as deleted, so a deletion that fails part-way keeps the project, and repeating it removes the
+files that are left and then the row. Until then the project may lack some of its files, which only a deletion the
+owner asked for can cause.
 """
 
 from typing import TYPE_CHECKING
@@ -133,7 +136,9 @@ class ProjectService:
         return await self._overview(stored)
 
     async def delete(self, actor: Actor, project_id: ProjectId) -> None:
-        """Delete the project with its pages and jobs, then its source and its derived files.
+        """Delete the project's source and derived files, then the project with its pages and jobs.
+
+        A failure at any step leaves the project in place, and calling this again finishes the deletion.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -142,11 +147,11 @@ class ProjectService:
         :raises NotFoundError: If the actor has no such project.
         """
         await owned_project(self._uow.projects, actor, project_id)
-        await self._uow.projects.delete(project_id)
-        await self._uow.commit()
-        # Files go only once the row is gone, so a failure leaves orphan files rather than a project without files
+        # The row goes last: only an existing row lets a repeated call reach files a failed call left behind
         await self._sources.delete_project(project_id)
         await self._assets.delete_project(project_id)
+        await self._uow.projects.delete(project_id)
+        await self._uow.commit()
 
     async def _overview(self, project: Project) -> ProjectOverview:
         """Pair a project with the number of its pages.
