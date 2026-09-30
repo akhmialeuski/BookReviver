@@ -11,11 +11,11 @@ from sqlalchemy.exc import IntegrityError
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.adapters.persistence.sqlalchemy.mappers import JobMapper, PageMapper
-from bookreviver.adapters.persistence.sqlalchemy.tables import JobRow, PageRow, ProjectRow
+from bookreviver.adapters.persistence.sqlalchemy.tables import JobRow, PageRow, ProjectRow, ScanRow, SourceRow
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.errors import NotFoundError
-from tests.helpers.builders import make_job, make_page, make_project, new_account_id
+from tests.helpers.builders import make_job, make_page, make_project, make_scan, make_source, new_account_id
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
@@ -27,6 +27,7 @@ pytestmark = pytest.mark.anyio
 SQLITE_FOREIGN_KEY_FAILED: str = 'FOREIGN KEY constraint failed'
 # The message SQLite gives for every violated unique index
 SQLITE_UNIQUE_FAILED: str = 'UNIQUE constraint failed'
+SCAN_COUNT: int = 3
 
 
 class TestPageRow:
@@ -64,6 +65,34 @@ class TestProjectRow:
             await session.commit()
             expect(await session.scalar(select(func.count()).select_from(PageRow)) == 0)
             expect(await session.scalar(select(func.count()).select_from(JobRow)) == 0)
+        assert_expectations()
+
+    async def test_database_deletes_sources_and_scans_with_their_project(
+        self, fx_database: SqlDatabase, fx_owner_id: AccountId
+    ) -> None:
+        """Verify a plain SQL delete of a project row removes its sources and their scans through the foreign keys.
+
+        A source belongs to the project and a scan to both its source and the project, so the scans go with either.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
+        """
+        project = make_project(owner_id=fx_owner_id)
+        source = make_source(project_id=project.id)
+        async with fx_database.sessions() as session:
+            uow = SqlAlchemyUnitOfWork(session)
+            await uow.projects.add(project)
+            await uow.sources.add(source)
+            await uow.scans.add_many([make_scan(source=source, number=number) for number in range(SCAN_COUNT)])
+            await uow.commit()
+        async with fx_database.sessions() as session:
+            # A bulk statement bypasses the ORM, so only the database can remove the dependent rows
+            await session.execute(delete(ProjectRow).where(ProjectRow.id == project.id))
+            await session.commit()
+            expect(await session.scalar(select(func.count()).select_from(SourceRow)) == 0)
+            expect(await session.scalar(select(func.count()).select_from(ScanRow)) == 0)
         assert_expectations()
 
     async def test_database_deletes_a_project_with_a_cover(
