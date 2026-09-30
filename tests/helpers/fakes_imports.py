@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.domain.entities import Job
-    from bookreviver.domain.enums import SourceKind
+    from bookreviver.domain.enums import Rendition, SourceKind
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import JobId, ProjectId, SourceId
     from bookreviver.domain.values import SourceAnalysis, UploadedSource
@@ -209,6 +209,7 @@ class WatchedRasterizer(PageRasterizer):
     :ivar running: Number of scans being written now.
     :ivar peak: Largest number of scans written at once.
     :ivar extracted: Number of every scan written, in the order the writes started.
+    :ivar formats: Format asked for every scan written, in the same order.
     :ivar pause: Seconds every write waits before it starts, so writes overlap.
     :ivar failures: Error to raise instead of writing the scan with this number.
     :ivar before_extract: Coroutine function run with the number of a scan before it is written, or None.
@@ -224,12 +225,15 @@ class WatchedRasterizer(PageRasterizer):
         self.running = 0
         self.peak = 0
         self.extracted: list[int] = []
+        self.formats: list[Rendition] = []
         self.pause = 0.0
         self.failures: dict[int, BaseException] = {}
         self.before_extract: Callable[[int], Awaitable[None]] | None = None
 
     @override
-    async def extract(self, kind: SourceKind, files: Sequence[Path], number: int, target: Path) -> None:
+    async def extract(
+        self, kind: SourceKind, files: Sequence[Path], number: int, target: Path, *, full: Rendition
+    ) -> None:
         """Write the scan with the real rasterizer, unless the test made this scan fail.
 
         :param kind: Kind of the source.
@@ -240,17 +244,20 @@ class WatchedRasterizer(PageRasterizer):
         :type number: int
         :param target: Path to write the image at.
         :type target: Path
+        :param full: Format of the image to write.
+        :type full: Rendition
         """
         self.running += 1
         self.peak = max(self.peak, self.running)
         self.extracted.append(number)
+        self.formats.append(full)
         try:
             await anyio.sleep(self.pause)
             if self.before_extract is not None:
                 await self.before_extract(number)
             if (failure := self.failures.get(number)) is not None:
                 raise failure
-            await self._inner.extract(kind, files, number, target)
+            await self._inner.extract(kind, files, number, target, full=full)
         finally:
             self.running -= 1
 

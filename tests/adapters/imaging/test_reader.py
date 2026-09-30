@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 
 from bookreviver.adapters.imaging import DjvuFormat, ImageFormat, PdfFormat, SourceReader
-from bookreviver.domain.enums import FileType, SourceKind, UploadProblem
+from bookreviver.domain.enums import FileType, Rendition, SourceKind, UploadProblem
 from bookreviver.domain.errors import UnsupportedSourceError, UploadRejectedError
 from bookreviver.domain.values import UploadedSource
 
@@ -239,5 +239,5 @@ class TestExtractDjvu:
         target = tmp_path / TARGET_NAME
 
         with pytest.raises(UnsupportedSourceError, match=DJVU_REFUSAL_MATCH):
-            await fx_reader_without_djvulibre.extract(SourceKind.DJVU, [path], 0, target)
+            await fx_reader_without_djvulibre.extract(SourceKind.DJVU, [path], 0, target, full=Rendition.FULL_JPEG)
         assert not target.exists()

@@ -402,7 +402,7 @@ class ImportRun:
             self._sources.source_files(scan.project_id, scan.source_id) as files,
             self._assets.writable(of_scan(Rendition.FULL_JPEG)) as target,
         ):
-            await self._rasterizer.extract(source.kind, files, scan.number, target)
+            await self._rasterizer.extract(source.kind, files, scan.number, target, full=Rendition.FULL_JPEG)
         await self._derive(of_scan)
         versions = []
         for page in pages:

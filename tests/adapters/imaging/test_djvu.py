@@ -1,4 +1,7 @@
-"""Tests for reading DjVu sources with the DjVuLibre tools: the facts of every page, and each page written as JPEG."""
+"""Tests for reading DjVu sources with the DjVuLibre tools: the facts of every page, and each page written as an image.
+
+A page is written as a JPEG or a PNG as the caller asks, and a bilevel page written as a PNG is a 1-bit PNG.
+"""
 
 import logging
 import subprocess
@@ -13,7 +16,7 @@ from PIL import Image
 from bookreviver.adapters.imaging import DjvuFormat, DjvuLibreTools
 from bookreviver.adapters.imaging.common import FactKey, to_mm
 from bookreviver.adapters.imaging.djvu import HEADER_LAYOUT
-from bookreviver.domain.enums import ColorMode, DjvuDocumentKind, FileType, SourceKind
+from bookreviver.domain.enums import ColorMode, DjvuDocumentKind, FileType, Rendition, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
 from bookreviver.domain.values import ScanFacts, UploadedSource
 from bookreviver.ports.imaging import SourceInspector
@@ -51,6 +54,10 @@ PAGES: tuple[DjvuPage, ...] = (
 )
 # The mode of the JPEG each colour mode is written as: a JPEG holds no single bit, and gray pages stay gray
 JPEG_MODES: dict[ColorMode, str] = {ColorMode.COLOR: 'RGB', ColorMode.GRAY: 'L', ColorMode.BILEVEL: 'L'}
+# The mode of the PNG each colour mode is written as: a PNG keeps the single bit of a bilevel page
+PNG_MODES: dict[ColorMode, str] = {ColorMode.COLOR: 'RGB', ColorMode.GRAY: 'L', ColorMode.BILEVEL: '1'}
+PNG_FORMAT: str = 'PNG'
+PNG_TARGET_NAME: str = 'full.png'
 BILEVEL_CHUNKS: list[str] = ['INFO', 'Sjbz']
 COLOR_CHUNK: str = 'BG44'
 KINDS: list[DjvuDocumentKind] = list(DjvuDocumentKind)
@@ -533,6 +540,8 @@ class TestExtract:
     ) -> None:
         """Verify the JPEG has the pixel size of the page's INFO chunk and the mode of its colour, for every kind.
 
+        A bilevel page is written gray, since a JPEG holds no single bit.
+
         :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
         :type fx_rasterizer: PageRasterizer
         :param tmp_path: Temporary directory of the test.
@@ -548,11 +557,49 @@ class TestExtract:
         page = PAGES[number]
 
         await fx_rasterizer.extract(
-            SourceKind.DJVU, [files[number]] if single else files, 0 if single else number, target
+            SourceKind.DJVU,
+            [files[number]] if single else files,
+            0 if single else number,
+            target,
+            full=Rendition.FULL_JPEG,
         )
 
         with Image.open(target) as image:
             assert (image.format, image.size, image.mode) == (JPEG_FORMAT, page.size_px, JPEG_MODES[page.mode])
+
+    @pytest.mark.parametrize('kind', KINDS, ids=[kind.value for kind in KINDS])
+    @pytest.mark.parametrize('number', range(len(PAGES)))
+    async def test_writes_the_page_as_png_keeping_a_bilevel_page_at_one_bit(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, kind: DjvuDocumentKind, number: int
+    ) -> None:
+        """Verify the PNG has the pixel size of the page and the mode of its colour, a bilevel page being 1-bit.
+
+        A 1-bit image holds exactly two values, so nothing smooths the strokes of a bilevel page.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param kind: Kind of the document the pages are written as.
+        :type kind: DjvuDocumentKind
+        :param number: Number of the scan to write, starting at 0.
+        :type number: int
+        """
+        files = _write(kind, tmp_path)
+        single = kind is DjvuDocumentKind.SINGLE_PAGE
+        target = tmp_path / PNG_TARGET_NAME
+        page = PAGES[number]
+
+        await fx_rasterizer.extract(
+            SourceKind.DJVU,
+            [files[number]] if single else files,
+            0 if single else number,
+            target,
+            full=Rendition.FULL_PNG,
+        )
+
+        with Image.open(target) as image:
+            assert (image.format, image.size, image.mode) == (PNG_FORMAT, page.size_px, PNG_MODES[page.mode])
 
     async def test_refuses_a_scan_the_document_does_not_have(
         self, fx_rasterizer: PageRasterizer, tmp_path: Path
@@ -569,7 +616,7 @@ class TestExtract:
 
         for number in (len(PAGES), -1):
             with pytest.raises(IndexError, match=r'^book\.djvu has no page'):
-                await fx_rasterizer.extract(SourceKind.DJVU, [book], number, target)
+                await fx_rasterizer.extract(SourceKind.DJVU, [book], number, target, full=Rendition.FULL_JPEG)
         assert not target.exists()
 
     async def test_refuses_a_damaged_page(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
@@ -583,7 +630,7 @@ class TestExtract:
         path = _broken_page(tmp_path, body=b'\x00' * 64)
 
         with pytest.raises(UnsupportedSourceError, match=DAMAGED_MATCH):
-            await fx_rasterizer.extract(SourceKind.DJVU, [path], 0, tmp_path / TARGET_NAME)
+            await fx_rasterizer.extract(SourceKind.DJVU, [path], 0, tmp_path / TARGET_NAME, full=Rendition.FULL_JPEG)
 
 
 class TestImagingProviderWithoutDjvulibre:

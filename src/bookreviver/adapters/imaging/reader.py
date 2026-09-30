@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
     from pathlib import Path
 
+    from bookreviver.domain.enums import Rendition
     from bookreviver.domain.values import SourceAnalysis
 
 
@@ -66,18 +67,20 @@ class SourceFormat(ABC):
         """
 
     @abstractmethod
-    def extract(self, files: Sequence[Path], *, number: int, target: Path) -> None:
-        """Write scan ``number`` of the source as a JPEG at ``target``, without re-encoding when possible.
+    def extract(self, files: Sequence[Path], *, number: int, target: Path, full: Rendition) -> None:
+        """Write scan ``number`` of the source at ``target`` in the format ``full``, without re-encoding when possible.
 
         :param files: Local paths of the files of the source.
         :type files: Sequence[Path]
         :param number: Number of the scan in its source, starting at 0.
         :type number: int
-        :param target: Path to write the JPEG at.
+        :param target: Path to write the image at.
         :type target: Path
+        :param full: Format to write, ``Rendition.FULL_JPEG`` or ``Rendition.FULL_PNG``.
+        :type full: Rendition
         :raises UnsupportedSourceError: If the files are not a readable source of this kind.
         :raises IndexError: If the source has no scan ``number``.
-        :raises ValueError: If the number of files does not fit the kind.
+        :raises ValueError: If the number of files does not fit the kind, or ``full`` is not a format of the full image.
         """
 
 
@@ -147,8 +150,10 @@ class SourceReader(SourceInspector, PageRasterizer):
         return await asyncify(self._formats[kind].inspect)(files)
 
     @override
-    async def extract(self, kind: SourceKind, files: Sequence[Path], number: int, target: Path) -> None:
-        """Write one scan as JPEG with the format of its source's kind, in a worker thread.
+    async def extract(
+        self, kind: SourceKind, files: Sequence[Path], number: int, target: Path, *, full: Rendition
+    ) -> None:
+        """Write one scan in the format ``full`` with the format of its source's kind, in a worker thread.
 
         :param kind: The kind of the source, which selects the format.
         :type kind: SourceKind
@@ -156,10 +161,12 @@ class SourceReader(SourceInspector, PageRasterizer):
         :type files: Sequence[Path]
         :param number: Number of the scan in its source, starting at 0.
         :type number: int
-        :param target: Path to write the JPEG at.
+        :param target: Path to write the image at.
         :type target: Path
+        :param full: Format to write, ``Rendition.FULL_JPEG`` or ``Rendition.FULL_PNG``.
+        :type full: Rendition
         :raises UnsupportedSourceError: If the files are not a readable source of this kind.
         :raises IndexError: If the source has no scan ``number``.
-        :raises ValueError: If the number of files does not fit the kind.
+        :raises ValueError: If the number of files does not fit the kind, or ``full`` is not a format of the full image.
         """
-        await asyncify(self._formats[kind].extract)(files, number=number, target=target)
+        await asyncify(self._formats[kind].extract)(files, number=number, target=target, full=full)

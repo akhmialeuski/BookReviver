@@ -2,9 +2,10 @@
 
 Import runs these ports in order. The ``SourceInspector`` first splits the staged files of an upload into sources,
 since which files make one source depends on the format, and then describes each source and its scans on its own,
-so one unreadable file never stops the others. The ``PageRasterizer`` writes each scan of a source as a JPEG at its
-native resolution, and the ``Tiler`` cuts that JPEG into the tile pyramid and the thumbnail the viewer shows. All
-three read and write local paths handed out by the storage ports.
+so one unreadable file never stops the others. The ``PageRasterizer`` writes each scan of a source as a JPEG or a PNG at
+its native resolution, in the format the caller chose from the scan's colour and the project's image policy, and the
+``Tiler`` cuts that image into the tile pyramid and the thumbnail the viewer shows. All three read and write local
+paths handed out by the storage ports.
 """
 
 from abc import ABC, abstractmethod
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from bookreviver.domain.enums import SourceKind
+    from bookreviver.domain.enums import Rendition, SourceKind
     from bookreviver.domain.values import SourceAnalysis, UploadedSource
 
 
@@ -56,8 +57,14 @@ class PageRasterizer(ABC):
     """Produces the native-resolution image of one scan of a source."""
 
     @abstractmethod
-    async def extract(self, kind: SourceKind, files: Sequence[Path], number: int, target: Path) -> None:
-        """Write scan ``number`` of the source as a JPEG at ``target``, without re-encoding when possible.
+    async def extract(
+        self, kind: SourceKind, files: Sequence[Path], number: int, target: Path, *, full: Rendition
+    ) -> None:
+        """Write scan ``number`` of the source at ``target`` in the format ``full``, without re-encoding when possible.
+
+        The caller chooses the format, because it knows the project's image policy, which no source knows. A JPEG
+        that is already what the scan shows is copied byte for byte when ``full`` is a JPEG. A bilevel scan written as
+        a PNG is a 1-bit PNG with exactly two values, and no format smooths its strokes.
 
         :param kind: Kind of the source, as ``group`` found it.
         :type kind: SourceKind
@@ -65,11 +72,14 @@ class PageRasterizer(ABC):
         :type files: Sequence[Path]
         :param number: Number of the scan in its source, starting at 0.
         :type number: int
-        :param target: Path to write the JPEG at.
+        :param target: Path to write the image at, whose name the caller has chosen to match ``full``.
         :type target: Path
+        :param full: Format to write, ``Rendition.FULL_JPEG`` or ``Rendition.FULL_PNG``.
+        :type full: Rendition
         :raises UnsupportedSourceError: If the files are not a readable source of this kind.
         :raises IndexError: If the source has no scan ``number``.
-        :raises ValueError: If the number of files does not fit the kind, such as two files for a PDF source.
+        :raises ValueError: If the number of files does not fit the kind, such as two files for a PDF source, or if
+                            ``full`` is not a format of the ``full`` image.
         """
 
 
