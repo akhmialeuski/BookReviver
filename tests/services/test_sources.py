@@ -1,6 +1,6 @@
 """Tests for the source use cases, against in-memory persistence and the local stores over a temporary directory."""
 
-from typing import TYPE_CHECKING, NamedTuple, override
+from typing import TYPE_CHECKING, override
 from uuid import uuid4
 
 import pytest
@@ -11,21 +11,13 @@ from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.adapters.storage import LocalSourceStore
 from bookreviver.domain.enums import JobState, Rendition
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.ids import JobId, SourceId
+from bookreviver.domain.ids import SourceId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import Renditions, SliceRequest
+from bookreviver.domain.values import SliceRequest
 from bookreviver.services.sources import SourceService
-from tests.helpers.builders import (
-    make_job,
-    make_page,
-    make_page_version,
-    make_project,
-    make_scan,
-    make_source,
-    new_account_id,
-)
+from tests.helpers.books import SCANS_PER_SOURCE, commit_book, on_disk
+from tests.helpers.builders import make_job, make_project
 from tests.helpers.seeding import commit_project
-from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -33,33 +25,11 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.adapters.storage import LocalAssetStore
-    from bookreviver.domain.entities import Actor, Page, PageVersion, Project, Scan, Source
+    from bookreviver.domain.entities import Actor
     from bookreviver.domain.ids import ProjectId
+    from tests.helpers.books import Book
 
 pytestmark = pytest.mark.anyio
-
-SCANS_PER_SOURCE: int = 3
-IMAGE: bytes = b'jpeg'
-MAX_UPLOAD_BYTES: int = 1024
-
-
-class Book(NamedTuple):
-    """A project with two sources, each with scans, and a page cut from a scan of the first source.
-
-    :ivar project: The project.
-    :ivar first: The source that is deleted in the tests.
-    :ivar second: The source that has to stay.
-    :ivar scans: The scans of the first source, then those of the second, each with its renditions ready.
-    :ivar page: The page cut from the first scan of the first source.
-    :ivar version: The base version of that page.
-    """
-
-    project: Project
-    first: Source
-    second: Source
-    scans: list[Scan]
-    page: Page
-    version: PageVersion
 
 
 class StoreFailedError(OSError):
@@ -92,66 +62,6 @@ class SourceStoreFailingOnce(LocalSourceStore):
             self._failed = True
             raise StoreFailedError
         await super().delete_source(project_id, source_id)
-
-
-async def _commit_book(
-    database: InMemoryDatabase, sources: LocalSourceStore, assets: LocalAssetStore, owner: Actor | None
-) -> Book:
-    """Commit and store a project of two sources with scans, and one page cut from a scan of the first source.
-
-    :param database: In-memory database to commit into.
-    :type database: InMemoryDatabase
-    :param sources: Source store receiving the two sources.
-    :type sources: LocalSourceStore
-    :param assets: Asset store receiving the renditions of the scans and the image of the page.
-    :type assets: LocalAssetStore
-    :param owner: The actor owning the project, or None for an account that acts nowhere else.
-    :type owner: Actor | None
-    :returns: The stored book.
-    :rtype: Book
-    """
-    project = make_project(owner_id=new_account_id() if owner is None else owner.account_id)
-    first = make_source(project_id=project.id, name='part1.pdf')
-    second = make_source(project_id=project.id, name='part2.pdf', minutes=1)
-    ready = Renditions(ready=True)
-    scans = [
-        evolve(make_scan(source=source, number=number), renditions=ready)
-        for source in (first, second)
-        for number in range(SCANS_PER_SOURCE)
-    ]
-    page = make_page(project_id=project.id, scan=scans[0])
-    version = make_page_version(page_id=page.id)
-    await commit_project(database, project, page, sources=[first, second], scans=scans, versions=[version])
-    keys = ProjectKeys(project.id)
-    for source in (first, second):
-        job_id = JobId(uuid4())
-        await sources.stage(project.id, job_id, [upload(source.file_name)], max_bytes=MAX_UPLOAD_BYTES)
-        await sources.promote(project.id, job_id, source.id, names=[source.file_name])
-    images = [keys.scan_rendition(scan, Rendition.FULL_JPEG) for scan in scans]
-    for key in [*images, keys.version_rendition(version, Rendition.FULL_JPEG)]:
-        async with assets.writable(key) as path:
-            path.write_bytes(IMAGE)
-    return Book(project=project, first=first, second=second, scans=scans, page=page, version=version)
-
-
-def _on_disk(root: Path, book: Book, source: Source) -> tuple[bool, bool]:
-    """Report whether a source's file and its first scan's full image are on disk.
-
-    :param root: Local storage root.
-    :type root: Path
-    :param book: The stored book.
-    :type book: Book
-    :param source: Source of the book whose files are checked.
-    :type source: Source
-    :returns: Whether the source file exists, and whether the full image of its first scan exists.
-    :rtype: tuple[bool, bool]
-    """
-    keys = ProjectKeys(book.project.id)
-    scan = next(scan for scan in book.scans if scan.source_id == source.id)
-    return (
-        (root / keys.source(source.id) / source.file_name).is_file(),
-        (root / keys.scan_rendition(scan, Rendition.FULL_JPEG)).is_file(),
-    )
 
 
 @pytest.fixture
@@ -208,7 +118,7 @@ async def fx_book(
     :returns: The stored book.
     :rtype: Book
     """
-    return await _commit_book(fx_database, fx_source_store, fx_asset_store, fx_actor)
+    return await commit_book(fx_database, fx_source_store, fx_asset_store, fx_actor)
 
 
 @pytest.fixture
@@ -226,7 +136,7 @@ async def fx_strangers_book(
     :returns: The stored book.
     :rtype: Book
     """
-    return await _commit_book(fx_database, fx_source_store, fx_asset_store, None)
+    return await commit_book(fx_database, fx_source_store, fx_asset_store, None)
 
 
 class TestList:
@@ -437,8 +347,8 @@ class TestDelete:
         image = ProjectKeys(fx_book.project.id).version_rendition(fx_book.version, Rendition.FULL_JPEG)
         expect(remaining.items == [fx_book.second])
         expect(scans.items == fx_book.scans[SCANS_PER_SOURCE:])
-        expect(_on_disk(fx_storage_root, fx_book, fx_book.first) == (False, False))
-        expect(_on_disk(fx_storage_root, fx_book, fx_book.second) == (True, True))
+        expect(on_disk(fx_storage_root, fx_book, fx_book.first) == (False, False))
+        expect(on_disk(fx_storage_root, fx_book, fx_book.second) == (True, True))
         expect(await uow.pages.get(fx_book.page.id) == evolve(fx_book.page, scan_id=None))
         expect(await uow.page_versions.list_for_page(fx_book.page.id) == [fx_book.version])
         expect((fx_storage_root / image).is_file())
@@ -473,7 +383,7 @@ class TestDelete:
             await fx_service().delete(fx_actor, fx_book.project.id, fx_book.first.id)
 
         expect(await fx_service().get(fx_actor, fx_book.project.id, fx_book.first.id) == fx_book.first)
-        expect(_on_disk(fx_storage_root, fx_book, fx_book.first) == (True, True))
+        expect(on_disk(fx_storage_root, fx_book, fx_book.first) == (True, True))
         assert_expectations()
 
     async def test_finished_import_does_not_block_the_deletion(
@@ -519,7 +429,7 @@ class TestDelete:
         await fx_flaky_service().delete(fx_actor, fx_book.project.id, fx_book.first.id)
 
         expect(kept == fx_book.first)
-        expect(_on_disk(fx_storage_root, fx_book, fx_book.first) == (False, False))
+        expect(on_disk(fx_storage_root, fx_book, fx_book.first) == (False, False))
         with pytest.raises(NotFoundError):
             await fx_flaky_service().get(fx_actor, fx_book.project.id, fx_book.first.id)
         assert_expectations()
@@ -541,4 +451,4 @@ class TestDelete:
         with pytest.raises(NotFoundError):
             await fx_service().delete(fx_actor, fx_strangers_book.project.id, fx_strangers_book.first.id)
 
-        assert _on_disk(fx_storage_root, fx_strangers_book, fx_strangers_book.first) == (True, True)
+        assert on_disk(fx_storage_root, fx_strangers_book, fx_strangers_book.first) == (True, True)

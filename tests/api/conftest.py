@@ -10,6 +10,8 @@ from bookreviver.ports.storage import AssetStore, SourceStore
 from tests.helpers.storage import BookFiles
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from fastapi import FastAPI
 
     from bookreviver.app.settings import Settings
@@ -81,3 +83,15 @@ async def fx_source_store(fx_container: AsyncContainer) -> SourceStore:
     :rtype: SourceStore
     """
     return await fx_container.get(SourceStore)
+
+
+@pytest.fixture
+def fx_storage_root(fx_settings: Settings) -> Path:
+    """Return the local storage root of the running application.
+
+    :param fx_settings: Settings of the application, which name the storage root.
+    :type fx_settings: Settings
+    :returns: Directory both stores of the application write under.
+    :rtype: Path
+    """
+    return fx_settings.storage_root
