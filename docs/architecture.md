@@ -461,7 +461,7 @@ The storage ports divide the files of a project by prefix. `SourceStore` owns `i
 
 | Port and method                                 | Target                                                                        |
 | ----------------------------------------------- | ----------------------------------------------------------------------------- |
-| `SourceStore.stage`                             | `(project_id, job_id, files, max_bytes) -> Sequence[StagedFile]`              |
+| `SourceStore.stage`                             | `(project_id, job_id, files, max_bytes) -> Sequence[SourceFile]`              |
 | `SourceStore.promote`                           | `(project_id, job_id, source_id, names)`                                      |
 | `SourceStore.discard`                           | `(project_id, job_id)`                                                        |
 | `SourceStore.staged_files`, `source_files`      | Local paths of the files of one job, or of one source                         |
@@ -471,9 +471,10 @@ The storage ports divide the files of a project by prefix. `SourceStore` owns `i
 | `AssetStore.delete_prefix`                      | Only prefixes under `projects/<id>/assets/`                                   |
 | `AssetStore.delete_project`                     | Removes `assets/` of the project                                              |
 
-`stage` reports the name and the size of every staged file, so no service reads file sizes itself, and it no longer
-refuses an upload to a project that has sources. `promote` moves the files of one source from the job's directory to
-the source's own directory.
+`stage` reports the name, the size and the SHA-256 digest of every staged file as a `SourceFile`, computed while the
+upload streams in, so no service reads files itself to learn their size or to refuse a duplicate. It no longer refuses
+an upload to a project that has sources. `promote` moves the files of one source from the job's directory to the
+source's own directory in one rename, and a refused promotion leaves the files staged.
 
 The imaging ports work on one source at a time. `SourceInspector.group(files)` splits the files of an upload into
 sources and assembles an indirect DjVu document from its index file and page files, because which files make one
