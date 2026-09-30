@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 import pymupdf
 from attrs import field, frozen
-from PIL import Image
+from PIL import Image, TiffImagePlugin
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -243,3 +243,23 @@ def write_tiff(path: Path, *, frames: Sequence[TiffFrame]) -> Path:
         image.encoderinfo = dict(frame.options)
     images[0].save(path, save_all=True, append_images=images[1:])
     return path
+
+
+def frame_pixel_span(path: Path, *, number: int) -> tuple[int, int]:
+    """Return where the pixel data of one frame of a single-strip TIFF lies in the file.
+
+    :param path: A TIFF whose frame stores its pixels in one strip, as ``write_tiff`` writes small frames.
+    :type path: Path
+    :param number: Number of the frame.
+    :type number: int
+    :returns: Offset of the first byte of the strip and its length in bytes.
+    :rtype: tuple[int, int]
+    :raises TypeError: If the file is not a TIFF.
+    """
+    with Image.open(path) as image:
+        if not isinstance(image, TiffImagePlugin.TiffImageFile):
+            err_msg = f'{path.name} is not a TIFF.'
+            raise TypeError(err_msg)
+        image.seek(number)
+        tags = image.tag_v2
+        return int(tags[TiffImagePlugin.STRIPOFFSETS][0]), int(tags[TiffImagePlugin.STRIPBYTECOUNTS][0])

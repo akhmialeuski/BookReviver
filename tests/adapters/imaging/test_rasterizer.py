@@ -14,6 +14,7 @@ from tests.adapters.imaging.samples import (
     PdfPage,
     ScanImage,
     TiffFrame,
+    frame_pixel_span,
     gradient_image,
     write_image,
     write_pdf,
@@ -21,6 +22,7 @@ from tests.adapters.imaging.samples import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from bookreviver.ports.imaging import PageRasterizer
@@ -83,6 +85,9 @@ MAX_FRAME_PIXELS_PATCH: str = 'bookreviver.adapters.imaging.images.MAX_FRAME_PIX
 # Admits a frame of SMALL_SIZE_PX and refuses one of LARGE_FRAME_SIZE_PX
 SMALL_FRAME_PIXELS: int = SMALL_SIZE_PX[0] * SMALL_SIZE_PX[1]
 LARGE_FRAME_SIZE_PX: tuple[int, int] = (240, 180)
+RAW_COMPRESSION: str = 'raw'
+DEFLATE_COMPRESSION: str = 'tiff_deflate'
+CORRUPT_BYTE: bytes = b'\xff'
 
 
 class RenderedPageCase(NamedTuple):
@@ -96,6 +101,17 @@ class RenderedPageCase(NamedTuple):
     page: PdfPage
     size_px: tuple[int, int]
     mode: str
+
+
+class DamagedPixelsCase(NamedTuple):
+    """An image file whose headers read but whose pixel data is damaged.
+
+    :ivar build: Function writing the file into a directory and returning its path.
+    :ivar number: Number of the damaged frame.
+    """
+
+    build: Callable[[Path], Path]
+    number: int
 
 
 class FrameProfileCase(NamedTuple):
@@ -120,6 +136,67 @@ class ConvertedImageCase(NamedTuple):
     mode: str
     suffix: str
     jpeg_mode: str
+
+
+def _two_frame_tiff(directory: Path, *, compression: str) -> Path:
+    """Write a TIFF of two gray frames, the second compressed with ``compression``.
+
+    :param directory: Directory to write the file into.
+    :type directory: Path
+    :param compression: Pillow name of the compression of the second frame, such as ``raw`` or ``tiff_deflate``.
+    :type compression: str
+    :returns: The written path.
+    :rtype: Path
+    """
+    frames = [
+        TiffFrame(mode=GRAY_MODE, size_px=SMALL_SIZE_PX),
+        TiffFrame(mode=GRAY_MODE, size_px=SMALL_SIZE_PX, options={'compression': compression}),
+    ]
+    return write_tiff(directory / TIFF_NAME, frames=frames)
+
+
+def _tiff_with_frame_pixels_cut_off(directory: Path) -> Path:
+    """Write a two-frame TIFF cut off halfway through the uncompressed pixels of its second frame, headers intact.
+
+    :param directory: Directory to write the file into.
+    :type directory: Path
+    :returns: The written path.
+    :rtype: Path
+    """
+    path = _two_frame_tiff(directory, compression=RAW_COMPRESSION)
+    offset, length = frame_pixel_span(path, number=1)
+    path.write_bytes(path.read_bytes()[: offset + length // 2])
+    return path
+
+
+def _tiff_with_frame_pixels_corrupted(directory: Path) -> Path:
+    """Write a two-frame TIFF whose second frame holds deflate data that cannot be inflated, headers intact.
+
+    :param directory: Directory to write the file into.
+    :type directory: Path
+    :returns: The written path.
+    :rtype: Path
+    """
+    path = _two_frame_tiff(directory, compression=DEFLATE_COMPRESSION)
+    offset, length = frame_pixel_span(path, number=1)
+    content = bytearray(path.read_bytes())
+    content[offset : offset + length] = CORRUPT_BYTE * length
+    path.write_bytes(bytes(content))
+    return path
+
+
+def _png_with_pixels_cut_off(directory: Path) -> Path:
+    """Write a PNG cut off halfway, so its header reads and its pixel data ends early.
+
+    :param directory: Directory to write the file into.
+    :type directory: Path
+    :returns: The written path.
+    :rtype: Path
+    """
+    path = write_image(directory / f'{PAGE_STEM}{PNG_SUFFIX}', mode=RGB_MODE, size=SMALL_SIZE_PX)
+    content = path.read_bytes()
+    path.write_bytes(content[: len(content) // 2])
+    return path
 
 
 def _gray_at(image: Image.Image, xy: tuple[int, int]) -> int:
@@ -550,4 +627,37 @@ class TestExtractImages:
 
         with pytest.raises(UnsupportedSourceError, match=r'^page\.tif cannot be read as an image'):
             await fx_rasterizer.extract(SourceKind.IMAGE, [source], 1, target)
+        assert not target.exists()
+
+    @pytest.mark.parametrize(
+        CASE_ARG,
+        [
+            DamagedPixelsCase(build=_tiff_with_frame_pixels_cut_off, number=1),
+            DamagedPixelsCase(build=_tiff_with_frame_pixels_corrupted, number=1),
+            DamagedPixelsCase(build=_png_with_pixels_cut_off, number=0),
+        ],
+        ids=['tiff-frame-cut-off', 'tiff-frame-corrupted', 'png-cut-off'],
+    )
+    async def test_refuses_frame_whose_pixels_it_cannot_decode(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, case: DamagedPixelsCase
+    ) -> None:
+        """Refuse a frame whose headers read but whose pixel data is damaged, and write nothing.
+
+        Pillow decodes pixels only when they are first read, so the inspection, which reads headers alone, accepts such
+        a file, and the damage shows only here.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: An image file with damaged pixel data, and the number of the damaged frame.
+        :type case: DamagedPixelsCase
+        """
+        source = case.build(tmp_path)
+        target = tmp_path / TARGET_NAME
+
+        with pytest.raises(
+            UnsupportedSourceError, match=rf'cannot be read as an image: the pixels of frame {case.number} are damaged'
+        ):
+            await fx_rasterizer.extract(SourceKind.IMAGE, [source], case.number, target)
         assert not target.exists()

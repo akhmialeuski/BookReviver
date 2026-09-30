@@ -14,8 +14,11 @@ Pillow treats the first frame of a file and the later frames of a TIFF different
 frame. Counting and seeking the later frames parse their headers without that care: a broken header escapes as a bare
 ``SyntaxError`` or ``EOFError``, and the pixel bound is not applied at all. Pillow also keeps one ``info`` for the
 whole file and only adds to it on a seek, so a colour profile or a resolution a frame does not have stays behind from
-an earlier frame. ``_ImageFile`` therefore reads every header behind one error boundary, holds every frame to the
-pixel bound, and reads the resolution and the colour profile of a TIFF frame from that frame's own tags.
+an earlier frame. Pillow decodes the pixels of a frame only when something first reads them, so damaged pixel data in
+a file with intact headers passes the inspection and surfaces as a bare ``OSError`` or ``ValueError`` from whatever
+call reads them. ``_ImageFile`` therefore reads every header and decodes the pixels behind one error boundary, holds
+every frame to the pixel bound, and reads the resolution and the colour profile of a TIFF frame from that frame's own
+tags.
 
 A gray or RGB JPEG stored upright is copied as the image of its scan byte for byte, as ``is_portable_jpeg`` decides.
 Every other scan is turned upright and encoded by Pillow with the same pixel values, 16-bit gray scaled rather than
@@ -184,6 +187,8 @@ class ImageFormat(SourceFormat):
             if is_portable_jpeg(image):
                 shutil.copyfile(path, target)
                 return
+            # Decoded before any conversion, so an error below is one of writing the JPEG, not of reading the file
+            file.load()
             upright = ImageOps.exif_transpose(image)
             if upright.mode.startswith(WIDE_GRAY_MODE_PREFIX):
                 scaled = upright.convert(INT32_MODE).point(lambda value: value * SIXTEEN_TO_EIGHT_BIT_SCALE)
@@ -195,7 +200,7 @@ class ImageFormat(SourceFormat):
 
 
 class _ImageFile:
-    """An image file open in Pillow, whose every header is read behind one error boundary, one frame at a time.
+    """An image file open in Pillow, whose headers and pixels are read behind one error boundary, one frame at a time.
 
     :ivar image: The open image, positioned at the frame last sought; the first frame until then.
     """
@@ -207,6 +212,7 @@ class _ImageFile:
         :type path: Path
         """
         self._path = path
+        self._number = 0
         self.image: Image.Image
 
     def __enter__(self) -> Self:
@@ -306,6 +312,25 @@ class _ImageFile:
         width, height = self.image.size
         if width * height > MAX_FRAME_PIXELS:
             raise UnsupportedSourceError(err_msg)
+        self._number = number
+
+    def load(self) -> None:
+        """Decode the pixels of the current frame, which Pillow otherwise does lazily on the first pixel access.
+
+        Decoding here keeps a damaged frame inside the error boundary, instead of inside whatever call reads the pixels
+        first, where it would look like a failure of that call, such as writing the JPEG.
+
+        :raises UnsupportedSourceError: If the pixel data of the frame cannot be decoded, such as data cut off or
+                                        corrupted in a file whose headers are intact.
+        """
+        try:
+            self.image.load()
+        except UNREADABLE_IMAGE_ERRORS as error:
+            err_msg = (
+                f'{self._path.name} cannot be read as an image: the pixels of frame {self._number} are damaged. '
+                'Replace this file.'
+            )
+            raise UnsupportedSourceError(err_msg) from error
 
 
 def _scan_facts(file: _ImageFile) -> ScanFacts:

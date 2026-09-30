@@ -99,12 +99,15 @@ def is_portable_jpeg(image: Image.Image) -> bool:
     """Return whether every reader shows the JPEG as its pixels are stored: gray or RGB, and upright.
 
     A browser turns a JPEG by its EXIF orientation while libvips ``dzsave`` and a PDF viewer do not, so an oriented
-    JPEG would give tiles, thumbnail and page that disagree.
+    JPEG would give tiles, thumbnail and page that disagree. The EXIF block is read only once the image is known to be
+    a gray or RGB JPEG, whose EXIF Pillow parsed with the header: for a PNG, ``getexif`` reads the whole file to look
+    for EXIF placed after the pixel data.
 
     :param image: Open image, of which only the header is read.
     :type image: Image.Image
     :returns: True when the file can be copied as the page image.
     :rtype: bool
     """
-    orientation = int(image.getexif().get(ExifTags.Base.Orientation, UPRIGHT_ORIENTATION))
-    return image.format == JPEG_FORMAT and image.mode in PORTABLE_JPEG_MODES and orientation == UPRIGHT_ORIENTATION
+    if image.format != JPEG_FORMAT or image.mode not in PORTABLE_JPEG_MODES:
+        return False
+    return int(image.getexif().get(ExifTags.Base.Orientation, UPRIGHT_ORIENTATION)) == UPRIGHT_ORIENTATION
