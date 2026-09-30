@@ -5,13 +5,15 @@ from typing import TYPE_CHECKING
 
 from fastapi import UploadFile
 
-from bookreviver.domain.enums import PageAsset
+from bookreviver.domain.enums import Rendition
+from bookreviver.domain.keys import ProjectKeys
+from tests.helpers.builders import make_page_version
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.entities import Page
-    from bookreviver.domain.ids import ProjectId, StorageKey
+    from bookreviver.domain.ids import PageId, ProjectId, StorageKey
     from bookreviver.ports.storage import AssetStore, SourceStore
 
 # More than one read chunk of the local store, so staging has to stream
@@ -73,17 +75,20 @@ class BookFiles:
         self._sources = sources
         self._assets = assets
         self._root = root
+        self._images: dict[PageId, StorageKey] = {}
 
     async def store(self, page: Page) -> None:
-        """Store a source for the page's project and the page's full image, as an import would.
+        """Store a source for the page's project and the full image of the page's base version, as an import would.
 
         :param page: Page whose project and image are stored.
         :type page: Page
         """
         await self._sources.stage(page.project_id, [upload(SOURCE_NAME)], max_bytes=MAX_SOURCE_BYTES)
         await self._sources.promote(page.project_id)
-        async with self._assets.writable(page.asset_key(PageAsset.FULL)) as path:
+        image = ProjectKeys(page.project_id).version_rendition(make_page_version(page_id=page.id), Rendition.FULL_JPEG)
+        async with self._assets.writable(image) as path:
             path.write_bytes(PAGE_IMAGE_CONTENT)
+        self._images[page.id] = image
 
     def kept(self, page: Page) -> bool:
         """Return whether the source of the page's project and the page's full image are still on disk.
@@ -94,7 +99,7 @@ class BookFiles:
         :rtype: bool
         """
         source = self._project_dir(page.project_id) / 'source' / SOURCE_NAME
-        image = self._root / page.asset_key(PageAsset.FULL)
+        image = self._root / self._images[page.id]
         return source.is_file() and image.read_bytes() == PAGE_IMAGE_CONTENT
 
     def gone(self, project_id: ProjectId) -> bool:

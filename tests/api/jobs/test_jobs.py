@@ -3,6 +3,7 @@
 import json
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, NamedTuple
+from uuid import uuid4
 
 import anyio
 import anyio.lowlevel
@@ -12,8 +13,16 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import EventName
 from bookreviver.domain.enums import JobState
-from bookreviver.domain.events import ProjectChanged
-from tests.helpers.builders import make_job, make_project, new_account_id
+from bookreviver.domain.events import PagesChanged, PageVersionReady, ProjectChanged, ScanReady, SourceImported
+from bookreviver.domain.ids import PageId
+from tests.helpers.builders import (
+    make_job,
+    make_page_version,
+    make_project,
+    make_scan,
+    make_source,
+    new_account_id,
+)
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
@@ -290,6 +299,45 @@ class TestStreamProjectEvents:
         expect(reader.events[1].data == {PROJECT_ID_FIELD: str(project_id)})
         expect(fx_fakes.events.open_subscriptions == 0)
         assert_expectations()
+
+    async def test_stream_names_the_changes_of_the_book(
+        self, fx_app: FastAPI, fx_fakes: JobFakes, fx_queued_job: Job
+    ) -> None:
+        """Verify an imported source, a ready scan, changed pages and a ready version reach the stream by identifier.
+
+        :param fx_app: The running application.
+        :type fx_app: FastAPI
+        :param fx_fakes: Adapters the application runs on.
+        :type fx_fakes: JobFakes
+        :param fx_queued_job: Queued job of the signed-in account, whose project the events belong to.
+        :type fx_queued_job: Job
+        """
+        project_id = fx_queued_job.project_id
+        source = make_source(project_id=project_id)
+        scan = make_scan(source=source, number=0)
+        version = make_page_version(page_id=PageId(uuid4()))
+        events = [
+            SourceImported(project_id=project_id, source=source),
+            ScanReady(project_id=project_id, scan=scan),
+            PagesChanged(project_id=project_id),
+            PageVersionReady(project_id=project_id, version=version),
+        ]
+        reader = _EventStreamReader(count=len(events))
+        async with anyio.create_task_group() as group:
+            group.start_soon(reader.read, fx_app, fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=project_id))
+            await fx_fakes.events.subscribed.wait()
+            for event in events:
+                await fx_fakes.events.publish(event)
+
+        project = {PROJECT_ID_FIELD: str(project_id)}
+        assert reader.events == [
+            StreamedEvent(EventName.SOURCE_IMPORTED, {**project, 'source_id': str(source.id)}),
+            StreamedEvent(EventName.SCAN_READY, {**project, 'scan_id': str(scan.id)}),
+            StreamedEvent(EventName.PAGES_CHANGED, project),
+            StreamedEvent(
+                EventName.PAGE_VERSION_READY, {**project, 'page_id': str(version.page_id), 'version_id': version.id}
+            ),
+        ]
 
     async def test_project_of_another_account_is_not_found(
         self, fx_app: FastAPI, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_strangers_job: Job

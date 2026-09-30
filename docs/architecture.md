@@ -279,6 +279,7 @@ it.
 | Field          | Type         | Meaning                                                                                  |
 | -------------- | ------------ | ---------------------------------------------------------------------------------------- |
 | `id`           | `ScanId`     | Identifier of the scan                                                                   |
+| `project_id`   | `ProjectId`  | Project owning the source, so the scans of a book are listed without its sources         |
 | `source_id`    | `SourceId`   | Source holding the scan                                                                  |
 | `number`       | `int`        | Number of the scan in its source from zero: the PDF or DjVu page, the TIFF frame         |
 | `source_label` | `str`        | Page label the file itself gives, such as the PDF page label `xii`, or empty             |
@@ -447,11 +448,13 @@ Ports are abstract base classes, so every adapter names its parent explicitly an
 Every repository method takes the acting account, so a query can never cross account boundaries.
 
 The persistence ports address data through the source, the scan and the page of the book. `ProjectRepository`,
-`SourceRepository`, `ScanRepository`, `PageRepository` and `JobRepository` share the `UnitOfWork`, so one use case
-changes all of them in one transaction. `PageRepository` addresses a page by its `PageId` and lists the pages of a
-project in `order_key` order, and the position of a page in the book is computed when it is read, never stored.
+`SourceRepository`, `ScanRepository`, `PageRepository`, `PageVersionRepository` and `JobRepository` share the
+`UnitOfWork`, so one use case changes all of them in one transaction. `PageRepository` addresses a page by its
+`PageId`, lists the pages of a project in `order_key` order and gives the last key of a book, and the position of a
+page in the book is computed when it is read, never stored. `ProjectRepository.overview` counts the book of one
+project, and the project listing counts every project of a window in the same query.
 `OrderKeys` is a port with an adapter on fractional-indexing, because the domain imports only the standard library
-and attrs.
+and attrs. Like `Clock.now`, its methods are synchronous, because they compute a string and wait on nothing.
 
 The storage ports divide the files of a project by prefix. `SourceStore` owns `incoming/` and `sources/`, and
 `AssetStore` owns `assets/`, so each port can delete everything of a project it holds:
@@ -540,7 +543,9 @@ erDiagram
 ```
 
 - `projects` has the primary key `id`, and `owner_id` references `user.id` with `ON DELETE RESTRICT`. Its columns are
-  the `BookDetails` fields, `cover_page_id`, `image_policy`, `created_at` and `updated_at`.
+  the `BookDetails` fields, `cover_page_id`, `image_policy`, `created_at` and `updated_at`. `cover_page_id`
+  references `pages.id` with `ON DELETE SET NULL`, so a deleted cover falls back to the first page, and the
+  repository refuses a cover that is not a page of the project, which a key over both columns could not empty alone.
 - `sources` has the primary key `id`, `project_id` with `ON DELETE CASCADE`, `import_job_id` with
   `ON DELETE SET NULL`, and a unique `(project_id, sha256)`. Its columns are `kind`, `file_type`, `file_name`, `files`
   as JSON, `size_bytes`, `sha256`, `scan_count`, `metadata` and `suggestion` as JSON, and `imported_at`.
@@ -584,7 +589,7 @@ and refuses to start when they differ.
 | Service             | Use cases                                                                |
 | ------------------- | ------------------------------------------------------------------------ |
 | `AccountService`    | Account settings, provider credentials, default engines and models       |
-| `ProjectService`    | List, create, read, edit the description, delete with all files          |
+| `ProjectService`    | List, create, read, edit the description, delete one or all with files   |
 | `ImportService`     | Accept an upload and enqueue the import, run the import job step by step |
 | `PageService`       | Page manifest, facts of one page, asset locations for the viewer         |
 | `ProcessingService` | Recipes, previews, runs, variants, invalidation of later stages          |

@@ -4,6 +4,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, override
 
 import pytest
+from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.clock.system import FixedClock
@@ -14,7 +15,7 @@ from bookreviver.domain.enums import Orthography
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.values import BookDetails, SliceRequest
 from bookreviver.services.projects import ProjectService
-from tests.helpers.builders import EPOCH, make_page, make_project, new_account_id
+from tests.helpers.builders import EPOCH, make_page, make_project, make_scan, make_source, new_account_id
 from tests.helpers.seeding import commit_project
 from tests.helpers.storage import BookFiles
 
@@ -192,10 +193,10 @@ class TestCreate:
 class TestGet:
     """Tests for ProjectService.get()."""
 
-    async def test_returns_the_project_with_its_page_count(
+    async def test_returns_the_project_with_the_counts_of_its_book(
         self, fx_service: Callable[[], ProjectService], fx_database: InMemoryDatabase, fx_actor: Actor
     ) -> None:
-        """Verify the overview counts the project's pages.
+        """Verify the overview counts the included pages, the sources and the scans of the project.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
@@ -205,12 +206,22 @@ class TestGet:
         :type fx_actor: Actor
         """
         project = make_project(owner_id=fx_actor.account_id)
-        pages = [make_page(project_id=project.id, index=index) for index in range(PAGE_COUNT)]
-        await commit_project(fx_database, project, *pages)
+        source = make_source(project_id=project.id)
+        scans = [make_scan(source=source, number=number) for number in range(PAGE_COUNT)]
+        pages = [make_page(project_id=project.id, order_key=f'a{scan.number}', scan=scan) for scan in scans]
+        # A duplicate scan kept out of the book is no page of it
+        await commit_project(
+            fx_database, project, *pages[:-1], evolve(pages[-1], included=False), sources=[source], scans=scans
+        )
 
         overview = await fx_service().get(fx_actor, project.id)
 
-        assert (overview.project, overview.page_count) == (project, PAGE_COUNT)
+        assert (overview.project, overview.page_count, overview.source_count, overview.scan_count) == (
+            project,
+            PAGE_COUNT - 1,
+            1,
+            PAGE_COUNT,
+        )
 
     async def test_another_accounts_project_is_not_found(
         self, fx_service: Callable[[], ProjectService], fx_database: InMemoryDatabase, fx_actor: Actor
@@ -300,7 +311,7 @@ class TestDelete:
         :type fx_actor: Actor
         """
         doomed, kept = make_project(owner_id=fx_actor.account_id), make_project(owner_id=fx_actor.account_id)
-        doomed_page, kept_page = make_page(project_id=doomed.id, index=0), make_page(project_id=kept.id, index=0)
+        doomed_page, kept_page = make_page(project_id=doomed.id), make_page(project_id=kept.id)
         for project, page in ((doomed, doomed_page), (kept, kept_page)):
             await commit_project(fx_database, project, page)
             await fx_files.store(page)
@@ -334,7 +345,7 @@ class TestDelete:
         :type fx_actor: Actor
         """
         project = make_project(owner_id=fx_actor.account_id)
-        page = make_page(project_id=project.id, index=0)
+        page = make_page(project_id=project.id)
         await commit_project(fx_database, project, page)
         await fx_files.store(page)
 
@@ -368,7 +379,7 @@ class TestDelete:
         :type fx_actor: Actor
         """
         project = make_project(owner_id=new_account_id())
-        page = make_page(project_id=project.id, index=0)
+        page = make_page(project_id=project.id)
         await commit_project(fx_database, project, page)
         await fx_files.store(page)
 
@@ -378,3 +389,53 @@ class TestDelete:
         expect(await _stored(fx_database, project) == project)
         expect(fx_files.kept(page))
         assert_expectations()
+
+
+class TestDeleteAll:
+    """Tests for ProjectService.delete_all()."""
+
+    async def test_removes_every_project_of_the_actor_with_its_files(
+        self,
+        fx_service: Callable[[], ProjectService],
+        fx_database: InMemoryDatabase,
+        fx_files: BookFiles,
+        fx_actor: Actor,
+    ) -> None:
+        """Verify every project of the actor goes with its files, and another account's project stays.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], ProjectService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_files: Files of imported books in the stores the service deletes from.
+        :type fx_files: BookFiles
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        owned = [make_project(owner_id=fx_actor.account_id, minutes=minute) for minute in range(PAGE_COUNT + 1)]
+        kept = make_project(owner_id=new_account_id())
+        pages = {project.id: make_page(project_id=project.id) for project in (*owned, kept)}
+        for project in (*owned, kept):
+            await commit_project(fx_database, project, pages[project.id])
+            await fx_files.store(pages[project.id])
+
+        await fx_service().delete_all(fx_actor)
+
+        remaining = await InMemoryUnitOfWork(fx_database).projects.list_for_owner(fx_actor.account_id, SliceRequest())
+        expect(remaining.total == 0)
+        expect(all(fx_files.gone(project.id) for project in owned))
+        expect(await _stored(fx_database, kept) == kept)
+        expect(fx_files.kept(pages[kept.id]))
+        assert_expectations()
+
+    async def test_actor_without_projects_is_not_an_error(
+        self, fx_service: Callable[[], ProjectService], fx_actor: Actor
+    ) -> None:
+        """Verify deleting the projects of an account that has none succeeds, as for a fresh account.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], ProjectService]
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        await fx_service().delete_all(fx_actor)

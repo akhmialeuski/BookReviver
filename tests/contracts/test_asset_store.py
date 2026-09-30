@@ -7,10 +7,11 @@ from uuid import uuid4
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import PageAsset
+from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.ids import ProjectId, StorageKey
-from tests.helpers.builders import make_page
+from bookreviver.domain.ids import PageId, ProjectId, StorageKey
+from bookreviver.domain.keys import ProjectKeys
+from tests.helpers.builders import make_page_version
 from tests.helpers.storage import WriterFailedError, abandon_write
 
 if TYPE_CHECKING:
@@ -347,17 +348,22 @@ class TestDeleteProject:
         :param fx_asset_store: Asset store of the storage backend under test.
         :type fx_asset_store: AssetStore
         """
-        page = make_page(project_id=ProjectId(uuid4()), index=0)
-        other_page = make_page(project_id=ProjectId(uuid4()), index=0)
-        await _store_file(fx_asset_store, key=page.asset_key(PageAsset.FULL), content=NEW_CONTENT)
-        await _store_directory(fx_asset_store, key=page.asset_key(PageAsset.TILES), content=NEW_CONTENT)
-        await _store_file(fx_asset_store, key=other_page.asset_key(PageAsset.FULL), content=NEW_CONTENT)
+        keys, other_keys = ProjectKeys(ProjectId(uuid4())), ProjectKeys(ProjectId(uuid4()))
+        version = make_page_version(page_id=PageId(uuid4()))
+        full, tiles = (
+            keys.version_rendition(version, Rendition.FULL_JPEG),
+            keys.version_rendition(version, Rendition.TILES),
+        )
+        other_full = other_keys.version_rendition(version, Rendition.FULL_JPEG)
+        await _store_file(fx_asset_store, key=full, content=NEW_CONTENT)
+        await _store_directory(fx_asset_store, key=tiles, content=NEW_CONTENT)
+        await _store_file(fx_asset_store, key=other_full, content=NEW_CONTENT)
 
-        await fx_asset_store.delete_project(page.project_id)
+        await fx_asset_store.delete_project(keys.project_id)
 
-        expect(not await _is_stored(fx_asset_store, page.asset_key(PageAsset.FULL)))
-        expect(not await _is_stored(fx_asset_store, page.asset_key(PageAsset.TILES)))
-        expect(await _is_stored(fx_asset_store, other_page.asset_key(PageAsset.FULL)))
+        expect(not await _is_stored(fx_asset_store, full))
+        expect(not await _is_stored(fx_asset_store, tiles))
+        expect(await _is_stored(fx_asset_store, other_full))
         assert_expectations()
 
     async def test_project_without_files_is_not_an_error(self, fx_asset_store: AssetStore) -> None:
@@ -366,8 +372,10 @@ class TestDeleteProject:
         :param fx_asset_store: Asset store of the storage backend under test.
         :type fx_asset_store: AssetStore
         """
-        page = make_page(project_id=ProjectId(uuid4()), index=0)
+        keys = ProjectKeys(ProjectId(uuid4()))
 
-        await fx_asset_store.delete_project(page.project_id)
+        await fx_asset_store.delete_project(keys.project_id)
 
-        assert not await _is_stored(fx_asset_store, page.asset_key(PageAsset.FULL))
+        assert not await _is_stored(
+            fx_asset_store, keys.version_rendition(make_page_version(page_id=PageId(uuid4())), Rendition.FULL_JPEG)
+        )

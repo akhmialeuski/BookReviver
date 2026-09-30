@@ -6,9 +6,8 @@ The title can be replaced but never cleared, so it is left out of the null varia
 title is refused. Pydantic declares no field that may be omitted but not null outside its experimental ``MISSING``
 sentinel, which mypy cannot check yet, so a field validator states that one rule.
 
-The project resource carries no source summary. The import model is being replaced by a book with any number of
-sources, and the schema gains its source fields together with that model, so the generated frontend client never
-sees a field that is about to change.
+The project resource describes the book and counts it: its included pages, its sources and their scans. The sources
+themselves are resources of their own, so the project carries no field naming a source.
 """
 
 from datetime import datetime
@@ -21,8 +20,8 @@ from pydantic.json_schema import SkipJsonSchema
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.api.schemas.types import LongText, ShortText, Title
 from bookreviver.domain.changes import BookDetailsChanges
-from bookreviver.domain.enums import Orthography
-from bookreviver.domain.ids import ProjectId
+from bookreviver.domain.enums import ImagePolicy, Orthography
+from bookreviver.domain.ids import PageId, ProjectId
 from bookreviver.domain.values import BookDetails
 
 if TYPE_CHECKING:
@@ -160,22 +159,30 @@ class ProjectSchema(ResponseModel):
 
     :ivar id: Identifier of the project.
     :ivar details: Bibliographic description of the book.
-    :ivar page_count: Number of pages imported into the project.
+    :ivar image_policy: How the images of the project's scans and page versions are stored.
+    :ivar cover_page_id: Page whose thumbnail the project list shows, or None for the first page of the book.
+    :ivar page_count: Number of pages of the book, without the pages kept out of it.
+    :ivar source_count: Number of sources the book was assembled from.
+    :ivar scan_count: Number of scans in all the sources.
     :ivar created_at: When the project was created.
     :ivar updated_at: When the project was last changed.
     """
 
     id: ProjectId
     details: BookDetailsSchema
+    image_policy: ImagePolicy
+    cover_page_id: PageId | None
     page_count: int
+    source_count: int
+    scan_count: int
     created_at: datetime
     updated_at: datetime
 
     @classmethod
     def from_overview(cls, overview: ProjectOverview) -> Self:
-        """Build the schema of a project and the size of its book.
+        """Build the schema of a project and the counts of its book.
 
-        :param overview: The project with the number of its pages.
+        :param overview: The project with the counts of its book.
         :type overview: ProjectOverview
         :returns: The project resource.
         :rtype: Self
@@ -184,7 +191,11 @@ class ProjectSchema(ResponseModel):
         return cls(
             id=project.id,
             details=BookDetailsSchema.model_validate(project.details),
+            image_policy=project.image_policy,
+            cover_page_id=project.cover_page_id,
             page_count=overview.page_count,
+            source_count=overview.source_count,
+            scan_count=overview.scan_count,
             created_at=project.created_at,
             updated_at=project.updated_at,
         )

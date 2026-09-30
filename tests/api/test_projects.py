@@ -11,10 +11,10 @@ from fastapi_pagination import Page
 
 from bookreviver.api.schemas.projects import BookDetailsSchema, ProjectCreate, ProjectSchema, ProjectUpdate
 from bookreviver.api.schemas.types import TITLE_MAX_LENGTH
-from bookreviver.domain.enums import Orthography
+from bookreviver.domain.enums import ImagePolicy, Orthography
 from bookreviver.domain.values import BookDetails
 from tests.conftest import TEST_BASE_URL
-from tests.helpers.builders import make_page, make_project, new_account_id
+from tests.helpers.builders import make_page, make_project, make_scan, make_source, new_account_id
 from tests.helpers.seeding import commit_project
 
 if TYPE_CHECKING:
@@ -153,10 +153,10 @@ class TestListProjects:
         expect((first.total, first.pages) == (PROJECT_COUNT, 2))
         assert_expectations()
 
-    async def test_counts_the_pages_of_each_project(
+    async def test_counts_the_book_of_each_project(
         self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
     ) -> None:
-        """Verify every listed project carries the number of its pages.
+        """Verify every listed project carries the numbers of its pages, sources and scans.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -166,11 +166,15 @@ class TestListProjects:
         :type fx_actor: Actor
         """
         project = make_project(owner_id=fx_actor.account_id)
-        await commit_project(fx_database, project, make_page(project_id=project.id, index=0))
+        source = make_source(project_id=project.id)
+        scans = [make_scan(source=source, number=number) for number in range(2)]
+        # The second scan is a spread whose page has not been made yet, so the book has one page
+        page = make_page(project_id=project.id, scan=scans[0])
+        await commit_project(fx_database, project, page, sources=[source], scans=scans)
 
         listed = await _list_projects(fx_client, {})
 
-        assert [item.page_count for item in listed.items] == [1]
+        assert [(item.page_count, item.source_count, item.scan_count) for item in listed.items] == [(1, 1, 2)]
 
 
 class TestCreateProject:
@@ -191,7 +195,8 @@ class TestCreateProject:
         expect(response.status_code == status.HTTP_201_CREATED)
         expect(location == f'{TEST_BASE_URL}{_project_path(created.id)}')
         expect((created.details.title, created.details.orthography) == (TITLE, Orthography.PRE_REFORM))
-        expect(created.page_count == 0)
+        expect((created.page_count, created.source_count, created.scan_count) == (0, 0, 0))
+        expect((created.image_policy, created.cover_page_id) == (ImagePolicy.COMPACT, None))
         expect(ProjectSchema.model_validate_json((await fx_client.get(location)).content) == created)
         assert_expectations()
 
@@ -366,7 +371,7 @@ class TestDeleteProject:
         :type fx_actor: Actor
         """
         project = make_project(owner_id=fx_actor.account_id)
-        page = make_page(project_id=project.id, index=0)
+        page = make_page(project_id=project.id)
         await commit_project(fx_database, project, page)
         await fx_files.store(page)
 
@@ -390,7 +395,7 @@ class TestDeleteProject:
         :type fx_files: BookFiles
         """
         project = make_project(owner_id=new_account_id())
-        page = make_page(project_id=project.id, index=0)
+        page = make_page(project_id=project.id)
         await commit_project(fx_database, project, page)
         await fx_files.store(page)
 

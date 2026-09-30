@@ -27,6 +27,15 @@ class TestLabeledStrEnum:
         )
 
 
+class TestStage:
+    """Tests for the order of the Stage members."""
+
+    def test_page_order_follows_page_split(self) -> None:
+        """Verify the page order stage runs right after the split and before every stage that works on pages."""
+        stages = list(Stage)
+        assert stages[stages.index(Stage.PAGE_SPLIT) + 1] is Stage.PAGE_ORDER
+
+
 class TestFileType:
     """Tests for FileType.from_name()."""
 
@@ -68,7 +77,7 @@ class TestFileType:
         ],
     )
     def test_source_kind(self, file_type: FileType, kind: SourceKind) -> None:
-        """Verify a PDF and a DjVu file make a source of their own kind, and every image type makes an image set.
+        """Verify a PDF and a DjVu file make a source of their own kind, and every image type makes an image source.
 
         :param file_type: Accepted file type.
         :type file_type: FileType

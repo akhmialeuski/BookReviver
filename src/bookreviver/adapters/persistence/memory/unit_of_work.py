@@ -1,10 +1,23 @@
 """In-memory unit of work: repositories work on a copy of the database, and ``commit`` publishes only the changes.
 
 The adapter backs the service and API tests and runs the same port contract suite as the SQLAlchemy adapter, so it
-reproduces the behaviour services rely on rather than only storing rows. It mirrors the foreign keys from a page or a
-job to its project, the cascade from a project to its pages and jobs, and transaction isolation: a unit of work reads
-and writes a private copy of the tables, and ``commit`` merges only the rows it added, replaced or removed, so two
-units of work touching different rows do not overwrite each other.
+reproduces the behaviour services rely on rather than only storing rows. It mirrors the schema of the SQL tables and
+transaction isolation:
+
+- Foreign keys: a source, a scan, a page or a job needs its project, a scan its source, a version its page, and a
+  source, a page or a version the import job, scan or input version it names. A project's cover is one of its own
+  pages. The owner of a project is not checked, because accounts belong to fastapi-users and have no port.
+- Unique keys: the digest of a source's main file within its project, the number of a scan within its source, the
+  order key of a page within its project, and the pair of a scan and a slot.
+- Referential actions: a project takes its sources, scans, pages and jobs with it, a source its scans, and a page
+  its versions. A deleted cover page leaves its project without a cover, a deleted scan leaves its pages without
+  their scan, a deleted job leaves the sources it imported
+  without their import job, and a deleted version leaves the versions it fed without their input.
+- Isolation: a unit of work reads and writes a private copy of the tables, and ``commit`` merges only the rows it
+  added, replaced or removed, so two units of work touching different rows do not overwrite each other.
+
+Each repository states its table's keys in two hooks of the generic repository, ``_check`` before a row is stored and
+``_cascade`` after one is removed, so the generic operations stay in one place.
 """
 
 from operator import attrgetter
@@ -12,23 +25,29 @@ from typing import TYPE_CHECKING, override
 
 from attrs import define, evolve, field, fields
 
-from bookreviver.domain.entities import Job, Project, ProjectOverview
-from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.ids import JobId, ProjectId
+from bookreviver.domain.entities import Job, Page, PageVersion, Project, ProjectOverview, Scan, Source
+from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
+from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
 from bookreviver.domain.values import Slice
-from bookreviver.ports.persistence import JobRepository, PageRepository, ProjectRepository, Repository, UnitOfWork
+from bookreviver.ports.persistence import (
+    JobRepository,
+    PageRepository,
+    PageVersionRepository,
+    ProjectRepository,
+    Repository,
+    ScanRepository,
+    SourceRepository,
+    UnitOfWork,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Sequence
+    from collections.abc import Callable, Collection, Hashable, Mapping, Sequence
 
-    from bookreviver.domain.entities import Page
     from bookreviver.domain.enums import JobState
     from bookreviver.domain.ids import AccountId
     from bookreviver.domain.values import SliceRequest
 
-type PageKey = tuple[ProjectId, int]
-
-# Attribute holding the identifier of a project and of a job
+# Attribute holding the identifier of every entity addressed by one
 ID_ATTRIBUTE: str = 'id'
 
 
@@ -37,23 +56,28 @@ class InMemoryTables:
     """The rows of every table, keyed by identifier.
 
     :ivar projects: Projects by identifier.
-    :ivar pages: Pages by project and index.
+    :ivar sources: Sources by identifier.
+    :ivar scans: Scans by identifier.
+    :ivar pages: Pages by identifier.
+    :ivar page_versions: Page versions by identifier.
     :ivar jobs: Jobs by identifier.
     """
 
     projects: dict[ProjectId, Project] = field(factory=dict)
-    pages: dict[PageKey, Page] = field(factory=dict)
+    sources: dict[SourceId, Source] = field(factory=dict)
+    scans: dict[ScanId, Scan] = field(factory=dict)
+    pages: dict[PageId, Page] = field(factory=dict)
+    page_versions: dict[PageVersionId, PageVersion] = field(factory=dict)
     jobs: dict[JobId, Job] = field(factory=dict)
 
-    def require_project(self, project_id: ProjectId) -> None:
-        """Mirror the foreign key from a page or a job to its project.
+    def forget_scans(self, scan_ids: Collection[ScanId]) -> None:
+        """Leave the pages cut from these scans without their scan, as the database's ``SET NULL`` does.
 
-        :param project_id: Project the page or job refers to.
-        :type project_id: ProjectId
-        :raises NotFoundError: If the project is not stored.
+        :param scan_ids: Scans just removed.
+        :type scan_ids: Collection[ScanId]
         """
-        if project_id not in self.projects:
-            raise NotFoundError(project_id)
+        for page in [page for page in self.pages.values() if page.scan_id in scan_ids]:
+            self.pages[page.id] = evolve(page, scan_id=None)
 
 
 @define
@@ -66,19 +90,45 @@ class InMemoryDatabase:
     tables: InMemoryTables = field(factory=InMemoryTables)
 
 
-class InMemoryRepository[EntityT, IdT](Repository[EntityT, IdT]):
-    """Generic repository over one table of the working copy."""
+def require[KeyT](rows: Mapping[KeyT, object], key: KeyT | None) -> None:
+    """Mirror a foreign key: a key that is given must be stored.
 
-    def __init__(self, rows: dict[IdT, EntityT], identify: Callable[[EntityT], IdT]) -> None:
+    :param rows: Table the foreign key refers to.
+    :type rows: Mapping[KeyT, object]
+    :param key: Value of the foreign key, or None for a nullable key left empty.
+    :type key: KeyT | None
+    :raises NotFoundError: If the key is given and not stored.
+    """
+    if key is not None and key not in rows:
+        raise NotFoundError(key)
+
+
+def remove_where[KeyT, RowT](rows: dict[KeyT, RowT], predicate: Callable[[RowT], bool]) -> None:
+    """Remove every row matching ``predicate``, in place so every repository of the unit keeps seeing the same table.
+
+    :param rows: Table to remove rows from.
+    :type rows: dict[KeyT, RowT]
+    :param predicate: Test selecting the rows to remove.
+    :type predicate: Callable[[RowT], bool]
+    """
+    for key in [key for key, row in rows.items() if predicate(row)]:
+        del rows[key]
+
+
+class InMemoryRepository[EntityT, IdT](Repository[EntityT, IdT]):
+    """Generic repository over one table of the working copy, with hooks for the keys of the table."""
+
+    def __init__(self, rows: dict[IdT, EntityT], tables: InMemoryTables) -> None:
         """Work on one table of the unit of work's copy.
 
         :param rows: Table of the working copy, changed in place.
         :type rows: dict[IdT, EntityT]
-        :param identify: Function returning the identifier of an entity.
-        :type identify: Callable[[EntityT], IdT]
+        :param tables: Every table of the working copy, which the keys of this table refer to.
+        :type tables: InMemoryTables
         """
         self._rows = rows
-        self._identify = identify
+        self._tables = tables
+        self._identify: Callable[[EntityT], IdT] = attrgetter(ID_ATTRIBUTE)
 
     @override
     async def get(self, entity_id: IdT) -> EntityT:
@@ -102,12 +152,33 @@ class InMemoryRepository[EntityT, IdT](Repository[EntityT, IdT]):
         :type entity: EntityT
         :returns: The entity as stored.
         :rtype: EntityT
-        :raises ConflictError: If an entity with this identifier is already stored.
+        :raises ConflictError: If an entity with this identifier or one of its unique values is already stored.
+        :raises NotFoundError: If an entity it refers to is not stored.
         """
         if (entity_id := self._identify(entity)) in self._rows:
             raise ConflictError(entity_id)
+        self._check(entity)
         self._rows[entity_id] = entity
         return entity
+
+    @override
+    async def add_many(self, entities: Sequence[EntityT]) -> Sequence[EntityT]:
+        """Store several new entities, all of them or none, as one database statement does.
+
+        :param entities: Entities to store, with their identifiers already assigned.
+        :type entities: Sequence[EntityT]
+        :returns: The entities as stored, in the given order.
+        :rtype: Sequence[EntityT]
+        :raises ConflictError: If an identifier or a unique value of one entity is stored already or given twice.
+        :raises NotFoundError: If an entity one of them refers to is not stored.
+        """
+        before = dict(self._rows)
+        try:
+            return [await self.add(entity) for entity in entities]
+        except DomainError:
+            self._rows.clear()
+            self._rows.update(before)
+            raise
 
     @override
     async def update(self, entity: EntityT) -> EntityT:
@@ -117,51 +188,108 @@ class InMemoryRepository[EntityT, IdT](Repository[EntityT, IdT]):
         :type entity: EntityT
         :returns: The entity as stored.
         :rtype: EntityT
-        :raises NotFoundError: If the entity is not stored.
+        :raises NotFoundError: If the entity, or an entity it refers to, is not stored.
+        :raises ConflictError: If its new state takes a unique value of another entity.
         """
-        await self.get(self._identify(entity))
-        self._rows[self._identify(entity)] = entity
+        await self.get(entity_id := self._identify(entity))
+        self._check(entity)
+        self._rows[entity_id] = entity
         return entity
 
     @override
     async def delete(self, entity_id: IdT) -> None:
-        """Remove the entity.
+        """Remove the entity and apply the actions of the foreign keys referring to it.
 
         :param entity_id: Identifier of the entity.
         :type entity_id: IdT
         :raises NotFoundError: If no entity has this identifier.
         """
-        await self.get(entity_id)
+        entity = await self.get(entity_id)
         del self._rows[entity_id]
+        self._cascade(entity)
+
+    def _check(self, entity: EntityT) -> None:
+        """Mirror the foreign keys and unique keys of the table for an entity about to be stored; none by default.
+
+        :param entity: Entity about to be added or replaced.
+        :type entity: EntityT
+        """
+
+    def _cascade(self, entity: EntityT) -> None:
+        """Mirror the actions of the foreign keys referring to a removed entity; none by default.
+
+        :param entity: Entity just removed.
+        :type entity: EntityT
+        """
+
+    def _require_unique(self, entity: EntityT, value: Callable[[EntityT], Hashable]) -> None:
+        """Mirror a unique key: no other entity of the table may have the same value.
+
+        :param entity: Entity about to be stored.
+        :type entity: EntityT
+        :param value: Function returning the unique value of an entity, a tuple for a key of several columns.
+        :type value: Callable[[EntityT], Hashable]
+        :raises ConflictError: If another entity has the same value, named in the error.
+        """
+        taken, entity_id = value(entity), self._identify(entity)
+        if any(value(row) == taken for key, row in self._rows.items() if key != entity_id):
+            raise ConflictError(taken)
 
 
 class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectRepository):
-    """Projects with page counts computed from the page table."""
+    """Projects with the counts of their books computed from the page, source and scan tables."""
 
     def __init__(self, tables: InMemoryTables) -> None:
-        """Work on the project table of the unit of work's copy, reading its pages and jobs as well.
+        """Work on the project table of the unit of work's copy, reading the tables of its books as well.
 
         :param tables: Every table of the working copy.
         :type tables: InMemoryTables
         """
-        super().__init__(tables.projects, attrgetter(ID_ATTRIBUTE))
-        self._tables = tables
+        super().__init__(tables.projects, tables)
 
     @override
-    async def delete(self, entity_id: ProjectId) -> None:
-        """Remove the project together with its pages and jobs, as the database cascade does.
+    def _check(self, entity: Project) -> None:
+        """Require the project's cover to be one of its own stored pages.
 
-        :param entity_id: Identifier of the project.
-        :type entity_id: ProjectId
-        :raises NotFoundError: If no project has this identifier.
+        :param entity: Project about to be stored.
+        :type entity: Project
+        :raises NotFoundError: If the cover page is not stored or belongs to another project.
         """
-        await super().delete(entity_id)
-        # Mirror the database cascade from a project to its pages and jobs, mutating in place so every
-        # repository of this unit of work keeps seeing the same tables
-        for page_key in [key for key in self._tables.pages if key[0] == entity_id]:
-            del self._tables.pages[page_key]
-        for job_id in [key for key, job in self._tables.jobs.items() if job.project_id == entity_id]:
-            del self._tables.jobs[job_id]
+        if (cover_id := entity.cover_page_id) is None:
+            return
+        if (cover := self._tables.pages.get(cover_id)) is None or cover.project_id != entity.id:
+            raise NotFoundError(cover_id)
+
+    @override
+    def _cascade(self, entity: Project) -> None:
+        """Remove the project's sources, scans, pages with their versions, and jobs, as the database cascade does.
+
+        :param entity: Project just removed.
+        :type entity: Project
+        """
+        doomed_pages = {page.id for page in self._tables.pages.values() if page.project_id == entity.id}
+        remove_where(self._tables.page_versions, lambda version: version.page_id in doomed_pages)
+        remove_where(self._tables.pages, lambda page: page.id in doomed_pages)
+        remove_where(self._tables.sources, lambda source: source.project_id == entity.id)
+        remove_where(self._tables.scans, lambda scan: scan.project_id == entity.id)
+        remove_where(self._tables.jobs, lambda job: job.project_id == entity.id)
+
+    @override
+    async def overview(self, project: Project) -> ProjectOverview:
+        """Count the included pages, the sources and the scans of the project.
+
+        :param project: Project whose book is counted.
+        :type project: Project
+        :returns: The project with its counts.
+        :rtype: ProjectOverview
+        """
+        tables = self._tables
+        return ProjectOverview(
+            project=project,
+            page_count=sum(page.project_id == project.id and page.included for page in tables.pages.values()),
+            source_count=sum(source.project_id == project.id for source in tables.sources.values()),
+            scan_count=sum(scan.project_id == project.id for scan in tables.scans.values()),
+        )
 
     @override
     async def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:
@@ -171,7 +299,7 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
         :type owner_id: AccountId
         :param request: Offset and limit of the window.
         :type request: SliceRequest
-        :returns: The projects of the window with their page counts, and the number of all the owner's projects.
+        :returns: The projects of the window with their counts, and the number of all the owner's projects.
         :rtype: Slice[ProjectOverview]
         """
         by_id = sorted(
@@ -181,43 +309,185 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
         # A stable sort keeps the identifier order among projects updated at the same moment
         owned = sorted(by_id, key=attrgetter('updated_at'), reverse=True)
         window = owned[request.offset : request.offset + request.limit]
-        overviews = [
-            ProjectOverview(project=project, page_count=sum(key[0] == project.id for key in self._tables.pages))
-            for project in window
-        ]
-        return Slice(items=overviews, total=len(owned))
+        return Slice(items=[await self.overview(project) for project in window], total=len(owned))
 
 
-class InMemoryPageRepository(PageRepository):
-    """Pages keyed by project and index."""
+class InMemorySourceRepository(InMemoryRepository[Source, SourceId], SourceRepository):
+    """Sources, unique by project and the digest of their main file."""
 
     def __init__(self, tables: InMemoryTables) -> None:
-        """Work on the page table of the unit of work's copy, checking pages against its projects.
+        """Work on the source table of the unit of work's copy, checking sources against projects and jobs.
 
         :param tables: Every table of the working copy.
         :type tables: InMemoryTables
         """
-        self._tables = tables
+        super().__init__(tables.sources, tables)
 
     @override
-    async def get(self, project_id: ProjectId, index: int) -> Page:
-        """Return one page of a project.
+    def _check(self, entity: Source) -> None:
+        """Require the source's project and import job, and a digest new to the project.
 
-        :param project_id: Project owning the page.
-        :type project_id: ProjectId
-        :param index: Position of the page in the book, starting at 0.
-        :type index: int
-        :returns: The stored page.
-        :rtype: Page
-        :raises NotFoundError: If the project has no page at this index.
+        :param entity: Source about to be stored.
+        :type entity: Source
+        :raises NotFoundError: If the project, or the import job it names, is not stored.
+        :raises ConflictError: If another source of the project has the same digest.
         """
-        if (page := self._tables.pages.get((project_id, index))) is None:
-            raise NotFoundError(project_id, index)
-        return page
+        require(self._tables.projects, entity.project_id)
+        require(self._tables.jobs, entity.import_job_id)
+        self._require_unique(entity, attrgetter('project_id', 'sha256'))
+
+    @override
+    def _cascade(self, entity: Source) -> None:
+        """Remove the source's scans and leave the pages cut from them without their scan, as the database does.
+
+        :param entity: Source just removed.
+        :type entity: Source
+        """
+        doomed_scans = {scan.id for scan in self._tables.scans.values() if scan.source_id == entity.id}
+        remove_where(self._tables.scans, lambda scan: scan.id in doomed_scans)
+        self._tables.forget_scans(doomed_scans)
+
+    @override
+    async def list_for_project(self, project_id: ProjectId) -> Sequence[Source]:
+        """Return the project's sources, the earliest import first, ties by identifier.
+
+        :param project_id: Project owning the sources.
+        :type project_id: ProjectId
+        :returns: Every source of the project in import order.
+        :rtype: Sequence[Source]
+        """
+        return sorted(
+            (source for source in self._rows.values() if source.project_id == project_id),
+            key=attrgetter('imported_at', ID_ATTRIBUTE),
+        )
+
+    @override
+    async def find_by_sha256(self, project_id: ProjectId, sha256: str) -> Source | None:
+        """Return the project's source with this digest.
+
+        :param project_id: Project owning the sources.
+        :type project_id: ProjectId
+        :param sha256: SHA-256 digest of a main file.
+        :type sha256: str
+        :returns: The source with this digest, or None.
+        :rtype: Source | None
+        """
+        return next(
+            (source for source in self._rows.values() if (source.project_id, source.sha256) == (project_id, sha256)),
+            None,
+        )
+
+
+class InMemoryScanRepository(InMemoryRepository[Scan, ScanId], ScanRepository):
+    """Scans, unique by source and number."""
+
+    def __init__(self, tables: InMemoryTables) -> None:
+        """Work on the scan table of the unit of work's copy, checking scans against projects and sources.
+
+        :param tables: Every table of the working copy.
+        :type tables: InMemoryTables
+        """
+        super().__init__(tables.scans, tables)
+
+    @override
+    def _check(self, entity: Scan) -> None:
+        """Require the scan's project and source, and a number new to the source.
+
+        :param entity: Scan about to be stored.
+        :type entity: Scan
+        :raises NotFoundError: If the project or the source is not stored.
+        :raises ConflictError: If another scan of the source has the same number.
+        """
+        require(self._tables.projects, entity.project_id)
+        require(self._tables.sources, entity.source_id)
+        self._require_unique(entity, attrgetter('source_id', 'number'))
+
+    @override
+    def _cascade(self, entity: Scan) -> None:
+        """Leave the pages cut from the scan without their scan, as the database's ``SET NULL`` does.
+
+        :param entity: Scan just removed.
+        :type entity: Scan
+        """
+        self._tables.forget_scans({entity.id})
+
+    @override
+    async def list_for_source(self, source_id: SourceId) -> Sequence[Scan]:
+        """Return the scans of one source by number.
+
+        :param source_id: Source holding the scans.
+        :type source_id: SourceId
+        :returns: Every scan of the source.
+        :rtype: Sequence[Scan]
+        """
+        return sorted((scan for scan in self._rows.values() if scan.source_id == source_id), key=attrgetter('number'))
+
+    @override
+    async def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Scan]:
+        """Return one window of the project's scans, source by source in import order and by number within one.
+
+        :param project_id: Project owning the scans.
+        :type project_id: ProjectId
+        :param request: Offset and limit of the window.
+        :type request: SliceRequest
+        :returns: The scans of the window and the number of all the project's scans.
+        :rtype: Slice[Scan]
+        """
+        sources = sorted(
+            (source for source in self._tables.sources.values() if source.project_id == project_id),
+            key=attrgetter('imported_at', ID_ATTRIBUTE),
+        )
+        rank = {source.id: position for position, source in enumerate(sources)}
+        scans = sorted(
+            (scan for scan in self._rows.values() if scan.project_id == project_id),
+            key=lambda scan: (rank[scan.source_id], scan.number),
+        )
+        return Slice(items=scans[request.offset : request.offset + request.limit], total=len(scans))
+
+
+class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
+    """Pages of the book, unique by project and order key and by scan and slot."""
+
+    def __init__(self, tables: InMemoryTables) -> None:
+        """Work on the page table of the unit of work's copy, checking pages against projects and scans.
+
+        :param tables: Every table of the working copy.
+        :type tables: InMemoryTables
+        """
+        super().__init__(tables.pages, tables)
+
+    @override
+    def _check(self, entity: Page) -> None:
+        """Require the page's project and scan, an order key new to the project, and a part of a scan of no page.
+
+        A page without a scan takes no part of one, as a null in a unique key of the database matches nothing.
+
+        :param entity: Page about to be stored.
+        :type entity: Page
+        :raises NotFoundError: If the project, or the scan the page names, is not stored.
+        :raises ConflictError: If another page of the project has the order key, or another page shows the same slot
+                               of the same scan.
+        """
+        require(self._tables.projects, entity.project_id)
+        require(self._tables.scans, entity.scan_id)
+        self._require_unique(entity, attrgetter('project_id', 'order_key'))
+        if entity.scan_id is not None:
+            self._require_unique(entity, attrgetter('scan_id', 'slot'))
+
+    @override
+    def _cascade(self, entity: Page) -> None:
+        """Remove the page's versions and leave a project it was the cover of without a cover, as the database does.
+
+        :param entity: Page just removed.
+        :type entity: Page
+        """
+        remove_where(self._tables.page_versions, lambda version: version.page_id == entity.id)
+        if (project := self._tables.projects.get(entity.project_id)) is not None and project.cover_page_id == entity.id:
+            self._tables.projects[project.id] = evolve(project, cover_page_id=None)
 
     @override
     async def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Page]:
-        """Return one window of a project's pages in book order.
+        """Return one window of a project's pages in the byte order of their order keys.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
@@ -227,38 +497,69 @@ class InMemoryPageRepository(PageRepository):
         :rtype: Slice[Page]
         """
         pages = sorted(
-            (page for page in self._tables.pages.values() if page.project_id == project_id), key=attrgetter('index')
+            (page for page in self._rows.values() if page.project_id == project_id),
+            key=lambda page: page.order_key.encode(),
         )
         return Slice(items=pages[request.offset : request.offset + request.limit], total=len(pages))
 
     @override
-    async def replace_for_project(self, project_id: ProjectId, pages: Sequence[Page]) -> None:
-        """Replace every page of a project with ``pages``, keyed by their own index.
+    async def last_order_key(self, project_id: ProjectId) -> str | None:
+        """Return the greatest order key of the project's pages in byte order.
 
-        :param project_id: Project whose pages are replaced; each page is stored under this project.
+        :param project_id: Project owning the pages.
         :type project_id: ProjectId
-        :param pages: The project's new pages.
-        :type pages: Sequence[Page]
-        :raises NotFoundError: If the project is not stored.
+        :returns: The order key of the last page, or None for a book without pages.
+        :rtype: str | None
         """
-        self._tables.require_project(project_id)
-        for page_key in [key for key in self._tables.pages if key[0] == project_id]:
-            del self._tables.pages[page_key]
-        self._tables.pages.update({(project_id, page.index): evolve(page, project_id=project_id) for page in pages})
+        keys = [page.order_key for page in self._rows.values() if page.project_id == project_id]
+        return max(keys, key=str.encode, default=None)
+
+
+class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionId], PageVersionRepository):
+    """Versions of the pages of the book."""
+
+    def __init__(self, tables: InMemoryTables) -> None:
+        """Work on the page version table of the unit of work's copy, checking versions against pages.
+
+        :param tables: Every table of the working copy.
+        :type tables: InMemoryTables
+        """
+        super().__init__(tables.page_versions, tables)
 
     @override
-    async def update(self, page: Page) -> Page:
-        """Replace the stored state of an existing page.
+    def _check(self, entity: PageVersion) -> None:
+        """Require the version's page and input version.
 
-        :param page: Page with its new state, addressed by its project and index.
-        :type page: Page
-        :returns: The page as stored.
-        :rtype: Page
-        :raises NotFoundError: If the page is not stored.
+        :param entity: Version about to be stored.
+        :type entity: PageVersion
+        :raises NotFoundError: If the page, or the input version the version names, is not stored.
         """
-        await self.get(page.project_id, page.index)
-        self._tables.pages[page.project_id, page.index] = page
-        return page
+        require(self._tables.pages, entity.page_id)
+        require(self._rows, entity.input_id)
+
+    @override
+    def _cascade(self, entity: PageVersion) -> None:
+        """Leave the versions the removed one fed without their input, as the database's ``SET NULL`` does.
+
+        :param entity: Version just removed.
+        :type entity: PageVersion
+        """
+        for version in [version for version in self._rows.values() if version.input_id == entity.id]:
+            self._rows[version.id] = evolve(version, input_id=None)
+
+    @override
+    async def list_for_page(self, page_id: PageId) -> Sequence[PageVersion]:
+        """Return the versions of one page, the earliest first, ties by identifier.
+
+        :param page_id: Page owning the versions.
+        :type page_id: PageId
+        :returns: Every version of the page.
+        :rtype: Sequence[PageVersion]
+        """
+        return sorted(
+            (version for version in self._rows.values() if version.page_id == page_id),
+            key=attrgetter('created_at', ID_ATTRIBUTE),
+        )
 
 
 class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
@@ -283,25 +584,30 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
         :param guards: The committed row each guarded write judged, by job, which the unit of work checks on commit.
         :type guards: dict[JobId, Job | None]
         """
-        super().__init__(tables.jobs, attrgetter(ID_ATTRIBUTE))
-        self._tables = tables
+        super().__init__(tables.jobs, tables)
         self._snapshot = snapshot
         self._committed = committed
         self._guards = guards
 
     @override
-    async def add(self, entity: Job) -> Job:
-        """Store a new job of an existing project.
+    def _check(self, entity: Job) -> None:
+        """Require the job's project.
 
-        :param entity: Job to store, with its identifier already assigned.
+        :param entity: Job about to be stored.
         :type entity: Job
-        :returns: The job as stored.
-        :rtype: Job
         :raises NotFoundError: If the job's project is not stored.
-        :raises ConflictError: If a job with this identifier is already stored.
         """
-        self._tables.require_project(entity.project_id)
-        return await super().add(entity)
+        require(self._tables.projects, entity.project_id)
+
+    @override
+    def _cascade(self, entity: Job) -> None:
+        """Leave the sources the job imported without their import job, as the database's ``SET NULL`` does.
+
+        :param entity: Job just removed.
+        :type entity: Job
+        """
+        for source in [source for source in self._tables.sources.values() if source.import_job_id == entity.id]:
+            self._tables.sources[source.id] = evolve(source, import_job_id=None)
 
     @override
     async def list_for_project(self, project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:
@@ -352,7 +658,10 @@ class InMemoryUnitOfWork(UnitOfWork):
     when the transaction began finds exactly what this unit added, replaced or removed.
 
     :ivar projects: Project repository over the working copy.
+    :ivar sources: Source repository over the working copy.
+    :ivar scans: Scan repository over the working copy.
     :ivar pages: Page repository over the working copy.
+    :ivar page_versions: Page version repository over the working copy.
     :ivar jobs: Job repository over the working copy.
     """
 
@@ -382,7 +691,10 @@ class InMemoryUnitOfWork(UnitOfWork):
         self._tables = self._copy(self._database.tables)
         self._guards: dict[JobId, Job | None] = {}
         self.projects = InMemoryProjectRepository(self._tables)
+        self.sources = InMemorySourceRepository(self._tables)
+        self.scans = InMemoryScanRepository(self._tables)
         self.pages = InMemoryPageRepository(self._tables)
+        self.page_versions = InMemoryPageVersionRepository(self._tables)
         self.jobs = InMemoryJobRepository(
             self._tables, snapshot=self._snapshot, committed=self._database.tables, guards=self._guards
         )

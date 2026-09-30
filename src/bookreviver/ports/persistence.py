@@ -8,13 +8,13 @@ contract suite in ``tests/contracts``, which is what makes them interchangeable.
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, override
 
-from bookreviver.domain.entities import Job, Project
-from bookreviver.domain.ids import JobId, ProjectId
+from bookreviver.domain.entities import Job, Page, PageVersion, Project, Scan, Source
+from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
-    from bookreviver.domain.entities import Page, ProjectOverview
+    from bookreviver.domain.entities import ProjectOverview
     from bookreviver.domain.enums import JobState
     from bookreviver.domain.ids import AccountId
     from bookreviver.domain.values import Slice, SliceRequest
@@ -42,7 +42,23 @@ class Repository[EntityT, IdT](ABC):
         :type entity: EntityT
         :returns: The entity as stored.
         :rtype: EntityT
-        :raises ConflictError: If an entity with this identifier is already stored.
+        :raises ConflictError: If an entity with this identifier, or with a value its port declares unique, is
+                               already stored.
+        :raises NotFoundError: If an entity it refers to, such as its project, is not stored.
+        """
+
+    @abstractmethod
+    async def add_many(self, entities: Sequence[EntityT]) -> Sequence[EntityT]:
+        """Store several new entities at once, all of them or, on an error, none.
+
+        After an error the unit of work is rolled back before it is used again, as a database requires.
+
+        :param entities: Entities to store, with their identifiers already assigned.
+        :type entities: Sequence[EntityT]
+        :returns: The entities as stored, in the given order.
+        :rtype: Sequence[EntityT]
+        :raises ConflictError: If an identifier or a unique value of one entity is stored already or given twice.
+        :raises NotFoundError: If an entity one of them refers to is not stored.
         """
 
     @abstractmethod
@@ -53,7 +69,8 @@ class Repository[EntityT, IdT](ABC):
         :type entity: EntityT
         :returns: The entity as stored.
         :rtype: EntityT
-        :raises NotFoundError: If the entity is not stored.
+        :raises NotFoundError: If the entity, or an entity it refers to, is not stored.
+        :raises ConflictError: If its new state takes a value its port declares unique from another entity.
         """
 
     @abstractmethod
@@ -67,69 +84,135 @@ class Repository[EntityT, IdT](ABC):
 
 
 class ProjectRepository(Repository[Project, ProjectId]):
-    """Projects, listed per owning account."""
+    """Projects, listed per owning account.
+
+    A project's cover is one of its own pages: ``add`` and ``update`` raise ``NotFoundError`` naming a cover page that
+    is not stored or belongs to another project, and deleting the cover page leaves the project without a cover.
+    """
 
     @abstractmethod
     async def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:
-        """Return the owner's projects with their page counts, most recently updated first, ties by identifier.
+        """Return the owner's projects with their counts, most recently updated first, ties by identifier.
 
         :param owner_id: Account owning the projects.
         :type owner_id: AccountId
         :param request: Offset and limit of the window to return.
         :type request: SliceRequest
-        :returns: The projects of the window with their page counts, and the number of all the owner's projects.
+        :returns: The projects of the window with the counts of their included pages, sources and scans, and the
+                  number of all the owner's projects.
         :rtype: Slice[ProjectOverview]
         """
 
+    @abstractmethod
+    async def overview(self, project: Project) -> ProjectOverview:
+        """Return a project read earlier together with the counts of its book.
 
-class PageRepository(ABC):
-    """Pages of a project, addressed by their position in the book."""
+        :param project: Project whose book is counted.
+        :type project: Project
+        :returns: The project with the counts of its included pages, sources and scans.
+        :rtype: ProjectOverview
+        """
+
+
+class SourceRepository(Repository[Source, SourceId]):
+    """Sources of the projects; the pair of a project and the digest of a source's main file is unique.
+
+    Deleting a source removes its scans, and the pages of the book made from them stay without their scan.
+    """
 
     @abstractmethod
-    async def get(self, project_id: ProjectId, index: int) -> Page:
-        """Return one page.
+    async def list_for_project(self, project_id: ProjectId) -> Sequence[Source]:
+        """Return the project's sources in the order they were imported, ties by identifier.
 
-        :param project_id: Project owning the page.
+        :param project_id: Project owning the sources.
         :type project_id: ProjectId
-        :param index: Position of the page in the book, starting at 0.
-        :type index: int
-        :returns: The stored page.
-        :rtype: Page
-        :raises NotFoundError: If the project has no page at this index.
+        :returns: Every source of the project, the earliest import first.
+        :rtype: Sequence[Source]
         """
 
     @abstractmethod
+    async def find_by_sha256(self, project_id: ProjectId, sha256: str) -> Source | None:
+        """Return the project's source whose main file has this digest, which refuses a second upload of the file.
+
+        :param project_id: Project owning the sources.
+        :type project_id: ProjectId
+        :param sha256: SHA-256 digest of a main file as lower-case hexadecimal digits.
+        :type sha256: str
+        :returns: The source with this digest, or None when the project has none.
+        :rtype: Source | None
+        """
+
+
+class ScanRepository(Repository[Scan, ScanId]):
+    """Scans of the sources; the pair of a source and the number of a scan in it is unique."""
+
+    @abstractmethod
+    async def list_for_source(self, source_id: SourceId) -> Sequence[Scan]:
+        """Return the scans of one source in their order in the source.
+
+        :param source_id: Source holding the scans.
+        :type source_id: SourceId
+        :returns: Every scan of the source, by number.
+        :rtype: Sequence[Scan]
+        """
+
+    @abstractmethod
+    async def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Scan]:
+        """Return the scans of a project, source by source in import order and by number within a source.
+
+        :param project_id: Project owning the scans.
+        :type project_id: ProjectId
+        :param request: Offset and limit of the window to return.
+        :type request: SliceRequest
+        :returns: The scans of the window and the number of all the project's scans.
+        :rtype: Slice[Scan]
+        """
+
+
+class PageRepository(Repository[Page, PageId]):
+    """Pages of the book, addressed by their identifier and ordered by their order key.
+
+    Within a project an order key is unique, and a part of a scan, the pair of a scan and a slot, belongs to one page
+    at most. A page keeps its row when its scan is deleted, and loses only the reference to it. Deleting a page
+    removes its versions.
+    """
+
+    @abstractmethod
     async def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Page]:
-        """Return the pages of a project in book order.
+        """Return the pages of a project in book order, the byte order of their order keys.
+
+        The position of a page in the book is the offset of the window plus its index in the window.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
         :param request: Offset and limit of the window to return.
         :type request: SliceRequest
-        :returns: The pages of the window and the number of all the project's pages.
+        :returns: The pages of the window and the number of all the project's pages, included or not.
         :rtype: Slice[Page]
         """
 
     @abstractmethod
-    async def replace_for_project(self, project_id: ProjectId, pages: Sequence[Page]) -> None:
-        """Replace every page of a project with the given pages.
+    async def last_order_key(self, project_id: ProjectId) -> str | None:
+        """Return the order key of the last page of a project, after which new pages are appended.
 
-        :param project_id: Project whose pages are replaced.
+        :param project_id: Project owning the pages.
         :type project_id: ProjectId
-        :param pages: The project's new pages, each keyed by its own index.
-        :type pages: Sequence[Page]
-        :raises NotFoundError: If the project is not stored.
+        :returns: The greatest order key of the project's pages, or None for a book without pages.
+        :rtype: str | None
         """
 
-    @abstractmethod
-    async def update(self, page: Page) -> Page:
-        """Replace the stored state of one page and return it as stored.
 
-        :param page: Page with its new state, addressed by its project and index.
-        :type page: Page
-        :returns: The page as stored.
-        :rtype: Page
-        :raises NotFoundError: If the page is not stored.
+class PageVersionRepository(Repository[PageVersion, PageVersionId]):
+    """Versions of the pages of the book; a version whose input version is deleted keeps its row without the input."""
+
+    @abstractmethod
+    async def list_for_page(self, page_id: PageId) -> Sequence[PageVersion]:
+        """Return the versions of one page in the order they were created, ties by identifier.
+
+        :param page_id: Page owning the versions.
+        :type page_id: PageId
+        :returns: Every version of the page, the earliest first.
+        :rtype: Sequence[PageVersion]
         """
 
 
@@ -184,12 +267,18 @@ class UnitOfWork(ABC):
     """One transaction over every repository; nothing is visible to others before ``commit``.
 
     :ivar projects: Project repository of this transaction.
+    :ivar sources: Source repository of this transaction.
+    :ivar scans: Scan repository of this transaction.
     :ivar pages: Page repository of this transaction.
+    :ivar page_versions: Page version repository of this transaction.
     :ivar jobs: Job repository of this transaction.
     """
 
     projects: ProjectRepository
+    sources: SourceRepository
+    scans: ScanRepository
     pages: PageRepository
+    page_versions: PageVersionRepository
     jobs: JobRepository
 
     @abstractmethod
