@@ -41,6 +41,7 @@ class Stage(LabeledStrEnum):
 
     IMPORT = 'import', 'Import'
     PAGE_SPLIT = 'page-split', 'Page split'
+    PAGE_ORDER = 'page-order', 'Page order'
     GEOMETRY = 'geometry', 'Geometry'
     CLEANUP = 'cleanup', 'Cleanup'
     LAYOUT = 'layout', 'Layout'
@@ -51,11 +52,11 @@ class Stage(LabeledStrEnum):
 
 
 class SourceKind(LabeledStrEnum):
-    """What a book was imported from."""
+    """What one source of a book is, which selects the format that reads it."""
 
     PDF = 'pdf', 'PDF document'
     DJVU = 'djvu', 'DjVu document'
-    IMAGES = 'images', 'Page images'
+    IMAGES = 'image', 'Image file'
 
     @classmethod
     def of_files(cls, names: Collection[str]) -> SourceKind:
@@ -99,6 +100,58 @@ class Orthography(LabeledStrEnum):
     UNKNOWN = 'unknown', 'Unknown'
     PRE_REFORM = 'pre-reform', 'Pre-reform'
     MODERN = 'modern', 'Modern'
+
+
+class ImagePolicy(LabeledStrEnum):
+    """How a project stores the ``full`` image of its scans and page versions.
+
+    A bilevel image is a lossless PNG under either policy. The policy decides only gray and colour images, and a change
+    applies to images written afterwards, so nothing stored is encoded again.
+    """
+
+    COMPACT = 'compact', 'Compact: gray and colour images as JPEG'
+    LOSSLESS = 'lossless', 'Lossless: every image as PNG'
+
+
+class PageKind(LabeledStrEnum):
+    """Role of a page in the printed book."""
+
+    COVER = 'cover', 'Cover'
+    BACK_COVER = 'back-cover', 'Back cover'
+    ENDPAPER = 'endpaper', 'Endpaper'
+    FRONTISPIECE = 'frontispiece', 'Frontispiece'
+    TITLE = 'title', 'Title page'
+    TEXT = 'text', 'Text page'
+    PLATE = 'plate', 'Plate'
+    BLANK = 'blank', 'Blank page'
+    OTHER = 'other', 'Other'
+
+
+class PageOrigin(LabeledStrEnum):
+    """Where the image of a page comes from."""
+
+    SCAN = 'scan', 'Copy of a part of a scan'
+    BLANK = 'blank', 'Generated blank leaf'
+    PLACEHOLDER = 'placeholder', 'Placeholder waiting for a scan'
+
+
+class VersionState(LabeledStrEnum):
+    """Lifecycle of a page version, from its creation to its result."""
+
+    PENDING = 'pending', 'Pending'
+    RUNNING = 'running', 'Running'
+    READY = 'ready', 'Ready'
+    FAILED = 'failed', 'Failed'
+
+
+class TransformKind(LabeledStrEnum):
+    """Kind of the coordinate transform a processing step applies from its input to its output."""
+
+    IDENTITY = 'identity', 'Unchanged coordinates'
+    CROP = 'crop', 'Crop to a quadrilateral'
+    ROTATE = 'rotate', 'Rotation by an angle'
+    PERSPECTIVE = 'perspective', 'Perspective correction of a quadrilateral'
+    MESH = 'mesh', 'Dewarping along a stored mesh'
 
 
 class JobKind(LabeledStrEnum):
@@ -203,5 +256,19 @@ class PageAsset(LabeledStrEnum):
     """A derived file of an imported page, named by its value inside the page's asset directory."""
 
     FULL = 'full.jpg', 'Native resolution image'
+    THUMBNAIL = 'thumb.jpg', 'Thumbnail'
+    TILES = 'iiif', 'IIIF tile pyramid'
+
+
+class Rendition(LabeledStrEnum):
+    """One of the derived files of a scan or a page version, named by its value inside their directory.
+
+    ``full`` is a JPEG or a PNG as the project's ``ImagePolicy`` and the colour of the image decide, so it has one
+    member per format. ``preview`` and ``thumb`` are always JPEG.
+    """
+
+    FULL_JPEG = 'full.jpg', 'Native resolution image as JPEG'
+    FULL_PNG = 'full.png', 'Native resolution image as PNG'
+    PREVIEW = 'preview.jpg', 'Preview, 2048 px on the longer side'
     THUMBNAIL = 'thumb.jpg', 'Thumbnail'
     TILES = 'iiif', 'IIIF tile pyramid'
