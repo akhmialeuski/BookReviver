@@ -101,6 +101,17 @@ def image_upload(directory: Path, name: str, *, width_px: int = PAGE_WIDTH_PX) -
     return upload(name, content=path.read_bytes())
 
 
+def djvu_uploads(files: Sequence[Path]) -> list[UploadFile]:
+    """Return an upload of each built DjVu file, named as the file is.
+
+    :param files: Built DjVu files, such as the index and the page files of an indirect document.
+    :type files: Sequence[Path]
+    :returns: The uploads, as FastAPI hands them to the source store, in the order of ``files``.
+    :rtype: list[UploadFile]
+    """
+    return [upload(path.name, content=path.read_bytes()) for path in files]
+
+
 class WorkerCrashError(BaseException):
     """A worker that dies in the middle of a job, which the service must not catch since it cannot."""
 

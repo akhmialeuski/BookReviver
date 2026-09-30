@@ -38,7 +38,8 @@ DJVU_SAMPLE_MODES: dict[ColorMode, tuple[str, str, str]] = {
     ColorMode.BILEVEL: ('1', '.pbm', 'cjb2'),
 }
 DJVU_SUFFIX: str = '.djvu'
-DJVU_PAGE_NAME: str = 'p{number:04d}.djvu'
+DJVU_PAGE_PREFIX: str = 'p'
+DJVU_PAGE_NAME: str = '{prefix}{number:04d}.djvu'
 DJVU_BUNDLE_NAME: str = 'bundle.djvu'
 DJVU_SCRIPT_NAME: str = 'script.txt'
 
@@ -339,42 +340,49 @@ def write_djvu_page(path: Path, *, page: DjvuPage) -> Path:
     return path
 
 
-def write_djvu_bundle(path: Path, *, pages: Sequence[DjvuPage]) -> Path:
-    """Assemble pages into one bundled DjVu document.
+def write_djvu_bundle(path: Path, *, pages: Sequence[DjvuPage], prefix: str = DJVU_PAGE_PREFIX) -> Path:
+    """Assemble pages into one bundled DjVu document, whose components are named after ``prefix``.
 
     :param path: Where to write the file.
     :type path: Path
     :param pages: Pages in order.
     :type pages: Sequence[DjvuPage]
+    :param prefix: Start of the names of the components, which become the names of the page files of an indirect
+                   document made of this one.
+    :type prefix: str
     :returns: The written path.
     :rtype: Path
     """
     with tempfile.TemporaryDirectory() as directory:
         files = [
-            write_djvu_page(Path(directory) / DJVU_PAGE_NAME.format(number=number), page=page)
+            write_djvu_page(Path(directory) / DJVU_PAGE_NAME.format(prefix=prefix, number=number), page=page)
             for number, page in enumerate(pages, start=1)
         ]
         run_djvulibre('djvm', '-c', path, *files)
     return path
 
 
-def write_djvu_pages(directory: Path, *, pages: Sequence[DjvuPage]) -> list[Path]:
+def write_djvu_pages(directory: Path, *, pages: Sequence[DjvuPage], prefix: str = DJVU_PAGE_PREFIX) -> list[Path]:
     """Write pages as single-page DjVu files named ``p0001.djvu`` and so on.
 
     :param directory: Existing directory to write the files into.
     :type directory: Path
     :param pages: Pages in order.
     :type pages: Sequence[DjvuPage]
+    :param prefix: Start of the names of the files.
+    :type prefix: str
     :returns: The written files in page order.
     :rtype: list[Path]
     """
     return [
-        write_djvu_page(directory / DJVU_PAGE_NAME.format(number=number), page=page)
+        write_djvu_page(directory / DJVU_PAGE_NAME.format(prefix=prefix, number=number), page=page)
         for number, page in enumerate(pages, start=1)
     ]
 
 
-def write_djvu_indirect(directory: Path, *, pages: Sequence[DjvuPage], index_name: str = 'index.djvu') -> list[Path]:
+def write_djvu_indirect(
+    directory: Path, *, pages: Sequence[DjvuPage], index_name: str = 'index.djvu', prefix: str = DJVU_PAGE_PREFIX
+) -> list[Path]:
     """Write an indirect DjVu document: an index file, and one file per page named ``p0001.djvu`` and so on.
 
     :param directory: Existing directory to write the index and the page files into.
@@ -383,15 +391,17 @@ def write_djvu_indirect(directory: Path, *, pages: Sequence[DjvuPage], index_nam
     :type pages: Sequence[DjvuPage]
     :param index_name: Name of the index file.
     :type index_name: str
+    :param prefix: Start of the names of the page files, so that two documents in one upload share no name.
+    :type prefix: str
     :returns: The index file first, then the page files in page order.
     :rtype: list[Path]
     """
     with tempfile.TemporaryDirectory() as scratch:
-        bundle = write_djvu_bundle(Path(scratch) / DJVU_BUNDLE_NAME, pages=pages)
+        bundle = write_djvu_bundle(Path(scratch) / DJVU_BUNDLE_NAME, pages=pages, prefix=prefix)
         run_djvulibre('djvmcvt', '-i', bundle, directory, index_name)
     return [
         directory / index_name,
-        *(directory / DJVU_PAGE_NAME.format(number=number) for number in range(1, len(pages) + 1)),
+        *(directory / DJVU_PAGE_NAME.format(prefix=prefix, number=number) for number in range(1, len(pages) + 1)),
     ]
 
 

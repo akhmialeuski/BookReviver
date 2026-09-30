@@ -15,8 +15,9 @@ from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import EventName
 from bookreviver.domain.enums import JobKind, JobState, RejectionReason
 from bookreviver.domain.values import SliceRequest
+from tests.adapters.imaging.samples import DjvuPage, requires_djvulibre, write_djvu_indirect
 from tests.helpers.builders import make_job, make_project, new_account_id
-from tests.helpers.fakes_imports import image_upload, pdf_upload
+from tests.helpers.fakes_imports import djvu_uploads, image_upload, pdf_upload
 from tests.helpers.sse import EventStreamReader
 
 if TYPE_CHECKING:
@@ -42,6 +43,8 @@ SECOND_PART_PAGES: int = 3
 SCAN_COUNT: int = FIRST_PART_PAGES + SECOND_PART_PAGES + 1
 SOURCE_COUNT: int = 3
 SECOND_PART_WIDTH_PX: int = 210
+# Pages of the sample indirect DjVu documents
+DJVU_PAGES: tuple[DjvuPage, ...] = (DjvuPage(), DjvuPage(size_px=(250, 350)), DjvuPage(size_px=(320, 420)))
 # The events of an import of one image, in the order they are published: the job queued and running, the job with
 # its total, the source and its pages, the job with its first scan done, the scan, and the job with its result
 ONE_IMAGE_EVENTS: list[EventName] = [
@@ -196,6 +199,52 @@ class TestUploadSources:
             [(file['file_name'], file['reason']) for file in finished['result']['rejected']]
             == [('notes.txt', RejectionReason.UNSUPPORTED_TYPE)]
         )
+        assert_expectations()
+
+    @requires_djvulibre
+    async def test_indirect_djvu_document_is_one_source_and_an_incomplete_one_is_rejected_by_name(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_broker: InMemoryBroker,
+        fx_fakes: JobFakes,
+        fx_project: Project,
+        tmp_path: Path,
+    ) -> None:
+        """Verify an index with its page files is one source of several files, and one lacking a file is rejected.
+
+        Two indirect documents are uploaded together, and the second has lost its last page file.
+
+        :param fx_client: Client of the signed-in account.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the import job.
+        :type fx_broker: InMemoryBroker
+        :param fx_fakes: Adapters the application runs on.
+        :type fx_fakes: JobFakes
+        :param fx_project: Project of the signed-in account.
+        :type fx_project: Project
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        complete = write_djvu_indirect(tmp_path, pages=DJVU_PAGES, index_name='a-index.djvu', prefix='a')
+        incomplete = write_djvu_indirect(tmp_path, pages=DJVU_PAGES, index_name='b-index.djvu', prefix='b')
+
+        queued = (
+            await fx_client.post(
+                SOURCES_PATH.format(project_id=fx_project.id),
+                files=_multipart(djvu_uploads([*complete, *incomplete[:-1]])),
+            )
+        ).json()
+        await fx_broker.wait_all()
+
+        finished = (await fx_client.get(JOB_PATH.format(job_id=queued['id']))).json()
+        [source] = await InMemoryUnitOfWork(fx_fakes.database).sources.list_for_project(fx_project.id)
+        [rejected] = finished['result']['rejected']
+        expect(finished['state'] == JobState.SUCCEEDED)
+        expect((source.file_name, source.scan_count) == ('a-index.djvu', len(DJVU_PAGES)))
+        expect([file.name for file in source.files] == [path.name for path in complete])
+        expect(finished['result']['imported'] == [str(source.id)])
+        expect((rejected['file_name'], rejected['reason']) == ('b-index.djvu', RejectionReason.UNREADABLE))
+        expect('b0003.djvu' in rejected['detail'])
         assert_expectations()
 
     async def test_second_upload_while_an_import_is_running_is_a_conflict(

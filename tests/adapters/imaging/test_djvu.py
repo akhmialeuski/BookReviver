@@ -13,9 +13,9 @@ from PIL import Image
 from bookreviver.adapters.imaging import DjvuFormat, DjvuLibreTools
 from bookreviver.adapters.imaging.common import FactKey, to_mm
 from bookreviver.adapters.imaging.djvu import HEADER_LAYOUT
-from bookreviver.domain.enums import ColorMode, DjvuDocumentKind, SourceKind
+from bookreviver.domain.enums import ColorMode, DjvuDocumentKind, FileType, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
-from bookreviver.domain.values import ScanFacts
+from bookreviver.domain.values import ScanFacts, UploadedSource
 from bookreviver.ports.imaging import SourceInspector
 from tests.adapters.imaging.samples import (
     DjvuPage,
@@ -430,6 +430,96 @@ class TestInspect:
 
         with pytest.raises(ValueError, match=r'^A DjVu source is one document file'):
             await fx_inspector.inspect(SourceKind.DJVU, [first, second])
+
+
+def _source(*names: str) -> UploadedSource:
+    """Return an expected DjVu source made of the named files.
+
+    :param names: Names of the files, the main file first.
+    :type names: str
+    :returns: The source as the reader must group it.
+    :rtype: UploadedSource
+    """
+    return UploadedSource(kind=SourceKind.DJVU, file_type=FileType.DJVU, names=list(names))
+
+
+class TestGroup:
+    """Tests for SourceInspector.group() of DjVu files, served by DjvuFormat."""
+
+    @requires_djvulibre
+    async def test_makes_one_source_of_an_index_and_all_its_files(
+        self, fx_inspector: SourceInspector, tmp_path: Path
+    ) -> None:
+        """Verify an indirect document is one source, its index first and then its page files in the order of the index.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        files = _write(DjvuDocumentKind.INDIRECT, tmp_path)
+
+        sources = await fx_inspector.group(files[::-1])
+
+        assert list(sources) == [_source(INDEX_NAME, 'p0001.djvu', 'p0002.djvu', 'p0003.djvu')]
+
+    @requires_djvulibre
+    async def test_makes_a_source_of_every_document_and_page_file_in_natural_order(
+        self, fx_inspector: SourceInspector, tmp_path: Path
+    ) -> None:
+        """Verify two indirect documents, a bundled one, single pages and a file that is no DjVu group as one upload.
+
+        Every index takes only the files it names, a bundled document and a single page are sources of their own, and
+        so is a file no tool reads, which ``inspect`` refuses by name later.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        pages = [PAGES[0], PAGES[1]]
+        first = write_djvu_indirect(tmp_path, pages=pages, index_name='a-index.djvu', prefix='a')
+        second = write_djvu_indirect(tmp_path, pages=pages, index_name='b-index.djvu', prefix='b')
+        bundle = write_djvu_bundle(tmp_path / 'c-book.djvu', pages=pages)
+        singles = write_djvu_pages(tmp_path, pages=pages, prefix='d')
+        notes = tmp_path / 'e-notes.djvu'
+        notes.write_bytes(b'not a DjVu file, though long enough to hold a header')
+        upload = [notes, *singles[::-1], bundle, *second[::-1], *first]
+
+        sources = await fx_inspector.group(upload)
+
+        assert list(sources) == [
+            _source('a-index.djvu', 'a0001.djvu', 'a0002.djvu'),
+            _source('b-index.djvu', 'b0001.djvu', 'b0002.djvu'),
+            _source('c-book.djvu'),
+            _source('d0001.djvu'),
+            _source('d0002.djvu'),
+            _source('e-notes.djvu'),
+        ]
+
+    @requires_djvulibre
+    async def test_keeps_an_index_with_the_files_that_are_there_when_some_are_missing(
+        self, fx_inspector: SourceInspector, tmp_path: Path
+    ) -> None:
+        """Verify an incomplete document is still one source, so that ``inspect`` refuses it whole and lists the rest.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        index, first, *_ = _write(DjvuDocumentKind.INDIRECT, tmp_path)
+
+        sources = await fx_inspector.group([index, first])
+
+        assert list(sources) == [_source(INDEX_NAME, 'p0001.djvu')]
+
+    def test_leaves_every_file_a_source_of_its_own_without_the_tools(self) -> None:
+        """Verify grouping needs no tools when there are none, since it then joins nothing."""
+        djvu = DjvuFormat(tools=None, jpeg_quality=JPEG_QUALITY, timeout_s=TIMEOUT_S)
+        files = [Path('index.djvu'), Path('p0001.djvu')]
+
+        assert djvu.group(files) == [[files[0]], [files[1]]]
 
 
 @requires_djvulibre

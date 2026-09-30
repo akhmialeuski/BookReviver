@@ -1,7 +1,7 @@
 """Tests for the import service: receiving an upload, and running the job it becomes, source by source."""
 
 import asyncio
-from operator import itemgetter
+from operator import attrgetter, itemgetter
 from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import AsyncMock, patch
 
@@ -9,14 +9,18 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.adapters.imaging.common import FactKey
 from bookreviver.adapters.jobs.recording import RecordingJobQueue
 from bookreviver.adapters.persistence.memory.unit_of_work import InMemoryJobRepository, InMemoryScanRepository
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import (
+    ColorMode,
+    DjvuDocumentKind,
     JobState,
     PageOrigin,
     RejectionReason,
     Rendition,
+    SourceKind,
     Stage,
     UploadProblem,
     VersionState,
@@ -41,6 +45,13 @@ from bookreviver.services.imports import (
     ImportCancelledError,
     ImportRun,
 )
+from tests.adapters.imaging.samples import (
+    DjvuPage,
+    requires_djvulibre,
+    write_djvu_bundle,
+    write_djvu_indirect,
+    write_djvu_pages,
+)
 from tests.helpers.builders import make_job, make_project, new_account_id
 from tests.helpers.fakes_imports import (
     DEFAULT_PARALLEL_SCANS,
@@ -50,6 +61,7 @@ from tests.helpers.fakes_imports import (
     OVERLAP_SECONDS,
     ImportRig,
     WorkerCrashError,
+    djvu_uploads,
     image_upload,
     pdf_upload,
 )
@@ -82,6 +94,13 @@ PARALLEL_SCANS: int = 2
 SECRET_FAULT: str = 'secret detail of the failure'
 BROKEN_PDF: bytes = b'this is not a pdf'
 DJVU_HEADER: bytes = b'AT&TFORM'
+# Pages of the sample DjVu documents, of different widths so that a page taken for another shows in its scan
+DJVU_PAGES: tuple[DjvuPage, ...] = (
+    DjvuPage(size_px=(300, 400), mode=ColorMode.COLOR),
+    DjvuPage(size_px=(250, 350), dpi=200),
+    DjvuPage(size_px=(320, 420), dpi=600, mode=ColorMode.BILEVEL),
+)
+DJVU_WIDTHS: list[int] = [page.size_px[0] for page in DJVU_PAGES]
 
 
 @pytest.fixture
@@ -695,6 +714,130 @@ class TestRunImport:
 
         pages = await _pages(fx_rig, fx_project.id)
         assert (pages[: len(before)], len(pages)) == (before, 2 * len(before))
+
+
+@requires_djvulibre
+class TestRunImportDjvu:
+    """Tests for the sources ImportService.run_import() makes of DjVu files."""
+
+    async def test_keeps_an_indirect_document_as_one_source_with_its_scans_in_index_order(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify an index and its page files become one source of all four files, next to the PDF of the upload.
+
+        The files are uploaded out of order. The source keeps every file under its own directory, so ``ddjvu`` finds
+        the pages beside the index when the scans are cut.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        files = write_djvu_indirect(fx_samples, pages=DJVU_PAGES, index_name='a-index.djvu')
+        uploads = [pdf_upload(fx_samples, 'b-book.pdf'), *djvu_uploads(files[::-1])]
+
+        job = await _import(fx_rig, fx_owner, fx_project.id, uploads)
+
+        djvu, pdf = await _sources(fx_rig, fx_project.id)
+        scans = [scan for scan in await _scans(fx_rig, fx_project.id) if scan.source_id == djvu.id]
+        async with fx_rig.sources.source_files(fx_project.id, djvu.id) as stored:
+            stored_names = sorted(path.name for path in stored)
+        expect(job.state is JobState.SUCCEEDED)
+        expect((djvu.kind, djvu.file_name, pdf.file_name) == (SourceKind.DJVU, 'a-index.djvu', 'b-book.pdf'))
+        expect([file.name for file in djvu.files] == [path.name for path in files])
+        expect(djvu.size_bytes == sum(path.stat().st_size for path in files))
+        expect(stored_names == sorted(path.name for path in files))
+        expect((djvu.scan_count, djvu.metadata[FactKey.DJVU_KIND]) == (len(DJVU_PAGES), DjvuDocumentKind.INDIRECT))
+        expect([scan.facts.width_px for scan in sorted(scans, key=attrgetter('number'))] == DJVU_WIDTHS)
+        expect(all(scan.renditions.ready for scan in scans))
+        assert_expectations()
+
+    async def test_makes_a_source_of_every_bundled_part_and_orders_the_pages_by_the_names_of_the_parts(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify two bundled parts uploaded out of order are two sources, whose pages follow the natural order.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        second = write_djvu_bundle(fx_samples / 'part2.djvu', pages=DJVU_PAGES[:2])
+        tenth = write_djvu_bundle(fx_samples / 'part10.djvu', pages=DJVU_PAGES[1:])
+
+        await _import(fx_rig, fx_owner, fx_project.id, djvu_uploads([tenth, second]))
+
+        sources, scans, pages = (
+            await _sources(fx_rig, fx_project.id),
+            await _scans(fx_rig, fx_project.id),
+            await _pages(fx_rig, fx_project.id),
+        )
+        widths = {scan.id: scan.facts.width_px for scan in scans}
+        expect([source.file_name for source in sources] == ['part2.djvu', 'part10.djvu'])
+        expect([source.scan_count for source in sources] == [2, 2])
+        expect([widths[page.scan_id] for page in pages if page.scan_id] == [*DJVU_WIDTHS[:2], *DJVU_WIDTHS[1:]])
+        assert_expectations()
+
+    async def test_makes_a_source_of_every_single_page_file(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify every single-page file is a source of its own with one scan.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        files = write_djvu_pages(fx_samples, pages=DJVU_PAGES)
+
+        await _import(fx_rig, fx_owner, fx_project.id, djvu_uploads(files))
+
+        sources = await _sources(fx_rig, fx_project.id)
+        expect([source.file_name for source in sources] == [path.name for path in files])
+        expect([source.scan_count for source in sources] == [1] * len(files))
+        assert_expectations()
+
+    async def test_rejects_an_indirect_document_that_lacks_files_and_imports_the_rest(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify an incomplete indirect document is rejected whole, naming the missing files, and the PDF is imported.
+
+        The page file that is there is not imported alone, and nothing of the rejected document stays staged.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        index, first, *_ = write_djvu_indirect(fx_samples, pages=DJVU_PAGES, index_name='a-index.djvu')
+
+        job = await _import(
+            fx_rig, fx_owner, fx_project.id, [*djvu_uploads([index, first]), pdf_upload(fx_samples, 'b-book.pdf')]
+        )
+
+        assert job.result is not None
+        [rejected] = job.result.rejected
+        expect(job.state is JobState.SUCCEEDED)
+        expect((rejected.file_name, rejected.reason) == ('a-index.djvu', RejectionReason.UNREADABLE))
+        expect('p0002.djvu, p0003.djvu' in rejected.detail)
+        expect([source.file_name for source in await _sources(fx_rig, fx_project.id)] == ['b-book.pdf'])
+        assert_expectations()
 
 
 class TestRunImportChecks:

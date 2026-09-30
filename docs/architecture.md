@@ -531,8 +531,16 @@ the JPEG, so a bilevel page is written as gray until `PageRasterizer` writes the
 call is one `subprocess.run` with a list of arguments, a timeout of `imaging.djvulibre_timeout_s` and the exit
 status checked. A tool that fails, hangs or is missing becomes an `UnsupportedSourceError` that names the file and
 never shows the tool's output, which goes to the log. An indirect document whose index names a file that is not among
-the files of the source is refused with the list of missing files. Until the grouping arrives with the next step,
-every DjVu file is a source of its own, so an index reaches `inspect` alone and is refused this way.
+the files of the source is refused with the list of missing files.
+
+`DjvuFormat.group` finds the index files among the DjVu files of an upload by their headers and joins each with every
+component that `djvused -e ls` lists for it, page files, shared data, annotations and thumbnails, the index first and
+then the components in the order of the index. Only the components of kind `P` become scans, in that order. A DjVu
+file that no index names is a source of its own, and so is one that is not DjVu, so `inspect` refuses it by name
+without stopping the other files. An index whose components are not all in the upload is still one source made of the
+index and the components that are, and `inspect` refuses it as a whole with the list of missing files, which the
+import reports as an unreadable file while it imports the rest of the upload. Grouping and inspection are separate
+calls because `group` must not read the pages. Without the tools every file is a source of its own.
 
 The persistence adapter keeps its table classes private and maps rows to domain entities in one mapper per entity.
 Each port repository wraps an advanced-alchemy `SQLAlchemyAsyncRepository`, so generic queries come from the library

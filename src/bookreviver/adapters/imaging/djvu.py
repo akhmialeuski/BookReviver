@@ -4,8 +4,11 @@ A DjVu file is one of three kinds, told apart by its first bytes before any tool
 page, an indirect document, which is a small index file naming one file per page beside it, and a single-page file.
 A bundled document and a single-page file are a source of their own, and an indirect document is one source made of
 the index and all its files, the only source of several files in the book. The kind is the ``DjvuDocumentKind`` that is
-recorded with the source. The files of one source may reach ``inspect`` and ``extract`` in any order, so the index is
-found by its header.
+recorded with the source. ``group`` finds the index files of an upload and joins each with the files its
+``djvused -e ls`` names, since no service reads files and only the index knows which files are its own. An index whose
+files are not all in the upload is still one source, and ``inspect`` refuses it with the list of missing files, so the
+files of the upload that are complete are imported. The files of one source may reach ``inspect`` and ``extract`` in
+any order, so the index is found by its header.
 
 DjVuLibre is used through its tools and not through the Python bindings, because the bindings are built from source
 against the DjVuLibre headers, which would make ``uv sync`` fail on a machine without them, and because a tool that
@@ -209,6 +212,41 @@ class DjvuFormat(SourceFormat):
         self._tools = tools
         self._jpeg_quality = jpeg_quality
         self._timeout_s = timeout_s
+
+    @override
+    def group(self, files: Sequence[Path]) -> list[Sequence[Path]]:
+        """Join the index file of each indirect document with the files its index names, and leave the rest alone.
+
+        A bundled document and a single-page file are a source of their own. A file that is not DjVu, and an index that
+        the tools cannot read, are left as sources of their own too, so ``inspect`` refuses them by name without
+        stopping the other files. A file the index names but the upload lacks is not joined, and ``inspect`` reports it
+        as missing. Without the tools every file is a source of its own, since only the tools read an index.
+
+        :param files: Local paths of the staged DjVu files, in the natural order of their names.
+        :type files: Sequence[Path]
+        :returns: The files of each source in the order of their main files, the index first and then its files in the
+                  order of the index, all its components and not only the pages.
+        :rtype: list[Sequence[Path]]
+        """
+        if self._tools is None:
+            return super().group(files)
+        by_name = {path.name: path for path in files}
+        members: dict[Path, list[Path]] = {}
+        claimed: set[Path] = set()
+        for path in files:
+            try:
+                if DjvuHeader.read(path).kind is not DjvuDocumentKind.INDIRECT:
+                    continue
+                components = self._components(path)
+            except UnsupportedSourceError, OSError:
+                continue
+            members[path] = [
+                by_name[component.name]
+                for component in components
+                if component.name in by_name and by_name[component.name] not in {path, *claimed}
+            ]
+            claimed.update(members[path])
+        return [[path, *members.get(path, [])] for path in files if path not in claimed]
 
     @override
     def inspect(self, files: Sequence[Path]) -> SourceAnalysis:
