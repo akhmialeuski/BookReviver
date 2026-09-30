@@ -1,22 +1,90 @@
 """Immutable value objects of the domain."""
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 from attrs import field, frozen, validators
 
 from bookreviver.domain.enums import Orthography, TransformKind
+from bookreviver.domain.errors import InvalidIdentifierError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.enums import ColorMode, FileType, RejectionReason, SourceKind
+    from attrs import Attribute
+
+    from bookreviver.domain.enums import (
+        ColorMode,
+        ContributorRole,
+        FileType,
+        IdentifierScheme,
+        RejectionReason,
+        SourceKind,
+    )
     from bookreviver.domain.ids import SourceId, StorageKey
 
 # JSON-compatible metadata as read from a source file
 type MetadataMap = Mapping[str, Any]
 # A SHA-256 digest as lower-case hexadecimal digits
 SHA256_PATTERN: str = r'[0-9a-f]{64}'
+
+
+@frozen(kw_only=True)
+class Contributor:
+    """A person who took part in the making of a book, in the role the title page or a catalogue gives them.
+
+    The name is kept as printed, with the spelling and the initials of the book, because a catalogue of old books is
+    searched by that form. The position of a contributor in the list of the description records the order of the
+    title page.
+
+    :ivar name: Name as printed in the book.
+    :ivar role: Role of the person, a code of the MARC list of relators.
+    """
+
+    name: str = field(validator=validators.min_len(1))
+    role: ContributorRole
+
+
+def _is_normalized(identifier: BookIdentifier, _attribute: Attribute[str], value: str) -> None:
+    """Check that the value follows the rules of the scheme of its identifier and is already normalized.
+
+    :param identifier: The identifier being built, whose scheme the value must follow.
+    :type identifier: BookIdentifier
+    :param _attribute: The attribute being validated, which the rule does not need.
+    :type _attribute: Attribute[str]
+    :param value: The value to check.
+    :type value: str
+    :raises InvalidIdentifierError: If the value breaks the rules of the scheme or is not normalized.
+    """
+    if (normalized := identifier.scheme.normalize(value)) != value:
+        err_msg = f'{value!r} is not normalized; the normalized {identifier.scheme.label} is {normalized!r}.'
+        raise InvalidIdentifierError(err_msg)
+
+
+@frozen(kw_only=True)
+class BookIdentifier:
+    """A number or an address that identifies a book or one copy of it, held in the normalized form of its scheme.
+
+    :ivar scheme: Kind of the identifier, which decides how it is written and checked.
+    :ivar value: The identifier in the normalized form of its scheme, so equal numbers written differently are equal.
+    """
+
+    scheme: IdentifierScheme
+    value: str = field(validator=_is_normalized)
+
+    @classmethod
+    def parse(cls, scheme: IdentifierScheme, raw: str) -> Self:
+        """Build an identifier from a value as a person wrote it or a file stored it.
+
+        :param scheme: Kind of the identifier.
+        :type scheme: IdentifierScheme
+        :param raw: The value in any spelling the scheme accepts.
+        :type raw: str
+        :returns: The identifier with the value normalized.
+        :rtype: Self
+        :raises InvalidIdentifierError: If the value breaks the rules of the scheme.
+        """
+        return cls(scheme=scheme, value=scheme.normalize(raw))
 
 
 @frozen(kw_only=True)

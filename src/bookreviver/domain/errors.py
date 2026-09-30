@@ -10,6 +10,13 @@ class DomainError(Exception):
     """Base of every error a use case reports to its caller."""
 
 
+class InvalidIdentifierError(DomainError, ValueError):
+    """A book identifier does not follow the rules of its scheme.
+
+    It is also a ``ValueError``, so Pydantic turns it into a validation error when a schema calls the rule.
+    """
+
+
 class NotFoundError(DomainError):
     """The requested entity does not exist or is not visible to the acting account."""
 
