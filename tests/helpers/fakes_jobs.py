@@ -1,9 +1,11 @@
 """Fakes of the job feature: an event bus that records, the adapters a job test shares, and a provider injecting them.
 
-The event bus is the application's own ``InProcessEventBus`` with two additions a test needs: the list of everything
-published, and an event set once a subscriber is listening, so a test publishes only after the stream is in place.
+The event bus is the application's own ``InProcessEventBus`` with what a test needs to observe: the list of everything
+published, an event set once a subscription is in place, so a test publishes only after the stream subscribed, and the
+number of subscriptions still open.
 """
 
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, override
 
 import anyio
@@ -18,7 +20,7 @@ from bookreviver.services.jobs import JobService
 from tests.helpers.builders import EPOCH
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncGenerator, AsyncIterator
 
     from bookreviver.domain.entities import Job, Project
     from bookreviver.domain.events import DomainEvent
@@ -31,7 +33,8 @@ class RecordingEventBus(InProcessEventBus):
     """The in-process event bus, recording every published event and announcing its first subscriber.
 
     :ivar published: Every published event, in the order it was published.
-    :ivar subscribed: Set once a subscriber listens for events.
+    :ivar subscribed: Set once a subscription is in place.
+    :ivar open_subscriptions: Number of subscriptions entered and not yet left.
     """
 
     def __init__(self) -> None:
@@ -39,6 +42,7 @@ class RecordingEventBus(InProcessEventBus):
         super().__init__(queue_size=EVENT_QUEUE_SIZE)
         self.published: list[DomainEvent] = []
         self.subscribed = anyio.Event()
+        self.open_subscriptions = 0
 
     @override
     async def publish(self, event: DomainEvent) -> None:
@@ -51,20 +55,22 @@ class RecordingEventBus(InProcessEventBus):
         await super().publish(event)
 
     @override
-    async def subscribe(self, project_id: ProjectId) -> AsyncIterator[DomainEvent]:
-        """Yield the project's events as the in-process bus does, announcing the subscription when it starts.
-
-        The subscription starts at the first read. The inner stream registers its queue before it waits, and the task
-        woken by ``subscribed`` runs only once this one waits, so an event published from there is delivered.
+    @asynccontextmanager
+    async def subscribe(self, project_id: ProjectId) -> AsyncGenerator[AsyncIterator[DomainEvent]]:
+        """Subscribe as the in-process bus does, announcing the subscription once it is in place and counting it.
 
         :param project_id: Project whose events are delivered.
         :type project_id: ProjectId
-        :returns: Iterator yielding each event published after the subscription starts.
-        :rtype: AsyncIterator[DomainEvent]
+        :returns: Generator yielding once the reader of every event published since entry.
+        :rtype: AsyncGenerator[AsyncIterator[DomainEvent]]
         """
-        self.subscribed.set()
-        async for event in super().subscribe(project_id):
-            yield event
+        async with super().subscribe(project_id) as events:
+            self.open_subscriptions += 1
+            self.subscribed.set()
+            try:
+                yield events
+            finally:
+                self.open_subscriptions -= 1
 
 
 @frozen(kw_only=True)

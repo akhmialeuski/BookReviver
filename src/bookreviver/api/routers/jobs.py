@@ -3,13 +3,15 @@
 The job routes live under ``/jobs`` and the event stream under ``/projects/{project_id}/events``, so the module holds
 one router per prefix and joins them under the ``jobs`` tag.
 
-The stream is opened by a dependency rather than inside the endpoint. FastAPI sends the response headers as soon as a
-streaming endpoint starts, so a refusal raised inside it could no longer become a problem response. Raised in the
-dependency, a project of another account is still answered with 404 before any event is sent. Domain events without a
-browser event are skipped.
+The subscription is held by a dependency with ``yield`` rather than inside the endpoint. FastAPI sends the response
+headers as soon as a streaming endpoint starts, so a refusal raised inside it could no longer become a problem
+response. Raised in the dependency, a project of another account is still answered with 404 before any event is sent.
+The dependency subscribes before the endpoint runs, so events published while the headers go out are kept, and FastAPI
+leaves it only after the stream ends, which unsubscribes at once. Domain events without a browser event are skipped.
 """
 
 from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack
 from typing import Annotated
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka, inject
@@ -66,8 +68,10 @@ async def cancel_job(job_id: JobIdPath, actor: ActorDep, service: JobServiceDep)
 
 
 @inject
-async def open_event_stream(project_id: ProjectIdPath, actor: ActorDep, service: JobServiceDep) -> ProjectEvents:
-    """Subscribe to the project's events, or refuse before the stream starts.
+async def open_event_stream(
+    project_id: ProjectIdPath, actor: ActorDep, service: JobServiceDep
+) -> AsyncIterator[ProjectEvents]:
+    """Subscribe to the project's events for as long as the response streams, or refuse before it starts.
 
     :param project_id: Identifier of the project.
     :type project_id: ProjectId
@@ -75,10 +79,16 @@ async def open_event_stream(project_id: ProjectIdPath, actor: ActorDep, service:
     :type actor: Actor
     :param service: Job service of the request.
     :type service: JobService
-    :returns: Iterator yielding the project's events from now on.
-    :rtype: ProjectEvents
+    :returns: Iterator yielding once the project's events published since subscribing, and unsubscribing afterwards.
+    :rtype: AsyncIterator[ProjectEvents]
     """
-    return await service.events(actor, project_id)
+    subscription = AsyncExitStack()
+    events = await subscription.enter_async_context(await service.events(actor, project_id))
+    # try/finally rather than `async with` around the yield: FastAPI drives this generator (ASYNC119)
+    try:
+        yield events
+    finally:
+        await subscription.aclose()
 
 
 @project_events.get('/{project_id}/events', response_class=EventSourceResponse, name=RouteName.PROJECT_EVENTS)

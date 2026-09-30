@@ -261,6 +261,8 @@ class TestStreamProjectEvents:
     ) -> None:
         """Verify a cancellation and a description change reach the stream as named events, in order.
 
+        The subscription is in place before the response starts, and closed as soon as the browser disconnects.
+
         :param fx_app: The running application.
         :type fx_app: FastAPI
         :param fx_client: Client of the signed-in account.
@@ -274,7 +276,7 @@ class TestStreamProjectEvents:
         reader = _EventStreamReader(count=2)
         async with anyio.create_task_group() as group:
             group.start_soon(reader.read, fx_app, fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=project_id))
-            # Change things only once the stream listens, so no event is published before it
+            # Change things only once the stream has subscribed, which happens before the endpoint runs
             await fx_fakes.events.subscribed.wait()
             await fx_client.delete(JOB_PATH.format(job_id=fx_queued_job.id))
             await fx_fakes.events.publish(ProjectChanged(project_id=project_id))
@@ -284,6 +286,7 @@ class TestStreamProjectEvents:
         expect(reader.events[0].data[ID] == str(fx_queued_job.id))
         expect(reader.events[0].data[STATE] == JobState.CANCELLED)
         expect(reader.events[1].data == {PROJECT_ID: str(project_id)})
+        expect(fx_fakes.events.open_subscriptions == 0)
         assert_expectations()
 
     async def test_project_of_another_account_is_not_found(

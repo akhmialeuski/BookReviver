@@ -2,7 +2,6 @@
 
 from typing import TYPE_CHECKING
 
-import anyio
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
@@ -17,7 +16,6 @@ from tests.helpers.fakes_jobs import JobFakes
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Project
-    from bookreviver.domain.events import DomainEvent
 
 pytestmark = pytest.mark.anyio
 
@@ -201,7 +199,7 @@ class TestEvents:
     async def test_owner_receives_only_project_events(
         self, fx_fakes: JobFakes, fx_owner: Actor, fx_project: Project
     ) -> None:
-        """Verify the stream yields the events of its project published after it opened, and none of another project.
+        """Verify a subscription keeps its project's events published before the first read, and none of another.
 
         :param fx_fakes: Adapters of the service.
         :type fx_fakes: JobFakes
@@ -212,20 +210,13 @@ class TestEvents:
         """
         other = make_project(owner_id=fx_owner.account_id)
         await fx_fakes.store(fx_project)
-        stream = await fx_fakes.job_service().events(fx_owner, fx_project.id)
-        received: list[DomainEvent] = []
-
-        async def listen() -> None:
-            """Record the first event the stream delivers."""
-            received.append(await anext(stream))
-
-        async with anyio.create_task_group() as group:
-            group.start_soon(listen)
-            # The stream subscribes at its first read, so publish only once it listens
-            await fx_fakes.events.subscribed.wait()
+        async with await fx_fakes.job_service().events(fx_owner, fx_project.id) as stream:
+            # Published before anything reads the stream, as while the response headers are still being sent
             await fx_fakes.events.publish(ProjectChanged(project_id=other.id))
             await fx_fakes.events.publish(ProjectChanged(project_id=fx_project.id))
-        assert received == [ProjectChanged(project_id=fx_project.id)]
+            expect(await anext(stream) == ProjectChanged(project_id=fx_project.id))
+        expect(fx_fakes.events.open_subscriptions == 0)
+        assert_expectations()
 
     async def test_project_of_another_account_is_not_found(
         self, fx_fakes: JobFakes, fx_stranger: Actor, fx_project: Project
@@ -242,3 +233,4 @@ class TestEvents:
         await fx_fakes.store(fx_project)
         with pytest.raises(NotFoundError):
             await fx_fakes.job_service().events(fx_stranger, fx_project.id)
+        assert not fx_fakes.events.subscribed.is_set()

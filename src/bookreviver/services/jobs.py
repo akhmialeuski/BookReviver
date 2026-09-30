@@ -8,8 +8,9 @@ cancelled, so no worker has to be interrupted. The state is written by ``JobRepo
 by a read and a replacement, because a worker may finish the job between the two: the write then finds the job
 finished and changes nothing, and the cancellation is refused like any cancellation of a finished job.
 
-The event stream delivers what is published after it opens and replays nothing: a client that reconnects reads the
-job again and refreshes what it shows.
+The event stream is a subscription: it keeps every event published from the moment it is entered, even before the
+first read, and replays nothing from before. A client therefore reads the job after its stream has opened, and again
+after every reconnect, and the stream carries every change from there on.
 """
 
 from typing import TYPE_CHECKING
@@ -22,6 +23,7 @@ from bookreviver.domain.events import JobChanged
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+    from contextlib import AbstractAsyncContextManager
 
     from bookreviver.domain.entities import Actor, Job
     from bookreviver.domain.events import DomainEvent
@@ -89,18 +91,21 @@ class JobService:
         await self._publisher.publish(JobChanged(project_id=cancelled.project_id, job=cancelled))
         return cancelled
 
-    async def events(self, actor: Actor, project_id: ProjectId) -> AsyncIterator[DomainEvent]:
-        """Return the stream of the project's events published from now on.
+    async def events(
+        self, actor: Actor, project_id: ProjectId
+    ) -> AbstractAsyncContextManager[AsyncIterator[DomainEvent]]:
+        """Return a subscription to the project's events, for the owner only.
 
-        The ownership check runs here rather than inside the stream, so a caller learns of a refusal before it starts
-        streaming.
+        The ownership check runs here, before the subscription exists, so a caller learns of a refusal before it
+        subscribes or starts streaming.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
-        :returns: Iterator yielding each event of the project, until the consumer stops.
-        :rtype: AsyncIterator[DomainEvent]
+        :returns: Context manager that subscribes when entered, yields the iterator of every event of the project
+                  published since, and unsubscribes when left.
+        :rtype: AbstractAsyncContextManager[AsyncIterator[DomainEvent]]
         :raises NotFoundError: If the project does not exist or belongs to another account.
         """
         await self._check_owner(actor, project_id)

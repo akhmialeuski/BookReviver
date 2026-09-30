@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+    from contextlib import AbstractAsyncContextManager
     from datetime import datetime
 
     from bookreviver.domain.entities import Job
@@ -43,16 +44,22 @@ class EventPublisher(ABC):
 
 
 class EventStream(ABC):
-    """Subscribes to the domain events of one project."""
+    """Subscribes to the domain events of one project.
+
+    A subscription is a resource with a start and an end, so it is an async context manager. Entering it subscribes,
+    so every event published from then on is kept for the subscriber, even before the first read. Leaving it
+    unsubscribes at once, whether the consumer stopped reading or never started.
+    """
 
     @abstractmethod
-    def subscribe(self, project_id: ProjectId) -> AsyncIterator[DomainEvent]:
-        """Yield the project's events as they are published, until the consumer stops.
+    def subscribe(self, project_id: ProjectId) -> AbstractAsyncContextManager[AsyncIterator[DomainEvent]]:
+        """Return a subscription to the project's events.
 
         :param project_id: Project whose events are delivered.
         :type project_id: ProjectId
-        :returns: Iterator yielding each event published after the subscription starts.
-        :rtype: AsyncIterator[DomainEvent]
+        :returns: Context manager that subscribes when entered, yields the iterator of every event published since,
+                  and unsubscribes when left.
+        :rtype: AbstractAsyncContextManager[AsyncIterator[DomainEvent]]
         """
 
 
