@@ -86,6 +86,7 @@ class ImagingSettings(BaseModel):
     :ivar thumbnail_long_side_px: Longer side of a page thumbnail in pixels.
     :ivar jpeg_quality: JPEG quality from 1 to 100 of rendered pages, tiles, previews and thumbnails.
     :ivar parallel_scans: Largest number of scans an import cuts at the same time.
+    :ivar djvulibre_timeout_s: Seconds one call of a DjVuLibre tool may run before the file is refused as damaged.
     """
 
     tile_size_px: PositiveInt = 512
@@ -93,6 +94,7 @@ class ImagingSettings(BaseModel):
     thumbnail_long_side_px: PositiveInt = 320
     jpeg_quality: int = Field(default=90, ge=1, le=100)
     parallel_scans: PositiveInt = 4
+    djvulibre_timeout_s: PositiveInt = 120
 
 
 class Settings(BaseSettings):

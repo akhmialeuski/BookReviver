@@ -56,7 +56,7 @@ What each concern reuses, and therefore what we do not write ourselves.
 | Background jobs            | Taskiq, in-process broker locally, Redis on a server            | Queueing, retries, worker processes              |
 | Mail                       | aiosmtplib                                                      | SMTP                                             |
 | PDF and images             | PyMuPDF, Pillow                                                 | Parsing and rasterising                          |
-| DjVu                       | DjVuLibre command-line tools: `djvused`, `ddjvu`, `djvutxt`     | DjVu parsing, rendering and text extraction      |
+| DjVu                       | DjVuLibre command-line tools: `djvused`, `djvudump`, `ddjvu`    | DjVu parsing, rendering and text extraction      |
 | XMP metadata               | defusedxml                                                      | XML parsing safe against hostile documents       |
 | Page order                 | fractional-indexing                                             | Order keys that sort between two neighbours      |
 | Tiles                      | pyvips `dzsave` with the IIIF 3 layout                          | Tile pyramids and `info.json`                    |
@@ -66,6 +66,13 @@ What each concern reuses, and therefore what we do not write ourselves.
 
 SQLAlchemy 2.0 is kept even though FastAPI's guide suggests SQLModel, because the persistence adapter is the only
 place that sees the ORM and SQLAlchemy is the explicit project choice.
+
+DjVu is read through the DjVuLibre command-line tools and not through the `python-djvulibre` bindings. The original
+bindings are archived, their continuation is published as source only and is built against the DjVuLibre headers, so
+`uv sync` would fail on a machine without them. The bindings are GPL-2.0-only and the project is AGPL-3.0, which leaves
+linking them into one process an open licence question, while a tool runs as a process of its own. It also means a
+tool that crashes on a damaged file does not take the worker down. PyMuPDF does not read DjVu. The tools are a system
+package, `djvulibre` on openSUSE and `djvulibre-bin` on Debian, which the README lists.
 
 ## Layers
 
@@ -512,10 +519,20 @@ which of its files make one source; by default every file is a source of its own
 pages are its scans, and an image source is one file whose TIFF frames are its scans, a JPEG, JPEG 2000 or PNG file
 holding one. The imaging provider registers the formats, and the reader refuses to start unless every kind has
 exactly one. Supporting another kind of source is a new `SourceKind` member, a new format and one entry in the
-provider. `DjvuFormat` refuses every source for now, so a DjVu upload is accepted and fails its import with a clear
-message until reading DjVu pages is written. Until then it also keeps the default grouping, because only the index
-file of an indirect document names its page files, in a directory DjVuLibre decodes, so assembling an indirect
-document arrives with reading DjVu.
+provider.
+
+`DjvuFormat` runs the DjVuLibre tools, which the provider finds with `shutil.which` when the container is built. It
+tells the three kinds of DjVu file apart, a bundled document, an indirect index and a single page, from the first 27
+bytes of the file before it runs any tool, so the kind is the `DjvuDocumentKind` in the metadata of the source. It
+takes the page count and the metadata from `djvused`, and the size, resolution and chunks of every page from one
+`djvudump` call per file. The chunks give the colour mode: only the `Sjbz` mask is bilevel, and an IW44 layer marked
+`(color)` is colour. It renders a page with `ddjvu` at native resolution into a temporary PNM file, and Pillow writes
+the JPEG, so a bilevel page is written as gray until `PageRasterizer` writes the PNG that decision 22 asks for. A
+call is one `subprocess.run` with a list of arguments, a timeout of `imaging.djvulibre_timeout_s` and the exit
+status checked. A tool that fails, hangs or is missing becomes an `UnsupportedSourceError` that names the file and
+never shows the tool's output, which goes to the log. An indirect document whose index names a file that is not among
+the files of the source is refused with the list of missing files. Until the grouping arrives with the next step,
+every DjVu file is a source of its own, so an index reaches `inspect` alone and is refused this way.
 
 The persistence adapter keeps its table classes private and maps rows to domain entities in one mapper per entity.
 Each port repository wraps an advanced-alchemy `SQLAlchemyAsyncRepository`, so generic queries come from the library

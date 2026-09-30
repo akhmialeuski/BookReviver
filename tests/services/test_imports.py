@@ -293,7 +293,7 @@ BAD_FILES: list[BadFile] = [
     BadFile(name='book.djvu', content=DJVU_HEADER, reason=RejectionReason.UNREADABLE),
     BadFile(name='notes.txt', content=b'plain text', reason=RejectionReason.UNSUPPORTED_TYPE),
 ]
-BAD_FILE_IDS: list[str] = ['damaged-pdf', 'damaged-image', 'djvu-not-readable-yet', 'unsupported-type']
+BAD_FILE_IDS: list[str] = ['damaged-pdf', 'damaged-image', 'truncated-djvu', 'unsupported-type']
 
 
 class TestStartImport:

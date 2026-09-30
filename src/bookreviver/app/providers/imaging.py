@@ -6,11 +6,15 @@ supporting another kind of source adds its format to the list in ``source_reader
 their sizes and quality from ``Settings.imaging``.
 """
 
+import logging
+
 from dishka import AnyOf, Provider, Scope, provide
 
-from bookreviver.adapters.imaging import DjvuFormat, ImageFormat, PdfFormat, SourceReader, VipsTiler
+from bookreviver.adapters.imaging import DjvuFormat, DjvuLibreTools, ImageFormat, PdfFormat, SourceReader, VipsTiler
 from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
+
+logger = logging.getLogger(__name__)
 
 
 class ImagingProvider(Provider):
@@ -28,8 +32,15 @@ class ImagingProvider(Provider):
         :rtype: SourceReader
         """
         jpeg_quality = settings.imaging.jpeg_quality
+        djvu_tools = DjvuLibreTools.locate()
+        if djvu_tools is None:
+            logger.warning(
+                'The DjVuLibre tools djvused, djvudump and ddjvu are not installed, so every DjVu source will be '
+                'refused. Install the djvulibre package to read DjVu.'
+            )
+        djvu = DjvuFormat(tools=djvu_tools, jpeg_quality=jpeg_quality, timeout_s=settings.imaging.djvulibre_timeout_s)
         return SourceReader(
-            formats=(PdfFormat(jpeg_quality=jpeg_quality), ImageFormat(jpeg_quality=jpeg_quality), DjvuFormat()),
+            formats=(PdfFormat(jpeg_quality=jpeg_quality), ImageFormat(jpeg_quality=jpeg_quality), djvu)
         )
 
     @provide

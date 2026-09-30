@@ -15,7 +15,7 @@ import anyio
 from attrs import frozen
 
 from bookreviver.adapters.clock.system import FixedClock
-from bookreviver.adapters.imaging import DjvuFormat, ImageFormat, PdfFormat, SourceReader, VipsTiler
+from bookreviver.adapters.imaging import DjvuFormat, DjvuLibreTools, ImageFormat, PdfFormat, SourceReader, VipsTiler
 from bookreviver.adapters.jobs.recording import RecordingJobQueue
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
@@ -374,7 +374,11 @@ class ImportRig:
             formats=(
                 PdfFormat(jpeg_quality=imaging.jpeg_quality),
                 ImageFormat(jpeg_quality=imaging.jpeg_quality),
-                DjvuFormat(),
+                DjvuFormat(
+                    tools=DjvuLibreTools.locate(),
+                    jpeg_quality=imaging.jpeg_quality,
+                    timeout_s=imaging.djvulibre_timeout_s,
+                ),
             )
         )
         tiler = VipsTiler(
