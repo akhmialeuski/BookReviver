@@ -4,8 +4,10 @@ from typing import TYPE_CHECKING
 
 import anyio
 import pytest
+from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.errors import ConflictError, NotFoundError
@@ -146,6 +148,31 @@ class TestCancel:
         with pytest.raises(ConflictError):
             await fx_fakes.job_service().cancel(fx_owner, job.id)
         expect((await fx_fakes.stored_job(job)).state is state)
+        expect(not fx_fakes.events.published)
+        assert_expectations()
+
+    async def test_job_finished_after_it_was_read_keeps_its_final_state(
+        self, fx_fakes: JobFakes, fx_owner: Actor, fx_project: Project
+    ) -> None:
+        """Verify a job that a worker finishes after the service read it running is not overwritten as cancelled.
+
+        :param fx_fakes: Adapters of the service.
+        :type fx_fakes: JobFakes
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        """
+        job = make_job(project_id=fx_project.id, state=JobState.RUNNING)
+        await fx_fakes.store(fx_project, job)
+        # The service's unit of work begins now and sees the job running
+        service = fx_fakes.job_service()
+        worker = InMemoryUnitOfWork(fx_fakes.database)
+        await worker.jobs.update(evolve(job, state=JobState.SUCCEEDED))
+        await worker.commit()
+        with pytest.raises(ConflictError):
+            await service.cancel(fx_owner, job.id)
+        expect((await fx_fakes.stored_job(job)).state is JobState.SUCCEEDED)
         expect(not fx_fakes.events.published)
         assert_expectations()
 

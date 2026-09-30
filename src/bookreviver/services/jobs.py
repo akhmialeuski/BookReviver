@@ -4,7 +4,9 @@ A job belongs to a project, so every use case checks that the acting account own
 another account is reported as missing rather than forbidden, so no account learns what another one has.
 
 Cancelling only records the state. A running job reads its own row before every step and stops once it finds itself
-cancelled, so no worker has to be interrupted.
+cancelled, so no worker has to be interrupted. The state is written by ``JobRepository.update_if_state`` rather than
+by a read and a replacement, because a worker may finish the job between the two: the write then finds the job
+finished and changes nothing, and the cancellation is refused like any cancellation of a finished job.
 
 The event stream delivers what is published after it opens and replays nothing: a client that reconnects reads the
 job again and refreshes what it shows.
@@ -75,12 +77,14 @@ class JobService:
         :returns: The job in the cancelled state, with the time it finished.
         :rtype: Job
         :raises NotFoundError: If the job does not exist or belongs to another account's project.
-        :raises ConflictError: If the job has already finished.
+        :raises ConflictError: If the job has already finished, or finished while it was being cancelled.
         """
         job = await self.get(actor, job_id)
-        if job.state.is_final:
+        cancelled = await self._uow.jobs.update_if_state(
+            evolve(job, state=JobState.CANCELLED, finished_at=self._clock.now()), expected=JobState.active()
+        )
+        if cancelled is None:
             raise ConflictError(JOB_FINISHED)
-        cancelled = await self._uow.jobs.update(evolve(job, state=JobState.CANCELLED, finished_at=self._clock.now()))
         await self._uow.commit()
         await self._publisher.publish(JobChanged(project_id=cancelled.project_id, job=cancelled))
         return cancelled
