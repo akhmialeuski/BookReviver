@@ -8,7 +8,8 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.ids import PageId
+from bookreviver.domain.ids import PageId, StorageKey
+from bookreviver.domain.keys import KeySegment, ProjectKeys
 from bookreviver.domain.values import SliceRequest
 from bookreviver.services.pages import PageService
 from tests.helpers.builders import make_page, make_page_version, make_project, make_scan, make_source, new_account_id
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Page, PageVersion, Project
 
 pytestmark = pytest.mark.anyio
@@ -26,18 +28,21 @@ pytestmark = pytest.mark.anyio
 STORED_KEYS: list[str] = ['a1', 'a0', 'a0V']
 BOOK_ORDER: list[int] = [1, 2, 0]
 WINDOW: SliceRequest = SliceRequest(offset=1, limit=1)
+FILE_CONTENT: bytes = b'derived file'
 
 
 @pytest.fixture
-def fx_service(fx_database: InMemoryDatabase) -> Callable[[], PageService]:
+def fx_service(fx_database: InMemoryDatabase, fx_asset_store: LocalAssetStore) -> Callable[[], PageService]:
     """Return a function building the service for one request.
 
     :param fx_database: In-memory database every request of the test shares.
     :type fx_database: InMemoryDatabase
+    :param fx_asset_store: Local asset store over the test's storage root.
+    :type fx_asset_store: LocalAssetStore
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], PageService]
     """
-    return lambda: PageService(uow=InMemoryUnitOfWork(fx_database))
+    return lambda: PageService(uow=InMemoryUnitOfWork(fx_database), assets=fx_asset_store)
 
 
 async def _commit_book(database: InMemoryDatabase, project: Project) -> tuple[list[Page], list[PageVersion]]:
@@ -53,7 +58,9 @@ async def _commit_book(database: InMemoryDatabase, project: Project) -> tuple[li
     source = make_source(project_id=project.id)
     scans = [make_scan(source=source, number=number) for number in range(2)]
     shown = [scans[0], None, scans[1]]
-    pages = [make_page(project_id=project.id, order_key=key, scan=scan) for key, scan in zip(STORED_KEYS, shown)]
+    pages = [
+        make_page(project_id=project.id, order_key=key, scan=scan) for key, scan in zip(STORED_KEYS, shown, strict=True)
+    ]
     versions = [make_page_version(page_id=pages[index].id) for index in (0, 2)]
     await commit_project(database, project, *pages, sources=[source], scans=scans, versions=versions)
     return pages, versions
@@ -171,11 +178,10 @@ class TestGet:
         expect(overview.base_version == versions[0])
         assert_expectations()
 
-    @pytest.mark.parametrize('owned', [False, True], ids=['another-accounts-project', 'page-of-another-project'])
-    async def test_page_outside_the_project_is_not_found(
-        self, fx_service: Callable[[], PageService], fx_database: InMemoryDatabase, fx_actor: Actor, owned: bool
+    async def test_page_of_another_project_of_the_actor_is_not_found(
+        self, fx_service: Callable[[], PageService], fx_database: InMemoryDatabase, fx_actor: Actor
     ) -> None:
-        """Verify a page is found only through the project that holds it, and only for the project's owner.
+        """Verify a page is found only through the project that holds it, even for an owner of both projects.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -183,17 +189,33 @@ class TestGet:
         :type fx_database: InMemoryDatabase
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param owned: Whether the actor owns the project the request names, the page being in a project of theirs.
-        :type owned: bool
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        holder = make_project(owner_id=fx_actor.account_id if owned else new_account_id())
+        project, holder = (make_project(owner_id=fx_actor.account_id) for _ in range(2))
         page = make_page(project_id=holder.id)
         await commit_project(fx_database, project)
         await commit_project(fx_database, holder, page)
 
         with pytest.raises(NotFoundError):
-            await fx_service().get(fx_actor, project.id if owned else holder.id, page.id)
+            await fx_service().get(fx_actor, project.id, page.id)
+
+    async def test_page_of_another_accounts_project_is_not_found(
+        self, fx_service: Callable[[], PageService], fx_database: InMemoryDatabase, fx_actor: Actor
+    ) -> None:
+        """Verify the actor cannot read a page through the project of another account.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        holder = make_project(owner_id=new_account_id())
+        page = make_page(project_id=holder.id)
+        await commit_project(fx_database, holder, page)
+
+        with pytest.raises(NotFoundError):
+            await fx_service().get(fx_actor, holder.id, page.id)
 
     async def test_missing_page_is_not_found(
         self, fx_service: Callable[[], PageService], fx_database: InMemoryDatabase, fx_actor: Actor
@@ -212,3 +234,107 @@ class TestGet:
 
         with pytest.raises(NotFoundError):
             await fx_service().get(fx_actor, project.id, PageId(uuid4()))
+
+
+class TestOpenAsset:
+    """Tests for PageService.open_asset()."""
+
+    async def test_gives_the_path_of_a_file_of_the_actors_project(
+        self,
+        fx_service: Callable[[], PageService],
+        fx_database: InMemoryDatabase,
+        fx_asset_store: LocalAssetStore,
+        fx_actor: Actor,
+    ) -> None:
+        """Verify the owner reads a stored derived file through the path the service hands out.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_asset_store: Local asset store over the test's storage root.
+        :type fx_asset_store: LocalAssetStore
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        await commit_project(fx_database, project)
+        key = ProjectKeys(project.id).book
+        async with fx_asset_store.writable(key) as target:
+            target.write_bytes(FILE_CONTENT)
+
+        async with fx_service().open_asset(fx_actor, key) as path:
+            assert path.read_bytes() == FILE_CONTENT
+
+    async def test_another_accounts_file_is_not_found(
+        self,
+        fx_service: Callable[[], PageService],
+        fx_database: InMemoryDatabase,
+        fx_asset_store: LocalAssetStore,
+        fx_actor: Actor,
+    ) -> None:
+        """Verify a stored file of another account's project is reported like a missing one.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_asset_store: Local asset store over the test's storage root.
+        :type fx_asset_store: LocalAssetStore
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=new_account_id())
+        await commit_project(fx_database, project)
+        key = ProjectKeys(project.id).book
+        async with fx_asset_store.writable(key) as target:
+            target.write_bytes(FILE_CONTENT)
+
+        with pytest.raises(NotFoundError):
+            async with fx_service().open_asset(fx_actor, key):
+                pytest.fail('The file of another account was opened.')
+
+    @pytest.mark.parametrize(
+        'area', [KeySegment.SOURCES, KeySegment.INCOMING, 'notes'], ids=['sources', 'incoming', 'unknown-area']
+    )
+    async def test_key_outside_the_assets_is_not_found(
+        self, fx_service: Callable[[], PageService], fx_database: InMemoryDatabase, fx_actor: Actor, area: str
+    ) -> None:
+        """Verify a key in the project's source area, its uploads or any other area is not found, not an error.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        :param area: Directory of the project the key lies in.
+        :type area: str
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        await commit_project(fx_database, project)
+
+        with pytest.raises(NotFoundError):
+            async with fx_service().open_asset(
+                fx_actor, StorageKey(f'{ProjectKeys(project.id).prefix}{area}/{uuid4()}')
+            ):
+                pytest.fail('A key outside the assets was opened.')
+
+    async def test_key_without_a_file_is_not_found(
+        self, fx_service: Callable[[], PageService], fx_database: InMemoryDatabase, fx_actor: Actor
+    ) -> None:
+        """Verify a key of the actor's project with nothing stored behind it is not found.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        await commit_project(fx_database, project)
+
+        with pytest.raises(NotFoundError):
+            async with fx_service().open_asset(fx_actor, ProjectKeys(project.id).book):
+                pytest.fail('A file that is not stored was opened.')

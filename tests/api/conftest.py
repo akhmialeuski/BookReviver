@@ -57,3 +57,27 @@ async def fx_files(fx_container: AsyncContainer, fx_settings: Settings) -> BookF
         assets=await fx_container.get(AssetStore),
         root=fx_settings.storage_root,
     )
+
+
+@pytest.fixture
+async def fx_asset_store(fx_container: AsyncContainer) -> AssetStore:
+    """Return the asset store of the running application, to store the files that earlier requests would have.
+
+    :param fx_container: Container of the application, holding the local stores.
+    :type fx_container: AsyncContainer
+    :returns: The store every request of the application reads derived files from.
+    :rtype: AssetStore
+    """
+    return await fx_container.get(AssetStore)
+
+
+@pytest.fixture
+async def fx_source_store(fx_container: AsyncContainer) -> SourceStore:
+    """Return the source store of the running application, to store the sources that earlier requests would have.
+
+    :param fx_container: Container of the application, holding the local stores.
+    :type fx_container: AsyncContainer
+    :returns: The store the application keeps uploads and sources in.
+    :rtype: SourceStore
+    """
+    return await fx_container.get(SourceStore)
