@@ -21,8 +21,8 @@ The size, resolution and chunks of every page come from the ``INFO`` line and th
 per file, since ``djvused`` would give the size of a page but not its resolution and would need a process per page. The
 colour mode follows the chunks: a page holding only the ``Sjbz`` mask is bilevel, and a page with an IW44 layer is
 colour when the layer says so and gray otherwise. Pages are rendered with ``ddjvu`` at native resolution into a
-temporary PNM file, and Pillow writes the JPEG at the configured quality, so a bilevel page is written as gray, as a
-PDF page is, because the rasterizer port writes JPEG for now.
+temporary PNM file, and Pillow writes the JPEG at the configured quality or the PNG. A bilevel page is rendered as a
+one-bit image and written as a 1-bit PNG, and as a gray JPEG in the format a JPEG has for it.
 """
 
 import enum
@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, Self, override
 from attrs import frozen
 from PIL import Image, ImageChops
 
-from bookreviver.adapters.imaging.common import FactKey, to_mm
+from bookreviver.adapters.imaging.common import GRAY_MODE, FactKey, to_mm, write_full
 from bookreviver.adapters.imaging.reader import SourceFormat
 from bookreviver.domain.enums import ColorMode, DjvuDocumentKind, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
@@ -46,6 +46,8 @@ from bookreviver.domain.values import MetadataSuggestion, ScanFacts, SourceAnaly
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+    from bookreviver.domain.enums import Rendition
 
 logger = logging.getLogger(__name__)
 
@@ -63,10 +65,7 @@ BUNDLED_FLAG: int = 0x80
 DJVU_IMAGE_FORMAT: str = 'DjVu'
 PNM_FORMAT: str = 'pnm'
 NATIVE_SCALE_OPTION: str = '-1'
-JPEG_FORMAT: str = 'JPEG'
-# Pillow modes of a rendered page: a one-bit PBM, an 8-bit PGM and a PPM
-BILEVEL_MODE: str = '1'
-GRAY_MODE: str = 'L'
+# Pillow mode of a rendered page that DjVu holds in gray, which ddjvu makes an RGB image of
 RGB_MODE: str = 'RGB'
 BILEVEL_BITS: int = 1
 DEFAULT_BITS: int = 8
@@ -306,18 +305,23 @@ class DjvuFormat(SourceFormat):
         return SourceAnalysis(kind=SourceKind.DJVU, scans=pages, file_metadata=file_metadata, suggestion=suggestion)
 
     @override
-    def extract(self, files: Sequence[Path], *, number: int, target: Path) -> None:
-        """Render the page at its native resolution and write it as a JPEG, bilevel and gray pages in gray.
+    def extract(self, files: Sequence[Path], *, number: int, target: Path, full: Rendition) -> None:
+        """Render the page at its native resolution and write it as a JPEG or a PNG, gray pages in gray.
+
+        A bilevel page keeps its one bit in a PNG, and is written gray as a JPEG.
 
         :param files: Local paths of the files of the source in any order, as for ``inspect``.
         :type files: Sequence[Path]
         :param number: Number of the page in the document, starting at 0.
         :type number: int
-        :param target: Path to write the JPEG at.
+        :param target: Path to write the image at.
         :type target: Path
+        :param full: Format to write, ``Rendition.FULL_JPEG`` or ``Rendition.FULL_PNG``.
+        :type full: Rendition
         :raises UnsupportedSourceError: If the tools are not installed, or the page cannot be rendered.
         :raises IndexError: If the document has fewer pages than ``number + 1``.
-        :raises ValueError: If the files are not one document, or one index with its components.
+        :raises ValueError: If the files are not one document, or one index with its components, or ``full`` is not a
+                            format of the full image.
         """
         tools = self._installed()
         main, _ = self._main(files)
@@ -332,11 +336,9 @@ class DjvuFormat(SourceFormat):
             self._run(tools.ddjvu, *options, main, rendered, subject=main)
             with Image.open(rendered) as image:
                 image.load()
-                # A JPEG holds no bit depth of one, and ddjvu makes an RGB image of a page that DjVu holds in gray
-                gray = image.mode == BILEVEL_MODE or (image.mode == RGB_MODE and _is_gray(image))
-                (image.convert(GRAY_MODE) if gray else image).save(
-                    target, format=JPEG_FORMAT, quality=self._jpeg_quality
-                )
+                # ddjvu makes an RGB image of a page that DjVu holds in gray
+                page = image.convert(GRAY_MODE) if image.mode == RGB_MODE and _is_gray(image) else image
+                write_full(page, target, full=full, jpeg_quality=self._jpeg_quality)
 
     def _installed(self) -> DjvuLibreTools:
         """Return the tools, or refuse the source when they are not installed.

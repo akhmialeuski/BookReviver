@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
+from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from fastapi import status
 from fastapi_pagination import Page
@@ -11,8 +12,9 @@ from fastapi_pagination import Page
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.api.schemas.sources import ScanSchema, SourceSchema
-from bookreviver.domain.enums import FileType, JobState, SourceKind
+from bookreviver.domain.enums import FileType, ImagePolicy, JobState, Rendition, SourceKind
 from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.values import Renditions
 from tests.helpers.books import IMAGE, SCANS_PER_SOURCE, commit_book, on_disk
 from tests.helpers.builders import make_job, make_project, make_scan, make_source
 from tests.helpers.seeding import commit_project
@@ -314,6 +316,35 @@ class TestListScans:
         expect(all(item.images is not None for item in scans.items))
         expect(all(item.images.full.startswith(f'{IIIF_PATH}/{keys.prefix}') for item in scans.items if item.images))
         assert_expectations()
+
+    @pytest.mark.parametrize('full', [Rendition.FULL_JPEG, Rendition.FULL_PNG])
+    async def test_full_image_path_has_the_extension_of_the_format_recorded_with_the_scan(
+        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor, full: Rendition
+    ) -> None:
+        """Verify the path of the full image names the format its scan was stored in, whatever the project's policy.
+
+        The project's policy is the opposite of what the scan records, as after a change of the policy.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param full: Format the scan records for its full image.
+        :type full: Rendition
+        """
+        policy = ImagePolicy.LOSSLESS if full is Rendition.FULL_JPEG else ImagePolicy.COMPACT
+        project = evolve(make_project(owner_id=fx_actor.account_id), image_policy=policy)
+        source = make_source(project_id=project.id)
+        scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True, full=full))
+        await commit_project(fx_database, project, sources=[source], scans=[scan])
+
+        response = await fx_client.get(f'{PROJECTS_PATH}/{project.id}/scans')
+
+        images = Page[ScanSchema].model_validate_json(response.content).items[0].images
+        assert images is not None
+        assert images.full == f'{IIIF_PATH}/{ProjectKeys(project.id).scan_rendition(scan, full)}'
 
     async def test_scan_without_ready_renditions_has_no_images(
         self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor

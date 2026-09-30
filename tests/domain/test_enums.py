@@ -2,7 +2,7 @@
 
 import pytest
 
-from bookreviver.domain.enums import FileType, JobState, SourceKind, Stage
+from bookreviver.domain.enums import ColorMode, FileType, ImagePolicy, JobState, Rendition, SourceKind, Stage
 
 # Written out rather than taken from the enum, so the test pins the value stored and sent over the API
 PAGE_SPLIT_VALUE: str = 'page-split'
@@ -80,6 +80,35 @@ class TestFileType:
         :type kind: SourceKind
         """
         assert file_type.source_kind == kind
+
+
+class TestImagePolicy:
+    """Tests for ImagePolicy.full_format(), the rule of decision 22 of the book model."""
+
+    @pytest.mark.parametrize(
+        ('policy', 'color_mode', EXPECTED_ARG),
+        [
+            (ImagePolicy.COMPACT, ColorMode.BILEVEL, Rendition.FULL_PNG),
+            (ImagePolicy.LOSSLESS, ColorMode.BILEVEL, Rendition.FULL_PNG),
+            (ImagePolicy.COMPACT, ColorMode.GRAY, Rendition.FULL_JPEG),
+            (ImagePolicy.LOSSLESS, ColorMode.GRAY, Rendition.FULL_PNG),
+            (ImagePolicy.COMPACT, ColorMode.COLOR, Rendition.FULL_JPEG),
+            (ImagePolicy.LOSSLESS, ColorMode.COLOR, Rendition.FULL_PNG),
+            (ImagePolicy.COMPACT, ColorMode.UNKNOWN, Rendition.FULL_JPEG),
+            (ImagePolicy.LOSSLESS, ColorMode.UNKNOWN, Rendition.FULL_PNG),
+        ],
+    )
+    def test_full_format(self, policy: ImagePolicy, color_mode: ColorMode, expected: Rendition) -> None:
+        """Verify a bilevel page is a PNG under both policies and any other page follows the policy.
+
+        :param policy: Image policy of the project.
+        :type policy: ImagePolicy
+        :param color_mode: Colour mode of the page.
+        :type color_mode: ColorMode
+        :param expected: Format of the ``full`` image the rule must give.
+        :type expected: Rendition
+        """
+        assert policy.full_format(color_mode) == expected
 
 
 class TestJobState:

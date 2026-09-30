@@ -157,7 +157,9 @@ class ScanSchema(ResponseModel):
         keys = ProjectKeys(scan.project_id)
         images = None
         if scan.renditions.ready:
-            images = ImagePathsSchema.of(request, lambda rendition: keys.scan_rendition(scan, rendition))
+            images = ImagePathsSchema.of(
+                request, lambda rendition: keys.scan_rendition(scan, rendition), full=scan.renditions.full
+            )
         return cls(
             id=scan.id,
             source_id=scan.source_id,

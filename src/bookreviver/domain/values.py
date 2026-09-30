@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from attrs import field, frozen, validators
 
-from bookreviver.domain.enums import Orthography, TransformKind
+from bookreviver.domain.enums import Orthography, Rendition, TransformKind
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -119,14 +119,21 @@ class Renditions:
     no cache serves a stale image. A page version is written once into the directory of its own identifier, so its
     renditions stay at the first version.
 
+    The format of ``full`` is chosen when the image is written, from its colour and the project's ``ImagePolicy``, and
+    kept here. It is not computed from the policy when read, because a later change of the policy must not change the
+    storage key of an image already stored. A page version copies the format of the scan it is cut from.
+
     :ivar ready: Whether every derived file of the current version is published.
     :ivar version: Version of the derived files, part of their storage keys.
+    :ivar full: Format of the ``full`` image, ``Rendition.FULL_JPEG`` or ``Rendition.FULL_PNG``.
     """
 
     FIRST_VERSION: ClassVar[int] = 1
+    FULL_FORMATS: ClassVar[frozenset[Rendition]] = frozenset({Rendition.FULL_JPEG, Rendition.FULL_PNG})
 
     ready: bool = False
     version: int = field(default=FIRST_VERSION, validator=validators.ge(FIRST_VERSION))
+    full: Rendition = field(default=Rendition.FULL_JPEG, validator=validators.in_(FULL_FORMATS))
 
 
 @frozen(kw_only=True)

@@ -4,8 +4,9 @@ An address is built from the storage key of the file with the name of the route 
 hand. It has no scheme or host because the browser resolves it against the origin it loaded the page from, and an
 address kept by a client or written into a pyramid then survives a change of domain, port or device address.
 
-The ``full`` image is a JPEG for now, because the import writes JPEG only. The other formats of ``Rendition`` arrive
-with the rasteriser that writes them, and the address then follows the format of the stored file.
+The ``full`` image is a JPEG or a PNG, and its address names the format recorded with the scan or the page version when
+the image was written, never one worked out from the project's image policy as it is now, since a later change of the
+policy does not change the files already stored.
 """
 
 from typing import TYPE_CHECKING, Self
@@ -39,13 +40,15 @@ class ImagePathsSchema(ResponseModel):
     iiif_info: str
 
     @classmethod
-    def of(cls, request: Request, key_of: Callable[[Rendition], StorageKey]) -> Self:
+    def of(cls, request: Request, key_of: Callable[[Rendition], StorageKey], *, full: Rendition) -> Self:
         """Build the paths of the four images of a scan or a page version.
 
         :param request: The request, whose application knows the IIIF route.
         :type request: Request
         :param key_of: Function giving the storage key of one rendition of the scan or the page version.
         :type key_of: Callable[[Rendition], StorageKey]
+        :param full: Format the full image was written in, as recorded with the scan or the page version.
+        :type full: Rendition
         :returns: The paths of the full image, the preview, the thumbnail and the pyramid's information document.
         :rtype: Self
         """
@@ -62,7 +65,7 @@ class ImagePathsSchema(ResponseModel):
 
         info = f'{key_of(Rendition.TILES)}{ProjectKeys.SEPARATOR}{IIIF_INFO_FILE}'
         return cls(
-            full=path(key_of(Rendition.FULL_JPEG)),
+            full=path(key_of(full)),
             preview=path(key_of(Rendition.PREVIEW)),
             thumbnail=path(key_of(Rendition.THUMBNAIL)),
             iiif_info=path(info),

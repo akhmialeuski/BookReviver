@@ -293,13 +293,17 @@ it.
 | `number`       | `int`        | Number of the scan in its source from zero: the PDF or DjVu page, the TIFF frame         |
 | `source_label` | `str`        | Page label the file itself gives, such as the PDF page label `xii`, or empty             |
 | `facts`        | `ScanFacts`  | Size in pixels, DPI, physical size, colour mode, bit depth, text layer, `extra`          |
-| `renditions`   | `Renditions` | Readiness and version of the derived files                                               |
+| `renditions`   | `Renditions` | Readiness and version of the derived files, and the format of `full`                     |
 
 A scan has four derived files, and a page version has the same four:
 
-- `full` at native resolution, in the format the project's `image_policy` selects. A bilevel image is always a 1-bit
-  PNG, and a gray or colour image is a JPEG under `compact` and a PNG under `lossless`. A PDF page or an image file
-  that already is a fitting JPEG is copied byte for byte.
+- `full` at native resolution, in the format the page's colour and the project's `image_policy` select. A bilevel
+  image is always a 1-bit PNG with exactly two values, and a gray or colour image is a JPEG under `compact` and a PNG
+  under `lossless`. A PDF page or an image file that already is a fitting JPEG is copied byte for byte when the format
+  is a JPEG, and decoded into a PNG of the same pixels when it is a PNG. The format is chosen when the image is
+  written, from `ImagePolicy.full_format(color_mode)`, and is recorded in `Renditions.full` next to the readiness and
+  the version of the files, so the key of a stored image never depends on the policy as it is now. A scan stored before
+  the format was recorded reads as a JPEG.
 - `preview`, 2048 px on the longer side, for interactive previews of steps within the budget of under 1 s on the
   visible page.
 - `thumb`, `imaging.thumbnail_long_side_px` on the longer side, 320 px by default.
@@ -437,7 +441,9 @@ that creates pages:
 - `lossless`: every version is a lossless PNG, so re-encoding between steps loses nothing. A colour book with five
   steps takes tens of gigabytes.
 
-Changing the setting after pages exist applies only to new versions, and old ones are not re-encoded.
+Changing the setting after pages exist applies only to new versions, and old ones are not re-encoded. The format of
+every version is recorded with it in `Renditions.full`, which is why such a change cannot move the path of an image that
+is already stored. The base version of a page copies the format of the scan it is cut from.
 
 ## Ports
 
@@ -492,7 +498,8 @@ source's own directory in one rename, and a refused promotion leaves the files s
 The imaging ports work on one source at a time. `SourceInspector.group(files)` splits the files of an upload into
 sources and assembles an indirect DjVu document from its index file and page files, because which files make one
 source is a property of the format. `SourceInspector.inspect` describes one source and its scans, and
-`PageRasterizer.extract` writes one scan of one source. `Tiler` cuts the IIIF pyramid (`tile`), the preview
+`PageRasterizer.extract` writes one scan of one source in the format of `full` its caller asks for, because only the
+caller knows the project's `image_policy`. `Tiler` cuts the IIIF pyramid (`tile`), the preview
 (`preview`) and the thumbnail (`thumbnail`) of an image, each at the size the imaging settings give.
 
 The persistence ports answer the two questions an import retry asks. `ScanRepository.list_unready` returns the scans of
@@ -525,13 +532,26 @@ holding one. The imaging provider registers the formats, and the reader refuses 
 exactly one. Supporting another kind of source is a new `SourceKind` member, a new format and one entry in the
 provider.
 
+Colour is managed where a page leaves its source, and nowhere after it, so every stage receives a gray or RGB `full`
+image, tagged sRGB when its colour was converted. A CMYK, LAB or YCbCr page of an image file changes its colour space
+when it becomes RGB, so the profile embedded in the file stops describing its pixels. `ImageFormat` therefore converts
+such a page from its embedded profile to sRGB with Little CMS, through Pillow's `ImageCms.profileToProfile`, with the
+relative colorimetric intent, which keeps the tones of paper and ink that sRGB can show and does not compress the gamut
+as the perceptual intent would. A page without a profile, or with one that does not apply to its pixels, is converted
+by Pillow's own formula, and the second case is logged. Either result is tagged with the sRGB profile, which the
+converted page is in. Little CMS is used through Pillow and not through `pyvips`, so the image format keeps to one
+library; the tests use libvips as the independent reference, and its built-in CMYK profile builds the CMYK samples, so
+no profile file is committed. MuPDF converts the CMYK images of a PDF page itself when `PdfFormat` renders it, and its
+colour management is switched on by default in the PyMuPDF in use, which a test pins, so the adapter never calls
+`pymupdf.TOOLS.set_icc`.
+
 `DjvuFormat` runs the DjVuLibre tools, which the provider finds with `shutil.which` when the container is built. It
 tells the three kinds of DjVu file apart, a bundled document, an indirect index and a single page, from the first 27
 bytes of the file before it runs any tool, so the kind is the `DjvuDocumentKind` in the metadata of the source. It
 takes the page count and the metadata from `djvused`, and the size, resolution and chunks of every page from one
 `djvudump` call per file. The chunks give the colour mode: only the `Sjbz` mask is bilevel, and an IW44 layer marked
 `(color)` is colour. It renders a page with `ddjvu` at native resolution into a temporary PNM file, and Pillow writes
-the JPEG, so a bilevel page is written as gray until `PageRasterizer` writes the PNG that decision 22 asks for. A
+the JPEG or the PNG, a bilevel page being a 1-bit PNG as decision 22 asks. A
 call is one `subprocess.run` with a list of arguments, a timeout of `imaging.djvulibre_timeout_s` and the exit
 status checked. A tool that fails, hangs or is missing becomes an `UnsupportedSourceError` that names the file and
 never shows the tool's output, which goes to the log. An indirect document whose index names a file that is not among
@@ -594,7 +614,8 @@ erDiagram
   as JSON, `size_bytes`, `sha256`, `scan_count`, `metadata` and `suggestion` as JSON, and `imported_at`.
 - `scans` has the primary key `id`, `source_id` and `project_id` with `ON DELETE CASCADE`, and a unique
   `(source_id, number)`. Its columns are `number`, `source_label`, one column per field of `ScanFacts`,
-  `renditions_ready` and `renditions_version`.
+  `renditions_ready`, `renditions_version` and `renditions_full`, the format of the `full` image, whose server default
+  `full.jpg` is what every scan stored before the format was recorded reads as.
 - `pages` has the primary key `id`, `project_id` with `ON DELETE CASCADE`, `scan_id` with `ON DELETE SET NULL`, and
   the unique pairs `(project_id, order_key)` and `(scan_id, slot)`. Its columns are `order_key`, `label`, `kind`,
   `origin`, `slot`, `included`, `notes`, `created_at` and `updated_at`.
@@ -605,7 +626,8 @@ erDiagram
   both adapters report its violation as a `ConflictError` when the job is added.
 - `page_versions` has the primary key `id`, `page_id` with `ON DELETE CASCADE`, `input_id` with `ON DELETE SET NULL`,
   and an index on `(page_id, stage)`. Its columns are `stage`, `processor_key`, `processor_version`, `params`,
-  `transform` and `data` as JSON, `renditions_ready`, `state` and `created_at`.
+  `transform` and `data` as JSON, `renditions_ready`, `renditions_full`, `state` and `created_at`. Both renditions
+  columns are null for a step without an image.
 - `page_stages` has the primary key `(page_id, stage)` and `head_version_id` with `ON DELETE SET NULL`. Its columns
   are `recipe_id`, `state` and `updated_at`.
 - `page_edits` has the primary key `(page_id, stage, processor_key)`. Its columns are `kind`, `geometry` as JSON,
@@ -626,7 +648,8 @@ the in-memory adapter has no accounts and there is no accounts port.
 The tables `sources`, `scans`, `pages` and `page_versions` come with the book model, because a page gets its base
 version with its own copy of the image when it is created, and the baseline migration creates them. `page_stages`,
 `page_edits` and `recipes` come with the processing framework, each through a migration of its own. The `request` and
-`result` columns and the partial unique index of `jobs` came with the import job, in their own revision.
+`result` columns and the partial unique index of `jobs` came with the import job, in their own revision, and the
+`renditions_full` columns of `scans` and `page_versions` came with the choice of the format of `full`, in another.
 
 ### Migrations
 
@@ -842,7 +865,7 @@ data/storage/
             │   └── 0c55…a1/                   SourceId
             │       ├── 0/                     number of the scan in its source
             │       │   └── v1/                version of the scan's renditions
-            │       │       ├── full.jpg       native resolution
+            │       │       ├── full.jpg       native resolution, full.png for a bilevel scan or lossless
             │       │       ├── preview.jpg    2048 px on the longer side
             │       │       ├── thumb.jpg      320 px on the longer side
             │       │       └── iiif/          IIIF Image API 3 level 0 pyramid
@@ -971,17 +994,19 @@ flowchart TD
    source adds its scans to `Progress.total` when it is committed, and each cut scan adds one to `Progress.done`.
 5. Once every source is committed, the job cuts the images of every scan of the project whose renditions are not
    ready, which covers its own scans, the scans a cancelled import left and the scans of a delivery that crashed. It
-   cuts at most `imaging.parallel_scans` at once, in the order of the book. Every scan gets `full`: a scanned PDF page
-   whose content is one fitting JPEG image, or an image file that is one, is copied byte for byte, and anything else
-   is rasterised once at its native resolution. `full` is always a JPEG for now, since `PageRasterizer` writes
-   JPEG, so the PNG that decision 22 asks for a bilevel scan arrives with the format the rasteriser writes. pyvips
-   then cuts `preview`, `thumb` and the IIIF pyramid from `full`. The pyramid's `info.json` carries as its `id` the
-   IIIF root, `/api/v1/iiif`, and the key of the pyramid's directory, which `ProjectKeys` builds.
+   cuts at most `imaging.parallel_scans` at once, in the order of the book. Every scan gets `full`, in the format
+   `ImagePolicy.full_format` gives for the scan's colour and the project's `image_policy` at the moment the scan is
+   cut, which the job passes to `PageRasterizer.extract` and records in the scan's `Renditions.full`. A scanned PDF
+   page whose content is one fitting JPEG image, or an image file that is one, is copied byte for byte when the format
+   is a JPEG, and anything else is rasterised once at its native resolution. A bilevel page is a 1-bit PNG under both
+   policies. pyvips then cuts `preview`, `thumb` and the IIIF pyramid from the `full` file of that format. The
+   pyramid's `info.json` carries as its `id` the IIIF root, `/api/v1/iiif`, and the key of the pyramid's directory,
+   which `ProjectKeys` builds.
 6. The page split is skipped: every new scan is a page at the end of the book, made in the transaction of its
    source, with the scan's `source_label` as its printed number, which is empty until the page order task reads the
    PDF page labels. When a scan is cut, its page gets the base version `split.none`: `AssetStore.copy` copies `full`
    into the version's own directory, and the four renditions are cut from that copy, so the page holds its own
-   image and its own pyramid. The scan and its versions are marked ready in one transaction with the progress of the
+   image and its own pyramid. The version records the same format of `full` as the scan. The scan and its versions are marked ready in one transaction with the progress of the
    job, and `ScanReady` follows, so the viewer shows the first pages while the rest are being cut. The user splits
    spreads and arranges the pages later, in the `page-split` and `page-order` stages.
 7. The job succeeds when at least one source was imported and fails otherwise, with the message that no file could be
@@ -1043,7 +1068,9 @@ The rest of the design is not served yet, apart from the fastapi-users routers:
 | Processing | `GET, PUT /projects/{id}/stages/{stage}/recipe`, `POST .../preview`, `POST .../run`, `GET .../variants`   |
 
 Every image address in a response is a path of `/iiif/{key}` without scheme or host. On a server, a reverse proxy
-serves `/iiif` straight from disk or object storage, after an access check by the API.
+serves `/iiif` straight from disk or object storage, after an access check by the API. The path of `full` ends in
+`full.jpg` or `full.png` as recorded with the scan or the page version, so it does not change when the project's
+`image_policy` does.
 
 `POST /projects/{id}/sources` takes the files as a multipart body and answers 202 with the queued job, 409 while the
 project imports, 413 for an upload past `max_upload_files` or `max_upload_bytes`, and 404 for a project of another
@@ -1224,7 +1251,9 @@ The book model rests on these decisions, each with its reason.
 21. **Cancelled import.** The next import job of the project first cuts the renditions of scans that have none, so
     no scan stays unviewable.
 22. **Format of a scan's `full`.** As for versions: a bilevel scan is always a 1-bit PNG, and a gray or colour scan
-    follows `image_policy`, so scans and pages share one rule.
+    follows `image_policy`, so scans and pages share one rule. The format is chosen when the image is written and
+    recorded with the scan or the version, because a format computed from the policy when read would move the paths of
+    every stored image whenever the policy changed.
 23. **Upload size.** The setting `max_upload_files = 10000` sits next to `max_upload_bytes = 4 GiB`, and exceeding
     either gives an RFC 9457 problem, which bounds what one request can make the server hold.
 24. **DjVuLibre not installed.** The application starts with a warning in its log, and every DjVu source is rejected
