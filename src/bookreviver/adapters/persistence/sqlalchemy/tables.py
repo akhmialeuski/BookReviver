@@ -15,6 +15,10 @@ A project owns its sources, scans, pages and jobs, and a source owns its scans. 
 is deleted through ``ON DELETE SET NULL``. The relationships use ``passive_deletes=True`` to leave that deletion to the
 database, and ``lazy="raise"`` because an ``AsyncSession`` cannot load a relationship implicitly on attribute access.
 Unique keys are declared with their table, and the shared naming convention names them.
+
+The owner of a project refers to the ``user`` table of fastapi-users with ``ON DELETE RESTRICT``. A cascade would
+remove the rows of the owner's projects but not their files, so an account is deleted only after its projects have
+been deleted through ``ProjectService``, which removes their files too.
 """
 
 import enum
@@ -27,12 +31,15 @@ from advanced_alchemy.types import JsonB
 from sqlalchemy import Enum, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.domain.enums import ColorMode, FileType, JobKind, JobState, Orthography, SourceKind
 
 # Referential action that lets the database remove the rows of a project, a source or a page with it
 CASCADE: Final = 'CASCADE'
 # Referential action that keeps a row whose optional parent is removed, emptying the reference
 SET_NULL: Final = 'SET NULL'
+# Referential action that refuses to remove a parent while rows still refer to it
+RESTRICT: Final = 'RESTRICT'
 # Name of the column holding a source's metadata, which the declarative base reserves as an attribute name
 METADATA_COLUMN: Final = 'metadata'
 # ORM cascade of a project to its pages and jobs; deletion itself is left to the database through CASCADE
@@ -79,7 +86,7 @@ class ProjectRow(DefaultBase):
     import ``source_kind`` and ``source_imported_at`` are null, and the other source columns hold empty values.
 
     :ivar id: Project identifier, assigned by the domain.
-    :ivar owner_id: Account that owns the project.
+    :ivar owner_id: Account that owns the project, which the database keeps while the project exists.
     :ivar title: Title of the book.
     :ivar authors: Authors as printed on the title page.
     :ivar publisher: Publisher or printing house.
@@ -106,7 +113,8 @@ class ProjectRow(DefaultBase):
     __tablename__ = 'projects'
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
-    owner_id: Mapped[UUID] = mapped_column(index=True)
+    # The column of the table, since fastapi-users declares the attribute for type checkers as a plain UUID
+    owner_id: Mapped[UUID] = mapped_column(ForeignKey(AccountTable.__table__.c.id, ondelete=RESTRICT), index=True)
     title: Mapped[str]
     authors: Mapped[str]
     publisher: Mapped[str]

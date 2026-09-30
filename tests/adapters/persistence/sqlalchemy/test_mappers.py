@@ -27,12 +27,12 @@ from tests.helpers.builders import (
     make_project,
     make_scan,
     make_source,
-    new_account_id,
 )
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Project
+    from bookreviver.domain.ids import AccountId
 
 pytestmark = pytest.mark.anyio
 
@@ -98,13 +98,15 @@ FULL_PROGRESS: Progress = Progress(done=7, total=12)
 class TestProjectMapper:
     """Tests for ProjectMapper."""
 
-    async def test_every_field_survives_the_database(self, fx_database: SqlDatabase) -> None:
+    async def test_every_field_survives_the_database(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
         """Verify a project with a full description and a source reads back equal to what was stored.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
         """
-        project = evolve(make_project(owner_id=new_account_id()), details=FULL_DETAILS, source=FULL_SOURCE)
+        project = evolve(make_project(owner_id=fx_owner_id), details=FULL_DETAILS, source=FULL_SOURCE)
         async with fx_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
             await uow.projects.add(project)
@@ -112,13 +114,15 @@ class TestProjectMapper:
         async with fx_database.sessions() as session:
             assert await SqlAlchemyUnitOfWork(session).projects.get(project.id) == project
 
-    async def test_update_can_remove_the_source(self, fx_database: SqlDatabase) -> None:
+    async def test_update_can_remove_the_source(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
         """Verify updating a project to have no source stores no source, rather than keeping the old one.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
         """
-        project: Project = evolve(make_project(owner_id=new_account_id()), source=FULL_SOURCE)
+        project: Project = evolve(make_project(owner_id=fx_owner_id), source=FULL_SOURCE)
         async with fx_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
             await uow.projects.add(project)
@@ -131,13 +135,15 @@ class TestProjectMapper:
 class TestPageMapper:
     """Tests for PageMapper."""
 
-    async def test_every_field_survives_the_database(self, fx_database: SqlDatabase) -> None:
+    async def test_every_field_survives_the_database(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
         """Verify a page with every fact, extra metadata and ready assets reads back equal to what was stored.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
         """
-        project = make_project(owner_id=new_account_id())
+        project = make_project(owner_id=fx_owner_id)
         page = evolve(
             make_page(project_id=project.id, index=4), facts=FULL_FACTS, assets=PageAssets(ready=True, version=3)
         )
@@ -153,13 +159,15 @@ class TestPageMapper:
 class TestSourceMapper:
     """Tests for SourceMapper."""
 
-    async def test_every_field_survives_the_database(self, fx_database: SqlDatabase) -> None:
+    async def test_every_field_survives_the_database(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
         """Verify an indirect DjVu source with its files, metadata, suggestion and import job reads back unchanged.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
         """
-        project = make_project(owner_id=new_account_id())
+        project = make_project(owner_id=fx_owner_id)
         job = make_job(project_id=project.id)
         source = evolve(
             make_source(project_id=project.id),
@@ -187,13 +195,15 @@ class TestSourceMapper:
 class TestScanMapper:
     """Tests for ScanMapper."""
 
-    async def test_every_field_survives_the_database(self, fx_database: SqlDatabase) -> None:
+    async def test_every_field_survives_the_database(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
         """Verify a scan with every fact, a label and ready renditions reads back equal to what was stored.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
         """
-        project = make_project(owner_id=new_account_id())
+        project = make_project(owner_id=fx_owner_id)
         source = make_source(project_id=project.id)
         scan = evolve(
             make_scan(source=source, number=11),
@@ -214,13 +224,15 @@ class TestScanMapper:
 class TestJobMapper:
     """Tests for JobMapper."""
 
-    async def test_every_field_survives_the_database(self, fx_database: SqlDatabase) -> None:
+    async def test_every_field_survives_the_database(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
         """Verify a finished job with progress, an error and its timestamps reads back equal to what was stored.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
         """
-        project = make_project(owner_id=new_account_id())
+        project = make_project(owner_id=fx_owner_id)
         job = evolve(
             make_job(project_id=project.id, state=JobState.FAILED),
             progress=FULL_PROGRESS,
