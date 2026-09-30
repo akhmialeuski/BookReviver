@@ -9,7 +9,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.ids import PageId, ProjectId, StorageKey
+from bookreviver.domain.ids import JobId, PageId, ProjectId, SourceId, StorageKey
 from bookreviver.domain.keys import ProjectKeys
 from tests.helpers.builders import make_page_version
 from tests.helpers.storage import WriterFailedError, abandon_write
@@ -21,14 +21,17 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
-PAGE_PREFIX: StorageKey = StorageKey('projects/book/pages/0')
-FILE_KEY: StorageKey = StorageKey(f'{PAGE_PREFIX}/v1/full.jpg')
-DIRECTORY_KEY: StorageKey = StorageKey(f'{PAGE_PREFIX}/v1/iiif')
+KEYS: ProjectKeys = ProjectKeys(ProjectId(uuid4()))
+PAGE_ID: PageId = PageId(uuid4())
+PAGE_PREFIX: StorageKey = KEYS.page(PAGE_ID)
+FILE_KEY: StorageKey = KEYS.version_rendition(make_page_version(page_id=PAGE_ID), Rendition.FULL_JPEG)
+DIRECTORY_KEY: StorageKey = KEYS.version_rendition(make_page_version(page_id=PAGE_ID), Rendition.TILES)
 # Shares the prefix as a string but not as a path segment, so it must survive deleting the prefix
-SIBLING_KEY: StorageKey = StorageKey('projects/book/pages/01/v1/full.jpg')
+SIBLING_KEY: StorageKey = StorageKey(f'{PAGE_PREFIX}0/{Rendition.FULL_JPEG}')
 TILE_NAME: str = 'info.json'
 CASE_ARG: str = 'case'
 KEY_ARG: str = 'key'
+OUTSIDE_ASSETS_MATCH: str = 'does not lie under the assets directory of a project'
 OLD_CONTENT: bytes = b'old image'
 NEW_CONTENT: bytes = b'new image'
 
@@ -325,18 +328,52 @@ class TestDeletePrefix:
 
     @pytest.mark.parametrize(
         KEY_ARG,
-        ['projects', 'projects/book', 'projects/book/source', 'projects/book/incoming/page.png'],
+        [
+            '',
+            '/etc/passwd',
+            '../outside',
+            'projects',
+            str(KEYS.prefix),
+            KEYS.incoming_area,
+            KEYS.incoming(JobId(uuid4())),
+            KEYS.sources_area,
+            f'{KEYS.source(SourceId(uuid4()))}/book.pdf',
+            # The whole area is removed by delete_project alone
+            KEYS.assets_area,
+            f'{KEYS.assets_area}/../sources',
+            f'{PAGE_PREFIX}//full.jpg',
+            f'projects/book/assets/{Rendition.FULL_JPEG}',
+            f'projects/{str(KEYS.project_id).upper()}/assets/book/typesetting',
+        ],
+        ids=[
+            'empty',
+            'absolute',
+            'climbing',
+            'root',
+            'project',
+            'incoming-area',
+            'upload',
+            'sources-area',
+            'source-file',
+            'assets-area',
+            'climbing-out-of-assets',
+            'empty-segment',
+            'not-a-project',
+            'project-in-other-spelling',
+        ],
     )
-    async def test_refuses_keys_of_source_store(self, fx_asset_store: AssetStore, key: str) -> None:
-        """Verify no key names or holds a project's source or staged upload, so a wrong key cannot erase a book.
+    async def test_refuses_keys_outside_assets(self, fx_asset_store: AssetStore, key: str) -> None:
+        """Verify only keys under a project's ``assets/`` are accepted, so a wrong key cannot erase a source.
 
         :param fx_asset_store: Asset store of the storage backend under test.
         :type fx_asset_store: AssetStore
         :param key: Storage key under test.
         :type key: str
         """
-        with pytest.raises(ValueError, match='reaches into the files of the source store'):
+        with pytest.raises(ValueError, match=OUTSIDE_ASSETS_MATCH):
             await fx_asset_store.delete_prefix(StorageKey(key))
+        with pytest.raises(ValueError, match=OUTSIDE_ASSETS_MATCH):
+            await _store_file(fx_asset_store, key=StorageKey(key), content=NEW_CONTENT)
 
 
 class TestDeleteProject:

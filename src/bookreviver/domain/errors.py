@@ -23,7 +23,7 @@ class ConflictError(DomainError):
 
 
 class UnsupportedSourceError(DomainError):
-    """The uploaded files are not a readable PDF or image set."""
+    """The files of a source are not a readable source of its kind, such as a damaged PDF or image file."""
 
 
 class UploadRejectedError(DomainError):

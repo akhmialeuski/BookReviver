@@ -1,16 +1,28 @@
 """Tests for the PyMuPDF and Pillow page rasterizer."""
 
 from typing import TYPE_CHECKING, NamedTuple
+from unittest.mock import patch
 
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
-from PIL import ExifTags, Image, ImageCms
+from PIL import ExifTags, Image, ImageCms, TiffImagePlugin
 
 from bookreviver.domain.enums import SourceKind
-from tests.adapters.imaging.samples import PdfPage, ScanImage, gradient_image, write_image, write_pdf
+from bookreviver.domain.errors import UnsupportedSourceError
+from tests.adapters.imaging.samples import (
+    PdfPage,
+    ScanImage,
+    TiffFrame,
+    frame_pixel_span,
+    gradient_image,
+    write_image,
+    write_pdf,
+    write_tiff,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from bookreviver.ports.imaging import PageRasterizer
@@ -58,10 +70,9 @@ GRAY_SCAN: ScanImage = ScanImage(mode=GRAY_MODE, size_px=SCAN_SIZE_PX, image_for
 # One inch by two, and two by one, rendered at 300 DPI as born-digital pages
 PAGE_SIZES_PT: tuple[tuple[float, float], ...] = ((72.0, 144.0), (144.0, 72.0))
 SECOND_PDF_PAGE_SIZE_PX: tuple[int, int] = (600, 300)
-NAMES_BY_UPLOAD_ORDER: tuple[str, ...] = ('page10.png', 'page2.png', 'page1.png')
-SIZES_BY_UPLOAD_ORDER: tuple[tuple[int, int], ...] = ((30, 40), (32, 42), (34, 44))
-# page2.png is the second page in book order
-SECOND_PAGE_SIZE_PX: tuple[int, int] = SIZES_BY_UPLOAD_ORDER[1]
+NUMBER_ARG: str = 'number'
+# Frames of a multi-page TIFF, each of its own size
+FRAME_SIZES_PX: tuple[tuple[int, int], ...] = ((30, 40), (32, 42), (34, 44))
 SMALL_SIZE_PX: tuple[int, int] = (120, 90)
 SIXTEEN_BIT_SAMPLE: int = 40_000
 # 40 000 / 256, allowing for lossy JPEG encoding
@@ -69,6 +80,14 @@ EIGHT_BIT_SAMPLE: int = 156
 SAMPLE_TOLERANCE: int = 3
 DARK_LIMIT: int = 64
 LIGHT_LIMIT: int = 192
+SRGB_PROFILE: bytes = ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')).tobytes()
+MAX_FRAME_PIXELS_PATCH: str = 'bookreviver.adapters.imaging.images.MAX_FRAME_PIXELS'
+# Admits a frame of SMALL_SIZE_PX and refuses one of LARGE_FRAME_SIZE_PX
+SMALL_FRAME_PIXELS: int = SMALL_SIZE_PX[0] * SMALL_SIZE_PX[1]
+LARGE_FRAME_SIZE_PX: tuple[int, int] = (240, 180)
+RAW_COMPRESSION: str = 'raw'
+DEFLATE_COMPRESSION: str = 'tiff_deflate'
+CORRUPT_BYTE: bytes = b'\xff'
 
 
 class RenderedPageCase(NamedTuple):
@@ -84,6 +103,28 @@ class RenderedPageCase(NamedTuple):
     mode: str
 
 
+class DamagedPixelsCase(NamedTuple):
+    """An image file whose headers read but whose pixel data is damaged.
+
+    :ivar build: Function writing the file into a directory and returning its path.
+    :ivar number: Number of the damaged frame.
+    """
+
+    build: Callable[[Path], Path]
+    number: int
+
+
+class FrameProfileCase(NamedTuple):
+    """A frame of a multi-page TIFF, and the colour profile the JPEG written of it must carry.
+
+    :ivar number: Number of the frame in the TIFF.
+    :ivar profile: The profile the JPEG must embed, or None for none.
+    """
+
+    number: int
+    profile: bytes | None
+
+
 class ConvertedImageCase(NamedTuple):
     """A page image stored in some Pillow mode and format, and the JPEG mode it becomes.
 
@@ -95,6 +136,67 @@ class ConvertedImageCase(NamedTuple):
     mode: str
     suffix: str
     jpeg_mode: str
+
+
+def _two_frame_tiff(directory: Path, *, compression: str) -> Path:
+    """Write a TIFF of two gray frames, the second compressed with ``compression``.
+
+    :param directory: Directory to write the file into.
+    :type directory: Path
+    :param compression: Pillow name of the compression of the second frame, such as ``raw`` or ``tiff_deflate``.
+    :type compression: str
+    :returns: The written path.
+    :rtype: Path
+    """
+    frames = [
+        TiffFrame(mode=GRAY_MODE, size_px=SMALL_SIZE_PX),
+        TiffFrame(mode=GRAY_MODE, size_px=SMALL_SIZE_PX, options={'compression': compression}),
+    ]
+    return write_tiff(directory / TIFF_NAME, frames=frames)
+
+
+def _tiff_with_frame_pixels_cut_off(directory: Path) -> Path:
+    """Write a two-frame TIFF cut off halfway through the uncompressed pixels of its second frame, headers intact.
+
+    :param directory: Directory to write the file into.
+    :type directory: Path
+    :returns: The written path.
+    :rtype: Path
+    """
+    path = _two_frame_tiff(directory, compression=RAW_COMPRESSION)
+    offset, length = frame_pixel_span(path, number=1)
+    path.write_bytes(path.read_bytes()[: offset + length // 2])
+    return path
+
+
+def _tiff_with_frame_pixels_corrupted(directory: Path) -> Path:
+    """Write a two-frame TIFF whose second frame holds deflate data that cannot be inflated, headers intact.
+
+    :param directory: Directory to write the file into.
+    :type directory: Path
+    :returns: The written path.
+    :rtype: Path
+    """
+    path = _two_frame_tiff(directory, compression=DEFLATE_COMPRESSION)
+    offset, length = frame_pixel_span(path, number=1)
+    content = bytearray(path.read_bytes())
+    content[offset : offset + length] = CORRUPT_BYTE * length
+    path.write_bytes(bytes(content))
+    return path
+
+
+def _png_with_pixels_cut_off(directory: Path) -> Path:
+    """Write a PNG cut off halfway, so its header reads and its pixel data ends early.
+
+    :param directory: Directory to write the file into.
+    :type directory: Path
+    :returns: The written path.
+    :rtype: Path
+    """
+    path = write_image(directory / f'{PAGE_STEM}{PNG_SUFFIX}', mode=RGB_MODE, size=SMALL_SIZE_PX)
+    content = path.read_bytes()
+    path.write_bytes(content[: len(content) // 2])
+    return path
 
 
 def _gray_at(image: Image.Image, xy: tuple[int, int]) -> int:
@@ -234,7 +336,7 @@ class TestExtractPdf:
         assert_expectations()
 
     async def test_extracts_requested_page(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
-        """Verify the page at the given index is the one written.
+        """Verify the page with the given number is the one written.
 
         :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
         :type fx_rasterizer: PageRasterizer
@@ -250,26 +352,8 @@ class TestExtractPdf:
         with Image.open(target) as rendered:
             assert rendered.size == SECOND_PDF_PAGE_SIZE_PX
 
-    async def test_counts_pages_through_parts(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
-        """Verify the index runs through the parts of a book in natural order, so page 1 is the first of part 10.
-
-        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
-        :type fx_rasterizer: PageRasterizer
-        :param tmp_path: Temporary directory of the test.
-        :type tmp_path: Path
-        """
-        # Passed in reverse, so only the natural order of the names puts the one-page part 2 first
-        later = write_pdf(tmp_path / 'part10.pdf', pages=[PdfPage(size_pt=size) for size in PAGE_SIZES_PT[::-1]])
-        earlier = write_pdf(tmp_path / 'part2.pdf', pages=[PdfPage(size_pt=PAGE_SIZES_PT[0])])
-        target = tmp_path / TARGET_NAME
-
-        await fx_rasterizer.extract(SourceKind.PDF, [later, earlier], 1, target)
-
-        with Image.open(target) as rendered:
-            assert rendered.size == SECOND_PDF_PAGE_SIZE_PX
-
-    async def test_rejects_index_past_last_part(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
-        """Reject a page index past the end of the book and write nothing.
+    async def test_rejects_number_past_last_page(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
+        """Reject a page number past the end of the PDF and write nothing.
 
         :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
         :type fx_rasterizer: PageRasterizer
@@ -279,32 +363,66 @@ class TestExtractPdf:
         pdf = write_pdf(tmp_path / PDF_NAME, pages=[PdfPage(size_pt=size) for size in PAGE_SIZES_PT])
         target = tmp_path / TARGET_NAME
 
-        with pytest.raises(IndexError, match=r'^The book has no page 2: its parts hold 2 pages'):
+        with pytest.raises(IndexError, match=r'^book\.pdf has no page 2: it holds 2 pages'):
             await fx_rasterizer.extract(SourceKind.PDF, [pdf], len(PAGE_SIZES_PT), target)
         assert not target.exists()
 
-
-class TestExtractImages:
-    """Tests for PageRasterizer.extract() of an image set, served by ImageSetFormat."""
-
-    async def test_picks_page_in_natural_order(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
-        """Verify the index counts pages in the natural order of their names, not the upload order.
+    async def test_refuses_more_than_one_file(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
+        """Reject two PDF files as one source, since each PDF part is a source of its own.
 
         :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
         :type fx_rasterizer: PageRasterizer
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        files = [
-            write_image(tmp_path / name, mode=GRAY_MODE, size=size)
-            for name, size in zip(NAMES_BY_UPLOAD_ORDER, SIZES_BY_UPLOAD_ORDER, strict=True)
-        ]
+        parts = [write_pdf(tmp_path / name, pages=[PdfPage()]) for name in ('part1.pdf', 'part2.pdf')]
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGES, files, 1, target)
+        with pytest.raises(ValueError, match=r'^A source of kind pdf is one file, not 2'):
+            await fx_rasterizer.extract(SourceKind.PDF, parts, 0, target)
+        assert not target.exists()
+
+
+class TestExtractImages:
+    """Tests for PageRasterizer.extract() of an image file, served by ImageFormat."""
+
+    async def test_extracts_requested_frame_of_a_tiff(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
+        """Verify the frame with the given number of a multi-page TIFF is the one written.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        first, *others = (gradient_image(mode=GRAY_MODE, size=size) for size in FRAME_SIZES_PX)
+        source = tmp_path / TIFF_NAME
+        first.save(source, save_all=True, append_images=others)
+        target = tmp_path / TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 1, target)
 
         with Image.open(target) as written:
-            assert written.size == SECOND_PAGE_SIZE_PX
+            assert written.size == FRAME_SIZES_PX[1]
+
+    @pytest.mark.parametrize(NUMBER_ARG, [1, -1])
+    async def test_rejects_frame_the_file_lacks(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, number: int
+    ) -> None:
+        """Reject a frame number outside a single-image file and write nothing.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param number: Frame number the file does not have.
+        :type number: int
+        """
+        source = write_image(tmp_path / f'{PAGE_STEM}{PNG_SUFFIX}', mode=GRAY_MODE, size=SMALL_SIZE_PX)
+        target = tmp_path / TARGET_NAME
+
+        with pytest.raises(IndexError, match=rf'^page\.png has no frame {number}: it holds 1 frames'):
+            await fx_rasterizer.extract(SourceKind.IMAGE, [source], number, target)
+        assert not target.exists()
 
     @pytest.mark.parametrize(MODE_ARG, [GRAY_MODE, RGB_MODE])
     async def test_copies_jpeg_byte_for_byte(self, fx_rasterizer: PageRasterizer, tmp_path: Path, mode: str) -> None:
@@ -320,7 +438,7 @@ class TestExtractImages:
         source = write_image(tmp_path / 'page.jpg', mode=mode, size=SMALL_SIZE_PX)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGES, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
 
         assert target.read_bytes() == source.read_bytes()
 
@@ -357,7 +475,7 @@ class TestExtractImages:
         source = write_image(tmp_path / f'{PAGE_STEM}{case.suffix}', mode=case.mode, size=SMALL_SIZE_PX)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGES, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
 
         with Image.open(target) as written:
             expect(written.format == JPEG)
@@ -379,7 +497,7 @@ class TestExtractImages:
         bilevel.save(source)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGES, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
 
         with Image.open(target) as written:
             width, height = written.size
@@ -399,7 +517,7 @@ class TestExtractImages:
         Image.new(GRAY_16_MODE, SMALL_SIZE_PX, color=SIXTEEN_BIT_SAMPLE).save(source)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGES, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
 
         with Image.open(target) as written:
             sample = _gray_at(written, (0, 0))
@@ -417,7 +535,7 @@ class TestExtractImages:
         source = write_image(tmp_path / f'{PAGE_STEM}{JPG_SUFFIX}', mode=GRAY_MODE, size=SMALL_SIZE_PX, exif=exif)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGES, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
 
         with Image.open(target) as written:
             expect(written.size == SMALL_SIZE_PX[::-1])
@@ -437,7 +555,109 @@ class TestExtractImages:
         gradient_image(mode=RGB_MODE, size=SMALL_SIZE_PX).save(source, icc_profile=profile)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGES, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
 
         with Image.open(target) as written:
             assert written.info.get('icc_profile') == profile
+
+    @pytest.mark.parametrize(
+        CASE_ARG,
+        [
+            FrameProfileCase(number=1, profile=SRGB_PROFILE),
+            # Pillow keeps the profile of frame 1 in the file's info after seeking to frame 2, which has none
+            FrameProfileCase(number=2, profile=None),
+        ],
+        ids=['frame-with-profile', 'frame-after-it-without-one'],
+    )
+    async def test_embeds_the_profile_of_the_extracted_frame_only(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, case: FrameProfileCase
+    ) -> None:
+        """Verify a TIFF frame keeps its own colour profile and never gets the profile of an earlier frame.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: A frame of the TIFF, and the profile its JPEG must carry.
+        :type case: FrameProfileCase
+        """
+        frames = [
+            TiffFrame(mode=GRAY_MODE, size_px=SMALL_SIZE_PX),
+            TiffFrame(mode=RGB_MODE, size_px=SMALL_SIZE_PX, options={'icc_profile': SRGB_PROFILE}),
+            TiffFrame(mode=GRAY_MODE, size_px=SMALL_SIZE_PX),
+        ]
+        source = write_tiff(tmp_path / TIFF_NAME, frames=frames)
+        target = tmp_path / TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], case.number, target)
+
+        with Image.open(target) as written:
+            assert written.info.get('icc_profile') == case.profile
+
+    @pytest.mark.parametrize(
+        CASE_ARG,
+        [
+            TiffFrame(
+                mode=GRAY_MODE,
+                size_px=SMALL_SIZE_PX,
+                options={'tiffinfo': {TiffImagePlugin.PHOTOMETRIC_INTERPRETATION: 99}},
+            ),
+            TiffFrame(mode=GRAY_MODE, size_px=LARGE_FRAME_SIZE_PX),
+        ],
+        ids=['unknown-pixel-mode', 'too-large'],
+    )
+    @patch(MAX_FRAME_PIXELS_PATCH, SMALL_FRAME_PIXELS)
+    async def test_refuses_later_frame_it_cannot_read(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, case: TiffFrame
+    ) -> None:
+        """Refuse a TIFF frame with a broken header or too many pixels, and write nothing.
+
+        An uncompressed frame over the bound would otherwise be loaded whole, since Pillow checks the bound of a later
+        frame only when a decoder loads it.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: The second frame of the TIFF, which cannot be read as a scan.
+        :type case: TiffFrame
+        """
+        source = write_tiff(tmp_path / TIFF_NAME, frames=[TiffFrame(mode=GRAY_MODE, size_px=SMALL_SIZE_PX), case])
+        target = tmp_path / TARGET_NAME
+
+        with pytest.raises(UnsupportedSourceError, match=r'^page\.tif cannot be read as an image'):
+            await fx_rasterizer.extract(SourceKind.IMAGE, [source], 1, target)
+        assert not target.exists()
+
+    @pytest.mark.parametrize(
+        CASE_ARG,
+        [
+            DamagedPixelsCase(build=_tiff_with_frame_pixels_cut_off, number=1),
+            DamagedPixelsCase(build=_tiff_with_frame_pixels_corrupted, number=1),
+            DamagedPixelsCase(build=_png_with_pixels_cut_off, number=0),
+        ],
+        ids=['tiff-frame-cut-off', 'tiff-frame-corrupted', 'png-cut-off'],
+    )
+    async def test_refuses_frame_whose_pixels_it_cannot_decode(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, case: DamagedPixelsCase
+    ) -> None:
+        """Refuse a frame whose headers read but whose pixel data is damaged, and write nothing.
+
+        Pillow decodes pixels only when they are first read, so the inspection, which reads headers alone, accepts such
+        a file, and the damage shows only here.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: An image file with damaged pixel data, and the number of the damaged frame.
+        :type case: DamagedPixelsCase
+        """
+        source = case.build(tmp_path)
+        target = tmp_path / TARGET_NAME
+
+        with pytest.raises(
+            UnsupportedSourceError, match=rf'cannot be read as an image: the pixels of frame {case.number} are damaged'
+        ):
+            await fx_rasterizer.extract(SourceKind.IMAGE, [source], case.number, target)
+        assert not target.exists()

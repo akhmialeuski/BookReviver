@@ -1,24 +1,25 @@
-"""Local directory tree under the storage root, holding the sources and the derived files of every project.
+"""Local directory tree under the storage root, holding the uploads, sources and derived files of every project.
 
-Both stores share one root and one layout: ``projects/<id>/incoming/`` holds an upload being received,
-``projects/<id>/source/`` the book as received, and every other path under ``projects/<id>/`` belongs to derived files
-addressed by storage keys. The asset store refuses keys that name or hold the two source directories, so a wrong key
-cannot erase a book.
+Both stores share one root, and every path under it is a storage key that ``ProjectKeys`` builds, joined by the
+directory separator. The source store owns ``projects/<id>/incoming/<job_id>/``, where an upload is received, and
+``projects/<id>/sources/<source_id>/``, where each source lives as uploaded. The asset store owns
+``projects/<id>/assets/`` and refuses any key outside it, so a wrong key can never erase a source.
 
-Nothing is written in place and nothing stored is ever replaced. An upload becomes ``source/`` by one rename, and a
-derived file or directory is written under a hidden sibling name and moved onto its key once complete. The move is a
-hard link for a file and a rename for a directory, because the operating system refuses both when the target exists,
-which a check followed by a write could not guarantee against a second writer. Every blocking call goes through
-``anyio.Path`` or ``asyncify``, and cleanup after a failure runs in a shielded cancel scope, so a cancelled job still
-removes what it half wrote.
+Nothing is written in place and nothing stored is ever replaced. The files of a source are moved from the upload
+into a hidden sibling directory, which one rename then publishes as the source's directory. A derived file or
+directory is written under a hidden sibling name and moved onto its key once complete. The move is a hard link for a
+file and a rename for a directory, because the operating system refuses both when the target exists, which a check
+followed by a write could not guarantee against a second writer. Every blocking call goes through ``anyio.Path`` or
+``asyncify``, and cleanup after a failure runs in a shielded cancel scope, so a cancelled job still removes what it
+half wrote.
 """
 
-import enum
 import errno
+import hashlib
 import shutil
 from contextlib import asynccontextmanager
 from functools import partial
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path, PureWindowsPath
 from typing import TYPE_CHECKING, override
 from uuid import uuid4
 
@@ -27,69 +28,86 @@ from asyncer import asyncify
 
 from bookreviver.domain.enums import UploadProblem
 from bookreviver.domain.errors import ConflictError, NotFoundError, UploadRejectedError
+from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.values import SourceFile
 from bookreviver.ports.storage import AssetStore, SourceStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
     from contextlib import AbstractAsyncContextManager
 
-    from bookreviver.domain.ids import ProjectId, StorageKey
+    from bookreviver.domain.ids import JobId, ProjectId, SourceId, StorageKey
     from bookreviver.ports.storage import IncomingFile
 
 # Read size of an upload stream, large enough to keep the per-chunk overhead negligible
 CHUNK_BYTES: int = 1024 * 1024
-PROJECTS_DIR: str = 'projects'
 # Base names a client may send that do not name a file
 NAMELESS: frozenset[str] = frozenset({'', '.', '..'})
-PARENT_PART: str = '..'
-# Index of the directory under ``projects/<id>/`` in the parts of a storage key
-PROJECT_AREA_INDEX: int = 2
 PARTIAL_ROLE: str = 'partial'
-SOURCE_EXISTS_MESSAGE: str = (
-    'This project already has a book. Create a new project for another book, '
-    'or delete this project with everything processed from it and create it again.'
-)
+# What ``rmdir`` reports for a directory that is gone or still holds another store's files
+KEPT_DIRECTORY_ERRNOS: frozenset[int] = frozenset({errno.ENOENT, errno.ENOTEMPTY})
 
 
-class SourceArea(enum.StrEnum):
-    """Directory of a project holding one state of its source, which only the source store touches."""
-
-    INCOMING = 'incoming'
-    SOURCE = 'source'
-
-
-class LocalSourceStore(SourceStore):
-    """Sources in ``projects/<id>/source/``, each written once from an upload staged in ``projects/<id>/incoming/``."""
+class _LocalTree:
+    """The storage root both local stores share, with the paths of storage keys under it."""
 
     def __init__(self, *, root: Path) -> None:
-        """Keep the sources under ``root``.
+        """Keep the files under ``root``.
 
-        :param root: Storage root shared with the asset store, created on the first upload.
+        :param root: Storage root shared by the source store and the asset store, created on the first write.
         :type root: Path
         """
         self._root = anyio.Path(root)
 
+    def _path(self, key: StorageKey) -> anyio.Path:
+        """Return the path of a key under the root, whether or not anything is stored there.
+
+        :param key: Storage key built by ``ProjectKeys``, with ``/`` separating its segments.
+        :type key: StorageKey
+        :returns: Path of the key under the root.
+        :rtype: anyio.Path
+        """
+        return self._root.joinpath(*key.split(ProjectKeys.SEPARATOR))
+
+    async def _remove_area(self, area: StorageKey) -> None:
+        """Remove one area of a project, then the project's directory once no other area is left in it.
+
+        :param area: Key of the area, such as ``projects/<id>/assets``.
+        :type area: StorageKey
+        """
+        path = self._path(area)
+        await _remove(path)
+        try:
+            await path.parent.rmdir()
+        except OSError as error:
+            if error.errno not in KEPT_DIRECTORY_ERRNOS:
+                raise
+
+
+class LocalSourceStore(_LocalTree, SourceStore):
+    """Uploads in ``incoming/<job_id>/`` and sources in ``sources/<source_id>/`` of each project's directory."""
+
     @override
-    async def stage(self, project_id: ProjectId, files: Sequence[IncomingFile], *, max_bytes: int) -> int:
-        """Stream an upload into the project's ``incoming/`` directory, replacing an earlier interrupted upload.
+    async def stage(
+        self, project_id: ProjectId, job_id: JobId, files: Sequence[IncomingFile], *, max_bytes: int
+    ) -> Sequence[SourceFile]:
+        """Stream an upload into the job's ``incoming/<job_id>/`` directory, replacing an interrupted upload of it.
 
         :param project_id: Project receiving the upload.
         :type project_id: ProjectId
+        :param job_id: Import job owning the upload.
+        :type job_id: JobId
         :param files: Uploaded files, read in chunks of ``CHUNK_BYTES``.
         :type files: Sequence[IncomingFile]
         :param max_bytes: Largest total size of the upload in bytes.
         :type max_bytes: int
-        :returns: Total size of the staged files in bytes.
-        :rtype: int
-        :raises ConflictError: If the project already has a source; nothing of the upload is read then.
+        :returns: Name, size and SHA-256 digest of every staged file, in upload order.
+        :rtype: Sequence[SourceFile]
         :raises UploadRejectedError: If a file has no usable name, two names differ only in letter case, or the upload
-                                     grows past ``max_bytes``; ``incoming/`` is removed then.
+                                     grows past ``max_bytes``; the job's directory is removed then.
         """
-        # Refused before a byte is read, since an upload can be gigabytes
-        if await self._area(project_id, SourceArea.SOURCE).exists():
-            raise ConflictError(SOURCE_EXISTS_MESSAGE)
-        incoming = self._area(project_id, SourceArea.INCOMING)
-        # An interrupted upload may have left files behind
+        incoming = self._path(ProjectKeys(project_id).incoming(job_id))
+        # An interrupted upload of the same job may have left files behind
         await _remove(incoming)
         await incoming.mkdir(parents=True)
         try:
@@ -100,117 +118,146 @@ class LocalSourceStore(SourceStore):
             raise
 
     @override
-    async def promote(self, project_id: ProjectId) -> None:
-        """Rename the project's ``incoming/`` directory to ``source/``.
+    async def promote(self, project_id: ProjectId, job_id: JobId, source_id: SourceId, *, names: Sequence[str]) -> None:
+        """Move the named files from ``incoming/<job_id>/`` into a hidden directory, then rename it to the source's.
 
-        :param project_id: Project whose staged upload becomes its source.
+        A refused promotion moves the files back, so they stay staged and nothing of the upload is lost.
+
+        :param project_id: Project owning the upload and the source.
         :type project_id: ProjectId
-        :raises NotFoundError: If no upload is staged.
-        :raises ConflictError: If ``source/`` exists, which the rename refuses to replace.
+        :param job_id: Import job whose upload holds the files.
+        :type job_id: JobId
+        :param source_id: Source the files become.
+        :type source_id: SourceId
+        :param names: Names of the staged files that make the source.
+        :type names: Sequence[str]
+        :raises NotFoundError: If the job has no staged upload, or a name is not among its staged files.
+        :raises ConflictError: If ``sources/<source_id>/`` exists, which the rename refuses to replace.
+        :raises ValueError: If ``names`` is empty.
         """
-        incoming = await self._existing_area(project_id, SourceArea.INCOMING)
-        await _publish(
-            incoming, target=self._area(project_id, SourceArea.SOURCE), conflict_message=SOURCE_EXISTS_MESSAGE
-        )
+        if not names:
+            err_msg = f'Source {source_id} needs at least one file.'
+            raise ValueError(err_msg)
+        keys = ProjectKeys(project_id)
+        incoming = await self._existing(keys.incoming(job_id))
+        # Only a name the store itself staged is accepted, so no name can climb out of the job's directory
+        staged = {entry.name async for entry in incoming.iterdir()}
+        if missing := sorted(set(names) - staged):
+            err_msg = f'Import job {job_id} has staged no file named {missing}'
+            raise NotFoundError(err_msg)
+        target = self._path(keys.source(source_id))
+        conflict_message = f'Source {source_id} already has files, and the files of a source are never replaced'
+        if await target.exists():
+            raise ConflictError(conflict_message)
+        await target.parent.mkdir(parents=True, exist_ok=True)
+        hidden = target.with_name(f'.{target.name}-{PARTIAL_ROLE}-{uuid4().hex}')
+        await hidden.mkdir()
+        try:
+            for name in dict.fromkeys(names):
+                await (incoming / name).rename(hidden / name)
+            await _publish(hidden, target=target, conflict_message=conflict_message)
+        except BaseException:
+            with anyio.CancelScope(shield=True):
+                if await hidden.is_dir():
+                    for entry in [entry async for entry in hidden.iterdir()]:
+                        await entry.rename(incoming / entry.name)
+                    await hidden.rmdir()
+            raise
 
     @override
-    async def discard(self, project_id: ProjectId) -> None:
-        """Remove the project's ``incoming/`` directory, if there is one.
+    async def discard(self, project_id: ProjectId, job_id: JobId) -> None:
+        """Remove the job's ``incoming/<job_id>/`` directory, if there is one.
 
-        :param project_id: Project whose staged upload is removed.
+        :param project_id: Project owning the upload.
         :type project_id: ProjectId
+        :param job_id: Import job whose upload is removed.
+        :type job_id: JobId
         """
-        await _remove(self._area(project_id, SourceArea.INCOMING))
+        await _remove(self._path(ProjectKeys(project_id).incoming(job_id)))
 
     @override
-    def staged_files(self, project_id: ProjectId) -> AbstractAsyncContextManager[Sequence[Path]]:
-        """Give the paths of the files in the project's ``incoming/`` directory.
+    def staged_files(self, project_id: ProjectId, job_id: JobId) -> AbstractAsyncContextManager[Sequence[Path]]:
+        """Give the paths of the files left in the job's ``incoming/<job_id>/`` directory.
 
-        :param project_id: Project whose staged upload is read.
+        :param project_id: Project owning the upload.
         :type project_id: ProjectId
+        :param job_id: Import job whose upload is read.
+        :type job_id: JobId
         :returns: Context manager yielding the paths in name order.
         :rtype: AbstractAsyncContextManager[Sequence[Path]]
-        :raises NotFoundError: If no upload is staged, when the context opens.
+        :raises NotFoundError: If the job has no staged upload, when the context opens.
         """
-        return self._files(project_id, SourceArea.INCOMING)
+        return self._files(ProjectKeys(project_id).incoming(job_id))
 
     @override
-    def source_files(self, project_id: ProjectId) -> AbstractAsyncContextManager[Sequence[Path]]:
-        """Give the paths of the files in the project's ``source/`` directory.
+    def source_files(self, project_id: ProjectId, source_id: SourceId) -> AbstractAsyncContextManager[Sequence[Path]]:
+        """Give the paths of the files in the source's ``sources/<source_id>/`` directory.
 
-        :param project_id: Project whose source is read.
+        :param project_id: Project owning the source.
         :type project_id: ProjectId
+        :param source_id: Source whose files are read.
+        :type source_id: SourceId
         :returns: Context manager yielding the paths in name order.
         :rtype: AbstractAsyncContextManager[Sequence[Path]]
-        :raises NotFoundError: If the project has no source, when the context opens.
+        :raises NotFoundError: If the source has no files, when the context opens.
         """
-        return self._files(project_id, SourceArea.SOURCE)
+        return self._files(ProjectKeys(project_id).source(source_id))
+
+    @override
+    async def delete_source(self, project_id: ProjectId, source_id: SourceId) -> None:
+        """Remove the source's ``sources/<source_id>/`` directory, if there is one.
+
+        :param project_id: Project owning the source.
+        :type project_id: ProjectId
+        :param source_id: Source whose files are removed.
+        :type source_id: SourceId
+        """
+        await _remove(self._path(ProjectKeys(project_id).source(source_id)))
 
     @override
     async def delete_project(self, project_id: ProjectId) -> None:
-        """Remove the project's ``source/`` and ``incoming/`` directories, whichever exist.
+        """Remove the project's ``incoming/`` and ``sources/`` directories, then the project's directory if empty.
 
-        :param project_id: Project whose source files are removed.
+        The project's directory stays while ``assets/`` is in it, since only the asset store removes that.
+
+        :param project_id: Project whose uploads and sources are removed.
         :type project_id: ProjectId
         """
-        for area in SourceArea:
-            await _remove(self._area(project_id, area))
+        keys = ProjectKeys(project_id)
+        for area in (keys.incoming_area, keys.sources_area):
+            await self._remove_area(area)
 
-    def _area(self, project_id: ProjectId, area: SourceArea) -> anyio.Path:
-        """Return the directory of one state of the project's source, whether or not it exists.
+    async def _existing(self, key: StorageKey) -> anyio.Path:
+        """Return the directory at ``key``, which must exist.
 
-        :param project_id: Project owning the directory.
-        :type project_id: ProjectId
-        :param area: State of the source the directory holds.
-        :type area: SourceArea
-        :returns: Path of ``projects/<id>/<area>`` under the root.
+        :param key: Key of an upload's or a source's directory.
+        :type key: StorageKey
+        :returns: Path of the existing directory.
         :rtype: anyio.Path
+        :raises NotFoundError: If nothing is stored at the key.
         """
-        return self._root / PROJECTS_DIR / str(project_id) / area
-
-    async def _existing_area(self, project_id: ProjectId, area: SourceArea) -> anyio.Path:
-        """Return the directory of one state of the project's source, which must exist.
-
-        :param project_id: Project owning the directory.
-        :type project_id: ProjectId
-        :param area: State of the source the directory holds.
-        :type area: SourceArea
-        :returns: Path of the existing ``projects/<id>/<area>`` directory.
-        :rtype: anyio.Path
-        :raises NotFoundError: If the project has no source in that state.
-        """
-        directory = self._area(project_id, area)
+        directory = self._path(key)
         if not await directory.is_dir():
-            err_msg = f'Project {project_id} has no {area} files'
+            err_msg = f'No files are stored at {key}'
             raise NotFoundError(err_msg)
         return directory
 
     @asynccontextmanager
-    async def _files(self, project_id: ProjectId, area: SourceArea) -> AsyncIterator[Sequence[Path]]:
-        """Yield the files of one state of the project's source in name order.
+    async def _files(self, key: StorageKey) -> AsyncIterator[Sequence[Path]]:
+        """Yield the files of the directory at ``key`` in name order.
 
-        :param project_id: Project owning the files.
-        :type project_id: ProjectId
-        :param area: State of the source to list.
-        :type area: SourceArea
+        :param key: Key of an upload's or a source's directory.
+        :type key: StorageKey
         :returns: Iterator yielding the sorted paths once.
         :rtype: AsyncIterator[Sequence[Path]]
-        :raises NotFoundError: If the project has no source in that state.
+        :raises NotFoundError: If nothing is stored at the key.
         """
-        directory = await self._existing_area(project_id, area)
+        directory = await self._existing(key)
         yield sorted([Path(entry) async for entry in directory.iterdir()])
 
 
-class LocalAssetStore(AssetStore):
-    """Derived files at ``<root>/<key>``, each written once and published only when written completely."""
-
-    def __init__(self, *, root: Path) -> None:
-        """Keep the derived files under ``root``.
-
-        :param root: Storage root shared with the source store.
-        :type root: Path
-        """
-        self._root = anyio.Path(root)
+class LocalAssetStore(_LocalTree, AssetStore):
+    """Derived files at ``<root>/<key>`` under each project's ``assets/``, each written once and published whole."""
 
     @override
     @asynccontextmanager
@@ -225,23 +272,23 @@ class LocalAssetStore(AssetStore):
         :returns: Iterator yielding the sibling path once.
         :rtype: AsyncIterator[Path]
         :raises ConflictError: If something is stored at ``key``, before the writer starts or when it publishes.
-        :raises ValueError: If the key leaves the root or reaches the files of the source store.
+        :raises ValueError: If the key does not lie under ``projects/<id>/assets/``.
         """
-        target = self._path(key)
+        target = self._asset_path(key)
         conflict_message = f'Something is already stored at {key}, and stored files are never replaced'
         # Refused before the writer spends time on a pyramid that could not be published
         if await target.exists():
             raise ConflictError(conflict_message)
         await target.parent.mkdir(parents=True, exist_ok=True)
         # Hidden, unique and keeping the suffix, so writers that infer the format from it still can
-        partial = target.with_stem(f'.{target.stem}-{PARTIAL_ROLE}-{uuid4().hex}')
+        hidden = target.with_stem(f'.{target.stem}-{PARTIAL_ROLE}-{uuid4().hex}')
         try:
-            yield Path(partial)
-            await _publish(partial, target=target, conflict_message=conflict_message)
+            yield Path(hidden)
+            await _publish(hidden, target=target, conflict_message=conflict_message)
         finally:
             # Nothing is left once published; a failed or refused write leaves its partial files
             with anyio.CancelScope(shield=True):
-                await _remove(partial)
+                await _remove(hidden)
 
     @override
     @asynccontextmanager
@@ -253,9 +300,9 @@ class LocalAssetStore(AssetStore):
         :returns: Iterator yielding the path once.
         :rtype: AsyncIterator[Path]
         :raises NotFoundError: If nothing is stored at the key.
-        :raises ValueError: If the key leaves the root or reaches the files of the source store.
+        :raises ValueError: If the key does not lie under ``projects/<id>/assets/``.
         """
-        path = self._path(key)
+        path = self._asset_path(key)
         if not await path.exists():
             err_msg = f'Nothing is stored at {key}'
             raise NotFoundError(err_msg)
@@ -267,53 +314,41 @@ class LocalAssetStore(AssetStore):
 
         :param prefix: Key of the file or directory to remove, matched by whole path segments.
         :type prefix: StorageKey
-        :raises ValueError: If the prefix leaves the root or reaches the files of the source store.
+        :raises ValueError: If the prefix does not lie under ``projects/<id>/assets/``.
         """
-        await _remove(self._path(prefix))
+        await _remove(self._asset_path(prefix))
 
     @override
     async def delete_project(self, project_id: ProjectId) -> None:
-        """Remove every entry of ``projects/<id>/`` except the source directories, then the directory if it is empty.
+        """Remove the project's ``assets/`` directory, then the project's directory if empty.
 
-        The directory stays while ``source/`` or ``incoming/`` is in it, since only the source store removes those.
+        The project's directory stays while ``incoming/`` or ``sources/`` is in it, since only the source store
+        removes those.
 
         :param project_id: Project whose derived files are removed.
         :type project_id: ProjectId
         """
-        project_dir = self._root / PROJECTS_DIR / str(project_id)
-        if not await project_dir.is_dir():
-            return
-        for entry in [entry async for entry in project_dir.iterdir()]:
-            if entry.name not in SourceArea:
-                await _remove(entry)
-        try:
-            await project_dir.rmdir()
-        except OSError as error:
-            if error.errno != errno.ENOTEMPTY:
-                raise
+        await self._remove_area(ProjectKeys(project_id).assets_area)
 
-    def _path(self, key: StorageKey) -> anyio.Path:
-        """Return the path of a key, which must name something strictly inside the root and outside every source.
+    def _asset_path(self, key: StorageKey) -> anyio.Path:
+        """Return the path of a key, which must name something strictly inside the ``assets/`` of a project.
 
         :param key: Storage key with ``/`` separating its segments.
         :type key: StorageKey
         :returns: Path of the key under the root.
         :rtype: anyio.Path
-        :raises ValueError: If the key is empty, absolute, climbs out of the root, or names or holds the source or
-                            staged upload of a project, which belong to the source store.
+        :raises ValueError: If the key is not a well-formed key of a project, or does not lie under its ``assets/``,
+                            such as the key of an upload, of a source, or of ``assets/`` itself.
         """
-        parts = PurePosixPath(key).parts
-        if not parts or PurePosixPath(key).is_absolute() or PARENT_PART in parts:
-            err_msg = f'Storage key {key!r} does not name a path inside the storage root'
+        keys = ProjectKeys.owning(key)
+        if keys is None or not key.startswith(f'{keys.assets_area}{ProjectKeys.SEPARATOR}'):
+            err_msg = f'Storage key {key!r} does not lie under the assets directory of a project'
             raise ValueError(err_msg)
-        if parts[0] == PROJECTS_DIR and (len(parts) <= PROJECT_AREA_INDEX or parts[PROJECT_AREA_INDEX] in SourceArea):
-            err_msg = f'Storage key {key!r} reaches into the files of the source store'
-            raise ValueError(err_msg)
-        return self._root.joinpath(*parts)
+        return self._path(key)
 
 
-async def _receive(files: Sequence[IncomingFile], *, directory: anyio.Path, max_bytes: int) -> int:
-    """Stream every file into ``directory`` under its base name.
+async def _receive(files: Sequence[IncomingFile], *, directory: anyio.Path, max_bytes: int) -> list[SourceFile]:
+    """Stream every file into ``directory`` under its base name, hashing it on the way.
 
     :param files: Uploaded files, read in chunks of ``CHUNK_BYTES``.
     :type files: Sequence[IncomingFile]
@@ -321,12 +356,13 @@ async def _receive(files: Sequence[IncomingFile], *, directory: anyio.Path, max_
     :type directory: anyio.Path
     :param max_bytes: Largest total size of the upload in bytes.
     :type max_bytes: int
-    :returns: Total size of the written files in bytes.
-    :rtype: int
+    :returns: Name, size and SHA-256 digest of every written file, in upload order.
+    :rtype: list[SourceFile]
     :raises UploadRejectedError: If a file has no usable name, two files share a base name in any letter case, or
                                  the total grows past ``max_bytes``.
     """
     total = 0
+    received: list[SourceFile] = []
     names: set[str] = set()
     for file in files:
         # A browser may send a client-side path, with either separator
@@ -338,13 +374,18 @@ async def _receive(files: Sequence[IncomingFile], *, directory: anyio.Path, max_
         if folded in names:
             raise UploadRejectedError(UploadProblem.DUPLICATE_NAME)
         names.add(folded)
+        size = 0
+        digest = hashlib.sha256()
         async with await (directory / name).open('wb') as target:
             while chunk := await file.read(CHUNK_BYTES):
-                total += len(chunk)
-                if total > max_bytes:
+                size += len(chunk)
+                if total + size > max_bytes:
                     raise UploadRejectedError(UploadProblem.TOO_LARGE)
+                digest.update(chunk)
                 await target.write(chunk)
-    return total
+        total += size
+        received.append(SourceFile(name=name, size_bytes=size, sha256=digest.hexdigest()))
+    return received
 
 
 async def _publish(staged: anyio.Path, *, target: anyio.Path, conflict_message: str) -> None:
