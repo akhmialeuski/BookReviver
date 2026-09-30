@@ -264,14 +264,30 @@ class InMemoryPageRepository(PageRepository):
 class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
     """Jobs of every project."""
 
-    def __init__(self, tables: InMemoryTables) -> None:
+    def __init__(
+        self,
+        tables: InMemoryTables,
+        *,
+        snapshot: InMemoryTables,
+        committed: InMemoryTables,
+        guards: dict[JobId, Job | None],
+    ) -> None:
         """Work on the job table of the unit of work's copy, checking jobs against its projects.
 
         :param tables: Every table of the working copy.
         :type tables: InMemoryTables
+        :param snapshot: The committed tables as the transaction began, which tell its own changes from others'.
+        :type snapshot: InMemoryTables
+        :param committed: The committed tables shared with every unit of work, read by a guarded write.
+        :type committed: InMemoryTables
+        :param guards: The committed row each guarded write judged, by job, which the unit of work checks on commit.
+        :type guards: dict[JobId, Job | None]
         """
         super().__init__(tables.jobs, attrgetter(ID_ATTRIBUTE))
         self._tables = tables
+        self._snapshot = snapshot
+        self._committed = committed
+        self._guards = guards
 
     @override
     async def add(self, entity: Job) -> Job:
@@ -300,6 +316,33 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
         """
         jobs = (job for job in self._tables.jobs.values() if job.project_id == project_id and job.state in states)
         return sorted(jobs, key=attrgetter('created_at'), reverse=True)
+
+    @override
+    async def update_if_state(self, entity: Job, *, expected: Collection[JobState]) -> Job | None:
+        """Replace the job in the working copy while its latest state is one of ``expected``.
+
+        Like a database statement, the check sees the job as last committed by anyone, unless this transaction changed
+        the job itself. Without locks, the committed row judged here is recorded, and the unit of work refuses to
+        commit if another transaction has replaced it by then.
+
+        :param entity: Job with its new state.
+        :type entity: Job
+        :param expected: States the stored job must be in for the replacement to happen.
+        :type expected: Collection[JobState]
+        :returns: The job as stored, or None when its latest state is not one of ``expected``.
+        :rtype: Job | None
+        :raises NotFoundError: If the job is not stored.
+        """
+        own = await self.get(entity.id)
+        committed = self._committed.jobs.get(entity.id)
+        changed_here = self._snapshot.jobs.get(entity.id) is not own
+        if (current := own if changed_here else committed) is None:
+            raise NotFoundError(entity.id)
+        if current.state not in expected:
+            return None
+        self._guards.setdefault(entity.id, committed)
+        self._rows[entity.id] = entity
+        return entity
 
 
 class InMemoryUnitOfWork(UnitOfWork):
@@ -337,14 +380,28 @@ class InMemoryUnitOfWork(UnitOfWork):
         """Start a transaction from the committed state."""
         self._snapshot = self._copy(self._database.tables)
         self._tables = self._copy(self._database.tables)
+        self._guards: dict[JobId, Job | None] = {}
         self.projects = InMemoryProjectRepository(self._tables)
         self.pages = InMemoryPageRepository(self._tables)
-        self.jobs = InMemoryJobRepository(self._tables)
+        self.jobs = InMemoryJobRepository(
+            self._tables, snapshot=self._snapshot, committed=self._database.tables, guards=self._guards
+        )
 
     @override
     async def commit(self) -> None:
-        """Publish the rows this transaction added, replaced or removed, and begin a new transaction."""
+        """Publish the rows this transaction added, replaced or removed, and begin a new transaction.
+
+        A database would have kept a job written by a guarded write locked until now. Here another transaction may
+        have committed that job meanwhile, and publishing this one would silently replace it, so the whole commit is
+        refused instead. Nothing awaits between the check and the merge, so no other commit interleaves.
+
+        :raises ConflictError: If a job this transaction wrote by ``update_if_state`` was committed by another
+                               transaction since; the transaction is discarded then.
+        """
         committed = self._database.tables
+        if changed := [job_id for job_id, seen in self._guards.items() if committed.jobs.get(job_id) is not seen]:
+            self._begin()
+            raise ConflictError(*changed)
         for table in fields(InMemoryTables):
             before, after = getattr(self._snapshot, table.name), getattr(self._tables, table.name)
             target = getattr(committed, table.name)

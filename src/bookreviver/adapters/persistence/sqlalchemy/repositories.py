@@ -23,7 +23,7 @@ from advanced_alchemy.exceptions import NotFoundError as MissingRowError
 from advanced_alchemy.filters import CollectionFilter, LimitOffset
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
 from attrs import evolve
-from sqlalchemy import func, select
+from sqlalchemy import func, inspect, select, update
 
 from bookreviver.adapters.persistence.sqlalchemy.mappers import JobMapper, PageMapper, ProjectMapper
 from bookreviver.adapters.persistence.sqlalchemy.tables import JobRow, PageRow, ProjectRow
@@ -356,3 +356,34 @@ class SqlAlchemyJobRepository(SqlAlchemyRepository[Job, JobId, JobRow], JobRepos
             project_id=project_id,
         )
         return [self._mapper.to_entity(row) for row in rows]
+
+    @override
+    async def update_if_state(self, entity: Job, *, expected: Collection[JobState]) -> Job | None:
+        """Replace the stored job with one ``UPDATE ... WHERE state IN`` statement.
+
+        The database evaluates the condition against the latest committed row and locks the row it changes until the
+        transaction ends, so no other transaction can change the job between the check and the write. ``RETURNING``
+        reloads the row into the session, replacing a copy an earlier read left there.
+
+        :param entity: Job with its new state.
+        :type entity: Job
+        :param expected: States the stored job must be in for the replacement to happen.
+        :type expected: Collection[JobState]
+        :returns: The job as stored, or None when its stored state is not one of ``expected``.
+        :rtype: Job | None
+        :raises NotFoundError: If the job is not stored.
+        """
+        row = self._mapper.to_row(entity)
+        statement = (
+            update(JobRow)
+            .where(JobRow.id == entity.id, JobRow.state.in_(expected))
+            .values({column.key: getattr(row, column.key) for column in inspect(JobRow).column_attrs})
+            .returning(JobRow)
+            .execution_options(populate_existing=True)
+        )
+        if (updated := (await self._rows.session.execute(statement)).scalar_one_or_none()) is None:
+            # A query rather than the session's copy tells a job in another state from one deleted meanwhile
+            if not await self._rows.exists(id=entity.id):
+                raise NotFoundError(entity.id)
+            return None
+        return self._mapper.to_entity(updated)

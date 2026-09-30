@@ -307,6 +307,61 @@ class TestJobRepository:
         with pytest.raises(NotFoundError, match=str(project_id)):
             await uow.jobs.add(make_job(project_id=project_id))
 
+    async def test_guarded_update_replaces_job_in_expected_state(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify a guarded write replaces a job whose state is expected, and the change reads back after commit.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        project = make_project(owner_id=new_account_id())
+        job = make_job(project_id=project.id, state=JobState.RUNNING)
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.jobs.add(job)
+        await uow.commit()
+        succeeded = evolve(job, state=JobState.SUCCEEDED)
+        expect(await uow.jobs.update_if_state(succeeded, expected=JobState.active()) == succeeded)
+        await uow.commit()
+        expect(await (await fx_uow_factory()).jobs.get(job.id) == succeeded)
+        assert_expectations()
+
+    async def test_guarded_update_judges_state_committed_meanwhile(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify a guarded write judges the state another unit committed after this one read the job, and keeps it.
+
+        This is a cancellation racing a worker: the canceller reads the job running, the worker commits it as
+        succeeded, and the cancellation must then leave the job succeeded.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        project = make_project(owner_id=new_account_id())
+        job = make_job(project_id=project.id, state=JobState.RUNNING)
+        setup = await fx_uow_factory()
+        await setup.projects.add(project)
+        await setup.jobs.add(job)
+        await setup.commit()
+        canceller = await fx_uow_factory()
+        seen = await canceller.jobs.get(job.id)
+        worker = await fx_uow_factory()
+        await worker.jobs.update(evolve(job, state=JobState.SUCCEEDED))
+        await worker.commit()
+        cancelled = evolve(seen, state=JobState.CANCELLED)
+        expect(await canceller.jobs.update_if_state(cancelled, expected=JobState.active()) is None)
+        await canceller.commit()
+        expect((await (await fx_uow_factory()).jobs.get(job.id)).state is JobState.SUCCEEDED)
+        assert_expectations()
+
+    async def test_guarded_update_of_missing_job_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify a guarded write of a job that is not stored reports it missing rather than in another state.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        job = make_job(project_id=make_project(owner_id=new_account_id()).id)
+        uow = await fx_uow_factory()
+        with pytest.raises(NotFoundError, match=str(job.id)):
+            await uow.jobs.update_if_state(job, expected=JobState.active())
+
 
 class TestUnitOfWork:
     """Contract of UnitOfWork isolation between concurrent units."""
