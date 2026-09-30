@@ -594,7 +594,8 @@ erDiagram
   as JSON, `size_bytes`, `sha256`, `scan_count`, `metadata` and `suggestion` as JSON, and `imported_at`.
 - `scans` has the primary key `id`, `source_id` and `project_id` with `ON DELETE CASCADE`, and a unique
   `(source_id, number)`. Its columns are `number`, `source_label`, one column per field of `ScanFacts`,
-  `renditions_ready` and `renditions_version`.
+  `renditions_ready`, `renditions_version` and `renditions_full`, the format of the `full` image, whose server default
+  `full.jpg` is what every scan stored before the format was recorded reads as.
 - `pages` has the primary key `id`, `project_id` with `ON DELETE CASCADE`, `scan_id` with `ON DELETE SET NULL`, and
   the unique pairs `(project_id, order_key)` and `(scan_id, slot)`. Its columns are `order_key`, `label`, `kind`,
   `origin`, `slot`, `included`, `notes`, `created_at` and `updated_at`.
@@ -605,7 +606,8 @@ erDiagram
   both adapters report its violation as a `ConflictError` when the job is added.
 - `page_versions` has the primary key `id`, `page_id` with `ON DELETE CASCADE`, `input_id` with `ON DELETE SET NULL`,
   and an index on `(page_id, stage)`. Its columns are `stage`, `processor_key`, `processor_version`, `params`,
-  `transform` and `data` as JSON, `renditions_ready`, `state` and `created_at`.
+  `transform` and `data` as JSON, `renditions_ready`, `renditions_full`, `state` and `created_at`. Both renditions
+  columns are null for a step without an image.
 - `page_stages` has the primary key `(page_id, stage)` and `head_version_id` with `ON DELETE SET NULL`. Its columns
   are `recipe_id`, `state` and `updated_at`.
 - `page_edits` has the primary key `(page_id, stage, processor_key)`. Its columns are `kind`, `geometry` as JSON,
@@ -626,7 +628,8 @@ the in-memory adapter has no accounts and there is no accounts port.
 The tables `sources`, `scans`, `pages` and `page_versions` come with the book model, because a page gets its base
 version with its own copy of the image when it is created, and the baseline migration creates them. `page_stages`,
 `page_edits` and `recipes` come with the processing framework, each through a migration of its own. The `request` and
-`result` columns and the partial unique index of `jobs` came with the import job, in their own revision.
+`result` columns and the partial unique index of `jobs` came with the import job, in their own revision, and the
+`renditions_full` columns of `scans` and `page_versions` came with the choice of the format of `full`, in another.
 
 ### Migrations
 

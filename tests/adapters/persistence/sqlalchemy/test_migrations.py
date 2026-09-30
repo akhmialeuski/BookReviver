@@ -33,6 +33,8 @@ from bookreviver.app.container import build_container
 from bookreviver.app.main import create_app
 from bookreviver.app.providers.database import MIGRATE_COMMAND, MIGRATE_DOWNGRADE_COMMAND
 from bookreviver.app.settings import PersistenceBackend
+from bookreviver.domain.enums import Rendition
+from bookreviver.domain.values import Renditions
 from tests.helpers.builders import make_job, make_page, make_page_version, make_project, make_scan, make_source
 from tests.helpers.seeding import commit_account
 
@@ -47,6 +49,8 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
+# The revision the one that records the format of the full image follows
+PREVIOUS_REVISION: str = '6446f5ce697c'
 # Identifier and message of the revision a test adds after the head of the shipped migrations
 TEST_REVISION: str = 'test_revision'
 TEST_REVISION_MESSAGE: str = 'A revision a test adds after the baseline.'
@@ -187,6 +191,51 @@ class TestBaseline:
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
         await _migrate(fx_empty_database, migrations.check)
         assert left == [fx_empty_database.config.alembic_config.version_table_name]
+
+
+class TestRecordFullFormatRevision:
+    """Tests for the revision that records the format of the ``full`` image of scans and page versions."""
+
+    async def test_images_stored_before_the_format_was_recorded_read_as_jpeg(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify a downgrade past the revision and an upgrade again leave every stored image a JPEG.
+
+        The downgrade drops the column, so the rows come back as the rows of a database migrated from before the
+        revision: a scan takes the server default, a version with an image is set by the revision, and a version of a
+        step without an image keeps a null.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        project = make_project(owner_id=await commit_account(fx_empty_database))
+        source = make_source(project_id=project.id)
+        png = Renditions(ready=True, full=Rendition.FULL_PNG)
+        scan = evolve(make_scan(source=source, number=0), renditions=png)
+        page = make_page(project_id=project.id, scan=scan)
+        with_image = evolve(make_page_version(page_id=page.id), renditions=png)
+        without_image = evolve(make_page_version(page_id=page.id, minutes=1), renditions=None)
+        async with fx_empty_database.sessions() as session:
+            uow = SqlAlchemyUnitOfWork(session)
+            await uow.projects.add(project)
+            await uow.sources.add(source)
+            await uow.scans.add(scan)
+            await uow.pages.add(page)
+            await uow.page_versions.add_many([with_image, without_image])
+            await uow.commit()
+
+        await _migrate(fx_empty_database, migrations.downgrade, PREVIOUS_REVISION)
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        async with fx_empty_database.sessions() as session:
+            scans = (await session.execute(select(ScanRow.renditions_full))).scalars().all()
+            rows = (await session.execute(select(PageVersionRow.id, PageVersionRow.renditions_full))).all()
+        versions = {row.id: row.renditions_full for row in rows}
+
+        expect(scans == [Rendition.FULL_JPEG])
+        expect(versions == {with_image.id: Rendition.FULL_JPEG, without_image.id: None})
+        assert_expectations()
 
 
 class TestDatabaseProvider:
