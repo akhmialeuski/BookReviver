@@ -25,6 +25,20 @@ The application never changes the database schema itself. After pulling code tha
 it holds anything worth keeping and run `uv run bookreviver-migrate upgrade head` again; until then the server
 refuses to start and names that command.
 
+## System dependencies
+
+Reading DjVu books needs the DjVuLibre command-line tools (`djvused`, `djvudump` and `ddjvu`) on the machine that
+runs the server and its workers. Without them the application still starts, logs a warning, and refuses every DjVu
+file with a message naming the package. The other kinds of source do not need them.
+
+```bash
+sudo zypper install djvulibre                                   # openSUSE
+sudo apt-get install --no-install-recommends djvulibre-bin      # Debian and Ubuntu, in a Docker image too
+```
+
+The DjVu tests build their samples with the same package (`c44`, `cjb2`, `djvm`, `djvmcvt`) and are skipped, with
+the reason "DjVuLibre is not installed", when it is missing.
+
 ## Development
 
 ```bash

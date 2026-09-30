@@ -21,7 +21,8 @@ pytestmark = pytest.mark.anyio
 CASE_ARG: str = 'case'
 DJVU_NAME: str = 'book.djvu'
 TARGET_NAME: str = 'full.jpg'
-DJVU_REFUSAL_MATCH: str = r'^Importing DjVu files is not supported yet'
+DJVU_REFUSAL_MATCH: str = r'^Reading DjVu files is not set up on this server.*djvulibre package'
+DJVU_TIMEOUT_S: int = 120
 REGISTRY_MATCH: str = r'^Register exactly one source format per kind'
 JPEG_QUALITY: int = 90
 
@@ -73,8 +74,8 @@ class TestSourceReaderInit:
             (
                 PdfFormat(jpeg_quality=JPEG_QUALITY),
                 ImageFormat(jpeg_quality=JPEG_QUALITY),
-                DjvuFormat(),
-                DjvuFormat(),
+                DjvuFormat(tools=None, jpeg_quality=JPEG_QUALITY, timeout_s=DJVU_TIMEOUT_S),
+                DjvuFormat(tools=None, jpeg_quality=JPEG_QUALITY, timeout_s=DJVU_TIMEOUT_S),
             ),
         ],
         ids=['kind-missing', 'kind-twice'],
@@ -184,14 +185,32 @@ class TestGroup:
         assert error.value.problem is case.problem
 
 
+@pytest.fixture
+def fx_reader_without_djvulibre() -> SourceReader:
+    """Return a reader whose DjVu format was given no DjVuLibre tools, as on a server that lacks the package.
+
+    :returns: The reader with every kind of source registered.
+    :rtype: SourceReader
+    """
+    return SourceReader(
+        formats=(
+            PdfFormat(jpeg_quality=JPEG_QUALITY),
+            ImageFormat(jpeg_quality=JPEG_QUALITY),
+            DjvuFormat(tools=None, jpeg_quality=JPEG_QUALITY, timeout_s=DJVU_TIMEOUT_S),
+        )
+    )
+
+
 class TestInspectDjvu:
-    """Tests for SourceInspector.inspect() of a DjVu source, served by DjvuFormat."""
+    """Tests for SourceInspector.inspect() of a DjVu source when the DjVuLibre tools are not installed."""
 
-    async def test_refuses_djvu_until_supported(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
-        """Refuse a DjVu source with a message saying the format is not supported yet.
+    async def test_refuses_djvu_naming_the_missing_package(
+        self, fx_reader_without_djvulibre: SourceReader, tmp_path: Path
+    ) -> None:
+        """Refuse a DjVu source with a message that asks to install the djvulibre package.
 
-        :param fx_inspector: Source inspector built by the application's imaging provider.
-        :type fx_inspector: SourceInspector
+        :param fx_reader_without_djvulibre: Reader whose DjVu format has no tools.
+        :type fx_reader_without_djvulibre: SourceReader
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
@@ -199,17 +218,19 @@ class TestInspectDjvu:
         path.write_bytes(b'')
 
         with pytest.raises(UnsupportedSourceError, match=DJVU_REFUSAL_MATCH):
-            await fx_inspector.inspect(SourceKind.DJVU, [path])
+            await fx_reader_without_djvulibre.inspect(SourceKind.DJVU, [path])
 
 
 class TestExtractDjvu:
-    """Tests for PageRasterizer.extract() of a DjVu scan, served by DjvuFormat."""
+    """Tests for PageRasterizer.extract() of a DjVu scan when the DjVuLibre tools are not installed."""
 
-    async def test_refuses_djvu_until_supported(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
-        """Refuse a DjVu scan and write nothing.
+    async def test_refuses_djvu_naming_the_missing_package(
+        self, fx_reader_without_djvulibre: SourceReader, tmp_path: Path
+    ) -> None:
+        """Refuse a DjVu scan that asks to install the djvulibre package, and write nothing.
 
-        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
-        :type fx_rasterizer: PageRasterizer
+        :param fx_reader_without_djvulibre: Reader whose DjVu format has no tools.
+        :type fx_reader_without_djvulibre: SourceReader
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
@@ -218,5 +239,5 @@ class TestExtractDjvu:
         target = tmp_path / TARGET_NAME
 
         with pytest.raises(UnsupportedSourceError, match=DJVU_REFUSAL_MATCH):
-            await fx_rasterizer.extract(SourceKind.DJVU, [path], 0, target)
+            await fx_reader_without_djvulibre.extract(SourceKind.DJVU, [path], 0, target)
         assert not target.exists()

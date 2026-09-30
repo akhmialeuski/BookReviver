@@ -52,6 +52,9 @@ class FactKey(enum.StrEnum):
     TEXT_CHARS = 'text_chars'
     PILLOW_MODE = 'pillow_mode'
     EXIF = 'exif'
+    DJVU_KIND = 'djvu_kind'
+    COMPONENT_COUNT = 'component_count'
+    DJVU_CHUNKS = 'djvu_chunks'
 
 
 def natural_order(files: Sequence[Path]) -> list[Path]:

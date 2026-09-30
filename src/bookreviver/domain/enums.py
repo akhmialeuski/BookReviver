@@ -54,6 +54,14 @@ class SourceKind(LabeledStrEnum):
     IMAGE = 'image', 'Image file'
 
 
+class DjvuDocumentKind(LabeledStrEnum):
+    """How a DjVu file holds its pages, which decides how many sources it makes."""
+
+    BUNDLED = 'bundled', 'Bundled document, every page in one file'
+    INDIRECT = 'indirect', 'Indirect document, an index file with one file per page'
+    SINGLE_PAGE = 'single-page', 'Single-page file'
+
+
 class ColorMode(LabeledStrEnum):
     """Colour depth of a page image as stored in the source."""
 
