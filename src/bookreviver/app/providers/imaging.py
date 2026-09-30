@@ -8,7 +8,7 @@ their sizes and quality from ``Settings.imaging``.
 
 from dishka import AnyOf, Provider, Scope, provide
 
-from bookreviver.adapters.imaging import DjvuFormat, ImageSetFormat, PdfFormat, SourceReader, VipsTiler
+from bookreviver.adapters.imaging import DjvuFormat, ImageFormat, PdfFormat, SourceReader, VipsTiler
 from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 
@@ -20,16 +20,16 @@ class ImagingProvider(Provider):
 
     @provide(provides=AnyOf[SourceInspector, PageRasterizer])
     def source_reader(self, settings: Settings) -> SourceReader:
-        """Build the reader with one format per kind of source, encoding pages at the configured JPEG quality.
+        """Build the reader with one format per kind of source, encoding scans at the configured JPEG quality.
 
         :param settings: Application settings, of which ``imaging.jpeg_quality`` is read.
         :type settings: Settings
-        :returns: The reader dispatching to the PDF, image-set and DjVu formats.
+        :returns: The reader dispatching to the PDF, image and DjVu formats.
         :rtype: SourceReader
         """
         jpeg_quality = settings.imaging.jpeg_quality
         return SourceReader(
-            formats=(PdfFormat(jpeg_quality=jpeg_quality), ImageSetFormat(jpeg_quality=jpeg_quality), DjvuFormat()),
+            formats=(PdfFormat(jpeg_quality=jpeg_quality), ImageFormat(jpeg_quality=jpeg_quality), DjvuFormat()),
         )
 
     @provide

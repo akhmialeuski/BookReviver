@@ -87,7 +87,9 @@ class TestProblemHandler:
             ProblemCase(ConflictError(CONFLICT_MESSAGE), HTTPStatus.CONFLICT, CONFLICT_MESSAGE),
             ProblemCase(UnsupportedSourceError(UNSUPPORTED_MESSAGE), HTTPStatus.BAD_REQUEST, UNSUPPORTED_MESSAGE),
             ProblemCase(
-                UploadRejectedError(UploadProblem.MIXED_TYPES), HTTPStatus.BAD_REQUEST, UploadProblem.MIXED_TYPES.label
+                UploadRejectedError(UploadProblem.UNSUPPORTED_TYPE),
+                HTTPStatus.BAD_REQUEST,
+                UploadProblem.UNSUPPORTED_TYPE.label,
             ),
             ProblemCase(
                 UploadRejectedError(UploadProblem.TOO_LARGE),

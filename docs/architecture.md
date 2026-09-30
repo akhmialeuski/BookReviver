@@ -489,7 +489,7 @@ source is a property of the format. `SourceInspector.inspect` describes one sour
 | Ordering    | fractional-indexing                                             | the same       |                        |
 | Storage     | Local directory tree under `data/`                              | local, tmp dir | S3-compatible storage  |
 | Mail        | Log mailer, aiosmtplib over SMTP                                | recording fake |                        |
-| Imaging     | Source reader with PDF, image-set, DjVu formats, pyvips tiler   | fake images    | remote workers         |
+| Imaging     | Source reader with PDF, image, DjVu formats, pyvips tiler       | fake images    | remote workers         |
 | AI engines  | pydantic-ai for cloud and Ollama models, local Surya, Tesseract | scripted fakes | more providers         |
 | Jobs        | Taskiq with the in-process broker                               | inline runner  | Taskiq with Redis      |
 | Events      | In-process broadcast                                            | in-memory      | Redis pub/sub          |
@@ -498,12 +498,17 @@ The storage ports hand out local paths for the imaging libraries to read and wri
 the local one over a temporary directory rather than an in-memory store.
 
 One `SourceReader` implements both `SourceInspector` and `PageRasterizer`, and hands each call to the `SourceFormat`
-registered for the `SourceKind` of the source: `PdfFormat` (PyMuPDF), `ImageSetFormat` (Pillow) and `DjvuFormat`. Each
-format holds both the inspection and the page extraction of its kind, in a module of its own under
-`adapters/imaging/`. The imaging provider registers the formats, and the reader refuses to start unless every kind has
+registered for the `SourceKind` of the source: `PdfFormat` (PyMuPDF), `ImageFormat` (Pillow) and `DjvuFormat`. Each
+format holds the grouping, the inspection and the scan extraction of its kind, in a module of its own under
+`adapters/imaging/`. `group` finds the kind of every file from its `FileType` and lets the format of that kind decide
+which of its files make one source; by default every file is a source of its own. A PDF source is one file whose
+pages are its scans, and an image source is one file whose TIFF frames are its scans, a JPEG, JPEG 2000 or PNG file
+holding one. The imaging provider registers the formats, and the reader refuses to start unless every kind has
 exactly one. Supporting another kind of source is a new `SourceKind` member, a new format and one entry in the
 provider. `DjvuFormat` refuses every source for now, so a DjVu upload is accepted and fails its import with a clear
-message until reading DjVu pages is written.
+message until reading DjVu pages is written. Until then it also keeps the default grouping, because only the index
+file of an indirect document names its page files, in a directory DjVuLibre decodes, so assembling an indirect
+document arrives with reading DjVu.
 
 The persistence adapter keeps its table classes private and maps rows to domain entities in one mapper per entity.
 Each port repository wraps an advanced-alchemy `SQLAlchemyAsyncRepository`, so generic queries come from the library

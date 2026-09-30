@@ -10,7 +10,7 @@ from bookreviver.domain.enums import Orthography, TransformKind
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.enums import ColorMode, SourceKind
+    from bookreviver.domain.enums import ColorMode, FileType, SourceKind
     from bookreviver.domain.ids import StorageKey
 
 # JSON-compatible metadata as read from a source file
@@ -68,43 +68,8 @@ class MetadataSuggestion:
 
 
 @frozen(kw_only=True)
-class PageFacts:
-    """Technical facts of one page as an inspector reports it from an upload, with the file holding it.
-
-    A stored scan keeps the same facts as ``ScanFacts``, without the file, which its source names.
-
-    :ivar width_px: Width of the page image in pixels.
-    :ivar height_px: Height of the page image in pixels.
-    :ivar color_mode: Whether the page is bilevel, gray or colour.
-    :ivar dpi_x: Horizontal resolution in dots per inch, or None when the source does not record it.
-    :ivar dpi_y: Vertical resolution in dots per inch, or None when the source does not record it.
-    :ivar bits_per_component: Bit depth of one colour component, or None when unknown.
-    :ivar image_format: Human name of the image format, such as ``JPEG`` or ``TIFF``.
-    :ivar width_mm: Physical width in millimetres, or None without a resolution.
-    :ivar height_mm: Physical height in millimetres, or None without a resolution.
-    :ivar has_text_layer: Whether the page carries text, such as the OCR layer of a scanned PDF.
-    :ivar source_file: Name of the source file holding the page: the page image, or the part of a document split
-                       into several files.
-    :ivar extra: Further facts under the keys of the inspector that reported them.
-    """
-
-    width_px: int = field(validator=validators.gt(0))
-    height_px: int = field(validator=validators.gt(0))
-    color_mode: ColorMode
-    dpi_x: float | None = None
-    dpi_y: float | None = None
-    bits_per_component: int | None = None
-    image_format: str = ''
-    width_mm: float | None = None
-    height_mm: float | None = None
-    has_text_layer: bool = False
-    source_file: str = ''
-    extra: MetadataMap = field(factory=dict)
-
-
-@frozen(kw_only=True)
 class SourceFile:
-    """One stored file of a source, as uploaded.
+    """One file of a source as uploaded, whether still staged or stored in the source's directory.
 
     :ivar name: Name of the file inside the source's directory.
     :ivar size_bytes: Size of the file in bytes.
@@ -244,17 +209,31 @@ class Transform:
 
 
 @frozen(kw_only=True)
-class SourceAnalysis:
-    """Everything an inspector learned from a source.
+class UploadedSource:
+    """The staged files of an upload that make one source, as the source inspector groups them.
 
-    :ivar kind: Whether the source is one PDF or a set of page images.
-    :ivar pages: Facts of every page in book order.
-    :ivar file_metadata: Facts of the source file or file set as a whole.
+    :ivar kind: Kind of the source, which selects the format that reads it.
+    :ivar file_type: Exact format of the main file.
+    :ivar names: Names of the staged files, the main file first; more than one only for an indirect DjVu document.
+    """
+
+    kind: SourceKind
+    file_type: FileType
+    names: Sequence[str] = field(validator=validators.min_len(1))
+
+
+@frozen(kw_only=True)
+class SourceAnalysis:
+    """Everything an inspector learned from one source.
+
+    :ivar kind: Kind of the source that was inspected.
+    :ivar scans: Facts of every scan in the order of the source, which gives the scans their numbers.
+    :ivar file_metadata: Technical metadata of the source's format, such as the document information of a PDF.
     :ivar suggestion: Description fields found in the source, offered to fill empty book details.
     """
 
     kind: SourceKind
-    pages: Sequence[PageFacts]
+    scans: Sequence[ScanFacts]
     file_metadata: MetadataMap = field(factory=dict)
     suggestion: MetadataSuggestion = field(factory=MetadataSuggestion)
 

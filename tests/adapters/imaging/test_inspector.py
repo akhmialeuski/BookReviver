@@ -1,8 +1,6 @@
 """Tests for the PyMuPDF and Pillow source inspector."""
 
-import hashlib
 import json
-import re
 from typing import TYPE_CHECKING, Any, NamedTuple
 from unittest.mock import patch
 
@@ -65,16 +63,15 @@ DOCUMENT_INFO_KEY: str = 'document_info'
 HAS_OUTLINE_KEY: str = 'has_outline'
 REPAIRED_KEY: str = 'repaired'
 PAGE_COUNT_KEY: str = 'page_count'
-# Named so that only a natural sort puts part 2 before part 10
-EARLIER_PART_NAME: str = 'part2.pdf'
-LATER_PART_NAME: str = 'part10.pdf'
-# Page sizes in points of a book split into two parts, equal to the pixel sizes the inspector reports for them
-PART_PAGE_SIZES_PT: tuple[tuple[int, int], ...] = ((300, 400), (320, 420), (340, 440))
 OUTLINE_TITLES: tuple[str, ...] = ('Preface', 'Chapter one')
 PASSWORD: str = 'secret'
 NOT_A_PDF_MATCH: str = 'is not a PDF'
 
-NATURAL_ORDER_NAMES: tuple[str, ...] = ('page1.png', 'page2.png', 'page10.png')
+KIND_ARG: str = 'kind'
+FILE_COUNT_ARG: str = 'file_count'
+# Gray, colour and bilevel frames of a multi-page TIFF, each of its own size
+FRAME_MODES: tuple[str, ...] = ('L', RGB_MODE, '1')
+FRAME_SIZES_PX: tuple[tuple[int, int], ...] = ((64, 48), (80, 60), (96, 72))
 EXIF_MAKE: str = 'Scanner Co'
 EXIF_MODEL: str = 'Book Scanner 3000'
 
@@ -123,15 +120,17 @@ def _write_truncated_pdf(path: Path, *, page: PdfPage) -> Path:
 
 
 def _write_multi_frame_tiff(path: Path) -> Path:
-    """Write a TIFF holding three pages.
+    """Write a TIFF holding three pages of different sizes and modes: gray, colour and bilevel.
 
     :param path: Where to write the file.
     :type path: Path
     :returns: The written path.
     :rtype: Path
     """
-    frame = gradient_image(mode='L', size=SMALL_SIZE_PX)
-    frame.save(path, save_all=True, append_images=[frame.copy(), frame.copy()])
+    first, *others = (
+        gradient_image(mode=mode, size=size) for mode, size in zip(FRAME_MODES, FRAME_SIZES_PX, strict=True)
+    )
+    first.save(path, save_all=True, append_images=others)
     return path
 
 
@@ -147,14 +146,25 @@ class RejectedPdfCase(NamedTuple):
 
 
 class RejectedImagesCase(NamedTuple):
-    """An image set the inspector must refuse, and the message it must give.
+    """An image source the inspector must refuse, and the message it must give.
 
-    :ivar build: Function writing the page images into a directory and returning their paths.
+    :ivar build: Function writing the image file into a directory and returning its path as the source's files.
     :ivar match: Regular expression the error message must match.
     """
 
     build: Callable[[Path], Sequence[Path]]
     match: str
+
+
+class ImageFormatCase(NamedTuple):
+    """An image format written under its suffix, and the format name the inspector must report for it.
+
+    :ivar suffix: File suffix selecting the image format.
+    :ivar image_format: Name Pillow gives the format.
+    """
+
+    suffix: str
+    image_format: str
 
 
 class PdfImageCase(NamedTuple):
@@ -207,7 +217,7 @@ class TestInspectPdf:
         analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
 
         expect(analysis.kind == SourceKind.PDF)
-        expect([(page.width_px, page.height_px) for page in analysis.pages] == sizes)
+        expect([(page.width_px, page.height_px) for page in analysis.scans] == sizes)
         assert_expectations()
 
     async def test_describes_page_by_dominant_image(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
@@ -223,7 +233,7 @@ class TestInspectPdf:
         stamp = ScanImage(mode=RGB_MODE, size_px=SMALL_SIZE_PX, image_format=PNG, rect=(0, 0, 40, 30))
         path = write_pdf(tmp_path / PDF_NAME, pages=[PdfPage(size_pt=SCAN_PAGE_SIZE_PT, images=[scan, stamp])])
 
-        page = (await fx_inspector.inspect(SourceKind.PDF, [path])).pages[0]
+        page = (await fx_inspector.inspect(SourceKind.PDF, [path])).scans[0]
 
         expect((page.width_px, page.height_px) == SCAN_SIZE_PX)
         expect((page.dpi_x, page.dpi_y) == (SCAN_DPI, SCAN_DPI))
@@ -246,7 +256,7 @@ class TestInspectPdf:
         scan = ScanImage(mode='L', size_px=SCAN_SIZE_PX, image_format=JPEG, rotate=QUARTER_TURN_DEGREES)
         path = write_pdf(tmp_path / PDF_NAME, pages=[PdfPage(size_pt=LANDSCAPE_PAGE_SIZE_PT, images=[scan])])
 
-        page = (await fx_inspector.inspect(SourceKind.PDF, [path])).pages[0]
+        page = (await fx_inspector.inspect(SourceKind.PDF, [path])).scans[0]
 
         # Measured along the page axes the DPI would be 120 and 187.5
         assert (page.dpi_x, page.dpi_y) == (SCAN_DPI, SCAN_DPI)
@@ -277,7 +287,7 @@ class TestInspectPdf:
         scan = ScanImage(mode=case.mode, size_px=SMALL_SIZE_PX, image_format=case.image_format)
         path = write_pdf(tmp_path / PDF_NAME, pages=[PdfPage(images=[scan])])
 
-        page = (await fx_inspector.inspect(SourceKind.PDF, [path])).pages[0]
+        page = (await fx_inspector.inspect(SourceKind.PDF, [path])).scans[0]
 
         expect(page.color_mode == case.color_mode)
         expect(page.bits_per_component == case.bits)
@@ -294,7 +304,7 @@ class TestInspectPdf:
         """
         path = write_pdf(tmp_path / PDF_NAME, pages=[PdfPage(text=PAGE_TEXT)])
 
-        page = (await fx_inspector.inspect(SourceKind.PDF, [path])).pages[0]
+        page = (await fx_inspector.inspect(SourceKind.PDF, [path])).scans[0]
 
         expect((page.width_px, page.height_px) == (612, 792))
         expect((page.dpi_x, page.dpi_y) == (None, None))
@@ -306,7 +316,7 @@ class TestInspectPdf:
         assert_expectations()
 
     async def test_reports_file_metadata_and_suggestion(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
-        """Verify document metadata, outline, checksum and the suggested title and authors.
+        """Verify the document information, version, page count, outline and integrity facts, and the suggestion.
 
         :param fx_inspector: Source inspector built by the application's imaging provider.
         :type fx_inspector: SourceInspector
@@ -322,23 +332,16 @@ class TestInspectPdf:
 
         analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
         metadata = analysis.file_metadata
-        part = metadata[FactKey.FILES][0]
 
         expect(analysis.suggestion == MetadataSuggestion(title=DOCUMENT_TITLE, authors=DOCUMENT_AUTHOR))
-        expect(metadata[FactKey.FILE_COUNT] == 1)
-        expect(metadata[FactKey.TOTAL_SIZE_BYTES] == path.stat().st_size)
+        expect(metadata[DOCUMENT_INFO_KEY].get(TITLE_KEY) == PADDED_DOCUMENT_TITLE)
+        expect(SUBJECT_KEY not in metadata[DOCUMENT_INFO_KEY])
+        expect(metadata['pdf_version'].startswith('PDF '))
         expect(metadata[PAGE_COUNT_KEY] == 2)
-        expect(part[FactKey.FILE_NAME] == PDF_NAME)
-        expect(part[DOCUMENT_INFO_KEY].get(TITLE_KEY) == PADDED_DOCUMENT_TITLE)
-        expect(SUBJECT_KEY not in part[DOCUMENT_INFO_KEY])
-        expect(part['pdf_version'].startswith('PDF '))
-        expect(part[PAGE_COUNT_KEY] == 2)
-        expect(part[HAS_OUTLINE_KEY] is True)
-        expect(part['outline_entries'] == len(OUTLINE_TITLES))
-        expect(part['has_xmp_metadata'] is False)
-        expect(part[REPAIRED_KEY] is False)
-        expect(part[FactKey.FILE_SIZE_BYTES] == path.stat().st_size)
-        expect(part['sha256'] == hashlib.sha256(path.read_bytes()).hexdigest())
+        expect(metadata[HAS_OUTLINE_KEY] is True)
+        expect(metadata['outline_entries'] == len(OUTLINE_TITLES))
+        expect(metadata['has_xmp_metadata'] is False)
+        expect(metadata[REPAIRED_KEY] is False)
         expect(json.loads(json.dumps(metadata)) == metadata)
         assert_expectations()
 
@@ -355,7 +358,7 @@ class TestInspectPdf:
         analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
 
         expect(analysis.suggestion == MetadataSuggestion())
-        expect(analysis.file_metadata[FactKey.FILES][0][HAS_OUTLINE_KEY] is False)
+        expect(analysis.file_metadata[HAS_OUTLINE_KEY] is False)
         assert_expectations()
 
     async def test_flags_repaired_pdf(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
@@ -371,8 +374,8 @@ class TestInspectPdf:
 
         analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
 
-        expect(analysis.file_metadata[FactKey.FILES][0][REPAIRED_KEY] is True)
-        expect(len(analysis.pages) == 1)
+        expect(analysis.file_metadata[REPAIRED_KEY] is True)
+        expect(len(analysis.scans) == 1)
         assert_expectations()
 
     @pytest.mark.parametrize(
@@ -413,80 +416,33 @@ class TestInspectPdf:
         with pytest.raises(UnsupportedSourceError, match=rf'^book\.pdf .*{case.match}'):
             await fx_inspector.inspect(SourceKind.PDF, files)
 
-    async def test_joins_parts_in_natural_order(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
-        """Verify a book split into PDF parts is one run of pages, part2 before part10, each page naming its part.
-
-        :param fx_inspector: Source inspector built by the application's imaging provider.
-        :type fx_inspector: SourceInspector
-        :param tmp_path: Temporary directory of the test.
-        :type tmp_path: Path
-        """
-        # Passed in reverse, so only the natural order of the names can put the parts right
-        later = write_pdf(tmp_path / LATER_PART_NAME, pages=[PdfPage(size_pt=PART_PAGE_SIZES_PT[2])])
-        earlier = write_pdf(
-            tmp_path / EARLIER_PART_NAME,
-            pages=[PdfPage(size_pt=size, text=PAGE_TEXT) for size in PART_PAGE_SIZES_PT[:2]],
-            metadata={TITLE_KEY: DOCUMENT_TITLE},
-        )
-
-        analysis = await fx_inspector.inspect(SourceKind.PDF, [later, earlier])
-        metadata = analysis.file_metadata
-
-        expect([(page.width_px, page.height_px) for page in analysis.pages] == list(PART_PAGE_SIZES_PT))
-        expect([page.source_file for page in analysis.pages] == [EARLIER_PART_NAME, EARLIER_PART_NAME, LATER_PART_NAME])
-        expect(metadata[FactKey.FILE_COUNT] == 2)
-        expect(metadata[PAGE_COUNT_KEY] == len(PART_PAGE_SIZES_PT))
-        expect(metadata[FactKey.TOTAL_SIZE_BYTES] == earlier.stat().st_size + later.stat().st_size)
-        expect([part[FactKey.FILE_NAME] for part in metadata[FactKey.FILES]] == [EARLIER_PART_NAME, LATER_PART_NAME])
-        expect([part[PAGE_COUNT_KEY] for part in metadata[FactKey.FILES]] == [2, 1])
-        # The title of the book comes from its first part
-        expect(analysis.suggestion == MetadataSuggestion(title=DOCUMENT_TITLE))
-        assert_expectations()
-
-    async def test_rejects_empty_source(self, fx_inspector: SourceInspector) -> None:
-        """Reject a PDF source without any file.
-
-        :param fx_inspector: Source inspector built by the application's imaging provider.
-        :type fx_inspector: SourceInspector
-        """
-        with pytest.raises(UnsupportedSourceError, match=r'^No PDF was uploaded'):
-            await fx_inspector.inspect(SourceKind.PDF, [])
-
-    async def test_rejects_book_with_unreadable_part(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
-        """Reject the whole book when one of its parts is not a PDF, naming that part.
-
-        :param fx_inspector: Source inspector built by the application's imaging provider.
-        :type fx_inspector: SourceInspector
-        :param tmp_path: Temporary directory of the test.
-        :type tmp_path: Path
-        """
-        files = [
-            write_pdf(tmp_path / EARLIER_PART_NAME, pages=[PdfPage()]),
-            _write_bytes(tmp_path / LATER_PART_NAME, b'plain text'),
-        ]
-
-        with pytest.raises(UnsupportedSourceError, match=rf'^{re.escape(LATER_PART_NAME)} .*{NOT_A_PDF_MATCH}'):
-            await fx_inspector.inspect(SourceKind.PDF, files)
-
 
 class TestInspectImages:
-    """Tests for SourceInspector.inspect() of an image set, served by ImageSetFormat."""
+    """Tests for SourceInspector.inspect() of an image file, served by ImageFormat."""
 
-    async def test_orders_pages_naturally(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
-        """Verify page2 comes before page10 whatever the upload order.
+    @patch(IMAGE_FILE_LOAD_PATCH, autospec=True)
+    async def test_describes_every_frame_of_a_tiff(
+        self, mock_load: MagicMock, fx_inspector: SourceInspector, tmp_path: Path
+    ) -> None:
+        """Verify a multi-page TIFF is one source with one scan per frame, read from the frame headers alone.
 
+        :param mock_load: Autospec mock of Pillow's ``ImageFile.load``, which decodes pixel data.
+        :type mock_load: MagicMock
         :param fx_inspector: Source inspector built by the application's imaging provider.
         :type fx_inspector: SourceInspector
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        paths = [write_image(tmp_path / name, mode='L', size=SMALL_SIZE_PX) for name in reversed(NATURAL_ORDER_NAMES)]
+        path = _write_multi_frame_tiff(tmp_path / 'pages.tif')
 
-        analysis = await fx_inspector.inspect(SourceKind.IMAGE, paths)
+        analysis = await fx_inspector.inspect(SourceKind.IMAGE, [path])
 
         expect(analysis.kind == SourceKind.IMAGE)
-        expect(tuple(page.source_file for page in analysis.pages) == NATURAL_ORDER_NAMES)
+        expect([(scan.width_px, scan.height_px) for scan in analysis.scans] == list(FRAME_SIZES_PX))
+        expect([scan.color_mode for scan in analysis.scans] == [ColorMode.GRAY, ColorMode.COLOR, ColorMode.BILEVEL])
+        expect(analysis.file_metadata == {'format': 'TIFF', 'frame_count': len(FRAME_SIZES_PX)})
         assert_expectations()
+        mock_load.assert_not_called()
 
     @pytest.mark.parametrize(
         CASE_ARG,
@@ -520,7 +476,7 @@ class TestInspectImages:
         """
         path = write_image(tmp_path / f'{PAGE_STEM}{case.suffix}', mode=case.mode, size=SMALL_SIZE_PX)
 
-        page = (await fx_inspector.inspect(SourceKind.IMAGE, [path])).pages[0]
+        page = (await fx_inspector.inspect(SourceKind.IMAGE, [path])).scans[0]
 
         expect(page.extra['pillow_mode'] == case.mode)
         expect(page.color_mode == case.color_mode)
@@ -542,7 +498,7 @@ class TestInspectImages:
         """
         path = write_image(tmp_path / f'{PAGE_STEM}{suffix}', mode='L', size=SCAN_SIZE_PX, dpi=SCAN_DPI)
 
-        page = (await fx_inspector.inspect(SourceKind.IMAGE, [path])).pages[0]
+        page = (await fx_inspector.inspect(SourceKind.IMAGE, [path])).scans[0]
 
         expect((page.width_px, page.height_px) == SCAN_SIZE_PX)
         expect((page.dpi_x, page.dpi_y) == (SCAN_DPI, SCAN_DPI))
@@ -564,14 +520,14 @@ class TestInspectImages:
         """
         path = write_image(tmp_path / f'{PAGE_STEM}{suffix}', mode='L', size=SMALL_SIZE_PX)
 
-        page = (await fx_inspector.inspect(SourceKind.IMAGE, [path])).pages[0]
+        page = (await fx_inspector.inspect(SourceKind.IMAGE, [path])).scans[0]
 
         expect((page.dpi_x, page.dpi_y) == (None, None))
         expect((page.width_mm, page.height_mm) == (None, None))
         assert_expectations()
 
     async def test_records_format_and_exif_subset(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
-        """Verify the format name, file size and the scanner EXIF tags are recorded as strings.
+        """Verify the format name and the scanner EXIF tags are recorded, the tags as strings.
 
         :param fx_inspector: Source inspector built by the application's imaging provider.
         :type fx_inspector: SourceInspector
@@ -581,11 +537,10 @@ class TestInspectImages:
         exif = {ExifTags.Base.Make: EXIF_MAKE, ExifTags.Base.Model: EXIF_MODEL, ExifTags.Base.Artist: 'Nobody'}
         path = write_image(tmp_path / 'page.jpg', mode=RGB_MODE, size=SMALL_SIZE_PX, exif=exif)
 
-        page = (await fx_inspector.inspect(SourceKind.IMAGE, [path])).pages[0]
+        page = (await fx_inspector.inspect(SourceKind.IMAGE, [path])).scans[0]
 
         expect(page.image_format == JPEG)
-        expect(page.extra[FactKey.FILE_SIZE_BYTES] == path.stat().st_size)
-        expect(page.extra['exif'] == {'Make': EXIF_MAKE, 'Model': EXIF_MODEL})
+        expect(page.extra[FactKey.EXIF] == {'Make': EXIF_MAKE, 'Model': EXIF_MODEL})
         assert_expectations()
 
     async def test_describes_oriented_image_as_shown(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
@@ -599,28 +554,40 @@ class TestInspectImages:
         exif = {ExifTags.Base.Orientation: QUARTER_TURN_ORIENTATION}
         path = write_image(tmp_path / f'{PAGE_STEM}{JPG_SUFFIX}', mode='L', size=SCAN_SIZE_PX, dpi=SCAN_DPI, exif=exif)
 
-        page = (await fx_inspector.inspect(SourceKind.IMAGE, [path])).pages[0]
+        page = (await fx_inspector.inspect(SourceKind.IMAGE, [path])).scans[0]
 
         expect((page.width_px, page.height_px) == SCAN_SIZE_PX[::-1])
         expect((page.width_mm, page.height_mm) == (SCAN_PAGE_HEIGHT_MM, SCAN_PAGE_WIDTH_MM))
         assert_expectations()
 
-    async def test_reports_file_metadata(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
-        """Verify the file count, total size and the sorted set of formats.
+    @pytest.mark.parametrize(
+        CASE_ARG,
+        [
+            ImageFormatCase(suffix=JPG_SUFFIX, image_format=JPEG),
+            ImageFormatCase(suffix=PNG_SUFFIX, image_format=PNG),
+            ImageFormatCase(suffix=JP2_SUFFIX, image_format='JPEG2000'),
+            ImageFormatCase(suffix=TIF_SUFFIX, image_format='TIFF'),
+        ],
+        ids=lambda case: case.suffix,
+    )
+    async def test_reports_one_scan_and_the_format(
+        self, fx_inspector: SourceInspector, tmp_path: Path, case: ImageFormatCase
+    ) -> None:
+        """Verify a single-image file is one scan, with the format and a frame count of one as its metadata.
 
         :param fx_inspector: Source inspector built by the application's imaging provider.
         :type fx_inspector: SourceInspector
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
+        :param case: An image format, selected by its suffix, and the name Pillow gives it.
+        :type case: ImageFormatCase
         """
-        names = ('1.tif', '2.png', '3.png', '4.jpg')
-        paths = [write_image(tmp_path / name, mode='L', size=SMALL_SIZE_PX) for name in names]
+        path = write_image(tmp_path / f'{PAGE_STEM}{case.suffix}', mode='L', size=SMALL_SIZE_PX)
 
-        metadata = (await fx_inspector.inspect(SourceKind.IMAGE, paths)).file_metadata
+        analysis = await fx_inspector.inspect(SourceKind.IMAGE, [path])
 
-        expect(metadata['file_count'] == len(paths))
-        expect(metadata['total_size_bytes'] == sum(path.stat().st_size for path in paths))
-        expect(metadata['formats'] == [JPEG, PNG, 'TIFF'])
+        expect(len(analysis.scans) == 1)
+        expect(analysis.file_metadata == {'format': case.image_format, 'frame_count': 1})
         assert_expectations()
 
     @pytest.mark.parametrize(SUFFIX_ARG, RESOLUTION_SUFFIXES)
@@ -648,35 +615,55 @@ class TestInspectImages:
     @pytest.mark.parametrize(
         CASE_ARG,
         [
-            RejectedImagesCase(build=lambda d: [], match=r'^No page images were uploaded'),
             RejectedImagesCase(
                 build=lambda d: [write_image(d / 'page.gif', mode='P', size=SMALL_SIZE_PX)],
-                match=r'^page\.gif is not a supported page image',
+                match=r'^page\.gif is not a supported image file',
             ),
             RejectedImagesCase(
                 build=lambda d: [_write_bytes(d / 'page.png', b'not an image')],
                 match=r'^page\.png cannot be read as an image',
             ),
-            RejectedImagesCase(
-                build=lambda d: [_write_multi_frame_tiff(d / 'pages.tif')],
-                match=r'^pages\.tif holds several pages',
-            ),
         ],
-        ids=['empty-set', 'suffix', 'unreadable', 'multi-frame'],
+        ids=['suffix', 'unreadable'],
     )
     async def test_rejects_unsupported_images(
         self, fx_inspector: SourceInspector, tmp_path: Path, case: RejectedImagesCase
     ) -> None:
-        """Reject an empty set, a wrong suffix, an unreadable file and a multi-frame image.
+        """Reject a file with a wrong suffix and a file that is not an image.
 
         :param fx_inspector: Source inspector built by the application's imaging provider.
         :type fx_inspector: SourceInspector
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
-        :param case: An image set the inspector must refuse, and the message it must give.
+        :param case: An image source the inspector must refuse, and the message it must give.
         :type case: RejectedImagesCase
         """
         files = case.build(tmp_path)
 
         with pytest.raises(UnsupportedSourceError, match=case.match):
             await fx_inspector.inspect(SourceKind.IMAGE, files)
+
+
+class TestInspectFileCount:
+    """Tests for SourceInspector.inspect() given a number of files that no source of the kind has."""
+
+    @pytest.mark.parametrize(KIND_ARG, [SourceKind.PDF, SourceKind.IMAGE])
+    @pytest.mark.parametrize(FILE_COUNT_ARG, [0, 2])
+    async def test_single_file_kind_refuses_other_counts(
+        self, fx_inspector: SourceInspector, tmp_path: Path, kind: SourceKind, file_count: int
+    ) -> None:
+        """Reject no file or two files for a PDF or an image source, since each of those is one file.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param kind: Kind of source whose every source is one file.
+        :type kind: SourceKind
+        :param file_count: Number of files passed as the source.
+        :type file_count: int
+        """
+        files = [write_pdf(tmp_path / f'part{number}.pdf', pages=[PdfPage()]) for number in range(file_count)]
+
+        with pytest.raises(ValueError, match=rf'^A source of kind {kind} is one file, not {file_count}'):
+            await fx_inspector.inspect(kind, files)

@@ -1,8 +1,10 @@
-"""Imaging ports: reading a source, extracting page images and cutting tile pyramids.
+"""Imaging ports: grouping an upload into sources, reading one source, extracting scans and cutting tile pyramids.
 
-Import runs these ports in order. The ``SourceInspector`` describes the pages of an upload, the ``PageRasterizer``
-writes each page as a JPEG at its native resolution, and the ``Tiler`` cuts that JPEG into the tile pyramid and the
-thumbnail the viewer shows. All three read and write local paths handed out by the storage ports.
+Import runs these ports in order. The ``SourceInspector`` first splits the staged files of an upload into sources,
+since which files make one source depends on the format, and then describes each source and its scans on its own,
+so one unreadable file never stops the others. The ``PageRasterizer`` writes each scan of a source as a JPEG at its
+native resolution, and the ``Tiler`` cuts that JPEG into the tile pyramid and the thumbnail the viewer shows. All
+three read and write local paths handed out by the storage ports.
 """
 
 from abc import ABC, abstractmethod
@@ -13,41 +15,61 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.enums import SourceKind
-    from bookreviver.domain.values import SourceAnalysis
+    from bookreviver.domain.values import SourceAnalysis, UploadedSource
 
 
 class SourceInspector(ABC):
-    """Reads the pages, technical facts and embedded metadata of a source."""
+    """Groups the files of an upload into sources, and reads the scans, facts and metadata of one source."""
+
+    @abstractmethod
+    async def group(self, files: Sequence[Path]) -> Sequence[UploadedSource]:
+        """Split the staged files of an upload into sources, any mix of kinds being accepted.
+
+        Every file is a source of its own, except the index file and page files of an indirect DjVu document, which
+        make one source together.
+
+        :param files: Local paths of the staged files, in any order.
+        :type files: Sequence[Path]
+        :returns: The sources in the natural order of the names of their main files, so ``part2.pdf`` precedes
+                  ``part10.pdf``, which is the order their pages join the book.
+        :rtype: Sequence[UploadedSource]
+        :raises UploadRejectedError: If there are no files, or the type of a file is not accepted.
+        """
 
     @abstractmethod
     async def inspect(self, kind: SourceKind, files: Sequence[Path]) -> SourceAnalysis:
-        """Describe the source made of ``files``.
+        """Describe one source and its scans.
 
-        :param kind: Whether the files are one PDF or a set of page images.
+        :param kind: Kind of the source, as ``group`` found it.
         :type kind: SourceKind
-        :param files: Local paths of the source files.
+        :param files: Local paths of the files of the source, in any order.
         :type files: Sequence[Path]
-        :returns: Facts of every page in book order, file metadata and suggested description fields.
+        :returns: Facts of every scan in the order of the source, the metadata of the format and suggested
+                  description fields.
         :rtype: SourceAnalysis
         :raises UnsupportedSourceError: If the files are not a readable source of this kind.
+        :raises ValueError: If the number of files does not fit the kind, such as two files for a PDF source.
         """
 
 
 class PageRasterizer(ABC):
-    """Produces the native-resolution image of one page."""
+    """Produces the native-resolution image of one scan of a source."""
 
     @abstractmethod
-    async def extract(self, kind: SourceKind, files: Sequence[Path], index: int, target: Path) -> None:
-        """Write page ``index`` of the source as a JPEG at ``target``, without re-encoding when possible.
+    async def extract(self, kind: SourceKind, files: Sequence[Path], number: int, target: Path) -> None:
+        """Write scan ``number`` of the source as a JPEG at ``target``, without re-encoding when possible.
 
-        :param kind: Whether the files are one PDF or a set of page images.
+        :param kind: Kind of the source, as ``group`` found it.
         :type kind: SourceKind
-        :param files: Local paths of the source files.
+        :param files: Local paths of the files of the source, in any order.
         :type files: Sequence[Path]
-        :param index: Position of the page in book order, starting at 0.
-        :type index: int
+        :param number: Number of the scan in its source, starting at 0.
+        :type number: int
         :param target: Path to write the JPEG at.
         :type target: Path
+        :raises UnsupportedSourceError: If the files are not a readable source of this kind.
+        :raises IndexError: If the source has no scan ``number``.
+        :raises ValueError: If the number of files does not fit the kind, such as two files for a PDF source.
         """
 
 

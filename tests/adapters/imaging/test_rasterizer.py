@@ -58,10 +58,9 @@ GRAY_SCAN: ScanImage = ScanImage(mode=GRAY_MODE, size_px=SCAN_SIZE_PX, image_for
 # One inch by two, and two by one, rendered at 300 DPI as born-digital pages
 PAGE_SIZES_PT: tuple[tuple[float, float], ...] = ((72.0, 144.0), (144.0, 72.0))
 SECOND_PDF_PAGE_SIZE_PX: tuple[int, int] = (600, 300)
-NAMES_BY_UPLOAD_ORDER: tuple[str, ...] = ('page10.png', 'page2.png', 'page1.png')
-SIZES_BY_UPLOAD_ORDER: tuple[tuple[int, int], ...] = ((30, 40), (32, 42), (34, 44))
-# page2.png is the second page in book order
-SECOND_PAGE_SIZE_PX: tuple[int, int] = SIZES_BY_UPLOAD_ORDER[1]
+NUMBER_ARG: str = 'number'
+# Frames of a multi-page TIFF, each of its own size
+FRAME_SIZES_PX: tuple[tuple[int, int], ...] = ((30, 40), (32, 42), (34, 44))
 SMALL_SIZE_PX: tuple[int, int] = (120, 90)
 SIXTEEN_BIT_SAMPLE: int = 40_000
 # 40 000 / 256, allowing for lossy JPEG encoding
@@ -234,7 +233,7 @@ class TestExtractPdf:
         assert_expectations()
 
     async def test_extracts_requested_page(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
-        """Verify the page at the given index is the one written.
+        """Verify the page with the given number is the one written.
 
         :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
         :type fx_rasterizer: PageRasterizer
@@ -250,26 +249,8 @@ class TestExtractPdf:
         with Image.open(target) as rendered:
             assert rendered.size == SECOND_PDF_PAGE_SIZE_PX
 
-    async def test_counts_pages_through_parts(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
-        """Verify the index runs through the parts of a book in natural order, so page 1 is the first of part 10.
-
-        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
-        :type fx_rasterizer: PageRasterizer
-        :param tmp_path: Temporary directory of the test.
-        :type tmp_path: Path
-        """
-        # Passed in reverse, so only the natural order of the names puts the one-page part 2 first
-        later = write_pdf(tmp_path / 'part10.pdf', pages=[PdfPage(size_pt=size) for size in PAGE_SIZES_PT[::-1]])
-        earlier = write_pdf(tmp_path / 'part2.pdf', pages=[PdfPage(size_pt=PAGE_SIZES_PT[0])])
-        target = tmp_path / TARGET_NAME
-
-        await fx_rasterizer.extract(SourceKind.PDF, [later, earlier], 1, target)
-
-        with Image.open(target) as rendered:
-            assert rendered.size == SECOND_PDF_PAGE_SIZE_PX
-
-    async def test_rejects_index_past_last_part(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
-        """Reject a page index past the end of the book and write nothing.
+    async def test_rejects_number_past_last_page(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
+        """Reject a page number past the end of the PDF and write nothing.
 
         :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
         :type fx_rasterizer: PageRasterizer
@@ -279,32 +260,66 @@ class TestExtractPdf:
         pdf = write_pdf(tmp_path / PDF_NAME, pages=[PdfPage(size_pt=size) for size in PAGE_SIZES_PT])
         target = tmp_path / TARGET_NAME
 
-        with pytest.raises(IndexError, match=r'^The book has no page 2: its parts hold 2 pages'):
+        with pytest.raises(IndexError, match=r'^book\.pdf has no page 2: it holds 2 pages'):
             await fx_rasterizer.extract(SourceKind.PDF, [pdf], len(PAGE_SIZES_PT), target)
         assert not target.exists()
 
-
-class TestExtractImages:
-    """Tests for PageRasterizer.extract() of an image set, served by ImageSetFormat."""
-
-    async def test_picks_page_in_natural_order(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
-        """Verify the index counts pages in the natural order of their names, not the upload order.
+    async def test_refuses_more_than_one_file(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
+        """Reject two PDF files as one source, since each PDF part is a source of its own.
 
         :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
         :type fx_rasterizer: PageRasterizer
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        files = [
-            write_image(tmp_path / name, mode=GRAY_MODE, size=size)
-            for name, size in zip(NAMES_BY_UPLOAD_ORDER, SIZES_BY_UPLOAD_ORDER, strict=True)
-        ]
+        parts = [write_pdf(tmp_path / name, pages=[PdfPage()]) for name in ('part1.pdf', 'part2.pdf')]
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGE, files, 1, target)
+        with pytest.raises(ValueError, match=r'^A source of kind pdf is one file, not 2'):
+            await fx_rasterizer.extract(SourceKind.PDF, parts, 0, target)
+        assert not target.exists()
+
+
+class TestExtractImages:
+    """Tests for PageRasterizer.extract() of an image file, served by ImageFormat."""
+
+    async def test_extracts_requested_frame_of_a_tiff(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
+        """Verify the frame with the given number of a multi-page TIFF is the one written.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        first, *others = (gradient_image(mode=GRAY_MODE, size=size) for size in FRAME_SIZES_PX)
+        source = tmp_path / TIFF_NAME
+        first.save(source, save_all=True, append_images=others)
+        target = tmp_path / TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 1, target)
 
         with Image.open(target) as written:
-            assert written.size == SECOND_PAGE_SIZE_PX
+            assert written.size == FRAME_SIZES_PX[1]
+
+    @pytest.mark.parametrize(NUMBER_ARG, [1, -1])
+    async def test_rejects_frame_the_file_lacks(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, number: int
+    ) -> None:
+        """Reject a frame number outside a single-image file and write nothing.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param number: Frame number the file does not have.
+        :type number: int
+        """
+        source = write_image(tmp_path / f'{PAGE_STEM}{PNG_SUFFIX}', mode=GRAY_MODE, size=SMALL_SIZE_PX)
+        target = tmp_path / TARGET_NAME
+
+        with pytest.raises(IndexError, match=rf'^page\.png has no frame {number}: it holds 1 frames'):
+            await fx_rasterizer.extract(SourceKind.IMAGE, [source], number, target)
+        assert not target.exists()
 
     @pytest.mark.parametrize(MODE_ARG, [GRAY_MODE, RGB_MODE])
     async def test_copies_jpeg_byte_for_byte(self, fx_rasterizer: PageRasterizer, tmp_path: Path, mode: str) -> None:
