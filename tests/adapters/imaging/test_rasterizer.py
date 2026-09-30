@@ -529,6 +529,8 @@ class TestExtractPdf:
 
         :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
         :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
         """
         source = write_cmyk_with_profile(tmp_path / f'cmyk{JPG_SUFFIX}', rgb=CMYK_COLOURS[2].rgb)
         pdf = write_pdf_of_image(tmp_path / PDF_NAME, image=source, size_pt=SMALL_PAGE_SIZE_PT)
