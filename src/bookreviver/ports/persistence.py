@@ -8,8 +8,8 @@ contract suite in ``tests/contracts``, which is what makes them interchangeable.
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, override
 
-from bookreviver.domain.entities import Job, Project
-from bookreviver.domain.ids import JobId, ProjectId
+from bookreviver.domain.entities import Job, Project, Scan, Source
+from bookreviver.domain.ids import JobId, ProjectId, ScanId, SourceId
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
@@ -42,7 +42,23 @@ class Repository[EntityT, IdT](ABC):
         :type entity: EntityT
         :returns: The entity as stored.
         :rtype: EntityT
-        :raises ConflictError: If an entity with this identifier is already stored.
+        :raises ConflictError: If an entity with this identifier, or with a value its port declares unique, is
+                               already stored.
+        :raises NotFoundError: If an entity it refers to, such as its project, is not stored.
+        """
+
+    @abstractmethod
+    async def add_many(self, entities: Sequence[EntityT]) -> Sequence[EntityT]:
+        """Store several new entities at once, all of them or, on an error, none.
+
+        After an error the unit of work is rolled back before it is used again, as a database requires.
+
+        :param entities: Entities to store, with their identifiers already assigned.
+        :type entities: Sequence[EntityT]
+        :returns: The entities as stored, in the given order.
+        :rtype: Sequence[EntityT]
+        :raises ConflictError: If an identifier or a unique value of one entity is stored already or given twice.
+        :raises NotFoundError: If an entity one of them refers to is not stored.
         """
 
     @abstractmethod
@@ -53,7 +69,8 @@ class Repository[EntityT, IdT](ABC):
         :type entity: EntityT
         :returns: The entity as stored.
         :rtype: EntityT
-        :raises NotFoundError: If the entity is not stored.
+        :raises NotFoundError: If the entity, or an entity it refers to, is not stored.
+        :raises ConflictError: If its new state takes a value its port declares unique from another entity.
         """
 
     @abstractmethod
@@ -79,6 +96,61 @@ class ProjectRepository(Repository[Project, ProjectId]):
         :type request: SliceRequest
         :returns: The projects of the window with their page counts, and the number of all the owner's projects.
         :rtype: Slice[ProjectOverview]
+        """
+
+
+class SourceRepository(Repository[Source, SourceId]):
+    """Sources of the projects; the pair of a project and the digest of a source's main file is unique.
+
+    Deleting a source removes its scans, and the pages of the book made from them stay without their scan.
+    """
+
+    @abstractmethod
+    async def list_for_project(self, project_id: ProjectId) -> Sequence[Source]:
+        """Return the project's sources in the order they were imported, ties by identifier.
+
+        :param project_id: Project owning the sources.
+        :type project_id: ProjectId
+        :returns: Every source of the project, the earliest import first.
+        :rtype: Sequence[Source]
+        """
+
+    @abstractmethod
+    async def find_by_sha256(self, project_id: ProjectId, sha256: str) -> Source | None:
+        """Return the project's source whose main file has this digest, which refuses a second upload of the file.
+
+        :param project_id: Project owning the sources.
+        :type project_id: ProjectId
+        :param sha256: SHA-256 digest of a main file as lower-case hexadecimal digits.
+        :type sha256: str
+        :returns: The source with this digest, or None when the project has none.
+        :rtype: Source | None
+        """
+
+
+class ScanRepository(Repository[Scan, ScanId]):
+    """Scans of the sources; the pair of a source and the number of a scan in it is unique."""
+
+    @abstractmethod
+    async def list_for_source(self, source_id: SourceId) -> Sequence[Scan]:
+        """Return the scans of one source in their order in the source.
+
+        :param source_id: Source holding the scans.
+        :type source_id: SourceId
+        :returns: Every scan of the source, by number.
+        :rtype: Sequence[Scan]
+        """
+
+    @abstractmethod
+    async def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Scan]:
+        """Return the scans of a project, source by source in import order and by number within a source.
+
+        :param project_id: Project owning the scans.
+        :type project_id: ProjectId
+        :param request: Offset and limit of the window to return.
+        :type request: SliceRequest
+        :returns: The scans of the window and the number of all the project's scans.
+        :rtype: Slice[Scan]
         """
 
 
@@ -184,11 +256,15 @@ class UnitOfWork(ABC):
     """One transaction over every repository; nothing is visible to others before ``commit``.
 
     :ivar projects: Project repository of this transaction.
+    :ivar sources: Source repository of this transaction.
+    :ivar scans: Scan repository of this transaction.
     :ivar pages: Page repository of this transaction.
     :ivar jobs: Job repository of this transaction.
     """
 
     projects: ProjectRepository
+    sources: SourceRepository
+    scans: ScanRepository
     pages: PageRepository
     jobs: JobRepository
 

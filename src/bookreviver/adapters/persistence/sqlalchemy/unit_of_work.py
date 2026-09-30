@@ -1,7 +1,7 @@
 """Unit of work over one SQLAlchemy session, which is one database transaction.
 
 The session is opened per HTTP request or background job by the application's ``DatabaseProvider`` and closed by it,
-so the unit of work owns no connection. It binds the three port repositories to that session, which makes every
+so the unit of work owns no connection. It binds every port repository to that session, which makes every
 change they make part of one transaction, visible to others only after :meth:`SqlAlchemyUnitOfWork.commit`.
 """
 
@@ -11,6 +11,8 @@ from bookreviver.adapters.persistence.sqlalchemy.repositories import (
     SqlAlchemyJobRepository,
     SqlAlchemyPageRepository,
     SqlAlchemyProjectRepository,
+    SqlAlchemyScanRepository,
+    SqlAlchemySourceRepository,
 )
 from bookreviver.ports.persistence import UnitOfWork
 
@@ -22,6 +24,8 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     """Repositories sharing the session of one request or job, committed or rolled back through the session.
 
     :ivar projects: Project repository bound to the session.
+    :ivar sources: Source repository bound to the session.
+    :ivar scans: Scan repository bound to the session.
     :ivar pages: Page repository bound to the session.
     :ivar jobs: Job repository bound to the session.
     """
@@ -34,6 +38,8 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         """
         self._session = session
         self.projects = SqlAlchemyProjectRepository(session)
+        self.sources = SqlAlchemySourceRepository(session)
+        self.scans = SqlAlchemyScanRepository(session)
         self.pages = SqlAlchemyPageRepository(session)
         self.jobs = SqlAlchemyJobRepository(session)
 

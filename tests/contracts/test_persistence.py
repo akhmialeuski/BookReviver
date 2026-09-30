@@ -9,8 +9,8 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.values import BookDetails, SliceRequest
-from tests.helpers.builders import make_job, make_page, make_project, new_account_id
+from bookreviver.domain.values import BookDetails, MetadataSuggestion, Renditions, SliceRequest
+from tests.helpers.builders import make_job, make_page, make_project, make_scan, make_source, new_account_id
 
 if TYPE_CHECKING:
     from tests.contracts.conftest import UnitOfWorkFactory
@@ -145,8 +145,8 @@ class TestProjectRepository:
         expect(paged == [project.id for project in tied])
         assert_expectations()
 
-    async def test_delete_cascades_to_pages_and_jobs(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify deleting a project removes its pages and jobs and leaves other projects alone.
+    async def test_delete_cascades_to_sources_scans_pages_and_jobs(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify deleting a project removes its sources, scans, pages and jobs and leaves other projects alone.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -155,19 +155,260 @@ class TestProjectRepository:
         doomed, kept = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         uow = await fx_uow_factory()
         for project in (doomed, kept):
+            source = make_source(project_id=project.id)
             await uow.projects.add(project)
+            await uow.sources.add(source)
+            await uow.scans.add(make_scan(source=source, number=0))
             await uow.pages.replace_for_project(project.id, [make_page(project_id=project.id, index=0)])
             await uow.jobs.add(make_job(project_id=project.id))
         await uow.projects.delete(doomed.id)
         await uow.commit()
         after = await fx_uow_factory()
-        doomed_pages = await after.pages.list_for_project(doomed.id, SliceRequest())
-        kept_pages = await after.pages.list_for_project(kept.id, SliceRequest())
-        expect(doomed_pages.total == 0)
-        expect(await after.jobs.list_for_project(doomed.id, EVERY_STATE) == [])
-        expect(kept_pages.total == 1)
-        expect(len(await after.jobs.list_for_project(kept.id, EVERY_STATE)) == 1)
+        counts = {
+            project.id: (
+                len(await after.sources.list_for_project(project.id)),
+                (await after.scans.list_for_project(project.id, SliceRequest())).total,
+                (await after.pages.list_for_project(project.id, SliceRequest())).total,
+                len(await after.jobs.list_for_project(project.id, EVERY_STATE)),
+            )
+            for project in (doomed, kept)
+        }
+        assert counts == {doomed.id: (0, 0, 0, 0), kept.id: (1, 1, 1, 1)}
+
+
+class TestSourceRepository:
+    """Contract of SourceRepository."""
+
+    async def test_added_source_reads_back_and_lists_in_import_order(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify committed sources read back unchanged and list by import time, without other projects' sources.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        project, other = make_project(owner_id=new_account_id()), make_project(owner_id=new_account_id())
+        job = make_job(project_id=project.id)
+        later = make_source(project_id=project.id, name='part2.pdf', minutes=2)
+        earlier = evolve(
+            make_source(project_id=project.id, name='part1.pdf', minutes=1),
+            import_job_id=job.id,
+            metadata={'pdf_version': '1.4'},
+            suggestion=MetadataSuggestion(title='Book', publication_year='1887'),
+        )
+        uow = await fx_uow_factory()
+        for owner in (project, other):
+            await uow.projects.add(owner)
+        await uow.jobs.add(job)
+        await uow.sources.add_many([later, earlier, make_source(project_id=other.id)])
+        await uow.commit()
+        sources = (await fx_uow_factory()).sources
+        expect(await sources.get(earlier.id) == earlier)
+        expect(await sources.list_for_project(project.id) == [earlier, later])
         assert_expectations()
+
+    async def test_find_by_sha256_looks_only_inside_the_project(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify a digest finds the project's source with it, and nothing in a project without it.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        project, other = make_project(owner_id=new_account_id()), make_project(owner_id=new_account_id())
+        source = make_source(project_id=project.id)
+        uow = await fx_uow_factory()
+        for owner in (project, other):
+            await uow.projects.add(owner)
+        await uow.sources.add(source)
+        await uow.commit()
+        sources = (await fx_uow_factory()).sources
+        expect(await sources.find_by_sha256(project.id, source.sha256) == source)
+        expect(await sources.find_by_sha256(other.id, source.sha256) is None)
+        assert_expectations()
+
+    async def test_same_file_twice_in_a_project_raises_conflict(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify a second source with the digest of a stored one is a ConflictError naming the digest.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        project = make_project(owner_id=new_account_id())
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.sources.add(make_source(project_id=project.id))
+        await uow.commit()
+        uow = await fx_uow_factory()
+        with pytest.raises(ConflictError, match=make_source(project_id=project.id).sha256):
+            await uow.sources.add(make_source(project_id=project.id))
+
+    async def test_same_file_in_another_project_is_stored(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify the digest is unique only within a project, so two books may share a file such as a cover.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        first, second = make_project(owner_id=new_account_id()), make_project(owner_id=new_account_id())
+        uow = await fx_uow_factory()
+        for project in (first, second):
+            await uow.projects.add(project)
+            await uow.sources.add(make_source(project_id=project.id))
+        await uow.commit()
+        sources = (await fx_uow_factory()).sources
+        assert [len(await sources.list_for_project(project.id)) for project in (first, second)] == [1, 1]
+
+    async def test_source_of_a_missing_parent_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify a source needs its project and the import job it names, reported by the missing identifier.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        project = make_project(owner_id=new_account_id())
+        missing_job = make_job(project_id=project.id)
+        uow = await fx_uow_factory()
+        with pytest.raises(NotFoundError, match=str(project.id)):
+            await uow.sources.add(make_source(project_id=project.id))
+        await uow.rollback()
+        await uow.projects.add(project)
+        with pytest.raises(NotFoundError, match=str(missing_job.id)):
+            await uow.sources.add(evolve(make_source(project_id=project.id), import_job_id=missing_job.id))
+
+    async def test_deleted_import_job_leaves_its_sources(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify deleting a job keeps the sources it imported and empties their import job.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        project = make_project(owner_id=new_account_id())
+        job = make_job(project_id=project.id)
+        source = evolve(make_source(project_id=project.id), import_job_id=job.id)
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.jobs.add(job)
+        await uow.sources.add(source)
+        await uow.commit()
+        uow = await fx_uow_factory()
+        await uow.jobs.delete(job.id)
+        await uow.commit()
+        assert await (await fx_uow_factory()).sources.get(source.id) == evolve(source, import_job_id=None)
+
+    async def test_delete_cascades_to_its_scans_only(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify deleting a source removes its scans and leaves the scans of the project's other sources.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        project = make_project(owner_id=new_account_id())
+        doomed, kept = (
+            make_source(project_id=project.id, name='a.pdf'),
+            make_source(project_id=project.id, name='b.pdf'),
+        )
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.sources.add_many([doomed, kept])
+        await uow.scans.add_many([make_scan(source=source, number=0) for source in (doomed, kept)])
+        await uow.commit()
+        uow = await fx_uow_factory()
+        await uow.sources.delete(doomed.id)
+        await uow.commit()
+        scans = (await fx_uow_factory()).scans
+        expect(await scans.list_for_source(doomed.id) == [])
+        expect(len(await scans.list_for_source(kept.id)) == 1)
+        assert_expectations()
+
+
+class TestScanRepository:
+    """Contract of ScanRepository."""
+
+    async def test_scans_read_back_by_number_within_their_source(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify committed scans read back unchanged and list by their number in the source.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        project = make_project(owner_id=new_account_id())
+        source = make_source(project_id=project.id)
+        scans = [
+            evolve(make_scan(source=source, number=number), source_label=f'{number + 1}')
+            for number in reversed(range(PAGE_COUNT))
+        ]
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.sources.add(source)
+        await uow.scans.add_many(scans)
+        await uow.commit()
+        repository = (await fx_uow_factory()).scans
+        expect(await repository.get(scans[0].id) == scans[0])
+        expect(await repository.list_for_source(source.id) == list(reversed(scans)))
+        assert_expectations()
+
+    async def test_list_for_project_follows_the_import_order_of_sources(
+        self, fx_uow_factory: UnitOfWorkFactory
+    ) -> None:
+        """Verify the scans of a project list source by source in import order, sliced, with the full total.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        project = make_project(owner_id=new_account_id())
+        first = make_source(project_id=project.id, name='part1.pdf', minutes=1)
+        second = make_source(project_id=project.id, name='part2.pdf', minutes=2)
+        expected = [make_scan(source=source, number=number) for source in (first, second) for number in range(2)]
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.sources.add_many([second, first])
+        # Insert against the expected order, so neither insertion nor storage order can pass for it
+        await uow.scans.add_many(list(reversed(expected)))
+        await uow.commit()
+        scans = (await fx_uow_factory()).scans
+        everything = await scans.list_for_project(project.id, SliceRequest())
+        window = await scans.list_for_project(project.id, SliceRequest(offset=1, limit=2))
+        expect([scan.id for scan in everything.items] == [scan.id for scan in expected])
+        expect([scan.id for scan in window.items] == [scan.id for scan in expected[1:3]])
+        expect(window.total == len(expected))
+        assert_expectations()
+
+    async def test_update_stores_the_renditions_state(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify a scan marked ready in a new renditions version reads back so.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        project = make_project(owner_id=new_account_id())
+        source = make_source(project_id=project.id)
+        scan = make_scan(source=source, number=0)
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.sources.add(source)
+        await uow.scans.add(scan)
+        ready = evolve(scan, renditions=Renditions(ready=True, version=2))
+        await uow.scans.update(ready)
+        await uow.commit()
+        assert await (await fx_uow_factory()).scans.get(scan.id) == ready
+
+    async def test_same_number_twice_in_a_source_raises_conflict(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify two scans cannot hold the same position of one source.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        project = make_project(owner_id=new_account_id())
+        source = make_source(project_id=project.id)
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.sources.add(source)
+        await uow.scans.add(make_scan(source=source, number=0))
+        with pytest.raises(ConflictError, match=str(source.id)):
+            await uow.scans.add_many([make_scan(source=source, number=1), make_scan(source=source, number=0)])
+
+    async def test_scan_of_a_missing_source_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify a scan cannot be stored for a source that does not exist, so no scan outlives its file.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        project = make_project(owner_id=new_account_id())
+        source = make_source(project_id=project.id)
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        with pytest.raises(NotFoundError, match=str(source.id)):
+            await uow.scans.add(make_scan(source=source, number=0))
 
 
 class TestPageRepository:

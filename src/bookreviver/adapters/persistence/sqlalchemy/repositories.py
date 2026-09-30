@@ -8,11 +8,11 @@ repository adds only the queries specific to BookReviver, such as the page count
 
 The database's own checks are reported as the domain errors the in-memory adapter raises, so services never see an
 advanced-alchemy exception. A missing row is a :class:`~bookreviver.domain.errors.NotFoundError` naming its key. A row
-whose key is already stored is a :class:`~bookreviver.domain.errors.ConflictError` naming that key, and a row whose
-parent row is missing is a ``NotFoundError`` naming the parent's key. advanced-alchemy's own Litestar handler answers
-409 for every integrity error, but here every foreign key points at the owning project, so a violated one means the
-project the caller addressed does not exist, which is a 404. Any other integrity error means the adapter wrote a row
-the schema forbids, a defect that propagates unchanged.
+whose primary key or unique value is already stored is a :class:`~bookreviver.domain.errors.ConflictError` naming
+them, and a row whose parent row is missing is a ``NotFoundError`` naming the parent's key. advanced-alchemy's own
+Litestar handler answers 409 for every integrity error, but here every foreign key points at a row the caller named,
+such as the project of a source or the source of a scan, so a violated one means that row does not exist, which is a
+404. Any other integrity error means the adapter wrote a row the schema forbids, a defect that propagates unchanged.
 """
 
 from contextlib import contextmanager
@@ -23,15 +23,28 @@ from advanced_alchemy.exceptions import NotFoundError as MissingRowError
 from advanced_alchemy.filters import CollectionFilter, LimitOffset
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
 from attrs import evolve
-from sqlalchemy import func, inspect, select, update
+from sqlalchemy import Table, UniqueConstraint, func, inspect, select, update
 
-from bookreviver.adapters.persistence.sqlalchemy.mappers import JobMapper, PageMapper, ProjectMapper
-from bookreviver.adapters.persistence.sqlalchemy.tables import JobRow, PageRow, ProjectRow
-from bookreviver.domain.entities import Job, Project, ProjectOverview
+from bookreviver.adapters.persistence.sqlalchemy.mappers import (
+    JobMapper,
+    PageMapper,
+    ProjectMapper,
+    ScanMapper,
+    SourceMapper,
+)
+from bookreviver.adapters.persistence.sqlalchemy.tables import JobRow, PageRow, ProjectRow, ScanRow, SourceRow
+from bookreviver.domain.entities import Job, Project, ProjectOverview, Scan, Source
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.ids import JobId, ProjectId
+from bookreviver.domain.ids import JobId, ProjectId, ScanId, SourceId
 from bookreviver.domain.values import Slice
-from bookreviver.ports.persistence import JobRepository, PageRepository, ProjectRepository, Repository
+from bookreviver.ports.persistence import (
+    JobRepository,
+    PageRepository,
+    ProjectRepository,
+    Repository,
+    ScanRepository,
+    SourceRepository,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterator, Sequence
@@ -102,37 +115,83 @@ class RowRepository[RowT: ModelProtocol](SQLAlchemyAsyncRepository[RowT]):
         with self._reporting_integrity_errors(data):
             return await super().add_many(data, **options)
 
+    @override
+    async def update(self, data: RowT, **options: Any) -> RowT:
+        """Replace the stored state of one row.
+
+        :param data: Transient row holding the new state under the key of the stored row.
+        :type data: RowT
+        :param options: Keyword options of :meth:`SQLAlchemyAsyncRepository.update`, passed through unchanged.
+        :type options: Any
+        :returns: The row, attached to the session.
+        :rtype: RowT
+        :raises NotFoundError: If no row has this key, or a row this one refers to through a foreign key is not stored.
+        :raises ConflictError: If the new state takes a unique value of another row.
+        """
+        with self._reporting_integrity_errors([data]):
+            return await super().update(data, **options)
+
     @contextmanager
     def _reporting_integrity_errors(self, rows: Sequence[RowT]) -> Iterator[None]:
         """Report the database rejecting ``rows`` as the domain error for the constraint they broke.
 
         The database does not say which row broke the constraint, so each error names the candidate keys: the
-        primary keys of the rows for a conflict, and the distinct values of their foreign keys for a missing parent.
+        primary keys and the unique values of the rows for a conflict, and the distinct values of their foreign keys
+        for a missing parent.
 
-        :param rows: Rows being inserted.
+        :param rows: Rows being written.
         :type rows: Sequence[RowT]
-        :returns: Iterator yielding once around the insert.
+        :returns: Iterator yielding once around the write.
         :rtype: Iterator[None]
-        :raises ConflictError: If a primary key of ``rows`` is already stored.
+        :raises ConflictError: If a primary key or a unique value of ``rows`` is already stored.
         :raises NotFoundError: If a row that ``rows`` refer to is not stored.
         """
         try:
             yield
         except DuplicateKeyError as error:
-            raise ConflictError(*(self.get_primary_key_value(row) for row in rows)) from error
+            mapper, table = self.model_type.__mapper__, self.model_type.__table__
+            # A declarative class maps one Table, the kind of FromClause that carries constraints
+            constraints = table.constraints if isinstance(table, Table) else set()
+            unique_keys = [
+                [mapper.get_property_by_column(column).key for column in constraint.columns]
+                for constraint in constraints
+                if isinstance(constraint, UniqueConstraint)
+            ]
+            candidates = [
+                candidate
+                for row in rows
+                for candidate in (
+                    self.get_primary_key_value(row),
+                    *(tuple(getattr(row, key) for key in keys) for keys in unique_keys),
+                )
+            ]
+            raise ConflictError(*candidates) from error
         except ForeignKeyError as error:
             references = [
                 attribute.key
                 for attribute in self.model_type.__mapper__.column_attrs
                 if attribute.columns[0].foreign_keys
             ]
-            raise NotFoundError(*dict.fromkeys(getattr(row, key) for row in rows for key in references)) from error
+            parents = (getattr(row, key) for row in rows for key in references)
+            raise NotFoundError(*dict.fromkeys(parent for parent in parents if parent is not None)) from error
 
 
 class ProjectRows(RowRepository[ProjectRow]):
     """Rows of the ``projects`` table."""
 
     model_type = ProjectRow
+
+
+class SourceRows(RowRepository[SourceRow]):
+    """Rows of the ``sources`` table."""
+
+    model_type = SourceRow
+
+
+class ScanRows(RowRepository[ScanRow]):
+    """Rows of the ``scans`` table."""
+
+    model_type = ScanRow
 
 
 class PageRows(RowRepository[PageRow]):
@@ -183,6 +242,21 @@ class SqlAlchemyRepository[EntityT, IdT, RowT: ModelProtocol](Repository[EntityT
         :rtype: EntityT
         """
         return self._mapper.to_entity(await self._rows.add(self._mapper.to_row(entity)))
+
+    @override
+    async def add_many(self, entities: Sequence[EntityT]) -> Sequence[EntityT]:
+        """Store several new entities in one statement, which the database applies whole or not at all.
+
+        :param entities: Entities to store, with their identifiers already assigned.
+        :type entities: Sequence[EntityT]
+        :returns: The entities as stored, in the given order.
+        :rtype: Sequence[EntityT]
+        """
+        # An insert of no rows is no statement at all
+        if not entities:
+            return entities
+        rows = await self._rows.add_many([self._mapper.to_row(entity) for entity in entities])
+        return [self._mapper.to_entity(row) for row in rows]
 
     @override
     async def update(self, entity: EntityT) -> EntityT:
@@ -246,6 +320,97 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
         rows = await self._rows.session.execute(statement)
         overviews = [ProjectOverview(project=self._mapper.to_entity(row), page_count=count) for row, count in rows]
         return Slice(items=overviews, total=await self._rows.count(owner_id=owner_id))
+
+
+class SqlAlchemySourceRepository(SqlAlchemyRepository[Source, SourceId, SourceRow], SourceRepository):
+    """Sources, listed per project in import order and found by the digest of their main file."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Create the repository over the ``sources`` table.
+
+        :param session: Session of the unit of work.
+        :type session: AsyncSession
+        """
+        super().__init__(rows=SourceRows(session=session), mapper=SourceMapper())
+
+    @override
+    async def list_for_project(self, project_id: ProjectId) -> Sequence[Source]:
+        """Return the project's sources, the earliest import first, ties by identifier.
+
+        :param project_id: Project owning the sources.
+        :type project_id: ProjectId
+        :returns: Every source of the project in import order.
+        :rtype: Sequence[Source]
+        """
+        rows = await self._rows.get_many(
+            order_by=[SourceRow.imported_at.asc(), SourceRow.id.asc()], project_id=project_id
+        )
+        return [self._mapper.to_entity(row) for row in rows]
+
+    @override
+    async def find_by_sha256(self, project_id: ProjectId, sha256: str) -> Source | None:
+        """Return the project's source with this digest, found through the unique key of the pair.
+
+        :param project_id: Project owning the sources.
+        :type project_id: ProjectId
+        :param sha256: SHA-256 digest of a main file.
+        :type sha256: str
+        :returns: The source with this digest, or None.
+        :rtype: Source | None
+        """
+        row = await self._rows.get_one_or_none(project_id=project_id, sha256=sha256)
+        return None if row is None else self._mapper.to_entity(row)
+
+
+class SqlAlchemyScanRepository(SqlAlchemyRepository[Scan, ScanId, ScanRow], ScanRepository):
+    """Scans, listed per source by number and per project in the import order of their sources."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Create the repository over the ``scans`` table.
+
+        :param session: Session of the unit of work.
+        :type session: AsyncSession
+        """
+        super().__init__(rows=ScanRows(session=session), mapper=ScanMapper())
+
+    @override
+    async def list_for_source(self, source_id: SourceId) -> Sequence[Scan]:
+        """Return the scans of one source by number.
+
+        :param source_id: Source holding the scans.
+        :type source_id: SourceId
+        :returns: Every scan of the source.
+        :rtype: Sequence[Scan]
+        """
+        rows = await self._rows.get_many(order_by=ScanRow.number.asc(), source_id=source_id)
+        return [self._mapper.to_entity(row) for row in rows]
+
+    @override
+    async def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Scan]:
+        """Return a slice of the project's scans, source by source in import order and by number within one.
+
+        The order comes from the sources, so the listing joins them; the total is a separate count, which stays
+        correct for a slice past the end.
+
+        :param project_id: Project owning the scans.
+        :type project_id: ProjectId
+        :param request: Offset and limit of the slice.
+        :type request: SliceRequest
+        :returns: Scans of the slice and the total number of the project's scans.
+        :rtype: Slice[Scan]
+        """
+        statement = (
+            select(ScanRow)
+            .join(SourceRow, ScanRow.source_id == SourceRow.id)
+            .where(ScanRow.project_id == project_id)
+            .order_by(SourceRow.imported_at, SourceRow.id, ScanRow.number)
+            .offset(request.offset)
+            .limit(request.limit)
+        )
+        rows = (await self._rows.session.scalars(statement)).all()
+        return Slice(
+            items=[self._mapper.to_entity(row) for row in rows], total=await self._rows.count(project_id=project_id)
+        )
 
 
 class SqlAlchemyPageRepository(PageRepository):

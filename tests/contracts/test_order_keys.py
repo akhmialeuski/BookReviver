@@ -42,7 +42,14 @@ def _lies_in(key: str, gap: Gap) -> bool:
     return after_lower and before_upper
 
 
-GAPS: list[Gap] = [Gap(None, None), Gap(None, 'a0'), Gap('a0', None), Gap('a0', 'a1'), Gap('a0', 'a0V'), Gap('Zz', 'a0')]
+GAPS: list[Gap] = [
+    Gap(None, None),
+    Gap(None, 'a0'),
+    Gap('a0', None),
+    Gap('a0', 'a1'),
+    Gap('a0', 'a0V'),
+    Gap('Zz', 'a0'),
+]
 GAP_IDS: list[str] = ['empty-book', 'before-first', 'after-last', 'between-integers', 'between-fractions', 'negative']
 
 
@@ -86,14 +93,14 @@ class TestBetween:
         'gap', [Gap('a1', 'a0'), Gap('a0', 'a0'), Gap('not a key', None)], ids=['reversed', 'equal', 'malformed']
     )
     def test_gap_without_room_is_rejected(self, fx_order_keys: OrderKeys, gap: Gap) -> None:
-        """Reject neighbours in the wrong order, equal neighbours and a malformed key.
+        """Reject neighbours in the wrong order, equal neighbours and a malformed key, naming the refused gap.
 
         :param fx_order_keys: Adapter of the port under test.
         :type fx_order_keys: OrderKeys
         :param gap: Neighbouring keys with no valid key between them.
         :type gap: Gap
         """
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=f'{gap.lower}.*{gap.upper}'):
             fx_order_keys.between(lower=gap.lower, upper=gap.upper)
 
 

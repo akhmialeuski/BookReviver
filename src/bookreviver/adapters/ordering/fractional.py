@@ -14,6 +14,9 @@ from bookreviver.ports.ordering import OrderKeys
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+# Message of a refused gap, naming both neighbours and the package's reason
+NO_ROOM: str = 'No order key lies between {lower} and {upper}: {reason}'
+
 
 class FractionalOrderKeys(OrderKeys):
     """Order keys of the fractional-indexing package in its default base-62 alphabet."""
@@ -33,7 +36,7 @@ class FractionalOrderKeys(OrderKeys):
         try:
             return generate_key_between(lower, upper)
         except FIError as error:
-            raise ValueError(str(error)) from error
+            raise ValueError(NO_ROOM.format(lower=lower, upper=upper, reason=error)) from error
 
     @override
     def spread(self, *, lower: str | None, upper: str | None, count: int) -> Sequence[str]:
@@ -57,4 +60,4 @@ class FractionalOrderKeys(OrderKeys):
         try:
             return generate_n_keys_between(lower, upper, count)
         except FIError as error:
-            raise ValueError(str(error)) from error
+            raise ValueError(NO_ROOM.format(lower=lower, upper=upper, reason=error)) from error

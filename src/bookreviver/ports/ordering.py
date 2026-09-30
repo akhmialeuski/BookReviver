@@ -27,7 +27,8 @@ class OrderKeys(ABC):
         :type upper: str | None
         :returns: A new key strictly between the two, the first key of a book when both are None.
         :rtype: str
-        :raises ValueError: If a key is not a valid order key or ``lower`` does not sort before ``upper``.
+        :raises ValueError: If a key is not a valid order key or ``lower`` does not sort before ``upper``, with a
+                            message naming both.
         """
 
     @abstractmethod
@@ -42,6 +43,6 @@ class OrderKeys(ABC):
         :type count: int
         :returns: The keys in ascending order, none for a count of zero.
         :rtype: Sequence[str]
-        :raises ValueError: If a key is not a valid order key, ``lower`` does not sort before ``upper``, or ``count``
-                            is negative.
+        :raises ValueError: If a key is not a valid order key or ``lower`` does not sort before ``upper``, with a
+                            message naming both, or if ``count`` is negative.
         """
