@@ -1,7 +1,31 @@
 """Closed sets of values used across the application, each carrying a human label."""
 
 import enum
-from typing import Self
+import re
+from itertools import cycle
+from typing import Final, Self
+from urllib.parse import urlsplit
+
+from bookreviver.domain.errors import InvalidIdentifierError
+
+# An ISBN without hyphens: ten characters whose last may be the check digit ``X``, or thirteen digits
+ISBN_10: Final = re.compile(r'[0-9]{9}[0-9X]')
+ISBN_13: Final = re.compile(r'[0-9]{13}')
+ISBN_10_MODULUS: Final = 11
+ISBN_13_MODULUS: Final = 10
+# The check digit ``X`` of an ISBN-10 stands for ten
+ISBN_10_X_VALUE: Final = 10
+# Weights of the digits of an ISBN-13, which alternate
+ISBN_13_WEIGHTS: Final = (1, 3)
+# Digits the serial number of an LCCN is padded to after its hyphen
+LCCN_SERIAL_LENGTH: Final = 6
+# A normalized LCCN has up to four characters of prefix and year, and ends with eight digits
+LCCN_NORMALIZED: Final = re.compile(r'[a-z0-9]{0,4}[0-9]{8}')
+OCLC_NUMBER: Final = re.compile(r'[0-9]+')
+# Longest shelfmark and longest URL of a copy the domain accepts
+SHELFMARK_MAX_LENGTH: Final = 300
+URL_MAX_LENGTH: Final = 2_048
+URL_SCHEMES: Final = frozenset({'http', 'https'})
 
 
 class LabeledStrEnum(enum.StrEnum):
@@ -77,6 +101,130 @@ class Orthography(LabeledStrEnum):
     UNKNOWN = 'unknown', 'Unknown'
     PRE_REFORM = 'pre-reform', 'Pre-reform'
     MODERN = 'modern', 'Modern'
+
+
+class Script(LabeledStrEnum):
+    """Writing system of the printed text, which is separate from its spelling norm."""
+
+    UNKNOWN = 'unknown', 'Unknown'
+    CYRILLIC = 'cyrillic', 'Cyrillic'
+    LATIN = 'latin', 'Latin'
+    MIXED = 'mixed', 'Mixed'
+
+
+class RightsStatus(LabeledStrEnum):
+    """Whether the result of the work on a book may be published."""
+
+    UNKNOWN = 'unknown', 'Unknown'
+    PUBLIC_DOMAIN = 'public-domain', 'Public domain'
+    IN_COPYRIGHT = 'in-copyright', 'In copyright'
+
+
+class ContributorRole(LabeledStrEnum):
+    """Role of a person in the making of a book.
+
+    The value of a member is its code in the `MARC Code List for Relators <https://www.loc.gov/marc/relators/>`_ and
+    the label is the term of that list, so an export to library formats writes the codes without a translation table.
+    """
+
+    AUTHOR = 'aut', 'author'
+    EDITOR = 'edt', 'editor'
+    COMPILER = 'com', 'compiler'
+    TRANSLATOR = 'trl', 'translator'
+    ILLUSTRATOR = 'ill', 'illustrator'
+    ENGRAVER = 'egr', 'engraver'
+    LITHOGRAPHER = 'ltg', 'lithographer'
+    PHOTOGRAPHER = 'pht', 'photographer'
+    WRITER_OF_PREFACE = 'wpr', 'writer of preface'
+    WRITER_OF_INTRODUCTION = 'win', 'writer of introduction'
+    ANNOTATOR = 'ann', 'annotator'
+    COMMENTATOR = 'cmm', 'commentator'
+    DEDICATEE = 'dte', 'dedicatee'
+    CONTRIBUTOR = 'ctb', 'contributor'
+    OTHER = 'oth', 'other'
+
+
+class IdentifierScheme(LabeledStrEnum):
+    """Kind of number or address that identifies a book or one copy of it, each with its rule of writing."""
+
+    ISBN = 'isbn', 'ISBN'
+    OCLC = 'oclc', 'OCLC number'
+    LCCN = 'lccn', 'LCCN'
+    SHELFMARK = 'shelfmark', 'Shelfmark'
+    URL = 'url', 'URL of a copy'
+
+    def normalize(self, raw: str) -> str:
+        """Return ``raw`` in the one form the scheme compares by, after checking it.
+
+        The rules follow the standards of each scheme: an ISBN loses its hyphens and spaces and must carry a correct
+        check digit, an OCLC number is digits, an LCCN is normalized as the Library of Congress describes, a shelfmark
+        is free text, and a URL is an ``http`` or ``https`` address.
+
+        :param raw: The identifier as a person wrote it or a file stored it.
+        :type raw: str
+        :returns: The identifier in normalized form.
+        :rtype: str
+        :raises InvalidIdentifierError: If the identifier breaks the rules of its scheme.
+        """
+        text = raw.strip()
+        match self:
+            case IdentifierScheme.ISBN:
+                normalized = re.sub(r'[-\s]', '', text).upper()
+                valid = self._has_isbn_check_digit(normalized)
+            case IdentifierScheme.OCLC:
+                normalized = text
+                valid = OCLC_NUMBER.fullmatch(normalized) is not None
+            case IdentifierScheme.LCCN:
+                normalized = re.sub(r'\s', '', text).lower().partition('/')[0]
+                head, hyphen, serial = normalized.partition('-')
+                if hyphen:
+                    normalized = head + serial.zfill(LCCN_SERIAL_LENGTH)
+                valid = LCCN_NORMALIZED.fullmatch(normalized) is not None
+            case IdentifierScheme.SHELFMARK:
+                normalized = text
+                valid = 0 < len(text) <= SHELFMARK_MAX_LENGTH
+            case IdentifierScheme.URL:
+                normalized = text
+                valid = self._is_web_address(text)
+        if not valid:
+            err_msg = f'{raw!r} is not a valid {self.label}.'
+            raise InvalidIdentifierError(err_msg)
+        return normalized
+
+    @staticmethod
+    def _has_isbn_check_digit(isbn: str) -> bool:
+        """Tell whether ``isbn`` is an ISBN-10 or an ISBN-13 whose weighted digit sum is a multiple of its modulus.
+
+        :param isbn: The ISBN without hyphens and spaces, in upper case.
+        :type isbn: str
+        :returns: Whether it has the length, the digits and the check digit of an ISBN.
+        :rtype: bool
+        """
+        if ISBN_10.fullmatch(isbn):
+            values = [ISBN_10_X_VALUE if digit == 'X' else int(digit) for digit in isbn]
+            weights = range(len(isbn), 0, -1)
+            return sum(weight * value for weight, value in zip(weights, values, strict=True)) % ISBN_10_MODULUS == 0
+        if ISBN_13.fullmatch(isbn):
+            total = sum(weight * int(digit) for weight, digit in zip(cycle(ISBN_13_WEIGHTS), isbn, strict=False))
+            return total % ISBN_13_MODULUS == 0
+        return False
+
+    @staticmethod
+    def _is_web_address(text: str) -> bool:
+        """Tell whether ``text`` is a single ``http`` or ``https`` address with a host.
+
+        :param text: The address without surrounding whitespace.
+        :type text: str
+        :returns: Whether it is such an address.
+        :rtype: bool
+        """
+        if not 0 < len(text) <= URL_MAX_LENGTH or re.search(r'\s', text):
+            return False
+        try:
+            parts = urlsplit(text)
+        except ValueError:
+            return False
+        return parts.scheme.lower() in URL_SCHEMES and bool(parts.hostname)
 
 
 class ImagePolicy(LabeledStrEnum):

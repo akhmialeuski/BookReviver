@@ -1,70 +1,208 @@
 """Immutable value objects of the domain."""
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
-from attrs import field, frozen, validators
+from attrs import evolve, field, fields_dict, frozen, validators
 
-from bookreviver.domain.enums import Orthography, Rendition, TransformKind
+from bookreviver.domain.enums import ContributorRole, Orthography, Rendition, RightsStatus, Script, TransformKind
+from bookreviver.domain.errors import InvalidIdentifierError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.enums import ColorMode, FileType, RejectionReason, SourceKind
+    from attrs import Attribute
+
+    from bookreviver.domain.enums import (
+        ColorMode,
+        FileType,
+        IdentifierScheme,
+        RejectionReason,
+        SourceKind,
+    )
     from bookreviver.domain.ids import SourceId, StorageKey
 
 # JSON-compatible metadata as read from a source file
 type MetadataMap = Mapping[str, Any]
+# The description field a suggestion never fills
+TITLE_FIELD: str = 'title'
 # A SHA-256 digest as lower-case hexadecimal digits
 SHA256_PATTERN: str = r'[0-9a-f]{64}'
 
 
 @frozen(kw_only=True)
-class BookDetails:
-    """Bibliographic description of a printed book.
+class Contributor:
+    """A person who took part in the making of a book, in the role the title page or a catalogue gives them.
 
-    :ivar title: Title of the book, the one field that may not be empty.
-    :ivar authors: Authors as printed, in one string.
-    :ivar publisher: Publisher or printing house.
+    The name is kept as printed, with the spelling and the initials of the book, because a catalogue of old books is
+    searched by that form. The position of a contributor in the list of the description records the order of the
+    title page.
+
+    :ivar name: Name as printed in the book.
+    :ivar role: Role of the person, a code of the MARC list of relators.
+    """
+
+    name: str = field(validator=validators.min_len(1))
+    role: ContributorRole
+
+
+def _is_normalized(identifier: BookIdentifier, _attribute: Attribute[str], value: str) -> None:
+    """Check that the value follows the rules of the scheme of its identifier and is already normalized.
+
+    :param identifier: The identifier being built, whose scheme the value must follow.
+    :type identifier: BookIdentifier
+    :param _attribute: The attribute being validated, which the rule does not need.
+    :type _attribute: Attribute[str]
+    :param value: The value to check.
+    :type value: str
+    :raises InvalidIdentifierError: If the value breaks the rules of the scheme or is not normalized.
+    """
+    if (normalized := identifier.scheme.normalize(value)) != value:
+        err_msg = f'{value!r} is not normalized; the normalized {identifier.scheme.label} is {normalized!r}.'
+        raise InvalidIdentifierError(err_msg)
+
+
+@frozen(kw_only=True)
+class BookIdentifier:
+    """A number or an address that identifies a book or one copy of it, held in the normalized form of its scheme.
+
+    :ivar scheme: Kind of the identifier, which decides how it is written and checked.
+    :ivar value: The identifier in the normalized form of its scheme, so equal numbers written differently are equal.
+    """
+
+    scheme: IdentifierScheme
+    value: str = field(validator=_is_normalized)
+
+    @classmethod
+    def parse(cls, scheme: IdentifierScheme, raw: str) -> Self:
+        """Build an identifier from a value as a person wrote it or a file stored it.
+
+        :param scheme: Kind of the identifier.
+        :type scheme: IdentifierScheme
+        :param raw: The value in any spelling the scheme accepts.
+        :type raw: str
+        :returns: The identifier with the value normalized.
+        :rtype: Self
+        :raises InvalidIdentifierError: If the value breaks the rules of the scheme.
+        """
+        return cls(scheme=scheme, value=scheme.normalize(raw))
+
+
+@frozen(kw_only=True)
+class BookDetails:
+    """Bibliographic description of a printed book, down to the copy that was scanned.
+
+    The fields follow the `DCMI Metadata Terms <https://www.dublincore.org/specifications/dublin-core/dcmi-terms/>`_,
+    so an export to library formats needs no translation of concepts. Text fields are empty when unknown, lists are
+    tuples, and the title is the one field that may not be empty.
+
+    :ivar title: Title of the book.
+    :ivar subtitle: Words of the title page that explain the title.
+    :ivar parallel_titles: Titles in other languages that the title page prints beside the title.
+    :ivar original_title: Title of the original work, for a translation.
+    :ivar contributors: People who made the book, each with a role, in the order of the title page.
+    :ivar publisher: Publisher of the book.
+    :ivar printer: Printing house, which old books name apart from the publisher.
     :ivar publication_place: City of publication.
     :ivar publication_year: Year of publication as printed, which may be a range or an estimate.
     :ivar edition: Edition statement.
+    :ivar censorship: Censor's permit printed in the book, whose date dates a book that names no year.
     :ivar series: Series the book belongs to.
+    :ivar series_number: Number of the book in its series.
     :ivar volume: Volume or part within a multi-volume work.
-    :ivar language: Language of the text.
+    :ivar languages: ISO 639-3 codes of the languages of the text.
     :ivar orthography: Spelling system of the print, such as pre-reform Russian.
+    :ivar script: Writing system of the print.
+    :ivar printed_pagination: Pagination as a catalogue states it, such as ``XII, 340 p., 8 l. of plates``.
+    :ivar height_cm: Height of the book in centimetres, or None when unknown.
+    :ivar illustrations: Illustrations as a catalogue states them.
+    :ivar binding: Binding or cover of the copy.
+    :ivar identifiers: Numbers and addresses that identify the book or the copy, such as a shelfmark.
+    :ivar subjects: Topics of the book.
+    :ivar rights: Whether the result of the work may be published.
+    :ivar copy_holder: Owner of the copy that was scanned.
+    :ivar copy_notes: Marks of the copy that was scanned, such as bookplates and annotations.
     :ivar notes: Free-form notes of the owner.
     """
 
     title: str = field(validator=validators.min_len(1))
-    authors: str = ''
+    subtitle: str = ''
+    parallel_titles: tuple[str, ...] = ()
+    original_title: str = ''
+    contributors: tuple[Contributor, ...] = ()
     publisher: str = ''
+    printer: str = ''
     publication_place: str = ''
     publication_year: str = ''
     edition: str = ''
+    censorship: str = ''
     series: str = ''
+    series_number: str = ''
     volume: str = ''
-    language: str = ''
+    languages: tuple[str, ...] = ()
     orthography: Orthography = Orthography.UNKNOWN
+    script: Script = Script.UNKNOWN
+    printed_pagination: str = ''
+    height_cm: int | None = field(default=None, validator=validators.optional(validators.gt(0)))
+    illustrations: str = ''
+    binding: str = ''
+    identifiers: tuple[BookIdentifier, ...] = ()
+    subjects: tuple[str, ...] = ()
+    rights: RightsStatus = RightsStatus.UNKNOWN
+    copy_holder: str = ''
+    copy_notes: str = ''
     notes: str = ''
+
+    def fill_from(self, suggestion: MetadataSuggestion) -> BookDetails:
+        """Return the description with every empty field the suggestion has a value for filled in.
+
+        A field that holds a value, even a wrong one, is never replaced, and the title is never touched, because it is
+        required when the project is created and a file can only guess it.
+
+        :param suggestion: Description fields found in a source.
+        :type suggestion: MetadataSuggestion
+        :returns: The description with its empty fields filled, or an equal description when nothing was empty.
+        :rtype: BookDetails
+        """
+        found = {
+            name: value
+            for name in fields_dict(MetadataSuggestion)
+            if name != TITLE_FIELD and (value := getattr(suggestion, name)) and not getattr(self, name)
+        }
+        return evolve(self, **found)
+
+    @property
+    def primary_author(self) -> str:
+        """The first author, else the first contributor of any role, else an empty string."""
+        for person in self.contributors:
+            if person.role is ContributorRole.AUTHOR:
+                return person.name
+        return self.contributors[0].name if self.contributors else ''
 
 
 @frozen(kw_only=True)
 class MetadataSuggestion:
-    """Description fields found in a source; an empty string means nothing was found.
+    """Description fields found in the metadata of a source file; an empty string or list means nothing was found.
+
+    Only the fields that file metadata can give are here, with the types they have in ``BookDetails``. A year comes
+    only from metadata that states one, never from the date a file was created or changed.
 
     :ivar title: Title found in the source.
-    :ivar authors: Authors found in the source.
+    :ivar contributors: People found in the source, each with the role the metadata gives them.
     :ivar publisher: Publisher found in the source.
     :ivar publication_year: Year of publication found in the source.
-    :ivar language: Language found in the source.
+    :ivar languages: ISO 639-3 codes of the languages found in the source.
+    :ivar identifiers: Valid ISBNs and web addresses found in the source.
+    :ivar subjects: Topics found in the source.
     """
 
     title: str = ''
-    authors: str = ''
+    contributors: tuple[Contributor, ...] = ()
     publisher: str = ''
     publication_year: str = ''
-    language: str = ''
+    languages: tuple[str, ...] = ()
+    identifiers: tuple[BookIdentifier, ...] = ()
+    subjects: tuple[str, ...] = ()
 
 
 @frozen(kw_only=True)

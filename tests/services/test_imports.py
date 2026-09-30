@@ -17,6 +17,7 @@ from bookreviver.adapters.persistence.memory.unit_of_work import InMemoryJobRepo
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import (
     ColorMode,
+    ContributorRole,
     DjvuDocumentKind,
     ImagePolicy,
     JobState,
@@ -38,7 +39,7 @@ from bookreviver.domain.events import (
     SourceImported,
 )
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import SliceRequest
+from bookreviver.domain.values import Contributor, SliceRequest
 from bookreviver.services.imports import (
     IMPORT_ACTIVE,
     NO_SOURCE_IMPORTED,
@@ -50,10 +51,14 @@ from bookreviver.services.imports import (
 )
 from tests.adapters.imaging.samples import (
     DjvuPage,
+    PdfPage,
+    add_xmp,
     requires_djvulibre,
     write_djvu_bundle,
     write_djvu_indirect,
     write_djvu_pages,
+    write_pdf,
+    xmp_packet,
 )
 from tests.helpers.builders import make_job, make_project, new_account_id
 from tests.helpers.fakes_imports import (
@@ -1184,7 +1189,37 @@ class TestRunImportChecks:
 
         project = await fx_rig.open_uow().projects.get(fx_project.id)
         expect(project.details.title == fx_project.details.title)
-        expect(project.details.authors == 'First Author')
+        expect(project.details.contributors == (Contributor(name='First Author', role=ContributorRole.AUTHOR),))
+        expect(len(_events_of(fx_rig, ProjectChanged)) == 1)
+        assert_expectations()
+
+    async def test_fills_the_lists_of_the_description_from_the_xmp_of_a_source(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify the languages, identifiers and subjects of an XMP packet reach an empty description, in one change.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        packet = xmp_packet(
+            '<dc:language><rdf:Bag><rdf:li>be</rdf:li></rdf:Bag></dc:language>'
+            '<dc:identifier>urn:isbn:0-306-40615-2</dc:identifier>'
+            '<dc:subject><rdf:Bag><rdf:li>Folklore</rdf:li></rdf:Bag></dc:subject>'
+        )
+
+        path = add_xmp(write_pdf(fx_samples / 'a.pdf', pages=[PdfPage()]), packet=packet)
+
+        await _import(fx_rig, fx_owner, fx_project.id, [upload('a.pdf', content=path.read_bytes())])
+
+        details = (await fx_rig.open_uow().projects.get(fx_project.id)).details
+        expect((details.languages, details.subjects) == (('bel',), ('Folklore',)))
+        expect([item.value for item in details.identifiers] == ['0306406152'])
         expect(len(_events_of(fx_rig, ProjectChanged)) == 1)
         assert_expectations()
 
@@ -1199,7 +1234,8 @@ class TestRunImportChecks:
         :type fx_samples: Path
         """
         project = make_project(owner_id=fx_owner.account_id)
-        described = evolve(project, details=evolve(project.details, authors='Owner Author'))
+        owner_author = (Contributor(name='Owner Author', role=ContributorRole.AUTHOR),)
+        described = evolve(project, details=evolve(project.details, contributors=owner_author))
         await fx_rig.fakes.store(described)
 
         await _import(

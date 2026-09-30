@@ -14,6 +14,7 @@ from fastapi_pagination import Params
 
 from bookreviver.api.schemas.base import ResponseModel
 from bookreviver.api.schemas.images import ImagePathsSchema
+from bookreviver.api.schemas.projects import ContributorSchema, IdentifierSchema
 from bookreviver.domain.enums import ColorMode, FileType, SourceKind
 from bookreviver.domain.ids import JobId, ScanId, SourceId
 from bookreviver.domain.keys import ProjectKeys
@@ -49,20 +50,24 @@ class SourceFileSchema(ResponseModel):
 
 
 class MetadataSuggestionSchema(ResponseModel):
-    """Description fields found in a source; an empty string means nothing was found.
+    """Description fields found in a source; an empty string or list means nothing was found.
 
     :ivar title: Title found in the source.
-    :ivar authors: Authors found in the source.
+    :ivar contributors: People found in the source, each with the role the metadata gives them.
     :ivar publisher: Publisher found in the source.
     :ivar publication_year: Year of publication found in the source.
-    :ivar language: Language found in the source.
+    :ivar languages: ISO 639-3 codes of the languages found in the source.
+    :ivar identifiers: Valid ISBNs and web addresses found in the source.
+    :ivar subjects: Topics found in the source.
     """
 
     title: str
-    authors: str
+    contributors: list[ContributorSchema]
     publisher: str
     publication_year: str
-    language: str
+    languages: list[str]
+    identifiers: list[IdentifierSchema]
+    subjects: list[str]
 
 
 class SourceSchema(ResponseModel):

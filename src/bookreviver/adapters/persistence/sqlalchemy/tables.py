@@ -44,6 +44,8 @@ from bookreviver.domain.enums import (
     PageKind,
     PageOrigin,
     Rendition,
+    RightsStatus,
+    Script,
     SourceKind,
     Stage,
     VersionState,
@@ -63,6 +65,9 @@ METADATA_COLUMN: Final = 'metadata'
 CHILD_CASCADE: Final = 'all, delete'
 # Loading strategy that raises instead of emitting hidden SQL, which an AsyncSession cannot run
 NO_IMPLICIT_LOAD: Final = 'raise'
+# Server defaults of the columns the description gained, which existing rows take when the columns are added
+EMPTY_TEXT: Final = ''
+EMPTY_LIST: Final = '[]'
 PAGES_TABLE: Final = 'pages'
 PAGE_VERSIONS_TABLE: Final = 'page_versions'
 # Length of a page version identifier, a hash cut to 16 hexadecimal digits
@@ -112,21 +117,38 @@ def enum_by_value[EnumT: enum.Enum](enum_type: type[EnumT]) -> Enum:
 class ProjectRow(DefaultBase):
     """Row of one book: its owner, its bibliographic description and the settings of the work on it.
 
-    The description is a value object in the domain and flat columns here. The sources of the book are rows of their
-    own table.
+    The description is a value object in the domain and columns here: a column per text field, and a JSON column per
+    list, because the items of a list have no identity, are always read and written with their project, and the
+    project list shows only the title and the first author. The sources of the book are rows of their own table.
 
     :ivar id: Project identifier, assigned by the domain.
     :ivar owner_id: Account that owns the project, which the database keeps while the project exists.
     :ivar title: Title of the book.
-    :ivar authors: Authors as printed on the title page.
-    :ivar publisher: Publisher or printing house.
+    :ivar subtitle: Words of the title page that explain the title.
+    :ivar parallel_titles: Titles in other languages, as a JSON list of strings.
+    :ivar original_title: Title of the original work.
+    :ivar contributors: People who made the book, as a JSON list of ``{name, role}`` objects in title page order.
+    :ivar publisher: Publisher of the book.
+    :ivar printer: Printing house.
     :ivar publication_place: City of publication.
     :ivar publication_year: Year of publication as printed, which may be approximate.
     :ivar edition: Edition statement.
+    :ivar censorship: Censor's permit printed in the book.
     :ivar series: Series the book belongs to.
+    :ivar series_number: Number of the book in its series.
     :ivar volume: Volume within a multi-volume work.
-    :ivar language: Language code of the text.
+    :ivar languages: ISO 639-3 codes of the languages of the text, as a JSON list of strings.
     :ivar orthography: Spelling system of the text, stored by value.
+    :ivar script: Writing system of the text, stored by value.
+    :ivar printed_pagination: Pagination as a catalogue states it.
+    :ivar height_cm: Height of the book in centimetres, or null.
+    :ivar illustrations: Illustrations as a catalogue states them.
+    :ivar binding: Binding or cover of the copy.
+    :ivar identifiers: Numbers and addresses that identify the book, as a JSON list of ``{scheme, value}`` objects.
+    :ivar subjects: Topics of the book, as a JSON list of strings.
+    :ivar rights: Publishing rights, stored by value.
+    :ivar copy_holder: Owner of the scanned copy.
+    :ivar copy_notes: Marks of the scanned copy.
     :ivar notes: Free-form notes of the owner.
     :ivar image_policy: How the images of the project's scans and page versions are stored, stored by value.
     :ivar cover_page_id: Page whose thumbnail the project list shows, or null for the first page.
@@ -143,15 +165,31 @@ class ProjectRow(DefaultBase):
     # The column of the table, since fastapi-users declares the attribute for type checkers as a plain UUID
     owner_id: Mapped[UUID] = mapped_column(ForeignKey(AccountTable.__table__.c.id, ondelete=RESTRICT), index=True)
     title: Mapped[str]
-    authors: Mapped[str]
+    subtitle: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
+    parallel_titles: Mapped[list[str]] = mapped_column(JsonB, server_default=EMPTY_LIST)
+    original_title: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
+    contributors: Mapped[list[dict[str, str]]] = mapped_column(JsonB, server_default=EMPTY_LIST)
     publisher: Mapped[str]
+    printer: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     publication_place: Mapped[str]
     publication_year: Mapped[str]
     edition: Mapped[str]
+    censorship: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     series: Mapped[str]
+    series_number: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     volume: Mapped[str]
-    language: Mapped[str]
+    languages: Mapped[list[str]] = mapped_column(JsonB, server_default=EMPTY_LIST)
     orthography: Mapped[Orthography] = mapped_column(enum_by_value(Orthography))
+    script: Mapped[Script] = mapped_column(enum_by_value(Script), server_default=Script.UNKNOWN.value)
+    printed_pagination: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
+    height_cm: Mapped[int | None]
+    illustrations: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
+    binding: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
+    identifiers: Mapped[list[dict[str, str]]] = mapped_column(JsonB, server_default=EMPTY_LIST)
+    subjects: Mapped[list[str]] = mapped_column(JsonB, server_default=EMPTY_LIST)
+    rights: Mapped[RightsStatus] = mapped_column(enum_by_value(RightsStatus), server_default=RightsStatus.UNKNOWN.value)
+    copy_holder: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
+    copy_notes: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     notes: Mapped[str]
     image_policy: Mapped[ImagePolicy] = mapped_column(enum_by_value(ImagePolicy))
     # By table name, and added after both tables exist, since the pages table refers back to this one

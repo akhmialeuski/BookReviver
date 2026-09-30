@@ -27,9 +27,8 @@ from functools import partial
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from attrs import asdict, evolve, frozen
+from attrs import evolve, frozen
 
-from bookreviver.domain.changes import BookDetailsChanges
 from bookreviver.domain.entities import Job, Page, PageVersion, Scan, Source
 from bookreviver.domain.enums import (
     FileType,
@@ -72,8 +71,9 @@ NO_SOURCE_IMPORTED: str = 'None of the uploaded files could be imported.'
 NOT_QUEUED: str = 'The import could not be queued. Upload the files again.'
 UNEXPECTED_FAILURE: str = 'The import stopped because of an unexpected error. It has been logged.'
 # Kinds of job that import files, of which a project runs one at a time
-IMPORT_JOBS: frozenset[JobKind] = frozenset({JobKind.IMPORT_SOURCE})
-# The step that gives a page its base version while the page split is skipped, until its processor exists
+IMPORT_JOBS: frozenset[JobKind] = frozenset(
+    {JobKind.IMPORT_SOURCE}
+)  # The step that gives a page its base version while the page split is skipped, until its processor exists
 SPLIT_NONE: ProcessorRef = ProcessorRef(key='split.none', version='1')
 
 logger = logging.getLogger(__name__)
@@ -342,14 +342,9 @@ class ImportRun:
         :rtype: bool
         """
         project = await self._uow.projects.get(self.job.project_id)
-        found = {
-            name: value
-            for name, value in asdict(suggestion).items()
-            if name != 'title' and value and not getattr(project.details, name)
-        }
-        if not found:
+        details = project.details.fill_from(suggestion)
+        if details == project.details:
             return False
-        details = BookDetailsChanges(**found).apply_to(project.details)
         await self._uow.projects.update(evolve(project, details=details, updated_at=self._clock.now()))
         return True
 

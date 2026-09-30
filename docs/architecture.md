@@ -117,7 +117,8 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Accounts     | `Actor`, `AccountSettings` (default engine and model per `AiTask`)                            |
 | Credentials  | `ProviderCredential` with a masked secret, never printed or logged                            |
 | Books        | `Project`, `ProjectOverview`, `BookDetails`, `ImagePolicy`                                    |
-| Changes      | `BookDetailsChanges`, `ProjectChanges` and `CoverChange`, None keeping a field               |
+| Changes      | `BookDetailsChanges` keeping a field at `KEEP`, `ProjectChanges` and `CoverChange`            |
+| Book parts   | `Contributor`, `ContributorRole`, `BookIdentifier`, `IdentifierScheme`, `Script`, `RightsStatus` |
 | Sources      | `Source`, `SourceFile`, `SourceKind`, `FileType`, `MetadataSuggestion`                        |
 | Scans        | `Scan`, `ScanFacts`, `Renditions`                                                             |
 | Pages        | `Page`, `PageOverview`, `PageKind`, `PageOrigin`, `PageVersion`, `VersionState`, `Transform`, |
@@ -196,29 +197,59 @@ cover and endpapers. Every later stage works only with pages of the book.
 ### Project and book description
 
 A project holds two kinds of data. The book description belongs to the printed edition alone and is filled in by
-hand or from the metadata of the sources, and the project fields belong to the work on the project. `BookDetails` has
-eleven string fields in the code today. The extended description below, with contributors by role, identifiers and
-the physical description, is part of the model and arrives with its own task, so the table marks what exists now.
+hand or from the metadata of the sources, and the project fields belong to the work on the project. `BookDetails` in
+`domain/values.py` is one frozen value with the groups below. Text fields are empty strings when unknown, lists are
+tuples, `height_cm` is `None` when unknown, and `title` is the one field that may not be empty.
 
-| Group                | Fields                                                                                   | In the code now                  |
-| -------------------- | ---------------------------------------------------------------------------------------- | -------------------------------- |
-| Title                | `title`, `subtitle`, `parallel_titles`, `original_title`                                 | only `title`                     |
-| Contributors         | `contributors`: pairs of a name and a role                                               | one `authors` string             |
-| Imprint              | `publisher`, `printer`, `publication_place`, `publication_year`, `edition`, `censorship` | without `printer`, `censorship`  |
-| Series and volume    | `series`, `series_number`, `volume`                                                      | without `series_number`          |
-| Language and script  | `languages`, `orthography`, `script` (Cyrillic, Latin)                                   | one `language`, `orthography`    |
-| Physical description | `printed_pagination`, `height_cm`, `illustrations`, `binding`                            | none                             |
-| Identifiers          | `identifiers`: pairs of a scheme and a value (ISBN, OCLC, shelfmark, URL of a copy)      | none                             |
-| Subject and rights   | `subjects`, `rights` (public domain or not)                                              | none                             |
-| Copy                 | `copy_holder` (whose copy was scanned), `copy_notes` (bookplates, marks)                 | none                             |
-| Notes                | `notes`                                                                                  | present                          |
+| Group                | Fields                                                                                   |
+| -------------------- | ---------------------------------------------------------------------------------------- |
+| Title                | `title`, `subtitle`, `parallel_titles`, `original_title`                                 |
+| Contributors         | `contributors`: `Contributor` values of a name and a `ContributorRole`                   |
+| Imprint              | `publisher`, `printer`, `publication_place`, `publication_year`, `edition`, `censorship` |
+| Series and volume    | `series`, `series_number`, `volume`                                                      |
+| Language and script  | `languages`, `orthography`, `script` (`Script`: unknown, Cyrillic, Latin, mixed)         |
+| Physical description | `printed_pagination`, `height_cm`, `illustrations`, `binding`                            |
+| Identifiers          | `identifiers`: `BookIdentifier` values of an `IdentifierScheme` and a value              |
+| Subject and rights   | `subjects`, `rights` (`RightsStatus`: unknown, public domain, in copyright)              |
+| Copy                 | `copy_holder` (whose copy was scanned), `copy_notes` (bookplates, marks)                 |
+| Notes                | `notes`                                                                                  |
 
-Contributor roles are author, editor, compiler, translator, illustrator, engraver, author of the preface and
-commentator, taken from the [MARC Relator](https://www.loc.gov/marc/relators/relaterm.html) codes. Field names follow
-the [DCMI Metadata Terms](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/), so an export to library
-formats later needs no translation of concepts. `printer` is the printing house, `censorship` the censor's permit
-that pre-reform Russian books print, and `printed_pagination` the pagination as a catalogue states it, such as
-"XII, 340 p., 8 l. of plates". Languages are ISO 639-3 codes.
+Field names follow the [DCMI Metadata Terms](https://www.dublincore.org/specifications/dublin-core/dcmi-terms/), so an
+export to library formats later needs no translation of concepts. `printer` is the printing house, exported as a
+contributor with the MARC role `prt`, `censorship` the censor's permit that pre-reform Russian books print, exported
+as a `dcterms:description`, and `printed_pagination` the pagination as a catalogue states it, such as
+"XII, 340 p., 8 l. of plates". `publication_year` stays a string, because a bracketed year, a range and an estimate are
+not integers. `BookDetails.primary_author` is the first contributor with the role `aut`, else the first contributor of
+any role, else an empty string, and it is what the project list shows.
+
+- **Contributors.** One list, in the order of the title page, so two editors and their order are expressible. A
+  `Contributor` keeps the name as printed, with the spelling and the initials of the book, and the name is checked for
+  length alone. `ContributorRole` holds the [MARC Relator](https://www.loc.gov/marc/relators/relaterm.html) codes as
+  values and the MARC terms as labels: `aut`, `edt`, `com`, `trl`, `ill`, `egr`, `ltg`, `pht`, `wpr` (writer of
+  preface), `win` (writer of introduction), `ann`, `cmm`, `dte`, `ctb` and `oth`. The set is closed, and a new role is
+  one member without a migration, since roles are strings inside a JSON column. The owner of the copy is not a
+  contributor but `copy_holder`.
+- **Identifiers.** `IdentifierScheme.normalize(raw)` in the domain, on the standard library, normalizes and checks a
+  value: an ISBN loses hyphens and spaces and needs a correct ISBN-10 or ISBN-13 check digit, an OCLC number is digits,
+  an LCCN follows the normalization of the Library of Congress (`n78-890351` is `n78890351`, `85-2` is `85000002`), a
+  shelfmark is free text up to 300 characters, and a URL is an `http` or `https` address. A refusal is an
+  `InvalidIdentifierError`, a `DomainError` and a `ValueError`, so Pydantic turns it into a validation error. Pre-reform
+  books have no ISBN, and the scheme is for the reprints and facsimiles that are scanned in their place.
+  `BookIdentifier.parse(scheme, raw)` normalizes, and the constructor refuses a value that is not normalized already.
+- **Languages** are ISO 639-3 codes, as DCMI recommends, because a pre-reform book needs neither a region nor a script
+  variant, and the script is a field of its own.
+- **Changes.** `BookDetailsChanges` marks a field it leaves alone with the sentinel `KEEP` of the one-member enum
+  `Keep` in `domain/changes.py`, because `None` is a value here: the empty height. Every other change of the domain
+  still keeps a field left as `None`. `apply_to` replaces the fields that are not `KEEP` through `attrs.evolve`, so the
+  validators of `BookDetails` check the result.
+- **Storage.** Text fields and enums are columns of `projects`, and the four lists and the two lists of objects are
+  JSON columns, because their items have no identity, they are always read and written with their project, and the
+  project list shows only the title and the first author. The price is that projects cannot be searched by contributor
+  in portable SQL. When such a search is needed, a JSONB index on PostgreSQL or a derived table written by the same
+  mapper provides it. The mapper is the one place that knows the JSON shape.
+- **Validation** happens in Pydantic before the route, and the identifier rule lives in the domain, so it checks both
+  what a user types and what a file suggests. The lists are limited in length (50 contributors, 20 identifiers, 10
+  languages without repeats, 50 subjects, 10 parallel titles), so a request cannot turn one row into megabytes of JSON.
 
 The project fields are these:
 
@@ -278,6 +309,21 @@ repaired and whether it is encrypted. XMP is parsed with defusedxml. A DjVu sour
 bundled or indirect, the page count, the `print-meta` metadata, the `print-outline` outline and whether it has a text
 layer, and it suggests a publication year only from `print-meta`. An image source records the format, the Pillow
 mode, the frame count, the compression, the ICC profile, the EXIF data with `Orientation`, and the DPI.
+
+`SuggestionBuilder` in `adapters/imaging/suggestions.py` turns the metadata of a file into its `MetadataSuggestion`,
+and both `PdfFormat` and `DjvuFormat` use it. `from_docinfo` reads the PDF Info dictionary (Title, Author, Subject and
+Keywords), `from_xmp` the Dublin Core elements of the XMP packet, and `from_djvu_meta` the pairs of `djvused -e
+print-meta`. `merge` takes the first non-empty value of each field in order of priority: XMP before Info for a PDF,
+because XMP lists several creators where Info holds one string, and BibTeX keys (`title`) before DocInfo keys (`Title`)
+for DjVu. The Info author is split at semicolons only, since a comma occurs inside "Ивановъ, Н. Н.", keywords are split
+at commas and semicolons, and `dc:creator` becomes authors (`aut`), `dc:contributor` contributors (`ctb`), and the
+DjVu `author` and `editor` authors and editors (`aut`, `edt`). A `dc:identifier` becomes an identifier only when it is
+a valid ISBN, with or without a `urn:isbn:` prefix, or an `http` or `https` address, and a `dc:language` tag becomes
+a language only when its primary subtag is an ISO 639-3 code or an ISO 639-1 code from the small table of the module.
+No date from a file becomes a year of publication except the DjVu key `year`: `creationDate`, `modDate` and `dc:date`
+date the file, and for a scan the day it was made, so a year taken from them would look right and be wrong. The XMP
+packet comes from an uploaded file and is parsed with `defusedxml` with DTDs forbidden, so a packet that declares
+entities or external references, or is not XML, gives an empty suggestion.
 
 ### Scan
 
@@ -606,7 +652,11 @@ erDiagram
 ```
 
 - `projects` has the primary key `id`, and `owner_id` references `user.id` with `ON DELETE RESTRICT`. Its columns are
-  the `BookDetails` fields, `cover_page_id`, `image_policy`, `created_at` and `updated_at`. `cover_page_id`
+  the `BookDetails` fields, `cover_page_id`, `image_policy`, `created_at` and `updated_at`. The lists
+  (`parallel_titles`, `languages`, `subjects` of strings, `contributors` of `{name, role}` and `identifiers` of
+  `{scheme, value}` objects) are advanced-alchemy `JsonB` columns defaulting to `[]`, the text columns added by the
+  extended description default to `''`, `script` and `rights` default to `'unknown'`, and `height_cm` is a nullable
+  integer. `cover_page_id`
   references `pages.id` with `ON DELETE SET NULL`, so a deleted cover falls back to the first page, and the
   repository refuses a cover that is not a page of the project, which a key over both columns could not empty alone.
 - `sources` has the primary key `id`, `project_id` with `ON DELETE CASCADE`, `import_job_id` with
@@ -650,6 +700,10 @@ version with its own copy of the image when it is created, and the baseline migr
 `page_edits` and `recipes` come with the processing framework, each through a migration of its own. The `request` and
 `result` columns and the partial unique index of `jobs` came with the import job, in their own revision, and the
 `renditions_full` columns of `scans` and `page_versions` came with the choice of the format of `full`, in another.
+The columns of the extended description came in a revision of their own, which turns a non-empty `authors` string into one
+contributor with the role `aut`, a `language` of three lower-case letters into the only item of `languages`, and any
+other `language` into a `Language: ...` line appended to `notes`, and then drops `authors` and `language`. Its
+downgrade rebuilds both from the first author and the first language.
 
 ### Migrations
 
@@ -989,8 +1043,9 @@ flowchart TD
    lose the upload. A promotion that fails with an error, and not with a crash, takes the source back whole, its pages
    first since deleting the source only empties their scan, and takes its scans out of the progress, so no source is
    left without files. The job's own progress is only what was committed, so a job that fails counts no step that
-   never was. The same transaction fills the empty fields of `BookDetails` from the `suggestion` of the source,
-   so the first source that has a value for a field is the one that gives it, and the title is never overwritten. A
+   never was. The same transaction fills the empty fields of `BookDetails` from the `suggestion` of the source
+   with `BookDetails.fill_from`, which fills only empty strings and empty lists, so the first source that has a value
+   for a field is the one that gives it, and the title is never overwritten. A
    source adds its scans to `Progress.total` when it is committed, and each cut scan adds one to `Progress.done`.
 5. Once every source is committed, the job cuts the images of every scan of the project whose renditions are not
    ready, which covers its own scans, the scans a cancelled import left and the scans of a delivery that crashed. It
@@ -1123,10 +1178,12 @@ The project list counts in `page_count` the included pages of the book, and show
   `Annotated` for every parameter and dependency.
 - `PATCH` follows JSON Merge Patch, RFC 7396: a field left out stays as it is, and `null` clears it to the value a
   new resource has for it. The title of a book cannot be cleared. The body is sent as `application/merge-patch+json`
-  or `application/json`. The service receives a domain change such as `ProjectChanges`, in which None keeps a field,
-  so clearing needs no third state in the domain. The one field whose cleared value is None itself, the cover page,
-  is changed with a `CoverChange` object, whose page is empty to remove the cover. `PATCH /projects/{id}` changes the
-  description, `image_policy` and `cover_page_id`, and a cover that is not a page of the project answers 404.
+  or `application/json`. A list is replaced as a whole, and `null` empties it. The service receives a domain change
+  such as `ProjectChanges`, in which None keeps a field, so clearing needs no third state in the domain. The two fields
+  whose cleared value is None itself are the cover page, changed with a `CoverChange` object whose page is empty to
+  remove the cover, and the height of a book, which `BookDetailsChanges` tells from a field left out with its `KEEP`
+  sentinel. `PATCH /projects/{id}` changes the description, `image_policy` and `cover_page_id`, and a cover that is not
+  a page of the project answers 404. A wrong ISBN, a role outside `ContributorRole` or a too long list answers 422.
 - Pydantic stays at the edges: request and response schemas in `api`, settings in `app`. Domain invariants are
   `attrs` validators, so the core does not depend on Pydantic.
 - Every route declares a typed Pydantic response. The shapes are the same everywhere: a single resource is its

@@ -9,18 +9,20 @@ from delayed_assert import assert_expectations, expect
 from PIL import ExifTags, TiffImagePlugin
 
 from bookreviver.adapters.imaging.common import FactKey
-from bookreviver.domain.enums import ColorMode, SourceKind
+from bookreviver.domain.enums import ColorMode, ContributorRole, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
-from bookreviver.domain.values import MetadataSuggestion
+from bookreviver.domain.values import Contributor, MetadataSuggestion
 from tests.adapters.imaging.samples import (
     PdfPage,
     ScanImage,
     TiffFrame,
+    add_xmp,
     encode_image,
     gradient_image,
     write_image,
     write_pdf,
     write_tiff,
+    xmp_packet,
 )
 
 if TYPE_CHECKING:
@@ -366,7 +368,12 @@ class TestInspectPdf:
         analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
         metadata = analysis.file_metadata
 
-        expect(analysis.suggestion == MetadataSuggestion(title=DOCUMENT_TITLE, authors=DOCUMENT_AUTHOR))
+        expect(
+            analysis.suggestion
+            == MetadataSuggestion(
+                title=DOCUMENT_TITLE, contributors=(Contributor(name=DOCUMENT_AUTHOR, role=ContributorRole.AUTHOR),)
+            )
+        )
         expect(metadata[DOCUMENT_INFO_KEY].get(TITLE_KEY) == PADDED_DOCUMENT_TITLE)
         expect(SUBJECT_KEY not in metadata[DOCUMENT_INFO_KEY])
         expect(metadata['pdf_version'].startswith('PDF '))
@@ -376,6 +383,74 @@ class TestInspectPdf:
         expect(metadata['has_xmp_metadata'] is False)
         expect(metadata[REPAIRED_KEY] is False)
         expect(json.loads(json.dumps(metadata)) == metadata)
+        assert_expectations()
+
+    async def test_xmp_wins_over_the_document_information_and_dates_give_no_year(
+        self, fx_inspector: SourceInspector, tmp_path: Path
+    ) -> None:
+        """Verify the XMP packet of a PDF is read before its information dictionary, field by field.
+
+        The XMP title and creators win, the information dictionary fills the subjects the packet lacks, and neither
+        the information dates nor ``dc:date`` becomes the year of publication.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        packet = xmp_packet(
+            '<dc:title><rdf:Alt><rdf:li xml:lang="x-default">XMP title</rdf:li></rdf:Alt></dc:title>'
+            '<dc:creator><rdf:Seq><rdf:li>First, A.</rdf:li><rdf:li>Second, B.</rdf:li></rdf:Seq></dc:creator>'
+            '<dc:language><rdf:Bag><rdf:li>ru</rdf:li></rdf:Bag></dc:language>'
+            '<dc:identifier>urn:isbn:0-306-40615-2</dc:identifier>'
+            '<dc:date><rdf:Seq><rdf:li>2024-05-12</rdf:li></rdf:Seq></dc:date>'
+        )
+        path = write_pdf(
+            tmp_path / PDF_NAME,
+            pages=[PdfPage()],
+            metadata={
+                TITLE_KEY: 'Info title',
+                'author': 'Info, I.',
+                'keywords': 'one, two',
+                'creationDate': 'D:20240512',
+            },
+        )
+        add_xmp(path, packet=packet)
+
+        analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
+
+        suggestion = analysis.suggestion
+        expect(suggestion.title == 'XMP title')
+        expect([person.name for person in suggestion.contributors] == ['First, A.', 'Second, B.'])
+        expect((suggestion.languages, suggestion.subjects) == (('rus',), ('one', 'two')))
+        expect([item.value for item in suggestion.identifiers] == ['0306406152'])
+        expect(suggestion.publication_year == '')
+        expect(analysis.file_metadata['has_xmp_metadata'] is True)
+        assert_expectations()
+
+    async def test_xmp_declaring_entities_is_not_expanded_and_gives_the_information_only(
+        self, fx_inspector: SourceInspector, tmp_path: Path
+    ) -> None:
+        """Verify a hostile XMP packet is refused as a whole, and the PDF is still inspected from its information.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        hostile = (
+            '<?xml version="1.0"?><!DOCTYPE xmpmeta [<!ENTITY a "AAAA"><!ENTITY b "&a;&a;&a;&a;">]>'
+            '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+            '<rdf:Description xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>&b;</dc:title>'
+            '</rdf:Description></rdf:RDF></x:xmpmeta>'
+        )
+        path = write_pdf(tmp_path / PDF_NAME, pages=[PdfPage()], metadata={TITLE_KEY: DOCUMENT_TITLE})
+        add_xmp(path, packet=hostile)
+
+        analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
+
+        expect(analysis.suggestion == MetadataSuggestion(title=DOCUMENT_TITLE))
+        expect(analysis.file_metadata['has_xmp_metadata'] is True)
         assert_expectations()
 
     async def test_suggests_nothing_without_metadata(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:

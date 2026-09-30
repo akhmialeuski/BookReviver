@@ -6,14 +6,17 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from attrs import evolve
+from delayed_assert import assert_expectations, expect
 
+from bookreviver.adapters.persistence.sqlalchemy.mappers import ProjectMapper
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.enums import (
     ColorMode,
+    ContributorRole,
     FileType,
+    IdentifierScheme,
     ImagePolicy,
     JobState,
-    Orthography,
     PageKind,
     Rendition,
     SourceKind,
@@ -22,7 +25,8 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.ids import StorageKey
 from bookreviver.domain.values import (
-    BookDetails,
+    BookIdentifier,
+    Contributor,
     MetadataSuggestion,
     Point,
     ProcessorRef,
@@ -35,12 +39,14 @@ from bookreviver.domain.values import (
 )
 from tests.helpers.builders import (
     EPOCH,
+    FULL_DETAILS,
     make_job,
     make_page,
     make_page_version,
     make_project,
     make_scan,
     make_source,
+    new_account_id,
 )
 
 if TYPE_CHECKING:
@@ -49,19 +55,6 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
-FULL_DETAILS: BookDetails = BookDetails(
-    title='Беларускія народныя казкі',
-    authors='Я. Карскі',
-    publisher='Друкарня Губернскага праўлення',
-    publication_place='Вільня',
-    publication_year='1905',
-    edition='Выданне другое',
-    series='Этнаграфічны зборнік',
-    volume='II',
-    language='be',
-    orthography=Orthography.PRE_REFORM,
-    notes='Scanned from the library copy',
-)
 # The right half of a spread 2200 px wide and 1561 px high
 HALF_QUAD: Quad = Quad(
     top_left=Point(x=1100.5, y=0),
@@ -89,7 +82,19 @@ FULL_FILES: list[SourceFile] = [
 ]
 FULL_METADATA: dict[str, Any] = {'document': 'indirect', 'pages': 2, 'meta': {'year': '1905'}, 'text_layer': False}
 FULL_SUGGESTION: MetadataSuggestion = MetadataSuggestion(
-    title='Беларускія народныя казкі', authors='Я. Карскі', publisher='', publication_year='1905', language='bel'
+    title='Беларускія народныя казкі',
+    contributors=(
+        Contributor(name='Я. Карскі', role=ContributorRole.AUTHOR),
+        Contributor(name='П. П. Петровъ', role=ContributorRole.CONTRIBUTOR),
+    ),
+    publisher='',
+    publication_year='1905',
+    languages=('bel', 'rus'),
+    identifiers=(
+        BookIdentifier.parse(IdentifierScheme.ISBN, '978-0-306-40615-7'),
+        BookIdentifier.parse(IdentifierScheme.URL, 'https://example.org/books/karski'),
+    ),
+    subjects=('Фольклор', 'Казкі'),
 )
 FULL_PROGRESS: Progress = Progress(done=7, total=12)
 
@@ -116,6 +121,17 @@ class TestProjectMapper:
             await uow.commit()
         async with fx_database.sessions() as session:
             assert await SqlAlchemyUnitOfWork(session).projects.get(project.id) == described
+
+    async def test_lists_are_stored_as_json_of_plain_values(self) -> None:
+        """Verify contributors and identifiers become lists of objects holding role and scheme values, not members."""
+        row = ProjectMapper().to_row(evolve(make_project(owner_id=new_account_id()), details=FULL_DETAILS))
+        expect(row.contributors[:2] == [{'name': 'Я. Карскі', 'role': 'aut'}, {'name': 'И. И. Ивановъ', 'role': 'edt'}])
+        expect(
+            row.identifiers[:2]
+            == [{'scheme': 'shelfmark', 'value': '18.123.4.56'}, {'scheme': 'isbn', 'value': '0306406152'}]
+        )
+        expect((row.languages, row.parallel_titles) == (['bel', 'rus'], ['Białoruskie baśnie ludowe']))
+        assert_expectations()
 
 
 class TestPageMapper:

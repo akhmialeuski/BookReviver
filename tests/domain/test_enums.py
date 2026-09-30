@@ -2,7 +2,18 @@
 
 import pytest
 
-from bookreviver.domain.enums import ColorMode, FileType, ImagePolicy, JobState, Rendition, SourceKind, Stage
+from bookreviver.domain.enums import (
+    ColorMode,
+    ContributorRole,
+    FileType,
+    ImagePolicy,
+    JobState,
+    Rendition,
+    RightsStatus,
+    Script,
+    SourceKind,
+    Stage,
+)
 
 # Written out rather than taken from the enum, so the test pins the value stored and sent over the API
 PAGE_SPLIT_VALUE: str = 'page-split'
@@ -125,3 +136,38 @@ class TestJobState:
     def test_active_states_are_queued_and_running(self) -> None:
         """Verify the active states are exactly the queued and running ones, the complement of the final states."""
         assert JobState.active() == {JobState.QUEUED, JobState.RUNNING}
+
+
+class TestContributorRole:
+    """Tests for the members of ContributorRole."""
+
+    def test_codes_and_terms_are_those_of_the_marc_list_of_relators(self) -> None:
+        """Verify each member has the code and the term the MARC Code List for Relators gives, written out here."""
+        assert {role.value: role.label for role in ContributorRole} == {
+            'aut': 'author',
+            'edt': 'editor',
+            'com': 'compiler',
+            'trl': 'translator',
+            'ill': 'illustrator',
+            'egr': 'engraver',
+            'ltg': 'lithographer',
+            'pht': 'photographer',
+            'wpr': 'writer of preface',
+            'win': 'writer of introduction',
+            'ann': 'annotator',
+            'cmm': 'commentator',
+            'dte': 'dedicatee',
+            'ctb': 'contributor',
+            'oth': 'other',
+        }
+
+
+class TestScriptAndRightsStatus:
+    """Tests for the values and labels of Script and RightsStatus."""
+
+    def test_values_and_labels(self) -> None:
+        """Verify the stored values and the labels of the writing systems and the rights statuses."""
+        assert ({s.value: s.label for s in Script}, {r.value: r.label for r in RightsStatus}) == (
+            {'unknown': 'Unknown', 'cyrillic': 'Cyrillic', 'latin': 'Latin', 'mixed': 'Mixed'},
+            {'unknown': 'Unknown', 'public-domain': 'Public domain', 'in-copyright': 'In copyright'},
+        )

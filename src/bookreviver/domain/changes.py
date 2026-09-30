@@ -1,50 +1,96 @@
 """Partial changes of value objects, as an edit form or a JSON Merge Patch sends them.
 
-A change names only the fields to replace, and a field left as None keeps its current value. Clearing a field is a
-change to its empty value, such as an empty string, so the domain needs no third state between keeping and
-replacing. The API turns a field sent as null into that empty value. The one field with no empty value of its own is
-the cover page of a project, where None is the empty value, so its change is the object ``CoverChange``.
+A change names only the fields to replace. Most changes keep a field that is left as None, and clearing such a field is
+a change to its empty value, such as an empty string. The book description cannot work that way, because its height has
+None as its empty value, so its change tells "not sent" from "clear" with the sentinel ``KEEP`` instead. The API turns
+a field sent as null into the empty value of the field. The other field with no empty value of its own is the cover
+page of a project, where None is the empty value, so its change is the object ``CoverChange``.
 """
 
+import enum
 from typing import TYPE_CHECKING
 
 from attrs import asdict, evolve, field, frozen
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Project
-    from bookreviver.domain.enums import ImagePolicy, Orthography
+    from bookreviver.domain.enums import ImagePolicy, Orthography, RightsStatus, Script
     from bookreviver.domain.ids import PageId
-    from bookreviver.domain.values import BookDetails
+    from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor
+
+
+class Keep(enum.Enum):
+    """The one value of ``KEEP``, so a field that may be None can still tell "left out" from "cleared"."""
+
+    KEEP = enum.auto()
+
+
+KEEP: Keep = Keep.KEEP
 
 
 @frozen(kw_only=True)
 class BookDetailsChanges:
-    """New values for some fields of a book description; None keeps the current value.
+    """New values for some fields of a book description; ``KEEP`` keeps the current value.
+
+    A list is replaced as a whole, and a cleared field is set to its empty value: an empty string, an empty tuple,
+    None for the height or the unknown member of an enum.
 
     :ivar title: New title, which may not be empty.
-    :ivar authors: New authors as printed.
-    :ivar publisher: New publisher or printing house.
+    :ivar subtitle: New subtitle.
+    :ivar parallel_titles: New titles in other languages.
+    :ivar original_title: New title of the original work.
+    :ivar contributors: New people who made the book, in the order of the title page.
+    :ivar publisher: New publisher.
+    :ivar printer: New printing house.
     :ivar publication_place: New city of publication.
     :ivar publication_year: New year of publication as printed.
     :ivar edition: New edition statement.
+    :ivar censorship: New censor's permit.
     :ivar series: New series the book belongs to.
+    :ivar series_number: New number of the book in its series.
     :ivar volume: New volume or part within a multi-volume work.
-    :ivar language: New language of the text.
+    :ivar languages: New ISO 639-3 codes of the languages of the text.
     :ivar orthography: New spelling system of the print.
+    :ivar script: New writing system of the print.
+    :ivar printed_pagination: New pagination as a catalogue states it.
+    :ivar height_cm: New height in centimetres, or None to clear it.
+    :ivar illustrations: New statement of the illustrations.
+    :ivar binding: New binding or cover of the copy.
+    :ivar identifiers: New numbers and addresses that identify the book or the copy.
+    :ivar subjects: New topics of the book.
+    :ivar rights: New publishing rights.
+    :ivar copy_holder: New owner of the scanned copy.
+    :ivar copy_notes: New marks of the scanned copy.
     :ivar notes: New free-form notes of the owner.
     """
 
-    title: str | None = None
-    authors: str | None = None
-    publisher: str | None = None
-    publication_place: str | None = None
-    publication_year: str | None = None
-    edition: str | None = None
-    series: str | None = None
-    volume: str | None = None
-    language: str | None = None
-    orthography: Orthography | None = None
-    notes: str | None = None
+    title: str | Keep = KEEP
+    subtitle: str | Keep = KEEP
+    parallel_titles: tuple[str, ...] | Keep = KEEP
+    original_title: str | Keep = KEEP
+    contributors: tuple[Contributor, ...] | Keep = KEEP
+    publisher: str | Keep = KEEP
+    printer: str | Keep = KEEP
+    publication_place: str | Keep = KEEP
+    publication_year: str | Keep = KEEP
+    edition: str | Keep = KEEP
+    censorship: str | Keep = KEEP
+    series: str | Keep = KEEP
+    series_number: str | Keep = KEEP
+    volume: str | Keep = KEEP
+    languages: tuple[str, ...] | Keep = KEEP
+    orthography: Orthography | Keep = KEEP
+    script: Script | Keep = KEEP
+    printed_pagination: str | Keep = KEEP
+    height_cm: int | Keep | None = KEEP
+    illustrations: str | Keep = KEEP
+    binding: str | Keep = KEEP
+    identifiers: tuple[BookIdentifier, ...] | Keep = KEEP
+    subjects: tuple[str, ...] | Keep = KEEP
+    rights: RightsStatus | Keep = KEEP
+    copy_holder: str | Keep = KEEP
+    copy_notes: str | Keep = KEEP
+    notes: str | Keep = KEEP
 
     def apply_to(self, details: BookDetails) -> BookDetails:
         """Return ``details`` with every given field replaced, checked like a new description.
@@ -55,7 +101,7 @@ class BookDetailsChanges:
         :rtype: BookDetails
         :raises ValueError: If the result breaks a rule of a description, such as an empty title.
         """
-        given = {name: value for name, value in asdict(self, recurse=False).items() if value is not None}
+        given = {name: value for name, value in asdict(self, recurse=False).items() if value is not KEEP}
         return evolve(details, **given)
 
 

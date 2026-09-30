@@ -29,10 +29,12 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     SourceRow,
 )
 from bookreviver.domain.entities import Job, Page, PageVersion, Project, Scan, Source
-from bookreviver.domain.enums import RejectionReason, TransformKind
+from bookreviver.domain.enums import ContributorRole, IdentifierScheme, RejectionReason, TransformKind
 from bookreviver.domain.ids import AccountId, JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId, StorageKey
 from bookreviver.domain.values import (
     BookDetails,
+    BookIdentifier,
+    Contributor,
     ImportRequest,
     ImportResult,
     MetadataSuggestion,
@@ -48,7 +50,7 @@ from bookreviver.domain.values import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
 
 def json_value(_owner: object, _field: object, value: object) -> object:
@@ -64,6 +66,50 @@ def json_value(_owner: object, _field: object, value: object) -> object:
     :rtype: object
     """
     return str(value) if isinstance(value, UUID) else value
+
+
+def contributors_to_json(contributors: Sequence[Contributor]) -> list[dict[str, str]]:
+    """Turn contributors into the JSON list of ``{name, role}`` objects a description and a suggestion store.
+
+    :param contributors: Contributors in title page order.
+    :type contributors: Sequence[Contributor]
+    :returns: One object per contributor, holding the code of the role and not the member.
+    :rtype: list[dict[str, str]]
+    """
+    return [{'name': person.name, 'role': person.role.value} for person in contributors]
+
+
+def contributors_from_json(stored: Sequence[Mapping[str, str]]) -> tuple[Contributor, ...]:
+    """Build contributors from the JSON list ``contributors_to_json`` wrote.
+
+    :param stored: Stored ``{name, role}`` objects.
+    :type stored: Sequence[Mapping[str, str]]
+    :returns: The contributors in the stored order.
+    :rtype: tuple[Contributor, ...]
+    """
+    return tuple(Contributor(name=item['name'], role=ContributorRole(item['role'])) for item in stored)
+
+
+def identifiers_to_json(identifiers: Sequence[BookIdentifier]) -> list[dict[str, str]]:
+    """Turn identifiers into the JSON list of ``{scheme, value}`` objects a description and a suggestion store.
+
+    :param identifiers: Identifiers in their order.
+    :type identifiers: Sequence[BookIdentifier]
+    :returns: One object per identifier, holding the value of the scheme and not the member.
+    :rtype: list[dict[str, str]]
+    """
+    return [{'scheme': item.scheme.value, 'value': item.value} for item in identifiers]
+
+
+def identifiers_from_json(stored: Sequence[Mapping[str, str]]) -> tuple[BookIdentifier, ...]:
+    """Build identifiers from the JSON list ``identifiers_to_json`` wrote.
+
+    :param stored: Stored ``{scheme, value}`` objects.
+    :type stored: Sequence[Mapping[str, str]]
+    :returns: The identifiers in the stored order.
+    :rtype: tuple[BookIdentifier, ...]
+    """
+    return tuple(BookIdentifier(scheme=IdentifierScheme(item['scheme']), value=item['value']) for item in stored)
 
 
 class RowMapper[EntityT, RowT](ABC):
@@ -108,15 +154,31 @@ class ProjectMapper(RowMapper[Project, ProjectRow]):
         """
         details = BookDetails(
             title=row.title,
-            authors=row.authors,
+            subtitle=row.subtitle,
+            parallel_titles=tuple(row.parallel_titles),
+            original_title=row.original_title,
+            contributors=contributors_from_json(row.contributors),
             publisher=row.publisher,
+            printer=row.printer,
             publication_place=row.publication_place,
             publication_year=row.publication_year,
             edition=row.edition,
+            censorship=row.censorship,
             series=row.series,
+            series_number=row.series_number,
             volume=row.volume,
-            language=row.language,
+            languages=tuple(row.languages),
             orthography=row.orthography,
+            script=row.script,
+            printed_pagination=row.printed_pagination,
+            height_cm=row.height_cm,
+            illustrations=row.illustrations,
+            binding=row.binding,
+            identifiers=identifiers_from_json(row.identifiers),
+            subjects=tuple(row.subjects),
+            rights=row.rights,
+            copy_holder=row.copy_holder,
+            copy_notes=row.copy_notes,
             notes=row.notes,
         )
         return Project(
@@ -143,15 +205,31 @@ class ProjectMapper(RowMapper[Project, ProjectRow]):
             id=entity.id,
             owner_id=entity.owner_id,
             title=details.title,
-            authors=details.authors,
+            subtitle=details.subtitle,
+            parallel_titles=list(details.parallel_titles),
+            original_title=details.original_title,
+            contributors=contributors_to_json(details.contributors),
             publisher=details.publisher,
+            printer=details.printer,
             publication_place=details.publication_place,
             publication_year=details.publication_year,
             edition=details.edition,
+            censorship=details.censorship,
             series=details.series,
+            series_number=details.series_number,
             volume=details.volume,
-            language=details.language,
+            languages=list(details.languages),
             orthography=details.orthography,
+            script=details.script,
+            printed_pagination=details.printed_pagination,
+            height_cm=details.height_cm,
+            illustrations=details.illustrations,
+            binding=details.binding,
+            identifiers=identifiers_to_json(details.identifiers),
+            subjects=list(details.subjects),
+            rights=details.rights,
+            copy_holder=details.copy_holder,
+            copy_notes=details.copy_notes,
             notes=details.notes,
             image_policy=entity.image_policy,
             cover_page_id=entity.cover_page_id,
@@ -308,7 +386,15 @@ class SourceMapper(RowMapper[Source, SourceRow]):
             sha256=row.sha256,
             scan_count=row.scan_count,
             metadata=row.metadata_,
-            suggestion=MetadataSuggestion(**row.suggestion),
+            suggestion=MetadataSuggestion(
+                title=row.suggestion['title'],
+                contributors=contributors_from_json(row.suggestion['contributors']),
+                publisher=row.suggestion['publisher'],
+                publication_year=row.suggestion['publication_year'],
+                languages=tuple(row.suggestion['languages']),
+                identifiers=identifiers_from_json(row.suggestion['identifiers']),
+                subjects=tuple(row.suggestion['subjects']),
+            ),
             import_job_id=None if row.import_job_id is None else JobId(row.import_job_id),
             imported_at=row.imported_at,
         )
@@ -333,7 +419,15 @@ class SourceMapper(RowMapper[Source, SourceRow]):
             sha256=entity.sha256,
             scan_count=entity.scan_count,
             metadata_=dict(entity.metadata),
-            suggestion=asdict(entity.suggestion),
+            suggestion={
+                'title': entity.suggestion.title,
+                'contributors': contributors_to_json(entity.suggestion.contributors),
+                'publisher': entity.suggestion.publisher,
+                'publication_year': entity.suggestion.publication_year,
+                'languages': list(entity.suggestion.languages),
+                'identifiers': identifiers_to_json(entity.suggestion.identifiers),
+                'subjects': list(entity.suggestion.subjects),
+            },
             import_job_id=entity.import_job_id,
             imported_at=entity.imported_at,
         )
