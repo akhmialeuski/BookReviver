@@ -6,6 +6,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from sqlalchemy import delete, func, select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
@@ -25,6 +26,15 @@ pytestmark = pytest.mark.anyio
 SQLITE_FOREIGN_KEY_FAILED: str = 'FOREIGN KEY constraint failed'
 
 
+class TestPageRow:
+    """Tests for the columns of PageRow."""
+
+    def test_order_keys_compare_byte_by_byte_on_postgresql(self) -> None:
+        """Verify the order key column takes the C collation on PostgreSQL, whose default collation ignores case."""
+        column_type = PageRow.__table__.c.order_key.type
+        assert column_type.compile(dialect=postgresql.dialect()) == 'VARCHAR COLLATE "C"'
+
+
 class TestProjectRow:
     """Tests for ProjectRow together with the foreign keys and relationships of its pages and jobs."""
 
@@ -42,7 +52,7 @@ class TestProjectRow:
         async with fx_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
             await uow.projects.add(project)
-            await uow.pages.replace_for_project(project.id, [make_page(project_id=project.id, index=0)])
+            await uow.pages.add(make_page(project_id=project.id))
             await uow.jobs.add(make_job(project_id=project.id))
             await uow.commit()
         async with fx_database.sessions() as session:
@@ -65,7 +75,7 @@ class TestProjectRow:
         async with fx_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
             await uow.projects.add(project)
-            await uow.pages.replace_for_project(project.id, [make_page(project_id=project.id, index=0)])
+            await uow.pages.add(make_page(project_id=project.id))
             await uow.jobs.add(make_job(project_id=project.id))
             await uow.commit()
         async with fx_database.sessions() as session:
@@ -82,7 +92,7 @@ class TestProjectRow:
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
         """
-        orphan = PageMapper().to_row(make_page(project_id=make_project(owner_id=new_account_id()).id, index=0))
+        orphan = PageMapper().to_row(make_page(project_id=make_project(owner_id=new_account_id()).id))
         async with fx_database.sessions() as session:
             session.add(orphan)
             with pytest.raises(IntegrityError, match=SQLITE_FOREIGN_KEY_FAILED):

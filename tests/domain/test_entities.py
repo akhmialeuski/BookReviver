@@ -6,8 +6,8 @@ from uuid import uuid4
 import pytest
 from attrs import evolve
 
-from bookreviver.domain.enums import PageAsset, TransformKind
-from bookreviver.domain.ids import PageId, PageVersionId, StorageKey
+from bookreviver.domain.enums import PageOrigin, TransformKind
+from bookreviver.domain.ids import PageId, PageVersionId, ScanId, StorageKey
 from bookreviver.domain.values import BookDetails, Point, Progress, Quad, Renditions, Transform
 from tests.helpers.builders import make_page, make_page_version, make_project, new_account_id
 
@@ -20,15 +20,24 @@ QUAD: Quad = Quad(
 )
 
 
-class TestPageAssetKey:
-    """Tests for Page.asset_key()."""
+class TestPage:
+    """Tests for Page invariants."""
 
-    def test_key_changes_with_asset_version(self) -> None:
-        """Verify regenerated assets get new keys, so cached URLs never serve stale images."""
-        page = make_page(project_id=make_project(owner_id=new_account_id()).id, index=4)
-        regenerated = evolve(page, assets=evolve(page.assets, version=1))
-        first, second = page.asset_key(PageAsset.TILES), regenerated.asset_key(PageAsset.TILES)
-        assert (first.endswith('/pages/4/v0/iiif'), second.endswith('/pages/4/v1/iiif')) == (True, True)
+    @pytest.mark.parametrize('origin', [PageOrigin.BLANK, PageOrigin.PLACEHOLDER])
+    def test_page_not_cut_from_a_scan_names_no_scan(self, origin: PageOrigin) -> None:
+        """Reject a blank leaf or a placeholder that names a scan, which only a page cut from one may.
+
+        :param origin: Origin of a page that has no scan.
+        :type origin: PageOrigin
+        """
+        page = make_page(project_id=make_project(owner_id=new_account_id()).id)
+        with pytest.raises(ValueError, match='has no scan'):
+            evolve(page, origin=origin, scan_id=ScanId(uuid4()))
+
+    def test_page_whose_source_was_deleted_keeps_its_origin(self) -> None:
+        """Verify a page cut from a scan stays one when its scan is gone, since it keeps its own copy of the image."""
+        page = evolve(make_page(project_id=make_project(owner_id=new_account_id()).id), origin=PageOrigin.SCAN)
+        assert (page.origin, page.scan_id) == (PageOrigin.SCAN, None)
 
 
 class TestTransform:

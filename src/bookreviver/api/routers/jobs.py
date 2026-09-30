@@ -20,8 +20,24 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.route_names import RouteName
-from bookreviver.api.schemas.jobs import EventName, JobSchema, ProjectChangedSchema
-from bookreviver.domain.events import DomainEvent, JobChanged, ProjectChanged
+from bookreviver.api.schemas.jobs import (
+    EventName,
+    JobSchema,
+    PagesChangedSchema,
+    PageVersionReadySchema,
+    ProjectChangedSchema,
+    ScanReadySchema,
+    SourceImportedSchema,
+)
+from bookreviver.domain.events import (
+    DomainEvent,
+    JobChanged,
+    PagesChanged,
+    PageVersionReady,
+    ProjectChanged,
+    ScanReady,
+    SourceImported,
+)
 from bookreviver.domain.ids import JobId, ProjectId
 from bookreviver.services.jobs import JobService
 
@@ -97,7 +113,7 @@ async def open_event_stream(
 async def stream_project_events(
     events: Annotated[ProjectEvents, Depends(open_event_stream)],
 ) -> AsyncIterator[ServerSentEvent]:
-    """Stream the project's events as they happen: job changes and description changes.
+    """Stream the project's events as they happen: jobs, imported sources, ready scans, pages, versions, description.
 
     \N{FORM FEED}
     :param events: The project's events, subscribed to by ``open_event_stream``.
@@ -109,6 +125,22 @@ async def stream_project_events(
         match event:
             case JobChanged(job=job):
                 yield ServerSentEvent(event=EventName.JOB_CHANGED, data=JobSchema.model_validate(job))
+            case SourceImported(project_id=project_id, source=source):
+                yield ServerSentEvent(
+                    event=EventName.SOURCE_IMPORTED,
+                    data=SourceImportedSchema(project_id=project_id, source_id=source.id),
+                )
+            case ScanReady(project_id=project_id, scan=scan):
+                yield ServerSentEvent(
+                    event=EventName.SCAN_READY, data=ScanReadySchema(project_id=project_id, scan_id=scan.id)
+                )
+            case PagesChanged(project_id=project_id):
+                yield ServerSentEvent(event=EventName.PAGES_CHANGED, data=PagesChangedSchema(project_id=project_id))
+            case PageVersionReady(project_id=project_id, version=version):
+                yield ServerSentEvent(
+                    event=EventName.PAGE_VERSION_READY,
+                    data=PageVersionReadySchema(project_id=project_id, page_id=version.page_id, version_id=version.id),
+                )
             case ProjectChanged(project_id=project_id):
                 yield ServerSentEvent(event=EventName.PROJECT_CHANGED, data=ProjectChangedSchema(project_id=project_id))
 

@@ -9,7 +9,6 @@ from bookreviver.domain.enums import Orthography, TransformKind
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from datetime import datetime
 
     from bookreviver.domain.enums import ColorMode, SourceKind
     from bookreviver.domain.ids import StorageKey
@@ -69,26 +68,10 @@ class MetadataSuggestion:
 
 
 @frozen(kw_only=True)
-class SourceSummary:
-    """The source a book was imported from.
-
-    :ivar kind: Whether the source is one PDF or a set of page images.
-    :ivar name: Name of the uploaded file, or of the first page image of a set.
-    :ivar size_bytes: Total size of the upload in bytes.
-    :ivar metadata: File metadata the inspector reported.
-    :ivar imported_at: When the source became the project's source.
-    """
-
-    kind: SourceKind
-    name: str
-    size_bytes: int = field(validator=validators.ge(0))
-    metadata: MetadataMap = field(factory=dict)
-    imported_at: datetime
-
-
-@frozen(kw_only=True)
 class PageFacts:
-    """Technical facts of one source page.
+    """Technical facts of one page as an inspector reports it from an upload, with the file holding it.
+
+    A stored scan keeps the same facts as ``ScanFacts``, without the file, which its source names.
 
     :ivar width_px: Width of the page image in pixels.
     :ivar height_px: Height of the page image in pixels.
@@ -117,18 +100,6 @@ class PageFacts:
     has_text_layer: bool = False
     source_file: str = ''
     extra: MetadataMap = field(factory=dict)
-
-
-@frozen(kw_only=True)
-class PageAssets:
-    """State of the derived images of a page: native image, thumbnail and tile pyramid.
-
-    :ivar ready: Whether every derived image of the current version is published.
-    :ivar version: Bumped whenever the assets are regenerated, so their URLs change and caches never go stale.
-    """
-
-    ready: bool = False
-    version: int = 0
 
 
 @frozen(kw_only=True)

@@ -8,13 +8,13 @@ contract suite in ``tests/contracts``, which is what makes them interchangeable.
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, override
 
-from bookreviver.domain.entities import Job, Project, Scan, Source
-from bookreviver.domain.ids import JobId, ProjectId, ScanId, SourceId
+from bookreviver.domain.entities import Job, Page, PageVersion, Project, Scan, Source
+from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
-    from bookreviver.domain.entities import Page, ProjectOverview
+    from bookreviver.domain.entities import ProjectOverview
     from bookreviver.domain.enums import JobState
     from bookreviver.domain.ids import AccountId
     from bookreviver.domain.values import Slice, SliceRequest
@@ -88,14 +88,25 @@ class ProjectRepository(Repository[Project, ProjectId]):
 
     @abstractmethod
     async def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:
-        """Return the owner's projects with their page counts, most recently updated first, ties by identifier.
+        """Return the owner's projects with their counts, most recently updated first, ties by identifier.
 
         :param owner_id: Account owning the projects.
         :type owner_id: AccountId
         :param request: Offset and limit of the window to return.
         :type request: SliceRequest
-        :returns: The projects of the window with their page counts, and the number of all the owner's projects.
+        :returns: The projects of the window with the counts of their included pages, sources and scans, and the
+                  number of all the owner's projects.
         :rtype: Slice[ProjectOverview]
+        """
+
+    @abstractmethod
+    async def overview(self, project: Project) -> ProjectOverview:
+        """Return a project read earlier together with the counts of its book.
+
+        :param project: Project whose book is counted.
+        :type project: Project
+        :returns: The project with the counts of its included pages, sources and scans.
+        :rtype: ProjectOverview
         """
 
 
@@ -154,54 +165,50 @@ class ScanRepository(Repository[Scan, ScanId]):
         """
 
 
-class PageRepository(ABC):
-    """Pages of a project, addressed by their position in the book."""
+class PageRepository(Repository[Page, PageId]):
+    """Pages of the book, addressed by their identifier and ordered by their order key.
 
-    @abstractmethod
-    async def get(self, project_id: ProjectId, index: int) -> Page:
-        """Return one page.
-
-        :param project_id: Project owning the page.
-        :type project_id: ProjectId
-        :param index: Position of the page in the book, starting at 0.
-        :type index: int
-        :returns: The stored page.
-        :rtype: Page
-        :raises NotFoundError: If the project has no page at this index.
-        """
+    Within a project an order key is unique, and a part of a scan, the pair of a scan and a slot, belongs to one page
+    at most. A page keeps its row when its scan is deleted, and loses only the reference to it. Deleting a page
+    removes its versions.
+    """
 
     @abstractmethod
     async def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Page]:
-        """Return the pages of a project in book order.
+        """Return the pages of a project in book order, the byte order of their order keys.
+
+        The position of a page in the book is the offset of the window plus its index in the window.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
         :param request: Offset and limit of the window to return.
         :type request: SliceRequest
-        :returns: The pages of the window and the number of all the project's pages.
+        :returns: The pages of the window and the number of all the project's pages, included or not.
         :rtype: Slice[Page]
         """
 
     @abstractmethod
-    async def replace_for_project(self, project_id: ProjectId, pages: Sequence[Page]) -> None:
-        """Replace every page of a project with the given pages.
+    async def last_order_key(self, project_id: ProjectId) -> str | None:
+        """Return the order key of the last page of a project, after which new pages are appended.
 
-        :param project_id: Project whose pages are replaced.
+        :param project_id: Project owning the pages.
         :type project_id: ProjectId
-        :param pages: The project's new pages, each keyed by its own index.
-        :type pages: Sequence[Page]
-        :raises NotFoundError: If the project is not stored.
+        :returns: The greatest order key of the project's pages, or None for a book without pages.
+        :rtype: str | None
         """
 
-    @abstractmethod
-    async def update(self, page: Page) -> Page:
-        """Replace the stored state of one page and return it as stored.
 
-        :param page: Page with its new state, addressed by its project and index.
-        :type page: Page
-        :returns: The page as stored.
-        :rtype: Page
-        :raises NotFoundError: If the page is not stored.
+class PageVersionRepository(Repository[PageVersion, PageVersionId]):
+    """Versions of the pages of the book; a version whose input version is deleted keeps its row without the input."""
+
+    @abstractmethod
+    async def list_for_page(self, page_id: PageId) -> Sequence[PageVersion]:
+        """Return the versions of one page in the order they were created, ties by identifier.
+
+        :param page_id: Page owning the versions.
+        :type page_id: PageId
+        :returns: Every version of the page, the earliest first.
+        :rtype: Sequence[PageVersion]
         """
 
 
@@ -259,6 +266,7 @@ class UnitOfWork(ABC):
     :ivar sources: Source repository of this transaction.
     :ivar scans: Scan repository of this transaction.
     :ivar pages: Page repository of this transaction.
+    :ivar page_versions: Page version repository of this transaction.
     :ivar jobs: Job repository of this transaction.
     """
 
@@ -266,6 +274,7 @@ class UnitOfWork(ABC):
     sources: SourceRepository
     scans: ScanRepository
     pages: PageRepository
+    page_versions: PageVersionRepository
     jobs: JobRepository
 
     @abstractmethod

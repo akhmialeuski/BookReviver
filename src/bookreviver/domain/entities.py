@@ -1,36 +1,20 @@
 """Entities: domain objects with an identity, frozen and changed through ``attrs.evolve``."""
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from attrs import field, frozen, validators
 
-from bookreviver.domain.enums import JobState, VersionState
-from bookreviver.domain.ids import StorageKey
-from bookreviver.domain.values import (
-    SHA256_PATTERN,
-    MetadataSuggestion,
-    PageAssets,
-    Progress,
-    Renditions,
-    Transform,
-)
+from bookreviver.domain.enums import ImagePolicy, JobState, PageKind, PageOrigin, VersionState
+from bookreviver.domain.values import SHA256_PATTERN, MetadataSuggestion, Progress, Renditions, Transform
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from bookreviver.domain.enums import FileType, JobKind, PageAsset, SourceKind, Stage
+    from bookreviver.domain.enums import FileType, JobKind, SourceKind, Stage
     from bookreviver.domain.ids import AccountId, JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
-    from bookreviver.domain.values import (
-        BookDetails,
-        MetadataMap,
-        PageFacts,
-        ProcessorRef,
-        ScanFacts,
-        SourceFile,
-        SourceSummary,
-    )
+    from bookreviver.domain.values import BookDetails, MetadataMap, ProcessorRef, ScanFacts, SourceFile
 
 # A page version identifier: a hash of what produced the version, cut to 16 hexadecimal digits
 VERSION_ID_PATTERN: str = r'[0-9a-f]{16}'
@@ -50,10 +34,14 @@ class Actor:
 class Project:
     """One book being digitised, owned by one account.
 
+    The project holds the description of the book and the settings of the work on it. The files the book was
+    assembled from are its sources, which the project does not name.
+
     :ivar id: Identifier of the project.
     :ivar owner_id: Account owning the project, the only one that may read or change it.
     :ivar details: Bibliographic description of the book.
-    :ivar source: The upload the book was imported from, or None before the first import.
+    :ivar image_policy: How the ``full`` images of the project's scans and page versions are stored.
+    :ivar cover_page_id: Page whose thumbnail the project list shows, or None for the first page of the book.
     :ivar created_at: When the project was created.
     :ivar updated_at: When the project was last changed, which orders the owner's project list.
     """
@@ -61,7 +49,8 @@ class Project:
     id: ProjectId
     owner_id: AccountId
     details: BookDetails
-    source: SourceSummary | None = None
+    image_policy: ImagePolicy = ImagePolicy.COMPACT
+    cover_page_id: PageId | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -78,40 +67,18 @@ class Project:
 
 @frozen(kw_only=True)
 class ProjectOverview:
-    """A project as shown in a list, with the size of its book.
+    """A project as shown in a list, with the size of its book, counted when read.
 
     :ivar project: The listed project.
-    :ivar page_count: Number of pages imported into the project.
+    :ivar page_count: Number of pages of the book, without the pages kept out of it.
+    :ivar source_count: Number of sources the book was assembled from.
+    :ivar scan_count: Number of scans in all the sources.
     """
 
     project: Project
-    page_count: int
-
-
-@frozen(kw_only=True)
-class Page:
-    """One page of an imported source.
-
-    :ivar project_id: Project owning the page.
-    :ivar index: Position of the page in the book, starting at 0, which together with the project identifies it.
-    :ivar facts: Technical facts of the page as found in the source.
-    :ivar assets: Readiness and version of the page's derived files.
-    """
-
-    project_id: ProjectId
-    index: int
-    facts: PageFacts
-    assets: PageAssets = field(factory=PageAssets)
-
-    def asset_key(self, asset: PageAsset) -> StorageKey:
-        """Return the storage key of a derived file, unique per asset version so it can be cached forever.
-
-        :param asset: Derived file of the page, such as the full image, the thumbnail or the tile pyramid.
-        :type asset: PageAsset
-        :returns: Key of the form ``projects/<id>/pages/<index>/v<version>/<asset>``.
-        :rtype: StorageKey
-        """
-        return StorageKey(f'projects/{self.project_id}/pages/{self.index}/v{self.assets.version}/{asset}')
+    page_count: int = field(default=0, validator=validators.ge(0))
+    source_count: int = field(default=0, validator=validators.ge(0))
+    scan_count: int = field(default=0, validator=validators.ge(0))
 
 
 @frozen(kw_only=True)
@@ -170,6 +137,56 @@ class Scan:
     source_label: str = ''
     facts: ScanFacts
     renditions: Renditions = field(factory=Renditions)
+
+
+@frozen(kw_only=True)
+class Page:
+    """A page of the book in book order, which stands on its own once created.
+
+    A page is cut from a scan by the page split, or added by the user in the page order stage as a blank leaf or a
+    placeholder. It keeps its own copy of its image in its base version, so nothing about it depends on its source,
+    and its identity survives reordering, splitting again and re-running stages. Its position is the order of its key
+    among the keys of the project's pages, and the position number shown to the user is computed when it is read.
+
+    :ivar id: Identifier of the page, which names its storage directory.
+    :ivar project_id: Project owning the page.
+    :ivar order_key: Fractional index string whose byte order is the order of the pages in the book.
+    :ivar label: Printed number, such as ``xii``, ``12`` or ``[4]``, or empty for an unnumbered page.
+    :ivar kind: Role of the page in the book.
+    :ivar origin: Where the image of the page comes from.
+    :ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was
+                   deleted.
+    :ivar slot: Part of the scan the page shows: ``0`` the whole scan, ``1`` and ``2`` the halves of a spread, higher
+                for a fold-out.
+    :ivar included: Whether the page is part of the book; off for a colour chart or a duplicate.
+    :ivar notes: Notes of the user.
+    :ivar created_at: When the page was created.
+    :ivar updated_at: When the page was last changed.
+    """
+
+    WHOLE_SCAN: ClassVar[int] = 0
+
+    id: PageId
+    project_id: ProjectId
+    order_key: str = field(validator=validators.min_len(1))
+    label: str = ''
+    kind: PageKind = PageKind.TEXT
+    origin: PageOrigin
+    scan_id: ScanId | None = None
+    slot: int = field(default=WHOLE_SCAN, validator=validators.ge(WHOLE_SCAN))
+    included: bool = True
+    notes: str = ''
+    created_at: datetime
+    updated_at: datetime
+
+    def __attrs_post_init__(self) -> None:
+        """Check that only a page cut from a scan names a scan.
+
+        :raises ValueError: If a blank leaf or a placeholder names a scan.
+        """
+        if self.scan_id is not None and self.origin is not PageOrigin.SCAN:
+            err_msg = f'A page of origin {self.origin} has no scan, but names scan {self.scan_id}.'
+            raise ValueError(err_msg)
 
 
 @frozen(kw_only=True)

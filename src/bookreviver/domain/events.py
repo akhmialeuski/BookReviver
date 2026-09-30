@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from attrs import frozen
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Job, Page, PageVersion, Scan, Source
+    from bookreviver.domain.entities import Job, PageVersion, Scan, Source
     from bookreviver.domain.ids import ProjectId
 
 
@@ -31,16 +31,6 @@ class JobChanged(DomainEvent):
     """
 
     job: Job
-
-
-@frozen(kw_only=True)
-class PageReady(DomainEvent):
-    """The derived images of a page can be shown.
-
-    :ivar page: The page whose assets are ready.
-    """
-
-    page: Page
 
 
 @frozen(kw_only=True)

@@ -2,16 +2,12 @@
 
 import hashlib
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from bookreviver.domain.entities import Job, Page, PageVersion, Project, Scan, Source
-from bookreviver.domain.enums import ColorMode, FileType, JobKind, JobState, SourceKind, Stage
-from bookreviver.domain.ids import AccountId, JobId, PageVersionId, ProjectId, ScanId, SourceId
-from bookreviver.domain.values import BookDetails, PageFacts, ProcessorRef, ScanFacts, SourceFile
-
-if TYPE_CHECKING:
-    from bookreviver.domain.ids import PageId
+from bookreviver.domain.enums import ColorMode, FileType, JobKind, JobState, PageOrigin, SourceKind, Stage
+from bookreviver.domain.ids import AccountId, JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
+from bookreviver.domain.values import BookDetails, ProcessorRef, ScanFacts, SourceFile
 
 EPOCH: datetime = datetime(2026, 1, 1, tzinfo=UTC)
 PAGE_WIDTH_PX: int = 2200
@@ -55,18 +51,27 @@ def make_project(*, owner_id: AccountId, title: str = 'Book', minutes: int = 0) 
     )
 
 
-def make_page(*, project_id: ProjectId, index: int) -> Page:
-    """Build a grayscale page of the given project.
+def make_page(*, project_id: ProjectId, order_key: str = 'a0', scan: Scan | None = None) -> Page:
+    """Build an included text page of the given project, cut from the whole of a scan or a placeholder without one.
 
     :param project_id: Project owning the page.
     :type project_id: ProjectId
-    :param index: Position of the page in the book, starting at 0.
-    :type index: int
-    :returns: A page with fixed pixel size and assets not yet ready.
+    :param order_key: Order key placing the page in the book, unique within the project.
+    :type order_key: str
+    :param scan: Scan the page shows whole, or None for a placeholder.
+    :type scan: Scan | None
+    :returns: A page with a fresh identifier, created and updated at the epoch.
     :rtype: Page
     """
-    facts = PageFacts(width_px=PAGE_WIDTH_PX, height_px=PAGE_HEIGHT_PX, color_mode=ColorMode.GRAY)
-    return Page(project_id=project_id, index=index, facts=facts)
+    return Page(
+        id=PageId(uuid4()),
+        project_id=project_id,
+        order_key=order_key,
+        origin=PageOrigin.PLACEHOLDER if scan is None else PageOrigin.SCAN,
+        scan_id=None if scan is None else scan.id,
+        created_at=EPOCH,
+        updated_at=EPOCH,
+    )
 
 
 def make_source(*, project_id: ProjectId, name: str = 'book.pdf', minutes: int = 0) -> Source:

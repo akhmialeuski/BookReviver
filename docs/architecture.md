@@ -448,9 +448,11 @@ Ports are abstract base classes, so every adapter names its parent explicitly an
 Every repository method takes the acting account, so a query can never cross account boundaries.
 
 The persistence ports address data through the source, the scan and the page of the book. `ProjectRepository`,
-`SourceRepository`, `ScanRepository`, `PageRepository` and `JobRepository` share the `UnitOfWork`, so one use case
-changes all of them in one transaction. `PageRepository` addresses a page by its `PageId` and lists the pages of a
-project in `order_key` order, and the position of a page in the book is computed when it is read, never stored.
+`SourceRepository`, `ScanRepository`, `PageRepository`, `PageVersionRepository` and `JobRepository` share the
+`UnitOfWork`, so one use case changes all of them in one transaction. `PageRepository` addresses a page by its
+`PageId`, lists the pages of a project in `order_key` order and gives the last key of a book, and the position of a
+page in the book is computed when it is read, never stored. `ProjectRepository.overview` counts the book of one
+project, and the project listing counts every project of a window in the same query.
 `OrderKeys` is a port with an adapter on fractional-indexing, because the domain imports only the standard library
 and attrs. Like `Clock.now`, its methods are synchronous, because they compute a string and wait on nothing.
 

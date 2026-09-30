@@ -252,14 +252,6 @@ FILE_TYPE_SUFFIXES: dict[FileType, frozenset[str]] = {
 }
 
 
-class PageAsset(LabeledStrEnum):
-    """A derived file of an imported page, named by its value inside the page's asset directory."""
-
-    FULL = 'full.jpg', 'Native resolution image'
-    THUMBNAIL = 'thumb.jpg', 'Thumbnail'
-    TILES = 'iiif', 'IIIF tile pyramid'
-
-
 class Rendition(LabeledStrEnum):
     """One of the derived files of a scan or a page version, named by its value inside their directory.
 

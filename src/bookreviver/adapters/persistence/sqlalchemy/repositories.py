@@ -2,9 +2,9 @@
 
 Each port repository works on two levels. A row repository, a subclass of advanced-alchemy's
 :class:`~advanced_alchemy.repository.SQLAlchemyAsyncRepository`, supplies every generic query of one table: lookup by
-primary key including the composite key of pages, add, update, delete, filtered and paginated listings, and counts.
-A mapper from :mod:`bookreviver.adapters.persistence.sqlalchemy.mappers` turns its rows into domain entities. The port
-repository adds only the queries specific to BookReviver, such as the page count of every project in a listing.
+primary key, add, update, delete, filtered and paginated listings, and counts. A mapper from
+:mod:`bookreviver.adapters.persistence.sqlalchemy.mappers` turns its rows into domain entities. The port repository
+adds only the queries specific to BookReviver, such as the counts of the book of every project in a listing.
 
 The database's own checks are reported as the domain errors the in-memory adapter raises, so services never see an
 advanced-alchemy exception. A missing row is a :class:`~bookreviver.domain.errors.NotFoundError` naming its key. A row
@@ -22,24 +22,32 @@ from advanced_alchemy.exceptions import DuplicateKeyError, ForeignKeyError
 from advanced_alchemy.exceptions import NotFoundError as MissingRowError
 from advanced_alchemy.filters import CollectionFilter, LimitOffset
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
-from attrs import evolve
 from sqlalchemy import Table, UniqueConstraint, func, inspect, select, update
 
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     JobMapper,
     PageMapper,
+    PageVersionMapper,
     ProjectMapper,
     ScanMapper,
     SourceMapper,
 )
-from bookreviver.adapters.persistence.sqlalchemy.tables import JobRow, PageRow, ProjectRow, ScanRow, SourceRow
-from bookreviver.domain.entities import Job, Project, ProjectOverview, Scan, Source
+from bookreviver.adapters.persistence.sqlalchemy.tables import (
+    JobRow,
+    PageRow,
+    PageVersionRow,
+    ProjectRow,
+    ScanRow,
+    SourceRow,
+)
+from bookreviver.domain.entities import Job, Page, PageVersion, Project, ProjectOverview, Scan, Source
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.ids import JobId, ProjectId, ScanId, SourceId
+from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
 from bookreviver.domain.values import Slice
 from bookreviver.ports.persistence import (
     JobRepository,
     PageRepository,
+    PageVersionRepository,
     ProjectRepository,
     Repository,
     ScanRepository,
@@ -48,13 +56,15 @@ from bookreviver.ports.persistence import (
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterator, Sequence
+    from uuid import UUID
 
     from advanced_alchemy.base import ModelProtocol
     from advanced_alchemy.repository.typing import PrimaryKeyType
+    from sqlalchemy import ScalarSelect
     from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import QueryableAttribute
 
     from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
-    from bookreviver.domain.entities import Page
     from bookreviver.domain.enums import JobState
     from bookreviver.domain.ids import AccountId
     from bookreviver.domain.values import SliceRequest
@@ -195,9 +205,15 @@ class ScanRows(RowRepository[ScanRow]):
 
 
 class PageRows(RowRepository[PageRow]):
-    """Rows of the ``pages`` table, keyed by project and index."""
+    """Rows of the ``pages`` table."""
 
     model_type = PageRow
+
+
+class PageVersionRows(RowRepository[PageVersionRow]):
+    """Rows of the ``page_versions`` table."""
+
+    model_type = PageVersionRow
 
 
 class JobRows(RowRepository[JobRow]):
@@ -282,7 +298,11 @@ class SqlAlchemyRepository[EntityT, IdT, RowT: ModelProtocol](Repository[EntityT
 
 
 class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, ProjectRow], ProjectRepository):
-    """Projects, listed per owner together with their page counts."""
+    """Projects, listed per owner together with the counts of their books.
+
+    The counts are scalar subqueries, correlated with the project rows of a listing, so one statement returns every
+    project of the listing with its counts.
+    """
 
     def __init__(self, session: AsyncSession) -> None:
         """Create the repository over the ``projects`` table.
@@ -294,32 +314,64 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
 
     @override
     async def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:
-        """Return a slice of the owner's projects with their page counts, most recently updated first.
+        """Return a slice of the owner's projects with their counts, most recently updated first.
 
-        The page count is a correlated scalar subquery inside the listing query, so one statement returns every
-        project of the slice with its count. The total is a separate count, which stays correct for a slice past the
-        end where a window-function count would report zero.
+        The total is a separate count, which stays correct for a slice past the end where a window-function count
+        would report zero.
 
         :param owner_id: Account whose projects are listed.
         :type owner_id: AccountId
         :param request: Offset and limit of the slice.
         :type request: SliceRequest
-        :returns: Projects of the slice with their page counts, and the total number of the owner's projects.
+        :returns: Projects of the slice with their counts, and the total number of the owner's projects.
         :rtype: Slice[ProjectOverview]
         """
-        page_count = (
-            select(func.count()).where(PageRow.project_id == ProjectRow.id).correlate(ProjectRow).scalar_subquery()
-        )
         statement = (
-            select(ProjectRow, page_count)
+            select(ProjectRow, *self._book_counts(ProjectRow.id))
             .where(ProjectRow.owner_id == owner_id)
             .order_by(ProjectRow.updated_at.desc(), ProjectRow.id)
             .offset(request.offset)
             .limit(request.limit)
         )
         rows = await self._rows.session.execute(statement)
-        overviews = [ProjectOverview(project=self._mapper.to_entity(row), page_count=count) for row, count in rows]
+        overviews = [
+            ProjectOverview(
+                project=self._mapper.to_entity(row), page_count=pages, source_count=sources, scan_count=scans
+            )
+            for row, pages, sources, scans in rows
+        ]
         return Slice(items=overviews, total=await self._rows.count(owner_id=owner_id))
+
+    @override
+    async def overview(self, project: Project) -> ProjectOverview:
+        """Count the included pages, the sources and the scans of the project in one statement.
+
+        :param project: Project whose book is counted.
+        :type project: Project
+        :returns: The project with its counts.
+        :rtype: ProjectOverview
+        """
+        pages, sources, scans = (await self._rows.session.execute(select(*self._book_counts(project.id)))).one()
+        return ProjectOverview(project=project, page_count=pages, source_count=sources, scan_count=scans)
+
+    @staticmethod
+    def _book_counts(project_id: QueryableAttribute[UUID] | ProjectId) -> tuple[ScalarSelect[int], ...]:
+        """Return the scalar subqueries counting a project's included pages, sources and scans.
+
+        :param project_id: The project's identifier, or the identifier column of the enclosing query's project rows,
+                           which the subqueries then correlate with.
+        :type project_id: QueryableAttribute[UUID] | ProjectId
+        :returns: The count of included pages, of sources and of scans, in this order.
+        :rtype: tuple[ScalarSelect[int], ...]
+        """
+        return tuple(
+            select(func.count()).where(*conditions).correlate(ProjectRow).scalar_subquery()
+            for conditions in (
+                (PageRow.project_id == project_id, PageRow.included.is_(True)),
+                (SourceRow.project_id == project_id,),
+                (ScanRow.project_id == project_id,),
+            )
+        )
 
 
 class SqlAlchemySourceRepository(SqlAlchemyRepository[Source, SourceId, SourceRow], SourceRepository):
@@ -413,12 +465,8 @@ class SqlAlchemyScanRepository(SqlAlchemyRepository[Scan, ScanId, ScanRow], Scan
         )
 
 
-class SqlAlchemyPageRepository(PageRepository):
-    """Pages addressed by the composite key of project and index.
-
-    The class stands apart from :class:`SqlAlchemyRepository` because the page port is not a
-    :class:`~bookreviver.ports.persistence.Repository`: a page has no identifier of its own.
-    """
+class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], PageRepository):
+    """Pages of the book, listed in the byte order of their order keys."""
 
     def __init__(self, session: AsyncSession) -> None:
         """Create the repository over the ``pages`` table.
@@ -426,29 +474,14 @@ class SqlAlchemyPageRepository(PageRepository):
         :param session: Session of the unit of work.
         :type session: AsyncSession
         """
-        self._rows = PageRows(session=session)
-        self._mapper = PageMapper()
-
-    @override
-    async def get(self, project_id: ProjectId, index: int) -> Page:
-        """Return one page of a project.
-
-        :param project_id: Project the page belongs to.
-        :type project_id: ProjectId
-        :param index: Zero-based position of the page in the book.
-        :type index: int
-        :returns: The stored page.
-        :rtype: Page
-        :raises NotFoundError: If the project has no page at this index.
-        """
-        return self._mapper.to_entity(await self._rows.get((project_id, index)))
+        super().__init__(rows=PageRows(session=session), mapper=PageMapper())
 
     @override
     async def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Page]:
         """Return a slice of the project's pages in book order.
 
-        The total is a separate count query, which stays correct for a slice past the end where a window-function
-        count would report zero.
+        The column's collation compares order keys byte by byte. The total is a separate count query, which stays
+        correct for a slice past the end where a window-function count would report zero.
 
         :param project_id: Project whose pages are listed.
         :type project_id: ProjectId
@@ -459,38 +492,51 @@ class SqlAlchemyPageRepository(PageRepository):
         """
         rows, total = await self._rows.get_many_and_count(
             LimitOffset(limit=request.limit, offset=request.offset),
-            order_by=PageRow.index.asc(),
+            order_by=PageRow.order_key.asc(),
             count_with_window_function=False,
             project_id=project_id,
         )
         return Slice(items=[self._mapper.to_entity(row) for row in rows], total=total)
 
     @override
-    async def replace_for_project(self, project_id: ProjectId, pages: Sequence[Page]) -> None:
-        """Replace every page of a project with the given pages.
+    async def last_order_key(self, project_id: ProjectId) -> str | None:
+        """Return the greatest order key of the project's pages, read from the unique index of project and key.
 
-        Each page is stored under ``project_id`` whatever project it names, so a caller cannot write pages into a
-        different project by mistake.
-
-        :param project_id: Project whose pages are replaced.
+        :param project_id: Project owning the pages.
         :type project_id: ProjectId
-        :param pages: New pages of the project, possibly none.
-        :type pages: Sequence[Page]
+        :returns: The order key of the last page, or None for a book without pages.
+        :rtype: str | None
         """
-        await self._rows.delete_where(project_id=project_id)
-        await self._rows.add_many([self._mapper.to_row(evolve(page, project_id=project_id)) for page in pages])
+        statement = select(func.max(PageRow.order_key)).where(PageRow.project_id == project_id)
+        return await self._rows.session.scalar(statement)
+
+
+class SqlAlchemyPageVersionRepository(
+    SqlAlchemyRepository[PageVersion, PageVersionId, PageVersionRow], PageVersionRepository
+):
+    """Versions of the pages of the book, listed per page in the order they were created."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Create the repository over the ``page_versions`` table.
+
+        :param session: Session of the unit of work.
+        :type session: AsyncSession
+        """
+        super().__init__(rows=PageVersionRows(session=session), mapper=PageVersionMapper())
 
     @override
-    async def update(self, page: Page) -> Page:
-        """Replace the stored state of one page.
+    async def list_for_page(self, page_id: PageId) -> Sequence[PageVersion]:
+        """Return the versions of one page, the earliest first, ties by identifier.
 
-        :param page: Page with its new state.
-        :type page: Page
-        :returns: The page as stored.
-        :rtype: Page
-        :raises NotFoundError: If the page is not stored.
+        :param page_id: Page owning the versions.
+        :type page_id: PageId
+        :returns: Every version of the page.
+        :rtype: Sequence[PageVersion]
         """
-        return self._mapper.to_entity(await self._rows.update(self._mapper.to_row(page)))
+        rows = await self._rows.get_many(
+            order_by=[PageVersionRow.created_at.asc(), PageVersionRow.id.asc()], page_id=page_id
+        )
+        return [self._mapper.to_entity(row) for row in rows]
 
 
 class SqlAlchemyJobRepository(SqlAlchemyRepository[Job, JobId, JobRow], JobRepository):

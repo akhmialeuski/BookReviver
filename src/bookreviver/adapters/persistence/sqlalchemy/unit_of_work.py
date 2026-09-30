@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, override
 from bookreviver.adapters.persistence.sqlalchemy.repositories import (
     SqlAlchemyJobRepository,
     SqlAlchemyPageRepository,
+    SqlAlchemyPageVersionRepository,
     SqlAlchemyProjectRepository,
     SqlAlchemyScanRepository,
     SqlAlchemySourceRepository,
@@ -27,6 +28,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     :ivar sources: Source repository bound to the session.
     :ivar scans: Scan repository bound to the session.
     :ivar pages: Page repository bound to the session.
+    :ivar page_versions: Page version repository bound to the session.
     :ivar jobs: Job repository bound to the session.
     """
 
@@ -41,6 +43,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.sources = SqlAlchemySourceRepository(session)
         self.scans = SqlAlchemyScanRepository(session)
         self.pages = SqlAlchemyPageRepository(session)
+        self.page_versions = SqlAlchemyPageVersionRepository(session)
         self.jobs = SqlAlchemyJobRepository(session)
 
     @override

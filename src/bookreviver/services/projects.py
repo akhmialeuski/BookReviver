@@ -19,18 +19,14 @@ from attrs import evolve
 from bookreviver.domain.entities import Project, ProjectOverview
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import ProjectId
-from bookreviver.domain.values import SliceRequest
 
 if TYPE_CHECKING:
     from bookreviver.domain.changes import BookDetailsChanges
     from bookreviver.domain.entities import Actor
-    from bookreviver.domain.values import BookDetails, Slice
+    from bookreviver.domain.values import BookDetails, Slice, SliceRequest
     from bookreviver.ports.persistence import ProjectRepository, UnitOfWork
     from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore, SourceStore
-
-# The smallest window of pages; only the total of the result is read
-PAGE_COUNT_REQUEST: SliceRequest = SliceRequest(limit=1)
 
 
 async def owned_project(projects: ProjectRepository, actor: Actor, project_id: ProjectId) -> Project:
@@ -79,7 +75,8 @@ class ProjectService:
         :type actor: Actor
         :param request: Offset and limit of the window.
         :type request: SliceRequest
-        :returns: The projects of the window with their page counts, and the number of all the actor's projects.
+        :returns: The projects of the window with the counts of their books, and the number of all the actor's
+                  projects.
         :rtype: Slice[ProjectOverview]
         """
         return await self._uow.projects.list_for_owner(actor.account_id, request)
@@ -91,7 +88,7 @@ class ProjectService:
         :type actor: Actor
         :param details: Description of the book.
         :type details: BookDetails
-        :returns: The stored project, which has no pages yet.
+        :returns: The stored project, which has no pages, sources or scans yet.
         :rtype: ProjectOverview
         """
         moment = self._clock.now()
@@ -100,7 +97,7 @@ class ProjectService:
         )
         stored = await self._uow.projects.add(project)
         await self._uow.commit()
-        return ProjectOverview(project=stored, page_count=0)
+        return ProjectOverview(project=stored)
 
     async def get(self, actor: Actor, project_id: ProjectId) -> ProjectOverview:
         """Return one of the actor's projects.
@@ -109,11 +106,11 @@ class ProjectService:
         :type actor: Actor
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
-        :returns: The project with the number of its pages.
+        :returns: The project with the counts of its book.
         :rtype: ProjectOverview
         :raises NotFoundError: If the actor has no such project.
         """
-        return await self._overview(await owned_project(self._uow.projects, actor, project_id))
+        return await self._uow.projects.overview(await owned_project(self._uow.projects, actor, project_id))
 
     async def update_details(self, actor: Actor, project_id: ProjectId, changes: BookDetailsChanges) -> ProjectOverview:
         """Change some fields of the project's description and mark the project as updated.
@@ -124,7 +121,7 @@ class ProjectService:
         :type project_id: ProjectId
         :param changes: New values of the fields to change.
         :type changes: BookDetailsChanges
-        :returns: The changed project with the number of its pages.
+        :returns: The changed project with the counts of its book.
         :rtype: ProjectOverview
         :raises NotFoundError: If the actor has no such project.
         :raises ValueError: If the changed description breaks one of its rules, such as an empty title.
@@ -133,10 +130,10 @@ class ProjectService:
         changed = evolve(project, details=changes.apply_to(project.details), updated_at=self._clock.now())
         stored = await self._uow.projects.update(changed)
         await self._uow.commit()
-        return await self._overview(stored)
+        return await self._uow.projects.overview(stored)
 
     async def delete(self, actor: Actor, project_id: ProjectId) -> None:
-        """Delete the project's source and derived files, then the project with its pages and jobs.
+        """Delete the project's source files and derived files, then the project with every row of its book.
 
         A failure at any step leaves the project in place, and calling this again finishes the deletion.
 
@@ -152,14 +149,3 @@ class ProjectService:
         await self._assets.delete_project(project_id)
         await self._uow.projects.delete(project_id)
         await self._uow.commit()
-
-    async def _overview(self, project: Project) -> ProjectOverview:
-        """Pair a project with the number of its pages.
-
-        :param project: Project to describe.
-        :type project: Project
-        :returns: The project with the number of its pages.
-        :rtype: ProjectOverview
-        """
-        pages = await self._uow.pages.list_for_project(project.id, PAGE_COUNT_REQUEST)
-        return ProjectOverview(project=project, page_count=pages.total)
