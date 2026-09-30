@@ -5,13 +5,15 @@ connection pool whatever it stores. The engine, the sessions and the Alembic com
 advanced-alchemy ``SQLAlchemyAsyncConfig``, so the migrations run over the same connection settings as the
 application instead of a second configuration in ``env.py``.
 
-The configuration differs from advanced-alchemy's defaults in three places:
+The configuration differs from advanced-alchemy's defaults in two places:
 
 - Sessions keep their objects usable after commit, because a route maps them to a response after the unit of work
   committed.
 - The listener that touches ``updated_at`` on every flush is off, because the domain sets ``updated_at`` through its
   ``Clock`` and the listener would overwrite it with the wall clock.
-- Autogenerate compares column types, so a revision notices a column whose type changed.
+
+The options of autogenerate, such as comparing column types, are set in ``migrations/env.py``, because
+advanced-alchemy 1.11.0 does not hand those of ``AlembicAsyncConfig`` to Alembic.
 
 SQLite ignores foreign keys unless each connection turns them on, so the engine does that on connect, and the
 ``ON DELETE CASCADE`` of pages and jobs works the same as on PostgreSQL. ``migrations/env.py`` turns them off again
@@ -50,15 +52,22 @@ class SchemaRevisions:
 
     :ivar database: Revisions recorded in the database's version table, empty for a database never migrated.
     :ivar code: Head revisions of the migrations directory.
+    :ivar shipped: Every revision of the migrations directory, heads and their ancestors.
     """
 
     database: tuple[str, ...]
     code: tuple[str, ...]
+    shipped: frozenset[str]
 
     @property
     def is_current(self) -> bool:
         """Whether the database is at every head revision of the code and at no other."""
         return sorted(self.database) == sorted(self.code)
+
+    @property
+    def unknown(self) -> tuple[str, ...]:
+        """Revisions of the database that the code does not ship, left by migrations of other code."""
+        return tuple(revision for revision in self.database if revision not in self.shipped)
 
 
 class SqlDatabase:
@@ -80,7 +89,7 @@ class SqlDatabase:
             connection_string=url,
             session_config=AsyncSessionConfig(expire_on_commit=False),
             enable_touch_updated_timestamp_listener=False,
-            alembic_config=AlembicAsyncConfig(script_location=str(MIGRATIONS_DIR), compare_type=True),
+            alembic_config=AlembicAsyncConfig(script_location=str(MIGRATIONS_DIR)),
         )
         self.engine: AsyncEngine = self.config.get_engine()
         if self.engine.dialect.name == SQLITE_DIALECT:
@@ -109,13 +118,14 @@ class SqlDatabase:
         :rtype: SchemaRevisions
         """
         script = ScriptDirectory.from_config(self.migrations.config)
-        code = await asyncify(script.get_heads)()
+        # Walking the revisions reads every revision file once; the heads then come from the loaded map
+        shipped = frozenset(await asyncify(lambda: [revision.revision for revision in script.walk_revisions()])())
         options = {'version_table': self.config.alembic_config.version_table_name}
         async with self.engine.connect() as connection:
             database = await connection.run_sync(
                 lambda sync_connection: MigrationContext.configure(sync_connection, opts=options).get_current_heads()
             )
-        return SchemaRevisions(database=database, code=tuple(code))
+        return SchemaRevisions(database=database, code=tuple(script.get_heads()), shipped=shipped)
 
     async def dispose(self) -> None:
         """Close every pooled connection."""

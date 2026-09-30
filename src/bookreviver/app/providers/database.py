@@ -3,7 +3,9 @@
 The application never changes the schema. Migrations are applied by hand, after a copy of the data directory if it
 matters, and the provider only compares the revision of the database with the head of the migrations the code
 ships. A mismatch stops the start with the command that fixes it, because running against another schema would fail
-on the first query of a changed column or, worse, write rows the code does not expect.
+on the first query of a changed column or, worse, write rows the code does not expect. A database behind the code is
+upgraded. A database at a revision the code does not ship, migrated on another branch, cannot be: Alembic does not
+know that revision, so the message names the downgrade to run with the code that ships it, or the copy to restore.
 """
 
 from collections.abc import AsyncIterator
@@ -16,6 +18,8 @@ from bookreviver.app.settings import Settings
 
 # The command applying the migrations to the database the settings name, a script of pyproject.toml
 MIGRATE_COMMAND: str = 'uv run bookreviver-migrate upgrade head'
+# The command returning a database to a revision of this code, run with the code that ships the database's revision
+MIGRATE_DOWNGRADE_COMMAND: str = 'uv run bookreviver-migrate downgrade'
 # How the message names a database no revision was ever applied to
 NO_REVISION: str = 'none'
 
@@ -31,17 +35,24 @@ class DatabaseProvider(Provider):
         :type settings: Settings
         :returns: Iterator yielding the open database and disposing of its engine afterwards.
         :rtype: AsyncIterator[SqlDatabase]
-        :raises RuntimeError: When the database is not at the head revision of the migrations.
+        :raises RuntimeError: When the database is not at the head revision of the migrations, naming the upgrade to
+            run, or the downgrade when the database is at a revision the code does not ship.
         """
         database = SqlDatabase(settings.resolved_database_url)
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         try:
             revisions = await database.schema_revisions()
-            if not revisions.is_current:
+            at, expected = ', '.join(revisions.database) or NO_REVISION, ', '.join(revisions.code)
+            # upgrade head cannot move a database from a revision it cannot locate, so that case names the way back
+            if unknown := ', '.join(revisions.unknown):
                 err_msg = (
-                    f'Database schema is at revision {", ".join(revisions.database) or NO_REVISION}, '
-                    f'code expects {", ".join(revisions.code)}: run `{MIGRATE_COMMAND}`'
+                    f'Database schema is at revision {at}, which this code does not ship, and code expects '
+                    f'{expected}: run `{MIGRATE_DOWNGRADE_COMMAND} {expected}` with the code that ships {unknown}, '
+                    f'or restore the copy of the data directory made before migrating'
                 )
+                raise RuntimeError(err_msg)
+            if not revisions.is_current:
+                err_msg = f'Database schema is at revision {at}, code expects {expected}: run `{MIGRATE_COMMAND}`'
                 raise RuntimeError(err_msg)
             yield database
         finally:

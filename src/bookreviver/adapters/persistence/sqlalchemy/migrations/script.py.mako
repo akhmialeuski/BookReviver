@@ -29,21 +29,19 @@ depends_on: str | Sequence[str] | None = ${repr(depends_on)}
 
 
 def upgrade() -> None:
-    """Change the schema, then the data, outside a transaction so that each statement commits on its own."""
+    """Change the schema, then the data, in the transaction of the migration, which commits or rolls back whole."""
     with warnings.catch_warnings():
         warnings.filterwarnings('ignore', category=UserWarning)
-        with op.get_context().autocommit_block():
-            schema_upgrades()
-            data_upgrades()
+        schema_upgrades()
+        data_upgrades()
 
 
 def downgrade() -> None:
-    """Revert the data, then the schema, outside a transaction so that each statement commits on its own."""
+    """Revert the data, then the schema, in the transaction of the migration, which commits or rolls back whole."""
     with warnings.catch_warnings():
         warnings.filterwarnings('ignore', category=UserWarning)
-        with op.get_context().autocommit_block():
-            data_downgrades()
-            schema_downgrades()
+        data_downgrades()
+        schema_downgrades()
 
 
 def schema_upgrades() -> None:

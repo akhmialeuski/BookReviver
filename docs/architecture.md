@@ -610,25 +610,36 @@ flowchart TD
   `stamp head` when its tables already match.
 - **Start-up.** The lifespan opens the database, and `DatabaseProvider` compares the revisions of its version table
   `alembic_versions` with the head of the directory through `SqlDatabase.schema_revisions`. On a mismatch the
-  application does not start and names the command. The check reads one table and runs no migration environment.
+  application does not start. A database behind the code gets the upgrade command. A database at a revision the code
+  does not ship, migrated on another branch, gets `bookreviver-migrate downgrade <head>` to run with the code that
+  ships its revision, or the copy of `data/` to restore, because `upgrade head` cannot locate that revision. The
+  check reads one table and runs no migration environment.
 - **Creating a revision.** Change the tables, then run
   `uv run bookreviver-migrate make-migrations --autogenerate -m "Add the recipes table."` against a database at
-  head, read the revision for every key and index, and run the gate, which formats it. Autogenerate compares column
-  types, and `env.py` renders every type from outside SQLAlchemy by its own module, so fastapi-users' `GUID` and
-  advanced-alchemy's `GUID`, `DateTimeUTC` and `JsonB` import what they are. A key declared with `use_alter`, such
-  as the cover of a project, is added in a step of its own after the table it refers to, because PostgreSQL leaves
-  it out of `CREATE TABLE`.
+  head, read the revision for every key and index, and run the gate, which formats it. `env.py` sets the options of
+  autogenerate itself, because advanced-alchemy 1.11.0 does not hand those of `AlembicAsyncConfig` to Alembic. It
+  compares column types, and on SQLite it compares a type whose name SQLAlchemy cannot reflect there, such as the
+  `BINARY(16)` of advanced-alchemy's `GUID`, which reflects as `NUMERIC(16)`, by SQLite's affinity. It renders every
+  type from outside SQLAlchemy by its own module, so fastapi-users' `GUID` and advanced-alchemy's `GUID`,
+  `DateTimeUTC` and `JsonB` import what they are. A key declared with `use_alter`, such as the cover of a project,
+  is added in a step of its own after the table it refers to, because PostgreSQL leaves it out of `CREATE TABLE`.
+- **One transaction.** A command runs its revisions and the row of the version table in one transaction, so a
+  migration applies whole or not at all. Revisions therefore run without advanced-alchemy's `autocommit_block`,
+  which commits each statement. A revision that needs a statement outside a transaction, such as
+  `CREATE INDEX CONCURRENTLY` on PostgreSQL, opens that block itself.
 - **SQLite.** Batch mode, on by default, changes a table by copying it, dropping the old one and renaming the copy.
   The engine turns foreign keys on for every connection, and dropping `projects` with keys on would cascade to every
-  source, scan, page and job, so `env.py` turns them off before the migrations begin their transaction, since SQLite
-  ignores the pragma inside one, and runs `PRAGMA foreign_key_check` afterwards, failing the command on a key that
-  points nowhere. A revision runs its statements outside a transaction, as advanced-alchemy's template does, so a
-  failed migration can leave part of its change behind, which is why `data/` is copied first. PostgreSQL needs
-  neither pragma.
+  source, scan, page and job, so `env.py` turns them off before the transaction begins, since SQLite ignores the
+  pragma inside one. Python's `sqlite3` begins a transaction only before a row change, so `env.py` issues `BEGIN`
+  itself and every `CREATE`, `DROP` and `ALTER` joins it. `PRAGMA foreign_key_check` runs inside the transaction,
+  and a key that points nowhere rolls the whole migration back and fails the command. PostgreSQL has transactional
+  DDL and needs neither pragma.
 - **Tests.** `test_migrations.py` upgrades an empty database, runs `alembic check`, downgrades to base and upgrades
-  again, rebuilds `projects` in batch mode with a book stored, and checks that the application refuses an unmigrated
-  database. Every other test creates the tables from the models and stamps the head revision, which is much faster
-  and proven equal by `alembic check`.
+  again. With revisions rendered from the shipped template in a copy of the directory, it rebuilds `projects` in
+  batch mode with a book stored, rolls back a revision that orphans the book, and fails `check` on a changed column
+  type. It also checks that the application refuses an unmigrated database and one migrated by other code. Every
+  other test creates the tables from the models and stamps the head revision, which is much faster and proven equal
+  by `alembic check`.
 
 ## Services
 
