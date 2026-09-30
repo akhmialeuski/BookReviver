@@ -15,6 +15,7 @@ dependencies = [
     "asyncer==0.0.18",
     "attrs==26.1.0",
     "cryptography==50.0.1",
+    "defusedxml==0.7.1",
     "dishka==1.10.1",
     "email-validator==2.3.0",
     "fastapi[standard]==0.141.1",

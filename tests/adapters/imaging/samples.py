@@ -437,3 +437,37 @@ def edit_djvu(path: Path, *, command: str, script: str) -> None:
         source = Path(directory) / DJVU_SCRIPT_NAME
         source.write_text(script, encoding='utf-8')
         run_djvulibre('djvused', '-s', '-e', f'{command} {source}', path)
+
+
+def add_xmp(path: Path, *, packet: str) -> Path:
+    """Embed an XMP packet in a PDF file that was written without one.
+
+    :param path: The PDF to change in place.
+    :type path: Path
+    :param packet: The XMP packet, such as ``xmp_packet`` builds.
+    :type packet: str
+    :returns: The same path.
+    :rtype: Path
+    """
+    with pymupdf.open(path) as document:
+        document.set_xml_metadata(packet)
+        document.saveIncr()
+    return path
+
+
+def xmp_packet(dublin_core: str) -> str:
+    """Wrap Dublin Core elements into an XMP packet the way an editor of PDF metadata writes it.
+
+    :param dublin_core: Markup of ``dc:`` elements, such as ``<dc:title>...</dc:title>``.
+    :type dublin_core: str
+    :returns: The packet, with its ``xpacket`` processing instructions and the RDF description holding the elements.
+    :rtype: str
+    """
+    return (
+        '<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>'
+        '<x:xmpmeta xmlns:x="adobe:ns:meta/">'
+        '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+        '<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        f'{dublin_core}'
+        '</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>'
+    )

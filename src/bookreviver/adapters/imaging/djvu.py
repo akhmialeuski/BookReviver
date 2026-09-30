@@ -40,12 +40,13 @@ from PIL import Image, ImageChops
 
 from bookreviver.adapters.imaging.common import FactKey, to_mm
 from bookreviver.adapters.imaging.reader import SourceFormat
-from bookreviver.domain.enums import ColorMode, ContributorRole, DjvuDocumentKind, SourceKind
+from bookreviver.adapters.imaging.suggestions import SuggestionBuilder
+from bookreviver.domain.enums import ColorMode, DjvuDocumentKind, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
-from bookreviver.domain.values import Contributor, MetadataSuggestion, ScanFacts, SourceAnalysis
+from bookreviver.domain.values import ScanFacts, SourceAnalysis
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -106,15 +107,6 @@ class DjvuComponentKind(enum.StrEnum):
     SHARED = 'I'
     ANNOTATIONS = 'A'
     THUMBNAILS = 'T'
-
-
-class DjvuMetaKey(enum.StrEnum):
-    """Keys of the document metadata ``djvused print-meta`` prints; BibTeX keys are lower case, DocInfo keys are not."""
-
-    TITLE = 'title'
-    AUTHOR = 'author'
-    PUBLISHER = 'publisher'
-    YEAR = 'year'
 
 
 @frozen(kw_only=True)
@@ -256,7 +248,7 @@ class DjvuFormat(SourceFormat):
                       or the index of an indirect document with every file it names.
         :type files: Sequence[Path]
         :returns: Facts of every page in page order, the kind of the document, its page count, metadata and outline,
-                  and the title, authors, publisher and year found in the metadata.
+                  and the description found in the metadata.
         :rtype: SourceAnalysis
         :raises UnsupportedSourceError: If the tools are not installed, a file is not a readable DjVu file, a file of an
                                         indirect document is missing, or a page includes shared data that is missing.
@@ -297,13 +289,7 @@ class DjvuFormat(SourceFormat):
         }
         if header.component_count is not None:
             file_metadata[FactKey.COMPONENT_COUNT] = header.component_count
-        author = _first(info, DjvuMetaKey.AUTHOR)
-        suggestion = MetadataSuggestion(
-            title=_first(info, DjvuMetaKey.TITLE),
-            contributors=(Contributor(name=author, role=ContributorRole.AUTHOR),) if author else (),
-            publisher=_first(info, DjvuMetaKey.PUBLISHER),
-            publication_year=_first(info, DjvuMetaKey.YEAR),
-        )
+        suggestion = SuggestionBuilder.from_djvu_meta(info)
         return SourceAnalysis(kind=SourceKind.DJVU, scans=pages, file_metadata=file_metadata, suggestion=suggestion)
 
     @override
@@ -515,19 +501,6 @@ def _scan_facts(chunks: Sequence[tuple[str, str]], *, path: Path, kind: DjvuDocu
         has_text_layer=bool(identifiers & {DjvuChunk.TEXT, DjvuChunk.PLAIN_TEXT}),
         extra={FactKey.DJVU_CHUNKS: [identifier for identifier, _ in chunks]},
     )
-
-
-def _first(info: Mapping[str, str], key: DjvuMetaKey) -> str:
-    """Return the value of a metadata key, preferring the BibTeX spelling over the capitalised DocInfo one.
-
-    :param info: The metadata pairs of the document.
-    :type info: Mapping[str, str]
-    :param key: The BibTeX key, in lower case.
-    :type key: DjvuMetaKey
-    :returns: The stripped value, or an empty string when the document has none.
-    :rtype: str
-    """
-    return (info.get(key) or info.get(key.capitalize()) or '').strip()
 
 
 def _unescape(match: re.Match[str]) -> str:

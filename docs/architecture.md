@@ -310,6 +310,21 @@ bundled or indirect, the page count, the `print-meta` metadata, the `print-outli
 layer, and it suggests a publication year only from `print-meta`. An image source records the format, the Pillow
 mode, the frame count, the compression, the ICC profile, the EXIF data with `Orientation`, and the DPI.
 
+`SuggestionBuilder` in `adapters/imaging/suggestions.py` turns the metadata of a file into its `MetadataSuggestion`,
+and both `PdfFormat` and `DjvuFormat` use it. `from_docinfo` reads the PDF Info dictionary (Title, Author, Subject and
+Keywords), `from_xmp` the Dublin Core elements of the XMP packet, and `from_djvu_meta` the pairs of `djvused -e
+print-meta`. `merge` takes the first non-empty value of each field in order of priority: XMP before Info for a PDF,
+because XMP lists several creators where Info holds one string, and BibTeX keys (`title`) before DocInfo keys (`Title`)
+for DjVu. The Info author is split at semicolons only, since a comma occurs inside "Ивановъ, Н. Н.", keywords are split
+at commas and semicolons, and `dc:creator` becomes authors (`aut`), `dc:contributor` contributors (`ctb`), and the
+DjVu `author` and `editor` authors and editors (`aut`, `edt`). A `dc:identifier` becomes an identifier only when it is
+a valid ISBN, with or without a `urn:isbn:` prefix, or an `http` or `https` address, and a `dc:language` tag becomes
+a language only when its primary subtag is an ISO 639-3 code or an ISO 639-1 code from the small table of the module.
+No date from a file becomes a year of publication except the DjVu key `year`: `creationDate`, `modDate` and `dc:date`
+date the file, and for a scan the day it was made, so a year taken from them would look right and be wrong. The XMP
+packet comes from an uploaded file and is parsed with `defusedxml` with DTDs forbidden, so a packet that declares
+entities or external references, or is not XML, gives an empty suggestion.
+
 ### Scan
 
 A scan is one image of a source as the file holds it. It is created by the import, never changes and holds the facts

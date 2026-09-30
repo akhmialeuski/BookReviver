@@ -225,6 +225,32 @@ class TestInspect:
         assert analysis.file_metadata[FactKey.DOCUMENT_INFO]['title'] == CYRILLIC_TITLE
 
     @requires_djvulibre
+    async def test_suggests_editors_and_every_author_and_takes_no_date_but_the_year(
+        self, fx_inspector: SourceInspector, tmp_path: Path
+    ) -> None:
+        """Verify authors split at semicolons, an editor keeps its role, and creation dates give no year.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        [book] = _write(DjvuDocumentKind.BUNDLED, tmp_path)
+        pairs = 'author "Ивановъ, И. И.; Петровъ, П. П."\neditor "Фёдоровъ, Ф. Ф."\nCreationDate "2024-05-12"\n'
+        edit_djvu(book, command='set-meta', script=pairs)
+
+        suggestion = (await fx_inspector.inspect(SourceKind.DJVU, [book])).suggestion
+
+        assert (suggestion.contributors, suggestion.publication_year) == (
+            (
+                Contributor(name='Ивановъ, И. И.', role=ContributorRole.AUTHOR),
+                Contributor(name='Петровъ, П. П.', role=ContributorRole.AUTHOR),
+                Contributor(name='Фёдоровъ, Ф. Ф.', role=ContributorRole.EDITOR),
+            ),
+            '',
+        )
+
+    @requires_djvulibre
     @pytest.mark.parametrize(
         ('pairs', 'title'),
         [

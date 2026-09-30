@@ -25,9 +25,10 @@ from PIL import Image
 
 from bookreviver.adapters.imaging.common import FactKey, is_portable_jpeg, only_file, to_mm
 from bookreviver.adapters.imaging.reader import SourceFormat
-from bookreviver.domain.enums import ColorMode, ContributorRole, SourceKind
+from bookreviver.adapters.imaging.suggestions import SuggestionBuilder
+from bookreviver.domain.enums import ColorMode, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
-from bookreviver.domain.values import Contributor, MetadataSuggestion, ScanFacts, SourceAnalysis
+from bookreviver.domain.values import ScanFacts, SourceAnalysis
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -84,8 +85,6 @@ class PyMuPdfKey(enum.StrEnum):
     SPAN_TYPE = 'type'
     # ``Document.metadata`` holds the PDF version under this key, beside the document information entries
     PDF_VERSION = 'format'
-    TITLE = 'title'
-    AUTHOR = 'author'
 
 
 class PdfFormat(SourceFormat):
@@ -108,7 +107,7 @@ class PdfFormat(SourceFormat):
         :param files: Local path of the PDF file, the one file of the source.
         :type files: Sequence[Path]
         :returns: Facts of every page in page order, the document information, version, page count, outline and
-                  integrity facts of the file, and the title and authors found in its document information.
+                  integrity facts of the file, and the description found in its XMP packet and document information.
         :rtype: SourceAnalysis
         :raises UnsupportedSourceError: If the file is not a readable PDF without a password.
         :raises ValueError: If the source is not exactly one file.
@@ -131,6 +130,7 @@ class PdfFormat(SourceFormat):
             metadata = document.metadata or {}
             outline = document.get_toc()
             info = {key: value for key, value in metadata.items() if value and key != PyMuPdfKey.PDF_VERSION}
+            xmp = document.get_xml_metadata()
             file_metadata: dict[str, Any] = {
                 FactKey.DOCUMENT_INFO: info,
                 FactKey.PDF_VERSION: metadata.get(PyMuPdfKey.PDF_VERSION, ''),
@@ -141,11 +141,7 @@ class PdfFormat(SourceFormat):
                 # MuPDF silently rebuilds a damaged cross-reference table; pages past the damage may be missing
                 FactKey.REPAIRED: document.is_repaired,
             }
-        author = (info.get(PyMuPdfKey.AUTHOR) or '').strip()
-        suggestion = MetadataSuggestion(
-            title=(info.get(PyMuPdfKey.TITLE) or '').strip(),
-            contributors=(Contributor(name=author, role=ContributorRole.AUTHOR),) if author else (),
-        )
+        suggestion = SuggestionBuilder.merge(SuggestionBuilder.from_xmp(xmp), SuggestionBuilder.from_docinfo(info))
         return SourceAnalysis(kind=SourceKind.PDF, scans=scans, file_metadata=file_metadata, suggestion=suggestion)
 
     @override
