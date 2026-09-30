@@ -10,9 +10,10 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
-from bookreviver.adapters.persistence.sqlalchemy.mappers import PageMapper
+from bookreviver.adapters.persistence.sqlalchemy.mappers import JobMapper, PageMapper
 from bookreviver.adapters.persistence.sqlalchemy.tables import JobRow, PageRow, ProjectRow
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
+from bookreviver.domain.enums import JobState
 from bookreviver.domain.errors import NotFoundError
 from tests.helpers.builders import make_job, make_page, make_project, new_account_id
 
@@ -24,6 +25,8 @@ pytestmark = pytest.mark.anyio
 
 # The message SQLite gives for every violated foreign key
 SQLITE_FOREIGN_KEY_FAILED: str = 'FOREIGN KEY constraint failed'
+# The message SQLite gives for every violated unique index
+SQLITE_UNIQUE_FAILED: str = 'UNIQUE constraint failed'
 
 
 class TestPageRow:
@@ -154,3 +157,44 @@ class TestProjectRow:
         async with fx_database.sessions() as session:
             with pytest.raises(NotFoundError, match=str(owner_id)):
                 await SqlAlchemyUnitOfWork(session).projects.add(make_project(owner_id=owner_id))
+
+
+class TestJobRow:
+    """Tests for the partial unique index that keeps a project to one active import."""
+
+    async def test_database_refuses_a_second_active_import_of_a_project(
+        self, fx_database: SqlDatabase, fx_owner_id: AccountId
+    ) -> None:
+        """Verify the database itself refuses a queued import beside a running one, whatever a service checked first.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
+        """
+        project = make_project(owner_id=fx_owner_id)
+        async with fx_database.sessions() as session:
+            await SqlAlchemyUnitOfWork(session).projects.add(project)
+            session.add(JobMapper().to_row(make_job(project_id=project.id, state=JobState.RUNNING)))
+            await session.commit()
+        async with fx_database.sessions() as session:
+            # A row added directly bypasses the repository, which would report the conflict as a domain error
+            session.add(JobMapper().to_row(make_job(project_id=project.id, state=JobState.QUEUED)))
+            with pytest.raises(IntegrityError, match=SQLITE_UNIQUE_FAILED):
+                await session.flush()
+
+    async def test_finished_imports_do_not_count(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
+        """Verify any number of finished imports may share a project with an active one.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
+        """
+        project = make_project(owner_id=fx_owner_id)
+        async with fx_database.sessions() as session:
+            await SqlAlchemyUnitOfWork(session).projects.add(project)
+            for state in (JobState.SUCCEEDED, JobState.FAILED, JobState.CANCELLED, JobState.QUEUED):
+                session.add(JobMapper().to_row(make_job(project_id=project.id, state=state)))
+            await session.commit()
+            assert await session.scalar(select(func.count()).select_from(JobRow)) == len(JobState) - 1

@@ -8,7 +8,8 @@ transaction isolation:
   source, a page or a version the import job, scan or input version it names. A project's cover is one of its own
   pages. The owner of a project is not checked, because accounts belong to fastapi-users and have no port.
 - Unique keys: the digest of a source's main file within its project, the number of a scan within its source, the
-  order key of a page within its project, and the pair of a scan and a slot.
+  order key of a page within its project, the pair of a scan and a slot, and the project of a queued or running
+  import job, so a project runs one import at a time.
 - Referential actions: a project takes its sources, scans, pages and jobs with it, a source its scans, and a page
   its versions. A deleted cover page leaves its project without a cover, a deleted scan leaves its pages without
   their scan, a deleted job leaves the sources it imported
@@ -26,9 +27,10 @@ from typing import TYPE_CHECKING, override
 from attrs import define, evolve, field, fields
 
 from bookreviver.domain.entities import Job, Page, PageVersion, Project, ProjectOverview, Scan, Source
+from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
-from bookreviver.domain.values import Slice
+from bookreviver.domain.values import Slice, SliceRequest
 from bookreviver.ports.persistence import (
     JobRepository,
     PageRepository,
@@ -43,12 +45,12 @@ from bookreviver.ports.persistence import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Hashable, Mapping, Sequence
 
-    from bookreviver.domain.enums import JobState
     from bookreviver.domain.ids import AccountId
-    from bookreviver.domain.values import SliceRequest
 
 # Attribute holding the identifier of every entity addressed by one
 ID_ATTRIBUTE: str = 'id'
+# The kinds of job a project runs one of at a time, the rows of the partial unique index of the ``jobs`` table
+ONE_ACTIVE_AT_A_TIME: frozenset[JobKind] = frozenset({JobKind.IMPORT_SOURCE})
 
 
 @define(kw_only=True)
@@ -444,6 +446,18 @@ class InMemoryScanRepository(InMemoryRepository[Scan, ScanId], ScanRepository):
         )
         return Slice(items=scans[request.offset : request.offset + request.limit], total=len(scans))
 
+    @override
+    async def list_unready(self, project_id: ProjectId) -> Sequence[Scan]:
+        """Return the project's scans whose renditions are not ready, in the order ``list_for_project`` lists them.
+
+        :param project_id: Project owning the scans.
+        :type project_id: ProjectId
+        :returns: The scans without ready renditions.
+        :rtype: Sequence[Scan]
+        """
+        every_scan = await self.list_for_project(project_id, SliceRequest(limit=max(len(self._rows), 1)))
+        return [scan for scan in every_scan.items if not scan.renditions.ready]
+
 
 class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
     """Pages of the book, unique by project and order key and by scan and slot."""
@@ -501,6 +515,17 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
             key=lambda page: page.order_key.encode(),
         )
         return Slice(items=pages[request.offset : request.offset + request.limit], total=len(pages))
+
+    @override
+    async def list_for_scan(self, scan_id: ScanId) -> Sequence[Page]:
+        """Return the pages cut from one scan by their slot.
+
+        :param scan_id: Scan the pages were cut from.
+        :type scan_id: ScanId
+        :returns: Every page that names the scan.
+        :rtype: Sequence[Page]
+        """
+        return sorted((page for page in self._rows.values() if page.scan_id == scan_id), key=attrgetter('slot'))
 
     @override
     async def last_order_key(self, project_id: ProjectId) -> str | None:
@@ -591,13 +616,22 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
 
     @override
     def _check(self, entity: Job) -> None:
-        """Require the job's project.
+        """Require the job's project, and no other queued or running import in it, as the partial unique index does.
 
         :param entity: Job about to be stored.
         :type entity: Job
         :raises NotFoundError: If the job's project is not stored.
+        :raises ConflictError: If the job is a queued or running import and the project has another.
         """
         require(self._tables.projects, entity.project_id)
+        if entity.kind in ONE_ACTIVE_AT_A_TIME and entity.state in JobState.active():
+            # Every other job gets its own identifier as its value, so only a queued or running import can match
+            self._require_unique(
+                entity,
+                lambda job: (
+                    job.project_id if job.kind in ONE_ACTIVE_AT_A_TIME and job.state in JobState.active() else job.id
+                ),
+            )
 
     @override
     def _cascade(self, entity: Job) -> None:

@@ -168,6 +168,16 @@ class ScanRepository(Repository[Scan, ScanId]):
         :rtype: Slice[Scan]
         """
 
+    @abstractmethod
+    async def list_unready(self, project_id: ProjectId) -> Sequence[Scan]:
+        """Return the scans of a project whose renditions are not ready, which an import cut again.
+
+        :param project_id: Project owning the scans.
+        :type project_id: ProjectId
+        :returns: The scans without ready renditions, source by source in import order and by number within a source.
+        :rtype: Sequence[Scan]
+        """
+
 
 class PageRepository(Repository[Page, PageId]):
     """Pages of the book, addressed by their identifier and ordered by their order key.
@@ -189,6 +199,16 @@ class PageRepository(Repository[Page, PageId]):
         :type request: SliceRequest
         :returns: The pages of the window and the number of all the project's pages, included or not.
         :rtype: Slice[Page]
+        """
+
+    @abstractmethod
+    async def list_for_scan(self, scan_id: ScanId) -> Sequence[Page]:
+        """Return the pages cut from one scan, by their slot.
+
+        :param scan_id: Scan the pages were cut from.
+        :type scan_id: ScanId
+        :returns: Every page that names the scan, the whole scan or its parts in slot order.
+        :rtype: Sequence[Page]
         """
 
     @abstractmethod
@@ -217,7 +237,7 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
 
 
 class JobRepository(Repository[Job, JobId]):
-    """Background jobs."""
+    """Background jobs; a project has at most one import job queued or running at a time."""
 
     @abstractmethod
     @override
@@ -228,7 +248,10 @@ class JobRepository(Repository[Job, JobId]):
         :type entity: Job
         :returns: The job as stored.
         :rtype: Job
-        :raises ConflictError: If a job with this identifier is already stored.
+        :raises ConflictError: If a job with this identifier is already stored, or the job is an import that is queued
+                               or running and the project already has one; the database enforces the second rule
+                               with a partial unique index, so two uploads that both passed a check before either
+                               committed cannot both be stored.
         :raises NotFoundError: If the job's project is not stored.
         """
 

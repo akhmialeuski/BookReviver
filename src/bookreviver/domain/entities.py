@@ -17,7 +17,15 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.enums import FileType, JobKind, SourceKind, Stage
     from bookreviver.domain.ids import AccountId, JobId, PageId, ProjectId, ScanId, SourceId
-    from bookreviver.domain.values import BookDetails, MetadataMap, ProcessorRef, ScanFacts, SourceFile
+    from bookreviver.domain.values import (
+        BookDetails,
+        ImportRequest,
+        ImportResult,
+        MetadataMap,
+        ProcessorRef,
+        ScanFacts,
+        SourceFile,
+    )
 
 # The length of a page version identifier: a hash cut to 16 hexadecimal digits
 VERSION_ID_LENGTH: int = 16
@@ -279,6 +287,8 @@ class Job:
     :ivar state: Where the job is in its life cycle.
     :ivar progress: How many of its steps are done.
     :ivar error: Why the job failed, shown to the user, or empty.
+    :ivar request: The files an import job was asked to import, or None for a job that takes none.
+    :ivar result: What an import job did with them, or None until it has finished.
     :ivar created_at: When the job was recorded.
     :ivar started_at: When a worker started the job, or None while it is queued.
     :ivar finished_at: When the job reached a final state, or None before.
@@ -290,6 +300,8 @@ class Job:
     state: JobState = JobState.QUEUED
     progress: Progress = field(factory=Progress)
     error: str = ''
+    request: ImportRequest | None = None
+    result: ImportResult | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
