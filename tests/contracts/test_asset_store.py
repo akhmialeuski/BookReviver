@@ -2,12 +2,15 @@
 
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
+from uuid import uuid4
 
 import pytest
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.domain.enums import PageAsset
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.ids import StorageKey
+from bookreviver.domain.ids import ProjectId, StorageKey
+from tests.helpers.builders import make_page
 from tests.helpers.storage import WriterFailedError, abandon_write
 
 if TYPE_CHECKING:
@@ -333,3 +336,38 @@ class TestDeletePrefix:
         """
         with pytest.raises(ValueError, match='reaches into the files of the source store'):
             await fx_asset_store.delete_prefix(StorageKey(key))
+
+
+class TestDeleteProject:
+    """Contract of AssetStore.delete_project()."""
+
+    async def test_removes_every_derived_file_of_the_project_only(self, fx_asset_store: AssetStore) -> None:
+        """Verify the project's page image and pyramid are gone and another project's page image stays.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        page = make_page(project_id=ProjectId(uuid4()), index=0)
+        other_page = make_page(project_id=ProjectId(uuid4()), index=0)
+        await _store_file(fx_asset_store, key=page.asset_key(PageAsset.FULL), content=NEW_CONTENT)
+        await _store_directory(fx_asset_store, key=page.asset_key(PageAsset.TILES), content=NEW_CONTENT)
+        await _store_file(fx_asset_store, key=other_page.asset_key(PageAsset.FULL), content=NEW_CONTENT)
+
+        await fx_asset_store.delete_project(page.project_id)
+
+        expect(not await _is_stored(fx_asset_store, page.asset_key(PageAsset.FULL)))
+        expect(not await _is_stored(fx_asset_store, page.asset_key(PageAsset.TILES)))
+        expect(await _is_stored(fx_asset_store, other_page.asset_key(PageAsset.FULL)))
+        assert_expectations()
+
+    async def test_project_without_files_is_not_an_error(self, fx_asset_store: AssetStore) -> None:
+        """Verify deleting a project that never had a derived file succeeds, as for a project never imported.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        page = make_page(project_id=ProjectId(uuid4()), index=0)
+
+        await fx_asset_store.delete_project(page.project_id)
+
+        assert not await _is_stored(fx_asset_store, page.asset_key(PageAsset.FULL))

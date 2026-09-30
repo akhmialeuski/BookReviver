@@ -28,9 +28,19 @@ runtime-evaluated-base-classes = [
     "bookreviver.api.schemas.base.RequestModel",
     "bookreviver.api.schemas.base.ResponseModel",
 ]
-# dishka resolves the return annotations of its providers at runtime
-runtime-evaluated-decorators = ["dishka.provide"]
-# FastAPI and dishka resolve route and dependency annotations at runtime, including our dependency aliases
+# dishka resolves the return annotations of its providers, and FastAPI and dishka those of routes, at runtime.
+# Ruff infers that a module's router is an APIRouter, so ``@router.get`` matches ``fastapi.APIRouter.get`` and a
+# route annotates its parameters in place, without module-level aliases.
+runtime-evaluated-decorators = [
+    "dishka.provide",
+    "dishka.integrations.fastapi.inject",
+    "fastapi.APIRouter.get",
+    "fastapi.APIRouter.post",
+    "fastapi.APIRouter.put",
+    "fastapi.APIRouter.patch",
+    "fastapi.APIRouter.delete",
+]
+# Annotation helpers of FastAPI and dishka, and the shared dependency aliases, are always imported at runtime
 exempt-modules = ["typing", "typing_extensions", "fastapi", "dishka", "bookreviver.api.auth"]
 
 [lint.flake8-tidy-imports]

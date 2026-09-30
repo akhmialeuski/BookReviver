@@ -271,6 +271,27 @@ class LocalAssetStore(AssetStore):
         """
         await _remove(self._path(prefix))
 
+    @override
+    async def delete_project(self, project_id: ProjectId) -> None:
+        """Remove every entry of ``projects/<id>/`` except the source directories, then the directory if it is empty.
+
+        The directory stays while ``source/`` or ``incoming/`` is in it, since only the source store removes those.
+
+        :param project_id: Project whose derived files are removed.
+        :type project_id: ProjectId
+        """
+        project_dir = self._root / PROJECTS_DIR / str(project_id)
+        if not await project_dir.is_dir():
+            return
+        for entry in [entry async for entry in project_dir.iterdir()]:
+            if entry.name not in SourceArea:
+                await _remove(entry)
+        try:
+            await project_dir.rmdir()
+        except OSError as error:
+            if error.errno != errno.ENOTEMPTY:
+                raise
+
     def _path(self, key: StorageKey) -> anyio.Path:
         """Return the path of a key, which must name something strictly inside the root and outside every source.
 

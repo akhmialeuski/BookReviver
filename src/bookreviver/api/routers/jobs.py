@@ -39,6 +39,7 @@ project_events = APIRouter(prefix='/projects', route_class=DishkaRoute)
 async def read_job(job_id: JobIdPath, actor: ActorDep, service: JobServiceDep) -> JobSchema:
     """Return the state and progress of a job.
 
+    \N{FORM FEED}
     :param job_id: Identifier of the job.
     :type job_id: JobId
     :param actor: The signed-in account.
@@ -55,6 +56,7 @@ async def read_job(job_id: JobIdPath, actor: ActorDep, service: JobServiceDep) -
 async def cancel_job(job_id: JobIdPath, actor: ActorDep, service: JobServiceDep) -> JobSchema:
     """Cancel a queued or running job and return it; a running job stops before its next step.
 
+    \N{FORM FEED}
     :param job_id: Identifier of the job.
     :type job_id: JobId
     :param actor: The signed-in account.
@@ -97,6 +99,7 @@ async def stream_project_events(
 ) -> AsyncIterator[ServerSentEvent]:
     """Stream the project's events as they happen: job changes and description changes.
 
+    \N{FORM FEED}
     :param events: The project's events, subscribed to by ``open_event_stream``.
     :type events: ProjectEvents
     :returns: Iterator yielding one server-sent event per domain event the browser listens to.

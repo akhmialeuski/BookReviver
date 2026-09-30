@@ -110,6 +110,7 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Accounts     | `Actor`, `AccountSettings` (default engine and model per `AiTask`)                            |
 | Credentials  | `ProviderCredential` with a masked secret, never printed or logged                            |
 | Books        | `Project`, `ProjectOverview`, `BookDetails`, `ImagePolicy`                                    |
+| Changes      | `BookDetailsChanges`, the description fields a change replaces, None keeping a field          |
 | Sources      | `Source`, `SourceFile`, `SourceKind`, `FileType`, `MetadataSuggestion`                        |
 | Scans        | `Scan`, `ScanFacts`, `Renditions`                                                             |
 | Pages        | `Page`, `PageKind`, `PageOrigin`, `PageVersion`, `VersionState`, `Transform`, `PageStage`     |
@@ -788,8 +789,10 @@ data/storage/
 ```
 
 Deleting a source removes its files, its scans and the renditions of its scans, and leaves the pages of the book
-with their copies of the images, their versions, labels and order. Deleting a project removes its rows and then
-calls `delete_project` on both storage ports.
+with their copies of the images, their versions, labels and order. Deleting a project calls `delete_project` on both
+storage ports and then removes its rows. Both methods treat a project without files as deleted, so a deletion that
+fails part-way keeps the project, and repeating it finishes the job. Removing the rows first would leave the files of
+a failed deletion where no request can reach them, because every request finds a project by its row.
 
 Nothing stored is ever replaced: a new version gets a new directory. Derived assets are regenerable under a new key,
 the next version or content hash, which their URLs carry, so browsers cache them forever. Each is written under a
@@ -909,8 +912,10 @@ The project list counts in `page_count` the included pages of the book, and show
   `model_validate`.
 - Following FastAPI's guide: no `...` as a default, no `RootModel` (an `Annotated` list with `Field` instead), and
   `Annotated` for every parameter and dependency.
-- `PATCH` follows JSON Merge Patch, RFC 7396: a field left out stays as it is, and `null` clears it. The title of a
-  book cannot be cleared.
+- `PATCH` follows JSON Merge Patch, RFC 7396: a field left out stays as it is, and `null` clears it to the value a
+  new resource has for it. The title of a book cannot be cleared. The body is sent as `application/merge-patch+json`
+  or `application/json`. The service receives a domain change such as `BookDetailsChanges`, in which None keeps a
+  field, so clearing needs no third state in the domain.
 - Pydantic stays at the edges: request and response schemas in `api`, settings in `app`. Domain invariants are
   `attrs` validators, so the core does not depend on Pydantic.
 - Every route declares a typed Pydantic response. The shapes are the same everywhere: a single resource is its
