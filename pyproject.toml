@@ -47,6 +47,10 @@ dependencies = [
     "ty==0.0.84",
 ]
 
+[project.scripts]
+# advanced-alchemy's migration commands on the database the settings name, such as `bookreviver-migrate upgrade head`
+bookreviver-migrate = "bookreviver.app.migrate:migrate"
+
 [tool.fastapi]
 entrypoint = "bookreviver.app.asgi:app"
 
