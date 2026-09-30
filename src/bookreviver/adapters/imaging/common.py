@@ -4,7 +4,8 @@ The facts a format reports beyond the typed ``ScanFacts`` fields go into ``extra
 of ``FactKey``, so every format spells a key the same way. ``natural_order`` is the one order of the files of an
 upload, which becomes the order of their sources in the book. ``only_file`` is the one rule that a PDF or an image
 source is a single file. ``is_portable_jpeg`` is the one rule deciding whether a stored JPEG may be copied as the
-image of a scan, whether it comes from a PDF page or from an image file.
+image of a scan, whether it comes from a PDF page or from an image file. ``write_full`` is the one place that writes a
+page image in the format the caller asked for, so every source format encodes a JPEG and a PNG alike.
 """
 
 import enum
@@ -13,6 +14,8 @@ from typing import TYPE_CHECKING
 
 from natsort import natsorted
 from PIL import ExifTags, Image
+
+from bookreviver.domain.enums import Rendition
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -29,6 +32,12 @@ MAX_IMAGE_PIXELS: int = 300_000_000
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 MM_PER_INCH: float = 25.4
 JPEG_FORMAT: str = 'JPEG'
+PNG_FORMAT: str = 'PNG'
+# Pillow modes of a bilevel and of a gray image; a JPEG holds no bit depth of one, so a bilevel image is written gray
+BILEVEL_MODE: str = '1'
+GRAY_MODE: str = 'L'
+# Key of ``Image.info`` and of the save options holding a colour profile
+ICC_PROFILE_KEY: str = 'icc_profile'
 # Pillow modes a browser and libvips read from a JPEG file as they are
 PORTABLE_JPEG_MODES: frozenset[str] = frozenset({'L', 'RGB'})
 # EXIF orientation of an image stored the way it is meant to be seen
@@ -114,3 +123,36 @@ def is_portable_jpeg(image: Image.Image) -> bool:
     if image.format != JPEG_FORMAT or image.mode not in PORTABLE_JPEG_MODES:
         return False
     return int(image.getexif().get(ExifTags.Base.Orientation, UPRIGHT_ORIENTATION)) == UPRIGHT_ORIENTATION
+
+
+def write_full(
+    image: Image.Image, target: Path, *, full: Rendition, jpeg_quality: int, icc_profile: bytes | None = None
+) -> None:
+    """Write a page image at ``target`` as a JPEG or a PNG, whichever ``full`` names.
+
+    A PNG keeps the mode of the image, so a bilevel image becomes a 1-bit PNG with exactly its two values, and gray,
+    RGB and their profile are stored without loss. A JPEG holds no bit depth of one, so a bilevel image is written gray.
+    The profile is written exactly as given: ``None`` writes none, even if the image carries one.
+
+    :param image: Page image in a mode a JPEG or a PNG can hold: ``1``, ``L`` or ``RGB``.
+    :type image: Image.Image
+    :param target: Path to write the image at.
+    :type target: Path
+    :param full: Format to write, ``Rendition.FULL_JPEG`` or ``Rendition.FULL_PNG``.
+    :type full: Rendition
+    :param jpeg_quality: JPEG quality from 1 to 100, unused for a PNG.
+    :type jpeg_quality: int
+    :param icc_profile: Colour profile to embed, or None for none.
+    :type icc_profile: bytes | None
+    :raises ValueError: If ``full`` is not a format of the ``full`` image, which only a caller that skipped the
+                        domain's choice of the format can cause.
+    """
+    match full:
+        case Rendition.FULL_PNG:
+            image.save(target, format=PNG_FORMAT, icc_profile=icc_profile)
+        case Rendition.FULL_JPEG:
+            jpeg = image.convert(GRAY_MODE) if image.mode == BILEVEL_MODE else image
+            jpeg.save(target, format=JPEG_FORMAT, quality=jpeg_quality, icc_profile=icc_profile)
+        case _:
+            err_msg = f'{full} is not a format of the full image.'
+            raise ValueError(err_msg)

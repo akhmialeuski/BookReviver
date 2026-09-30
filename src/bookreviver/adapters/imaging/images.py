@@ -20,27 +20,42 @@ call reads them. ``_ImageFile`` therefore reads every header and decodes the pix
 every frame to the pixel bound, and reads the resolution and the colour profile of a TIFF frame from that frame's own
 tags.
 
-A gray or RGB JPEG stored upright is copied as the image of its scan byte for byte, as ``is_portable_jpeg`` decides.
-Every other scan is turned upright and encoded by Pillow with the same pixel values, 16-bit gray scaled rather than
-clipped, and its own colour profile kept unless the conversion changes the colour space.
+The image of a scan is a JPEG or a PNG, as the caller asks. A gray or RGB JPEG stored upright is copied as a JPEG
+byte for byte, as ``is_portable_jpeg`` decides. Every other scan is turned upright and encoded by Pillow with the same
+pixel values, 16-bit gray scaled rather than clipped, and its own colour profile kept when the conversion leaves the
+colour space alone. A bilevel scan keeps its 1-bit mode in a PNG, and is written gray as a JPEG, which has no 1-bit
+mode.
+
+A CMYK, LAB or YCbCr scan is turned into RGB, which changes its colour space, so its embedded profile no longer
+describes the pixels. When the scan has a profile, Little CMS converts from that profile to sRGB through
+``ImageCms.profileToProfile`` with the relative colorimetric intent, which keeps the tones of the paper and the ink that
+sRGB can show exactly, where the perceptual intent would compress the whole gamut and shift even those. A scan without
+a profile, or with one Little CMS cannot apply to its pixels, is converted by Pillow's own formula, as before. Either
+way the pixels are then sRGB, and the image is tagged with the sRGB profile so that every viewer shows the colour alike.
 """
 
+import io
+import logging
 import shutil
 import struct
-from typing import TYPE_CHECKING, Any, Self, override
+from typing import TYPE_CHECKING, Any, Literal, Self, override
 
-from PIL import ExifTags, Image, ImageOps, TiffImagePlugin
+from PIL import ExifTags, Image, ImageCms, ImageOps, TiffImagePlugin
 
 from bookreviver.adapters.imaging.common import (
-    JPEG_FORMAT,
+    BILEVEL_MODE,
+    GRAY_MODE,
+    ICC_PROFILE_KEY,
     MAX_IMAGE_PIXELS,
+    PNG_FORMAT,
     FactKey,
     is_portable_jpeg,
     only_file,
     to_mm,
+    write_full,
 )
 from bookreviver.adapters.imaging.reader import SourceFormat
-from bookreviver.domain.enums import ColorMode, FileType, SourceKind
+from bookreviver.domain.enums import ColorMode, FileType, Rendition, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
 from bookreviver.domain.values import ScanFacts, SourceAnalysis
 
@@ -52,12 +67,13 @@ if TYPE_CHECKING:
 type ModeDepth = tuple[ColorMode, int | None]
 type Dpi = tuple[float | None, float | None]
 
+logger = logging.getLogger(__name__)
+
 IMAGE_FILE_TYPES: tuple[FileType, ...] = tuple(
     file_type for file_type in FileType if file_type.source_kind is SourceKind.IMAGE
 )
 IMAGE_SUFFIXES: frozenset[str] = frozenset(suffix for file_type in IMAGE_FILE_TYPES for suffix in file_type.suffixes)
 IMAGE_TYPE_NAMES: str = ', '.join(file_type.label for file_type in IMAGE_FILE_TYPES)
-PNG_FORMAT: str = 'PNG'
 DPI_KEY: str = 'dpi'
 NO_DPI: tuple[float, float] = (0.0, 0.0)
 # What Pillow raises for a header it cannot read: Image.open turns SyntaxError, IndexError, TypeError and struct.error
@@ -109,32 +125,35 @@ EXIF_TAGS: Sequence[ExifTags.Base] = (
     ExifTags.Base.DateTime,
 )
 
-# JPEG mode for the Pillow modes that do not become RGB
-GRAY_MODE: str = 'L'
-GRAY_JPEG_MODES: Mapping[str, str] = {'1': GRAY_MODE, 'L': GRAY_MODE, 'LA': GRAY_MODE, 'F': GRAY_MODE}
+# Mode a page image is converted to, for the Pillow modes that do not become RGB; a bilevel image stays bilevel, and
+# ``write_full`` makes it gray only for a JPEG
+GRAY_MODES: Mapping[str, str] = {BILEVEL_MODE: BILEVEL_MODE, 'L': GRAY_MODE, 'LA': GRAY_MODE, 'F': GRAY_MODE}
 RGB_MODE: str = 'RGB'
 INT32_MODE: str = 'I'
 # Both 'I;16*' and 'I' hold samples wider than 8 bits
 WIDE_GRAY_MODE_PREFIX: str = 'I'
 # Maps a 16-bit sample onto 0..255; a plain conversion to 'L' clips instead of scaling
 SIXTEEN_TO_EIGHT_BIT_SCALE: float = 1 / 256
-ICC_PROFILE_KEY: str = 'icc_profile'
 # Modes whose pixels Pillow converts into another colour space, so their embedded profile no longer describes them
 PROFILE_CHANGING_MODES: frozenset[str] = frozenset({'CMYK', 'LAB', 'YCbCr'})
+# Name ``ImageCms.createProfile`` knows the standard RGB colour space by
+SRGB_PROFILE_NAME: Literal['sRGB'] = 'sRGB'
 
 
 class ImageFormat(SourceFormat):
-    """Describes each frame of an image file by its header alone, and copies or converts it as JPEG."""
+    """Describes each frame of an image file by its header alone, and copies or converts it as JPEG or PNG."""
 
     kind = SourceKind.IMAGE
 
     def __init__(self, *, jpeg_quality: int) -> None:
-        """Encode converted scans at ``jpeg_quality``.
+        """Encode converted scans written as JPEG at ``jpeg_quality``, and build the sRGB profile they convert to.
 
-        :param jpeg_quality: JPEG quality from 1 to 100 for every scan that is not copied.
+        :param jpeg_quality: JPEG quality from 1 to 100 for every scan written as JPEG that is not copied.
         :type jpeg_quality: int
         """
         self._jpeg_quality = jpeg_quality
+        self._srgb = ImageCms.ImageCmsProfile(ImageCms.createProfile(SRGB_PROFILE_NAME))
+        self._srgb_profile = self._srgb.tobytes()
 
     @override
     def inspect(self, files: Sequence[Path]) -> SourceAnalysis:
@@ -161,20 +180,29 @@ class ImageFormat(SourceFormat):
         return SourceAnalysis(kind=SourceKind.IMAGE, scans=scans, file_metadata=file_metadata)
 
     @override
-    def extract(self, files: Sequence[Path], *, number: int, target: Path) -> None:
-        """Copy an upright gray or RGB JPEG as it is, and encode any other frame upright as JPEG.
+    def extract(self, files: Sequence[Path], *, number: int, target: Path, full: Rendition) -> None:
+        """Copy an upright gray or RGB JPEG as it is when a JPEG is asked for, and encode any other frame upright.
 
-        The pixels keep their values and their colour profile, unless the conversion changes the colour space.
+        The pixels keep their values and their colour profile, unless the conversion changes the colour space. A
+        JPEG asked for as a PNG is decoded and written as one, so the PNG holds exactly the pixels the JPEG shows.
+
+        A CMYK, LAB or YCbCr frame changes its colour space to RGB in one of two ways. With an embedded colour profile
+        that applies to its pixels, it is converted from that profile to sRGB by Little CMS with the relative
+        colorimetric intent. Without one, or when the profile does not apply, it is converted by Pillow's own formula,
+        which takes no account of the inks. The result of either is tagged with the sRGB profile, whereas the profile
+        the frame had described the colour space it left and is dropped.
 
         :param files: Local path of the image file, the one file of the source.
         :type files: Sequence[Path]
         :param number: Number of the frame in the file, starting at 0; only a TIFF file has more than one.
         :type number: int
-        :param target: Path to write the JPEG at.
+        :param target: Path to write the image at.
         :type target: Path
+        :param full: Format to write, ``Rendition.FULL_JPEG`` or ``Rendition.FULL_PNG``.
+        :type full: Rendition
         :raises UnsupportedSourceError: If the file or the frame cannot be read as an image.
         :raises IndexError: If the file has fewer frames than ``number + 1``.
-        :raises ValueError: If the source is not exactly one file.
+        :raises ValueError: If the source is not exactly one file, or ``full`` is not a format of the full image.
         """
         path = only_file(files, kind=self.kind)
         with _ImageFile(path) as file:
@@ -184,19 +212,51 @@ class ImageFormat(SourceFormat):
                 raise IndexError(err_msg)
             file.seek(number)
             image = file.image
-            if is_portable_jpeg(image):
+            if full is Rendition.FULL_JPEG and is_portable_jpeg(image):
                 shutil.copyfile(path, target)
                 return
-            # Decoded before any conversion, so an error below is one of writing the JPEG, not of reading the file
+            # Decoded before any conversion, so an error below is one of writing the image, not of reading the file
             file.load()
             upright = ImageOps.exif_transpose(image)
+            profile = file.icc_profile
             if upright.mode.startswith(WIDE_GRAY_MODE_PREFIX):
                 scaled = upright.convert(INT32_MODE).point(lambda value: value * SIXTEEN_TO_EIGHT_BIT_SCALE)
                 converted = scaled.convert(GRAY_MODE)
+            elif upright.mode in PROFILE_CHANGING_MODES:
+                converted, profile = self._to_srgb(upright, profile, name=path.name), self._srgb_profile
             else:
-                converted = upright.convert(GRAY_JPEG_MODES.get(upright.mode, RGB_MODE))
-            profile = None if image.mode in PROFILE_CHANGING_MODES else file.icc_profile
-            converted.save(target, format=JPEG_FORMAT, quality=self._jpeg_quality, icc_profile=profile)
+                converted = upright.convert(GRAY_MODES.get(upright.mode, RGB_MODE))
+            write_full(converted, target, full=full, jpeg_quality=self._jpeg_quality, icc_profile=profile)
+
+    def _to_srgb(self, image: Image.Image, profile: bytes | None, *, name: str) -> Image.Image:
+        """Turn a CMYK, LAB or YCbCr image into sRGB, by its embedded profile when it has one that applies.
+
+        Little CMS converts from the profile to sRGB with the relative colorimetric intent. Without a profile, or when
+        Little CMS cannot apply the profile to the pixels, such as a damaged profile or one of another colour space,
+        Pillow's own conversion to RGB is used, and the second case is logged.
+
+        :param image: Upright image in a mode of ``PROFILE_CHANGING_MODES``.
+        :type image: Image.Image
+        :param profile: The embedded colour profile of the image, or None when it has none.
+        :type profile: bytes | None
+        :param name: Name of the image file, for the log.
+        :type name: str
+        :returns: The image in RGB, in the sRGB colour space when the profile applied.
+        :rtype: Image.Image
+        """
+        converted = None
+        if profile is not None:
+            try:
+                converted = ImageCms.profileToProfile(
+                    image,
+                    ImageCms.ImageCmsProfile(io.BytesIO(profile)),
+                    self._srgb,
+                    outputMode=RGB_MODE,
+                    renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC,
+                )
+            except (OSError, ImageCms.PyCMSError) as error:
+                logger.warning('The colour profile of %s does not apply to its %s pixels: %s', name, image.mode, error)
+        return image.convert(RGB_MODE) if converted is None else converted
 
 
 class _ImageFile:

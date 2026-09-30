@@ -18,6 +18,7 @@ from bookreviver.domain.enums import (
     ImagePolicy,
     JobState,
     PageKind,
+    Rendition,
     SourceKind,
     TransformKind,
     VersionState,
@@ -171,7 +172,9 @@ class TestPageVersionMapper:
     """Tests for PageVersionMapper."""
 
     @pytest.mark.parametrize(
-        'renditions', [Renditions(ready=True), Renditions(), None], ids=['ready', 'not-ready', 'no-image']
+        'renditions',
+        [Renditions(ready=True), Renditions(ready=True, full=Rendition.FULL_PNG), Renditions(), None],
+        ids=['ready', 'ready-png', 'not-ready', 'no-image'],
     )
     async def test_every_field_survives_the_database(
         self, fx_database: SqlDatabase, fx_owner_id: AccountId, renditions: Renditions | None
@@ -294,7 +297,7 @@ class TestScanMapper:
             make_scan(source=source, number=11),
             source_label='xii',
             facts=FULL_SCAN_FACTS,
-            renditions=Renditions(ready=True, version=3),
+            renditions=Renditions(ready=True, version=3, full=Rendition.FULL_PNG),
         )
         async with fx_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)

@@ -15,7 +15,7 @@ becomes the contributor list, ``language`` becomes ``languages`` when it is a co
 keys ``identifiers`` and ``subjects`` start empty. The downgrade turns the first author and the first language back.
 
 Revision ID: 4f4f125a9583
-Revises: 6446f5ce697c
+Revises: 1d0fc6453df6
 Create Date: 2026-09-30 16:38:42.770696
 """
 
@@ -37,7 +37,7 @@ __all__ = ('data_downgrades', 'data_upgrades', 'downgrade', 'schema_downgrades',
 
 # Revision identifiers, used by Alembic
 revision: str = '4f4f125a9583'
-down_revision: str | Sequence[str] | None = '6446f5ce697c'
+down_revision: str | Sequence[str] | None = '1d0fc6453df6'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

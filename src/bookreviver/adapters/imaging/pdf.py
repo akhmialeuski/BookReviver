@@ -1,4 +1,4 @@
-"""PDF sources read with PyMuPDF: the facts of every page of one PDF file, and each page written as JPEG.
+"""PDF sources read with PyMuPDF: the facts of every page of one PDF file, and each page written as JPEG or PNG.
 
 One PDF file is one source, and each of its pages is one scan numbered from 0 in page order. A book split into
 several PDF parts is several sources, whose pages join the book in the order of the upload, so no part is joined to
@@ -10,9 +10,11 @@ in points. The dictionaries PyMuPDF returns are read through the keys of ``PyMuP
 
 A page's embedded JPEG is copied byte for byte when the copy looks exactly like the page: the page must show nothing
 but that one image, upright over exactly its area, without a mask or a decode array, since ``extract_image`` returns
-the stored stream without either, and the JPEG must pass ``is_portable_jpeg``. Every other page is rendered at the
-resolution of its dominant image, or at ``BORN_DIGITAL_DPI`` when it has none, from the same ``_scan_facts`` the
-inspection reported.
+the stored stream without either, and the JPEG must pass ``is_portable_jpeg``. When a PNG is asked for instead, that
+JPEG is decoded and written as a PNG, which holds its pixels exactly and resamples nothing. Every other page is
+rendered at the resolution of its dominant image, or at ``BORN_DIGITAL_DPI`` when it has none, from the same
+``_scan_facts`` the inspection reported. A bilevel page is rendered gray and thresholded to a 1-bit PNG, so the
+result has exactly two values whatever smoothing the renderer applied.
 """
 
 import enum
@@ -23,10 +25,19 @@ import pymupdf
 from attrs import evolve
 from PIL import Image
 
-from bookreviver.adapters.imaging.common import FactKey, is_portable_jpeg, only_file, to_mm
+from bookreviver.adapters.imaging.common import (
+    BILEVEL_MODE,
+    GRAY_MODE,
+    ICC_PROFILE_KEY,
+    FactKey,
+    is_portable_jpeg,
+    only_file,
+    to_mm,
+    write_full,
+)
 from bookreviver.adapters.imaging.reader import SourceFormat
 from bookreviver.adapters.imaging.suggestions import SuggestionBuilder
-from bookreviver.domain.enums import ColorMode, SourceKind
+from bookreviver.domain.enums import ColorMode, Rendition, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
 from bookreviver.domain.values import ScanFacts, SourceAnalysis
 
@@ -38,7 +49,8 @@ POINTS_PER_INCH: float = 72.0
 PDF_FILETYPE: str = 'pdf'
 # Resolution of a page that has no raster image to take it from
 BORN_DIGITAL_DPI: float = 300.0
-PYMUPDF_JPEG_OUTPUT: str = 'jpeg'
+# The file formats of ``Pixmap.save`` for each format of the full image
+PYMUPDF_OUTPUTS: Mapping[Rendition, str] = {Rendition.FULL_JPEG: 'jpeg', Rendition.FULL_PNG: 'png'}
 
 # Human names of the PDF image filters; any other filter is shown as-is
 PDF_FILTER_NAMES: Mapping[str, str] = {
@@ -88,7 +100,7 @@ class PyMuPdfKey(enum.StrEnum):
 
 
 class PdfFormat(SourceFormat):
-    """Describes a PDF page by its dominant raster image, and copies or renders it as JPEG."""
+    """Describes a PDF page by its dominant raster image, and copies or renders it as JPEG or PNG."""
 
     kind = SourceKind.PDF
 
@@ -145,32 +157,50 @@ class PdfFormat(SourceFormat):
         return SourceAnalysis(kind=SourceKind.PDF, scans=scans, file_metadata=file_metadata, suggestion=suggestion)
 
     @override
-    def extract(self, files: Sequence[Path], *, number: int, target: Path) -> None:
+    def extract(self, files: Sequence[Path], *, number: int, target: Path, full: Rendition) -> None:
         """Copy the page's embedded JPEG, or render the page at the resolution of its dominant image.
+
+        The embedded JPEG is copied when a JPEG is asked for, and decoded into a PNG when a PNG is. A bilevel page that
+        is rendered and asked for as a PNG is thresholded to a 1-bit image.
 
         :param files: Local path of the PDF file, the one file of the source.
         :type files: Sequence[Path]
         :param number: Number of the page in the PDF, starting at 0.
         :type number: int
-        :param target: Path to write the JPEG at.
+        :param target: Path to write the image at.
         :type target: Path
+        :param full: Format to write, ``Rendition.FULL_JPEG`` or ``Rendition.FULL_PNG``.
+        :type full: Rendition
         :raises IndexError: If the PDF has fewer pages than ``number + 1``.
-        :raises ValueError: If the source is not exactly one file.
+        :raises ValueError: If the source is not exactly one file, or ``full`` is not a format of the full image.
         """
         path = only_file(files, kind=self.kind)
+        if full not in PYMUPDF_OUTPUTS:
+            err_msg = f'{full} is not a format of the full image.'
+            raise ValueError(err_msg)
         with pymupdf.open(path) as document:
             if not 0 <= number < document.page_count:
                 err_msg = f'{path.name} has no page {number}: it holds {document.page_count} pages.'
                 raise IndexError(err_msg)
             page = document[number]
             if (jpeg := _embedded_jpeg(document, page)) is not None:
-                target.write_bytes(jpeg)
+                if full is Rendition.FULL_JPEG:
+                    target.write_bytes(jpeg)
+                else:
+                    with Image.open(io.BytesIO(jpeg)) as image:
+                        profile = image.info.get(ICC_PROFILE_KEY)
+                        write_full(image, target, full=full, jpeg_quality=self._jpeg_quality, icc_profile=profile)
                 return
             facts = _scan_facts(page)
             dpi = max(filter(None, (facts.dpi_x, facts.dpi_y)), default=BORN_DIGITAL_DPI)
             gray = facts.color_mode in {ColorMode.GRAY, ColorMode.BILEVEL}
             pixmap = page.get_pixmap(dpi=round(dpi), colorspace=pymupdf.csGRAY if gray else pymupdf.csRGB)
-        pixmap.save(target, output=PYMUPDF_JPEG_OUTPUT, jpg_quality=self._jpeg_quality)
+        if facts.color_mode is ColorMode.BILEVEL and full is Rendition.FULL_PNG:
+            rendered = Image.frombytes(GRAY_MODE, (pixmap.width, pixmap.height), pixmap.samples)
+            bilevel = rendered.convert(BILEVEL_MODE, dither=Image.Dither.NONE)
+            write_full(bilevel, target, full=full, jpeg_quality=self._jpeg_quality)
+        else:
+            pixmap.save(target, output=PYMUPDF_OUTPUTS[full], jpg_quality=self._jpeg_quality)
 
 
 def _scan_facts(page: pymupdf.Page) -> ScanFacts:

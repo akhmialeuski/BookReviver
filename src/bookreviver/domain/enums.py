@@ -237,6 +237,21 @@ class ImagePolicy(LabeledStrEnum):
     COMPACT = 'compact', 'Compact: gray and colour images as JPEG'
     LOSSLESS = 'lossless', 'Lossless: every image as PNG'
 
+    def full_format(self, color_mode: ColorMode) -> Rendition:
+        """Return the format of the ``full`` image of a page of ``color_mode``, by decision 22 of the book model.
+
+        A bilevel page is a 1-bit PNG whatever the policy, since JPEG rings around strokes and a 1-bit PNG is smaller.
+        Any other page, one of unknown colour included, is a JPEG under ``compact`` and a PNG under ``lossless``.
+
+        :param color_mode: Colour mode of the page, as its scan reports it.
+        :type color_mode: ColorMode
+        :returns: ``Rendition.FULL_PNG`` or ``Rendition.FULL_JPEG``.
+        :rtype: Rendition
+        """
+        if color_mode is ColorMode.BILEVEL or self is ImagePolicy.LOSSLESS:
+            return Rendition.FULL_PNG
+        return Rendition.FULL_JPEG
+
 
 class PageKind(LabeledStrEnum):
     """Role of a page in the printed book."""

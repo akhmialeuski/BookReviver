@@ -311,14 +311,18 @@ class PageVersionMapper(RowMapper[PageVersion, PageVersionRow]):
             params=row.params,
             transform=self._transform(row.transform),
             data=row.data,
-            renditions=None if row.renditions_ready is None else Renditions(ready=row.renditions_ready),
+            renditions=(
+                None
+                if row.renditions_ready is None or row.renditions_full is None
+                else Renditions(ready=row.renditions_ready, full=row.renditions_full)
+            ),
             state=row.state,
             created_at=row.created_at,
         )
 
     @override
     def to_row(self, entity: PageVersion) -> PageVersionRow:
-        """Build the row of ``entity``; the renditions keep only their readiness, since they stay at the first version.
+        """Build the row of ``entity``; the renditions keep their readiness and full format, never a later version.
 
         :param entity: Page version to store.
         :type entity: PageVersion
@@ -336,6 +340,7 @@ class PageVersionMapper(RowMapper[PageVersion, PageVersionRow]):
             transform=asdict(entity.transform),
             data=dict(entity.data),
             renditions_ready=None if entity.renditions is None else entity.renditions.ready,
+            renditions_full=None if entity.renditions is None else entity.renditions.full,
             state=entity.state,
             created_at=entity.created_at,
         )
@@ -460,7 +465,7 @@ class ScanMapper(RowMapper[Scan, ScanRow]):
             number=row.number,
             source_label=row.source_label,
             facts=facts,
-            renditions=Renditions(ready=row.renditions_ready, version=row.renditions_version),
+            renditions=Renditions(ready=row.renditions_ready, version=row.renditions_version, full=row.renditions_full),
         )
 
     @override
@@ -492,6 +497,7 @@ class ScanMapper(RowMapper[Scan, ScanRow]):
             extra=dict(facts.extra),
             renditions_ready=entity.renditions.ready,
             renditions_version=entity.renditions.version,
+            renditions_full=entity.renditions.full,
         )
 
 

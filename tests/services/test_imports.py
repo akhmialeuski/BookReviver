@@ -1,6 +1,7 @@
 """Tests for the import service: receiving an upload, and running the job it becomes, source by source."""
 
 import asyncio
+from functools import partial
 from operator import attrgetter, itemgetter
 from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import AsyncMock, patch
@@ -8,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
+from PIL import Image
 
 from bookreviver.adapters.imaging.common import FactKey
 from bookreviver.adapters.jobs.recording import RecordingJobQueue
@@ -17,6 +19,7 @@ from bookreviver.domain.enums import (
     ColorMode,
     ContributorRole,
     DjvuDocumentKind,
+    ImagePolicy,
     JobState,
     PageOrigin,
     RejectionReason,
@@ -85,7 +88,23 @@ pytestmark = pytest.mark.anyio
 
 FILES_ARG: str = 'files'
 CASE_ARG: str = 'case'
-RENDITIONS: tuple[Rendition, ...] = (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL, Rendition.TILES)
+# The renditions cut from the ``full`` image, whatever its format
+DERIVED: tuple[Rendition, ...] = (Rendition.PREVIEW, Rendition.THUMBNAIL, Rendition.TILES)
+BILEVEL_MODE: str = '1'
+GRAY_MODE: str = 'L'
+RGB_MODE: str = 'RGB'
+JPEG: str = 'JPEG'
+PNG: str = 'PNG'
+# Format and mode of the stored ``full`` image of a page of each colour under each policy, written out rather than
+# taken from the rule the service applies
+DJVU_FULL_IMAGES: dict[tuple[ImagePolicy, ColorMode], tuple[str, str]] = {
+    (ImagePolicy.COMPACT, ColorMode.COLOR): (JPEG, RGB_MODE),
+    (ImagePolicy.COMPACT, ColorMode.GRAY): (JPEG, GRAY_MODE),
+    (ImagePolicy.COMPACT, ColorMode.BILEVEL): (PNG, BILEVEL_MODE),
+    (ImagePolicy.LOSSLESS, ColorMode.COLOR): (PNG, RGB_MODE),
+    (ImagePolicy.LOSSLESS, ColorMode.GRAY): (PNG, GRAY_MODE),
+    (ImagePolicy.LOSSLESS, ColorMode.BILEVEL): (PNG, BILEVEL_MODE),
+}
 EVERY_SLICE: SliceRequest = SliceRequest(limit=1000)
 # Pages of the sample PDFs, and the scans they and the one image make in all
 FIRST_PART_PAGES: int = 2
@@ -260,6 +279,38 @@ async def _is_stored(assets: AssetStore, key: StorageKey) -> bool:
         return False
 
 
+async def _project_with(rig: ImportRig, owner: Actor, policy: ImagePolicy) -> Project:
+    """Store a project of the owner with no sources, under an image policy.
+
+    :param rig: Adapters of the import.
+    :type rig: ImportRig
+    :param owner: Account owning the project.
+    :type owner: Actor
+    :param policy: Image policy of the project.
+    :type policy: ImagePolicy
+    :returns: The stored project.
+    :rtype: Project
+    """
+    project = evolve(make_project(owner_id=owner.account_id), image_policy=policy)
+    await rig.fakes.store(project)
+    return project
+
+
+async def _stored_image(rig: ImportRig, key: StorageKey) -> tuple[str | None, str]:
+    """Read the format and the mode of a stored image, as Pillow reports them.
+
+    :param rig: Adapters of the import.
+    :type rig: ImportRig
+    :param key: Key of the stored image.
+    :type key: StorageKey
+    :returns: The Pillow format, such as ``PNG``, and the Pillow mode, such as ``1``.
+    :rtype: tuple[str | None, str]
+    """
+    async with rig.assets.readable(key) as path:
+        with Image.open(path) as image:
+            return image.format, image.mode
+
+
 def _events_of[EventT: DomainEvent](rig: ImportRig, kind: type[EventT]) -> list[EventT]:
     """Return the published events of one kind, in the order they were published.
 
@@ -296,6 +347,27 @@ REFUSED_UPLOADS: list[UploadCase] = [
     UploadCase(names=['a.jpg', 'A.JPG'], problem=UploadProblem.DUPLICATE_NAME),
 ]
 REFUSED_IDS: list[str] = ['no-files', 'too-many-files', 'too-large', 'empty-name', 'duplicate-name']
+
+
+class FullFormatCase(NamedTuple):
+    """A page image imported under an image policy, and the ``full`` image it must be stored as.
+
+    :ivar policy: Image policy of the project.
+    :ivar mode: Pillow mode of the uploaded page image.
+    :ivar name: Name of the uploaded file, whose suffix selects its format.
+    :ivar expected: Format the ``full`` image must be recorded and stored in.
+    :ivar stored: Pillow format and mode the stored ``full`` file must have.
+    """
+
+    policy: ImagePolicy
+    mode: str
+    name: str
+    expected: Rendition
+
+    @property
+    def stored(self) -> tuple[str, str]:
+        """The Pillow format and mode of the stored file: the format of ``expected``, in the mode it was uploaded in."""
+        return (PNG if self.expected is Rendition.FULL_PNG else JPEG), self.mode
 
 
 class BadFile(NamedTuple):
@@ -595,14 +667,14 @@ class TestRunImport:
         for scan in scans:
             missing += [
                 key
-                for rendition in RENDITIONS
+                for rendition in (scan.renditions.full, *DERIVED)
                 if not await _is_stored(fx_rig.assets, key := keys.scan_rendition(scan, rendition))
             ]
         versions = [version for page in pages for version in await uow.page_versions.list_for_page(page.id)]
         for version in versions:
             missing += [
                 key
-                for rendition in RENDITIONS
+                for rendition in (Rendition.FULL_JPEG, *DERIVED)
                 if not await _is_stored(fx_rig.assets, key := keys.version_rendition(version, rendition))
             ]
         expect(missing == [])
@@ -721,9 +793,131 @@ class TestRunImport:
         assert (pages[: len(before)], len(pages)) == (before, 2 * len(before))
 
 
+class TestRunImportFullFormat:
+    """Tests for the format ImportService.run_import() writes the ``full`` image of a scan and its pages in."""
+
+    @pytest.mark.parametrize(
+        CASE_ARG,
+        [
+            FullFormatCase(ImagePolicy.COMPACT, BILEVEL_MODE, 'page.tif', Rendition.FULL_PNG),
+            FullFormatCase(ImagePolicy.LOSSLESS, BILEVEL_MODE, 'page.tif', Rendition.FULL_PNG),
+            FullFormatCase(ImagePolicy.COMPACT, GRAY_MODE, 'page.jpg', Rendition.FULL_JPEG),
+            FullFormatCase(ImagePolicy.LOSSLESS, GRAY_MODE, 'page.jpg', Rendition.FULL_PNG),
+            FullFormatCase(ImagePolicy.COMPACT, RGB_MODE, 'page.jpg', Rendition.FULL_JPEG),
+            FullFormatCase(ImagePolicy.LOSSLESS, RGB_MODE, 'page.jpg', Rendition.FULL_PNG),
+        ],
+        ids=lambda case: f'{case.policy}-{case.mode}',
+    )
+    async def test_writes_scan_and_page_version_in_the_format_the_colour_and_the_policy_choose(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_samples: Path, case: FullFormatCase
+    ) -> None:
+        """Verify the format is asked of the rasterizer, recorded with the scan and its page's version, and stored.
+
+        The preview, the thumbnail and the pyramid are cut from that file, and only a file of that format exists.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        :param case: Image policy of the project, the page image to import, and the format its ``full`` must have.
+        :type case: FullFormatCase
+        """
+        project = await _project_with(fx_rig, fx_owner, case.policy)
+
+        await _import(fx_rig, fx_owner, project.id, [image_upload(fx_samples, case.name, mode=case.mode)])
+
+        keys = ProjectKeys(project.id)
+        [scan] = await _scans(fx_rig, project.id)
+        [page] = await _pages(fx_rig, project.id)
+        [version] = await fx_rig.open_uow().page_versions.list_for_page(page.id)
+        other = Rendition.FULL_JPEG if case.expected is Rendition.FULL_PNG else Rendition.FULL_PNG
+        expect(fx_rig.rasterizer.formats == [case.expected])
+        expect(scan.renditions.full is case.expected)
+        expect(version.renditions is not None and version.renditions.full is case.expected)
+        for of in (partial(keys.scan_rendition, scan), partial(keys.version_rendition, version)):
+            expect(all([await _is_stored(fx_rig.assets, of(rendition)) for rendition in (case.expected, *DERIVED)]))
+            expect(not await _is_stored(fx_rig.assets, of(other)))
+        expect(await _stored_image(fx_rig, keys.scan_rendition(scan, case.expected)) == case.stored)
+        assert_expectations()
+
+    async def test_later_change_of_the_policy_leaves_the_stored_images_and_their_paths_alone(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_samples: Path
+    ) -> None:
+        """Verify a scan imported under ``compact`` stays a JPEG after the project turns ``lossless``.
+
+        A scan imported afterwards follows the new policy, and the first keeps its recorded format, its key and its
+        file, so no stored address changes.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        project = await _project_with(fx_rig, fx_owner, ImagePolicy.COMPACT)
+        await _import(fx_rig, fx_owner, project.id, [image_upload(fx_samples, 'first.jpg')])
+        [first] = await _scans(fx_rig, project.id)
+        uow = fx_rig.open_uow()
+        await uow.projects.update(evolve(project, image_policy=ImagePolicy.LOSSLESS))
+        await uow.commit()
+
+        second = image_upload(fx_samples, 'second.jpg', width_px=SECOND_PART_WIDTH_PX)
+        await _import(fx_rig, fx_owner, project.id, [second])
+
+        keys = ProjectKeys(project.id)
+        scans = await _scans(fx_rig, project.id)
+        kept = next(scan for scan in scans if scan.id == first.id)
+        added = next(scan for scan in scans if scan.id != first.id)
+        expect(kept.renditions.full is Rendition.FULL_JPEG)
+        expect(added.renditions.full is Rendition.FULL_PNG)
+        expect(await _is_stored(fx_rig.assets, keys.scan_rendition(kept, Rendition.FULL_JPEG)))
+        expect(not await _is_stored(fx_rig.assets, keys.scan_rendition(kept, Rendition.FULL_PNG)))
+        assert_expectations()
+
+
 @requires_djvulibre
 class TestRunImportDjvu:
     """Tests for the sources ImportService.run_import() makes of DjVu files."""
+
+    @pytest.mark.parametrize('policy', list(ImagePolicy))
+    async def test_stores_a_bilevel_page_as_a_one_bit_png_under_both_policies(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_samples: Path, policy: ImagePolicy
+    ) -> None:
+        """Verify a bilevel DjVu page is a 1-bit PNG whatever the policy, and a gray or colour page follows it.
+
+        The pages of the scans and of their base versions are checked, so the copy keeps the format.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        :param policy: Image policy of the project.
+        :type policy: ImagePolicy
+        """
+        project = await _project_with(fx_rig, fx_owner, policy)
+        bundle = write_djvu_bundle(fx_samples / 'book.djvu', pages=DJVU_PAGES)
+
+        job = await _import(fx_rig, fx_owner, project.id, djvu_uploads([bundle]))
+
+        keys, uow = ProjectKeys(project.id), fx_rig.open_uow()
+        scans = await _scans(fx_rig, project.id)
+        expect(job.state is JobState.SUCCEEDED)
+        expect(sorted(scan.facts.color_mode for scan in scans) == sorted(page.mode for page in DJVU_PAGES))
+        for scan in scans:
+            wanted = DJVU_FULL_IMAGES[policy, scan.facts.color_mode]
+            expect(await _stored_image(fx_rig, keys.scan_rendition(scan, scan.renditions.full)) == wanted)
+        for page in await _pages(fx_rig, project.id):
+            [version] = await uow.page_versions.list_for_page(page.id)
+            scan = next(scan for scan in scans if scan.id == page.scan_id)
+            wanted = DJVU_FULL_IMAGES[policy, scan.facts.color_mode]
+            expect(version.renditions is not None and version.renditions.full is scan.renditions.full)
+            expect(await _stored_image(fx_rig, keys.version_rendition(version, scan.renditions.full)) == wanted)
+        assert_expectations()
 
     async def test_keeps_an_indirect_document_as_one_source_with_its_scans_in_index_order(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path

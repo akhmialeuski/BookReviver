@@ -9,7 +9,7 @@ from tests.adapters.imaging.samples import xmp_packet
 
 TITLE: str = 'Сборникъ народныхъ пѣсенъ'
 OTHER_TITLE: str = 'Zbiór pieśni ludowych'
-IVANOV: str = 'Ивановъ, Н. Н.'
+IVANOV: str = 'Ивановъ, И. И.'
 PETROV: str = 'Петровъ, П. П.'
 PUBLISHER: str = 'Изданіе автора'
 ISBN: str = '0306406152'
@@ -58,11 +58,13 @@ class TestFromDocinfo:
 
     def test_reads_missing_and_empty_values_as_nothing(self) -> None:
         """Verify None, an empty string and absent keys give an empty suggestion."""
-        assert SuggestionBuilder.from_docinfo({'title': None, 'author': '', 'format': 'PDF 1.7'}) == MetadataSuggestion()
+        assert (
+            SuggestionBuilder.from_docinfo({'title': None, 'author': '', 'format': 'PDF 1.7'}) == MetadataSuggestion()
+        )
 
     def test_never_takes_a_year_from_the_dates_of_the_file(self) -> None:
         """Verify the creation and modification dates describe the file and stay out of the year of publication."""
-        info = {'title': TITLE, 'creationDate': "D:20240512101500+03'00'", 'modDate': "D:20240601000000Z"}
+        info = {'title': TITLE, 'creationDate': "D:20240512101500+03'00'", 'modDate': 'D:20240601000000Z'}
 
         assert SuggestionBuilder.from_docinfo(info).publication_year == ''
 
@@ -76,7 +78,7 @@ class TestFromXmp:
             f'<dc:title><rdf:Alt><rdf:li xml:lang="pl">{OTHER_TITLE}</rdf:li>'
             f'<rdf:li xml:lang="x-default">{TITLE}</rdf:li></rdf:Alt></dc:title>'
             f'<dc:creator><rdf:Seq><rdf:li>{IVANOV}</rdf:li><rdf:li>{PETROV}</rdf:li></rdf:Seq></dc:creator>'
-            '<dc:contributor><rdf:Bag><rdf:li>Сидоровъ, С. С.</rdf:li></rdf:Bag></dc:contributor>'
+            '<dc:contributor><rdf:Bag><rdf:li>Фёдоровъ, Ф. Ф.</rdf:li></rdf:Bag></dc:contributor>'
             f'<dc:publisher><rdf:Bag><rdf:li>{PUBLISHER}</rdf:li></rdf:Bag></dc:publisher>'
             '<dc:language><rdf:Bag><rdf:li>ru-RU</rdf:li><rdf:li>be</rdf:li><rdf:li>rus</rdf:li></rdf:Bag></dc:language>'
             f'<dc:identifier><rdf:Bag><rdf:li>urn:isbn:0-306-40615-2</rdf:li><rdf:li>{ADDRESS}</rdf:li></rdf:Bag>'
@@ -88,7 +90,7 @@ class TestFromXmp:
             title=TITLE,
             contributors=(
                 *_authors(IVANOV, PETROV),
-                Contributor(name='Сидоровъ, С. С.', role=ContributorRole.CONTRIBUTOR),
+                Contributor(name='Фёдоровъ, Ф. Ф.', role=ContributorRole.CONTRIBUTOR),
             ),
             publisher=PUBLISHER,
             languages=('rus', 'bel'),
@@ -121,13 +123,17 @@ class TestFromXmp:
 
     def test_drops_a_language_tag_that_is_no_iso_639_code(self) -> None:
         """Verify unknown two-letter tags and words give no language."""
-        packet = xmp_packet('<dc:language><rdf:Bag><rdf:li>zz</rdf:li><rdf:li>x-default</rdf:li></rdf:Bag></dc:language>')
+        packet = xmp_packet(
+            '<dc:language><rdf:Bag><rdf:li>zz</rdf:li><rdf:li>x-default</rdf:li></rdf:Bag></dc:language>'
+        )
 
         assert SuggestionBuilder.from_xmp(packet).languages == ()
 
     def test_never_takes_a_year_from_dc_date(self) -> None:
         """Verify ``dc:date`` is any date of the life of the file, such as the day it was scanned, and is ignored."""
-        packet = xmp_packet(f'<dc:title>{TITLE}</dc:title><dc:date><rdf:Seq><rdf:li>2024-05-12</rdf:li></rdf:Seq></dc:date>')
+        packet = xmp_packet(
+            f'<dc:title>{TITLE}</dc:title><dc:date><rdf:Seq><rdf:li>2024-05-12</rdf:li></rdf:Seq></dc:date>'
+        )
 
         suggestion = SuggestionBuilder.from_xmp(packet)
 
@@ -150,7 +156,9 @@ class TestFromXmp:
 
         assert SuggestionBuilder.from_xmp(packet) == MetadataSuggestion()
 
-    @pytest.mark.parametrize('packet', ['', '   ', 'not xml at all', '<x:xmpmeta'], ids=['empty', 'blank', 'text', 'cut'])
+    @pytest.mark.parametrize(
+        'packet', ['', '   ', 'not xml at all', '<x:xmpmeta'], ids=['empty', 'blank', 'text', 'cut']
+    )
     def test_a_missing_or_broken_packet_gives_an_empty_suggestion(self, packet: str) -> None:
         """Verify PyMuPDF's empty string for no packet, and text that is not XML, read as nothing found.
 
@@ -168,7 +176,7 @@ class TestFromDjvuMeta:
         meta = {
             'title': TITLE,
             'author': f'{IVANOV}; {PETROV}',
-            'editor': 'Сидоровъ, С. С.',
+            'editor': 'Фёдоровъ, Ф. Ф.',
             'publisher': PUBLISHER,
             'year': ' 1896 ',
         }
@@ -177,7 +185,7 @@ class TestFromDjvuMeta:
             title=TITLE,
             contributors=(
                 *_authors(IVANOV, PETROV),
-                Contributor(name='Сидоровъ, С. С.', role=ContributorRole.EDITOR),
+                Contributor(name='Фёдоровъ, Ф. Ф.', role=ContributorRole.EDITOR),
             ),
             publisher=PUBLISHER,
             publication_year='1896',

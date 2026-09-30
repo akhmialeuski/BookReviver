@@ -12,7 +12,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import JobState, PageKind, RejectionReason
+from bookreviver.domain.enums import JobState, PageKind, RejectionReason, Rendition
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import SourceId
 from bookreviver.domain.values import (
@@ -593,7 +593,7 @@ class TestScanRepository:
     async def test_update_stores_the_renditions_state(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify a scan marked ready in a new renditions version reads back so.
+        """Verify a scan marked ready in a new renditions version and a PNG full image reads back so.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -607,7 +607,7 @@ class TestScanRepository:
         await uow.projects.add(project)
         await uow.sources.add(source)
         await uow.scans.add(scan)
-        ready = evolve(scan, renditions=Renditions(ready=True, version=2))
+        ready = evolve(scan, renditions=Renditions(ready=True, version=2, full=Rendition.FULL_PNG))
         await uow.scans.update(ready)
         await uow.commit()
         assert await (await fx_uow_factory()).scans.get(scan.id) == ready

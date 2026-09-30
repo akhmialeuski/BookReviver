@@ -43,6 +43,7 @@ from bookreviver.domain.enums import (
     Orthography,
     PageKind,
     PageOrigin,
+    Rendition,
     RightsStatus,
     Script,
     SourceKind,
@@ -50,6 +51,8 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 
+# Format of the ``full`` image of the scans stored before the format was recorded, which were all JPEG
+LEGACY_FULL_FORMAT: Final = Rendition.FULL_JPEG.value
 # Referential action that lets the database remove the rows of a project, a source or a page with it
 CASCADE: Final = 'CASCADE'
 # Referential action that keeps a row whose optional parent is removed, emptying the reference
@@ -329,6 +332,8 @@ class ScanRow(DefaultBase):
     :ivar extra: Further facts read from the source, as JSON.
     :ivar renditions_ready: Whether every derived file of the current version is published.
     :ivar renditions_version: Version of the derived files, part of their storage keys.
+    :ivar renditions_full: Format of the ``full`` image, stored by value; a scan stored before the format was recorded
+                           reads as JPEG.
     :ivar source: Source holding the scan, never loaded implicitly.
     """
 
@@ -353,6 +358,7 @@ class ScanRow(DefaultBase):
     extra: Mapped[dict[str, Any]]
     renditions_ready: Mapped[bool]
     renditions_version: Mapped[int]
+    renditions_full: Mapped[Rendition] = mapped_column(enum_by_value(Rendition), server_default=LEGACY_FULL_FORMAT)
 
     source: Mapped[SourceRow] = relationship(back_populates=Relation.SCANS, lazy=NO_IMPLICIT_LOAD)
 
@@ -420,6 +426,7 @@ class PageVersionRow(DefaultBase):
     :ivar transform: Transform of coordinates from the input, as JSON.
     :ivar data: Data the step found, as JSON.
     :ivar renditions_ready: Whether the version's image files are published, or null for a step without an image.
+    :ivar renditions_full: Format of the version's ``full`` image, stored by value, or null for a step without an image.
     :ivar state: Where the version is in its lifecycle, stored by value.
     :ivar created_at: Time the version was created.
     :ivar page: Page owning the version, never loaded implicitly.
@@ -439,6 +446,7 @@ class PageVersionRow(DefaultBase):
     transform: Mapped[dict[str, Any]]
     data: Mapped[dict[str, Any]]
     renditions_ready: Mapped[bool | None]
+    renditions_full: Mapped[Rendition | None] = mapped_column(enum_by_value(Rendition))
     state: Mapped[VersionState] = mapped_column(enum_by_value(VersionState))
     created_at: Mapped[datetime]
 

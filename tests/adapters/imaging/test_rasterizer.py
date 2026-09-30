@@ -1,14 +1,17 @@
 """Tests for the PyMuPDF and Pillow page rasterizer."""
 
+import io
+import logging
 from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import patch
 
+import pymupdf
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
-from PIL import ExifTags, Image, ImageCms, TiffImagePlugin
+from PIL import ExifTags, Image, ImageChops, ImageCms, TiffImagePlugin
 
-from bookreviver.domain.enums import SourceKind
+from bookreviver.domain.enums import Rendition, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
 from tests.adapters.imaging.samples import (
     PdfPage,
@@ -16,13 +19,16 @@ from tests.adapters.imaging.samples import (
     TiffFrame,
     frame_pixel_span,
     gradient_image,
+    icc_reference_color,
+    write_cmyk_with_profile,
     write_image,
     write_pdf,
+    write_pdf_of_image,
     write_tiff,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     from bookreviver.ports.imaging import PageRasterizer
@@ -33,8 +39,12 @@ CASE_ARG: str = 'case'
 MODE_ARG: str = 'mode'
 PDF_NAME: str = 'book.pdf'
 TARGET_NAME: str = 'full.jpg'
+PNG_TARGET_NAME: str = 'full.png'
 JPEG: str = 'JPEG'
 PNG: str = 'PNG'
+BILEVEL_MODE: str = '1'
+# The value of a white pixel of a 1-bit image as Pillow reads it back
+WHITE: int = 255
 GRAY_MODE: str = 'L'
 RGB_MODE: str = 'RGB'
 CMYK_MODE: str = 'CMYK'
@@ -78,9 +88,21 @@ SIXTEEN_BIT_SAMPLE: int = 40_000
 # 40 000 / 256, allowing for lossy JPEG encoding
 EIGHT_BIT_SAMPLE: int = 156
 SAMPLE_TOLERANCE: int = 3
+CONTROL_PIXEL: tuple[int, int] = (5, 5)
+# One inch square, showing a 64-pixel CMYK sample at 64 DPI
+SMALL_PAGE_SIZE_PT: tuple[float, float] = (72.0, 72.0)
+# How far a channel of the converted pixel may be from the reference of Little CMS
+COLOUR_TOLERANCE: int = 2
+# A shift that a wrong conversion makes and a right one does not, in one channel
+SHIFT: int = 20
+UNPROFILED_INKS: tuple[int, int, int, int] = (10, 20, 30, 40)
+# L* 50 with both colour axes neutral in Pillow's 8-bit LAB, and the sRGB gray with that lightness
+NEUTRAL_LAB: tuple[int, int, int] = (128, 128, 128)
+MID_GRAY: int = 119
 DARK_LIMIT: int = 64
 LIGHT_LIMIT: int = 192
 SRGB_PROFILE: bytes = ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')).tobytes()
+SRGB_DESCRIPTION: str = ImageCms.getProfileDescription(ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')))
 MAX_FRAME_PIXELS_PATCH: str = 'bookreviver.adapters.imaging.images.MAX_FRAME_PIXELS'
 # Admits a frame of SMALL_SIZE_PX and refuses one of LARGE_FRAME_SIZE_PX
 SMALL_FRAME_PIXELS: int = SMALL_SIZE_PX[0] * SMALL_SIZE_PX[1]
@@ -101,6 +123,38 @@ class RenderedPageCase(NamedTuple):
     page: PdfPage
     size_px: tuple[int, int]
     mode: str
+
+
+class CmykColour(NamedTuple):
+    """A colour of an old scan, named for the test report.
+
+    :ivar name: What the colour is on the page.
+    :ivar rgb: The sRGB value the page shows.
+    """
+
+    name: str
+    rgb: tuple[int, int, int]
+
+
+# The colours of a scan that shift under a conversion without the profile: paper, ink and an illustration
+CMYK_COLOURS: list[CmykColour] = [
+    CmykColour(name='paper', rgb=(240, 230, 200)),
+    CmykColour(name='ink', rgb=(30, 25, 20)),
+    CmykColour(name='illustration', rgb=(200, 60, 40)),
+]
+
+
+class PngImageCase(NamedTuple):
+    """A page image stored in some Pillow mode and format, and the PNG mode it becomes.
+
+    :ivar mode: Pillow mode of the stored page image.
+    :ivar suffix: File suffix selecting the stored format.
+    :ivar png_mode: Pillow mode the written PNG must have.
+    """
+
+    mode: str
+    suffix: str
+    png_mode: str
 
 
 class DamagedPixelsCase(NamedTuple):
@@ -199,6 +253,48 @@ def _png_with_pixels_cut_off(directory: Path) -> Path:
     return path
 
 
+@pytest.fixture
+def fx_mupdf_icc() -> Iterator[None]:
+    """Yield to a test that switches the colour management of MuPDF, and leave it on, as MuPDF starts, afterwards.
+
+    :returns: Iterator yielding once, which restores the colour management when the test is over.
+    :rtype: Iterator[None]
+    """
+    yield
+    pymupdf.TOOLS.set_icc(True)
+
+
+def _description(profile: bytes | None) -> str | None:
+    """Return the description a colour profile gives itself, which tells two profiles of a colour space apart.
+
+    Two profiles of one colour space made at different times are not equal byte for byte, since the header holds the
+    second of their creation, so a test compares what they describe and not their bytes.
+
+    :param profile: Bytes of an ICC profile, or None for no profile.
+    :type profile: bytes | None
+    :returns: The description of the profile, or None when there is no profile.
+    :rtype: str | None
+    """
+    if profile is None:
+        return None
+    return ImageCms.getProfileDescription(ImageCms.ImageCmsProfile(io.BytesIO(profile)))
+
+
+def _distance(pixel: object, reference: object) -> int:
+    """Return the largest difference in any channel between two colours of an RGB image.
+
+    :param pixel: A pixel of an RGB image, as Pillow returns it: a tuple with one value per channel.
+    :type pixel: object
+    :param reference: The colour to compare with, a tuple with one value per channel.
+    :type reference: object
+    :returns: The largest absolute difference of a channel.
+    :rtype: int
+    """
+    assert isinstance(pixel, tuple)
+    assert isinstance(reference, tuple)
+    return max(abs(int(value) - int(wanted)) for value, wanted in zip(pixel, reference, strict=True))
+
+
 def _gray_at(image: Image.Image, xy: tuple[int, int]) -> int:
     """Return the 8-bit gray value of one pixel of a written image.
 
@@ -241,7 +337,7 @@ class TestExtractPdf:
         pdf = write_pdf(tmp_path / PDF_NAME, pages=[case])
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.PDF, [pdf], 0, target)
+        await fx_rasterizer.extract(SourceKind.PDF, [pdf], 0, target, full=Rendition.FULL_JPEG)
 
         assert target.read_bytes() == case.images[0].encoded()
 
@@ -326,13 +422,131 @@ class TestExtractPdf:
         pdf = write_pdf(tmp_path / PDF_NAME, pages=[case.page])
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.PDF, [pdf], 0, target)
+        await fx_rasterizer.extract(SourceKind.PDF, [pdf], 0, target, full=Rendition.FULL_JPEG)
 
         with Image.open(target) as rendered:
             expect(rendered.format == JPEG)
             expect(rendered.size == case.size_px)
             expect(rendered.mode == case.mode)
         expect(target.read_bytes() not in {image.encoded() for image in case.page.images})
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        CASE_ARG,
+        [PdfPage(size_pt=SCAN_PAGE_SIZE_PT, images=[evolve(GRAY_SCAN, mode=RGB_MODE)]), PdfPage(images=[GRAY_SCAN])],
+        ids=['rgb', 'gray'],
+    )
+    async def test_decodes_embedded_jpeg_into_a_png_holding_its_pixels(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, case: PdfPage
+    ) -> None:
+        """Verify a page showing one JPEG is written as a PNG of exactly the pixels the JPEG decodes to.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: Page showing nothing but one upright gray or RGB JPEG over its whole area.
+        :type case: PdfPage
+        """
+        pdf = write_pdf(tmp_path / PDF_NAME, pages=[case])
+        target = tmp_path / PNG_TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.PDF, [pdf], 0, target, full=Rendition.FULL_PNG)
+
+        with Image.open(target) as written, Image.open(io.BytesIO(case.images[0].encoded())) as jpeg:
+            expect(written.format == PNG)
+            expect(written.mode == jpeg.mode)
+            expect(ImageChops.difference(written, jpeg).getbbox() is None)
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        CASE_ARG,
+        [
+            RenderedPageCase(
+                page=PdfPage(size_pt=SCAN_PAGE_SIZE_PT, images=[evolve(GRAY_SCAN, image_format=PNG)]),
+                size_px=SCAN_SIZE_PX,
+                mode=GRAY_MODE,
+            ),
+            RenderedPageCase(page=PdfPage(text=PAGE_TEXT), size_px=LETTER_AT_300_DPI_PX, mode=RGB_MODE),
+        ],
+        ids=['gray', 'born-digital'],
+    )
+    async def test_renders_page_as_png_in_the_mode_of_its_colour(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, case: RenderedPageCase
+    ) -> None:
+        """Verify a page that has to be rendered is a PNG of its native size, gray or RGB as its content is.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: A PDF page that is more than one upright JPEG, and the image rendered from it.
+        :type case: RenderedPageCase
+        """
+        pdf = write_pdf(tmp_path / PDF_NAME, pages=[case.page])
+        target = tmp_path / PNG_TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.PDF, [pdf], 0, target, full=Rendition.FULL_PNG)
+
+        with Image.open(target) as rendered:
+            expect(rendered.format == PNG)
+            expect(rendered.size == case.size_px)
+            expect(rendered.mode == case.mode)
+        assert_expectations()
+
+    async def test_renders_a_bilevel_page_as_a_one_bit_png_without_smoothing(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path
+    ) -> None:
+        """Verify a page of one 1-bit image is a 1-bit PNG whose pixels are those of the image, no grays between.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        scan = ScanImage(mode=BILEVEL_MODE, size_px=SCAN_SIZE_PX, image_format=PNG)
+        pdf = write_pdf(tmp_path / PDF_NAME, pages=[PdfPage(size_pt=SCAN_PAGE_SIZE_PT, images=[scan])])
+        target = tmp_path / PNG_TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.PDF, [pdf], 0, target, full=Rendition.FULL_PNG)
+
+        with Image.open(target) as rendered, Image.open(io.BytesIO(scan.encoded())) as source:
+            expect(rendered.format == PNG)
+            expect(rendered.mode == BILEVEL_MODE)
+            expect(rendered.size == SCAN_SIZE_PX)
+            expect(ImageChops.difference(rendered, source).getbbox() is None)
+        assert_expectations()
+
+    @pytest.mark.usefixtures('fx_mupdf_icc')
+    async def test_renders_a_cmyk_image_through_its_profile_with_the_mupdf_default(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path
+    ) -> None:
+        """Verify MuPDF applies colour management by default, so no switch is needed in the adapter.
+
+        The page shows a CMYK JPEG with its profile. Rendered in the state MuPDF starts in, it comes out as it does with
+        colour management switched on explicitly, and differently from when it is switched off, so the default is
+        pinned: a build of MuPDF that turned it off would fail here.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        source = write_cmyk_with_profile(tmp_path / f'cmyk{JPG_SUFFIX}', rgb=CMYK_COLOURS[2].rgb)
+        pdf = write_pdf_of_image(tmp_path / PDF_NAME, image=source, size_pt=SMALL_PAGE_SIZE_PT)
+        pixels: dict[str, object] = {}
+
+        # The default comes first, before the test switches the colour management itself
+        for name, switch in (('default', None), ('off', False), ('on', True)):
+            if switch is not None:
+                pymupdf.TOOLS.set_icc(switch)
+            target = tmp_path / f'{name}{PNG_SUFFIX}'
+            await fx_rasterizer.extract(SourceKind.PDF, [pdf], 0, target, full=Rendition.FULL_PNG)
+            with Image.open(target) as rendered:
+                pixels[name] = rendered.getpixel(CONTROL_PIXEL)
+
+        expect(pixels['default'] == pixels['on'])
+        expect(pixels['off'] != pixels['on'])
         assert_expectations()
 
     async def test_extracts_requested_page(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
@@ -347,7 +561,7 @@ class TestExtractPdf:
         pdf = write_pdf(tmp_path / PDF_NAME, pages=pages)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.PDF, [pdf], 1, target)
+        await fx_rasterizer.extract(SourceKind.PDF, [pdf], 1, target, full=Rendition.FULL_JPEG)
 
         with Image.open(target) as rendered:
             assert rendered.size == SECOND_PDF_PAGE_SIZE_PX
@@ -364,7 +578,7 @@ class TestExtractPdf:
         target = tmp_path / TARGET_NAME
 
         with pytest.raises(IndexError, match=r'^book\.pdf has no page 2: it holds 2 pages'):
-            await fx_rasterizer.extract(SourceKind.PDF, [pdf], len(PAGE_SIZES_PT), target)
+            await fx_rasterizer.extract(SourceKind.PDF, [pdf], len(PAGE_SIZES_PT), target, full=Rendition.FULL_JPEG)
         assert not target.exists()
 
     async def test_refuses_more_than_one_file(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
@@ -379,7 +593,7 @@ class TestExtractPdf:
         target = tmp_path / TARGET_NAME
 
         with pytest.raises(ValueError, match=r'^A source of kind pdf is one file, not 2'):
-            await fx_rasterizer.extract(SourceKind.PDF, parts, 0, target)
+            await fx_rasterizer.extract(SourceKind.PDF, parts, 0, target, full=Rendition.FULL_JPEG)
         assert not target.exists()
 
 
@@ -399,7 +613,7 @@ class TestExtractImages:
         first.save(source, save_all=True, append_images=others)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 1, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 1, target, full=Rendition.FULL_JPEG)
 
         with Image.open(target) as written:
             assert written.size == FRAME_SIZES_PX[1]
@@ -421,7 +635,7 @@ class TestExtractImages:
         target = tmp_path / TARGET_NAME
 
         with pytest.raises(IndexError, match=rf'^page\.png has no frame {number}: it holds 1 frames'):
-            await fx_rasterizer.extract(SourceKind.IMAGE, [source], number, target)
+            await fx_rasterizer.extract(SourceKind.IMAGE, [source], number, target, full=Rendition.FULL_JPEG)
         assert not target.exists()
 
     @pytest.mark.parametrize(MODE_ARG, [GRAY_MODE, RGB_MODE])
@@ -438,7 +652,7 @@ class TestExtractImages:
         source = write_image(tmp_path / 'page.jpg', mode=mode, size=SMALL_SIZE_PX)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=Rendition.FULL_JPEG)
 
         assert target.read_bytes() == source.read_bytes()
 
@@ -475,7 +689,7 @@ class TestExtractImages:
         source = write_image(tmp_path / f'{PAGE_STEM}{case.suffix}', mode=case.mode, size=SMALL_SIZE_PX)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=Rendition.FULL_JPEG)
 
         with Image.open(target) as written:
             expect(written.format == JPEG)
@@ -497,13 +711,136 @@ class TestExtractImages:
         bilevel.save(source)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=Rendition.FULL_JPEG)
 
         with Image.open(target) as written:
             width, height = written.size
             expect(_gray_at(written, (width // 4, height // 2)) < DARK_LIMIT)
             expect(_gray_at(written, (width * 3 // 4, height // 2)) > LIGHT_LIMIT)
         assert_expectations()
+
+    @pytest.mark.parametrize(
+        CASE_ARG,
+        [
+            PngImageCase(mode='1', suffix=TIF_SUFFIX, png_mode='1'),
+            PngImageCase(mode=GRAY_MODE, suffix=PNG_SUFFIX, png_mode=GRAY_MODE),
+            PngImageCase(mode='LA', suffix=PNG_SUFFIX, png_mode=GRAY_MODE),
+            PngImageCase(mode=GRAY_16_MODE, suffix=TIF_SUFFIX, png_mode=GRAY_MODE),
+            PngImageCase(mode=RGB_MODE, suffix=TIF_SUFFIX, png_mode=RGB_MODE),
+            PngImageCase(mode=RGB_MODE, suffix=JPG_SUFFIX, png_mode=RGB_MODE),
+            PngImageCase(mode='RGBA', suffix=PNG_SUFFIX, png_mode=RGB_MODE),
+            PngImageCase(mode='P', suffix=PNG_SUFFIX, png_mode=RGB_MODE),
+            PngImageCase(mode='LAB', suffix=TIF_SUFFIX, png_mode=RGB_MODE),
+            PngImageCase(mode=CMYK_MODE, suffix=JPG_SUFFIX, png_mode=RGB_MODE),
+            PngImageCase(mode=GRAY_MODE, suffix=JP2_SUFFIX, png_mode=GRAY_MODE),
+        ],
+        ids=lambda case: f'{case.mode}{case.suffix}',
+    )
+    async def test_writes_a_png_of_the_same_size_in_the_mode_of_the_image(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, case: PngImageCase
+    ) -> None:
+        """Verify any page image becomes a PNG of the same pixel size, a bilevel one staying 1-bit.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: A page image stored in some Pillow mode and format, and the PNG mode it becomes.
+        :type case: PngImageCase
+        """
+        source = write_image(tmp_path / f'{PAGE_STEM}{case.suffix}', mode=case.mode, size=SMALL_SIZE_PX)
+        target = tmp_path / PNG_TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=Rendition.FULL_PNG)
+
+        with Image.open(target) as written:
+            expect(written.format == PNG)
+            expect(written.mode == case.png_mode)
+            expect(written.size == SMALL_SIZE_PX)
+        assert_expectations()
+
+    @pytest.mark.parametrize(MODE_ARG, [GRAY_MODE, RGB_MODE])
+    async def test_writes_a_jpeg_as_a_png_of_the_pixels_it_decodes_to(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, mode: str
+    ) -> None:
+        """Verify a JPEG asked for as a PNG is not copied, and the PNG holds exactly the pixels of the JPEG.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param mode: Pillow mode of the JPEG.
+        :type mode: str
+        """
+        source = write_image(tmp_path / f'{PAGE_STEM}{JPG_SUFFIX}', mode=mode, size=SMALL_SIZE_PX)
+        target = tmp_path / PNG_TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=Rendition.FULL_PNG)
+
+        with Image.open(target) as written, Image.open(source) as jpeg:
+            expect(target.read_bytes() != source.read_bytes())
+            expect(ImageChops.difference(written, jpeg).getbbox() is None)
+        assert_expectations()
+
+    async def test_keeps_the_pixels_of_a_bilevel_scan_in_a_one_bit_png(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path
+    ) -> None:
+        """Verify a bilevel scan becomes a 1-bit PNG whose pixels equal the scan's, with nothing between black and white.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        source = tmp_path / TIFF_NAME
+        bilevel = Image.new(BILEVEL_MODE, SMALL_SIZE_PX, color=WHITE)
+        bilevel.paste(0, (0, 0, SMALL_SIZE_PX[0] // 2, SMALL_SIZE_PX[1]))
+        bilevel.save(source)
+        target = tmp_path / PNG_TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=Rendition.FULL_PNG)
+
+        with Image.open(target) as written:
+            expect(written.mode == BILEVEL_MODE)
+            expect(ImageChops.difference(written, bilevel).getbbox() is None)
+        assert_expectations()
+
+    async def test_keeps_colour_profile_in_a_png(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
+        """Verify a page written as a PNG keeps its embedded colour profile, as one written as a JPEG does.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        source = tmp_path / TIFF_NAME
+        gradient_image(mode=RGB_MODE, size=SMALL_SIZE_PX).save(source, icc_profile=SRGB_PROFILE)
+        target = tmp_path / PNG_TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=Rendition.FULL_PNG)
+
+        with Image.open(target) as written:
+            assert written.info.get('icc_profile') == SRGB_PROFILE
+
+    @pytest.mark.parametrize('full', [Rendition.PREVIEW, Rendition.THUMBNAIL, Rendition.TILES])
+    async def test_rejects_a_rendition_that_is_no_format_of_the_full_image(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, full: Rendition
+    ) -> None:
+        """Reject a preview, a thumbnail or a pyramid as the format of the full image, and write nothing.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param full: Rendition that names no format of the full image.
+        :type full: Rendition
+        """
+        source = write_image(tmp_path / f'{PAGE_STEM}{PNG_SUFFIX}', mode=GRAY_MODE, size=SMALL_SIZE_PX)
+        target = tmp_path / TARGET_NAME
+
+        with pytest.raises(ValueError, match='is not a format of the full image'):
+            await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=full)
+        assert not target.exists()
 
     async def test_scales_sixteen_bit_samples(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
         """Verify 16-bit gray is scaled to 8 bits rather than clipped to white.
@@ -517,7 +854,7 @@ class TestExtractImages:
         Image.new(GRAY_16_MODE, SMALL_SIZE_PX, color=SIXTEEN_BIT_SAMPLE).save(source)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=Rendition.FULL_JPEG)
 
         with Image.open(target) as written:
             sample = _gray_at(written, (0, 0))
@@ -535,7 +872,7 @@ class TestExtractImages:
         source = write_image(tmp_path / f'{PAGE_STEM}{JPG_SUFFIX}', mode=GRAY_MODE, size=SMALL_SIZE_PX, exif=exif)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=Rendition.FULL_JPEG)
 
         with Image.open(target) as written:
             expect(written.size == SMALL_SIZE_PX[::-1])
@@ -555,7 +892,7 @@ class TestExtractImages:
         gradient_image(mode=RGB_MODE, size=SMALL_SIZE_PX).save(source, icc_profile=profile)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=Rendition.FULL_JPEG)
 
         with Image.open(target) as written:
             assert written.info.get('icc_profile') == profile
@@ -589,7 +926,7 @@ class TestExtractImages:
         source = write_tiff(tmp_path / TIFF_NAME, frames=frames)
         target = tmp_path / TARGET_NAME
 
-        await fx_rasterizer.extract(SourceKind.IMAGE, [source], case.number, target)
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], case.number, target, full=Rendition.FULL_JPEG)
 
         with Image.open(target) as written:
             assert written.info.get('icc_profile') == case.profile
@@ -626,7 +963,7 @@ class TestExtractImages:
         target = tmp_path / TARGET_NAME
 
         with pytest.raises(UnsupportedSourceError, match=r'^page\.tif cannot be read as an image'):
-            await fx_rasterizer.extract(SourceKind.IMAGE, [source], 1, target)
+            await fx_rasterizer.extract(SourceKind.IMAGE, [source], 1, target, full=Rendition.FULL_JPEG)
         assert not target.exists()
 
     @pytest.mark.parametrize(
@@ -659,5 +996,162 @@ class TestExtractImages:
         with pytest.raises(
             UnsupportedSourceError, match=rf'cannot be read as an image: the pixels of frame {case.number} are damaged'
         ):
-            await fx_rasterizer.extract(SourceKind.IMAGE, [source], case.number, target)
+            await fx_rasterizer.extract(SourceKind.IMAGE, [source], case.number, target, full=Rendition.FULL_JPEG)
         assert not target.exists()
+
+
+class TestExtractColourManagement:
+    """Tests for the colour conversion of PageRasterizer.extract() when a page is CMYK, LAB or YCbCr."""
+
+    @pytest.mark.parametrize('suffix', [TIF_SUFFIX, JPG_SUFFIX])
+    @pytest.mark.parametrize(CASE_ARG, CMYK_COLOURS, ids=lambda case: case.name)
+    async def test_converts_cmyk_to_srgb_by_its_embedded_profile(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, case: CmykColour, suffix: str
+    ) -> None:
+        """Verify the converted pixel is the sRGB colour Little CMS gives by the file's profile, within two units.
+
+        The reference is libvips, which converts by the embedded profile with code of its own. The PNG holds the
+        conversion without JPEG loss, and carries the sRGB profile.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param case: A colour of an old scan, by its sRGB value.
+        :type case: CmykColour
+        :param suffix: File suffix of the CMYK page, selecting a TIFF or a JPEG that carries the profile.
+        :type suffix: str
+        """
+        source = write_cmyk_with_profile(tmp_path / f'{PAGE_STEM}{suffix}', rgb=case.rgb)
+        target = tmp_path / PNG_TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=Rendition.FULL_PNG)
+
+        with Image.open(target) as written:
+            expect(written.mode == RGB_MODE)
+            expect(_distance(written.getpixel(CONTROL_PIXEL), icc_reference_color(source)) <= COLOUR_TOLERANCE)
+            expect(_description(written.info.get('icc_profile')) == SRGB_DESCRIPTION)
+        assert_expectations()
+
+    async def test_writes_the_converted_page_as_a_jpeg_tagged_with_srgb(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path
+    ) -> None:
+        """Verify a CMYK page written as a JPEG keeps the converted colour within two units and carries sRGB.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        source = write_cmyk_with_profile(tmp_path / f'{PAGE_STEM}{TIF_SUFFIX}', rgb=CMYK_COLOURS[2].rgb)
+        target = tmp_path / TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=Rendition.FULL_JPEG)
+
+        with Image.open(target) as written:
+            expect(written.format == JPEG)
+            expect(_distance(written.getpixel(CONTROL_PIXEL), icc_reference_color(source)) <= COLOUR_TOLERANCE)
+            expect(_description(written.info.get('icc_profile')) == SRGB_DESCRIPTION)
+        assert_expectations()
+
+    async def test_uses_the_profile_and_not_the_formula_of_pillow(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path
+    ) -> None:
+        """Verify the dark ink of a scan comes out far from what Pillow's profile-blind conversion makes of it.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        source = write_cmyk_with_profile(tmp_path / f'{PAGE_STEM}{TIF_SUFFIX}', rgb=CMYK_COLOURS[1].rgb)
+        target = tmp_path / PNG_TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=Rendition.FULL_PNG)
+
+        with Image.open(target) as written, Image.open(source) as cmyk:
+            assert _distance(written.getpixel(CONTROL_PIXEL), cmyk.convert(RGB_MODE).getpixel(CONTROL_PIXEL)) > SHIFT
+
+    @pytest.mark.parametrize('full', [Rendition.FULL_JPEG, Rendition.FULL_PNG])
+    async def test_converts_cmyk_without_a_profile_as_pillow_does(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, full: Rendition
+    ) -> None:
+        """Verify a CMYK page with no profile is converted by Pillow's formula and is tagged sRGB all the same.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param full: Format to write.
+        :type full: Rendition
+        """
+        source = tmp_path / f'{PAGE_STEM}{TIF_SUFFIX}'
+        cmyk = Image.new(CMYK_MODE, SMALL_SIZE_PX, color=UNPROFILED_INKS)
+        cmyk.save(source)
+        target = tmp_path / full.value
+
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=full)
+
+        with Image.open(target) as written:
+            expect(written.mode == RGB_MODE)
+            expect(
+                _distance(written.getpixel(CONTROL_PIXEL), cmyk.convert(RGB_MODE).getpixel(CONTROL_PIXEL))
+                <= COLOUR_TOLERANCE
+            )
+            expect(_description(written.info.get('icc_profile')) == SRGB_DESCRIPTION)
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        'profile', [SRGB_PROFILE, b'not a profile'], ids=['profile-of-another-colour-space', 'damaged-profile']
+    )
+    async def test_converts_as_without_a_profile_when_the_profile_does_not_apply(
+        self, fx_rasterizer: PageRasterizer, tmp_path: Path, caplog: pytest.LogCaptureFixture, profile: bytes
+    ) -> None:
+        """Verify a profile Little CMS cannot apply to the pixels is logged and ignored, not raised.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param caplog: Fixture capturing the log records of the test.
+        :type caplog: pytest.LogCaptureFixture
+        :param profile: Embedded profile that is an sRGB profile on CMYK pixels, or no profile at all.
+        :type profile: bytes
+        """
+        source = tmp_path / f'{PAGE_STEM}{TIF_SUFFIX}'
+        cmyk = Image.new(CMYK_MODE, SMALL_SIZE_PX, color=UNPROFILED_INKS)
+        cmyk.save(source, icc_profile=profile)
+        target = tmp_path / PNG_TARGET_NAME
+
+        with caplog.at_level(logging.WARNING):
+            await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=Rendition.FULL_PNG)
+
+        with Image.open(target) as written:
+            expect(
+                _distance(written.getpixel(CONTROL_PIXEL), cmyk.convert(RGB_MODE).getpixel(CONTROL_PIXEL))
+                <= COLOUR_TOLERANCE
+            )
+            expect(_description(written.info.get('icc_profile')) == SRGB_DESCRIPTION)
+        expect('does not apply to its CMYK pixels' in caplog.text)
+        assert_expectations()
+
+    async def test_converts_lab_by_its_embedded_profile(self, fx_rasterizer: PageRasterizer, tmp_path: Path) -> None:
+        """Verify a neutral mid-tone LAB page comes out as the mid gray sRGB shows for L* 50, within two units.
+
+        :param fx_rasterizer: Page rasterizer built by the application's imaging provider.
+        :type fx_rasterizer: PageRasterizer
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        profile = ImageCms.ImageCmsProfile(ImageCms.createProfile('LAB')).tobytes()
+        source = tmp_path / f'{PAGE_STEM}{TIF_SUFFIX}'
+        Image.new('LAB', SMALL_SIZE_PX, color=NEUTRAL_LAB).save(source, icc_profile=profile)
+        target = tmp_path / PNG_TARGET_NAME
+
+        await fx_rasterizer.extract(SourceKind.IMAGE, [source], 0, target, full=Rendition.FULL_PNG)
+
+        with Image.open(target) as written:
+            expect(written.mode == RGB_MODE)
+            expect(_distance(written.getpixel(CONTROL_PIXEL), (MID_GRAY,) * 3) <= COLOUR_TOLERANCE)
+            expect(_description(written.info.get('icc_profile')) == SRGB_DESCRIPTION)
+        assert_expectations()

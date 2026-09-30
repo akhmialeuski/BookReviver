@@ -3,6 +3,10 @@
 The DjVu samples are encoded by the DjVuLibre tools from gradient images, so a test states the size, resolution and
 colour mode of every page and compares the facts the format reports with them. One list of pages makes a bundled
 document, an indirect document and single-page files alike.
+
+A CMYK sample with an embedded colour profile is made by libvips, which carries a CMYK profile of its own, so the
+repository holds no profile file: Pillow can only create sRGB, LAB and XYZ profiles. libvips also converts such a
+sample back to sRGB by its embedded profile, which is the reference a test holds the application's conversion to.
 """
 
 import io
@@ -14,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import pymupdf
 import pytest
+import pyvips
 from attrs import field, frozen
 from PIL import Image, ImageOps, TiffImagePlugin
 
@@ -25,6 +30,9 @@ if TYPE_CHECKING:
 
     from PIL import ExifTags
 
+# Names libvips knows its built-in colour profiles by
+VIPS_CMYK_PROFILE: str = 'cmyk'
+VIPS_SRGB_PROFILE: str = 'srgb'
 # Tools that encode and assemble the DjVu samples, beside the tools the format reads them with
 DJVU_BUILD_TOOLS: tuple[str, ...] = ('c44', 'cjb2', 'djvm', 'djvmcvt', 'djvused')
 requires_djvulibre = pytest.mark.skipif(
@@ -200,6 +208,61 @@ def write_pdf(
         else:
             document.save(path)
     return path
+
+
+def write_pdf_of_image(path: Path, *, image: Path, size_pt: tuple[float, float] = LETTER_SIZE_PT) -> Path:
+    """Write a one-page PDF showing an image file over the whole page, embedded with the bytes the file holds.
+
+    :param path: Where to write the PDF.
+    :type path: Path
+    :param image: Image file to embed, such as a CMYK JPEG with its colour profile.
+    :type image: Path
+    :param size_pt: Width and height of the page in points.
+    :type size_pt: tuple[float, float]
+    :returns: The written path.
+    :rtype: Path
+    """
+    with pymupdf.open() as document:
+        page = document.new_page(width=size_pt[0], height=size_pt[1])
+        page.insert_image(page.rect, stream=image.read_bytes(), keep_proportion=False)
+        document.save(path)
+    return path
+
+
+def write_cmyk_with_profile(path: Path, *, rgb: tuple[int, int, int], size: tuple[int, int] = (64, 64)) -> Path:
+    """Write a flat CMYK image of one colour, with the CMYK profile of libvips embedded in it.
+
+    The inks are what the colour ``rgb`` needs in that profile, so the colour a viewer with colour management shows for
+    the file is close to ``rgb``, and ``icc_reference_color`` gives it exactly. The file suffix selects the format,
+    which carries the profile: a ``.tif`` or a ``.jpg``.
+
+    :param path: Where to write the file; its suffix selects the format.
+    :type path: Path
+    :param rgb: The sRGB colour the page shows.
+    :type rgb: tuple[int, int, int]
+    :param size: Width and height in pixels.
+    :type size: tuple[int, int]
+    :returns: The written path.
+    :rtype: Path
+    """
+    flat = pyvips.Image.black(*size, bands=len(rgb)).new_from_image(list(rgb)).copy(interpretation=VIPS_SRGB_PROFILE)
+    flat.icc_transform(VIPS_CMYK_PROFILE).write_to_file(str(path))
+    return path
+
+
+def icc_reference_color(path: Path) -> tuple[int, ...]:
+    """Return the colour of the first pixel of an image file in sRGB, converted by its embedded profile by libvips.
+
+    libvips converts with Little CMS, like Pillow does, but through code of its own, so it is an independent reference
+    for the conversion the application makes with Pillow.
+
+    :param path: Image file with an embedded colour profile.
+    :type path: Path
+    :returns: The red, green and blue values of the pixel.
+    :rtype: tuple[int, ...]
+    """
+    converted = pyvips.Image.new_from_file(str(path)).icc_transform(VIPS_SRGB_PROFILE, embedded=True)
+    return tuple(round(value) for value in converted(0, 0))
 
 
 def write_image(
