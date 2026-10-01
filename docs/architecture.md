@@ -129,6 +129,7 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Events       | `JobChanged`, `SourceImported`, `ScanReady`, `PagesChanged`, `PageVersionReady`, and others   |
 | Jobs         | `Job`, `JobKind`, `JobState`, `Progress`, `WorkerPool` (cpu, gpu, llm)                        |
 | Imports      | `ImportRequest`, `ImportResult`, `RejectedFile`, `RejectionReason`, `UploadProblem`           |
+|              | `UploadPath` (a checked relative path), `SystemFile` (names an operating system adds)         |
 | Queries      | `Slice[T]` (items and total), `SliceRequest` (offset and limit)                               |
 | Errors       | `DomainError`, `NotFoundError`, `PermissionDeniedError`, `UploadRejectedError`, and others    |
 
@@ -286,7 +287,7 @@ of `BookDetails`.
 | `kind`          | `SourceKind`           | `pdf`, `djvu` or `image`                                                           |
 | `file_type`     | `FileType`             | Exact format: `pdf`, `djvu`, `tiff`, `jpeg`, `jpeg-2000`, `png`                    |
 | `file_name`     | `str`                  | Name the browser sent, with the relative path of a directory upload sanitised      |
-| `files`         | `Sequence[SourceFile]` | Stored files with name, size and SHA-256; more than one only for indirect DjVu     |
+| `files`         | `Sequence[SourceFile]` | Stored files with relative path, size and SHA-256; more than one only for indirect DjVu |
 | `size_bytes`    | `int`                  | Total size of the files                                                            |
 | `sha256`        | `str`                  | Hash of the main file, which refuses a second upload of the same file              |
 | `scan_count`    | `int`                  | Number of scans                                                                    |
@@ -528,7 +529,7 @@ The storage ports divide the files of a project by prefix. `SourceStore` owns `i
 | `SourceStore.stage`                             | `(project_id, job_id, files, max_bytes) -> Sequence[SourceFile]`              |
 | `SourceStore.promote`                           | `(project_id, job_id, source_id, names)`                                      |
 | `SourceStore.discard`                           | `(project_id, job_id)`                                                        |
-| `SourceStore.staged_files`, `source_files`      | Local paths of the files of one job, or of one source                         |
+| `SourceStore.staged_files`, `source_files`      | Local paths of the files of one job by relative path, or of one source        |
 | `SourceStore.delete_source`                     | `(project_id, source_id)`                                                     |
 | `SourceStore.delete_project`                    | Removes `sources/` and `incoming/` of a project                               |
 | `AssetStore.writable`, `readable`               | Only keys under `projects/<id>/assets/`                                       |
@@ -536,14 +537,18 @@ The storage ports divide the files of a project by prefix. `SourceStore` owns `i
 | `AssetStore.delete_prefix`                      | Only prefixes under `projects/<id>/assets/`                                   |
 | `AssetStore.delete_project`                     | Removes `assets/` of the project                                              |
 
-`stage` reports the name, the size and the SHA-256 digest of every staged file as a `SourceFile`, computed while the
-upload streams in, so no service reads files itself to learn their size or to refuse a duplicate. It no longer refuses
-an upload to a project that has sources. `promote` moves the files of one source from the job's directory to the
-source's own directory in one rename, and a refused promotion leaves the files staged.
+`stage` reports the relative path, the size and the SHA-256 digest of every staged file as a `SourceFile`, computed
+while the upload streams in, so no service reads files itself to learn their size or to refuse a duplicate. It keeps
+the folders of a directory upload under `incoming/<job_id>/`, refuses a path that `UploadPath.parse` finds unsafe or
+two paths that differ only in letter case, and no longer refuses an upload to a project that has sources.
+`staged_files` gives the paths by relative name in the order of the names, since two files of different folders can
+share a base name. `promote` moves the files of one source from the job's directory to the source's own directory in
+one rename, storing each under the last segment of its path, and a refused promotion leaves the files staged.
 
-The imaging ports work on one source at a time. `SourceInspector.group(files)` splits the files of an upload into
-sources and assembles an indirect DjVu document from its index file and page files, because which files make one
-source is a property of the format. `SourceInspector.inspect` describes one source and its scans, and
+The imaging ports work on one source at a time. `SourceInspector.group(files)` takes the files of an upload by relative
+name in the order of the upload and splits them into sources, in that order, and assembles an indirect DjVu document
+from its index file and the page files of its own folder, because which files make one source is a property of the
+format. Nothing sorts the files, since the order of the upload is the order of the book. `SourceInspector.inspect` describes one source and its scans, and
 `PageRasterizer.extract` writes one scan of one source in the format of `full` its caller asks for, because only the
 caller knows the project's `image_policy`. `Tiler` cuts the IIIF pyramid (`tile`), the preview
 (`preview`) and the thumbnail (`thumbnail`) of an image, each at the size the imaging settings give.
@@ -1024,17 +1029,29 @@ flowchart TD
    a declared body before it runs any dependency, which would spool the upload to disk before the caller is known to
    be signed in, to own the project or to be allowed another import. The route therefore declares no body: a
    dependency reads the form after `ImportService.authorize_upload` has checked the owner (404) and that no import is
-   queued or running (409), and `openapi_extra` gives the schema its multipart body. The form is parsed with the file
-   limit of the rule, since Starlette's parser stops at 1000 files, and with one file more, so an upload of one file
-   too many is answered by the service with the 413 problem and an upload of two files too many by the parser with a
-   400.
+   queued or running (409), and `openapi_extra` gives the schema its multipart body. Starlette's parser stops at 1000
+   files with a 400 of its own, so the form is parsed with no ceiling and `ImportService.start_import` is the one
+   place that enforces `max_upload_files`: any number of files past it, one or a thousand, gets the 413 problem.
+   The browser sends the relative path of a file of a chosen directory as the file name of its part, such as
+   `vol1/001.tif`, and the bare name for a file chosen alone. `UploadPath.parse` checks every name before the first
+   byte is written: the name must not be empty, `.` or `..` (400 `empty-name`), and the path must be relative, with
+   `/` or `\` between segments and no empty, `.` or `..` segment, no drive letter and no control character (400
+   `unsafe-path`). A server that skipped this would let `../../x` write outside the upload's directory. `stage` keeps
+   the checked path under `incoming/<job_id>/` and refuses two paths that differ only in letter case, or a path that is
+   both a file and a folder, as `duplicate-name`, so `vol1/001.tif` and `vol2/001.tif` are two files. The checked path
+   is the name of the file in `Job.request` and the `file_name` of its source.
 2. `SourceInspector.group` splits the upload into sources. `FileType.from_name` decides the type of every file, and
-   any mix of the accepted types is fine, because each file is a source of its own. A file of a type no source can be
-   is rejected on its own as `unsupported-type`, so it does not stop the others. An indirect DjVu document is
-   assembled from its index file, and one that lacks some of its page files is rejected as a whole, with the list of
-   missing files, while the other files of the upload are still imported. The sources are taken in the natural order
-   of the names of their main files, so `part2.pdf` precedes `part10.pdf`, and this order becomes the order of their
-   pages in the book, whatever the order of the upload.
+   any mix of the accepted types is fine, because each file is a source of its own. A system file that a directory
+   upload carries along, `Thumbs.db`, `desktop.ini`, `.DS_Store` or a macOS resource fork such as `._001.tif` (which has
+   the suffix of the image it accompanies), is found by its last path segment in any letter case with
+   `SystemFile.matches` and rejected on its own as `system-file`, and a file of a type no source can be is rejected on
+   its own as `unsupported-type`, so neither stops the others and both are named in `Job.result`. An indirect DjVu
+   document is assembled from its index file and the page files in the index's own folder, and one that lacks some of
+   its page files is rejected as a whole, with the list of missing files, while the other files of the upload are
+   still imported. The sources are taken in the order of the upload, and this order becomes the order of their pages in
+   the book, so the user's choice before sending is kept to the end and `part10.pdf` listed before `part2.pdf` stays
+   before it. The service and the adapters sort nothing, and the browser lists the files in the natural order of their
+   paths by default, so `part2.pdf` precedes `part10.pdf` there.
 3. A file whose SHA-256 is already stored in the project is rejected as `duplicate`, with the name of the existing
    source. The digest comes from the staged file's record, so no service reads a file.
 4. Every source is inspected, and one that cannot be read is rejected as `unreadable`, with the message of the error.
@@ -1337,6 +1354,18 @@ The book model rests on these decisions, each with its reason.
     group, run as `uv run bookreviver-migrate upgrade head`, and the application at start-up only compares the
     revision and refuses to start on a mismatch, because a schema change is a deliberate step and running against
     the wrong schema corrupts data.
+33. **Directory upload.** The relative path of a file is kept, checked and stored in `Source.file_name`, and a source
+    keeps its file under the last segment of the path in a directory of its own, because the folders of a book in
+    volumes often reuse file names, and flattening them into a prefix would change the name the user sees. A path that
+    leaves its folder is refused before anything is written.
+34. **Order of an upload.** The order of the list of files is the order of the sources and of their pages. The server
+    sorts nothing, and no second field of order exists, because the parts of a multipart body are already ordered and
+    a second field could disagree with them. Natural order is only the default the browser lists the files in.
+35. **System files.** A directory's `Thumbs.db`, `desktop.ini`, `.DS_Store` and `._*` files are rejected as
+    `system-file` by the server and named in the result of the job, never refusing the upload, because the API is
+    called without the frontend and a page must not be lost silently. The browser removes them from its list too.
+36. **Number of files.** `max_upload_files` is enforced by the service alone, and the multipart parser is given no
+    ceiling of its own, so every upload past the limit gets the same 413 problem and not the parser's 400.
 
 Smaller technical choices follow the same model. Languages are ISO 639-3 codes, XMP is parsed with defusedxml, the
 parameters of processing jobs are kept in `Job.params`, a DjVu source suggests a publication year only from its

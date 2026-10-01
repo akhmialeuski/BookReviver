@@ -19,14 +19,13 @@ from typing import TYPE_CHECKING, ClassVar, override
 
 from asyncer import asyncify
 
-from bookreviver.adapters.imaging.common import natural_order
 from bookreviver.domain.enums import FileType, SourceKind, UploadProblem
 from bookreviver.domain.errors import UploadRejectedError
 from bookreviver.domain.values import UploadedSource
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
     from pathlib import Path
 
     from bookreviver.domain.enums import Rendition
@@ -46,7 +45,7 @@ class SourceFormat(ABC):
 
         A format whose sources can span several files, as an indirect DjVu document does, overrides this.
 
-        :param files: Local paths of the staged files of this kind, in the natural order of their names.
+        :param files: Local paths of the staged files of this kind, in the order of the upload.
         :type files: Sequence[Path]
         :returns: The files of each source, the main file first.
         :rtype: list[Sequence[Path]]
@@ -102,18 +101,21 @@ class SourceReader(SourceInspector, PageRasterizer):
             raise ValueError(err_msg)
 
     @override
-    async def group(self, files: Sequence[Path]) -> Sequence[UploadedSource]:
+    async def group(self, files: Mapping[str, Path]) -> Sequence[UploadedSource]:
         """Find the kind of every file from its type, and let the format of each kind group its files.
 
-        :param files: Local paths of the staged files, in any order.
-        :type files: Sequence[Path]
-        :returns: The sources in the natural order of the names of their main files.
+        The files are never sorted: the order of the upload is the order of the book.
+
+        :param files: Local paths of the staged files by their relative name, in the order of the upload.
+        :type files: Mapping[str, Path]
+        :returns: The sources in the order of their main files in ``files``.
         :rtype: Sequence[UploadedSource]
         :raises UploadRejectedError: If there are no files, or the type of a file is not accepted.
         """
         if not files:
             raise UploadRejectedError(UploadProblem.NO_FILES)
-        ordered = natural_order(files)
+        ordered = list(files.values())
+        names = {path: name for name, path in files.items()}
         file_types: dict[Path, FileType] = {}
         by_kind: defaultdict[SourceKind, list[Path]] = defaultdict(list)
         for path in ordered:
@@ -129,7 +131,9 @@ class SourceReader(SourceInspector, PageRasterizer):
         position = {path: index for index, path in enumerate(ordered)}
         groups.sort(key=lambda group: position[group[1][0]])
         return [
-            UploadedSource(kind=kind, file_type=file_types[source_files[0]], names=[path.name for path in source_files])
+            UploadedSource(
+                kind=kind, file_type=file_types[source_files[0]], names=[names[path] for path in source_files]
+            )
             for kind, source_files in groups
         ]
 

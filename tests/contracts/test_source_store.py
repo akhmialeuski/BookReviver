@@ -35,6 +35,8 @@ NEW_NAME: str = 'new.pdf'
 OLD_CONTENT: bytes = b'old book'
 NEW_CONTENT: bytes = b'new book'
 PAGE_NAME: str = 'page.png'
+FIRST_VOLUME_PAGE: str = 'vol1/001.tif'
+SECOND_VOLUME_PAGE: str = 'vol2/001.tif'
 UNLIMITED_BYTES: int = 1024**3
 
 
@@ -90,7 +92,7 @@ async def _import(
 
 
 async def _staged(store: SourceStore, job_id: JobId, *, project_id: ProjectId = PROJECT_ID) -> dict[str, bytes]:
-    """Return the files an import job has staged and not promoted, by name.
+    """Return the files an import job has staged and not promoted, by relative name.
 
     :param store: Source store to read from.
     :type store: SourceStore
@@ -98,12 +100,12 @@ async def _staged(store: SourceStore, job_id: JobId, *, project_id: ProjectId = 
     :type job_id: JobId
     :param project_id: Project owning the upload.
     :type project_id: ProjectId
-    :returns: Content of every staged file, by file name.
+    :returns: Content of every staged file, by relative name.
     :rtype: dict[str, bytes]
     :raises NotFoundError: If the job has no staged upload.
     """
     async with store.staged_files(project_id, job_id) as paths:
-        return {path.name: path.read_bytes() for path in paths}
+        return {name: path.read_bytes() for name, path in paths.items()}
 
 
 async def _source(store: SourceStore, source_id: SourceId, *, project_id: ProjectId = PROJECT_ID) -> dict[str, bytes]:
@@ -126,13 +128,15 @@ async def _source(store: SourceStore, source_id: SourceId, *, project_id: Projec
 class TestStage:
     """Contract of SourceStore.stage()."""
 
-    async def test_streams_files_under_their_base_names(self, fx_source_store: SourceStore) -> None:
-        """Verify every file is kept whole under its base name and reported with its size and digest.
+    async def test_streams_files_under_their_relative_paths(self, fx_source_store: SourceStore) -> None:
+        """Verify every file is kept whole under its relative path and reported with its size and digest.
+
+        A backslash separates folders as a slash does, since a Windows client may send either.
 
         :param fx_source_store: Source store of the storage backend under test.
         :type fx_source_store: SourceStore
         """
-        files = [upload('scans/page1.png', content=OLD_CONTENT), upload('C:\\scans\\page2.png', content=LARGE_CONTENT)]
+        files = [upload('scans/page1.png', content=OLD_CONTENT), upload('scans\\page2.png', content=LARGE_CONTENT)]
 
         # A limit equal to the upload size admits it
         staged = await fx_source_store.stage(PROJECT_ID, JOB_ID, files, max_bytes=len(OLD_CONTENT) + len(LARGE_CONTENT))
@@ -141,14 +145,37 @@ class TestStage:
             list(staged)
             == [
                 SourceFile(
-                    name='page1.png', size_bytes=len(OLD_CONTENT), sha256=hashlib.sha256(OLD_CONTENT).hexdigest()
+                    name='scans/page1.png', size_bytes=len(OLD_CONTENT), sha256=hashlib.sha256(OLD_CONTENT).hexdigest()
                 ),
                 SourceFile(
-                    name='page2.png', size_bytes=len(LARGE_CONTENT), sha256=hashlib.sha256(LARGE_CONTENT).hexdigest()
+                    name='scans/page2.png',
+                    size_bytes=len(LARGE_CONTENT),
+                    sha256=hashlib.sha256(LARGE_CONTENT).hexdigest(),
                 ),
             ]
         )
-        expect(await _staged(fx_source_store, JOB_ID) == {'page1.png': OLD_CONTENT, 'page2.png': LARGE_CONTENT})
+        expect(
+            await _staged(fx_source_store, JOB_ID) == {'scans/page1.png': OLD_CONTENT, 'scans/page2.png': LARGE_CONTENT}
+        )
+        assert_expectations()
+
+    async def test_files_of_different_folders_with_one_name_are_two_files(self, fx_source_store: SourceStore) -> None:
+        """Verify ``vol1/001.tif`` and ``vol2/001.tif`` are staged apart, and the report keeps their upload order.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
+        staged = await _stage(
+            fx_source_store,
+            JOB_ID,
+            upload(SECOND_VOLUME_PAGE, content=NEW_CONTENT),
+            upload(FIRST_VOLUME_PAGE, content=OLD_CONTENT),
+        )
+
+        expect([file.name for file in staged] == [SECOND_VOLUME_PAGE, FIRST_VOLUME_PAGE])
+        expect(
+            await _staged(fx_source_store, JOB_ID) == {FIRST_VOLUME_PAGE: OLD_CONTENT, SECOND_VOLUME_PAGE: NEW_CONTENT}
+        )
         assert_expectations()
 
     async def test_replaces_interrupted_upload_of_the_same_job(self, fx_source_store: SourceStore) -> None:
@@ -207,18 +234,56 @@ class TestStage:
                 files=[('scans/..', OLD_CONTENT)], max_bytes=UNLIMITED_BYTES, problem=UploadProblem.EMPTY_NAME
             ),
             RejectedUploadCase(
-                files=[('left/page.png', OLD_CONTENT), ('right\\page.png', NEW_CONTENT)],
+                files=[('scans/../page.png', OLD_CONTENT)], max_bytes=UNLIMITED_BYTES, problem=UploadProblem.UNSAFE_PATH
+            ),
+            RejectedUploadCase(
+                files=[('/etc/page.png', OLD_CONTENT)], max_bytes=UNLIMITED_BYTES, problem=UploadProblem.UNSAFE_PATH
+            ),
+            RejectedUploadCase(
+                files=[('C:\\scans\\page.png', OLD_CONTENT)],
+                max_bytes=UNLIMITED_BYTES,
+                problem=UploadProblem.UNSAFE_PATH,
+            ),
+            RejectedUploadCase(
+                files=[('scans//page.png', OLD_CONTENT)], max_bytes=UNLIMITED_BYTES, problem=UploadProblem.UNSAFE_PATH
+            ),
+            RejectedUploadCase(
+                files=[('left/page.png', OLD_CONTENT), ('left\\page.png', NEW_CONTENT)],
                 max_bytes=UNLIMITED_BYTES,
                 problem=UploadProblem.DUPLICATE_NAME,
             ),
             # A case-insensitive file system would store both under one name
             RejectedUploadCase(
-                files=[('Page.JPG', OLD_CONTENT), ('page.jpg', NEW_CONTENT)],
+                files=[('Vol1/Page.JPG', OLD_CONTENT), ('vol1/page.jpg', NEW_CONTENT)],
+                max_bytes=UNLIMITED_BYTES,
+                problem=UploadProblem.DUPLICATE_NAME,
+            ),
+            # A path cannot be a file and a folder, whichever comes first
+            RejectedUploadCase(
+                files=[('vol1', OLD_CONTENT), ('vol1/page.png', NEW_CONTENT)],
+                max_bytes=UNLIMITED_BYTES,
+                problem=UploadProblem.DUPLICATE_NAME,
+            ),
+            RejectedUploadCase(
+                files=[('vol1/page.png', OLD_CONTENT), ('VOL1', NEW_CONTENT)],
                 max_bytes=UNLIMITED_BYTES,
                 problem=UploadProblem.DUPLICATE_NAME,
             ),
         ],
-        ids=['too-large', 'no-name', 'empty-name', 'parent-directory', 'same-base-name', 'same-name-other-case'],
+        ids=[
+            'too-large',
+            'no-name',
+            'empty-name',
+            'parent-directory-as-name',
+            'parent-directory-in-path',
+            'absolute-path',
+            'drive-letter',
+            'empty-segment',
+            'same-path',
+            'same-path-other-case',
+            'file-then-folder',
+            'folder-then-file',
+        ],
     )
     async def test_rejected_upload_leaves_nothing_staged(
         self, fx_source_store: SourceStore, case: RejectedUploadCase
@@ -275,6 +340,54 @@ class TestPromote:
 
         assert await _source(fx_source_store, SOURCE_ID) == {OLD_NAME: OLD_CONTENT, NEW_NAME: NEW_CONTENT}
 
+    async def test_source_keeps_a_file_under_its_base_name_and_the_others_stay_staged(
+        self, fx_source_store: SourceStore
+    ) -> None:
+        """Verify a file of a folder is stored under its base name, and the same name of another folder stays staged.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
+        await _stage(
+            fx_source_store,
+            JOB_ID,
+            upload(FIRST_VOLUME_PAGE, content=OLD_CONTENT),
+            upload(SECOND_VOLUME_PAGE, content=NEW_CONTENT),
+        )
+
+        await fx_source_store.promote(PROJECT_ID, JOB_ID, SOURCE_ID, names=[FIRST_VOLUME_PAGE])
+        await fx_source_store.promote(PROJECT_ID, JOB_ID, OTHER_SOURCE_ID, names=[SECOND_VOLUME_PAGE])
+
+        expect(await _source(fx_source_store, SOURCE_ID) == {'001.tif': OLD_CONTENT})
+        expect(await _source(fx_source_store, OTHER_SOURCE_ID) == {'001.tif': NEW_CONTENT})
+        expect(await _staged(fx_source_store, JOB_ID) == {})
+        assert_expectations()
+
+    async def test_two_files_ending_in_one_name_raise_conflict_and_move_nothing(
+        self, fx_source_store: SourceStore
+    ) -> None:
+        """Reject a source whose files would share a name in its directory, keeping every file staged.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
+        await _stage(
+            fx_source_store,
+            JOB_ID,
+            upload(FIRST_VOLUME_PAGE, content=OLD_CONTENT),
+            upload(SECOND_VOLUME_PAGE, content=NEW_CONTENT),
+        )
+
+        with pytest.raises(ConflictError):
+            await fx_source_store.promote(PROJECT_ID, JOB_ID, SOURCE_ID, names=[FIRST_VOLUME_PAGE, SECOND_VOLUME_PAGE])
+
+        expect(
+            await _staged(fx_source_store, JOB_ID) == {FIRST_VOLUME_PAGE: OLD_CONTENT, SECOND_VOLUME_PAGE: NEW_CONTENT}
+        )
+        with pytest.raises(NotFoundError):
+            await _source(fx_source_store, SOURCE_ID)
+        assert_expectations()
+
     @pytest.mark.parametrize(NAMES_ARG, [(PAGE_NAME,), (OLD_NAME, PAGE_NAME), ('../escape.pdf',)])
     async def test_name_not_staged_raises_not_found_and_moves_nothing(
         self, fx_source_store: SourceStore, names: Sequence[str]
@@ -319,6 +432,20 @@ class TestPromote:
         expect(await _source(fx_source_store, SOURCE_ID) == {OLD_NAME: OLD_CONTENT})
         expect(await _staged(fx_source_store, JOB_ID) == {NEW_NAME: NEW_CONTENT})
         assert_expectations()
+
+    async def test_refused_promotion_leaves_a_file_in_its_folder(self, fx_source_store: SourceStore) -> None:
+        """Verify the files of a refused promotion stay staged under the relative paths they had.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
+        await _import(fx_source_store, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
+        await _stage(fx_source_store, JOB_ID, upload(FIRST_VOLUME_PAGE, content=NEW_CONTENT))
+
+        with pytest.raises(ConflictError):
+            await fx_source_store.promote(PROJECT_ID, JOB_ID, SOURCE_ID, names=[FIRST_VOLUME_PAGE])
+
+        assert await _staged(fx_source_store, JOB_ID) == {FIRST_VOLUME_PAGE: NEW_CONTENT}
 
     async def test_no_names_raises_value_error(self, fx_source_store: SourceStore) -> None:
         """Reject a source without files, which a caller can only ask for by mistake.

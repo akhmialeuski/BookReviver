@@ -16,10 +16,11 @@ half wrote.
 
 import errno
 import hashlib
+import os
 import shutil
 from contextlib import asynccontextmanager
 from functools import partial
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import TYPE_CHECKING, override
 from uuid import uuid4
 
@@ -29,11 +30,11 @@ from asyncer import asyncify
 from bookreviver.domain.enums import UploadProblem
 from bookreviver.domain.errors import ConflictError, NotFoundError, UploadRejectedError
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import SourceFile
+from bookreviver.domain.values import SourceFile, UploadPath
 from bookreviver.ports.storage import AssetStore, SourceStore
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import AsyncIterator, Mapping, Sequence
     from contextlib import AbstractAsyncContextManager
 
     from bookreviver.domain.ids import JobId, ProjectId, SourceId, StorageKey
@@ -41,8 +42,6 @@ if TYPE_CHECKING:
 
 # Read size of an upload stream, large enough to keep the per-chunk overhead negligible
 CHUNK_BYTES: int = 1024 * 1024
-# Base names a client may send that do not name a file
-NAMELESS: frozenset[str] = frozenset({'', '.', '..'})
 PARTIAL_ROLE: str = 'partial'
 # What ``rmdir`` reports for a directory that is gone or still holds another store's files
 KEPT_DIRECTORY_ERRNOS: frozenset[int] = frozenset({errno.ENOENT, errno.ENOTEMPTY})
@@ -85,7 +84,11 @@ class _LocalTree:
 
 
 class LocalSourceStore(_LocalTree, SourceStore):
-    """Uploads in ``incoming/<job_id>/`` and sources in ``sources/<source_id>/`` of each project's directory."""
+    """Uploads in ``incoming/<job_id>/`` and sources in ``sources/<source_id>/`` of each project's directory.
+
+    An upload keeps the relative paths of its files under ``incoming/<job_id>/``, and a source keeps each of its files
+    under the last segment of that path alone, since the folders of a directory upload end where the source starts.
+    """
 
     @override
     async def stage(
@@ -103,8 +106,8 @@ class LocalSourceStore(_LocalTree, SourceStore):
         :type max_bytes: int
         :returns: Name, size and SHA-256 digest of every staged file, in upload order.
         :rtype: Sequence[SourceFile]
-        :raises UploadRejectedError: If a file has no usable name, two names differ only in letter case, or the upload
-                                     grows past ``max_bytes``; the job's directory is removed then.
+        :raises UploadRejectedError: If a file has no usable name or path, two paths differ only in letter case, or the
+                                     upload grows past ``max_bytes``; the job's directory is removed then.
         """
         incoming = self._path(ProjectKeys(project_id).incoming(job_id))
         # An interrupted upload of the same job may have left files behind
@@ -132,19 +135,23 @@ class LocalSourceStore(_LocalTree, SourceStore):
         :param names: Names of the staged files that make the source.
         :type names: Sequence[str]
         :raises NotFoundError: If the job has no staged upload, or a name is not among its staged files.
-        :raises ConflictError: If ``sources/<source_id>/`` exists, which the rename refuses to replace.
+        :raises ConflictError: If ``sources/<source_id>/`` exists, which the rename refuses to replace, or two of the
+                               names end in the same file name.
         :raises ValueError: If ``names`` is empty.
         """
         if not names:
             err_msg = f'Source {source_id} needs at least one file.'
             raise ValueError(err_msg)
         keys = ProjectKeys(project_id)
-        incoming = await self._existing(keys.incoming(job_id))
         # Only a name the store itself staged is accepted, so no name can climb out of the job's directory
-        staged = {entry.name async for entry in incoming.iterdir()}
-        if missing := sorted(set(names) - staged):
+        staged = await _staged_paths(await self._existing(keys.incoming(job_id)))
+        if missing := sorted(set(names) - staged.keys()):
             err_msg = f'Import job {job_id} has staged no file named {missing}'
             raise NotFoundError(err_msg)
+        stored_names = {name: UploadPath.parse(name).name for name in dict.fromkeys(names)}
+        if len(set(stored_names.values())) != len(stored_names):
+            err_msg = f'Source {source_id} cannot hold two files with the same name from different folders'
+            raise ConflictError(err_msg)
         target = self._path(keys.source(source_id))
         conflict_message = f'Source {source_id} already has files, and the files of a source are never replaced'
         if await target.exists():
@@ -153,14 +160,15 @@ class LocalSourceStore(_LocalTree, SourceStore):
         hidden = target.with_name(f'.{target.name}-{PARTIAL_ROLE}-{uuid4().hex}')
         await hidden.mkdir()
         try:
-            for name in dict.fromkeys(names):
-                await (incoming / name).rename(hidden / name)
+            for name, stored_name in stored_names.items():
+                await anyio.Path(staged[name]).rename(hidden / stored_name)
             await _publish(hidden, target=target, conflict_message=conflict_message)
         except BaseException:
             with anyio.CancelScope(shield=True):
                 if await hidden.is_dir():
-                    for entry in [entry async for entry in hidden.iterdir()]:
-                        await entry.rename(incoming / entry.name)
+                    for name, stored_name in stored_names.items():
+                        if await (hidden / stored_name).exists():
+                            await (hidden / stored_name).rename(staged[name])
                     await hidden.rmdir()
             raise
 
@@ -176,18 +184,19 @@ class LocalSourceStore(_LocalTree, SourceStore):
         await _remove(self._path(ProjectKeys(project_id).incoming(job_id)))
 
     @override
-    def staged_files(self, project_id: ProjectId, job_id: JobId) -> AbstractAsyncContextManager[Sequence[Path]]:
-        """Give the paths of the files left in the job's ``incoming/<job_id>/`` directory.
+    @asynccontextmanager
+    async def staged_files(self, project_id: ProjectId, job_id: JobId) -> AsyncIterator[Mapping[str, Path]]:
+        """Give the paths of the files left in the job's ``incoming/<job_id>/`` directory and its folders.
 
         :param project_id: Project owning the upload.
         :type project_id: ProjectId
         :param job_id: Import job whose upload is read.
         :type job_id: JobId
-        :returns: Context manager yielding the paths in name order.
-        :rtype: AbstractAsyncContextManager[Sequence[Path]]
+        :returns: Iterator yielding the path of every file by its relative name, in the order of the names, once.
+        :rtype: AsyncIterator[Mapping[str, Path]]
         :raises NotFoundError: If the job has no staged upload, when the context opens.
         """
-        return self._files(ProjectKeys(project_id).incoming(job_id))
+        yield await _staged_paths(await self._existing(ProjectKeys(project_id).incoming(job_id)))
 
     @override
     def source_files(self, project_id: ProjectId, source_id: SourceId) -> AbstractAsyncContextManager[Sequence[Path]]:
@@ -363,7 +372,7 @@ class LocalAssetStore(_LocalTree, AssetStore):
 
 
 async def _receive(files: Sequence[IncomingFile], *, directory: anyio.Path, max_bytes: int) -> list[SourceFile]:
-    """Stream every file into ``directory`` under its base name, hashing it on the way.
+    """Stream every file into ``directory`` under its relative path, hashing it on the way.
 
     :param files: Uploaded files, read in chunks of ``CHUNK_BYTES``.
     :type files: Sequence[IncomingFile]
@@ -371,27 +380,32 @@ async def _receive(files: Sequence[IncomingFile], *, directory: anyio.Path, max_
     :type directory: anyio.Path
     :param max_bytes: Largest total size of the upload in bytes.
     :type max_bytes: int
-    :returns: Name, size and SHA-256 digest of every written file, in upload order.
+    :returns: Relative path, size and SHA-256 digest of every written file, in upload order.
     :rtype: list[SourceFile]
-    :raises UploadRejectedError: If a file has no usable name, two files share a base name in any letter case, or
-                                 the total grows past ``max_bytes``.
+    :raises UploadRejectedError: If a file has no usable name, leaves its folder, shares its path with another in any
+                                 letter case or lies where another file has a folder, or the total grows past
+                                 ``max_bytes``.
     """
     total = 0
     received: list[SourceFile] = []
-    names: set[str] = set()
+    paths: set[str] = set()
+    folders: set[str] = set()
     for file in files:
-        # A browser may send a client-side path, with either separator
-        name = PureWindowsPath(file.filename or '').name
-        if name in NAMELESS:
-            raise UploadRejectedError(UploadProblem.EMPTY_NAME)
+        path = UploadPath.parse(file.filename or '')
+        name = str(path)
         # A case-insensitive file system, such as a Windows drive, stores Page.jpg and page.jpg as one file
         folded = name.casefold()
-        if folded in names:
+        above = {folder.casefold() for folder in path.folders}
+        # A path cannot be a file and a folder at once, whatever the letter case
+        if folded in paths or folded in folders or not above.isdisjoint(paths):
             raise UploadRejectedError(UploadProblem.DUPLICATE_NAME)
-        names.add(folded)
+        paths.add(folded)
+        folders |= above
         size = 0
         digest = hashlib.sha256()
-        async with await (directory / name).open('wb') as target:
+        stored = directory.joinpath(*path.segments)
+        await stored.parent.mkdir(parents=True, exist_ok=True)
+        async with await stored.open('wb') as target:
             while chunk := await file.read(CHUNK_BYTES):
                 size += len(chunk)
                 if total + size > max_bytes:
@@ -401,6 +415,38 @@ async def _receive(files: Sequence[IncomingFile], *, directory: anyio.Path, max_
         total += size
         received.append(SourceFile(name=name, size_bytes=size, sha256=digest.hexdigest()))
     return received
+
+
+def _list_files(directory: Path) -> dict[str, Path]:
+    """Find the files under ``directory``, however deep, by their relative path.
+
+    :param directory: Existing directory of an upload.
+    :type directory: Path
+    :returns: Path of every file by its ``/`` separated path relative to ``directory``, in the order of the paths.
+    :rtype: dict[str, Path]
+    """
+    # os.walk reads the kind of every entry with the listing, where Path.rglob asks the file system for each file, and
+    # the relative name is cut once per folder, since Path.relative_to costs more than reading a book's worth of files
+    found: dict[str, Path] = {}
+    for current, _folders, names in os.walk(directory):
+        folder = os.path.relpath(current, directory).replace(os.sep, '/')
+        prefix = '' if folder == os.curdir else f'{folder}/'
+        found.update({f'{prefix}{name}': Path(current, name) for name in names})
+    return dict(sorted(found.items()))
+
+
+async def _staged_paths(directory: anyio.Path) -> dict[str, Path]:
+    """Find the files of an upload under ``directory``, however deep, in one call to a worker thread.
+
+    A listing that waited on the file system for every entry would cost a thread hop per file, and an import lists the
+    upload once per source, which is thousands of files for a book of scans.
+
+    :param directory: Existing directory of an upload.
+    :type directory: anyio.Path
+    :returns: Path of every file by its ``/`` separated path relative to ``directory``, in the order of the paths.
+    :rtype: dict[str, Path]
+    """
+    return await asyncify(_list_files)(Path(directory))
 
 
 async def _publish(staged: anyio.Path, *, target: anyio.Path, conflict_message: str) -> None:

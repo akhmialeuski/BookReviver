@@ -13,6 +13,7 @@ from bookreviver.domain.enums import (
     Script,
     SourceKind,
     Stage,
+    SystemFile,
 )
 
 # Written out rather than taken from the enum, so the test pins the value stored and sent over the API
@@ -120,6 +121,59 @@ class TestImagePolicy:
         :type expected: Rendition
         """
         assert policy.full_format(color_mode) == expected
+
+
+class TestSystemFile:
+    """Tests for SystemFile.matches()."""
+
+    @pytest.mark.parametrize(
+        ('name', EXPECTED_ARG),
+        [
+            ('Thumbs.db', True),
+            ('THUMBS.DB', True),
+            ('desktop.ini', True),
+            ('.DS_Store', True),
+            ('._001.tif', True),
+            ('vol1/Thumbs.db', True),
+            ('vol1\\scans\\.DS_Store', True),
+            ('vol1/._001.tif', True),
+            ('001.tif', False),
+            ('thumbs.db.pdf', False),
+            ('my.DS_Store.png', False),
+            ('vol.1/001.tif', False),
+            ('Thumbs.db/001.tif', False),
+            ('a._b.tif', False),
+        ],
+        ids=[
+            'thumbs',
+            'thumbs-upper-case',
+            'desktop-ini',
+            'ds-store',
+            'apple-double',
+            'thumbs-in-folder',
+            'ds-store-in-backslash-folder',
+            'apple-double-in-folder',
+            'scan',
+            'longer-name',
+            'name-inside-a-longer-one',
+            'dot-in-folder',
+            'system-name-as-folder',
+            'prefix-not-at-start',
+        ],
+    )
+    def test_matches_the_name_of_the_file_and_not_its_folders(self, *, name: str, expected: bool) -> None:
+        """Verify a system file is found by its last path segment in any letter case, and a folder name never matches.
+
+        :param name: File name or relative path to classify.
+        :type name: str
+        :param expected: Whether the name is a system file.
+        :type expected: bool
+        """
+        assert SystemFile.matches(name) is expected
+
+    def test_every_member_has_a_label(self) -> None:
+        """Verify every known system file says what it is, as the interface shows it to the user."""
+        assert all(member.label for member in SystemFile)
 
 
 class TestJobState:

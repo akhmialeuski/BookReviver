@@ -4232,7 +4232,8 @@
         "enum": [
           "duplicate",
           "unreadable",
-          "unsupported-type"
+          "unsupported-type",
+          "system-file"
         ],
         "title": "RejectionReason",
         "description": "Why one file of an upload was not imported, while the other files of the upload were."

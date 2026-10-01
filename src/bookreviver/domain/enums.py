@@ -337,7 +337,8 @@ class UploadProblem(LabeledStrEnum):
 
     NO_FILES = 'no-files', 'Choose PDF files, DjVu files or page images to upload.'
     EMPTY_NAME = 'empty-name', 'Every uploaded file needs a name.'
-    DUPLICATE_NAME = 'duplicate-name', 'Two uploaded files have the same name.'
+    UNSAFE_PATH = 'unsafe-path', 'An uploaded file has a path that leaves its folder, such as an absolute path or ..'
+    DUPLICATE_NAME = 'duplicate-name', 'Two uploaded files have the same path.'
     UNSUPPORTED_TYPE = 'unsupported-type', 'Only PDF, DjVu, TIFF, JPEG, JPEG 2000 and PNG files are accepted.'
     TOO_LARGE = 'too-large', 'The upload is larger than the allowed size.'
     TOO_MANY_FILES = 'too-many-files', 'The upload has more files than allowed.'
@@ -349,6 +350,35 @@ class RejectionReason(LabeledStrEnum):
     DUPLICATE = 'duplicate', 'The project already has this file.'
     UNREADABLE = 'unreadable', 'The file cannot be read as a source.'
     UNSUPPORTED_TYPE = 'unsupported-type', 'The type of the file is not accepted as a source.'
+    SYSTEM_FILE = 'system-file', 'The file is a system file of the operating system, not a part of the book.'
+
+
+class SystemFile(LabeledStrEnum):
+    """A file an operating system adds to a folder, which a directory upload carries along but is not a book source.
+
+    The value of a member is its name in lower case, and ``APPLE_DOUBLE`` is a prefix, since macOS writes the resource
+    fork of ``001.tif`` as ``._001.tif`` and such a file has the suffix of the image it accompanies.
+    """
+
+    THUMBS_DB = 'thumbs.db', 'Windows thumbnail cache'
+    DESKTOP_INI = 'desktop.ini', 'Windows folder settings'
+    DS_STORE = '.ds_store', 'macOS folder settings'
+    APPLE_DOUBLE = '._', 'macOS resource fork of another file'
+
+    @classmethod
+    def matches(cls, name: str) -> bool:
+        """Tell whether a file is a system file, by the last segment of its name in any letter case.
+
+        :param name: File name, or a relative path whose last segment is the file name, with a slash or a backslash
+                     between segments.
+        :type name: str
+        :returns: Whether the name is one of the known system files, or starts with the prefix of one.
+        :rtype: bool
+        """
+        folded = name.replace('\\', '/').rsplit('/', 1)[-1].casefold()
+        return any(
+            folded.startswith(member.value) if member is cls.APPLE_DOUBLE else folded == member.value for member in cls
+        )
 
 
 class FileType(LabeledStrEnum):

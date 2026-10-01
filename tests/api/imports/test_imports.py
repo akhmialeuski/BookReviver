@@ -83,8 +83,8 @@ class TestUploadSources:
     ) -> None:
         """Verify a book uploaded as two PDF parts and a cover is imported as three sources, pages in book order.
 
-        The files are sent out of order, and the pages follow the natural order of their names: part 1, part 2 and the
-        cover.
+        The files are sent in an order that differs from the natural order of their names, and the sources and the
+        pages follow the order of the upload: the cover, part 2 and part 1.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
@@ -120,8 +120,8 @@ class TestUploadSources:
         expect(finished['progress'] == {'done': SCAN_COUNT, 'total': SCAN_COUNT, 'fraction': 1.0})
         expect(finished['result']['imported'] == [str(source.id) for source in sources])
         expect((finished['result']['rejected'], finished['result']['skipped']) == ([], []))
-        expect([source.file_name for source in sources] == ['part1.pdf', 'part2.pdf', 'part3-cover.jpg'])
-        expect([source.scan_count for source in sources] == [FIRST_PART_PAGES, SECOND_PART_PAGES, 1])
+        expect([source.file_name for source in sources] == ['part3-cover.jpg', 'part2.pdf', 'part1.pdf'])
+        expect([source.scan_count for source in sources] == [1, SECOND_PART_PAGES, FIRST_PART_PAGES])
         expect(
             [(scans[page.scan_id].source_id, scans[page.scan_id].number) for page in pages if page.scan_id]
             == [(source.id, number) for source in sources for number in range(source.scan_count)]

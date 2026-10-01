@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
     from bookreviver.domain.enums import Rendition, SourceKind
@@ -23,16 +23,17 @@ class SourceInspector(ABC):
     """Groups the files of an upload into sources, and reads the scans, facts and metadata of one source."""
 
     @abstractmethod
-    async def group(self, files: Sequence[Path]) -> Sequence[UploadedSource]:
+    async def group(self, files: Mapping[str, Path]) -> Sequence[UploadedSource]:
         """Split the staged files of an upload into sources, any mix of kinds being accepted.
 
         Every file is a source of its own, except the index file and page files of an indirect DjVu document, which
-        make one source together.
+        make one source together. The order of the upload is the order of the book, so nothing here sorts the files.
 
-        :param files: Local paths of the staged files, in any order.
-        :type files: Sequence[Path]
-        :returns: The sources in the natural order of the names of their main files, so ``part2.pdf`` precedes
-                  ``part10.pdf``, which is the order their pages join the book.
+        :param files: Local paths of the staged files by their relative name in the upload, in the order the user gave
+                      them. Two files can share a base name in different folders.
+        :type files: Mapping[str, Path]
+        :returns: The sources in the order of their main files in ``files``, which is the order their pages join the
+                  book, whatever the names are. The names of a source are keys of ``files``.
         :rtype: Sequence[UploadedSource]
         :raises UploadRejectedError: If there are no files, or the type of a file is not accepted.
         """

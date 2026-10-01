@@ -178,11 +178,11 @@ class WatchedInspector(SourceInspector):
         self.inspected: list[tuple[SourceKind, list[str]]] = []
 
     @override
-    async def group(self, files: Sequence[Path]) -> Sequence[UploadedSource]:
+    async def group(self, files: Mapping[str, Path]) -> Sequence[UploadedSource]:
         """Group the files with the real inspector.
 
-        :param files: Local paths of the staged files.
-        :type files: Sequence[Path]
+        :param files: Local paths of the staged files by their relative name, in the order of the upload.
+        :type files: Mapping[str, Path]
         :returns: The sources the files make.
         :rtype: Sequence[UploadedSource]
         """
