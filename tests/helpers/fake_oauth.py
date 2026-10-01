@@ -13,15 +13,15 @@ from typing import TYPE_CHECKING, Any, override
 from urllib.parse import parse_qs
 
 import httpx
-from fastapi.responses import RedirectResponse
 from httpx_oauth.oauth2 import BaseOAuth2
+from starlette.responses import RedirectResponse
 
 if TYPE_CHECKING:
     import contextlib
     from collections.abc import Callable
 
-    from fastapi import Request
-    from fastapi.responses import Response
+    from starlette.requests import Request
+    from starlette.responses import Response
 
 FAKE_AUTHORIZE_URL: str = 'https://provider.example/authorize'
 FAKE_TOKEN_URL: str = 'https://provider.example/token'
