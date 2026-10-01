@@ -131,7 +131,8 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Geometry     | `Point`, `Size`, `Rect`, `Quad`, `Line`, `Rotation` and `Transform` in `domain/geometry.py`   |
 | Edits        | `PageEdit` with its `EditorKind` and a shape (`Rect`, `Quad`, `Line`, `Rotation`) or a mask   |
 | Events       | `JobChanged`, `SourceImported`, `ScanReady`, `PagesChanged`, `PageVersionReady`, and others   |
-| Jobs         | `Job`, `JobKind` (`import-source`, `prepare-pages`), `JobState`, `Progress`, `WorkerPool`     |
+| Jobs         | `Job`, `JobKind` (the import, the preparing of pages and the four processing jobs), `JobState` |
+|              | `Progress`, `WorkerPool`                                                                      |
 | Imports      | `ImportRequest`, `ImportResult`, `RejectedFile`, `RejectionReason`, `UploadProblem`           |
 |              | `UploadPath` (a checked relative path), `SystemFile` (names an operating system adds)         |
 | Queries      | `Slice[T]` (items and total), `SliceRequest` (offset and limit)                               |
@@ -562,9 +563,10 @@ one such job, so two requests that both found none cannot both store one: the on
 together. A running job may have read its versions before a new one was committed, so a job that ends looks for pending
 versions once more and queues a follow-up when it finds one, which is why a request may leave the queueing to the job
 that runs. The task `prepare_pages` of `app/worker.py` calls `PageService.prepare_images`, which takes the pending and
-the failed versions of the stages `page-split` and `page-order`, writes each one and commits it before the next, and
-publishes `PageVersionReady`, so the viewer swaps an empty frame for the image without reloading. A version `split.none`
-is a copy of its scan made by `BaseVersions`, the same code the import uses, and a version `pages.blank` is a white leaf.
+the failed versions made by `split.none` and `pages.blank`, which are the ones it knows how to make, writes each one
+and commits it before the next, and publishes `PageVersionReady`, so the viewer swaps an empty frame for the image
+without reloading. A failed half of a split spread is left to the run that makes it. A version `split.none` is a copy
+of its scan run through `StepRunner`, the same way the import does it, and a version `pages.blank` is a white leaf.
 A version that cannot be made is stored as `failed` with its reason in `data['error']`, the job ends failed, and the
 next job takes the failed versions again with the new ones, so there is no route to repeat a job. A page deleted while
 the job runs takes its versions with it, so a version whose page is gone is nothing to make and nothing that failed:
@@ -794,7 +796,10 @@ erDiagram
   `WHERE kind = 'import-source' AND state IN ('queued', 'running')` keeps a project to one import at a time, and
   both adapters report its violation as a `ConflictError` when the job is added. The partial unique index
   `ix_jobs_one_active_prepare` on `project_id` `WHERE kind = 'prepare-pages' AND state IN ('queued', 'running')` does
-  the same for the jobs that write page images, and an import and a prepare job of one project do not collide.
+  the same for the jobs that write page images, and an import and a prepare job of one project do not collide. The
+  partial unique index `ix_jobs_one_active_processing` on `project_id` `WHERE kind IN ('collect-versions', 'cut-tiles',
+  'preview-step', 'run-stage') AND state IN ('queued', 'running')` keeps a project to one job that processes the
+  versions of its pages, so two runs never write the same files and a collection never deletes what a run reuses.
 - `page_versions` has the primary key `id`, `page_id` with `ON DELETE CASCADE`, `input_id` with `ON DELETE SET NULL`,
   and an index on `(page_id, stage)`. Its columns are `stage`, `processor_key`, `processor_version`, `params`,
   `transform` and `data` as JSON, `renditions_ready`, `renditions_full`, `state`, `scale` (`full` or `preview`),
@@ -1539,6 +1544,20 @@ The book model rests on these decisions, each with its reason.
     makes no page, and the right half is not run by itself because its left half makes it. The step cannot be previewed,
     since a preview changes no page. Undoing the split needs a confirmation in the request and not a second request,
     so a run keeps one job and a refused one leaves the page failed with the reason, and nothing deleted.
+41. **The book changes once the work is done.** A split runs its step and writes its files first, and then commits the
+    new page, the change of the left page, the versions and the heads of both halves together, so a split that fails
+    leaves no empty page. Undoing a split commits the deletion of the right half with the new current version of the
+    left half, and removes the files after, so a replacement that fails deletes nothing.
+42. **A project processes one thing at a time.** A run, a preview, a tile cutting and a collection exclude each other
+    and themselves, kept by a partial unique index, because a collection deletes the versions a run may be reusing and
+    two runs write the same files. A request for a second one is a 409, and the collection that every run queues when it
+    ends is left out when something else is processing the project. Choosing a current version is refused as well while
+    one is active. The price is that a second preview waits for the first, which takes about a second.
+43. **A collection marks before it deletes.** It chooses the old versions that no version that stays reads, marks them
+    failed so that none can be chosen or reused, removes their directories and then deletes their rows. One that stops on
+    the way leaves versions that are old and read by nothing, which the next collection chooses again. Deleting an input
+    that a surviving version reads is never done, since the database would set its input to none and make it look like
+    a base version that nothing may delete.
 
 Smaller technical choices follow the same model. Languages are ISO 639-3 codes, XMP is parsed with defusedxml, the
 parameters of processing jobs are kept in `Job.params`, a DjVu source suggests a publication year only from its

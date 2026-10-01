@@ -40,6 +40,7 @@ async def prepared(kit: ProcessingKit) -> tuple[Actor, Project, Page]:
     await kit.seed_base_version(page)
     job = await kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
     await kit.jobs().run_stage(job.id)
+    await kit.work_queue()
     return actor, project, page
 
 
@@ -90,6 +91,7 @@ class TestSave:
             """
             job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
             await fx_kit.jobs().run_stage(job.id)
+            await fx_kit.work_queue()
             record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
             assert record.head_version_id is not None
             return record.head_version_id

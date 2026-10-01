@@ -462,6 +462,18 @@ class JobKind(LabeledStrEnum):
     CUT_TILES = 'cut-tiles', 'Cut tiles'
     COLLECT_VERSIONS = 'collect-versions', 'Collect old versions'
 
+    @classmethod
+    def processing(cls) -> frozenset[JobKind]:
+        """Return the kinds of job that read and write the versions of pages, of which a project runs one at a time.
+
+        A run, a preview and a tile cutting write the files of versions they may have found made already, and a
+        collection deletes them, so no two of them may overlap, and two of one kind would write the same files.
+
+        :returns: The kinds of the processing jobs.
+        :rtype: frozenset[JobKind]
+        """
+        return frozenset({cls.RUN_STAGE, cls.PREVIEW_STEP, cls.CUT_TILES, cls.COLLECT_VERSIONS})
+
 
 class JobState(LabeledStrEnum):
     """Lifecycle of a background job."""

@@ -197,10 +197,14 @@ class SplitSpread(ModelProcessor):
         if float(np.ptp(smooth)) < MIN_CONTRAST:
             middle = (first + last) / 2
             return Cut(top_x=middle, bottom_x=middle)
-        # The gutter is as wide as the shadow, so the cut goes through the middle of the columns that are as dark as it
-        darkest = np.flatnonzero(smooth <= smooth.min() + PLATEAU_FRACTION * float(np.ptp(smooth)))
-        gutter = first + float(darkest.mean()) + 0.5
-        return Cut(top_x=gutter, bottom_x=gutter)
+        # The gutter is as wide as the shadow, so the cut goes through the middle of the run of columns around the
+        # darkest one that are as dark as it. A second dark region of the band is another run and does not count
+        as_dark = smooth <= smooth.min() + PLATEAU_FRACTION * float(np.ptp(smooth))
+        darkest = int(smooth.argmin())
+        lighter = np.flatnonzero(~as_dark)
+        start = int(lighter[lighter < darkest].max(initial=-1)) + 1
+        end = int(lighter[lighter > darkest].min(initial=len(smooth)))
+        return Cut(top_x=first + (start + end) / 2, bottom_x=first + (start + end) / 2)
 
     @staticmethod
     def _half(scan: Samples, columns: Indices, edge: Floats, reach: int, side: int) -> tuple[Samples, int]:

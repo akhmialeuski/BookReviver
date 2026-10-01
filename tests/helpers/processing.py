@@ -20,6 +20,7 @@ from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.domain.entities import Actor, PageStage
 from bookreviver.domain.enums import (
     ImagePolicy,
+    JobKind,
     Rendition,
     Stage,
     StageState,
@@ -172,6 +173,22 @@ class ProcessingKit:
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
         )
         return ProcessingJobs(uow=uow, assets=self.assets, runtime=runtime, parts=self.parts(uow))
+
+    async def work_queue(self) -> None:
+        """Let a worker take every job the recording queue holds that has not finished, in the order they were queued.
+
+        A project processes one thing at a time, so a test that starts a second job first lets the worker finish the
+        collection that a run queues when it ends.
+        """
+        methods = {
+            JobKind.RUN_STAGE: 'run_stage',
+            JobKind.PREVIEW_STEP: 'preview_step',
+            JobKind.CUT_TILES: 'cut_tiles',
+            JobKind.COLLECT_VERSIONS: 'collect_versions',
+        }
+        for queued in list(self.recording.enqueued):
+            if not (await self.uow().jobs.get(queued.id)).state.is_final:
+                await getattr(self.jobs(), methods[queued.kind])(queued.id)
 
     def edits(self) -> EditService:
         """Build the edit service over a new unit of work.

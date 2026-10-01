@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 from delayed_assert import assert_expectations, expect
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import EditorKind, ProcessorScope, Stage, TransformKind, VersionData
@@ -89,6 +89,23 @@ class TestSplitSpread:
         expect((left.data[VersionData.HEIGHT_PX], right.data[VersionData.HEIGHT_PX]) == (HEIGHT_PX, HEIGHT_PX))
         expect((left.data[VersionData.OVERLAP_PX], right.data[VersionData.OVERLAP_PX]) == (0, 0))
         assert_expectations()
+
+    def test_a_second_dark_region_in_the_band_does_not_pull_the_cut_off_the_gutter(
+        self, fx_split_spread: Processor, tmp_path: Path
+    ) -> None:
+        """Verify the cut is the middle of the gutter alone, though another strip as dark as it lies in the band.
+
+        :param fx_split_spread: The processor under test.
+        :type fx_split_spread: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        scan = spread(PAGE_WIDTH_PX, HEIGHT_PX)
+        ImageDraw.Draw(scan).rectangle((1_100, 0, 1_115, HEIGHT_PX), fill=(GUTTER_SHADE,) * 3)
+        image = save(scan, tmp_path / 'scan.png')
+        params = fx_split_spread.validate_params({})
+        left, _right = halves_of(fx_split_spread, StepInput(image=image, params=params, workdir=tmp_path))
+        assert abs(left.data[VersionData.CUT_X] - PAGE_WIDTH_PX) < CUT_TOLERANCE_PX
 
     def test_each_half_is_a_crop_whose_transform_maps_the_scan_to_it(
         self, fx_split_spread: Processor, tmp_path: Path

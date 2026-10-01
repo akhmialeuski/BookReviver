@@ -10,10 +10,11 @@ version the current one of the stage. A page that fails is recorded as failed an
 job succeeds when it processed at least one page. When it ends it queues a collection of the project's old versions, so
 old versions go by their age without the user asking.
 
-A collection chooses the versions, writes the keys of their directories into its own parameters and deletes their rows
-in one transaction, and removes the directories after it, by those keys. A collection that stops between the two is run
-again, finds the keys in its parameters and removes the directories that are left. Removing a directory that is gone is
-no error.
+A project processes one thing at a time, so a collection never overlaps a run that may be reusing the versions it
+deletes. A collection chooses the versions, marks them failed so that none can be chosen or reused any more, removes
+their directories and then deletes their rows. A collection that stops on the way leaves the versions marked, which are
+old and read by nothing that stays, so the next collection chooses them again and finishes the work. Removing a
+directory that is gone is no error.
 """
 
 import logging
@@ -21,7 +22,7 @@ from typing import TYPE_CHECKING
 
 from attrs import evolve
 
-from bookreviver.domain.enums import JobState, PageOrigin, RunOutcome, VersionState
+from bookreviver.domain.enums import JobState, PageOrigin, RunOutcome, VersionData, VersionState
 from bookreviver.domain.errors import DomainError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
@@ -29,10 +30,10 @@ from bookreviver.domain.values import SliceRequest, StageRun, StepPreview, TileC
 from bookreviver.services.stage_runs import PreviewRun, RecipeRun
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Sequence
+    from collections.abc import Sequence
 
     from bookreviver.domain.entities import Job, Page, Recipe
-    from bookreviver.domain.ids import JobId, ProjectId, StorageKey
+    from bookreviver.domain.ids import JobId, ProjectId
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.storage import AssetStore
     from bookreviver.services.processing_parts import ProcessingParts
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
 
 NO_PAGE_PROCESSED: str = 'No page could be processed. The state of the stage of each page says why.'
 UNEXPECTED_FAILURE: str = 'The job stopped because of an unexpected error. It has been logged.'
+BEING_COLLECTED: str = 'The version is being deleted.'
 # How many pages a run reads from the book at a time
 PAGE_WINDOW: int = 1_000
 
@@ -147,9 +149,7 @@ class ProcessingJobs:
         if (job := await self._tracker.start(job_id)) is None:
             return
         try:
-            doomed = await self._choose(job)
-            for key in doomed:
-                await self._assets.delete_prefix(key)
+            total = await self._collect(job)
         except DomainError as error:
             await self._uow.rollback()
             await self._tracker.finish(job, JobState.FAILED, error=str(error))
@@ -157,7 +157,8 @@ class ProcessingJobs:
             logger.exception('The collect-versions job %s stopped', job_id)
             await self._tracker.finish(job, JobState.FAILED, error=UNEXPECTED_FAILURE)
         else:
-            await self._tracker.finish(job, JobState.SUCCEEDED, total=len(doomed))
+            if total is not None:
+                await self._tracker.finish(job, JobState.SUCCEEDED, total=total)
 
     async def _run_pages(self, job: Job) -> tuple[int, int, int] | None:
         """Run the recipe of a ``run-stage`` job over its pages, recording the progress as it goes.
@@ -274,26 +275,30 @@ class ProcessingJobs:
             await self._runtime.publisher.publish(PageVersionReady(project_id=job.project_id, version=cut_version))
         return len(cut.version_ids)
 
-    async def _choose(self, job: Job) -> Collection[StorageKey]:
-        """Choose the versions a ``collect-versions`` job deletes, and delete their rows, in one transaction.
+    async def _collect(self, job: Job) -> int | None:
+        """Delete the old versions that nothing needs: mark them, remove their directories, and delete their rows.
 
         :param job: The running job.
         :type job: Job
-        :returns: The keys of the directories to remove, which the job's parameters hold.
-        :rtype: Collection[StorageKey]
+        :returns: The number of versions deleted, or None when the job was cancelled before it deleted anything.
+        :rtype: int | None
         :raises DomainError: If the parameters of the job are not valid.
         """
         collection = VersionCollection.from_map(job.params)
-        if collection.doomed:
-            return collection.doomed
-        keys = ProjectKeys(job.project_id)
         old = await self._uow.page_versions.collectable(
             job.project_id, collection.older_than, collection.previews_older_than
         )
-        doomed = tuple(keys.version_directory(version) for version in old)
-        await self._uow.jobs.update_if_state(
-            evolve(job, params=evolve(collection, doomed=doomed).to_map()), expected=(JobState.RUNNING,)
-        )
+        if await self._tracker.advance(job, done=0, total=len(old)) is None:
+            return None
+        for version in old:
+            marked = evolve(
+                version, state=VersionState.FAILED, data={**version.data, VersionData.ERROR: BEING_COLLECTED}
+            )
+            await self._uow.page_versions.update(marked)
+        await self._uow.commit()
+        keys = ProjectKeys(job.project_id)
+        for version in old:
+            await self._assets.delete_prefix(keys.version_directory(version))
         await self._uow.page_versions.delete_many([version.id for version in old])
         await self._uow.commit()
-        return doomed
+        return len(old)

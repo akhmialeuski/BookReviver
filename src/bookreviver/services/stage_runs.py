@@ -57,6 +57,9 @@ if TYPE_CHECKING:
 UNEXPECTED_FAILURE: str = 'The step failed because of an unexpected error. It has been logged.'
 SPLIT_NOT_AVAILABLE: str = 'The step {key} splits a scan, so it is the only step of its recipe and cannot be previewed.'
 WRONG_OUTPUTS: str = 'The step {key} made {count} outputs, and a step of one page makes one.'
+EARLIER_STAGE_FAILED: str = (
+    'The {stage} stage of the page is out of date and could not be run again, so a later stage cannot read it.'
+)
 NO_PREVIEW_INPUT: str = 'The page has no image to preview a step on.'
 
 logger = logging.getLogger(__name__)
@@ -140,6 +143,7 @@ class StageWork:
         :type scale: VersionScale
         :returns: The source, or None when the page has no image to process, such as a placeholder.
         :rtype: StepSource | None
+        :raises ConflictError: If an earlier stage of the page is stale and running it again failed.
         """
         if stage is Stage.PAGE_SPLIT:
             return await self._scan_source(page, scale)
@@ -150,6 +154,8 @@ class StageWork:
             if record.state is StageState.STALE:
                 await self._refresh(page, earlier)
                 record = await self._uow.page_stages.get(PageStageKey(page.id, earlier))
+                if record.state is StageState.FAILED:
+                    raise ConflictError(EARLIER_STAGE_FAILED.format(stage=earlier.label))
             if record.head_version_id is None:
                 continue
             head = await self._uow.page_versions.get(record.head_version_id)
@@ -367,28 +373,33 @@ class RecipeRun(StageWork):
         stage = recipe.stage
         if stage is Stage.PAGE_SPLIT and page.slot > Page.LEFT_HALF:
             return RunOutcome.SKIPPED
-        source = await self._source(page, stage, VersionScale.FULL)
-        if source is None:
-            return RunOutcome.SKIPPED
         try:
-            version = await self._run_steps(page, recipe, source, confirmed=confirmed)
+            if (source := await self._source(page, stage, VersionScale.FULL)) is None:
+                return RunOutcome.SKIPPED
+            if self._splits.splits(recipe):
+                return (
+                    RunOutcome.DONE
+                    if await self._splits.split(page, recipe, source)
+                    else await self._fail(page, recipe)
+                )
+            undoing = await self._splits.undoing(page, recipe, confirmed=confirmed)
+            version = await self._run_steps(page, recipe, source)
         except DomainError:
             await self._uow.rollback()
             return await self._fail(page, recipe)
         if version is None:
             return await self._fail(page, recipe)
         changed = await self._records.set_head(page.id, stage, head_version_id=version.id, recipe_id=recipe.id)
+        if undoing is not None:
+            await self._splits.unsplit(undoing)
         await self._uow.commit()
+        if undoing is not None:
+            await self._splits.finish_unsplit(undoing)
         await self._records.announce(page.project_id, changed)
         return RunOutcome.DONE
 
-    async def _run_steps(
-        self, page: Page, recipe: Recipe, source: StepSource, *, confirmed: bool
-    ) -> PageVersion | None:
+    async def _run_steps(self, page: Page, recipe: Recipe, source: StepSource) -> PageVersion | None:
         """Make the version of each step of the recipe, and cut the pyramid of the last one.
-
-        A recipe of the page split whose step splits the scan makes the two halves of a spread, and any other recipe of
-        the stage makes the page the whole scan, which undoes an earlier split.
 
         :param page: Page to process.
         :type page: Page
@@ -396,16 +407,10 @@ class RecipeRun(StageWork):
         :type recipe: Recipe
         :param source: What the first step reads.
         :type source: StepSource
-        :param confirmed: Whether the user confirmed that undoing a split deletes the right half of a spread.
-        :type confirmed: bool
         :returns: The version of the last step, or None when a step failed.
         :rtype: PageVersion | None
         :raises DomainError: If a processor is missing, its parameters do not fit, or the pyramid cannot be cut.
         """
-        if recipe.stage is Stage.PAGE_SPLIT and recipe.steps:
-            if self._catalogue.get(recipe.steps[0].processor_key).spec.scope is ProcessorScope.SPLIT:
-                return await self._splits.split(page, recipe.id, recipe.steps[0], source)
-            page = await self._splits.unsplit(page, confirmed=confirmed)
         version: PageVersion | None = None
         for step in recipe.steps:
             version = await self._make_version(page, recipe.stage, step, source, VersionScale.FULL)

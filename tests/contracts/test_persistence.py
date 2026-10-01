@@ -31,6 +31,7 @@ from bookreviver.domain.values import (
     ImportResult,
     MetadataSuggestion,
     PageSize,
+    ProcessorRef,
     RejectedFile,
     Renditions,
     SliceRequest,
@@ -57,6 +58,8 @@ pytestmark = pytest.mark.anyio
 PAGE_COUNT: int = 3
 # Two finished jobs and a queued one of the same kind in one project
 FINISHED_AND_QUEUED_JOBS: int = 3
+# A run, a job writing page images and an import of one project, which do not exclude each other
+THREE_JOBS: int = 3
 # Included pages, sources and scans of the book _add_book stores
 BOOK: tuple[int, int, int] = (PAGE_COUNT - 1, 1, PAGE_COUNT)
 EVERY_STATE: frozenset[JobState] = frozenset(JobState)
@@ -1201,12 +1204,13 @@ class TestPageRepository:
 class TestPageVersionRepository:
     """Contract of PageVersionRepository."""
 
-    async def test_list_to_prepare_returns_pending_and_failed_versions_of_the_stages_of_the_project(
+    async def test_list_to_prepare_returns_pending_and_failed_versions_of_the_given_processors(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
         """Verify the versions still to write come back earliest first, and nothing else does.
 
-        Ready and running versions, versions of other stages and versions of another project are left out.
+        Ready and running versions, versions of other processors, such as the half of a split spread that failed, and
+        versions of another project are left out.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -1219,23 +1223,30 @@ class TestPageVersionRepository:
         elsewhere = make_page(project_id=other.id)
         pending = make_page_version(page_id=pages[0].id, minutes=3)
         failed = evolve(
-            make_page_version(page_id=pages[1].id, minutes=1), stage=Stage.PAGE_ORDER, state=VersionState.FAILED
+            make_page_version(page_id=pages[1].id, minutes=1),
+            stage=Stage.PAGE_ORDER,
+            processor=ProcessorRef(key='pages.blank', version='1'),
+            state=VersionState.FAILED,
         )
         ready = evolve(make_page_version(page_id=pages[2].id), state=VersionState.READY)
         running = evolve(make_page_version(page_id=pages[3].id), state=VersionState.RUNNING)
-        later_stage = evolve(make_page_version(page_id=pages[4].id), stage=Stage.GEOMETRY)
+        spread_half = evolve(
+            make_page_version(page_id=pages[4].id),
+            processor=ProcessorRef(key='split.spread', version='1'),
+            state=VersionState.FAILED,
+        )
         uow = await fx_uow_factory()
         for owned in (project, other):
             await uow.projects.add(owned)
         await uow.pages.add_many([*pages, elsewhere])
         await uow.page_versions.add_many(
-            [pending, failed, ready, running, later_stage, make_page_version(page_id=elsewhere.id)]
+            [pending, failed, ready, running, spread_half, make_page_version(page_id=elsewhere.id)]
         )
         await uow.commit()
         versions = (await fx_uow_factory()).page_versions
-        found = await versions.list_to_prepare(project.id, {Stage.PAGE_SPLIT, Stage.PAGE_ORDER})
+        found = await versions.list_to_prepare(project.id, {'split.none', 'pages.blank'})
         expect(list(found) == [failed, pending])
-        expect(list(await versions.list_to_prepare(project.id, {Stage.PAGE_ORDER})) == [failed])
+        expect(list(await versions.list_to_prepare(project.id, {'pages.blank'})) == [failed])
         assert_expectations()
 
     async def test_base_sizes_are_those_of_the_base_versions_of_the_included_scan_pages(
@@ -1504,6 +1515,81 @@ class TestJobRepository:
         await uow.commit()
         kinds = [job.kind for job in await (await fx_uow_factory()).jobs.list_for_project(project.id, EVERY_STATE)]
         assert sorted(kinds) == sorted([JobKind.IMPORT_SOURCE, JobKind.PREPARE_PAGES])
+
+    @pytest.mark.parametrize(
+        ('first', 'second'),
+        [(first, second) for first in sorted(JobKind.processing()) for second in sorted(JobKind.processing())],
+        ids=str,
+    )
+    async def test_a_project_stores_one_active_job_that_processes_its_versions(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory, first: JobKind, second: JobKind
+    ) -> None:
+        """Verify a run, a preview, a tile cutting and a collection exclude each other, and themselves.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        :param first: Kind of the job already stored.
+        :type first: JobKind
+        :param second: Kind of the job that is refused.
+        :type second: JobKind
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        setup = await fx_uow_factory()
+        await setup.projects.add(project)
+        await setup.jobs.add(evolve(make_job(project_id=project.id, state=JobState.RUNNING), kind=first))
+        await setup.commit()
+        uow = await fx_uow_factory()
+        with pytest.raises(ConflictError):
+            await uow.jobs.add(evolve(make_job(project_id=project.id), kind=second))
+
+    async def test_processing_jobs_leave_room_for_other_jobs_of_the_project_and_for_other_projects(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify an active run does not keep an import or a prepare job from queueing, nor another project's run.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        uow = await fx_uow_factory()
+        for owned in (project, other):
+            await uow.projects.add(owned)
+        await uow.jobs.add(evolve(make_job(project_id=project.id), kind=JobKind.RUN_STAGE))
+        await uow.jobs.add(evolve(make_job(project_id=project.id), kind=JobKind.PREPARE_PAGES))
+        await uow.jobs.add(make_job(project_id=project.id))
+        await uow.jobs.add(evolve(make_job(project_id=other.id), kind=JobKind.RUN_STAGE))
+        await uow.commit()
+        listed = await (await fx_uow_factory()).jobs.list_for_project(project.id, EVERY_STATE)
+        assert len(listed) == THREE_JOBS
+
+    @pytest.mark.parametrize('finished_state', FINAL_STATES, ids=str)
+    async def test_finished_processing_job_leaves_room_for_the_next_one(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory, finished_state: JobState
+    ) -> None:
+        """Verify a finished job that processed versions, whatever its final state, does not keep the next from queueing.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        :param finished_state: Final state of the earlier jobs.
+        :type finished_state: JobState
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        for minutes in (1, 2):
+            finished = make_job(project_id=project.id, state=finished_state, minutes=minutes)
+            await uow.jobs.add(evolve(finished, kind=JobKind.RUN_STAGE))
+        await uow.jobs.add(evolve(make_job(project_id=project.id, minutes=3), kind=JobKind.COLLECT_VERSIONS))
+        await uow.commit()
+        listed = await (await fx_uow_factory()).jobs.list_for_project(project.id, EVERY_STATE)
+        assert len(listed) == FINISHED_AND_QUEUED_JOBS
 
     @pytest.mark.parametrize('first_state', sorted(JobState.active()), ids=str)
     async def test_second_active_import_of_a_project_raises_conflict(

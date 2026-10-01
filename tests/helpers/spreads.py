@@ -73,6 +73,7 @@ async def run_stage(kit: ProcessingKit, actor: Actor, project: Project, run: Sta
     """
     job = await kit.service().start_run(actor, project.id, run.stage, run)
     await kit.jobs().run_stage(job.id)
+    await kit.work_queue()
 
 
 async def book_of(kit: ProcessingKit, project: Project) -> list[Page]:

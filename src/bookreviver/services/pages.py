@@ -42,7 +42,6 @@ from bookreviver.domain.enums import (
     PageChange,
     PageOrigin,
     Side,
-    Stage,
     VersionData,
     VersionState,
 )
@@ -70,8 +69,10 @@ if TYPE_CHECKING:
     from bookreviver.ports.storage import AssetStore
     from bookreviver.services.steps import StepRunner
 
-# Stages whose pending and failed versions the ``prepare-pages`` job writes the files of
-PREPARED_STAGES: frozenset[Stage] = frozenset({Stage.PAGE_SPLIT, Stage.PAGE_ORDER})
+# The processors whose pending and failed versions the ``prepare-pages`` job writes the files of, which are the ones a
+# page is given when it is made. A version of another processor of the same stages, such as a half of a split spread,
+# belongs to the run that makes it
+PREPARED_PROCESSORS: frozenset[str] = frozenset({SPLIT_NONE.key, PAGES_BLANK.key})
 NO_BOOK_IMAGE: str = (
     'No page of the book that is cut from a scan and part of the book has a recorded size, so a blank leaf has no size '
     'to take. Give the size of the leaf.'
@@ -420,7 +421,7 @@ class PageService:
                   None when the job was cancelled, which stops it before its next version.
         :rtype: tuple[Job, int, int] | None
         """
-        versions = await self._uow.page_versions.list_to_prepare(job.project_id, PREPARED_STAGES)
+        versions = await self._uow.page_versions.list_to_prepare(job.project_id, PREPARED_PROCESSORS)
         failed = 0
         for done, version in enumerate(versions):
             progress = Progress(done=done, total=len(versions))
@@ -774,7 +775,7 @@ class PageService:
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         """
-        waiting = await self._uow.page_versions.list_to_prepare(project_id, PREPARED_STAGES)
+        waiting = await self._uow.page_versions.list_to_prepare(project_id, PREPARED_PROCESSORS)
         if any(version.state is VersionState.PENDING for version in waiting):
             await self._enqueue_prepare(project_id)
 

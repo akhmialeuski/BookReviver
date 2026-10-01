@@ -15,11 +15,13 @@ Versions are not deleted when they stop being current, so going back to earlier 
 ``collect-versions`` removes the old ones that nothing needs.
 """
 
+import contextlib
 from typing import TYPE_CHECKING
 
 from bookreviver.domain.enums import JobKind, VersionScale, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.values import PageStageKey, Slice, StepPreview, TileCut
+from bookreviver.services.processing_parts import PROJECT_BUSY
 from bookreviver.services.projects import owned_project
 
 if TYPE_CHECKING:
@@ -29,12 +31,11 @@ if TYPE_CHECKING:
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.geometry import Point
     from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
-    from bookreviver.domain.values import ProcessorSpec, SliceRequest, StageRun, Step, VersionFilter
+    from bookreviver.domain.values import ProcessorSpec, RecipeKey, SliceRequest, StageRun, Step, VersionFilter
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.services.processing_parts import ProcessingParts
 
-RUN_ACTIVE: str = 'A stage of this project is being run already.'
 NOT_CHOOSABLE: str = 'The version {version_id} cannot be made the current one: {reason}.'
 NOT_READY: str = 'it is not ready'
 NOT_FULL: str = 'it is a preview'
@@ -154,27 +155,27 @@ class ProcessingService:
         return variant
 
     async def save_variant(
-        self, actor: Actor, project_id: ProjectId, recipe_id: RecipeId, name: str, steps: Sequence[Step]
+        self, actor: Actor, project_id: ProjectId, key: RecipeKey, name: str, steps: Sequence[Step]
     ) -> Recipe:
-        """Replace the name and the steps of a recipe, and mark the pages it processed stale.
+        """Replace the name and the steps of a recipe of a stage, and mark the pages it processed stale.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
-        :param recipe_id: Identifier of the recipe.
-        :type recipe_id: RecipeId
+        :param key: The stage the request names and the identifier of the recipe, which must belong to that stage.
+        :type key: RecipeKey
         :param name: New name of the recipe.
         :type name: str
         :param steps: New steps, which are checked against their processors.
         :type steps: Sequence[Step]
         :returns: The recipe as stored.
         :rtype: Recipe
-        :raises NotFoundError: If the actor has no such project, or the project has no such recipe.
+        :raises NotFoundError: If the actor has no such project, or the project has no such recipe of the stage.
         :raises InvalidParametersError: If a step does not fit its processor.
         """
         await owned_project(self._uow.projects, actor, project_id)
-        return await self._rewrite(await self._recipes.get(project_id, recipe_id), name, steps)
+        return await self._rewrite(await self._recipes.get(project_id, key.recipe_id, stage=key.stage), name, steps)
 
     async def activate(self, actor: Actor, project_id: ProjectId, stage: Stage, recipe_id: RecipeId) -> Recipe:
         """Make a variant the active recipe of its stage, and mark the pages the old active recipe processed stale.
@@ -217,7 +218,7 @@ class ProcessingService:
         :rtype: Job
         :raises NotFoundError: If the actor has no such project, or the project has no such recipe, stage recipe or
                                page.
-        :raises ConflictError: If a run of the project is queued or running already.
+        :raises ConflictError: If a run, a preview, a tile cutting or a collection of the project is queued or running.
         """
         await owned_project(self._uow.projects, actor, project_id)
         if run.recipe_id is None:
@@ -226,8 +227,6 @@ class ProcessingService:
             await self._recipes.get(project_id, run.recipe_id, stage=stage)
         if run.page_ids is not None:
             await self._uow.pages.list_by_ids(project_id, run.page_ids)
-        if await self._starter.active(project_id, JobKind.RUN_STAGE) is not None:
-            raise ConflictError(RUN_ACTIVE)
         return await self._starter.enqueue(project_id, JobKind.RUN_STAGE, run.to_map())
 
     async def start_preview(self, actor: Actor, project_id: ProjectId, preview: StepPreview) -> Job:
@@ -243,6 +242,7 @@ class ProcessingService:
         :rtype: Job
         :raises NotFoundError: If the actor has no such project, or the project has no such page.
         :raises InvalidParametersError: If a step does not fit its processor.
+        :raises ConflictError: If a run, a preview, a tile cutting or a collection of the project is queued or running.
         """
         await owned_project(self._uow.projects, actor, project_id)
         await self._page(project_id, preview.page_id)
@@ -298,10 +298,14 @@ class ProcessingService:
         :rtype: PageStage
         :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no such
                                version.
-        :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage.
+        :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage, or a run, a
+                               preview, a tile cutting or a collection of the project is queued or running, which
+                               may be reading or deleting the versions the choice depends on.
         """
         await owned_project(self._uow.projects, actor, project_id)
         await self._page(project_id, page_id)
+        if await self._starter.busy(project_id) is not None:
+            raise ConflictError(PROJECT_BUSY)
         version = await self._version_of(page_id, version_id)
         if (reason := self._why_not_choosable(version, stage)) is not None:
             raise ConflictError(NOT_CHOOSABLE.format(version_id=version_id, reason=reason))
@@ -312,8 +316,22 @@ class ProcessingService:
         await self._uow.commit()
         await self._records.announce(project_id, changed)
         if version.renditions is not None and not version.tiles_ready:
-            await self._starter.enqueue(project_id, JobKind.CUT_TILES, TileCut(version_ids=(version_id,)).to_map())
+            await self._queue_tiles_of_choice(project_id, version_id)
         return changed[0]
+
+    async def _queue_tiles_of_choice(self, project_id: ProjectId, version_id: PageVersionId) -> None:
+        """Queue the cutting of the pyramid of a version that was just made current.
+
+        The choice is committed already, so a job of another request that took the project in the meantime does not
+        undo it. The viewer asks for the pyramid of a version that has none when it opens it, so it is cut then.
+
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param version_id: Identifier of the version.
+        :type version_id: PageVersionId
+        """
+        with contextlib.suppress(ConflictError):
+            await self._starter.enqueue(project_id, JobKind.CUT_TILES, TileCut(version_ids=(version_id,)).to_map())
 
     async def versions(
         self,
@@ -382,7 +400,8 @@ class ProcessingService:
         :rtype: Job
         :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no such
                                version.
-        :raises ConflictError: If the version is not ready, has no image, or is a preview.
+        :raises ConflictError: If the version is not ready, has no image, or is a preview, or a run, a preview, a tile
+                               cutting or a collection of the project is queued or running.
         """
         await owned_project(self._uow.projects, actor, project_id)
         await self._page(project_id, page_id)
@@ -403,9 +422,12 @@ class ProcessingService:
         :returns: The queued job, or the collection that is queued or running already.
         :rtype: Job
         :raises NotFoundError: If the actor has no such project.
+        :raises ConflictError: If a run, a preview or a tile cutting of the project is queued or running.
         """
         await owned_project(self._uow.projects, actor, project_id)
-        return await self._starter.enqueue_collection(project_id)
+        if (job := await self._starter.enqueue_collection(project_id)) is None:
+            raise ConflictError(PROJECT_BUSY)
+        return job
 
     async def map_to_scan(
         self,

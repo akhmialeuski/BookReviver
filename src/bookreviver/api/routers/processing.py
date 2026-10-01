@@ -31,6 +31,7 @@ from bookreviver.api.schemas.processing import (
 from bookreviver.domain.entities import PageStage, PageVersion, Recipe
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
+from bookreviver.domain.values import RecipeKey
 from bookreviver.services.processing import ProcessingService
 
 PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
@@ -213,7 +214,9 @@ async def put_variant(
     :returns: The recipe as stored.
     :rtype: RecipeSchema
     """
-    saved = await processing.save_variant(actor, address.project_id, address.recipe_id, body.name, body.to_steps())
+    saved = await processing.save_variant(
+        actor, address.project_id, RecipeKey(address.stage, address.recipe_id), body.name, body.to_steps()
+    )
     return RecipeSchema.model_validate(saved)
 
 

@@ -3,7 +3,10 @@
 A page stage keeps the current version of one stage of a page, a page edit a manual edit that a processor reads, and a
 recipe the steps of a stage with one active recipe per stage, kept by a partial unique index. A page version gains the
 scale of its run, the hash of its manual edit and whether its tile pyramid is cut, which every version that already has
-its images is, since the images were cut with them, and a job gains the parameters of a processing job.
+its images is, since the images were cut with them, and a job gains the parameters of a processing job. The partial
+unique index ``ix_jobs_one_active_processing`` keeps a project to one queued or running job of the kinds that
+process the versions of its pages, so two runs never write the same files and a collection never deletes what a run
+reuses.
 
 Revision ID: 49e74cc886a4
 Revises: d5b4c3cd9379
@@ -25,6 +28,11 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 __all__ = ('data_downgrades', 'data_upgrades', 'downgrade', 'schema_downgrades', 'schema_upgrades', 'upgrade')
+
+# The rows of the partial unique index that keeps a project to one job processing the versions of its pages
+ACTIVE_PROCESSING = sa.text(
+    "kind IN ('collect-versions', 'cut-tiles', 'preview-step', 'run-stage') AND state IN ('queued', 'running')"
+)
 
 # Revision identifiers, used by Alembic
 revision: str = '49e74cc886a4'
@@ -225,6 +233,13 @@ def schema_upgrades() -> None:
                 nullable=False,
             )
         )
+        batch_op.create_index(
+            'ix_jobs_one_active_processing',
+            ['project_id'],
+            unique=True,
+            sqlite_where=ACTIVE_PROCESSING,
+            postgresql_where=ACTIVE_PROCESSING,
+        )
 
     with op.batch_alter_table('page_versions', schema=None) as batch_op:
         batch_op.add_column(
@@ -250,6 +265,11 @@ def schema_downgrades() -> None:
         batch_op.drop_column('scale')
 
     with op.batch_alter_table('jobs', schema=None) as batch_op:
+        batch_op.drop_index(
+            'ix_jobs_one_active_processing',
+            sqlite_where=ACTIVE_PROCESSING,
+            postgresql_where=ACTIVE_PROCESSING,
+        )
         batch_op.drop_column('params')
         batch_op.alter_column(
             'kind',

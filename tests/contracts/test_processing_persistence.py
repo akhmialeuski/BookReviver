@@ -642,6 +642,32 @@ class TestPageVersionProcessing:
         found = await uow.page_versions.collectable(project_id, FULL_CUTOFF, PREVIEW_CUTOFF)
         assert {version.id for version in found} == {orphan.id, old_preview.id}
 
+    async def test_collectable_keeps_the_inputs_of_every_version_that_stays(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify an old input goes only with the versions that read it, and not from under one that stays.
+
+        A recent version that no page shows still reads its old input, which the database would leave it without if the
+        input were deleted, and the old input of that input stays too. A chain of old versions that nothing outside it
+        reads goes whole.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        uow = await fx_uow_factory()
+        base = evolve(make_page_version(page_id=page_id), created_at=EPOCH)
+        first = _version(base)
+        second = evolve(_version(base), input_id=first.id)
+        reader = evolve(_version(base), input_id=second.id, created_at=NOW - RECENT)
+        chain_start = _version(base)
+        chain_end = evolve(_version(base), input_id=chain_start.id)
+        await uow.page_versions.add_many([base, first, second, reader, chain_start, chain_end])
+        found = await uow.page_versions.collectable(project_id, FULL_CUTOFF, PREVIEW_CUTOFF)
+        assert {version.id for version in found} == {chain_start.id, chain_end.id}
+
     async def test_delete_many_removes_the_versions_and_ignores_missing_ones(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:

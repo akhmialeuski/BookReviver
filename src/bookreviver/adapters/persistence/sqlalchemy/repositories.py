@@ -62,6 +62,7 @@ from bookreviver.domain.enums import PageOrigin, Side, Stage, VersionScale, Vers
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
 from bookreviver.domain.values import PageEditKey, PageSize, PageStageKey, Slice
+from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
     JobRepository,
     PageEditRepository,
@@ -783,13 +784,13 @@ class SqlAlchemyPageVersionRepository(
         return [self._mapper.to_entity(row) for row in rows]
 
     @override
-    async def list_to_prepare(self, project_id: ProjectId, stages: Collection[Stage]) -> Sequence[PageVersion]:
-        """Return the pending and failed versions of the project's pages in the given stages, joining ``pages``.
+    async def list_to_prepare(self, project_id: ProjectId, processor_keys: Collection[str]) -> Sequence[PageVersion]:
+        """Return the pending and failed versions of the project's pages made by the given processors.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
-        :param stages: Stages whose versions are returned.
-        :type stages: Collection[Stage]
+        :param processor_keys: Keys of the processors whose versions are returned.
+        :type processor_keys: Collection[str]
         :returns: The versions still to prepare, the earliest first, ties by identifier.
         :rtype: Sequence[PageVersion]
         """
@@ -798,7 +799,7 @@ class SqlAlchemyPageVersionRepository(
             .join(PageRow, PageVersionRow.page_id == PageRow.id)
             .where(
                 PageRow.project_id == project_id,
-                PageVersionRow.stage.in_(stages),
+                PageVersionRow.processor_key.in_(processor_keys),
                 PageVersionRow.state.in_([VersionState.PENDING, VersionState.FAILED]),
             )
             .order_by(PageVersionRow.created_at, PageVersionRow.id)
@@ -921,17 +922,22 @@ class SqlAlchemyPageVersionRepository(
         :rtype: Sequence[PageVersion]
         """
         session = self._rows.session
-        inputs_of = dict(
-            (
-                await session.execute(
-                    select(PageVersionRow.id, PageVersionRow.input_id)
-                    .join(PageRow, PageVersionRow.page_id == PageRow.id)
-                    .where(PageRow.project_id == project_id)
-                )
-            )
-            .tuples()
-            .all()
+        eligible_by_age = and_(
+            PageVersionRow.input_id.is_not(None),
+            or_(
+                and_(PageVersionRow.scale == VersionScale.FULL, PageVersionRow.created_at < older_than),
+                and_(PageVersionRow.scale == VersionScale.PREVIEW, PageVersionRow.created_at < previews_older_than),
+            ),
         )
+        # The two columns of every version of the project, and whether it is old enough to go, since the chains are
+        # followed here and a recursive query is not portable to every database
+        rows = (
+            await session.execute(
+                select(PageVersionRow.id, PageVersionRow.input_id, eligible_by_age)
+                .join(PageRow, PageVersionRow.page_id == PageRow.id)
+                .where(PageRow.project_id == project_id)
+            )
+        ).all()
         heads = (
             await session.scalars(
                 select(PageStageRow.head_version_id)
@@ -939,26 +945,14 @@ class SqlAlchemyPageVersionRepository(
                 .where(PageRow.project_id == project_id, PageStageRow.head_version_id.is_not(None))
             )
         ).all()
-        kept: set[str] = set()
-        pending = [head for head in heads if head is not None]
-        while pending:
-            if (version_id := pending.pop()) in kept:
-                continue
-            kept.add(version_id)
-            if (input_id := inputs_of.get(version_id)) is not None:
-                pending.append(input_id)
+        goes = collectable_versions(
+            {PageVersionId(version_id): input_id for version_id, input_id, _ in rows},
+            eligible=[PageVersionId(version_id) for version_id, _, old in rows if old],
+            heads=[PageVersionId(head) for head in heads if head is not None],
+        )
         statement = (
             select(PageVersionRow)
-            .join(PageRow, PageVersionRow.page_id == PageRow.id)
-            .where(
-                PageRow.project_id == project_id,
-                PageVersionRow.input_id.is_not(None),
-                PageVersionRow.id.not_in(kept),
-                or_(
-                    and_(PageVersionRow.scale == VersionScale.FULL, PageVersionRow.created_at < older_than),
-                    and_(PageVersionRow.scale == VersionScale.PREVIEW, PageVersionRow.created_at < previews_older_than),
-                ),
-            )
+            .where(PageVersionRow.id.in_(goes))
             .order_by(PageVersionRow.created_at, PageVersionRow.id)
         )
         return [self._mapper.to_entity(row) for row in (await session.scalars(statement)).all()]

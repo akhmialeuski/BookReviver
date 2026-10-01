@@ -10,7 +10,7 @@ from bookreviver.domain.enums import JobKind, JobState, Stage, StageState
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.ids import PageId, RecipeId
-from bookreviver.domain.values import PageStageKey, SliceRequest, StageRun, Step
+from bookreviver.domain.values import PageStageKey, RecipeKey, SliceRequest, StageRun, Step, StepPreview
 from tests.helpers.builders import make_page_stage
 from tests.helpers.fake_processing import RefusingJobQueue
 from tests.helpers.processing import ProcessingKit
@@ -236,10 +236,30 @@ class TestVariants:
         await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=variant.id))
         await uow.commit()
         await fx_kit.service().save_variant(
-            actor, project.id, variant.id, 'Stronger', [Step(processor_key=FAKE_KEY, params={'strength': 9})]
+            actor,
+            project.id,
+            RecipeKey(Stage.GEOMETRY, variant.id),
+            'Stronger',
+            [Step(processor_key=FAKE_KEY, params={'strength': 9})],
         )
         record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         assert record.state is StageState.STALE
+
+    async def test_variant_of_another_stage_is_not_found_and_stays_as_it_was(self, fx_kit: ProcessingKit) -> None:
+        """Reject a save of a recipe through the address of another stage, and rewrite nothing.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project = await fx_kit.seed_project()
+        variant = await fx_kit.service().add_variant(
+            actor, project.id, Stage.GEOMETRY, 'Strong', [Step(processor_key=FAKE_KEY)]
+        )
+        with pytest.raises(NotFoundError):
+            await fx_kit.service().save_variant(
+                actor, project.id, RecipeKey(Stage.CLEANUP, variant.id), 'Hijacked', [Step(processor_key=FAKE_KEY)]
+            )
+        assert (await fx_kit.uow().recipes.get(variant.id)).name == 'Strong'
 
 
 class TestStartRun:
@@ -262,15 +282,58 @@ class TestStartRun:
         assert_expectations()
 
     async def test_second_run_while_one_is_active_is_a_conflict(self, fx_kit: ProcessingKit) -> None:
-        """Reject a run while another run of the project is queued or running.
+        """Reject a run while another job that processes the project is queued or running.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
         actor, project = await fx_kit.seed_project()
         await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        with pytest.raises(ConflictError, match='being run'):
+        with pytest.raises(ConflictError, match='processing something'):
             await fx_kit.service().start_run(actor, project.id, Stage.CLEANUP, StageRun(stage=Stage.CLEANUP))
+
+    async def test_preview_and_collection_are_refused_while_a_run_is_active(self, fx_kit: ProcessingKit) -> None:
+        """Reject a preview and a collection while a run of the project is queued, since the project processes one thing.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project = await fx_kit.seed_project()
+        page, _ = await fx_kit.seed_scan_page(project)
+        await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        preview = StepPreview(
+            page_id=page.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=FAKE_KEY),), step_index=0
+        )
+        with pytest.raises(ConflictError, match='processing something'):
+            await fx_kit.service().start_preview(actor, project.id, preview)
+        with pytest.raises(ConflictError, match='processing something'):
+            await fx_kit.service().start_collection(actor, project.id)
+
+    async def test_run_is_refused_while_a_collection_is_active(self, fx_kit: ProcessingKit) -> None:
+        """Reject a run while a collection is queued, which may delete the versions the run would reuse.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project = await fx_kit.seed_project()
+        await fx_kit.service().start_collection(actor, project.id)
+        with pytest.raises(ConflictError, match='processing something'):
+            await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+
+    async def test_collection_that_a_run_queues_is_left_out_while_another_job_processes_the_project(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify the collection of a finished run is not queued behind a job that is active, which is no error.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project = await fx_kit.seed_project()
+        await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        starter = fx_kit.parts(fx_kit.uow()).starter
+        expect(await starter.enqueue_collection(project.id) is None)
+        expect([job.kind for job in fx_kit.recording.enqueued] == [JobKind.RUN_STAGE])
+        assert_expectations()
 
     async def test_page_of_another_project_is_not_found(self, fx_kit: ProcessingKit) -> None:
         """Reject a run that names a page the project does not have.

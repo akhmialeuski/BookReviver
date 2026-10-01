@@ -25,7 +25,7 @@ from bookreviver.domain.enums import (
     WorkerPool,
 )
 from bookreviver.domain.errors import InvalidIdentifierError, InvalidParametersError, UploadRejectedError
-from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StorageKey
+from bookreviver.domain.ids import PageId, PageVersionId, RecipeId
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -425,6 +425,18 @@ class PageStageKey:
 
     page_id: PageId
     stage: Stage
+
+
+@frozen
+class RecipeKey:
+    """The address of a recipe: the stage it belongs to and its identifier, which a use case takes as one value.
+
+    :ivar stage: The stage of the recipe.
+    :ivar recipe_id: Identifier of the recipe.
+    """
+
+    stage: Stage
+    recipe_id: RecipeId
 
 
 @frozen
@@ -940,31 +952,24 @@ class TileCut:
 
 @frozen(kw_only=True)
 class VersionCollection:
-    """What a ``collect-versions`` job deletes: the old versions, and the directories it already chose to remove.
-
-    The job deletes the rows of the versions first and their directories after, so it writes the keys of the
-    directories into its parameters before it deletes the rows. A job that stops between the two steps is repeated by
-    the same job, which removes the directories by those keys.
+    """What a ``collect-versions`` job deletes: the versions older than two moments that nothing needs.
 
     :ivar older_than: Full runs created before this moment may be deleted.
     :ivar previews_older_than: Previews created before this moment may be deleted.
-    :ivar doomed: Keys of the directories of the versions whose rows were deleted, or about to be.
     """
 
     older_than: datetime
     previews_older_than: datetime
-    doomed: tuple[StorageKey, ...] = ()
 
     def to_map(self) -> dict[str, Any]:
         """Return the value as the JSON object a job stores.
 
-        :returns: The two moments as ISO 8601 text and the directory keys.
+        :returns: The two moments as ISO 8601 text.
         :rtype: dict[str, Any]
         """
         return {
             'older_than': self.older_than.isoformat(),
             'previews_older_than': self.previews_older_than.isoformat(),
-            'doomed': list(self.doomed),
         }
 
     @classmethod
@@ -981,7 +986,6 @@ class VersionCollection:
             return cls(
                 older_than=datetime.fromisoformat(stored['older_than']),
                 previews_older_than=datetime.fromisoformat(stored['previews_older_than']),
-                doomed=tuple(StorageKey(key) for key in stored['doomed']),
             )
         except (KeyError, ValueError, TypeError) as error:
             raise _params_error(JobKind.COLLECT_VERSIONS, error) from error

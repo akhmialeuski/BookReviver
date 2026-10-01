@@ -45,6 +45,7 @@ from bookreviver.domain.enums import JobKind, JobState, PageOrigin, Side, Stage,
 from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
 from bookreviver.domain.values import PageEditKey, PageSize, PageStageKey, Slice, SliceRequest
+from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
     JobRepository,
     PageEditRepository,
@@ -67,8 +68,13 @@ if TYPE_CHECKING:
 
 # Attribute holding the identifier of every entity addressed by one
 ID_ATTRIBUTE: str = 'id'
-# The kinds of job a project runs one of at a time, the rows of the partial unique index of the ``jobs`` table
-ONE_ACTIVE_AT_A_TIME: frozenset[JobKind] = frozenset({JobKind.IMPORT_SOURCE, JobKind.PREPARE_PAGES})
+# The groups of kinds of job of which a project runs one at a time, each the rows of a partial unique index of the
+# ``jobs`` table: the imports, the writing of page images, and the jobs that process the versions of pages
+ONE_ACTIVE_AT_A_TIME: tuple[frozenset[JobKind], ...] = (
+    frozenset({JobKind.IMPORT_SOURCE}),
+    frozenset({JobKind.PREPARE_PAGES}),
+    JobKind.processing(),
+)
 
 
 @define(kw_only=True)
@@ -784,13 +790,13 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
         )
 
     @override
-    async def list_to_prepare(self, project_id: ProjectId, stages: Collection[Stage]) -> Sequence[PageVersion]:
-        """Return the pending and failed versions of the project's pages in the given stages.
+    async def list_to_prepare(self, project_id: ProjectId, processor_keys: Collection[str]) -> Sequence[PageVersion]:
+        """Return the pending and failed versions of the project's pages made by the given processors.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
-        :param stages: Stages whose versions are returned.
-        :type stages: Collection[Stage]
+        :param processor_keys: Keys of the processors whose versions are returned.
+        :type processor_keys: Collection[str]
         :returns: The versions still to prepare, the earliest first, ties by identifier.
         :rtype: Sequence[PageVersion]
         """
@@ -799,7 +805,7 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
             (
                 version
                 for version in self._rows.values()
-                if version.stage in stages
+                if version.processor.key in processor_keys
                 and version.state in waiting
                 and self._tables.pages[version.page_id].project_id == project_id
             ),
@@ -911,29 +917,22 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
         :rtype: Sequence[PageVersion]
         """
         pages = {page.id for page in self._tables.pages.values() if page.project_id == project_id}
-        kept: set[PageVersionId] = set()
-        pending = [
+        versions = {version.id: version for version in self._rows.values() if version.page_id in pages}
+        heads = [
             stage.head_version_id
             for stage in self._tables.page_stages.values()
             if stage.page_id in pages and stage.head_version_id is not None
         ]
-        while pending:
-            if (version_id := pending.pop()) in kept or (version := self._rows.get(version_id)) is None:
-                continue
-            kept.add(version_id)
-            if version.input_id is not None:
-                pending.append(version.input_id)
-        return sorted(
-            (
-                version
-                for version in self._rows.values()
-                if version.page_id in pages
-                and version.id not in kept
-                and version.input_id is not None
-                and version.created_at < (previews_older_than if version.scale is VersionScale.PREVIEW else older_than)
-            ),
-            key=attrgetter('created_at', ID_ATTRIBUTE),
+        eligible = [
+            version.id
+            for version in versions.values()
+            if version.input_id is not None
+            and version.created_at < (previews_older_than if version.scale is VersionScale.PREVIEW else older_than)
+        ]
+        goes = collectable_versions(
+            {version.id: version.input_id for version in versions.values()}, eligible=eligible, heads=heads
         )
+        return sorted((versions[version_id] for version_id in goes), key=attrgetter('created_at', ID_ATTRIBUTE))
 
     @override
     async def delete_many(self, version_ids: Collection[PageVersionId]) -> None:
@@ -1243,25 +1242,36 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
 
     @override
     def _check(self, entity: Job) -> None:
-        """Require the job's project, and no other active job of its kind in it, as the partial unique indexes do.
+        """Require the job's project, and no other active job of its group in it, as the partial unique indexes do.
 
         :param entity: Job about to be stored.
         :type entity: Job
         :raises NotFoundError: If the job's project is not stored.
-        :raises ConflictError: If the job is a queued or running import, or a queued or running job writing page
-                               images, and the project has another of the same kind.
+        :raises ConflictError: If the job is a queued or running import, a job writing page images, or a job
+                               processing versions, and the project has another active job of the same group.
         """
         require(self._tables.projects, entity.project_id)
-        if entity.kind in ONE_ACTIVE_AT_A_TIME and entity.state in JobState.active():
-            # Every other job gets its own identifier as its value, so only an active job of the same kind can match
+        if self._group_of(entity) is not None and entity.state in JobState.active():
+            # Every other job gets its own identifier as its value, so only an active job of the same group can match
             self._require_unique(
                 entity,
                 lambda job: (
-                    (job.project_id, job.kind)
-                    if job.kind in ONE_ACTIVE_AT_A_TIME and job.state in JobState.active()
+                    (job.project_id, self._group_of(job))
+                    if self._group_of(job) is not None and job.state in JobState.active()
                     else job.id
                 ),
             )
+
+    @staticmethod
+    def _group_of(job: Job) -> int | None:
+        """Find the group of kinds a job belongs to, of which a project runs one at a time.
+
+        :param job: The job.
+        :type job: Job
+        :returns: The index of the group in ``ONE_ACTIVE_AT_A_TIME``, or None for a job that has no such limit.
+        :rtype: int | None
+        """
+        return next((index for index, group in enumerate(ONE_ACTIVE_AT_A_TIME) if job.kind in group), None)
 
     @override
     def _cascade(self, entity: Job) -> None:

@@ -49,6 +49,7 @@ async def run_stage(kit: ProcessingKit, actor: Actor, project: Project, run: Sta
     """
     job = await kit.service().start_run(actor, project.id, run.stage, run)
     await kit.jobs().run_stage(job.id)
+    await kit.work_queue()
 
 
 async def head_of(kit: ProcessingKit, page: Page, stage: Stage) -> PageVersion:
@@ -220,6 +221,29 @@ class TestRunStage:
         cleanup = await head_of(fx_kit, page, Stage.CLEANUP)
         expect(geometry.state is StageState.FRESH)
         expect(cleanup.input_id == geometry.head_version_id)
+        assert_expectations()
+
+    async def test_stale_earlier_stage_that_cannot_be_run_again_fails_the_stage_after_it(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a stage is not made from a stale input it could not bring up to date, and it is not marked fresh.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page = await prepared_page(fx_kit)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
+        cleanup_before = await head_of(fx_kit, page, Stage.CLEANUP)
+        await fx_kit.service().save_recipe(
+            actor, project.id, Stage.GEOMETRY, 'Failing', [Step(processor_key=FAKE_KEY, params={'fail': True})]
+        )
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
+        geometry = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        cleanup = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.CLEANUP))
+        versions = await fx_kit.uow().page_versions.list_for_stage(page.id, Stage.CLEANUP, None, EVERYTHING)
+        expect((geometry.state, cleanup.state) == (StageState.FAILED, StageState.FAILED))
+        expect((cleanup.head_version_id, versions.total) == (cleanup_before.id, 1))
         assert_expectations()
 
     async def test_failing_step_fails_its_version_and_stage_and_the_job_goes_on(self, fx_kit: ProcessingKit) -> None:

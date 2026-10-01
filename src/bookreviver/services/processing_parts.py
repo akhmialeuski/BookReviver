@@ -6,8 +6,9 @@ and are built the same way.
 
 A job is recorded and committed before it is queued, so the worker finds it. A queue that refuses it leaves the job
 stored as failed and announced, which tells the client it never ran, and the request that asked for it still answers,
-since the rows it wrote are committed. A collection of old versions is queued by every run that ends, and by the user,
-and a project has one at a time, so a second request gets the job that is active.
+since the rows it wrote are committed. A project processes one thing at a time, a run, a preview, a tile cutting or a
+collection of its old versions, so a request for a second is refused and the collection that every run queues when it
+ends is left out while something else is processing the project.
 """
 
 import logging
@@ -18,6 +19,7 @@ from attrs import evolve, frozen
 
 from bookreviver.domain.entities import Job
 from bookreviver.domain.enums import JobKind, JobState
+from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.events import JobChanged
 from bookreviver.domain.ids import JobId
 from bookreviver.domain.values import VersionCollection
@@ -36,6 +38,10 @@ if TYPE_CHECKING:
     from bookreviver.services.recipes import DefaultRecipes
 
 NOT_QUEUED: str = 'The job could not be queued.'
+PROJECT_BUSY: str = (
+    'The project is processing something. Wait for the run, preview, tile cutting or collection that is queued or '
+    'running to end, or cancel it.'
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,34 +93,43 @@ class JobStarter:
         self._queue = runtime.queue
         self._config = config
 
-    async def active(self, project_id: ProjectId, kind: JobKind) -> Job | None:
-        """Return a job of a kind that is queued or running in the project.
+    async def busy(self, project_id: ProjectId) -> Job | None:
+        """Return the job that is processing the versions of the project, if one is queued or running.
 
         :param project_id: Project whose jobs are read.
         :type project_id: ProjectId
-        :param kind: Kind of the job.
-        :type kind: JobKind
-        :returns: The newest such job, or None.
+        :returns: The newest queued or running run, preview, tile cutting or collection, or None.
         :rtype: Job | None
         """
         active = await self._uow.jobs.list_for_project(project_id, JobState.active())
-        return next((job for job in active if job.kind is kind), None)
+        return next((job for job in active if job.kind in JobKind.processing()), None)
 
     async def enqueue(self, project_id: ProjectId, kind: JobKind, params: MetadataMap) -> Job:
-        """Record a job of the project and queue it.
+        """Record a job that processes the versions of the project and queue it, if the project is not busy.
+
+        A project processes one thing at a time. The check is a read and the insert a second step, so the unique index
+        of the database decides when two requests pass the check together, and the one that loses is refused like the
+        one that found the project busy.
 
         :param project_id: Project the job works on.
         :type project_id: ProjectId
-        :param kind: What the job does.
+        :param kind: What the job does, one of the processing kinds.
         :type kind: JobKind
         :param params: What the job was asked to do, in the form its value class writes.
         :type params: MetadataMap
         :returns: The job as stored, queued or failed.
         :rtype: Job
+        :raises ConflictError: If a run, a preview, a tile cutting or a collection of the project is queued or running.
         """
+        if await self.busy(project_id) is not None:
+            raise ConflictError(PROJECT_BUSY)
         job = Job(id=JobId(uuid4()), project_id=project_id, kind=kind, params=params, created_at=self._clock.now())
-        await self._uow.jobs.add(job)
-        await self._uow.commit()
+        try:
+            await self._uow.jobs.add(job)
+            await self._uow.commit()
+        except ConflictError:
+            await self._uow.rollback()
+            raise ConflictError(PROJECT_BUSY) from None
         await self._publisher.publish(JobChanged(project_id=project_id, job=job))
         try:
             await self._queue.enqueue(job)
@@ -128,21 +143,25 @@ class JobStarter:
                 return stored
         return job
 
-    async def enqueue_collection(self, project_id: ProjectId) -> Job:
-        """Queue a collection of the project's old versions, unless one is queued or running.
+    async def enqueue_collection(self, project_id: ProjectId) -> Job | None:
+        """Queue a collection of the project's old versions, unless the project is processing something.
 
         :param project_id: Project whose versions are collected.
         :type project_id: ProjectId
-        :returns: The collection job, new or the one that is active.
-        :rtype: Job
+        :returns: The collection job, new or the one that is queued or running already, or None when another job
+                  processes the project, which queues a collection when it ends.
+        :rtype: Job | None
         """
-        if (running := await self.active(project_id, JobKind.COLLECT_VERSIONS)) is not None:
-            return running
+        if (active := await self.busy(project_id)) is not None:
+            return active if active.kind is JobKind.COLLECT_VERSIONS else None
         now = self._clock.now()
         collection = VersionCollection(
             older_than=now - self._config.version_retention, previews_older_than=now - self._config.preview_retention
         )
-        return await self.enqueue(project_id, JobKind.COLLECT_VERSIONS, collection.to_map())
+        try:
+            return await self.enqueue(project_id, JobKind.COLLECT_VERSIONS, collection.to_map())
+        except ConflictError:
+            return None
 
 
 @frozen(kw_only=True)

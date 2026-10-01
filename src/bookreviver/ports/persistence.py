@@ -344,7 +344,7 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         """
 
     @abstractmethod
-    async def list_to_prepare(self, project_id: ProjectId, stages: Collection[Stage]) -> Sequence[PageVersion]:
+    async def list_to_prepare(self, project_id: ProjectId, processor_keys: Collection[str]) -> Sequence[PageVersion]:
         """Return the versions of a project whose files still have to be written: the pending and the failed ones.
 
         A failed version is returned with the pending ones, so the next job of the project tries it again and no route
@@ -352,9 +352,9 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
-        :param stages: Stages whose versions are returned, such as the page split and the page order.
-        :type stages: Collection[Stage]
-        :returns: The pending and failed versions of those stages, the earliest first, ties by identifier.
+        :param processor_keys: Keys of the processors whose versions are returned, those the job knows how to make.
+        :type processor_keys: Collection[str]
+        :returns: The pending and failed versions made by those processors, the earliest first, ties by identifier.
         :rtype: Sequence[PageVersion]
         """
 
@@ -425,11 +425,13 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
     async def collectable(
         self, project_id: ProjectId, older_than: datetime, previews_older_than: datetime
     ) -> Sequence[PageVersion]:
-        """Return the versions a collection may delete: not current, not base, not the input of a current chain, old.
+        """Return the versions a collection may delete: old, not base, and read by no version that stays.
 
-        A version is kept when a stage record names it as its head, directly or through the chain of input versions of
-        a head, and when it is a base version, which has no input. A full run is collectable once it was created before
-        ``older_than``, and a preview once it was created before ``previews_older_than``.
+        A version stays when a stage record names it as its head, when it is a base version, which has no input, when
+        it is too young to go, and when a version that stays reads it, directly or through the chain of inputs.
+        Deleting an input would leave the version that reads it with no input, which the database allows and which
+        would make it look like a base version for ever. A full run is old once it was created before ``older_than``,
+        and a preview once it was created before ``previews_older_than``.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId

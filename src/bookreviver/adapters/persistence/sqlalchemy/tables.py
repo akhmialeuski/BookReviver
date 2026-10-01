@@ -92,6 +92,12 @@ ACTIVE_IMPORT: Final = text(
 ACTIVE_PREPARE: Final = text(
     f"kind = '{JobKind.PREPARE_PAGES}' AND state IN ('{JobState.QUEUED}', '{JobState.RUNNING}')"
 )
+# The rows of the partial unique index that keeps a project to one job processing the versions of its pages
+ACTIVE_PROCESSING: Final = text(
+    'kind IN ('
+    + ', '.join(f"'{kind}'" for kind in sorted(JobKind.processing()))
+    + f") AND state IN ('{JobState.QUEUED}', '{JobState.RUNNING}')"
+)
 
 
 class Relation(enum.StrEnum):
@@ -257,7 +263,9 @@ class JobRow(DefaultBase):
     __tablename__ = 'jobs'
     # A project runs one import at a time, and only the database can keep two uploads that both passed a check
     # before either committed from being both stored. It writes the images of its pages with one job at a time for the
-    # same reason: two jobs that both passed the check would write the files of one version at once
+    # same reason: two jobs that both passed the check would write the files of one version at once. It also runs one
+    # job at a time that processes the versions of its pages, since a collection deletes the versions a run may be
+    # reusing and two runs write the same files
     __table_args__ = (
         Index(
             'ix_jobs_one_active_import',
@@ -272,6 +280,13 @@ class JobRow(DefaultBase):
             unique=True,
             sqlite_where=ACTIVE_PREPARE,
             postgresql_where=ACTIVE_PREPARE,
+        ),
+        Index(
+            'ix_jobs_one_active_processing',
+            'project_id',
+            unique=True,
+            sqlite_where=ACTIVE_PROCESSING,
+            postgresql_where=ACTIVE_PROCESSING,
         ),
     )
 

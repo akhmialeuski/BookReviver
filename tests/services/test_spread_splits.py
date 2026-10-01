@@ -5,6 +5,7 @@ The tests need OpenCV, and are skipped with the reason where the optional group 
 
 import io
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 from delayed_assert import assert_expectations, expect
@@ -12,11 +13,12 @@ from PIL import Image
 
 from bookreviver.domain.entities import Page
 from bookreviver.domain.enums import JobState, PageChange, Stage, StageState, VersionState
-from bookreviver.domain.errors import NotFoundError
+from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.events import PagesChanged, PageVersionReady
 from bookreviver.domain.geometry import Line, Point
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import NewPageEdit, PageEditKey, StageRun, Step, StepPreview
+from tests.helpers.samples import png_bytes, spread
 from tests.helpers.spreads import (
     HEIGHT_PX,
     PAGE_WIDTH_PX,
@@ -172,6 +174,52 @@ class TestSplit:
         expect(len(await book_of(fx_cv_kit, project)) == 2)
         assert_expectations()
 
+    async def test_a_split_that_fails_leaves_the_book_as_it_was(self, fx_cv_kit: ProcessingKit) -> None:
+        """Verify no page is added and the page keeps its slot when the step fails, which the page's version says why.
+
+        :param fx_cv_kit: The processing kit with the OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        page, _ = await fx_cv_kit.seed_scan_page(project, image=b'this is no image')
+        await use_recipe(fx_cv_kit, actor, project, Stage.PAGE_SPLIT, SPLIT_SPREAD)
+        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
+        [stored] = await book_of(fx_cv_kit, project)
+        versions = await fx_cv_kit.uow().page_versions.list_for_page(page.id)
+        added = [event for event in fx_cv_kit.events.published if isinstance(event, PagesChanged)]
+        expect((stored.id, stored.slot) == (page.id, Page.WHOLE_SCAN))
+        expect(
+            [(version.state, version.processor.key) for version in versions] == [(VersionState.FAILED, SPLIT_SPREAD)]
+        )
+        expect('cannot be read' in versions[0].data['error'])
+        expect((await stage_of(fx_cv_kit, page, Stage.PAGE_SPLIT)).state is StageState.FAILED)
+        expect(not added)
+        assert_expectations()
+
+    async def test_a_split_that_failed_is_made_again_by_the_next_run(self, fx_cv_kit: ProcessingKit) -> None:
+        """Verify the failed version is replaced when the scan can be read, and then the page has its right half.
+
+        :param fx_cv_kit: The processing kit with the OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        broken, _ = await fx_cv_kit.seed_scan_page(project, image=b'this is no image')
+        await use_recipe(fx_cv_kit, actor, project, Stage.PAGE_SPLIT, SPLIT_SPREAD)
+        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
+        keys = ProjectKeys(project.id)
+        assert broken.scan_id is not None
+        scan = await fx_cv_kit.uow().scans.get(broken.scan_id)
+        full = keys.scan_rendition(scan, scan.renditions.full)
+        await fx_cv_kit.assets.delete_prefix(full)
+        async with fx_cv_kit.assets.writable(full) as target:
+            target.write_bytes(png_bytes(spread(PAGE_WIDTH_PX, HEIGHT_PX)))
+        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
+        left, right = await book_of(fx_cv_kit, project)
+        versions = await fx_cv_kit.uow().page_versions.list_for_page(left.id)
+        expect((left.id, left.slot, right.slot) == (broken.id, Page.LEFT_HALF, Page.RIGHT_HALF))
+        expect([version.state for version in versions] == [VersionState.READY])
+        assert_expectations()
+
     async def test_the_step_cannot_be_previewed(self, fx_cv_kit: ProcessingKit) -> None:
         """Verify a preview of a step that makes pages fails its job with the reason and makes no page.
 
@@ -221,6 +269,26 @@ class TestUnsplit:
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         expect(len(await book_of(fx_cv_kit, project)) == 2)
         expect((await stage_of(fx_cv_kit, left, Stage.PAGE_SPLIT)).state is StageState.FAILED)
+        assert_expectations()
+
+    async def test_a_replacement_that_fails_leaves_the_right_half_in_place(
+        self, fx_cv_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify a confirmed undoing whose new version cannot be made deletes nothing and keeps the split as it was.
+
+        :param fx_cv_kit: The processing kit with the OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        :param monkeypatch: Makes the writing of the page's files fail.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        actor, project, [left, right] = await self.split_then_use_whole_scan(fx_cv_kit)
+        halves = [await head_of(fx_cv_kit, page, Stage.PAGE_SPLIT) for page in (left, right)]
+        monkeypatch.setattr(fx_cv_kit.writer, 'write', AsyncMock(side_effect=ConflictError('The disk is full.')))
+        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT, confirm_unsplit=True))
+        pages = await book_of(fx_cv_kit, project)
+        heads = [await head_of(fx_cv_kit, page, Stage.PAGE_SPLIT) for page in pages]
+        expect([(page.id, page.slot) for page in pages] == [(left.id, Page.LEFT_HALF), (right.id, Page.RIGHT_HALF)])
+        expect([head.id for head in heads] == [half.id for half in halves])
         assert_expectations()
 
     async def test_after_a_confirmation_the_right_half_is_deleted_with_its_files(
