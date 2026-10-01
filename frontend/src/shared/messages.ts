@@ -1,4 +1,4 @@
-import type { RejectionReason } from '@/api';
+import type { FileType, Orthography, RejectionReason, Script } from '@/api';
 import { ProblemCode } from '@/shared/http/codes';
 import { pluralize } from '@/shared/lib/format';
 
@@ -126,24 +126,24 @@ export const MESSAGES = {
       unknown: 'Unknown',
       'pre-reform': 'Pre-reform',
       modern: 'Modern',
-    },
+    } satisfies Record<Orthography, string>,
     script: {
       unknown: 'Unknown',
       cyrillic: 'Cyrillic',
       latin: 'Latin',
       mixed: 'Mixed',
-    },
+    } satisfies Record<Script, string>,
     sources: {
       title: 'Sources',
       empty: 'No files have been uploaded to this book yet.',
       scans: (count: number) => `${count} ${pluralize(count, 'scan', 'scans')}`,
       imported: (date: string) => `Imported ${date}`,
+      showScans: 'Show scans',
     },
     scans: {
       title: 'Scans',
       empty: 'The scans appear here as the uploaded files are imported.',
-      all: 'All sources',
-      filter: 'Show scans of',
+      showAll: 'Show all scans',
       label: (number: number) => `Scan ${number + 1}`,
       pending: 'Preparing images…',
       size: (width: number, height: number) => `${width} × ${height} px`,
@@ -180,7 +180,7 @@ export const MESSAGES = {
       jpeg: 'JPEG',
       'jpeg-2000': 'JPEG 2000',
       png: 'PNG',
-    },
+    } satisfies Record<FileType, string>,
     skipped: {
       title: (count: number) => `${count} ${pluralize(count, 'file', 'files')} skipped`,
       description: 'These files are not sent.',
