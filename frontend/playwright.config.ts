@@ -5,7 +5,7 @@ import { BASE_URL, RUN_DIR, SERVER_LOG, SERVER_PORT } from './e2e/support/env';
  * Playwright configuration of the end-to-end scenarios.
  *
  * The scenarios run against the real thing: the built frontend served by the backend through `app.frontend()`, on
- * a fresh database in `.e2e-data`, with the mail written to its log. `npm run e2e` builds the frontend first.
+ * a fresh database in `.e2e-data`, with the mail written to its log and a fake provider offered in place of Google. `npm run e2e` builds the frontend first.
  * Where the Chromium that Playwright expects is not installed, `BOOKREVIVER_E2E_CHROMIUM` names another one.
  */
 
@@ -13,7 +13,7 @@ const SERVER_COMMAND = [
   `rm -rf ${RUN_DIR}`,
   `mkdir -p ${RUN_DIR}`,
   'uv run bookreviver-migrate upgrade head --no-prompt',
-  `uv run fastapi run --port ${SERVER_PORT} 2>&1 | tee ${SERVER_LOG}`,
+  `uv run uvicorn tests.helpers.e2e_app:app --port ${SERVER_PORT} 2>&1 | tee ${SERVER_LOG}`,
 ].join(' && ');
 
 export default defineConfig({
@@ -41,6 +41,7 @@ export default defineConfig({
     env: {
       BOOKREVIVER_AUTH__SECRET: 'end-to-end-secret-that-is-long-enough-to-sign-with',
       BOOKREVIVER_AUTH__COOKIE_SECURE: 'false',
+      BOOKREVIVER_PUBLIC_URL: BASE_URL,
       BOOKREVIVER_DATA_DIR: `${RUN_DIR}/data`,
       BOOKREVIVER_FRONTEND_DIR: 'frontend/dist',
     },

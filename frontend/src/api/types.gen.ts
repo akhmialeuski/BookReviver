@@ -1951,6 +1951,25 @@ export type ScanSchema = {
 export type Script = 'unknown' | 'cyrillic' | 'latin' | 'mixed';
 
 /**
+ * SignInProvider
+ *
+ * A social sign-in provider the server offers, which says nothing about how it is configured.
+ *
+ * :ivar name: Name in the provider's addresses, ``/auth/{name}/authorize`` and the page ``/auth/{name}/callback``.
+ * :ivar label: Name the interface shows on the sign-in button.
+ */
+export type SignInProvider = {
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Label
+     */
+    label: string;
+};
+
+/**
  * SourceFileSchema
  *
  * One stored file of a source.
@@ -4206,6 +4225,37 @@ export type IiifFileApiV1IiifKeyGetResponses = {
      */
     200: unknown;
 };
+
+export type ListProvidersApiV1AuthProvidersGetData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/providers';
+};
+
+export type ListProvidersApiV1AuthProvidersGetErrors = {
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ListProvidersApiV1AuthProvidersGetError = ListProvidersApiV1AuthProvidersGetErrors[keyof ListProvidersApiV1AuthProvidersGetErrors];
+
+export type ListProvidersApiV1AuthProvidersGetResponses = {
+    /**
+     * Response List Providers Api V1 Auth Providers Get
+     *
+     * Successful Response
+     */
+    200: Array<SignInProvider>;
+};
+
+export type ListProvidersApiV1AuthProvidersGetResponse = ListProvidersApiV1AuthProvidersGetResponses[keyof ListProvidersApiV1AuthProvidersGetResponses];
 
 export type AuthCookieLoginApiV1AuthLoginPostData = {
     body: BodyAuthCookieLoginApiV1AuthLoginPost;

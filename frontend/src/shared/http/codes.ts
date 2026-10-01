@@ -10,6 +10,11 @@ export const ProblemCode = {
   LoginUserNotVerified: 'LOGIN_USER_NOT_VERIFIED',
   VerifyBadToken: 'VERIFY_USER_BAD_TOKEN',
   VerifyAlreadyVerified: 'VERIFY_USER_ALREADY_VERIFIED',
+  ResetBadToken: 'RESET_PASSWORD_BAD_TOKEN',
+  OAuthInvalidState: 'OAUTH_INVALID_STATE',
+  OAuthNoEmail: 'OAUTH_NOT_AVAILABLE_EMAIL',
+  AccessTokenDecodeError: 'ACCESS_TOKEN_DECODE_ERROR',
+  AccessTokenExpired: 'ACCESS_TOKEN_ALREADY_EXPIRED',
 } as const;
 
 /** One code of {@link ProblemCode}. */

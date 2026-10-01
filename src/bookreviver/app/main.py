@@ -20,19 +20,28 @@ from bookreviver.app.settings import Settings
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
+    from typing import Any
 
     from dishka import Provider
+    from httpx_oauth.oauth2 import BaseOAuth2
 
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings: Settings | None = None, extra_providers: Sequence[Provider] = ()) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    extra_providers: Sequence[Provider] = (),
+    social_clients: Sequence[BaseOAuth2[Any]] | None = None,
+) -> FastAPI:
     """Build the API application; the container is closed when the application shuts down.
 
     :param settings: Configuration, read from the environment when omitted.
     :type settings: Settings | None
     :param extra_providers: Providers added last, overriding earlier ones; tests use them to inject fakes.
     :type extra_providers: Sequence[Provider]
+    :param social_clients: Social sign-in clients to offer instead of those the credentials in ``settings`` enable; the
+                           tests and the end-to-end server use it to offer a fake provider.
+    :type social_clients: Sequence[BaseOAuth2[Any]] | None
     :returns: The application with its routers, exception handler, pagination, security and container installed, and
               the built frontend when ``settings.frontend_dir`` exists.
     :rtype: FastAPI
@@ -62,7 +71,7 @@ def create_app(settings: Settings | None = None, extra_providers: Sequence[Provi
     app = FastAPI(title='BookReviver', lifespan=lifespan)
     add_exception_handler(app, problem_handler(logger))
     add_pagination(app)
-    accounts = account_routes(resolved, sign_in_throttle())
+    accounts = account_routes(resolved, sign_in_throttle(), social_clients)
     api = APIRouter(prefix=API_PREFIX)
     for router in ROUTERS:
         api.include_router(router)

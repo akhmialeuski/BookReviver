@@ -10,6 +10,17 @@ from bookreviver.api.schemas.base import RequestModel, ResponseModel
 EMAIL_CHANGE_REFUSED: str = 'Changing the email address is not offered.'
 
 
+class SignInProvider(ResponseModel):
+    """A social sign-in provider the server offers, which says nothing about how it is configured.
+
+    :ivar name: Name in the provider's addresses, ``/auth/{name}/authorize`` and the page ``/auth/{name}/callback``.
+    :ivar label: Name the interface shows on the sign-in button.
+    """
+
+    name: str
+    label: str
+
+
 class AccountRead(ResponseModel, schemas.BaseUser[UUID]):
     """The signed-in account."""
 

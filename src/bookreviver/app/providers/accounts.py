@@ -31,7 +31,7 @@ from bookreviver.ports.runtime import Mailer
 from bookreviver.services.projects import ProjectService
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from fastapi import Request, Response, params
     from fastapi_users.schemas import BaseUserCreate
@@ -363,13 +363,17 @@ def oauth_clients(auth: AuthSettings) -> list[BaseOAuth2[Any]]:
     ]
 
 
-def account_routes(settings: Settings, throttle: params.Depends) -> AccountRoutes[AccountTable]:
+def account_routes(
+    settings: Settings, throttle: params.Depends, social_clients: Sequence[BaseOAuth2[Any]] | None = None
+) -> AccountRoutes[AccountTable]:
     """Build the fastapi-users objects of one application and the routes they serve.
 
     :param settings: Application settings holding the accounts section.
     :type settings: Settings
     :param throttle: Dependency counting attempts at the sign-in routes.
     :type throttle: params.Depends
+    :param social_clients: Clients to offer instead of the ones the credentials in the settings enable, or ``None``.
+    :type social_clients: Sequence[BaseOAuth2[Any]] | None
     :returns: The routes with the objects they were built from.
     :rtype: AccountRoutes[AccountTable]
     """
@@ -385,8 +389,9 @@ def account_routes(settings: Settings, throttle: params.Depends) -> AccountRoute
     return AccountRoutes(
         users=FastAPIUsers[AccountTable, UUID](get_user_manager, [backend]),
         backend=backend,
-        oauth_clients=oauth_clients(auth),
+        oauth_clients=oauth_clients(auth) if social_clients is None else social_clients,
         state_secret=auth.secret,
+        public_url=settings.public_url,
         secure_cookies=auth.cookie_secure,
         throttle=throttle,
     )

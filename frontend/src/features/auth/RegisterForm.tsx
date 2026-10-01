@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { registerRegisterApiV1AuthRegisterPostMutation } from '@/api/@tanstack/react-query.gen';
 import { AuthCard } from '@/features/auth/AuthCard';
+import { SocialSignIn } from '@/features/auth/SocialSignIn';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
 import { Button, buttonVariants } from '@/shared/ui/button';
@@ -66,6 +67,7 @@ export function RegisterForm(): React.JSX.Element {
           {register.isPending ? MESSAGES.auth.register.submitting : MESSAGES.auth.register.submit}
         </Button>
       </form>
+      <SocialSignIn />
       <p className="text-center text-sm text-muted-foreground">
         {MESSAGES.auth.register.hasAccount}{' '}
         <Link to="/sign-in" className="text-foreground underline underline-offset-4">
