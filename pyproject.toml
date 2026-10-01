@@ -58,6 +58,13 @@ bookreviver-openapi = "bookreviver.app.openapi:main"
 [project.entry-points."bookreviver.processors"]
 "split.none" = "bookreviver.plugins.split_none:SplitNone"
 "pages.blank" = "bookreviver.plugins.blank:BlankPage"
+"split.spread" = "bookreviver.plugins.split_spread:SplitSpread"
+"geometry.deskew" = "bookreviver.plugins.deskew:Deskew"
+
+[project.optional-dependencies]
+cv = [
+    "opencv-python-headless>=5.0.0.93",
+]
 
 [tool.fastapi]
 entrypoint = "bookreviver.app.asgi:app"
@@ -102,6 +109,7 @@ type = "forbidden"
 source_modules = ["bookreviver.domain", "bookreviver.ports", "bookreviver.services"]
 forbidden_modules = [
     "advanced_alchemy",
+    "cv2",
     "aiosmtplib",
     "dishka",
     "fastapi",

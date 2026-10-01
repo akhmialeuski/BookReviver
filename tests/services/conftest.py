@@ -8,10 +8,12 @@ from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.jobs.recording import RecordingJobQueue
 from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUnitOfWork
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
+from bookreviver.plugins.split_none import SplitNone
 from tests.helpers.builders import EPOCH
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.page_services import make_page_service
-from tests.helpers.processing import ProcessingKit
+from tests.helpers.processing import CV_DEFAULTS, ProcessingKit
+from tests.helpers.samples import CV_MISSING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -144,3 +146,17 @@ def fx_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
     :rtype: ProcessingKit
     """
     return ProcessingKit(fx_asset_store)
+
+
+@pytest.fixture
+def fx_cv_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
+    """Build the processing kit with the real OpenCV plugins, or skip the test where OpenCV is not installed.
+
+    :param fx_asset_store: Local asset store over the test's storage root.
+    :type fx_asset_store: LocalAssetStore
+    :returns: The kit whose catalogue has ``split.none``, ``split.spread`` and ``geometry.deskew``.
+    :rtype: ProcessingKit
+    """
+    split = pytest.importorskip('bookreviver.plugins.split_spread', reason=CV_MISSING).SplitSpread()
+    deskew = pytest.importorskip('bookreviver.plugins.deskew', reason=CV_MISSING).Deskew()
+    return ProcessingKit(fx_asset_store, processors=[SplitNone(), split, deskew], defaults=CV_DEFAULTS)

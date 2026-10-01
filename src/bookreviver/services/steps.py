@@ -180,6 +180,14 @@ class StepRunner:
             return await self.cut_tiles(keys, stored)
         return stored
 
+    async def discard(self, prefix: StorageKey) -> None:
+        """Remove every file stored under a prefix, such as the directory of a page that was deleted.
+
+        :param prefix: Storage key of the directory, which may hold nothing.
+        :type prefix: StorageKey
+        """
+        await self._assets.delete_prefix(prefix)
+
     async def cut_tiles(self, keys: ProjectKeys, version: PageVersion) -> PageVersion:
         """Cut the IIIF tile pyramid of a ready version from its ``full`` image.
 

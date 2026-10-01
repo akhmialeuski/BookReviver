@@ -10,6 +10,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.app.plugins import PROCESSOR_GROUP, EntryPointCatalog
 from bookreviver.domain.enums import WorkerPool
 from bookreviver.domain.errors import NotFoundError
+from tests.helpers.samples import CV_MISSING
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -37,6 +38,12 @@ class TestEntryPointCatalog:
         """Verify the catalogue lists the processors the project's own metadata registers, by key."""
         keys = [spec.key for spec in EntryPointCatalog(pools=set(WorkerPool)).specs()]
         assert {'split.none', 'pages.blank'} <= set(keys)
+
+    def test_opencv_processors_are_found_through_their_entry_points(self) -> None:
+        """Verify the processors that need OpenCV are in the catalogue where the group ``cv`` is installed."""
+        pytest.importorskip('cv2', reason=CV_MISSING)
+        keys = [spec.key for spec in EntryPointCatalog(pools=set(WorkerPool)).specs()]
+        assert {'split.spread', 'geometry.deskew'} <= set(keys)
 
     def test_specs_are_listed_by_key(self) -> None:
         """Verify the specs come ordered by key, whatever order the entry points were found in."""

@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, override
 
 from attrs import evolve, frozen
 
-from bookreviver.domain.entities import PageVersion, VersionInputs
+from bookreviver.domain.entities import Page, PageVersion, VersionInputs
 from bookreviver.domain.enums import (
     PageOrigin,
     ProcessorScope,
@@ -37,14 +37,16 @@ from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import PageEditKey, PageSize, PageStageKey
+from bookreviver.services.spread_splits import SpreadSplit
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Page, Project, Recipe
+    from bookreviver.domain.entities import Project, Recipe
     from bookreviver.domain.ids import PageVersionId, StorageKey
     from bookreviver.domain.values import MetadataMap, Step
+    from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock, EventPublisher
@@ -53,7 +55,7 @@ if TYPE_CHECKING:
     from bookreviver.services.steps import StepRunner
 
 UNEXPECTED_FAILURE: str = 'The step failed because of an unexpected error. It has been logged.'
-SPLIT_NOT_AVAILABLE: str = 'The step {key} splits a scan, which this run cannot apply yet.'
+SPLIT_NOT_AVAILABLE: str = 'The step {key} splits a scan, so it is the only step of its recipe and cannot be previewed.'
 WRONG_OUTPUTS: str = 'The step {key} made {count} outputs, and a step of one page makes one.'
 NO_PREVIEW_INPUT: str = 'The page has no image to preview a step on.'
 
@@ -84,6 +86,7 @@ class StageRuntime:
     :ivar catalogue: The processors the application can run.
     :ivar publisher: Publisher of the events the browser follows.
     :ivar clock: Clock stamping new versions.
+    :ivar order_keys: Builder of the order key of the right half of a spread, which a split inserts after the left.
     :ivar preview_long_side_px: Longer side of a preview in pixels, from which the ratio of a preview is worked out.
     """
 
@@ -91,6 +94,7 @@ class StageRuntime:
     catalogue: ProcessorCatalog
     publisher: EventPublisher
     clock: Clock
+    order_keys: OrderKeys
     preview_long_side_px: int
 
 
@@ -344,23 +348,30 @@ class RecipeRun(StageWork):
         super().__init__(project=project, uow=uow, runtime=runtime)
         self._recipes = recipes
         self._records = records
+        self._splits = SpreadSplit(project=project, uow=uow, runtime=runtime, records=records)
 
-    async def run(self, page: Page, recipe: Recipe) -> RunOutcome:
+    async def run(self, page: Page, recipe: Recipe, *, confirmed: bool = False) -> RunOutcome:
         """Run the steps of the recipe on the page, and make the version of the last one current.
+
+        The right half of a split spread is made by the run of its left half, so a run of the page split leaves it out.
 
         :param page: Page to process.
         :type page: Page
         :param recipe: Recipe of the stage to run.
         :type recipe: Recipe
+        :param confirmed: Whether the user confirmed that undoing a split deletes the right half of a spread.
+        :type confirmed: bool
         :returns: Whether the page was processed, skipped for lack of an image, or failed.
         :rtype: RunOutcome
         """
         stage = recipe.stage
+        if stage is Stage.PAGE_SPLIT and page.slot > Page.LEFT_HALF:
+            return RunOutcome.SKIPPED
         source = await self._source(page, stage, VersionScale.FULL)
         if source is None:
             return RunOutcome.SKIPPED
         try:
-            version = await self._run_steps(page, recipe, source)
+            version = await self._run_steps(page, recipe, source, confirmed=confirmed)
         except DomainError:
             await self._uow.rollback()
             return await self._fail(page, recipe)
@@ -371,8 +382,13 @@ class RecipeRun(StageWork):
         await self._records.announce(page.project_id, changed)
         return RunOutcome.DONE
 
-    async def _run_steps(self, page: Page, recipe: Recipe, source: StepSource) -> PageVersion | None:
+    async def _run_steps(
+        self, page: Page, recipe: Recipe, source: StepSource, *, confirmed: bool
+    ) -> PageVersion | None:
         """Make the version of each step of the recipe, and cut the pyramid of the last one.
+
+        A recipe of the page split whose step splits the scan makes the two halves of a spread, and any other recipe of
+        the stage makes the page the whole scan, which undoes an earlier split.
 
         :param page: Page to process.
         :type page: Page
@@ -380,10 +396,16 @@ class RecipeRun(StageWork):
         :type recipe: Recipe
         :param source: What the first step reads.
         :type source: StepSource
+        :param confirmed: Whether the user confirmed that undoing a split deletes the right half of a spread.
+        :type confirmed: bool
         :returns: The version of the last step, or None when a step failed.
         :rtype: PageVersion | None
         :raises DomainError: If a processor is missing, its parameters do not fit, or the pyramid cannot be cut.
         """
+        if recipe.stage is Stage.PAGE_SPLIT and recipe.steps:
+            if self._catalogue.get(recipe.steps[0].processor_key).spec.scope is ProcessorScope.SPLIT:
+                return await self._splits.split(page, recipe.id, recipe.steps[0], source)
+            page = await self._splits.unsplit(page, confirmed=confirmed)
         version: PageVersion | None = None
         for step in recipe.steps:
             version = await self._make_version(page, recipe.stage, step, source, VersionScale.FULL)

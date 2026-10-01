@@ -20,10 +20,11 @@ from bookreviver.api.schemas.processing import (
     PageVersionSchema,
     ProcessorSchema,
     RecipeSchema,
+    StageRunBody,
 )
-from bookreviver.domain.enums import JobKind, JobState, Rendition, StageState, VersionScale
+from bookreviver.domain.enums import JobKind, JobState, Rendition, Stage, StageState, VersionScale
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import Renditions
+from bookreviver.domain.values import Renditions, StageRun
 from tests.helpers.builders import make_page, make_project, make_scan, make_source, new_account_id
 from tests.helpers.processing import ProcessingFakesProvider
 from tests.helpers.seeding import commit_project
@@ -525,3 +526,19 @@ class TestEdits:
         expect(saved.status_code == status.HTTP_200_OK)
         expect((served.status_code, served.content) == (status.HTTP_200_OK, b'mask-bytes'))
         assert_expectations()
+
+
+class TestStageRunBody:
+    """Tests for the body of a run of a stage."""
+
+    @pytest.mark.parametrize('confirmed', [True, False], ids=['confirmed', 'not-confirmed'])
+    def test_the_confirmation_of_an_unsplit_reaches_the_run_and_the_job_that_stores_it(
+        self, *, confirmed: bool
+    ) -> None:
+        """Verify the confirmation is in the run the body states, and survives being stored as the parameters of a job.
+
+        :param confirmed: Whether the body confirms that undoing a split deletes the right half.
+        :type confirmed: bool
+        """
+        run = StageRunBody(confirm_unsplit=confirmed).to_run(Stage.PAGE_SPLIT)
+        assert (run.confirm_unsplit, StageRun.from_map(run.to_map()).confirm_unsplit) == (confirmed, confirmed)

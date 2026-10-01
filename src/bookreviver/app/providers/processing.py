@@ -15,6 +15,7 @@ from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.app.plugins import EntryPointCatalog
 from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import RenditionWriter, Tiler
+from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
@@ -145,7 +146,12 @@ class ProcessingProvider(Provider):
 
     @provide(scope=Scope.APP)
     def stage_runtime(
-        self, runner: StepRunner, catalogue: ProcessorCatalog, runtime: ProcessingRuntime, config: ProcessingConfig
+        self,
+        runner: StepRunner,
+        catalogue: ProcessorCatalog,
+        runtime: ProcessingRuntime,
+        order_keys: OrderKeys,
+        config: ProcessingConfig,
     ) -> StageRuntime:
         """Gather what a run of a stage works with, apart from the project and the unit of work.
 
@@ -155,6 +161,8 @@ class ProcessingProvider(Provider):
         :type catalogue: ProcessorCatalog
         :param runtime: The publisher, the clock and the queue.
         :type runtime: ProcessingRuntime
+        :param order_keys: Order keys of the application.
+        :type order_keys: OrderKeys
         :param config: The retention periods and the size of a preview.
         :type config: ProcessingConfig
         :returns: The runtime of a stage run.
@@ -165,6 +173,7 @@ class ProcessingProvider(Provider):
             catalogue=catalogue,
             publisher=runtime.publisher,
             clock=runtime.clock,
+            order_keys=order_keys,
             preview_long_side_px=config.preview_long_side_px,
         )
 

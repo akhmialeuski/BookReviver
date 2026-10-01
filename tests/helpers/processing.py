@@ -14,6 +14,7 @@ from dishka import Provider, Scope, provide
 
 from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.jobs.recording import RecordingJobQueue
+from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUnitOfWork
 from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.domain.entities import Actor, PageStage
@@ -76,6 +77,9 @@ DEFAULTS: DefaultRecipes = DefaultRecipes(
     }
 )
 
+# The recipes of a kit with the OpenCV plugins, which are the ones the application starts with
+CV_DEFAULTS: DefaultRecipes = DefaultRecipes()
+
 
 class ProcessingKit:
     """What the processing services of one test share, and a builder of the services over a new unit of work.
@@ -93,7 +97,12 @@ class ProcessingKit:
     """
 
     def __init__(
-        self, assets: AssetStore, *, processors: Sequence[Processor] | None = None, queue: JobQueue | None = None
+        self,
+        assets: AssetStore,
+        *,
+        processors: Sequence[Processor] | None = None,
+        queue: JobQueue | None = None,
+        defaults: DefaultRecipes = DEFAULTS,
     ) -> None:
         """Build the kit over an asset store.
 
@@ -103,7 +112,10 @@ class ProcessingKit:
         :type processors: Sequence[Processor] | None
         :param queue: The queue the jobs are handed to, or None for one that records them.
         :type queue: JobQueue | None
+        :param defaults: The recipes the stages start with.
+        :type defaults: DefaultRecipes
         """
+        self._defaults = defaults
         self.database = InMemoryDatabase()
         self.assets = assets
         self.events = RecordingEventBus()
@@ -133,7 +145,7 @@ class ProcessingKit:
             preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
         )
-        return ProcessingParts.build(uow, self.catalogue, DEFAULTS, runtime, config)
+        return ProcessingParts.build(uow, self.catalogue, self._defaults, runtime, config)
 
     def service(self) -> ProcessingService:
         """Build the processing service over a new unit of work.
@@ -156,6 +168,7 @@ class ProcessingKit:
             catalogue=self.catalogue,
             publisher=self.events,
             clock=self.clock,
+            order_keys=FractionalOrderKeys(),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
         )
         return ProcessingJobs(uow=uow, assets=self.assets, runtime=runtime, parts=self.parts(uow))
@@ -194,13 +207,17 @@ class ProcessingKit:
         await uow.commit()
         return Actor(account_id=owner), project
 
-    async def seed_scan_page(self, project: Project, *, order_key: str = 'a0') -> tuple[Page, Scan]:
+    async def seed_scan_page(
+        self, project: Project, *, order_key: str = 'a0', image: bytes = IMAGE_CONTENT
+    ) -> tuple[Page, Scan]:
         """Commit a scan whose images are stored and a page that shows it whole.
 
         :param project: Project owning the page.
         :type project: Project
         :param order_key: Order key of the page.
         :type order_key: str
+        :param image: Content of the ``full`` and the preview image of the scan.
+        :type image: bytes
         :returns: The page and its scan.
         :rtype: tuple[Page, Scan]
         """
@@ -215,7 +232,7 @@ class ProcessingKit:
         keys = ProjectKeys(project.id)
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW):
             async with self.assets.writable(keys.scan_rendition(scan, rendition)) as target:
-                target.write_bytes(IMAGE_CONTENT)
+                target.write_bytes(image)
         return page, scan
 
     async def seed_base_version(self, page: Page) -> PageVersion:

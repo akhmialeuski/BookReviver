@@ -8233,12 +8233,17 @@
               }
             ],
             "title": "Page Ids"
+          },
+          "confirm_unsplit": {
+            "type": "boolean",
+            "title": "Confirm Unsplit",
+            "default": false
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "StageRunBody",
-        "description": "What a run of a stage is asked to do; the stage is in the address.\n\n:ivar recipe_id: Recipe to run it by, or omitted for the active recipe.\n:ivar page_ids: Pages to run it on, or omitted for every page with an image."
+        "description": "What a run of a stage is asked to do; the stage is in the address.\n\n:ivar recipe_id: Recipe to run it by, or omitted for the active recipe.\n:ivar page_ids: Pages to run it on, or omitted for every page with an image.\n:ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a\n                       run that would do so leaves that page failed."
       },
       "StageState": {
         "type": "string",

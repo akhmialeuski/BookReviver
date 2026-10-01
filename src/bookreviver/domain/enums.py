@@ -368,12 +368,17 @@ class NewPageOrigin(LabeledStrEnum):
 
 
 class VersionData(LabeledStrEnum):
-    """Keys of the data of a base version, which the median size of a book's pages and a failed version read."""
+    """Keys of the data of a version: the size of its image, what its step found, and why it failed."""
 
     WIDTH_PX = 'width_px', 'Width of the image in pixels'
     HEIGHT_PX = 'height_px', 'Height of the image in pixels'
     DPI = 'dpi', 'Resolution of the image in dots per inch'
     ERROR = 'error', 'Why the version could not be made'
+    ANGLE = 'angle', 'Angle a page was turned by, in degrees'
+    CONFIDENCE = 'confidence', 'How sure the step is of what it found, from 0 to 1'
+    SKIPPED = 'skipped', 'Whether the step left the image as it was'
+    OVERLAP_PX = 'overlap_px', 'Width in pixels a half of a spread reaches over the cut'
+    CUT_X = 'cut_x', 'Place of the cut in the scan, as the distance in pixels from its left edge'
 
 
 class VersionState(LabeledStrEnum):

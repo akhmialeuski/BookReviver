@@ -399,8 +399,10 @@ rules:
   the end of the book in upload order, and their printed number is the scan's `source_label`.
 - Splitting a spread keeps the existing page as the left half (`slot = 1`) and inserts the right half (`slot = 2`)
   right after it. Each half gets its own copy of its part of the scan. Moving the split line recreates the base
-  versions of both pages and marks their later stages stale. Undoing the split deletes the right page with its
-  versions and edits, so the interface asks for confirmation.
+  versions of both pages and marks their later stages stale. Undoing the split, which is running a step that does not
+  split, such as `split.none`, on the left half, deletes the right page with its versions and edits. A run that would
+  do so fails the page unless its request says `confirm_unsplit`, so the interface asks for confirmation first. A run
+  over every page of the book leaves the right halves to the run of their left halves.
 - In the page order stage a blank leaf (`origin = blank`), such as the back of the cover, an endpaper or the empty
   leaf after the title, gets a generated white image of the median page size of the book and then passes the stages
   like any page. A missing page, cover or title page without a scan (`origin = placeholder`) stays without an image
@@ -409,9 +411,10 @@ rules:
 - Deleting a source leaves the pages of the book alone, because they hold their own copies of the images. The pages
   of that source lose their `scan_id`, and splitting them again is no longer possible.
 
-The split line of a spread is stored as the `transform` of the base version, so moving it recreates only the base
-versions of the two pages and marks their later stages stale. From then on the two pages live independently of each
-other and of the scan.
+The split line of a spread is stored as the `line` edit of the left page, which joins the identifier of both base
+versions, so moving it recreates only the base versions of the two pages and marks their later stages stale. The
+`transform` of each base version is the `crop(quad)` of its half. From then on the two pages live independently of
+each other and of the scan.
 
 ### Page versions
 
@@ -455,9 +458,9 @@ colour scan instead of the binarised page.
 | Stage         | Step                   | `transform`                | `data`                                                      |
 | ------------- | ---------------------- | -------------------------- | ----------------------------------------------------------- |
 | `page-split`  | `split.none`           | `identity`                 | copy of the whole scan, split skipped                       |
-| `page-split`  | `split.spread`         | `crop(quad)` of a half     | position of the spine, confidence                           |
+| `page-split`  | `split.spread`         | `crop(quad)` of a half     | position of the cut, overlap in pixels, size of the half    |
 | `page-order`  | `pages.blank`          | `identity`                 | size of the generated blank leaf                            |
-| `geometry`    | `geometry.deskew`      | `rotate(angle)`            | angle in degrees, method, confidence                        |
+| `geometry`    | `geometry.deskew`      | `rotate(angle)`            | angle in degrees, confidence, whether it was skipped        |
 | `geometry`    | `geometry.perspective` | `perspective(quad)`        | four corners of the page                                    |
 | `geometry`    | `geometry.dewarp`      | `mesh(key)`                | key of the mesh, root mean square error                     |
 | `geometry`    | `geometry.crop`        | `crop(quad)`               | content frame, margins                                      |
@@ -606,6 +609,7 @@ Ports are abstract base classes, so every adapter names its parent explicitly an
 | Storage     | `SourceStore` (uploads and the files of each source), `AssetStore` (derived files by key)        |
 | Mail        | `Mailer`                                                                                         |
 | Imaging     | `SourceInspector` (group an upload into sources, inspect one), `PageRasterizer`, `Tiler`,        |
+|             | `RenditionWriter` (the files of a page version)                                                  |
 | AI engines  | `TextRecognizer`, `LayoutAnalyzer`, `LanguageModel`, each with an engine catalogue               |
 | Processing  | `Processor` (the plugin contract), `ProcessorCatalog`                                            |
 | Runtime     | `JobQueue`, `EventPublisher`, `EventStream`, `Clock`                                             |
@@ -971,8 +975,13 @@ indistinguishable to the application.
   of `split.spread`.
 - A preview of a step runs as a background job, like every heavy computation, and its result reaches the browser
   over SSE.
-- The base steps `split.none` and `pages.blank` are ordinary processors. Until the plugin framework exists, the
-  import and the page order stage produce the same base versions with interim code that the processors replace.
+- The base steps `split.none` and `pages.blank` are ordinary processors, and the import and the page order stage run
+  them through the same `StepRunner` as a recipe.
+- `split.spread` and `geometry.deskew` need OpenCV, so they live in the optional group `bookreviver[cv]`. A machine
+  that lacks it starts without them, the catalogue leaves them out, and a default recipe that names them is not made.
+  `split.spread` takes the darkest column of the central band of the scan as the gutter, or the `line` the user drew,
+  and `geometry.deskew` takes the angle at which the ink of the page lies in the fewest rows, or the `rotation` the
+  user gave, and leaves a page whose lines it is not sure of as it is.
 - First plugins, in delivery order: page split, deskew, perspective crop by quad, dewarp by mesh, despeckle,
   binarisation (a cleanup step of its own, so the despeckled and the binarised page are separate artifacts), eraser
   mask, layout regions (text versus illustration), background separation, background unification (white, aged paper
@@ -1409,8 +1418,9 @@ The book model rests on these decisions, each with its reason.
 2. **A page stands on its own.** A page keeps its own copy of its base image in its own directory, so deleting a
    source does not break it. The price is about twice the space of the scans.
 3. **The page split creates pages.** The split is a step that creates pages from scans, and it can be skipped. The
-   split area lives in the `transform` of the base version of `split.spread`, and the `scan_id` and `slot` of a page
-   only record its origin, so moving the line changes versions and never the identity of a page.
+   split line lives in the `line` edit that `split.spread` reads and in the `transform` of its base versions, and the
+   `scan_id` and `slot` of a page only record its origin, so moving the line changes versions and never the identity
+   of a page.
 4. **Order by fractional index.** `order_key` is a fractional index string from the `fractional-indexing` package,
    so moving or inserting a page writes one row and nothing is renumbered.
 5. **How pages appear.** An import with the split skipped appends one page per scan to the end of the book in upload
@@ -1522,6 +1532,11 @@ The book model rests on these decisions, each with its reason.
     the making of a version and a job.
 39. **A leaf is a plugin run.** `pages.blank` and `split.none` are plugins, and the page order and import stages run
     them through `StepRunner`, so every base version is made the way a version of a recipe is.
+40. **A split is one run that makes two pages.** A step of the scope `split` gives one output for each half, and the
+    page that runs it becomes the left half. The right page is found again by its scan and its slot, so a second run
+    makes no page, and the right half is not run by itself because its left half makes it. The step cannot be previewed,
+    since a preview changes no page. Undoing the split needs a confirmation in the request and not a second request,
+    so a run keeps one job and a refused one leaves the page failed with the reason, and nothing deleted.
 
 Smaller technical choices follow the same model. Languages are ISO 639-3 codes, XMP is parsed with defusedxml, the
 parameters of processing jobs are kept in `Job.params`, a DjVu source suggests a publication year only from its

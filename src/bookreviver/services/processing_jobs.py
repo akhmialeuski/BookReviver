@@ -185,10 +185,10 @@ class ProcessingJobs:
             if (saved := await self._tracker.advance(job, done=len(outcomes), total=len(pages))) is None:
                 return None
             job = saved
-            outcomes.append(await self._run_page(executor, page, recipe))
+            outcomes.append(await self._run_page(executor, page, recipe, confirmed=run.confirm_unsplit))
         return outcomes.count(RunOutcome.DONE), outcomes.count(RunOutcome.FAILED), len(pages)
 
-    async def _run_page(self, executor: RecipeRun, page: Page, recipe: Recipe) -> RunOutcome:
+    async def _run_page(self, executor: RecipeRun, page: Page, recipe: Recipe, *, confirmed: bool) -> RunOutcome:
         """Run the recipe on one page, so that whatever goes wrong on it fails the page and not the job.
 
         :param executor: Runner of recipes of the project.
@@ -197,11 +197,13 @@ class ProcessingJobs:
         :type page: Page
         :param recipe: Recipe to run.
         :type recipe: Recipe
+        :param confirmed: Whether the user confirmed that undoing a split deletes the right half of a spread.
+        :type confirmed: bool
         :returns: What the run came to.
         :rtype: RunOutcome
         """
         try:
-            return await executor.run(page, recipe)
+            return await executor.run(page, recipe, confirmed=confirmed)
         except Exception:
             logger.exception('The stage %s failed on page %s', recipe.stage, page.id)
             await self._uow.rollback()

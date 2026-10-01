@@ -151,10 +151,13 @@ class StageRunBody(RequestModel):
 
     :ivar recipe_id: Recipe to run it by, or omitted for the active recipe.
     :ivar page_ids: Pages to run it on, or omitted for every page with an image.
+    :ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a
+                           run that would do so leaves that page failed.
     """
 
     recipe_id: RecipeId | None = None
     page_ids: PageIdList | None = None
+    confirm_unsplit: bool = False
 
     def to_run(self, stage: Stage) -> StageRun:
         """Return the run as the domain states it.
@@ -168,6 +171,7 @@ class StageRunBody(RequestModel):
             stage=stage,
             recipe_id=self.recipe_id,
             page_ids=None if self.page_ids is None else tuple(self.page_ids),
+            confirm_unsplit=self.confirm_unsplit,
         )
 
 

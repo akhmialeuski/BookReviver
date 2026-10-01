@@ -197,6 +197,8 @@ class Page:
     """
 
     WHOLE_SCAN: ClassVar[int] = 0
+    LEFT_HALF: ClassVar[int] = 1
+    RIGHT_HALF: ClassVar[int] = 2
 
     id: PageId
     project_id: ProjectId

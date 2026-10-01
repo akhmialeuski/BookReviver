@@ -801,22 +801,26 @@ class StageRun:
     :ivar stage: Stage to run.
     :ivar recipe_id: Recipe to run it by, or None for the active recipe of the stage.
     :ivar page_ids: Pages to run it on, or None for every page with an image.
+    :ivar confirm_unsplit: Whether the user confirmed that a page split that is undone deletes the right half of a
+                           spread, which a run that would do so refuses without it.
     """
 
     stage: Stage
     recipe_id: RecipeId | None = None
     page_ids: tuple[PageId, ...] | None = None
+    confirm_unsplit: bool = False
 
     def to_map(self) -> dict[str, Any]:
         """Return the value as the JSON object a job stores.
 
-        :returns: The stage, the recipe and the pages as text.
+        :returns: The stage, the recipe, the pages as text, and the confirmation.
         :rtype: dict[str, Any]
         """
         return {
             'stage': self.stage.value,
             'recipe_id': None if self.recipe_id is None else str(self.recipe_id),
             'page_ids': None if self.page_ids is None else [str(page_id) for page_id in self.page_ids],
+            'confirm_unsplit': self.confirm_unsplit,
         }
 
     @classmethod
@@ -835,6 +839,7 @@ class StageRun:
                 stage=Stage(stored['stage']),
                 recipe_id=None if stored['recipe_id'] is None else RecipeId(UUID(stored['recipe_id'])),
                 page_ids=None if page_ids is None else tuple(PageId(UUID(page_id)) for page_id in page_ids),
+                confirm_unsplit=bool(stored.get('confirm_unsplit', False)),
             )
         except (KeyError, ValueError, TypeError) as error:
             raise _params_error(JobKind.RUN_STAGE, error) from error
