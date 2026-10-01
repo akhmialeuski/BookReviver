@@ -10,6 +10,7 @@ import { createBook, registerAndSignIn, uploadFolder, writePagesFolder } from '.
  */
 
 const PAGES = 5;
+const IMAGE_TIMEOUT_MS = 30_000;
 
 /** The ids of the cards of the strip in the order they stand. */
 async function stripOrder(page: Page): Promise<string[]> {
@@ -209,6 +210,19 @@ test('a reader arranges the pages of a book', async ({ page }) => {
 
     await expect(cards.first().getByTestId('page-name')).toHaveText('live');
     await other.close();
+  });
+
+  await test.step('add a blank leaf and watch its image appear when the job has written it', async () => {
+    await page.getByRole('button', { name: 'Add a page' }).click();
+    await page.getByLabel('Kind of new page').selectOption('blank');
+    await page.getByLabel('Role in the book').selectOption('blank');
+    await page.getByRole('button', { name: 'Add page' }).click();
+    await expect(cards).toHaveCount(PAGES);
+
+    const leaf = cards.last();
+    await expect(leaf.getByText('Blank leaf', { exact: true })).toBeVisible();
+    // A job writes the white image, and the event of its page version makes the strip read the manifest again
+    await expect(leaf.getByRole('img')).toBeVisible({ timeout: IMAGE_TIMEOUT_MS });
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });
