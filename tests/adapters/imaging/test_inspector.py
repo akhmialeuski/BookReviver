@@ -13,9 +13,12 @@ from bookreviver.domain.enums import ColorMode, ContributorRole, SourceKind
 from bookreviver.domain.errors import UnsupportedSourceError
 from bookreviver.domain.values import Contributor, MetadataSuggestion
 from tests.adapters.imaging.samples import (
+    ROMAN_THEN_ARABIC_LABELS,
+    ROMAN_THEN_ARABIC_RULES,
     PdfPage,
     ScanImage,
     TiffFrame,
+    add_page_labels,
     add_xmp,
     encode_image,
     gradient_image,
@@ -254,6 +257,38 @@ class TestInspectPdf:
         expect(analysis.kind == SourceKind.PDF)
         expect([(page.width_px, page.height_px) for page in analysis.scans] == sizes)
         assert_expectations()
+
+    async def test_reads_the_page_labels_of_every_page(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
+        """Verify the labels a document's rules give come back one per page, Roman numerals first and Arabic after.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        pages = [PdfPage(images=[ScanImage(mode='L', size_px=SCAN_SIZE_PX, image_format=JPEG)])] * 4
+        path = add_page_labels(write_pdf(tmp_path / PDF_NAME, pages=pages), rules=ROMAN_THEN_ARABIC_RULES)
+
+        analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
+
+        assert list(analysis.scan_labels) == list(ROMAN_THEN_ARABIC_LABELS)
+
+    async def test_pages_of_a_document_without_label_rules_have_empty_labels(
+        self, fx_inspector: SourceInspector, tmp_path: Path
+    ) -> None:
+        """Verify a document that defines no page labels gives every scan an empty label, one per page.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        pages = [PdfPage(images=[ScanImage(mode='L', size_px=SCAN_SIZE_PX, image_format=JPEG)])] * 3
+        path = write_pdf(tmp_path / PDF_NAME, pages=pages)
+
+        analysis = await fx_inspector.inspect(SourceKind.PDF, [path])
+
+        assert list(analysis.scan_labels) == [''] * 3
 
     async def test_describes_page_by_dominant_image(self, fx_inspector: SourceInspector, tmp_path: Path) -> None:
         """Verify the largest image gives the pixel facts and effective DPI, and the page gives the size.

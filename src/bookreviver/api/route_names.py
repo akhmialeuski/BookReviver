@@ -7,5 +7,6 @@ class RouteName(enum.StrEnum):
     """Route names shared between routers."""
 
     IIIF_FILE = 'iiif-file'
+    PAGE = 'page'
     PROJECT = 'project'
     PROJECT_EVENTS = 'project-events'

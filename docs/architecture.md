@@ -123,11 +123,14 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Scans        | `Scan`, `ScanFacts`, `Renditions`                                                             |
 | Pages        | `Page`, `PageOverview`, `PageKind`, `PageOrigin`, `PageVersion`, `VersionState`, `Transform`, |
 |              | `PageStage`                                                                                   |
+| Page order   | `PageAnchor` (a page and a `Side`), `PageChange`, and `PageOverview` with its position        |
+| Page labels  | `LabelStyle`, `PageNumbering`, and `PageChanges` for the editable fields of a page            |
+| New pages    | `NewPage`, `NewPageOrigin` (blank or placeholder), `PageSize`, `VersionData` (data keys)      |
 | Storage keys | `StorageKey`, and `ProjectKeys` in `domain/keys.py`, the one builder of every key             |
 | Processing   | `Stage`, `ProcessorRef`, `Recipe`, `Step`, `Variant`, `ArtifactKind`, `Artifact`              |
 | Edits        | `PageEdit` with geometry (`Rect`, `Quad`, `Mesh`, `Region` with `RegionKind`) or a mask       |
 | Events       | `JobChanged`, `SourceImported`, `ScanReady`, `PagesChanged`, `PageVersionReady`, and others   |
-| Jobs         | `Job`, `JobKind`, `JobState`, `Progress`, `WorkerPool` (cpu, gpu, llm)                        |
+| Jobs         | `Job`, `JobKind` (`import-source`, `prepare-pages`), `JobState`, `Progress`, `WorkerPool`     |
 | Imports      | `ImportRequest`, `ImportResult`, `RejectedFile`, `RejectionReason`, `UploadProblem`           |
 |              | `UploadPath` (a checked relative path), `SystemFile` (names an operating system adds)         |
 | Queries      | `Slice[T]` (items and total), `SliceRequest` (offset and limit)                               |
@@ -305,8 +308,10 @@ Each format reads its technical metadata with its own library:
 | TIFF, JPEG, JPEG 2000, PNG | Pillow (`PIL.Image`)                       |
 
 A PDF source records the PDF version, the Info dictionary (Title, Author, Subject, Keywords, Creator, Producer and
-the dates), whether it has XMP metadata, the page count, the page labels, the outline, whether the file had to be
-repaired and whether it is encrypted. XMP is parsed with defusedxml. A DjVu source records whether the document is
+the dates), whether it has XMP metadata, the page count, the outline, whether the file had to be repaired and whether
+it is encrypted. The page labels are not kept in the metadata but read for every page with PyMuPDF's
+`Page.get_label` and returned as `SourceAnalysis.scan_labels`, aligned with the scans, where a document that defines
+no label rules gives empty strings. XMP is parsed with defusedxml. A DjVu source records whether the document is
 bundled or indirect, the page count, the `print-meta` metadata, the `print-outline` outline and whether it has a text
 layer, and it suggests a publication year only from `print-meta`. An image source records the format, the Pillow
 mode, the frame count, the compression, the ICC profile, the EXIF data with `Orientation`, and the DPI.
@@ -492,6 +497,104 @@ Changing the setting after pages exist applies only to new versions, and old one
 every version is recorded with it in `Renditions.full`, which is why such a change cannot move the path of an image that
 is already stored. The base version of a page copies the format of the scan it is cut from.
 
+### Page order
+
+The page order stage is `PageService`. A page is moved by writing a new `order_key` to it and to nothing else, so a move
+of one page writes one row and a move of a group writes the rows of the group. Three moves exist, and each puts the
+pages before or after an anchor page, a `PageAnchor`:
+
+- **One page.** The service reads the key of the anchor and `neighbour_key` of the anchor on the chosen side, leaving the
+  moved page out, and writes the key `OrderKeys.spread` gives for one page between the two keys, which is the key
+  `between` gives.
+- **A group.** The pages are read in book order, and the service finds the neighbour of the anchor without any page of
+  the group and writes the keys `OrderKeys.spread` gives for the group's size between them, so the group stands
+  together in the order it had.
+- **A source.** The pages whose scans belong to the source are listed through `scans` and moved as a group, which puts
+  a missing part of the book, such as a cover file or a quire from another copy, in its place with one request.
+
+The anchor may not be one of the moved pages, since the place is then not defined, and that is a `ConflictError`. The
+unique key of `(project_id, order_key)` refuses a second move to a place another one took first, and the repository
+reports that as a `ConflictError` too, so the client answers it by reading the manifest again. A move writes the
+`updated_at` of the pages it moves, commits, and then publishes one `PagesChanged`. Keys are not rebalanced: a key
+grows by a character or two for a book arranged by hand, which a book of a few hundred pages never notices.
+
+### Pages without a scan
+
+A page the scans lack is added in a place of the book with `POST /projects/{id}/pages`, a `PageCreate` that names an
+origin, `blank` or `placeholder`, the kind, an optional label and notes, and an optional place, which is the end of the
+book when no anchor is given. The origin `scan` is refused, since only the split and the binding of a scan make such a
+page. The key is made the way a move makes it, between the anchor and its neighbour or after the last page. Two kinds of page follow different rules:
+
+- **A placeholder** is a missing page, a cover or a title page for which a scan is still to come. It has no image and no
+  version, and the stages skip it.
+- **A blank leaf** is a real leaf of the printed book that the scan lacks, such as the back of a cover. It gets the
+  pending base version `pages.blank` of the stage `page-order`, recorded with the size of its image, and a job writes
+  its white image. Its size is the median of the sizes of the base versions of the pages that are included and cut from
+  a scan, the width, the height and the resolution each taken apart with `statistics.median`, so a single fold-out map or
+  cropped scan does not move it. A request may give the size and the resolution instead, and then no median is taken.
+  A book with no page that is included, cut from a scan and has a recorded size gives a blank leaf without a given
+  size a `ConflictError` that says it is the recorded size that is missing, which also holds for a book whose scan
+  pages are all kept out.
+
+The image of a blank leaf is made by the temporary port `BlankPageMaker`, whose adapter `VipsBlankPageMaker` makes a
+black image with `Image.black`, adds 255 and saves it with `pngsave` at a bit depth of 1, so the leaf is the 1-bit PNG
+of a bilevel page whatever the project's image policy. The version records the format the policy's `full_format` gives a
+bilevel page, `full.png`, so no format is chosen a second time. The port and its adapter are removed when the
+`pages.blank` processor exists. libvips always writes a resolution into a PNG, so a leaf made without one carries its own
+default, and the data of the base version, which says the resolution is unknown, is what the book relies on.
+
+`PUT /projects/{id}/pages/{page_id}/scan` binds a scan to a placeholder with a `ScanAttach`. It refuses a page that is
+not a placeholder, a scan that is not cut yet and a scan that another page shows, which is a 409 naming those pages, and
+a scan of another project is a 404. With `take_over` the pages that show the scan are deleted with their versions in the
+same transaction and their files after it, so the page the import made of the scan gives way to the placeholder. The
+page keeps the fields the placeholder had, takes `origin = scan` and `slot = 0`, takes the scan's `source_label` as its
+label when it had none, and gets the pending base version `split.none`. `DELETE /projects/{id}/pages/{page_id}` removes
+the page, its versions and, after the commit, everything under `assets/pages/<page_id>`, and leaves the scan and the
+source.
+
+None of these requests writes an image. Each commits the page and its pending version, and then queues a job of the kind
+`prepare-pages` unless one is queued or running. The partial unique index `ix_jobs_one_active_prepare` keeps a project to
+one such job, so two requests that both found none cannot both store one: the one that loses gets a
+`ConflictError`, rolls back and relies on the job of the other, and two jobs never write the files of one version
+together. A running job may have read its versions before a new one was committed, so a job that ends looks for pending
+versions once more and queues a follow-up when it finds one, which is why a request may leave the queueing to the job
+that runs. The task `prepare_pages` of `app/worker.py` calls `PageService.prepare_images`, which takes the pending and
+the failed versions of the stages `page-split` and `page-order`, writes each one and commits it before the next, and
+publishes `PageVersionReady`, so the viewer swaps an empty frame for the image without reloading. A version `split.none`
+is a copy of its scan made by `BaseVersions`, the same code the import uses, and a version `pages.blank` is a white leaf.
+A version that cannot be made is stored as `failed` with its reason in `data['error']`, the job ends failed, and the
+next job takes the failed versions again with the new ones, so there is no route to repeat a job. A page deleted while
+the job runs takes its versions with it, so a version whose page is gone is nothing to make and nothing that failed:
+the job removes the files it wrote for it and goes on. An error nobody expected ends the job failed with a general
+reason, so a job never stays running and blocks the next one.
+
+The pages are committed before the job is queued, so a queue that refuses the job does not fail the request that made
+the page, since a retry would add a second blank leaf. The job is then stored as failed with the reason
+`NOT_QUEUED`, announced, and logged, and the next page that is added queues a new one.
+
+### Printed numbers
+
+The printed number of a page is its `label`, a string, empty for an unnumbered page, and the ranges a numbering was made
+from are not stored. Four things write it:
+
+- **The import.** A new page takes the `source_label` of its scan, which for a PDF is the label the document's page
+  label rules give the page.
+- **A patch.** `PATCH /projects/{id}/pages/{page_id}` follows JSON Merge Patch and changes the four fields the stage
+  edits, `label`, `kind`, `included` and `notes`. A field left out is kept and a `null` label or note is cleared to an
+  empty string. The kind and the inclusion have no empty value, so `null` for either is a 422. The order, the origin and
+  the scan are changed by other routes, so a body naming them is a 422 too. `PageService.update` receives the domain
+  value `PageChanges`, in which `None` keeps a field.
+- **A numbering.** `POST /projects/{id}/pages/labels` takes a `LabelRange` and writes numbers into the pages from the
+  first to the last in the book. The domain value `PageNumbering` holds the range, the `LabelStyle`, the first number,
+  whether the label is in square brackets and the kinds to skip. The pages kept out of the book and the pages of a
+  skipped kind take no number and keep their label, because the plates of an old book usually stand outside its
+  pagination, and a page outside the range keeps its label as well. The style `none` erases the labels of the range.
+  Only the pages whose label changes are written, and one `PagesChanged` of kind `edited` follows. The range may not run
+  backwards, and a Roman style stops at 3999, so a numbering that would pass it is a 409 and the first number of a
+  Roman range above it is a 422.
+- **`LabelStyle.write`.** The Roman numerals are a dozen lines in the domain, because the domain imports only the
+  standard library and the `roman` package would be its one dependency for a function that small.
+
 ## Ports
 
 Ports are abstract base classes, so every adapter names its parent explicitly and the type checkers verify it.
@@ -502,7 +605,8 @@ Ports are abstract base classes, so every adapter names its parent explicitly an
 | Ordering    | `OrderKeys`: the key after the last page and the key between two neighbours                      |
 | Storage     | `SourceStore` (uploads and the files of each source), `AssetStore` (derived files by key)        |
 | Mail        | `Mailer`                                                                                         |
-| Imaging     | `SourceInspector` (group an upload into sources, inspect one), `PageRasterizer`, `Tiler`         |
+| Imaging     | `SourceInspector` (group an upload into sources, inspect one), `PageRasterizer`, `Tiler`,        |
+|             | and until the plugin framework `BlankPageMaker` (the image of a blank leaf)                      |
 | AI engines  | `TextRecognizer`, `LayoutAnalyzer`, `LanguageModel`, each with an engine catalogue               |
 | Processing  | `Processor` (the plugin contract), `ProcessorCatalog`                                            |
 | Runtime     | `JobQueue`, `EventPublisher`, `EventStream`, `Clock`                                             |
@@ -514,7 +618,12 @@ The persistence ports address data through the source, the scan and the page of 
 `UnitOfWork`, so one use case changes all of them in one transaction. `PageRepository` addresses a page by its
 `PageId`, lists the pages of a project in `order_key` order and gives the last key of a book, and the position of a
 page in the book is computed when it is read, never stored: a window of the manifest numbers its pages from its
-offset, and `count_before` counts the pages before one page read alone. `PageVersionRepository.list_base_versions`
+offset, and `count_before` counts the pages before one page read alone. The page order stage adds the queries a move
+needs, all inside one project and in `order_key` order: `list_by_ids` reads the named pages and refuses an identifier
+of another project like a missing one, `list_for_source` joins `pages` with `scans` so that placeholders and blank
+leaves never belong to a source, `neighbour_key` finds the key next to a key on one side while leaving the moving pages
+out, and `update_many` writes several pages in the one transaction, all or none. `ScanRepository.list_by_ids` gives
+the manifest the source of every page of a window in one query. `PageVersionRepository.list_base_versions`
 reads the base versions of a whole window in one call, so the manifest costs no query per page.
 `ProjectRepository.overview` counts the book of one
 project, and the project listing counts every project of a window in the same query.
@@ -565,7 +674,7 @@ the pages cut from one scan by their slot.
 | Ordering    | fractional-indexing                                             | the same       |                        |
 | Storage     | Local directory tree under `data/`                              | local, tmp dir | S3-compatible storage  |
 | Mail        | Log mailer, aiosmtplib over SMTP                                | recording fake |                        |
-| Imaging     | Source reader with PDF, image, DjVu formats, pyvips tiler       | fake images    | remote workers         |
+| Imaging     | Source reader with PDF, image, DjVu formats, pyvips tiler and blank leaves | fake images | remote workers |
 | AI engines  | pydantic-ai for cloud and Ollama models, local Surya, Tesseract | scripted fakes | more providers         |
 | Jobs        | Taskiq with the in-process broker                               | inline runner  | Taskiq with Redis      |
 | Events      | In-process broadcast                                            | in-memory      | Redis pub/sub          |
@@ -678,7 +787,9 @@ erDiagram
   `progress_done`, `progress_total`, `error`, `request` and `result` as JSON, both empty for a job that has none,
   `created_at`, `started_at` and `finished_at`. The partial unique index `ix_jobs_one_active_import` on `project_id`
   `WHERE kind = 'import-source' AND state IN ('queued', 'running')` keeps a project to one import at a time, and
-  both adapters report its violation as a `ConflictError` when the job is added.
+  both adapters report its violation as a `ConflictError` when the job is added. The partial unique index
+  `ix_jobs_one_active_prepare` on `project_id` `WHERE kind = 'prepare-pages' AND state IN ('queued', 'running')` does
+  the same for the jobs that write page images, and an import and a prepare job of one project do not collide.
 - `page_versions` has the primary key `id`, `page_id` with `ON DELETE CASCADE`, `input_id` with `ON DELETE SET NULL`,
   and an index on `(page_id, stage)`. Its columns are `stage`, `processor_key`, `processor_version`, `params`,
   `transform` and `data` as JSON, `renditions_ready`, `renditions_full`, `state` and `created_at`. Both renditions
@@ -776,7 +887,7 @@ flowchart TD
 | `ProjectService`    | List, create, read, edit the description, cover and image policy, delete with files |
 | `ImportService`     | Accept an upload and enqueue the import, run the import job step by step            |
 | `SourceService`     | List and read the sources and scans of a book, delete a source with its files       |
-| `PageService`       | Page manifest, one page by identifier, asset locations for the viewer               |
+| `PageService`       | Page manifest, one page, order, labels, placeholders, blank leaves, binding scans   |
 | `ProcessingService` | Recipes, previews, runs, variants, invalidation of later stages                     |
 | `EditService`       | Save and load manual page edits (frames, meshes, masks, regions)                    |
 | `JobService`        | Job state, cancellation, the event stream of a project                              |
@@ -1075,8 +1186,8 @@ flowchart TD
    pyramid's `info.json` carries as its `id` the IIIF root, `/api/v1/iiif`, and the key of the pyramid's directory,
    which `ProjectKeys` builds.
 6. The page split is skipped: every new scan is a page at the end of the book, made in the transaction of its
-   source, with the scan's `source_label` as its printed number, which is empty until the page order task reads the
-   PDF page labels. When a scan is cut, its page gets the base version `split.none`: `AssetStore.copy` copies `full`
+   source, with the scan's `source_label` as its printed number, which is the page label of a PDF page, such as `xii`,
+   and empty for a scan whose file carries none. When a scan is cut, its page gets the base version `split.none`: `AssetStore.copy` copies `full`
    into the version's own directory, and the four renditions are cut from that copy, so the page holds its own
    image and its own pyramid. The version records the same format of `full` as the scan. The scan and its versions are marked ready in one transaction with the progress of the
    job, and `ScanReady` follows, so the viewer shows the first pages while the rest are being cut. The user splits
@@ -1122,6 +1233,14 @@ the frontend client is generated from it. These endpoints of books, jobs and ima
 | `GET /projects/{id}/scans`                  | `list_scans`            | `SourceService.scans`        | 200 `Page[ScanSchema]`, `?source_id`            |
 | `GET /projects/{id}/pages`                  | `list_pages`            | `PageService.manifest`       | 200 `ManifestPage[PageSchema]`                  |
 | `GET /projects/{id}/pages/{page_id}`        | `get_page`              | `PageService.get`            | 200 `PageSchema`                                |
+| `POST /projects/{id}/pages`                 | `create_page`           | `PageService.add`            | 201 `PageSchema`, `Location`                    |
+| `DELETE /projects/{id}/pages/{page_id}`     | `delete_page`           | `PageService.delete`         | 204                                             |
+| `PUT /projects/{id}/pages/{page_id}/scan`   | `attach_scan`           | `PageService.attach_scan`    | 200 `PageSchema`, 409 for a scan another page shows |
+| `PATCH /projects/{id}/pages/{page_id}`      | `update_page`           | `PageService.update`         | 200 `PageSchema`, JSON Merge Patch              |
+| `POST /projects/{id}/pages/labels`          | `number_pages`          | `PageService.number`         | 204, 409 for a range that runs backwards        |
+| `POST /projects/{id}/pages/{page_id}/move`  | `move_page`             | `PageService.move`           | 200 `PageSchema`, 409 for an anchor of its own  |
+| `POST /projects/{id}/pages/move`            | `move_pages`            | `PageService.move_group`     | 204, 409 for an anchor inside the group         |
+| `POST /projects/{id}/sources/{source_id}/pages/move` | `move_source_pages` | `PageService.move_source` | 204, 409 for an anchor inside the source        |
 | `GET /iiif/{key}`                           | `iiif_file`             | `PageService.open_asset`     | the file as stored, immutable                   |
 | `GET /jobs/{id}`                            | `read_job`              | `JobService.get`             | 200 `JobSchema`                                 |
 | `DELETE /jobs/{id}`                         | `cancel_job`            | `JobService.cancel`          | 200 `JobSchema`                                 |
@@ -1134,8 +1253,6 @@ The rest of the design is not served yet, apart from the fastapi-users routers:
 | Auth       | fastapi-users routers under `/auth`: cookie login and logout, register, verify, reset, OAuth per provider |
 | Account    | `GET /users/me`, `GET, PATCH /me/settings`, `GET, PUT, DELETE /me/credentials/{provider}`                 |
 | Catalogue  | `GET /engines`, `GET /processors`                                                                         |
-| Pages      | `POST /projects/{id}/pages`, `PATCH, DELETE /projects/{id}/pages/{page_id}`                               |
-| Page order | `POST /projects/{id}/pages/{page_id}/move`, `PUT /projects/{id}/pages/{page_id}/scan`                     |
 | Edits      | `GET, PUT /projects/{id}/pages/{page_id}/edits/{stage}`                                                   |
 | Processing | `GET, PUT /projects/{id}/stages/{stage}/recipe`, `POST .../preview`, `POST .../run`, `GET .../variants`   |
 
@@ -1150,7 +1267,12 @@ account. The job's `result` lists the sources imported, the files rejected with 
 job skipped.
 
 Pages are addressed by their `PageId`, never by their position. `POST /projects/{id}/pages` adds a placeholder or a
-blank leaf, `POST .../move` moves a page to another position, and `PUT .../scan` binds a scan to a placeholder. A
+blank leaf, `PUT .../scan` binds a scan to a placeholder, and the three move routes put pages before or after an
+anchor page. A move body names the anchor with exactly one of `before_page_id` and `after_page_id`, which the shared
+`PageAnchorBody` checks with a `model_validator`. A group is named by `page_ids`, a list of 1 to 2000 distinct
+identifiers, and it keeps its order in the book. An anchor that is one of the moved pages, or a place another move took
+first, is a 409 problem, and a page, anchor or source of another project is a 404. The group routes answer 204, since
+their result is the `pages-changed` event and every other position changes anyway. A
 scan that the import already made into a page of its own is bound with the flag `take_over`, which moves the scan
 from that page to the placeholder. `POST /projects/{id}/source`, a `source` field of the project schema and page
 addresses by index are never published, because the frontend client is generated from the OpenAPI schema and would
@@ -1160,7 +1282,9 @@ The page manifest, `GET /projects/{id}/pages`, returns up to 1000 pages per requ
 the computed position of every page and never its order key. Because fastapi-pagination checks the query against the
 parameters of the response's page class too, the manifest answers with a customized page class, `ManifestPage`, that
 carries the same limit. Excluded pages are returned with `included` false, and the viewer asks for `?included=true`,
-a filter that is not served yet. A page carries `images`, the paths of its four images, once its base version has them
+which lists only the pages that are part of the book and numbers those among themselves, so a position is the place in
+the book the viewer shows. A page carries `source_id`, the source of its scan, by which the strip selects every page of
+a source, and it carries `images`, the paths of its four images, once its base version has them
 cut, and none before, for a placeholder too.
 
 `DELETE /projects/{id}/sources/{source_id}` answers 204 and leaves the pages of the book with their images. It answers
@@ -1173,7 +1297,9 @@ The events of a project reach the browser over `GET /projects/{id}/events`:
 - `JobChanged` when a job changes state or progress, its last one carrying the result of an import.
 - `SourceImported` when a source and its scans are committed.
 - `ScanReady` when the renditions of a scan can be shown.
-- `PagesChanged` when pages are added, removed or moved, or their labels or kinds change.
+- `PagesChanged` when pages are added, removed or moved, or their labels or kinds change. It carries `page_ids`, the
+  pages the change touched, and `change`, a `PageChange`: `moved`, `edited`, `added` or `removed`. A group of any size is
+  one event, so the stream does not grow with it, and the browser reads the manifest again.
 - `PageVersionReady` when a page version is ready.
 - `ProjectChanged` when the book description changes.
 
@@ -1366,6 +1492,34 @@ The book model rests on these decisions, each with its reason.
     called without the frontend and a page must not be lost silently. The browser removes them from its list too.
 36. **Number of files.** `max_upload_files` is enforced by the service alone, and the multipart parser is given no
     ceiling of its own, so every upload past the limit gets the same 413 problem and not the parser's 400.
+
+33. **Order keys are not rebalanced.** A key grows by a character or two for a book arranged by hand, and a rebalance
+    would rewrite every row of the book for what is one move. A linked list of previous and next pages was refused
+    because a move writes three rows and the manifest would need a recursive query, and floating-point positions
+    because halving a gap again and again loses precision.
+34. **Moves of many pages answer 204 and publish one event.** An answer holding every moved page would repeat the
+    manifest, whose other positions change anyway, and one `PagesChanged` naming the group keeps the event stream the
+    same size whatever the group.
+35. **An anchor inside the moved pages is a conflict.** The place is not defined then, so the service answers 409
+    instead of choosing one, and the body schema leaves the check to the service so that a group and a source are
+    handled alike.
+
+36. **Numbers are written into the rows.** The numbering of a range computes the labels and stores them in the pages,
+    and the range, the style and the first number are forgotten, because the printed numbering of an old book has
+    plates outside the count and misprints that a stored range would need rules for. A repeated numbering of the same
+    range with other settings only writes the rows again.
+
+37. **Images of new pages are written by a job.** Copying a scan and drawing a leaf, with the tile pyramid, are heavy
+    work, so a request commits the page and its pending base version and queues `prepare-pages`, whose failed versions
+    the next job takes again, and no route repeats a job. Doing it in the request was refused because request handlers
+    never block on heavy work. One such job runs per project, kept by a unique index like the import's rather than by
+    a check that two requests can both pass, and a job that ends looks for the versions committed meanwhile.
+38. **A blank leaf has the median size.** The median of the widths, of the heights and of the resolutions of the included
+    scan pages follows neither one fold-out map nor one cropped scan, so the leaf stands level with its neighbours in a
+    spread. Binding a scan is a route of its own, since a `PATCH` of `scan_id` would mix an instant edit of one row with
+    the making of a version and a job.
+39. **The leaf is made by a temporary port.** `BlankPageMaker` and its libvips adapter exist because the page order stage
+    comes before the plugin framework, and they are removed when the `pages.blank` processor makes the leaf.
 
 Smaller technical choices follow the same model. Languages are ISO 639-3 codes, XMP is parsed with defusedxml, the
 parameters of processing jobs are kept in `Job.params`, a DjVu source suggests a publication year only from its

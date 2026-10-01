@@ -9,7 +9,7 @@ import enum
 from datetime import datetime
 
 from bookreviver.api.schemas.base import ResponseModel
-from bookreviver.domain.enums import JobKind, JobState, RejectionReason
+from bookreviver.domain.enums import JobKind, JobState, PageChange, RejectionReason
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
 
 
@@ -125,9 +125,13 @@ class PagesChangedSchema(ResponseModel):
     """A book whose pages were added, removed, moved, numbered or given a kind; the data of a ``pages-changed`` event.
 
     :ivar project_id: Identifier of the project whose page manifest to read again.
+    :ivar page_ids: Pages the change touched, one event naming all of them whatever the size of the group.
+    :ivar change: What was done to them.
     """
 
     project_id: ProjectId
+    page_ids: list[PageId]
+    change: PageChange
 
 
 class PageVersionReadySchema(ResponseModel):

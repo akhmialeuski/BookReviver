@@ -14,9 +14,11 @@ from fastapi_pagination import Page, Params
 
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
+from bookreviver.api.schemas.pages import PageAnchorBody
 from bookreviver.api.schemas.sources import ScanQuery, ScanSchema, SourceSchema
 from bookreviver.domain.entities import Scan, Source
 from bookreviver.domain.ids import ProjectId, SourceId
+from bookreviver.services.pages import PageService
 from bookreviver.services.sources import SourceService
 
 PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
@@ -124,3 +126,31 @@ async def list_scans(
     """
     pager = Pager[Scan, ScanSchema](query, partial(ScanSchema.from_scan, request=request))
     return pager.page(await sources.scans(actor, project_id, pager.request, source_id=query.source_id))
+
+
+@router.post('/{project_id}/sources/{source_id}/pages/move', status_code=status.HTTP_204_NO_CONTENT)
+async def move_source_pages(
+    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    source_id: Annotated[SourceId, Path(description=SOURCE_ID_DESCRIPTION)],
+    body: PageAnchorBody,
+    actor: ActorDep,
+    pages: FromDishka[PageService],
+) -> None:
+    """Put every page of one source in a run before or after a page, which places a missing part of the book at once.
+
+    The answer is 409 when the anchor is a page of the source. The new order reaches the browser as a ``pages-changed``
+    event, so the answer has no body.
+
+    \N{FORM FEED}
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :param source_id: Identifier of the source whose pages are moved.
+    :type source_id: SourceId
+    :param body: The page to put them next to, and the side.
+    :type body: PageAnchorBody
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param pages: Page service of the request.
+    :type pages: PageService
+    """
+    await pages.move_source(actor, project_id, source_id, body.anchor)

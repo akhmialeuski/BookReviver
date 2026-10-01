@@ -287,11 +287,14 @@ class PageOverview:
     :ivar position: Place of the page in the book from zero, counted over every page of the project, excluded or not.
     :ivar base_version: The page's base version, whose renditions show the page, or None for a page that has no image
                         yet, such as a placeholder.
+    :ivar source_id: Source holding the page's scan, which selects every page of one source, or None for a page
+                     without a scan.
     """
 
     page: Page
     position: int = field(validator=validators.ge(0))
     base_version: PageVersion | None = None
+    source_id: SourceId | None = None
 
 
 @frozen(kw_only=True)

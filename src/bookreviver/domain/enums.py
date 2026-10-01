@@ -26,6 +26,24 @@ OCLC_NUMBER: Final = re.compile(r'[0-9]+')
 SHELFMARK_MAX_LENGTH: Final = 300
 URL_MAX_LENGTH: Final = 2_048
 URL_SCHEMES: Final = frozenset({'http', 'https'})
+# The values and symbols of the Roman numerals in the order they are written, subtractive pairs included, and the
+# largest number they can write
+ROMAN_NUMERALS: Final = (
+    (1000, 'M'),
+    (900, 'CM'),
+    (500, 'D'),
+    (400, 'CD'),
+    (100, 'C'),
+    (90, 'XC'),
+    (50, 'L'),
+    (40, 'XL'),
+    (10, 'X'),
+    (9, 'IX'),
+    (5, 'V'),
+    (4, 'IV'),
+    (1, 'I'),
+)
+ROMAN_MAX: Final = 3999
 
 
 class LabeledStrEnum(enum.StrEnum):
@@ -275,6 +293,84 @@ class PageOrigin(LabeledStrEnum):
     PLACEHOLDER = 'placeholder', 'Placeholder waiting for a scan'
 
 
+class LabelStyle(LabeledStrEnum):
+    """How the number of a page is written, which the numbering of a range of pages applies to its numbers.
+
+    The domain imports only the standard library, so the Roman numerals are written here and not taken from the
+    ``roman`` package, whose one function would be about a dozen lines of ours.
+    """
+
+    ARABIC = 'arabic', 'Arabic'
+    ROMAN_LOWER = 'roman-lower', 'Roman, lower case'
+    ROMAN_UPPER = 'roman-upper', 'Roman, upper case'
+    NONE = 'none', 'No label'
+
+    def write(self, number: int) -> str:
+        """Write a page number in this style, which for ``none`` is the empty label that erases a numbering.
+
+        The method is not called ``format``, since that name belongs to ``str``, whose signature it would break.
+
+        :param number: Number of the page, from 1.
+        :type number: int
+        :returns: ``12``, ``xii`` or ``XII`` for the number 12, and an empty string for ``none``.
+        :rtype: str
+        :raises ValueError: If the number is below 1, or above 3999 in a Roman style, which has no numeral for it.
+        """
+        if self is LabelStyle.NONE:
+            return ''
+        if number < 1 or (self is not LabelStyle.ARABIC and number > ROMAN_MAX):
+            err_msg = f'{number} cannot be written as a {self.label.lower()} page number.'
+            raise ValueError(err_msg)
+        if self is LabelStyle.ARABIC:
+            return str(number)
+        numeral, remaining = '', number
+        for value, symbol in ROMAN_NUMERALS:
+            repeats, remaining = divmod(remaining, value)
+            numeral += symbol * repeats
+        return numeral.lower() if self is LabelStyle.ROMAN_LOWER else numeral
+
+
+class Side(LabeledStrEnum):
+    """Which side of a page in the book a neighbour or a new position lies on."""
+
+    BEFORE = 'before', 'Before the page'
+    AFTER = 'after', 'After the page'
+
+
+class PageChange(LabeledStrEnum):
+    """What a use case did to the pages of a book, which the ``PagesChanged`` event reports."""
+
+    MOVED = 'moved', 'Moved'
+    EDITED = 'edited', 'Edited'
+    ADDED = 'added', 'Added'
+    REMOVED = 'removed', 'Removed'
+
+
+class NewPageOrigin(LabeledStrEnum):
+    """Where the image of a page the user adds comes from.
+
+    Only a blank leaf and a placeholder are added by hand, since a page cut from a scan is made by the page split and
+    by binding a scan to a placeholder.
+    """
+
+    BLANK = 'blank', 'Generated blank leaf'
+    PLACEHOLDER = 'placeholder', 'Placeholder waiting for a scan'
+
+    @property
+    def page_origin(self) -> PageOrigin:
+        """The origin of the page this one makes."""
+        return PageOrigin(self.value)
+
+
+class VersionData(LabeledStrEnum):
+    """Keys of the data of a base version, which the median size of a book's pages and a failed version read."""
+
+    WIDTH_PX = 'width_px', 'Width of the image in pixels'
+    HEIGHT_PX = 'height_px', 'Height of the image in pixels'
+    DPI = 'dpi', 'Resolution of the image in dots per inch'
+    ERROR = 'error', 'Why the version could not be made'
+
+
 class VersionState(LabeledStrEnum):
     """Lifecycle of a page version, from its creation to its result."""
 
@@ -298,6 +394,7 @@ class JobKind(LabeledStrEnum):
     """What a background job does."""
 
     IMPORT_SOURCE = 'import-source', 'Import source'
+    PREPARE_PAGES = 'prepare-pages', 'Prepare pages'
 
 
 class JobState(LabeledStrEnum):

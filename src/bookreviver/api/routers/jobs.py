@@ -134,8 +134,11 @@ async def stream_project_events(
                 yield ServerSentEvent(
                     event=EventName.SCAN_READY, data=ScanReadySchema(project_id=project_id, scan_id=scan.id)
                 )
-            case PagesChanged(project_id=project_id):
-                yield ServerSentEvent(event=EventName.PAGES_CHANGED, data=PagesChangedSchema(project_id=project_id))
+            case PagesChanged(project_id=project_id, page_ids=page_ids, change=change):
+                yield ServerSentEvent(
+                    event=EventName.PAGES_CHANGED,
+                    data=PagesChangedSchema(project_id=project_id, page_ids=list(page_ids), change=change),
+                )
             case PageVersionReady(project_id=project_id, version=version):
                 yield ServerSentEvent(
                     event=EventName.PAGE_VERSION_READY,

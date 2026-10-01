@@ -241,7 +241,9 @@ class TestUploadDirectories:
         """
         cover = image_upload(tmp_path, 'cover.jpg').file.read()
 
-        response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=[_part('cover.jpg', cover)])
+        response = await fx_client.post(
+            SOURCES_PATH.format(project_id=fx_project.id), files=[_part('cover.jpg', cover)]
+        )
         finished = await _finished_job(fx_client, fx_broker, response.json()['id'])
 
         sources = await InMemoryUnitOfWork(fx_fakes.database).sources.list_for_project(fx_project.id)
@@ -312,7 +314,10 @@ class TestUploadDirectories:
         :param fx_project: Project of the signed-in account.
         :type fx_project: Project
         """
-        parts = [_part('vol1/001.tif', _scan(1, image_format='TIFF')), _part('vol2\\001.tif', _scan(2, image_format='TIFF'))]
+        parts = [
+            _part('vol1/001.tif', _scan(1, image_format='TIFF')),
+            _part('vol2\\001.tif', _scan(2, image_format='TIFF')),
+        ]
 
         response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
         finished = await _finished_job(fx_client, fx_broker, response.json()['id'])

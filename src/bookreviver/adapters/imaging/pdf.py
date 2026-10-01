@@ -118,8 +118,9 @@ class PdfFormat(SourceFormat):
 
         :param files: Local path of the PDF file, the one file of the source.
         :type files: Sequence[Path]
-        :returns: Facts of every page in page order, the document information, version, page count, outline and
-                  integrity facts of the file, and the description found in its XMP packet and document information.
+        :returns: Facts and page label of every page in page order, the document information, version, page count,
+                  outline and integrity facts of the file, and the description found in its XMP packet and document
+                  information.
         :rtype: SourceAnalysis
         :raises UnsupportedSourceError: If the file is not a readable PDF without a password.
         :raises ValueError: If the source is not exactly one file.
@@ -138,7 +139,11 @@ class PdfFormat(SourceFormat):
             if document.needs_pass:
                 err_msg = f'{path.name} is protected by a password. Remove the password and upload the PDF again.'
                 raise UnsupportedSourceError(err_msg)
-            scans = [_scan_facts(page) for page in document.pages()]
+            scans, labels = [], []
+            for page in document.pages():
+                scans.append(_scan_facts(page))
+                # Empty when the document defines no page label rules, which is what a scan without a label has
+                labels.append(page.get_label())
             metadata = document.metadata or {}
             outline = document.get_toc()
             info = {key: value for key, value in metadata.items() if value and key != PyMuPdfKey.PDF_VERSION}
@@ -154,7 +159,13 @@ class PdfFormat(SourceFormat):
                 FactKey.REPAIRED: document.is_repaired,
             }
         suggestion = SuggestionBuilder.merge(SuggestionBuilder.from_xmp(xmp), SuggestionBuilder.from_docinfo(info))
-        return SourceAnalysis(kind=SourceKind.PDF, scans=scans, file_metadata=file_metadata, suggestion=suggestion)
+        return SourceAnalysis(
+            kind=SourceKind.PDF,
+            scans=scans,
+            scan_labels=labels,
+            file_metadata=file_metadata,
+            suggestion=suggestion,
+        )
 
     @override
     def extract(self, files: Sequence[Path], *, number: int, target: Path, full: Rendition) -> None:

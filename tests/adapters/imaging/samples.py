@@ -60,6 +60,13 @@ TEXT_ORIGIN_PT: tuple[float, float] = (72.0, 72.0)
 # PDF text render mode that draws nothing, as the OCR layer of a scan does
 INVISIBLE_RENDER_MODE: int = 3
 DECODE_KEY: str = 'Decode'
+# Page label rules of a book with a preface: lower-case Roman numerals on the first two pages, then Arabic from 1
+ROMAN_THEN_ARABIC_RULES: Sequence[Mapping[str, Any]] = (
+    {'startpage': 0, 'prefix': '', 'style': 'r', 'firstpagenum': 1},
+    {'startpage': 2, 'prefix': '', 'style': 'D', 'firstpagenum': 1},
+)
+# What the rules give a four-page file
+ROMAN_THEN_ARABIC_LABELS: Sequence[str] = ('i', 'ii', '1', '2')
 # Keyword of Pillow's ``Image.save`` carrying the EXIF block
 EXIF_OPTION: str = 'exif'
 
@@ -514,6 +521,23 @@ def add_xmp(path: Path, *, packet: str) -> Path:
     """
     with pymupdf.open(path) as document:
         document.set_xml_metadata(packet)
+        document.saveIncr()
+    return path
+
+
+def add_page_labels(path: Path, *, rules: Sequence[Mapping[str, Any]]) -> Path:
+    """Give a PDF file that was written without them page label rules, such as ``ROMAN_THEN_ARABIC_RULES``.
+
+    :param path: The PDF to change in place.
+    :type path: Path
+    :param rules: Rules in the form of ``Document.set_page_labels``, each naming the ``startpage`` it begins at, its
+                  ``style`` and its ``firstpagenum``.
+    :type rules: Sequence[Mapping[str, Any]]
+    :returns: The same path.
+    :rtype: Path
+    """
+    with pymupdf.open(path) as document:
+        document.set_page_labels([dict(rule) for rule in rules])
         document.saveIncr()
     return path
 

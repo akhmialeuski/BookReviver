@@ -4,8 +4,10 @@ from typing import TYPE_CHECKING, Annotated
 
 from pydantic import AfterValidator, Field, StringConstraints
 
+from bookreviver.domain.ids import PageId
+
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Hashable, Sequence
 
 TITLE_MAX_LENGTH: int = 500
 TEXT_MAX_LENGTH: int = 300
@@ -21,6 +23,14 @@ LANGUAGES_MAX_LENGTH: int = 10
 SUBJECTS_MAX_LENGTH: int = 50
 TITLES_MAX_LENGTH: int = 10
 REPEATED_ITEMS: str = 'The list may not repeat an item.'
+# Longest printed number of a page, such as ``[xii]`` or ``12a``
+PAGE_LABEL_MAX_LENGTH: int = 50
+# Largest side of a generated blank leaf in pixels and largest resolution to record in it, which bound the image a
+# request can make the worker write
+PAGE_SIDE_MAX_PX: int = 30_000
+DPI_MAX: float = 4_800.0
+# Most pages one request moves or numbers, which bounds the rows it writes
+PAGE_BATCH_MAX_LENGTH: int = 2_000
 ASSET_KEY_MAX_LENGTH: int = 1_024
 # Slash-separated names that never start with a dot, so a key cannot climb out of its directory; commas appear in
 # IIIF tile paths such as ``0,0,512,512/512,/0/default.jpg``
@@ -49,13 +59,13 @@ HeightCm = Annotated[int, Field(ge=HEIGHT_CM_MIN, le=HEIGHT_CM_MAX)]
 ListedText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=TEXT_MAX_LENGTH)]
 
 
-def _refuse_repeats(items: Sequence[str]) -> Sequence[str]:
+def _refuse_repeats[ItemT: Hashable](items: Sequence[ItemT]) -> Sequence[ItemT]:
     """Refuse a list that holds the same item twice.
 
     :param items: The items of the list.
-    :type items: Sequence[str]
+    :type items: Sequence[ItemT]
     :returns: The items unchanged.
-    :rtype: Sequence[str]
+    :rtype: Sequence[ItemT]
     :raises ValueError: If an item appears more than once.
     """
     if len(set(items)) != len(items):
@@ -66,4 +76,15 @@ def _refuse_repeats(items: Sequence[str]) -> Sequence[str]:
 # The languages of a book without repeats
 LanguageList = Annotated[list[LanguageCode], Field(max_length=LANGUAGES_MAX_LENGTH), AfterValidator(_refuse_repeats)]
 SubjectList = Annotated[list[ListedText], Field(max_length=SUBJECTS_MAX_LENGTH)]
+# The printed number of a page, which is empty for a page that has none
+PageLabel = Annotated[str, StringConstraints(strip_whitespace=True, max_length=PAGE_LABEL_MAX_LENGTH)]
+# One side of a generated blank leaf in pixels, and its resolution in dots per inch
+PagePixels = Annotated[int, Field(gt=0, le=PAGE_SIDE_MAX_PX)]
+Dpi = Annotated[float, Field(gt=0, le=DPI_MAX)]
+# The pages one request acts on, at least one and each at most once
+PageIdList = Annotated[
+    list[PageId],
+    Field(min_length=1, max_length=PAGE_BATCH_MAX_LENGTH),
+    AfterValidator(_refuse_repeats),
+]
 TitleList = Annotated[list[ListedText], Field(max_length=TITLES_MAX_LENGTH)]

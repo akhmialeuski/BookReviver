@@ -21,6 +21,7 @@ from bookreviver.domain.enums import (
     DjvuDocumentKind,
     ImagePolicy,
     JobState,
+    PageChange,
     PageOrigin,
     RejectionReason,
     Rendition,
@@ -40,18 +41,21 @@ from bookreviver.domain.events import (
 )
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import Contributor, SliceRequest
+from bookreviver.services.base_versions import SPLIT_NONE
 from bookreviver.services.imports import (
     IMPORT_ACTIVE,
     NO_SOURCE_IMPORTED,
     NOT_QUEUED,
-    SPLIT_NONE,
     UNEXPECTED_FAILURE,
     ImportCancelledError,
     ImportRun,
 )
 from tests.adapters.imaging.samples import (
+    ROMAN_THEN_ARABIC_LABELS,
+    ROMAN_THEN_ARABIC_RULES,
     DjvuPage,
     PdfPage,
+    add_page_labels,
     add_xmp,
     requires_djvulibre,
     write_djvu_bundle,
@@ -748,6 +752,34 @@ class TestRunImport:
         expect(job.result.skipped == ())
         assert_expectations()
 
+    async def test_takes_the_page_labels_of_a_pdf_as_the_labels_of_its_scans_and_pages(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify a PDF with Roman numerals for its preface and Arabic ones after gives its scans and pages those labels.
+
+        An image file carries no labels, so its page stays unnumbered.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        pdf_upload(fx_samples, 'book.pdf', pages=len(ROMAN_THEN_ARABIC_LABELS))
+        labelled = add_page_labels(fx_samples / 'book.pdf', rules=ROMAN_THEN_ARABIC_RULES)
+        files = [upload('book.pdf', content=labelled.read_bytes()), image_upload(fx_samples, 'cover.jpg')]
+
+        await _import(fx_rig, fx_owner, fx_project.id, files)
+
+        scans, pages = await _scans(fx_rig, fx_project.id), await _pages(fx_rig, fx_project.id)
+        expected = [*ROMAN_THEN_ARABIC_LABELS, '']
+        expect([scan.source_label for scan in scans] == expected)
+        expect([page.label for page in pages] == expected)
+        assert_expectations()
+
     async def test_writes_the_renditions_of_every_scan_and_the_base_version_of_every_page(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_book_files: list[UploadFile]
     ) -> None:
@@ -844,6 +876,8 @@ class TestRunImport:
         last_source = max(index for index, event in enumerate(published) if isinstance(event, SourceImported))
         expect(len(_events_of(fx_rig, SourceImported)) == len(_events_of(fx_rig, PagesChanged)) == SOURCE_COUNT)
         expect(len(_events_of(fx_rig, ScanReady)) == SCAN_COUNT)
+        expect({event.change for event in _events_of(fx_rig, PagesChanged)} == {PageChange.ADDED})
+        expect(sum(len(event.page_ids) for event in _events_of(fx_rig, PagesChanged)) == SCAN_COUNT)
         # Every source is announced before the first image is, so the browser knows the book before it is cut
         expect(last_source < first_scan)
         expect([event.job.state for event in jobs][:2] == [JobState.QUEUED, JobState.RUNNING])

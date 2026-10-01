@@ -15,9 +15,9 @@ if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
     from bookreviver.domain.entities import ProjectOverview
-    from bookreviver.domain.enums import JobState
+    from bookreviver.domain.enums import JobState, Side, Stage
     from bookreviver.domain.ids import AccountId
-    from bookreviver.domain.values import Slice, SliceRequest
+    from bookreviver.domain.values import PageSize, Slice, SliceRequest
 
 
 class Repository[EntityT, IdT](ABC):
@@ -169,6 +169,16 @@ class ScanRepository(Repository[Scan, ScanId]):
         """
 
     @abstractmethod
+    async def list_by_ids(self, scan_ids: Collection[ScanId]) -> Sequence[Scan]:
+        """Return several scans in one read, so a window of the book costs one query to learn its sources.
+
+        :param scan_ids: Scans to read; one that is not stored is left out of the result.
+        :type scan_ids: Collection[ScanId]
+        :returns: The stored scans among them, in no particular order.
+        :rtype: Sequence[Scan]
+        """
+
+    @abstractmethod
     async def list_unready(self, project_id: ProjectId) -> Sequence[Scan]:
         """Return the scans of a project whose renditions are not ready, which an import cut again.
 
@@ -188,7 +198,9 @@ class PageRepository(Repository[Page, PageId]):
     """
 
     @abstractmethod
-    async def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Page]:
+    async def list_for_project(
+        self, project_id: ProjectId, request: SliceRequest, *, included_only: bool = False
+    ) -> Slice[Page]:
         """Return the pages of a project in book order, the byte order of their order keys.
 
         The position of a page in the book is the offset of the window plus its index in the window.
@@ -197,8 +209,90 @@ class PageRepository(Repository[Page, PageId]):
         :type project_id: ProjectId
         :param request: Offset and limit of the window to return.
         :type request: SliceRequest
-        :returns: The pages of the window and the number of all the project's pages, included or not.
+        :param included_only: Whether to leave out the pages kept out of the book, which then take no part in the
+                              offset either.
+        :type included_only: bool
+        :returns: The pages of the window and the number of all the project's pages, or of its included pages when
+                  ``included_only`` is set.
         :rtype: Slice[Page]
+        """
+
+    @abstractmethod
+    async def list_by_ids(self, project_id: ProjectId, page_ids: Collection[PageId]) -> Sequence[Page]:
+        """Return the given pages of a project in book order.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param page_ids: Identifiers of the pages to read, repeats counting once.
+        :type page_ids: Collection[PageId]
+        :returns: The pages, in the byte order of their order keys.
+        :rtype: Sequence[Page]
+        :raises NotFoundError: If an identifier names no page, or a page of another project, which is reported like a
+                               missing one.
+        """
+
+    @abstractmethod
+    async def list_range(self, project_id: ProjectId, first_key: str, last_key: str) -> Sequence[Page]:
+        """Return the pages of a project whose order keys lie between two keys, both included, in book order.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param first_key: Smallest order key of the range, in byte order.
+        :type first_key: str
+        :param last_key: Greatest order key of the range, in byte order.
+        :type last_key: str
+        :returns: The pages from ``first_key`` to ``last_key``, none when the range is reversed.
+        :rtype: Sequence[Page]
+        """
+
+    @abstractmethod
+    async def list_for_source(self, project_id: ProjectId, source_id: SourceId) -> Sequence[Page]:
+        """Return the pages whose scans belong to a source, in book order.
+
+        Pages without a scan, such as placeholders and blank leaves, belong to no source and are never listed.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param source_id: Source whose scans the pages show.
+        :type source_id: SourceId
+        :returns: The pages cut from the scans of the source, by order key.
+        :rtype: Sequence[Page]
+        """
+
+    @abstractmethod
+    async def neighbour_key(
+        self, project_id: ProjectId, key: str, side: Side, *, excluding: Collection[PageId] = ()
+    ) -> str | None:
+        """Return the order key of the page next to ``key`` on one side, leaving some pages out of the count.
+
+        A group of pages that is about to move is left out, so the key found is the one of the page the group will
+        stand next to once it has left its old place.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param key: Order key the neighbour is looked up from, usually the key of an anchor page.
+        :type key: str
+        :param side: Whether to look for the nearest key before or after ``key``.
+        :type side: Side
+        :param excluding: Pages that do not count as neighbours.
+        :type excluding: Collection[PageId]
+        :returns: The nearest key on that side, or None when no page lies there, which is the start or the end of the
+                  book.
+        :rtype: str | None
+        """
+
+    @abstractmethod
+    async def update_many(self, pages: Sequence[Page]) -> None:
+        """Replace the stored state of several pages in the one transaction, all of them or, on an error, none.
+
+        After an error the unit of work is rolled back before it is used again, as a database requires.
+
+        :param pages: Pages with their new state.
+        :type pages: Sequence[Page]
+        :raises NotFoundError: If a page is not stored.
+        :raises ConflictError: If the new state of a page takes an order key, or a part of a scan, that another page
+                               of the project has, such as a page moved to the place another move took in the
+                               meantime.
         """
 
     @abstractmethod
@@ -245,6 +339,33 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         :type page_id: PageId
         :returns: Every version of the page, the earliest first.
         :rtype: Sequence[PageVersion]
+        """
+
+    @abstractmethod
+    async def list_to_prepare(self, project_id: ProjectId, stages: Collection[Stage]) -> Sequence[PageVersion]:
+        """Return the versions of a project whose files still have to be written: the pending and the failed ones.
+
+        A failed version is returned with the pending ones, so the next job of the project tries it again and no route
+        of its own is needed to repeat it.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param stages: Stages whose versions are returned, such as the page split and the page order.
+        :type stages: Collection[Stage]
+        :returns: The pending and failed versions of those stages, the earliest first, ties by identifier.
+        :rtype: Sequence[PageVersion]
+        """
+
+    @abstractmethod
+    async def base_sizes(self, project_id: ProjectId) -> Sequence[PageSize]:
+        """Return the sizes of the base versions of the project's pages that show a scan and are part of the book.
+
+        The median of these is the size of a generated blank leaf. A version that records no size is left out.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: The recorded size of every such base version, in no particular order.
+        :rtype: Sequence[PageSize]
         """
 
     @abstractmethod

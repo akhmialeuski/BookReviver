@@ -27,10 +27,10 @@ from typing import TYPE_CHECKING, override
 from attrs import define, evolve, field, fields
 
 from bookreviver.domain.entities import Job, Page, PageVersion, Project, ProjectOverview, Scan, Source
-from bookreviver.domain.enums import JobKind, JobState
+from bookreviver.domain.enums import JobKind, JobState, PageOrigin, Side, VersionState
 from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
-from bookreviver.domain.values import Slice, SliceRequest
+from bookreviver.domain.values import PageSize, Slice, SliceRequest
 from bookreviver.ports.persistence import (
     JobRepository,
     PageRepository,
@@ -43,14 +43,15 @@ from bookreviver.ports.persistence import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Hashable, Mapping, Sequence
+    from collections.abc import Callable, Collection, Hashable, Iterable, Mapping, Sequence
 
+    from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import AccountId
 
 # Attribute holding the identifier of every entity addressed by one
 ID_ATTRIBUTE: str = 'id'
 # The kinds of job a project runs one of at a time, the rows of the partial unique index of the ``jobs`` table
-ONE_ACTIVE_AT_A_TIME: frozenset[JobKind] = frozenset({JobKind.IMPORT_SOURCE})
+ONE_ACTIVE_AT_A_TIME: frozenset[JobKind] = frozenset({JobKind.IMPORT_SOURCE, JobKind.PREPARE_PAGES})
 
 
 @define(kw_only=True)
@@ -447,6 +448,17 @@ class InMemoryScanRepository(InMemoryRepository[Scan, ScanId], ScanRepository):
         return Slice(items=scans[request.offset : request.offset + request.limit], total=len(scans))
 
     @override
+    async def list_by_ids(self, scan_ids: Collection[ScanId]) -> Sequence[Scan]:
+        """Return the stored scans among the given identifiers.
+
+        :param scan_ids: Scans to read.
+        :type scan_ids: Collection[ScanId]
+        :returns: The scans that are stored.
+        :rtype: Sequence[Scan]
+        """
+        return [scan for scan_id in set(scan_ids) if (scan := self._rows.get(scan_id)) is not None]
+
+    @override
     async def list_unready(self, project_id: ProjectId) -> Sequence[Scan]:
         """Return the project's scans whose renditions are not ready, in the order ``list_for_project`` lists them.
 
@@ -500,21 +512,134 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
             self._tables.projects[project.id] = evolve(project, cover_page_id=None)
 
     @override
-    async def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Page]:
+    async def list_for_project(
+        self, project_id: ProjectId, request: SliceRequest, *, included_only: bool = False
+    ) -> Slice[Page]:
         """Return one window of a project's pages in the byte order of their order keys.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
         :param request: Offset and limit of the window.
         :type request: SliceRequest
-        :returns: The pages of the window and the number of all the project's pages.
+        :param included_only: Whether to leave out the pages kept out of the book.
+        :type included_only: bool
+        :returns: The pages of the window and the number of the pages listed, before the window.
         :rtype: Slice[Page]
         """
-        pages = sorted(
-            (page for page in self._rows.values() if page.project_id == project_id),
-            key=lambda page: page.order_key.encode(),
+        pages = self._in_book_order(
+            page
+            for page in self._rows.values()
+            if page.project_id == project_id and (page.included or not included_only)
         )
         return Slice(items=pages[request.offset : request.offset + request.limit], total=len(pages))
+
+    @override
+    async def list_by_ids(self, project_id: ProjectId, page_ids: Collection[PageId]) -> Sequence[Page]:
+        """Return the given pages of a project in the byte order of their order keys.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param page_ids: Identifiers of the pages to read.
+        :type page_ids: Collection[PageId]
+        :returns: The pages in book order.
+        :rtype: Sequence[Page]
+        :raises NotFoundError: If an identifier names no page of the project.
+        """
+        wanted = set(page_ids)
+        pages = [page for page in self._rows.values() if page.project_id == project_id and page.id in wanted]
+        if missing := wanted - {page.id for page in pages}:
+            raise NotFoundError(*missing)
+        return self._in_book_order(pages)
+
+    @override
+    async def list_range(self, project_id: ProjectId, first_key: str, last_key: str) -> Sequence[Page]:
+        """Return the pages whose order keys lie between the two keys in byte order, both included.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param first_key: Smallest order key of the range.
+        :type first_key: str
+        :param last_key: Greatest order key of the range.
+        :type last_key: str
+        :returns: The pages of the range in book order.
+        :rtype: Sequence[Page]
+        """
+        lower, upper = first_key.encode(), last_key.encode()
+        return self._in_book_order(
+            page
+            for page in self._rows.values()
+            if page.project_id == project_id and lower <= page.order_key.encode() <= upper
+        )
+
+    @override
+    async def list_for_source(self, project_id: ProjectId, source_id: SourceId) -> Sequence[Page]:
+        """Return the pages whose scans belong to the source, in book order.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param source_id: Source whose scans the pages show.
+        :type source_id: SourceId
+        :returns: The pages cut from the scans of the source.
+        :rtype: Sequence[Page]
+        """
+        scan_ids = {scan.id for scan in self._tables.scans.values() if scan.source_id == source_id}
+        return self._in_book_order(
+            page for page in self._rows.values() if page.project_id == project_id and page.scan_id in scan_ids
+        )
+
+    @override
+    async def neighbour_key(
+        self, project_id: ProjectId, key: str, side: Side, *, excluding: Collection[PageId] = ()
+    ) -> str | None:
+        """Return the nearest order key on one side of ``key``, without the excluded pages.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param key: Order key the neighbour is looked up from.
+        :type key: str
+        :param side: Whether to look before or after ``key``.
+        :type side: Side
+        :param excluding: Pages that do not count as neighbours.
+        :type excluding: Collection[PageId]
+        :returns: The nearest key on that side, or None when no page lies there.
+        :rtype: str | None
+        """
+        pivot = key.encode()
+        keys = [
+            page.order_key for page in self._rows.values() if page.project_id == project_id and page.id not in excluding
+        ]
+        if side is Side.BEFORE:
+            return max((other for other in keys if other.encode() < pivot), key=str.encode, default=None)
+        return min((other for other in keys if other.encode() > pivot), key=str.encode, default=None)
+
+    @override
+    async def update_many(self, pages: Sequence[Page]) -> None:
+        """Replace the stored state of several pages, all of them or none, as one database transaction does.
+
+        :param pages: Pages with their new state.
+        :type pages: Sequence[Page]
+        :raises NotFoundError: If a page is not stored.
+        :raises ConflictError: If the new state of a page takes a key another page has.
+        """
+        before = dict(self._rows)
+        try:
+            for page in pages:
+                await self.update(page)
+        except DomainError:
+            self._rows.clear()
+            self._rows.update(before)
+            raise
+
+    @staticmethod
+    def _in_book_order(pages: Iterable[Page]) -> list[Page]:
+        """Sort pages by the byte order of their order keys.
+
+        :param pages: Pages of one project.
+        :type pages: Iterable[Page]
+        :returns: The pages in book order.
+        :rtype: list[Page]
+        """
+        return sorted(pages, key=lambda page: page.order_key.encode())
 
     @override
     async def list_for_scan(self, scan_id: ScanId) -> Sequence[Page]:
@@ -559,13 +684,39 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
 class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionId], PageVersionRepository):
     """Versions of the pages of the book."""
 
-    def __init__(self, tables: InMemoryTables) -> None:
+    def __init__(self, tables: InMemoryTables, *, snapshot: InMemoryTables, committed: InMemoryTables) -> None:
         """Work on the page version table of the unit of work's copy, checking versions against pages.
 
         :param tables: Every table of the working copy.
         :type tables: InMemoryTables
+        :param snapshot: The committed tables as the transaction began, which tell its own rows from others'.
+        :type snapshot: InMemoryTables
+        :param committed: The committed tables shared with every unit of work, which another transaction may have
+                          changed since this one began.
+        :type committed: InMemoryTables
         """
         super().__init__(tables.page_versions, tables)
+        self._snapshot = snapshot
+        self._committed = committed
+
+    @override
+    async def update(self, entity: PageVersion) -> PageVersion:
+        """Replace the stored state of a version, which another transaction may have deleted with its page meanwhile.
+
+        A database statement updates no row then, so this fails like it instead of letting the commit bring the
+        deleted row back.
+
+        :param entity: Version with its new state.
+        :type entity: PageVersion
+        :returns: The version as stored.
+        :rtype: PageVersion
+        :raises NotFoundError: If the version, or a version or page it refers to, is not stored, or was deleted by a
+                               transaction that committed after this one began.
+        :raises ConflictError: If its new state takes a unique value of another version.
+        """
+        if entity.id in self._snapshot.page_versions and entity.id not in self._committed.page_versions:
+            raise NotFoundError(entity.id)
+        return await super().update(entity)
 
     @override
     def _check(self, entity: PageVersion) -> None:
@@ -601,6 +752,50 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
             (version for version in self._rows.values() if version.page_id == page_id),
             key=attrgetter('created_at', ID_ATTRIBUTE),
         )
+
+    @override
+    async def list_to_prepare(self, project_id: ProjectId, stages: Collection[Stage]) -> Sequence[PageVersion]:
+        """Return the pending and failed versions of the project's pages in the given stages.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param stages: Stages whose versions are returned.
+        :type stages: Collection[Stage]
+        :returns: The versions still to prepare, the earliest first, ties by identifier.
+        :rtype: Sequence[PageVersion]
+        """
+        waiting = {VersionState.PENDING, VersionState.FAILED}
+        return sorted(
+            (
+                version
+                for version in self._rows.values()
+                if version.stage in stages
+                and version.state in waiting
+                and self._tables.pages[version.page_id].project_id == project_id
+            ),
+            key=attrgetter('created_at', ID_ATTRIBUTE),
+        )
+
+    @override
+    async def base_sizes(self, project_id: ProjectId) -> Sequence[PageSize]:
+        """Return the recorded sizes of the base versions of the project's included pages cut from a scan.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: The size of every such base version that records one.
+        :rtype: Sequence[PageSize]
+        """
+        shown = {
+            page.id
+            for page in self._tables.pages.values()
+            if page.project_id == project_id and page.included and page.origin is PageOrigin.SCAN
+        }
+        sizes = (
+            PageSize.from_data(version.data)
+            for version in self._rows.values()
+            if version.page_id in shown and version.input_id is None
+        )
+        return [size for size in sizes if size is not None]
 
     @override
     async def list_base_versions(self, page_ids: Collection[PageId]) -> Sequence[PageVersion]:
@@ -646,20 +841,23 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
 
     @override
     def _check(self, entity: Job) -> None:
-        """Require the job's project, and no other queued or running import in it, as the partial unique index does.
+        """Require the job's project, and no other active job of its kind in it, as the partial unique indexes do.
 
         :param entity: Job about to be stored.
         :type entity: Job
         :raises NotFoundError: If the job's project is not stored.
-        :raises ConflictError: If the job is a queued or running import and the project has another.
+        :raises ConflictError: If the job is a queued or running import, or a queued or running job writing page
+                               images, and the project has another of the same kind.
         """
         require(self._tables.projects, entity.project_id)
         if entity.kind in ONE_ACTIVE_AT_A_TIME and entity.state in JobState.active():
-            # Every other job gets its own identifier as its value, so only a queued or running import can match
+            # Every other job gets its own identifier as its value, so only an active job of the same kind can match
             self._require_unique(
                 entity,
                 lambda job: (
-                    job.project_id if job.kind in ONE_ACTIVE_AT_A_TIME and job.state in JobState.active() else job.id
+                    (job.project_id, job.kind)
+                    if job.kind in ONE_ACTIVE_AT_A_TIME and job.state in JobState.active()
+                    else job.id
                 ),
             )
 
@@ -758,7 +956,9 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.sources = InMemorySourceRepository(self._tables)
         self.scans = InMemoryScanRepository(self._tables)
         self.pages = InMemoryPageRepository(self._tables)
-        self.page_versions = InMemoryPageVersionRepository(self._tables)
+        self.page_versions = InMemoryPageVersionRepository(
+            self._tables, snapshot=self._snapshot, committed=self._database.tables
+        )
         self.jobs = InMemoryJobRepository(
             self._tables, snapshot=self._snapshot, committed=self._database.tables, guards=self._guards
         )

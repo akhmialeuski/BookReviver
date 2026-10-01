@@ -41,9 +41,10 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     SourceRow,
 )
 from bookreviver.domain.entities import Job, Page, PageVersion, Project, ProjectOverview, Scan, Source
+from bookreviver.domain.enums import PageOrigin, Side, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
-from bookreviver.domain.values import Slice
+from bookreviver.domain.values import PageSize, Slice
 from bookreviver.ports.persistence import (
     JobRepository,
     PageRepository,
@@ -65,7 +66,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import QueryableAttribute
 
     from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
-    from bookreviver.domain.enums import JobState
+    from bookreviver.domain.enums import JobState, Stage
     from bookreviver.domain.ids import AccountId
     from bookreviver.domain.values import SliceRequest
 
@@ -508,6 +509,18 @@ class SqlAlchemyScanRepository(SqlAlchemyRepository[Scan, ScanId, ScanRow], Scan
         )
 
     @override
+    async def list_by_ids(self, scan_ids: Collection[ScanId]) -> Sequence[Scan]:
+        """Return the stored scans among the given identifiers in one ``IN`` query.
+
+        :param scan_ids: Scans to read.
+        :type scan_ids: Collection[ScanId]
+        :returns: The scans that are stored.
+        :rtype: Sequence[Scan]
+        """
+        rows = await self._rows.get_many(CollectionFilter(field_name=ScanRow.id, values=set(scan_ids)))
+        return [self._mapper.to_entity(row) for row in rows]
+
+    @override
     async def list_unready(self, project_id: ProjectId) -> Sequence[Scan]:
         """Return the project's scans whose renditions are not ready, in the order ``list_for_project`` lists them.
 
@@ -537,7 +550,9 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
         super().__init__(rows=PageRows(session=session), mapper=PageMapper())
 
     @override
-    async def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Page]:
+    async def list_for_project(
+        self, project_id: ProjectId, request: SliceRequest, *, included_only: bool = False
+    ) -> Slice[Page]:
         """Return a slice of the project's pages in book order.
 
         The column's collation compares order keys byte by byte. The total is a separate count query, which stays
@@ -547,16 +562,123 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
         :type project_id: ProjectId
         :param request: Offset and limit of the slice.
         :type request: SliceRequest
-        :returns: Pages of the slice and the total number of the project's pages.
+        :param included_only: Whether to leave out the pages kept out of the book.
+        :type included_only: bool
+        :returns: Pages of the slice and the total number of the pages listed.
         :rtype: Slice[Page]
         """
+        conditions = [PageRow.included.is_(True)] if included_only else []
         rows, total = await self._rows.get_many_and_count(
             LimitOffset(limit=request.limit, offset=request.offset),
+            *conditions,
             order_by=PageRow.order_key.asc(),
             count_with_window_function=False,
             project_id=project_id,
         )
         return Slice(items=[self._mapper.to_entity(row) for row in rows], total=total)
+
+    @override
+    async def list_by_ids(self, project_id: ProjectId, page_ids: Collection[PageId]) -> Sequence[Page]:
+        """Return the given pages of a project in book order, in one ``IN`` query.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param page_ids: Identifiers of the pages to read.
+        :type page_ids: Collection[PageId]
+        :returns: The pages in book order.
+        :rtype: Sequence[Page]
+        :raises NotFoundError: If an identifier names no page of the project.
+        """
+        wanted = set(page_ids)
+        rows = await self._rows.get_many(
+            CollectionFilter(field_name=PageRow.id, values=wanted),
+            order_by=PageRow.order_key.asc(),
+            project_id=project_id,
+        )
+        if missing := wanted - {row.id for row in rows}:
+            raise NotFoundError(*missing)
+        return [self._mapper.to_entity(row) for row in rows]
+
+    @override
+    async def list_range(self, project_id: ProjectId, first_key: str, last_key: str) -> Sequence[Page]:
+        """Return the pages between two order keys, both included, from the unique index of project and key.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param first_key: Smallest order key of the range.
+        :type first_key: str
+        :param last_key: Greatest order key of the range.
+        :type last_key: str
+        :returns: The pages of the range in book order.
+        :rtype: Sequence[Page]
+        """
+        rows = await self._rows.get_many(
+            PageRow.order_key.between(first_key, last_key), order_by=PageRow.order_key.asc(), project_id=project_id
+        )
+        return [self._mapper.to_entity(row) for row in rows]
+
+    @override
+    async def list_for_source(self, project_id: ProjectId, source_id: SourceId) -> Sequence[Page]:
+        """Return the pages whose scans belong to the source, joining ``pages`` with ``scans``.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param source_id: Source whose scans the pages show.
+        :type source_id: SourceId
+        :returns: The pages cut from the scans of the source, in book order.
+        :rtype: Sequence[Page]
+        """
+        statement = (
+            select(PageRow)
+            .join(ScanRow, PageRow.scan_id == ScanRow.id)
+            .where(PageRow.project_id == project_id, ScanRow.source_id == source_id)
+            .order_by(PageRow.order_key)
+        )
+        return [self._mapper.to_entity(row) for row in (await self._rows.session.scalars(statement)).all()]
+
+    @override
+    async def neighbour_key(
+        self, project_id: ProjectId, key: str, side: Side, *, excluding: Collection[PageId] = ()
+    ) -> str | None:
+        """Return the nearest order key on one side of ``key``, read from the unique index of project and key.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param key: Order key the neighbour is looked up from.
+        :type key: str
+        :param side: Whether to look before or after ``key``.
+        :type side: Side
+        :param excluding: Pages that do not count as neighbours.
+        :type excluding: Collection[PageId]
+        :returns: The nearest key on that side, or None when no page lies there.
+        :rtype: str | None
+        """
+        before = side is Side.BEFORE
+        statement = (
+            select(PageRow.order_key)
+            .where(
+                PageRow.project_id == project_id,
+                PageRow.order_key < key if before else PageRow.order_key > key,
+                PageRow.id.not_in(excluding),
+            )
+            .order_by(PageRow.order_key.desc() if before else PageRow.order_key.asc())
+            .limit(1)
+        )
+        return await self._rows.session.scalar(statement)
+
+    @override
+    async def update_many(self, pages: Sequence[Page]) -> None:
+        """Replace the stored state of several pages, one after the other in the transaction of the unit of work.
+
+        The transaction makes the pages change together or not at all, as the unit of work rolls it back on an error.
+
+        :param pages: Pages with their new state.
+        :type pages: Sequence[Page]
+        :raises NotFoundError: If a page is not stored.
+        :raises ConflictError: If the new state of a page takes a key another page has.
+        """
+        for page in pages:
+            await self.update(page)
 
     @override
     async def list_for_scan(self, scan_id: ScanId) -> Sequence[Page]:
@@ -620,6 +742,54 @@ class SqlAlchemyPageVersionRepository(
             order_by=[PageVersionRow.created_at.asc(), PageVersionRow.id.asc()], page_id=page_id
         )
         return [self._mapper.to_entity(row) for row in rows]
+
+    @override
+    async def list_to_prepare(self, project_id: ProjectId, stages: Collection[Stage]) -> Sequence[PageVersion]:
+        """Return the pending and failed versions of the project's pages in the given stages, joining ``pages``.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param stages: Stages whose versions are returned.
+        :type stages: Collection[Stage]
+        :returns: The versions still to prepare, the earliest first, ties by identifier.
+        :rtype: Sequence[PageVersion]
+        """
+        statement = (
+            select(PageVersionRow)
+            .join(PageRow, PageVersionRow.page_id == PageRow.id)
+            .where(
+                PageRow.project_id == project_id,
+                PageVersionRow.stage.in_(stages),
+                PageVersionRow.state.in_([VersionState.PENDING, VersionState.FAILED]),
+            )
+            .order_by(PageVersionRow.created_at, PageVersionRow.id)
+        )
+        return [self._mapper.to_entity(row) for row in (await self._rows.session.scalars(statement)).all()]
+
+    @override
+    async def base_sizes(self, project_id: ProjectId) -> Sequence[PageSize]:
+        """Return the sizes the base versions of the project's included scan pages record in their data.
+
+        Only the data column is read, and the sizes are taken from it here, since the column is JSON and the same
+        reading serves every database.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: The size of every such base version that records one.
+        :rtype: Sequence[PageSize]
+        """
+        statement = (
+            select(PageVersionRow.data)
+            .join(PageRow, PageVersionRow.page_id == PageRow.id)
+            .where(
+                PageRow.project_id == project_id,
+                PageRow.included.is_(True),
+                PageRow.origin == PageOrigin.SCAN,
+                PageVersionRow.input_id.is_(None),
+            )
+        )
+        sizes = (PageSize.from_data(data) for data in (await self._rows.session.scalars(statement)).all())
+        return [size for size in sizes if size is not None]
 
     @override
     async def list_base_versions(self, page_ids: Collection[PageId]) -> Sequence[PageVersion]:

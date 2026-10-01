@@ -8,12 +8,14 @@ from attrs import evolve, field, fields_dict, frozen, validators
 
 from bookreviver.domain.enums import (
     ContributorRole,
+    NewPageOrigin,
     Orthography,
     Rendition,
     RightsStatus,
     Script,
     TransformKind,
     UploadProblem,
+    VersionData,
 )
 from bookreviver.domain.errors import InvalidIdentifierError, UploadRejectedError
 
@@ -26,10 +28,13 @@ if TYPE_CHECKING:
         ColorMode,
         FileType,
         IdentifierScheme,
+        LabelStyle,
+        PageKind,
         RejectionReason,
+        Side,
         SourceKind,
     )
-    from bookreviver.domain.ids import SourceId, StorageKey
+    from bookreviver.domain.ids import PageId, SourceId, StorageKey
 
 # JSON-compatible metadata as read from a source file
 type MetadataMap = Mapping[str, Any]
@@ -425,6 +430,133 @@ class Transform:
 
 
 @frozen(kw_only=True)
+class PageAnchor:
+    """A place in the book named by a page and the side of it, where moved or new pages are put.
+
+    :ivar page_id: Page the place is next to.
+    :ivar side: Whether the place lies before or after that page.
+    """
+
+    page_id: PageId
+    side: Side
+
+
+@frozen(kw_only=True)
+class PageNumbering:
+    """How to write the printed numbers of a range of pages, which is applied once and not stored.
+
+    The range runs from one page to another in the order of the book. Pages kept out of the book, and pages of the kinds
+    in ``skip_kinds``, take no number and keep their label, since the plates of an old book are usually not counted.
+
+    :ivar first_page_id: First page of the range.
+    :ivar last_page_id: Last page of the range, which may be the first page but not stand before it.
+    :ivar style: How the numbers are written; ``none`` erases the labels of the range.
+    :ivar start: Number of the first numbered page, from 1.
+    :ivar bracketed: Whether the label is enclosed in square brackets, as a bibliographer marks a number that is not
+                     printed in the book.
+    :ivar skip_kinds: Kinds of page that are not numbered.
+    """
+
+    first_page_id: PageId
+    last_page_id: PageId
+    style: LabelStyle
+    start: int = field(default=1, validator=validators.ge(1))
+    bracketed: bool = False
+    skip_kinds: frozenset[PageKind] = frozenset()
+
+    def __attrs_post_init__(self) -> None:
+        """Check that the first number can be written in the style.
+
+        :raises ValueError: If the style is Roman and the first number is above 3999.
+        """
+        self.style.write(self.start)
+
+    def label(self, number: int) -> str:
+        """Write the label of the page that takes ``number``.
+
+        :param number: Number of the page, counted from ``start``.
+        :type number: int
+        :returns: The number in the style of the numbering, in square brackets when ``bracketed``, and empty for the
+                  style ``none``.
+        :rtype: str
+        :raises ValueError: If the style cannot write the number, such as 4000 in Roman numerals.
+        """
+        text = self.style.write(number)
+        return f'[{text}]' if self.bracketed and text else text
+
+
+@frozen(kw_only=True)
+class PageSize:
+    """The size of a page image in pixels and the resolution it was made at, as a base version records them.
+
+    The median of these over the pages of a book gives the size of a generated blank leaf, so the leaf stands level
+    with its neighbours in a spread.
+
+    :ivar width_px: Width of the image in pixels.
+    :ivar height_px: Height of the image in pixels.
+    :ivar dpi: Resolution in dots per inch, or None when the page has none recorded.
+    """
+
+    width_px: int = field(validator=validators.gt(0))
+    height_px: int = field(validator=validators.gt(0))
+    dpi: float | None = field(default=None, validator=validators.optional(validators.gt(0)))
+
+    @classmethod
+    def from_data(cls, data: MetadataMap) -> Self | None:
+        """Read the size a base version recorded in its data.
+
+        :param data: Data of a page version.
+        :type data: MetadataMap
+        :returns: The size, or None when the data holds no usable width and height.
+        :rtype: Self | None
+        """
+        width, height, dpi = (data.get(key) for key in (VersionData.WIDTH_PX, VersionData.HEIGHT_PX, VersionData.DPI))
+        if not (isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0):
+            return None
+        return cls(width_px=width, height_px=height, dpi=dpi if isinstance(dpi, int | float) and dpi > 0 else None)
+
+    def as_data(self) -> dict[str, Any]:
+        """Return the size as the data of a base version, which leaves out an unknown resolution.
+
+        :returns: The width and height, and the resolution when it is known.
+        :rtype: dict[str, Any]
+        """
+        data: dict[str, Any] = {VersionData.WIDTH_PX: self.width_px, VersionData.HEIGHT_PX: self.height_px}
+        if self.dpi is not None:
+            data[VersionData.DPI] = self.dpi
+        return data
+
+
+@frozen(kw_only=True)
+class NewPage:
+    """A page the user adds to the book without a scan: a blank leaf or a placeholder.
+
+    :ivar origin: Whether the page is a generated blank leaf or a placeholder that waits for a scan.
+    :ivar kind: Role of the page in the book.
+    :ivar label: Printed number of the page, or empty.
+    :ivar notes: Notes of the user.
+    :ivar anchor: Place the page is put at, or None for the end of the book.
+    :ivar size: Size of a blank leaf, or None for the median size of the book's pages; never given for a placeholder.
+    """
+
+    origin: NewPageOrigin
+    kind: PageKind
+    label: str = ''
+    notes: str = ''
+    anchor: PageAnchor | None = None
+    size: PageSize | None = None
+
+    def __attrs_post_init__(self) -> None:
+        """Check that only a blank leaf has a size.
+
+        :raises ValueError: If a placeholder is given a size, since it has no image.
+        """
+        if self.size is not None and self.origin is not NewPageOrigin.BLANK:
+            err_msg = f'A {self.origin.label.lower()} has no image, so it has no size.'
+            raise ValueError(err_msg)
+
+
+@frozen(kw_only=True)
 class UploadedSource:
     """The staged files of an upload that make one source, as the source inspector groups them.
 
@@ -444,14 +576,36 @@ class SourceAnalysis:
 
     :ivar kind: Kind of the source that was inspected.
     :ivar scans: Facts of every scan in the order of the source, which gives the scans their numbers.
+    :ivar scan_labels: Page label the file gives each scan, such as the PDF page label ``xii``, aligned with ``scans``,
+                       or empty for a format that carries no labels.
     :ivar file_metadata: Technical metadata of the source's format, such as the document information of a PDF.
     :ivar suggestion: Description fields found in the source, offered to fill empty book details.
     """
 
     kind: SourceKind
     scans: Sequence[ScanFacts]
+    scan_labels: Sequence[str] = ()
     file_metadata: MetadataMap = field(factory=dict)
     suggestion: MetadataSuggestion = field(factory=MetadataSuggestion)
+
+    def __attrs_post_init__(self) -> None:
+        """Check that the labels, when a format gives any, are one per scan.
+
+        :raises ValueError: If there are labels, but not as many as scans.
+        """
+        if self.scan_labels and len(self.scan_labels) != len(self.scans):
+            err_msg = f'{len(self.scan_labels)} page labels do not fit {len(self.scans)} scans.'
+            raise ValueError(err_msg)
+
+    def label_of(self, number: int) -> str:
+        """Return the page label the file gives a scan.
+
+        :param number: Position of the scan in the source, starting at 0.
+        :type number: int
+        :returns: The label, or an empty string for a format without labels or a scan without one.
+        :rtype: str
+        """
+        return self.scan_labels[number] if self.scan_labels else ''
 
 
 @frozen(kw_only=True)

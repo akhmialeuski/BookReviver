@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING
 from attrs import asdict, evolve, field, frozen
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Project
-    from bookreviver.domain.enums import ImagePolicy, Orthography, RightsStatus, Script
+    from bookreviver.domain.entities import Page, Project
+    from bookreviver.domain.enums import ImagePolicy, Orthography, PageKind, RightsStatus, Script
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor
 
@@ -149,3 +149,35 @@ class ProjectChanges:
         if self.cover is not None:
             changed = evolve(changed, cover_page_id=self.cover.page_id)
         return changed
+
+
+@frozen(kw_only=True)
+class PageChanges:
+    """New values for some fields of a page; a field left as None keeps its current value.
+
+    A cleared label or note is an empty string, so None never has to mean "clear" here. The kind and the inclusion of a
+    page have no empty value and are never cleared.
+
+    :ivar label: New printed number, or an empty string for an unnumbered page.
+    :ivar kind: New role of the page in the book.
+    :ivar included: New decision whether the page is part of the book.
+    :ivar notes: New notes of the user, or an empty string for none.
+    """
+
+    label: str | None = None
+    kind: PageKind | None = None
+    included: bool | None = None
+    notes: str | None = None
+
+    def apply_to(self, page: Page) -> Page:
+        """Return ``page`` with every given field replaced.
+
+        The update time is left to the caller, which owns the clock.
+
+        :param page: Current state of the page.
+        :type page: Page
+        :returns: The page with the given fields replaced and the others kept.
+        :rtype: Page
+        """
+        given = {name: value for name, value in asdict(self, recurse=False).items() if value is not None}
+        return evolve(page, **given)

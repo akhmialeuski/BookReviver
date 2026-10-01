@@ -10,9 +10,17 @@ import logging
 
 from dishka import AnyOf, Provider, Scope, provide
 
-from bookreviver.adapters.imaging import DjvuFormat, DjvuLibreTools, ImageFormat, PdfFormat, SourceReader, VipsTiler
+from bookreviver.adapters.imaging import (
+    DjvuFormat,
+    DjvuLibreTools,
+    ImageFormat,
+    PdfFormat,
+    SourceReader,
+    VipsBlankPageMaker,
+    VipsTiler,
+)
 from bookreviver.app.settings import Settings
-from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
+from bookreviver.ports.imaging import BlankPageMaker, PageRasterizer, SourceInspector, Tiler
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +50,15 @@ class ImagingProvider(Provider):
         return SourceReader(
             formats=(PdfFormat(jpeg_quality=jpeg_quality), ImageFormat(jpeg_quality=jpeg_quality), djvu)
         )
+
+    @provide
+    def blank_page_maker(self) -> BlankPageMaker:
+        """Build the maker of blank leaves, a temporary adapter that the ``pages.blank`` processor will replace.
+
+        :returns: The libvips blank page maker.
+        :rtype: BlankPageMaker
+        """
+        return VipsBlankPageMaker()
 
     @provide
     def tiler(self, settings: Settings) -> Tiler:

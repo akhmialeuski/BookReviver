@@ -14,8 +14,9 @@ already committed and writing the directories of unready scans again. The job ca
 its progress is guarded by its state, and the run stops at the first one that finds it cancelled.
 
 The base version of a page, ``split.none``, holds the page's own copy of its scan's ``full`` image and the renditions
-cut from that copy, so the page stands on its own once its scan is deleted. Until the plugin framework exists this
-module writes it, and the ``split.none`` processor replaces this code.
+cut from that copy, so the page stands on its own once its scan is deleted. Until the plugin framework exists
+``BaseVersions`` writes it, as it does when a scan is bound to a placeholder, and the ``split.none`` processor replaces
+that code.
 
 A file is named by its relative path in the upload, such as ``vol1/001.tif``, and the order of the upload is the order
 of the book: the job lists its files as the user gave them, sources are created in that order, and the pages of their
@@ -34,15 +35,14 @@ from uuid import uuid4
 
 from attrs import evolve, frozen
 
-from bookreviver.domain.entities import Job, Page, PageVersion, Scan, Source
+from bookreviver.domain.entities import Job, Page, Scan, Source
 from bookreviver.domain.enums import (
     FileType,
     JobKind,
     JobState,
+    PageChange,
     PageOrigin,
     RejectionReason,
-    Rendition,
-    Stage,
     SystemFile,
     UploadProblem,
     VersionState,
@@ -60,19 +60,19 @@ from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import (
     ImportRequest,
     ImportResult,
-    ProcessorRef,
     Progress,
     RejectedFile,
     Renditions,
     UploadPath,
 )
+from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.projects import owned_project
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Sequence
 
     from bookreviver.domain.entities import Actor
-    from bookreviver.domain.ids import ProjectId, StorageKey
+    from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.values import MetadataSuggestion, UploadedSource
     from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
     from bookreviver.ports.ordering import OrderKeys
@@ -85,10 +85,7 @@ NO_SOURCE_IMPORTED: str = 'None of the uploaded files could be imported.'
 NOT_QUEUED: str = 'The import could not be queued. Upload the files again.'
 UNEXPECTED_FAILURE: str = 'The import stopped because of an unexpected error. It has been logged.'
 # Kinds of job that import files, of which a project runs one at a time
-IMPORT_JOBS: frozenset[JobKind] = frozenset(
-    {JobKind.IMPORT_SOURCE}
-)  # The step that gives a page its base version while the page split is skipped, until its processor exists
-SPLIT_NONE: ProcessorRef = ProcessorRef(key='split.none', version='1')
+IMPORT_JOBS: frozenset[JobKind] = frozenset({JobKind.IMPORT_SOURCE})
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +185,9 @@ class ImportRun:
         self._assets = storage.assets
         self._inspector = imaging.inspector
         self._rasterizer = imaging.rasterizer
-        self._tiler = imaging.tiler
+        self._base_versions = BaseVersions(
+            assets=storage.assets, tiler=imaging.tiler, iiif_root=runtime.limits.iiif_root
+        )
         self._order_keys = runtime.order_keys
         self._publisher = runtime.publisher
         self._clock = runtime.clock
@@ -307,7 +306,14 @@ class ImportRun:
             imported_at=moment,
         )
         scans = [
-            Scan(id=ScanId(uuid4()), project_id=source.project_id, source_id=source.id, number=number, facts=facts)
+            Scan(
+                id=ScanId(uuid4()),
+                project_id=source.project_id,
+                source_id=source.id,
+                number=number,
+                source_label=analysis.label_of(number),
+                facts=facts,
+            )
             for number, facts in enumerate(analysis.scans)
         ]
         order_keys = self._order_keys.spread(
@@ -346,7 +352,9 @@ class ImportRun:
         self._imported.append(source.id)
         self._handled.update(uploaded.names)
         await self._publisher.publish(SourceImported(project_id=source.project_id, source=source))
-        await self._publisher.publish(PagesChanged(project_id=source.project_id))
+        await self._publisher.publish(
+            PagesChanged(project_id=source.project_id, page_ids=[page.id for page in pages], change=PageChange.ADDED)
+        )
         if described:
             await self._publisher.publish(ProjectChanged(project_id=source.project_id))
 
@@ -423,22 +431,11 @@ class ImportRun:
             self._assets.writable(of_scan(full)) as target,
         ):
             await self._rasterizer.extract(source.kind, files, scan.number, target, full=full)
-        await self._derive(of_scan, full=full)
+        await self._base_versions.derive(of_scan, full=full)
         versions = []
         for page in pages:
-            version = PageVersion(
-                id=PageVersion.identify(page_id=page.id, processor=SPLIT_NONE),
-                page_id=page.id,
-                stage=Stage.PAGE_SPLIT,
-                processor=SPLIT_NONE,
-                renditions=Renditions(ready=True, full=full),
-                state=VersionState.READY,
-                created_at=self._clock.now(),
-            )
-            of_version = partial(self._keys.version_rendition, version)
-            await self._assets.delete_prefix(self._keys.version_directory(version))
-            await self._assets.copy(of_scan(full), of_version(full))
-            await self._derive(of_version, full=full)
+            version = BaseVersions.split_none(page=page, scan=ready, state=VersionState.READY, moment=self._clock.now())
+            await self._base_versions.copy_scan(version, ready)
             versions.append(version)
         async with self._lock:
             await self._record_progress(done=1)
@@ -446,23 +443,6 @@ class ImportRun:
             await self._uow.scans.update(ready)
             await self._commit()
             await self._publisher.publish(ScanReady(project_id=scan.project_id, scan=ready))
-
-    async def _derive(self, key: Callable[[Rendition], StorageKey], *, full: Rendition) -> None:
-        """Cut the preview, the thumbnail and the tile pyramid from the ``full`` image stored under the keys.
-
-        :param key: Function giving the storage key of each rendition of one scan or one page version.
-        :type key: Callable[[Rendition], StorageKey]
-        :param full: Format the ``full`` image was written in, which names the file to cut from.
-        :type full: Rendition
-        """
-        async with self._assets.readable(key(full)) as image:
-            async with self._assets.writable(key(Rendition.PREVIEW)) as target:
-                await self._tiler.preview(image, target)
-            async with self._assets.writable(key(Rendition.THUMBNAIL)) as target:
-                await self._tiler.thumbnail(image, target)
-            tiles = key(Rendition.TILES)
-            async with self._assets.writable(tiles) as target:
-                await self._tiler.tile(image, target, resource_id=f'{self._limits.iiif_root}/{tiles}')
 
     def _reject(self, names: Sequence[str], reason: RejectionReason, detail: str) -> None:
         """Record that the files of one source were not imported, and why.

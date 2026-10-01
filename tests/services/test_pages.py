@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
+from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
@@ -11,7 +12,6 @@ from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import PageId, StorageKey
 from bookreviver.domain.keys import KeySegment, ProjectKeys
 from bookreviver.domain.values import SliceRequest
-from bookreviver.services.pages import PageService
 from tests.helpers.builders import make_page, make_page_version, make_project, make_scan, make_source, new_account_id
 from tests.helpers.seeding import commit_project
 
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Page, PageVersion, Project
+    from bookreviver.services.pages import PageService
 
 pytestmark = pytest.mark.anyio
 
@@ -29,20 +30,6 @@ STORED_KEYS: list[str] = ['a1', 'a0', 'a0V']
 BOOK_ORDER: list[int] = [1, 2, 0]
 WINDOW: SliceRequest = SliceRequest(offset=1, limit=1)
 FILE_CONTENT: bytes = b'derived file'
-
-
-@pytest.fixture
-def fx_service(fx_database: InMemoryDatabase, fx_asset_store: LocalAssetStore) -> Callable[[], PageService]:
-    """Return a function building the service for one request.
-
-    :param fx_database: In-memory database every request of the test shares.
-    :type fx_database: InMemoryDatabase
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
-    :returns: Function building a service over a new unit of work.
-    :rtype: Callable[[], PageService]
-    """
-    return lambda: PageService(uow=InMemoryUnitOfWork(fx_database), assets=fx_asset_store)
 
 
 async def _commit_book(database: InMemoryDatabase, project: Project) -> tuple[list[Page], list[PageVersion]]:
@@ -151,6 +138,50 @@ class TestManifest:
 
         with pytest.raises(NotFoundError):
             await fx_service().manifest(fx_actor, project.id, SliceRequest())
+
+    async def test_included_only_leaves_out_the_pages_kept_out_and_numbers_the_rest(
+        self, fx_service: Callable[[], PageService], fx_database: InMemoryDatabase, fx_actor: Actor
+    ) -> None:
+        """Verify a listing of the included pages skips an excluded page, and numbers the listed pages among themselves.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        pages = [make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1', 'a2')]
+        pages[1] = evolve(pages[1], included=False)
+        await commit_project(fx_database, project, *pages)
+
+        manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest(), included_only=True)
+
+        expect([overview.page for overview in manifest.items] == [pages[0], pages[2]])
+        expect([overview.position for overview in manifest.items] == [0, 1])
+        expect(manifest.total == len(manifest.items))
+        assert_expectations()
+
+    async def test_names_the_source_of_a_page_with_a_scan_and_none_for_a_placeholder(
+        self, fx_service: Callable[[], PageService], fx_database: InMemoryDatabase, fx_actor: Actor
+    ) -> None:
+        """Verify each page of the window knows the source of its scan, which selects the pages of one source.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        await _commit_book(fx_database, project)
+        source = (await InMemoryUnitOfWork(fx_database).sources.list_for_project(project.id))[0]
+
+        manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest())
+
+        assert [overview.source_id for overview in manifest.items] == [None, source.id, source.id]
 
 
 class TestGet:
