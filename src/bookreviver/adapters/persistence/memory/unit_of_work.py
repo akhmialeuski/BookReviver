@@ -4,16 +4,19 @@ The adapter backs the service and API tests and runs the same port contract suit
 reproduces the behaviour services rely on rather than only storing rows. It mirrors the schema of the SQL tables and
 transaction isolation:
 
-- Foreign keys: a source, a scan, a page or a job needs its project, a scan its source, a version its page, and a
-  source, a page or a version the import job, scan or input version it names. A project's cover is one of its own
+- Foreign keys: a source, a scan, a page, a recipe or a job needs its project, a scan its source, a version, a page
+  stage and a page edit their page, and a source, a page, a version or a page stage the import job, scan, input
+  version, head version or recipe it names. A project's cover is one of its own
   pages. The owner of a project is not checked, because accounts belong to fastapi-users and have no port.
 - Unique keys: the digest of a source's main file within its project, the number of a scan within its source, the
-  order key of a page within its project, the pair of a scan and a slot, and the project of a queued or running
-  import job, so a project runs one import at a time.
-- Referential actions: a project takes its sources, scans, pages and jobs with it, a source its scans, and a page
-  its versions. A deleted cover page leaves its project without a cover, a deleted scan leaves its pages without
-  their scan, a deleted job leaves the sources it imported
-  without their import job, and a deleted version leaves the versions it fed without their input.
+  order key of a page within its project, the pair of a scan and a slot, the project of a queued or running
+  import job, so a project runs one import at a time, and the project and stage of an active recipe, so a stage has
+  one active recipe.
+- Referential actions: a project takes its sources, scans, pages, recipes and jobs with it, a source its scans, and a
+  page its versions, stage records and edits. A deleted cover page leaves its project without a cover, a deleted
+  scan leaves its pages without their scan, a deleted job leaves the sources it imported without their import job,
+  a deleted version leaves the versions it fed without their input and the stage records it headed without their
+  head, and a deleted recipe leaves the stage records it processed without their recipe.
 - Isolation: a unit of work reads and writes a private copy of the tables, and ``commit`` merges only the rows it
   added, replaced or removed, so two units of work touching different rows do not overwrite each other.
 
@@ -26,16 +29,31 @@ from typing import TYPE_CHECKING, override
 
 from attrs import define, evolve, field, fields
 
-from bookreviver.domain.entities import Job, Page, PageVersion, Project, ProjectOverview, Scan, Source
-from bookreviver.domain.enums import JobKind, JobState, PageOrigin, Side, VersionState
+from bookreviver.domain.entities import (
+    Job,
+    Page,
+    PageEdit,
+    PageStage,
+    PageVersion,
+    Project,
+    ProjectOverview,
+    Recipe,
+    Scan,
+    Source,
+)
+from bookreviver.domain.enums import JobKind, JobState, PageOrigin, Side, Stage, VersionScale, VersionState
 from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
-from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
-from bookreviver.domain.values import PageSize, Slice, SliceRequest
+from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
+from bookreviver.domain.values import PageEditKey, PageSize, PageStageKey, Slice, SliceRequest
+from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
     JobRepository,
+    PageEditRepository,
     PageRepository,
+    PageStageRepository,
     PageVersionRepository,
     ProjectRepository,
+    RecipeRepository,
     Repository,
     ScanRepository,
     SourceRepository,
@@ -44,14 +62,19 @@ from bookreviver.ports.persistence import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Hashable, Iterable, Mapping, Sequence
+    from datetime import datetime
 
-    from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import AccountId
 
 # Attribute holding the identifier of every entity addressed by one
 ID_ATTRIBUTE: str = 'id'
-# The kinds of job a project runs one of at a time, the rows of the partial unique index of the ``jobs`` table
-ONE_ACTIVE_AT_A_TIME: frozenset[JobKind] = frozenset({JobKind.IMPORT_SOURCE, JobKind.PREPARE_PAGES})
+# The groups of kinds of job of which a project runs one at a time, each the rows of a partial unique index of the
+# ``jobs`` table: the imports, the writing of page images, and the jobs that process the versions of pages
+ONE_ACTIVE_AT_A_TIME: tuple[frozenset[JobKind], ...] = (
+    frozenset({JobKind.IMPORT_SOURCE}),
+    frozenset({JobKind.PREPARE_PAGES}),
+    JobKind.processing(),
+)
 
 
 @define(kw_only=True)
@@ -63,6 +86,9 @@ class InMemoryTables:
     :ivar scans: Scans by identifier.
     :ivar pages: Pages by identifier.
     :ivar page_versions: Page versions by identifier.
+    :ivar page_stages: Page stage records by page and stage.
+    :ivar page_edits: Page edits by page, stage and processor.
+    :ivar recipes: Recipes by identifier.
     :ivar jobs: Jobs by identifier.
     """
 
@@ -71,6 +97,9 @@ class InMemoryTables:
     scans: dict[ScanId, Scan] = field(factory=dict)
     pages: dict[PageId, Page] = field(factory=dict)
     page_versions: dict[PageVersionId, PageVersion] = field(factory=dict)
+    page_stages: dict[PageStageKey, PageStage] = field(factory=dict)
+    page_edits: dict[PageEditKey, PageEdit] = field(factory=dict)
+    recipes: dict[RecipeId, Recipe] = field(factory=dict)
     jobs: dict[JobId, Job] = field(factory=dict)
 
     def forget_scans(self, scan_ids: Collection[ScanId]) -> None:
@@ -265,14 +294,17 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
 
     @override
     def _cascade(self, entity: Project) -> None:
-        """Remove the project's sources, scans, pages with their versions, and jobs, as the database cascade does.
+        """Remove the project's sources, scans, pages with their records, recipes and jobs, as the cascade does.
 
         :param entity: Project just removed.
         :type entity: Project
         """
         doomed_pages = {page.id for page in self._tables.pages.values() if page.project_id == entity.id}
         remove_where(self._tables.page_versions, lambda version: version.page_id in doomed_pages)
+        remove_where(self._tables.page_stages, lambda stage: stage.page_id in doomed_pages)
+        remove_where(self._tables.page_edits, lambda edit: edit.page_id in doomed_pages)
         remove_where(self._tables.pages, lambda page: page.id in doomed_pages)
+        remove_where(self._tables.recipes, lambda recipe: recipe.project_id == entity.id)
         remove_where(self._tables.sources, lambda source: source.project_id == entity.id)
         remove_where(self._tables.scans, lambda scan: scan.project_id == entity.id)
         remove_where(self._tables.jobs, lambda job: job.project_id == entity.id)
@@ -502,12 +534,14 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
 
     @override
     def _cascade(self, entity: Page) -> None:
-        """Remove the page's versions and leave a project it was the cover of without a cover, as the database does.
+        """Remove the page's versions, stage records and edits, and leave a project it was the cover of without one.
 
         :param entity: Page just removed.
         :type entity: Page
         """
         remove_where(self._tables.page_versions, lambda version: version.page_id == entity.id)
+        remove_where(self._tables.page_stages, lambda stage: stage.page_id == entity.id)
+        remove_where(self._tables.page_edits, lambda edit: edit.page_id == entity.id)
         if (project := self._tables.projects.get(entity.project_id)) is not None and project.cover_page_id == entity.id:
             self._tables.projects[project.id] = evolve(project, cover_page_id=None)
 
@@ -731,13 +765,15 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
 
     @override
     def _cascade(self, entity: PageVersion) -> None:
-        """Leave the versions the removed one fed without their input, as the database's ``SET NULL`` does.
+        """Leave the versions the removed one fed, and the stages it headed, without it, as ``SET NULL`` does.
 
         :param entity: Version just removed.
         :type entity: PageVersion
         """
         for version in [version for version in self._rows.values() if version.input_id == entity.id]:
             self._rows[version.id] = evolve(version, input_id=None)
+        for stage in [stage for stage in self._tables.page_stages.values() if stage.head_version_id == entity.id]:
+            self._tables.page_stages[stage.key] = evolve(stage, head_version_id=None)
 
     @override
     async def list_for_page(self, page_id: PageId) -> Sequence[PageVersion]:
@@ -754,13 +790,13 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
         )
 
     @override
-    async def list_to_prepare(self, project_id: ProjectId, stages: Collection[Stage]) -> Sequence[PageVersion]:
-        """Return the pending and failed versions of the project's pages in the given stages.
+    async def list_to_prepare(self, project_id: ProjectId, processor_keys: Collection[str]) -> Sequence[PageVersion]:
+        """Return the pending and failed versions of the project's pages made by the given processors.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
-        :param stages: Stages whose versions are returned.
-        :type stages: Collection[Stage]
+        :param processor_keys: Keys of the processors whose versions are returned.
+        :type processor_keys: Collection[str]
         :returns: The versions still to prepare, the earliest first, ties by identifier.
         :rtype: Sequence[PageVersion]
         """
@@ -769,7 +805,7 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
             (
                 version
                 for version in self._rows.values()
-                if version.stage in stages
+                if version.processor.key in processor_keys
                 and version.state in waiting
                 and self._tables.pages[version.page_id].project_id == project_id
             ),
@@ -811,6 +847,371 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
             key=attrgetter('created_at', ID_ATTRIBUTE),
         )
 
+    @override
+    async def list_by_ids(self, version_ids: Collection[PageVersionId]) -> Sequence[PageVersion]:
+        """Return the stored versions among the given identifiers, the earliest first, ties by identifier.
+
+        :param version_ids: Identifiers of the versions to read.
+        :type version_ids: Collection[PageVersionId]
+        :returns: The versions found.
+        :rtype: Sequence[PageVersion]
+        """
+        return sorted(
+            (version for version in self._rows.values() if version.id in version_ids),
+            key=attrgetter('created_at', ID_ATTRIBUTE),
+        )
+
+    @override
+    async def find(self, version_id: PageVersionId) -> PageVersion | None:
+        """Return the version with this identifier.
+
+        :param version_id: Identifier of the version.
+        :type version_id: PageVersionId
+        :returns: The stored version, or None.
+        :rtype: PageVersion | None
+        """
+        return self._rows.get(version_id)
+
+    @override
+    async def list_for_stage(
+        self, page_id: PageId, stage: Stage | None, scale: VersionScale | None, request: SliceRequest
+    ) -> Slice[PageVersion]:
+        """Return a window of the versions of one page matching a stage and a scale, the earliest first.
+
+        :param page_id: Page owning the versions.
+        :type page_id: PageId
+        :param stage: Stage listed, or None for every stage.
+        :type stage: Stage | None
+        :param scale: Scale listed, or None for both.
+        :type scale: VersionScale | None
+        :param request: Offset and limit of the window.
+        :type request: SliceRequest
+        :returns: The window and the number of versions that match.
+        :rtype: Slice[PageVersion]
+        """
+        matching = sorted(
+            (
+                version
+                for version in self._rows.values()
+                if version.page_id == page_id
+                and (stage is None or version.stage == stage)
+                and (scale is None or version.scale == scale)
+            ),
+            key=attrgetter('created_at', ID_ATTRIBUTE),
+        )
+        return Slice(items=matching[request.offset : request.offset + request.limit], total=len(matching))
+
+    @override
+    async def collectable(
+        self, project_id: ProjectId, older_than: datetime, previews_older_than: datetime
+    ) -> Sequence[PageVersion]:
+        """Return the old versions that are neither base versions nor in the chain of a current version.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param older_than: Full runs created before this moment may go.
+        :type older_than: datetime
+        :param previews_older_than: Previews created before this moment may go.
+        :type previews_older_than: datetime
+        :returns: The versions that may be deleted, the earliest first, ties by identifier.
+        :rtype: Sequence[PageVersion]
+        """
+        pages = {page.id for page in self._tables.pages.values() if page.project_id == project_id}
+        versions = {version.id: version for version in self._rows.values() if version.page_id in pages}
+        heads = [
+            stage.head_version_id
+            for stage in self._tables.page_stages.values()
+            if stage.page_id in pages and stage.head_version_id is not None
+        ]
+        eligible = [
+            version.id
+            for version in versions.values()
+            if version.input_id is not None
+            and version.created_at < (previews_older_than if version.scale is VersionScale.PREVIEW else older_than)
+        ]
+        goes = collectable_versions(
+            {version.id: version.input_id for version in versions.values()}, eligible=eligible, heads=heads
+        )
+        return sorted((versions[version_id] for version_id in goes), key=attrgetter('created_at', ID_ATTRIBUTE))
+
+    @override
+    async def delete_many(self, version_ids: Collection[PageVersionId]) -> None:
+        """Remove the stored versions among the given ones, with the actions of the keys that refer to them.
+
+        :param version_ids: Versions to remove.
+        :type version_ids: Collection[PageVersionId]
+        """
+        for version_id in version_ids:
+            if version_id in self._rows:
+                await self.delete(version_id)
+
+
+class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], PageStageRepository):
+    """The current version of each stage of each page."""
+
+    def __init__(self, tables: InMemoryTables) -> None:
+        """Work on the page stage table of the unit of work's copy, checking records against pages, versions, recipes.
+
+        :param tables: Every table of the working copy.
+        :type tables: InMemoryTables
+        """
+        super().__init__(tables.page_stages, tables)
+        self._identify = attrgetter('key')
+
+    @override
+    def _check(self, entity: PageStage) -> None:
+        """Require the page, the head version and the recipe of the record.
+
+        :param entity: Record about to be stored.
+        :type entity: PageStage
+        :raises NotFoundError: If the page, the head version or the recipe the record names is not stored.
+        """
+        require(self._tables.pages, entity.page_id)
+        require(self._tables.page_versions, entity.head_version_id)
+        require(self._tables.recipes, entity.recipe_id)
+
+    @override
+    async def save(self, stage: PageStage) -> PageStage:
+        """Store the record, replacing the one of the same page and stage.
+
+        :param stage: Record to store.
+        :type stage: PageStage
+        :returns: The record as stored.
+        :rtype: PageStage
+        :raises NotFoundError: If the page, the head version or the recipe is not stored.
+        """
+        self._check(stage)
+        self._rows[stage.key] = stage
+        return stage
+
+    @override
+    async def find(self, key: PageStageKey) -> PageStage | None:
+        """Return the record of a stage of a page.
+
+        :param key: Page and stage.
+        :type key: PageStageKey
+        :returns: The record, or None.
+        :rtype: PageStage | None
+        """
+        return self._rows.get(key)
+
+    @override
+    async def list_for_page(self, page_id: PageId) -> Sequence[PageStage]:
+        """Return the records of one page in the order of the stages.
+
+        :param page_id: Page owning the records.
+        :type page_id: PageId
+        :returns: Every record of the page.
+        :rtype: Sequence[PageStage]
+        """
+        order = list(Stage)
+        return sorted(
+            (stage for stage in self._rows.values() if stage.page_id == page_id), key=lambda s: order.index(s.stage)
+        )
+
+    @override
+    async def list_for_pages(self, page_ids: Collection[PageId]) -> Sequence[PageStage]:
+        """Return the records of several pages, by page and then in the order of the stages.
+
+        :param page_ids: Pages whose records are read.
+        :type page_ids: Collection[PageId]
+        :returns: Every record of those pages.
+        :rtype: Sequence[PageStage]
+        """
+        order = list(Stage)
+        return sorted(
+            (record for record in self._rows.values() if record.page_id in page_ids),
+            key=lambda record: (str(record.page_id), order.index(record.stage)),
+        )
+
+    @override
+    async def list_for_recipe(self, recipe_id: RecipeId) -> Sequence[PageStage]:
+        """Return the records that name the recipe, by page identifier.
+
+        :param recipe_id: Recipe whose pages are listed.
+        :type recipe_id: RecipeId
+        :returns: Every record that names the recipe.
+        :rtype: Sequence[PageStage]
+        """
+        return sorted(
+            (stage for stage in self._rows.values() if stage.recipe_id == recipe_id), key=attrgetter('page_id')
+        )
+
+    @override
+    async def list_for_project_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[PageStage]:
+        """Return the records of one stage over the pages of a project, by page identifier.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: Every record of the stage in the project.
+        :rtype: Sequence[PageStage]
+        """
+        pages = {page.id for page in self._tables.pages.values() if page.project_id == project_id}
+        return sorted(
+            (record for record in self._rows.values() if record.stage == stage and record.page_id in pages),
+            key=attrgetter('page_id'),
+        )
+
+    @override
+    async def head_ids(self, project_id: ProjectId) -> Collection[PageVersionId]:
+        """Return the distinct head versions of the stage records of the project's pages.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: The identifiers of the current versions.
+        :rtype: Collection[PageVersionId]
+        """
+        pages = {page.id for page in self._tables.pages.values() if page.project_id == project_id}
+        return {
+            record.head_version_id
+            for record in self._rows.values()
+            if record.page_id in pages and record.head_version_id is not None
+        }
+
+
+class InMemoryPageEditRepository(InMemoryRepository[PageEdit, PageEditKey], PageEditRepository):
+    """Manual edits of the pages."""
+
+    def __init__(self, tables: InMemoryTables) -> None:
+        """Work on the page edit table of the unit of work's copy, checking edits against pages.
+
+        :param tables: Every table of the working copy.
+        :type tables: InMemoryTables
+        """
+        super().__init__(tables.page_edits, tables)
+        self._identify = attrgetter('key')
+
+    @override
+    def _check(self, entity: PageEdit) -> None:
+        """Require the page of the edit.
+
+        :param entity: Edit about to be stored.
+        :type entity: PageEdit
+        :raises NotFoundError: If the page is not stored.
+        """
+        require(self._tables.pages, entity.page_id)
+
+    @override
+    async def save(self, edit: PageEdit) -> PageEdit:
+        """Store the edit, replacing the one of the same page, stage and processor.
+
+        :param edit: Edit to store.
+        :type edit: PageEdit
+        :returns: The edit as stored.
+        :rtype: PageEdit
+        :raises NotFoundError: If the page is not stored.
+        """
+        self._check(edit)
+        self._rows[edit.key] = edit
+        return edit
+
+    @override
+    async def find(self, key: PageEditKey) -> PageEdit | None:
+        """Return one edit.
+
+        :param key: Page, stage and processor.
+        :type key: PageEditKey
+        :returns: The edit, or None.
+        :rtype: PageEdit | None
+        """
+        return self._rows.get(key)
+
+    @override
+    async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageEdit]:
+        """Return the edits of one page, by stage and processor.
+
+        :param page_id: Page owning the edits.
+        :type page_id: PageId
+        :param stage: Stage listed, or None for every stage.
+        :type stage: Stage | None
+        :returns: The edits of the page.
+        :rtype: Sequence[PageEdit]
+        """
+        order = list(Stage)
+        return sorted(
+            (
+                edit
+                for edit in self._rows.values()
+                if edit.page_id == page_id and (stage is None or edit.stage == stage)
+            ),
+            key=lambda edit: (order.index(edit.stage), edit.processor_key),
+        )
+
+
+class InMemoryRecipeRepository(InMemoryRepository[Recipe, RecipeId], RecipeRepository):
+    """Recipes of the projects, one active per stage of a project."""
+
+    def __init__(self, tables: InMemoryTables) -> None:
+        """Work on the recipe table of the unit of work's copy, checking recipes against projects.
+
+        :param tables: Every table of the working copy.
+        :type tables: InMemoryTables
+        """
+        super().__init__(tables.recipes, tables)
+
+    @override
+    def _check(self, entity: Recipe) -> None:
+        """Require the recipe's project, and no other active recipe of its stage, as the partial unique index does.
+
+        :param entity: Recipe about to be stored.
+        :type entity: Recipe
+        :raises NotFoundError: If the project is not stored.
+        :raises ConflictError: If the recipe is active and another recipe of the stage is too.
+        """
+        require(self._tables.projects, entity.project_id)
+        if entity.active:
+            self._require_unique(
+                entity, lambda recipe: (recipe.project_id, recipe.stage) if recipe.active else recipe.id
+            )
+
+    @override
+    def _cascade(self, entity: Recipe) -> None:
+        """Leave the page stages the recipe processed without their recipe, as the database's ``SET NULL`` does.
+
+        :param entity: Recipe just removed.
+        :type entity: Recipe
+        """
+        for stage in [stage for stage in self._tables.page_stages.values() if stage.recipe_id == entity.id]:
+            self._tables.page_stages[stage.key] = evolve(stage, recipe_id=None)
+
+    @override
+    async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[Recipe]:
+        """Return the recipes of one stage, the active one first, then by creation, ties by identifier.
+
+        :param project_id: Project owning the recipes.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The active recipe and the variants.
+        :rtype: Sequence[Recipe]
+        """
+        return sorted(
+            (recipe for recipe in self._rows.values() if recipe.project_id == project_id and recipe.stage == stage),
+            key=lambda recipe: (not recipe.active, recipe.created_at, recipe.id),
+        )
+
+    @override
+    async def find_active(self, project_id: ProjectId, stage: Stage) -> Recipe | None:
+        """Return the active recipe of a stage of a project.
+
+        :param project_id: Project owning the recipe.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The active recipe, or None.
+        :rtype: Recipe | None
+        """
+        return next(
+            (
+                recipe
+                for recipe in self._rows.values()
+                if recipe.project_id == project_id and recipe.stage == stage and recipe.active
+            ),
+            None,
+        )
+
 
 class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
     """Jobs of every project."""
@@ -841,25 +1242,36 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
 
     @override
     def _check(self, entity: Job) -> None:
-        """Require the job's project, and no other active job of its kind in it, as the partial unique indexes do.
+        """Require the job's project, and no other active job of its group in it, as the partial unique indexes do.
 
         :param entity: Job about to be stored.
         :type entity: Job
         :raises NotFoundError: If the job's project is not stored.
-        :raises ConflictError: If the job is a queued or running import, or a queued or running job writing page
-                               images, and the project has another of the same kind.
+        :raises ConflictError: If the job is a queued or running import, a job writing page images, or a job
+                               processing versions, and the project has another active job of the same group.
         """
         require(self._tables.projects, entity.project_id)
-        if entity.kind in ONE_ACTIVE_AT_A_TIME and entity.state in JobState.active():
-            # Every other job gets its own identifier as its value, so only an active job of the same kind can match
+        if self._group_of(entity) is not None and entity.state in JobState.active():
+            # Every other job gets its own identifier as its value, so only an active job of the same group can match
             self._require_unique(
                 entity,
                 lambda job: (
-                    (job.project_id, job.kind)
-                    if job.kind in ONE_ACTIVE_AT_A_TIME and job.state in JobState.active()
+                    (job.project_id, self._group_of(job))
+                    if self._group_of(job) is not None and job.state in JobState.active()
                     else job.id
                 ),
             )
+
+    @staticmethod
+    def _group_of(job: Job) -> int | None:
+        """Find the group of kinds a job belongs to, of which a project runs one at a time.
+
+        :param job: The job.
+        :type job: Job
+        :returns: The index of the group in ``ONE_ACTIVE_AT_A_TIME``, or None for a job that has no such limit.
+        :rtype: int | None
+        """
+        return next((index for index, group in enumerate(ONE_ACTIVE_AT_A_TIME) if job.kind in group), None)
 
     @override
     def _cascade(self, entity: Job) -> None:
@@ -924,6 +1336,9 @@ class InMemoryUnitOfWork(UnitOfWork):
     :ivar scans: Scan repository over the working copy.
     :ivar pages: Page repository over the working copy.
     :ivar page_versions: Page version repository over the working copy.
+    :ivar page_stages: Page stage repository over the working copy.
+    :ivar page_edits: Page edit repository over the working copy.
+    :ivar recipes: Recipe repository over the working copy.
     :ivar jobs: Job repository over the working copy.
     """
 
@@ -959,6 +1374,9 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.page_versions = InMemoryPageVersionRepository(
             self._tables, snapshot=self._snapshot, committed=self._database.tables
         )
+        self.page_stages = InMemoryPageStageRepository(self._tables)
+        self.page_edits = InMemoryPageEditRepository(self._tables)
+        self.recipes = InMemoryRecipeRepository(self._tables)
         self.jobs = InMemoryJobRepository(
             self._tables, snapshot=self._snapshot, committed=self._database.tables, guards=self._guards
         )

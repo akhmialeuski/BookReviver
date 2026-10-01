@@ -25,6 +25,7 @@ from bookreviver.domain.enums import JobKind
 from bookreviver.domain.ids import JobId
 from bookreviver.services.imports import ImportService
 from bookreviver.services.pages import PageService
+from bookreviver.services.processing_jobs import ProcessingJobs
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -66,8 +67,63 @@ async def prepare_pages(job_id: str, container: FromDishka[AsyncContainer]) -> N
     await service.prepare_images(JobId(UUID(job_id)))
 
 
+async def run_stage(job_id: str, container: FromDishka[AsyncContainer]) -> None:
+    """Run a stage over its pages: the entry point of ``JobKind.RUN_STAGE``.
+
+    :param job_id: Identifier of the job as text, the one argument the queue sends.
+    :type job_id: str
+    :param container: Request-scoped container of the task.
+    :type container: AsyncContainer
+    """
+    jobs = await container.get(ProcessingJobs)
+    await jobs.run_stage(JobId(UUID(job_id)))
+
+
+async def preview_step(job_id: str, container: FromDishka[AsyncContainer]) -> None:
+    """Preview the steps of a form on a page: the entry point of ``JobKind.PREVIEW_STEP``.
+
+    :param job_id: Identifier of the job as text, the one argument the queue sends.
+    :type job_id: str
+    :param container: Request-scoped container of the task.
+    :type container: AsyncContainer
+    """
+    jobs = await container.get(ProcessingJobs)
+    await jobs.preview_step(JobId(UUID(job_id)))
+
+
+async def cut_tiles(job_id: str, container: FromDishka[AsyncContainer]) -> None:
+    """Cut the tile pyramids of some page versions: the entry point of ``JobKind.CUT_TILES``.
+
+    :param job_id: Identifier of the job as text, the one argument the queue sends.
+    :type job_id: str
+    :param container: Request-scoped container of the task.
+    :type container: AsyncContainer
+    """
+    jobs = await container.get(ProcessingJobs)
+    await jobs.cut_tiles(JobId(UUID(job_id)))
+
+
+async def collect_versions(job_id: str, container: FromDishka[AsyncContainer]) -> None:
+    """Delete the old page versions nothing needs: the entry point of ``JobKind.COLLECT_VERSIONS``.
+
+    :param job_id: Identifier of the job as text, the one argument the queue sends.
+    :type job_id: str
+    :param container: Request-scoped container of the task.
+    :type container: AsyncContainer
+    """
+    jobs = await container.get(ProcessingJobs)
+    await jobs.collect_versions(JobId(UUID(job_id)))
+
+
 JOB_TASKS: Mapping[JobKind, JobTask] = MappingProxyType(
-    {JobKind.IMPORT_SOURCE: import_source, JobKind.PREPARE_PAGES: prepare_pages}
+    {
+        JobKind.IMPORT_SOURCE: import_source,
+        JobKind.PREPARE_PAGES: prepare_pages,
+        JobKind.RUN_STAGE: run_stage,
+        JobKind.PREVIEW_STEP: preview_step,
+        JobKind.CUT_TILES: cut_tiles,
+        JobKind.COLLECT_VERSIONS: collect_versions,
+    }
 )
 
 

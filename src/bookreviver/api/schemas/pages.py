@@ -1,10 +1,10 @@
-"""Schema of a page of the book: its place in the book, its kind and the images of its base version.
+"""Schema of a page of the book: its place in the book, its kind and the images of its current version.
 
 A page is identified by its ``PageId`` and its place in the book is its ``position``, counted from zero over the pages
 of the project in book order. The fractional order key that keeps the order never leaves the server, so a client cannot
-build a page order from it. ``images`` shows the base version of the page, which is the only version recorded until
-the processing stages write their own, and is empty for a page that has no image yet: a placeholder waiting for a scan,
-or a page whose images are still being cut.
+build a page order from it. ``images`` shows the current version of the latest stage of the page that has an image,
+which is its base version until a processing stage writes a later one, and is empty for a page that has no image yet: a
+placeholder waiting for a scan, or a page whose images are still being cut.
 """
 
 from datetime import datetime
@@ -294,7 +294,7 @@ class PageSchema(ResponseModel):
     :ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.
     :ivar included: Whether the page is part of the book.
     :ivar notes: Notes of the user.
-    :ivar images: Paths of the images of the page's base version, or None while it has none.
+    :ivar images: Paths of the images of the page's current version, or None while it has none.
     :ivar created_at: When the page was created.
     :ivar updated_at: When the page was last changed.
     """
@@ -324,7 +324,7 @@ class PageSchema(ResponseModel):
         :returns: The page resource, with images once its base version has them cut.
         :rtype: Self
         """
-        page, version = overview.page, overview.base_version
+        page, version = overview.page, overview.image_version
         images = None
         if version is not None and version.renditions is not None and version.renditions.ready:
             keys = ProjectKeys(page.project_id)

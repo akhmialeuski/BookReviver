@@ -53,6 +53,19 @@ bookreviver-migrate = "bookreviver.app.migrate:migrate"
 # Writes the OpenAPI schema the frontend client is generated from to docs/openapi.json
 bookreviver-openapi = "bookreviver.app.openapi:main"
 
+# Processing plugins, found by the catalogue in the application through importlib.metadata.entry_points. An external
+# package registers its own processors in this group in the same way
+[project.entry-points."bookreviver.processors"]
+"split.none" = "bookreviver.plugins.split_none:SplitNone"
+"pages.blank" = "bookreviver.plugins.blank:BlankPage"
+"split.spread" = "bookreviver.plugins.split_spread:SplitSpread"
+"geometry.deskew" = "bookreviver.plugins.deskew:Deskew"
+
+[project.optional-dependencies]
+cv = [
+    "opencv-python-headless>=5.0.0.93",
+]
+
 [tool.fastapi]
 entrypoint = "bookreviver.app.asgi:app"
 
@@ -96,6 +109,7 @@ type = "forbidden"
 source_modules = ["bookreviver.domain", "bookreviver.ports", "bookreviver.services"]
 forbidden_modules = [
     "advanced_alchemy",
+    "cv2",
     "aiosmtplib",
     "dishka",
     "fastapi",

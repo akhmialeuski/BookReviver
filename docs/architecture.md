@@ -121,16 +121,18 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Book parts   | `Contributor`, `ContributorRole`, `BookIdentifier`, `IdentifierScheme`, `Script`, `RightsStatus` |
 | Sources      | `Source`, `SourceFile`, `SourceKind`, `FileType`, `MetadataSuggestion`                        |
 | Scans        | `Scan`, `ScanFacts`, `Renditions`                                                             |
-| Pages        | `Page`, `PageOverview`, `PageKind`, `PageOrigin`, `PageVersion`, `VersionState`, `Transform`, |
-|              | `PageStage`                                                                                   |
+| Pages        | `Page`, `PageOverview`, `PageKind`, `PageOrigin`, `PageVersion`, `VersionInputs`,             |
+|              | `VersionState`, `VersionScale`, `PageStage` and its `StageState`                              |
 | Page order   | `PageAnchor` (a page and a `Side`), `PageChange`, and `PageOverview` with its position        |
 | Page labels  | `LabelStyle`, `PageNumbering`, and `PageChanges` for the editable fields of a page            |
 | New pages    | `NewPage`, `NewPageOrigin` (blank or placeholder), `PageSize`, `VersionData` (data keys)      |
 | Storage keys | `StorageKey`, and `ProjectKeys` in `domain/keys.py`, the one builder of every key             |
-| Processing   | `Stage`, `ProcessorRef`, `Recipe`, `Step`, `Variant`, `ArtifactKind`, `Artifact`              |
-| Edits        | `PageEdit` with geometry (`Rect`, `Quad`, `Mesh`, `Region` with `RegionKind`) or a mask       |
+| Processing   | `Stage`, `ProcessorRef`, `Recipe` (a variant is a recipe that is not active), `Step`          |
+| Geometry     | `Point`, `Size`, `Rect`, `Quad`, `Line`, `Rotation` and `Transform` in `domain/geometry.py`   |
+| Edits        | `PageEdit` with its `EditorKind` and a shape (`Rect`, `Quad`, `Line`, `Rotation`) or a mask   |
 | Events       | `JobChanged`, `SourceImported`, `ScanReady`, `PagesChanged`, `PageVersionReady`, and others   |
-| Jobs         | `Job`, `JobKind` (`import-source`, `prepare-pages`), `JobState`, `Progress`, `WorkerPool`     |
+| Jobs         | `Job`, `JobKind` (the import, the preparing of pages and the four processing jobs), `JobState` |
+|              | `Progress`, `WorkerPool`                                                                      |
 | Imports      | `ImportRequest`, `ImportResult`, `RejectedFile`, `RejectionReason`, `UploadProblem`           |
 |              | `UploadPath` (a checked relative path), `SystemFile` (names an operating system adds)         |
 | Queries      | `Slice[T]` (items and total), `SliceRequest` (offset and limit)                               |
@@ -398,8 +400,10 @@ rules:
   the end of the book in upload order, and their printed number is the scan's `source_label`.
 - Splitting a spread keeps the existing page as the left half (`slot = 1`) and inserts the right half (`slot = 2`)
   right after it. Each half gets its own copy of its part of the scan. Moving the split line recreates the base
-  versions of both pages and marks their later stages stale. Undoing the split deletes the right page with its
-  versions and edits, so the interface asks for confirmation.
+  versions of both pages and marks their later stages stale. Undoing the split, which is running a step that does not
+  split, such as `split.none`, on the left half, deletes the right page with its versions and edits. A run that would
+  do so fails the page unless its request says `confirm_unsplit`, so the interface asks for confirmation first. A run
+  over every page of the book leaves the right halves to the run of their left halves.
 - In the page order stage a blank leaf (`origin = blank`), such as the back of the cover, an endpaper or the empty
   leaf after the title, gets a generated white image of the median page size of the book and then passes the stages
   like any page. A missing page, cover or title page without a scan (`origin = placeholder`) stays without an image
@@ -408,9 +412,10 @@ rules:
 - Deleting a source leaves the pages of the book alone, because they hold their own copies of the images. The pages
   of that source lose their `scan_id`, and splitting them again is no longer possible.
 
-The split line of a spread is stored as the `transform` of the base version, so moving it recreates only the base
-versions of the two pages and marks their later stages stale. From then on the two pages live independently of each
-other and of the scan.
+The split line of a spread is stored as the `line` edit of the left page, which joins the identifier of both base
+versions, so moving it recreates only the base versions of the two pages and marks their later stages stale. The
+`transform` of each base version is the `crop(quad)` of its half. From then on the two pages live independently of
+each other and of the scan.
 
 ### Page versions
 
@@ -454,9 +459,9 @@ colour scan instead of the binarised page.
 | Stage         | Step                   | `transform`                | `data`                                                      |
 | ------------- | ---------------------- | -------------------------- | ----------------------------------------------------------- |
 | `page-split`  | `split.none`           | `identity`                 | copy of the whole scan, split skipped                       |
-| `page-split`  | `split.spread`         | `crop(quad)` of a half     | position of the spine, confidence                           |
+| `page-split`  | `split.spread`         | `crop(quad)` of a half     | position of the cut, overlap in pixels, size of the half    |
 | `page-order`  | `pages.blank`          | `identity`                 | size of the generated blank leaf                            |
-| `geometry`    | `geometry.deskew`      | `rotate(angle)`            | angle in degrees, method, confidence                        |
+| `geometry`    | `geometry.deskew`      | `rotate(angle)`            | angle in degrees, confidence, whether it was skipped        |
 | `geometry`    | `geometry.perspective` | `perspective(quad)`        | four corners of the page                                    |
 | `geometry`    | `geometry.dewarp`      | `mesh(key)`                | key of the mesh, root mean square error                     |
 | `geometry`    | `geometry.crop`        | `crop(quad)`               | content frame, margins                                      |
@@ -536,12 +541,11 @@ page. The key is made the way a move makes it, between the anchor and its neighb
   size a `ConflictError` that says it is the recorded size that is missing, which also holds for a book whose scan
   pages are all kept out.
 
-The image of a blank leaf is made by the temporary port `BlankPageMaker`, whose adapter `VipsBlankPageMaker` makes a
-black image with `Image.black`, adds 255 and saves it with `pngsave` at a bit depth of 1, so the leaf is the 1-bit PNG
-of a bilevel page whatever the project's image policy. The version records the format the policy's `full_format` gives a
-bilevel page, `full.png`, so no format is chosen a second time. The port and its adapter are removed when the
-`pages.blank` processor exists. libvips always writes a resolution into a PNG, so a leaf made without one carries its own
-default, and the data of the base version, which says the resolution is unknown, is what the book relies on.
+The image of a blank leaf is made by the `pages.blank` processor, which runs through `StepRunner` like every step. It
+makes a black image with `Image.black`, adds 255 and saves it with `pngsave` at a bit depth of 1, so the leaf is the
+1-bit PNG of a bilevel page whatever the project's image policy. libvips always writes a resolution into a PNG, so a
+leaf made without one carries its own default, and the data of the base version, which says the resolution is unknown,
+is what the book relies on.
 
 `PUT /projects/{id}/pages/{page_id}/scan` binds a scan to a placeholder with a `ScanAttach`. It refuses a page that is
 not a placeholder, a scan that is not cut yet and a scan that another page shows, which is a 409 naming those pages, and
@@ -559,9 +563,10 @@ one such job, so two requests that both found none cannot both store one: the on
 together. A running job may have read its versions before a new one was committed, so a job that ends looks for pending
 versions once more and queues a follow-up when it finds one, which is why a request may leave the queueing to the job
 that runs. The task `prepare_pages` of `app/worker.py` calls `PageService.prepare_images`, which takes the pending and
-the failed versions of the stages `page-split` and `page-order`, writes each one and commits it before the next, and
-publishes `PageVersionReady`, so the viewer swaps an empty frame for the image without reloading. A version `split.none`
-is a copy of its scan made by `BaseVersions`, the same code the import uses, and a version `pages.blank` is a white leaf.
+the failed versions made by `split.none` and `pages.blank`, which are the ones it knows how to make, writes each one
+and commits it before the next, and publishes `PageVersionReady`, so the viewer swaps an empty frame for the image
+without reloading. A failed half of a split spread is left to the run that makes it. A version `split.none` is a copy
+of its scan run through `StepRunner`, the same way the import does it, and a version `pages.blank` is a white leaf.
 A version that cannot be made is stored as `failed` with its reason in `data['error']`, the job ends failed, and the
 next job takes the failed versions again with the new ones, so there is no route to repeat a job. A page deleted while
 the job runs takes its versions with it, so a version whose page is gone is nothing to make and nothing that failed:
@@ -606,7 +611,7 @@ Ports are abstract base classes, so every adapter names its parent explicitly an
 | Storage     | `SourceStore` (uploads and the files of each source), `AssetStore` (derived files by key)        |
 | Mail        | `Mailer`                                                                                         |
 | Imaging     | `SourceInspector` (group an upload into sources, inspect one), `PageRasterizer`, `Tiler`,        |
-|             | and until the plugin framework `BlankPageMaker` (the image of a blank leaf)                      |
+|             | `RenditionWriter` (the files of a page version)                                                  |
 | AI engines  | `TextRecognizer`, `LayoutAnalyzer`, `LanguageModel`, each with an engine catalogue               |
 | Processing  | `Processor` (the plugin contract), `ProcessorCatalog`                                            |
 | Runtime     | `JobQueue`, `EventPublisher`, `EventStream`, `Clock`                                             |
@@ -623,8 +628,10 @@ needs, all inside one project and in `order_key` order: `list_by_ids` reads the 
 of another project like a missing one, `list_for_source` joins `pages` with `scans` so that placeholders and blank
 leaves never belong to a source, `neighbour_key` finds the key next to a key on one side while leaving the moving pages
 out, and `update_many` writes several pages in the one transaction, all or none. `ScanRepository.list_by_ids` gives
-the manifest the source of every page of a window in one query. `PageVersionRepository.list_base_versions`
-reads the base versions of a whole window in one call, so the manifest costs no query per page.
+the manifest the source of every page of a window in one query. The manifest shows each page by its current version of
+the latest stage that has an image, found by the `PageStage` records, and by its newest base version when no stage has
+one yet. `PageStageRepository.list_for_pages`, `PageVersionRepository.list_by_ids` and `list_base_versions` read those
+for a whole window in one call each, so the manifest costs no query per page, and the shape of its answer is the same.
 `ProjectRepository.overview` counts the book of one
 project, and the project listing counts every project of a window in the same query.
 `OrderKeys` is a port with an adapter on fractional-indexing, because the domain imports only the standard library
@@ -784,22 +791,27 @@ erDiagram
   the unique pairs `(project_id, order_key)` and `(scan_id, slot)`. Its columns are `order_key`, `label`, `kind`,
   `origin`, `slot`, `included`, `notes`, `created_at` and `updated_at`.
 - `jobs` has the primary key `id` and `project_id` with `ON DELETE CASCADE`. Its columns are `kind`, `state`,
-  `progress_done`, `progress_total`, `error`, `request` and `result` as JSON, both empty for a job that has none,
+  `progress_done`, `progress_total`, `error`, `request`, `params` and `result`, the last two as JSON, `request` and `result` empty for a job that has none and `params` an empty object,
   `created_at`, `started_at` and `finished_at`. The partial unique index `ix_jobs_one_active_import` on `project_id`
   `WHERE kind = 'import-source' AND state IN ('queued', 'running')` keeps a project to one import at a time, and
   both adapters report its violation as a `ConflictError` when the job is added. The partial unique index
   `ix_jobs_one_active_prepare` on `project_id` `WHERE kind = 'prepare-pages' AND state IN ('queued', 'running')` does
-  the same for the jobs that write page images, and an import and a prepare job of one project do not collide.
+  the same for the jobs that write page images, and an import and a prepare job of one project do not collide. The
+  partial unique index `ix_jobs_one_active_processing` on `project_id` `WHERE kind IN ('collect-versions', 'cut-tiles',
+  'preview-step', 'run-stage') AND state IN ('queued', 'running')` keeps a project to one job that processes the
+  versions of its pages, so two runs never write the same files and a collection never deletes what a run reuses.
 - `page_versions` has the primary key `id`, `page_id` with `ON DELETE CASCADE`, `input_id` with `ON DELETE SET NULL`,
   and an index on `(page_id, stage)`. Its columns are `stage`, `processor_key`, `processor_version`, `params`,
-  `transform` and `data` as JSON, `renditions_ready`, `renditions_full`, `state` and `created_at`. Both renditions
-  columns are null for a step without an image.
-- `page_stages` has the primary key `(page_id, stage)` and `head_version_id` with `ON DELETE SET NULL`. Its columns
-  are `recipe_id`, `state` and `updated_at`.
-- `page_edits` has the primary key `(page_id, stage, processor_key)`. Its columns are `kind`, `geometry` as JSON,
-  `mask_key` and `updated_at`.
-- `recipes` has the primary key `id` and `project_id` with `ON DELETE CASCADE`. Its columns are `stage`, `name`,
-  `steps` as JSON and `active`.
+  `transform` and `data` as JSON, `renditions_ready`, `renditions_full`, `state`, `scale` (`full` or `preview`),
+  `edit_hash`, `tiles_ready` and `created_at`. Both renditions columns are null for a step without an image, and
+  `tiles_ready` says whether the IIIF pyramid is cut, which a run does only for a current version.
+- `page_stages` has the primary key `(page_id, stage)`, `page_id` with `ON DELETE CASCADE`, and `head_version_id` and
+  `recipe_id` with `ON DELETE SET NULL`. Its columns are `state` and `updated_at`.
+- `page_edits` has the primary key `(page_id, stage, processor_key)` and `page_id` with `ON DELETE CASCADE`. Its
+  columns are `kind`, `geometry` as JSON, `mask_key`, `edit_hash` and `updated_at`.
+- `recipes` has the primary key `id`, `project_id` with `ON DELETE CASCADE`, an index on `(project_id, stage)`, and the
+  partial unique index `ix_recipes_one_active` on `(project_id, stage)` `WHERE active`, which keeps one active recipe
+  per stage. Its columns are `stage`, `name`, `steps` as JSON, `active`, `created_at` and `updated_at`.
 
 `order_key` holds a fractional index string from the fractional-indexing package, such as `a0`, `a0V` or `a1`, so
 inserting a page between two neighbours writes one row instead of renumbering the book. Keys compare byte by byte,
@@ -813,7 +825,8 @@ the in-memory adapter has no accounts and there is no accounts port.
 
 The tables `sources`, `scans`, `pages` and `page_versions` come with the book model, because a page gets its base
 version with its own copy of the image when it is created, and the baseline migration creates them. `page_stages`,
-`page_edits` and `recipes` come with the processing framework, each through a migration of its own. The `request` and
+`page_edits` and `recipes`, the columns `scale`, `edit_hash` and `tiles_ready` of `page_versions` and the column `params`
+of `jobs` come with the processing framework, in one revision. The `request` and
 `result` columns and the partial unique index of `jobs` came with the import job, in their own revision, and the
 `renditions_full` columns of `scans` and `page_versions` came with the choice of the format of `full`, in another.
 The columns of the extended description came in a revision of their own, which turns a non-empty `authors` string into one
@@ -970,8 +983,13 @@ indistinguishable to the application.
   of `split.spread`.
 - A preview of a step runs as a background job, like every heavy computation, and its result reaches the browser
   over SSE.
-- The base steps `split.none` and `pages.blank` are ordinary processors. Until the plugin framework exists, the
-  import and the page order stage produce the same base versions with interim code that the processors replace.
+- The base steps `split.none` and `pages.blank` are ordinary processors, and the import and the page order stage run
+  them through the same `StepRunner` as a recipe.
+- `split.spread` and `geometry.deskew` need OpenCV, so they live in the optional group `bookreviver[cv]`. A machine
+  that lacks it starts without them, the catalogue leaves them out, and a default recipe that names them is not made.
+  `split.spread` takes the darkest column of the central band of the scan as the gutter, or the `line` the user drew,
+  and `geometry.deskew` takes the angle at which the ink of the page lies in the fewest rows, or the `rotation` the
+  user gave, and leaves a page whose lines it is not sure of as it is.
 - First plugins, in delivery order: page split, deskew, perspective crop by quad, dewarp by mesh, despeckle,
   binarisation (a cleanup step of its own, so the despeckled and the binarised page are separate artifacts), eraser
   mask, layout regions (text versus illustration), background separation, background unification (white, aged paper
@@ -1412,8 +1430,9 @@ The book model rests on these decisions, each with its reason.
 2. **A page stands on its own.** A page keeps its own copy of its base image in its own directory, so deleting a
    source does not break it. The price is about twice the space of the scans.
 3. **The page split creates pages.** The split is a step that creates pages from scans, and it can be skipped. The
-   split area lives in the `transform` of the base version of `split.spread`, and the `scan_id` and `slot` of a page
-   only record its origin, so moving the line changes versions and never the identity of a page.
+   split line lives in the `line` edit that `split.spread` reads and in the `transform` of its base versions, and the
+   `scan_id` and `slot` of a page only record its origin, so moving the line changes versions and never the identity
+   of a page.
 4. **Order by fractional index.** `order_key` is a fractional index string from the `fractional-indexing` package,
    so moving or inserting a page writes one row and nothing is renumbered.
 5. **How pages appear.** An import with the split skipped appends one page per scan to the end of the book in upload
@@ -1523,8 +1542,27 @@ The book model rests on these decisions, each with its reason.
     scan pages follows neither one fold-out map nor one cropped scan, so the leaf stands level with its neighbours in a
     spread. Binding a scan is a route of its own, since a `PATCH` of `scan_id` would mix an instant edit of one row with
     the making of a version and a job.
-39. **The leaf is made by a temporary port.** `BlankPageMaker` and its libvips adapter exist because the page order stage
-    comes before the plugin framework, and they are removed when the `pages.blank` processor makes the leaf.
+39. **A leaf is a plugin run.** `pages.blank` and `split.none` are plugins, and the page order and import stages run
+    them through `StepRunner`, so every base version is made the way a version of a recipe is.
+40. **A split is one run that makes two pages.** A step of the scope `split` gives one output for each half, and the
+    page that runs it becomes the left half. The right page is found again by its scan and its slot, so a second run
+    makes no page, and the right half is not run by itself because its left half makes it. The step cannot be previewed,
+    since a preview changes no page. Undoing the split needs a confirmation in the request and not a second request,
+    so a run keeps one job and a refused one leaves the page failed with the reason, and nothing deleted.
+41. **The book changes once the work is done.** A split runs its step and writes its files first, and then commits the
+    new page, the change of the left page, the versions and the heads of both halves together, so a split that fails
+    leaves no empty page. Undoing a split commits the deletion of the right half with the new current version of the
+    left half, and removes the files after, so a replacement that fails deletes nothing.
+42. **A project processes one thing at a time.** A run, a preview, a tile cutting and a collection exclude each other
+    and themselves, kept by a partial unique index, because a collection deletes the versions a run may be reusing and
+    two runs write the same files. A request for a second one is a 409, and the collection that every run queues when it
+    ends is left out when something else is processing the project. Choosing a current version is refused as well while
+    one is active. The price is that a second preview waits for the first, which takes about a second.
+43. **A collection marks before it deletes.** It chooses the old versions that no version that stays reads, marks them
+    failed so that none can be chosen or reused, removes their directories and then deletes their rows. One that stops on
+    the way leaves versions that are old and read by nothing, which the next collection chooses again. Deleting an input
+    that a surviving version reads is never done, since the database would set its input to none and make it look like
+    a base version that nothing may delete.
 
 Smaller technical choices follow the same model. Languages are ISO 639-3 codes, XMP is parsed with defusedxml, the
 parameters of processing jobs are kept in `Job.params`, a DjVu source suggests a publication year only from its

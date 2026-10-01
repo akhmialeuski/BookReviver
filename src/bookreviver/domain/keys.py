@@ -6,7 +6,7 @@ Every file of a project lives under ``projects/<project_id>/``, divided between 
 - ``sources/<source_id>/`` holds the files of one source exactly as uploaded.
 - ``assets/scans/<source_id>/<number>/v<version>/`` holds the renditions of one scan in one version.
 - ``assets/pages/<page_id>/<stage>/<processor>/<version_id>/`` holds one page version.
-- ``assets/pages/<page_id>/edits/<processor>/`` holds the manual edits of a page that steps read as inputs.
+- ``assets/pages/<page_id>/edits/<processor>/<edit_hash>/`` holds one manual edit of a page a step reads.
 - ``assets/book/`` holds the results of whole-book steps, such as typesetting and export.
 
 The ``SourceStore`` owns ``incoming/`` and ``sources/`` and the ``AssetStore`` owns ``assets/``, so each port removes
@@ -200,6 +200,21 @@ class ProjectKeys:
         :raises ValueError: If the processor key is not a safe directory name.
         """
         return self._key(KeySegment.ASSETS, KeySegment.PAGES, str(page_id), KeySegment.EDITS, processor_key)
+
+    def page_edit(self, page_id: PageId, processor_key: str, edit_hash: str) -> StorageKey:
+        """Return the directory of one manual edit, whose mask is stored there and never replaced by a later edit.
+
+        :param page_id: Page the edit belongs to.
+        :type page_id: PageId
+        :param processor_key: Key of the processor reading the edit.
+        :type processor_key: str
+        :param edit_hash: Hash of the edit, which gives each edit a directory of its own.
+        :type edit_hash: str
+        :returns: Key of ``assets/pages/<page_id>/edits/<processor>/<hash>``.
+        :rtype: StorageKey
+        :raises ValueError: If the processor key or the hash is not a safe directory name.
+        """
+        return StorageKey(f'{self.page_edits(page_id, processor_key)}{self.SEPARATOR}{edit_hash}')
 
     @classmethod
     def owning(cls, key: StorageKey) -> Self | None:

@@ -1,12 +1,26 @@
 """The routers of every feature, in the order the application includes them, and where they are mounted."""
 
-from bookreviver.api.routers import accounts, iiif, imports, jobs, pages, projects, sources
+from bookreviver.api.routers import (
+    accounts,
+    catalogue,
+    edits,
+    iiif,
+    imports,
+    jobs,
+    pages,
+    processing,
+    projects,
+    sources,
+)
 
 ROUTERS = (
     accounts.router,
     projects.router,
     sources.router,
     pages.router,
+    processing.router,
+    edits.router,
+    catalogue.router,
     imports.router,
     jobs.router,
     iiif.router,

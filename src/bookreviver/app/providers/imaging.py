@@ -1,4 +1,4 @@
-"""Provider of the imaging adapters: the source reader with its formats, and the tiler.
+"""Provider of the imaging adapters: the source reader with its formats, the tiler and the rendition writer.
 
 The adapters keep no per-request state, so one instance of each serves the whole application. One ``SourceReader``
 serves as both the source inspector and the page rasterizer, and this provider is where its formats are registered:
@@ -16,11 +16,11 @@ from bookreviver.adapters.imaging import (
     ImageFormat,
     PdfFormat,
     SourceReader,
-    VipsBlankPageMaker,
+    VipsRenditionWriter,
     VipsTiler,
 )
 from bookreviver.app.settings import Settings
-from bookreviver.ports.imaging import BlankPageMaker, PageRasterizer, SourceInspector, Tiler
+from bookreviver.ports.imaging import PageRasterizer, RenditionWriter, SourceInspector, Tiler
 
 logger = logging.getLogger(__name__)
 
@@ -52,13 +52,20 @@ class ImagingProvider(Provider):
         )
 
     @provide
-    def blank_page_maker(self) -> BlankPageMaker:
-        """Build the maker of blank leaves, a temporary adapter that the ``pages.blank`` processor will replace.
+    def rendition_writer(self, settings: Settings) -> RenditionWriter:
+        """Build the writer of the files of a page version with the configured preview and thumbnail sizes.
 
-        :returns: The libvips blank page maker.
-        :rtype: BlankPageMaker
+        :param settings: Application settings, of which the ``imaging`` group is read.
+        :type settings: Settings
+        :returns: The libvips rendition writer.
+        :rtype: RenditionWriter
         """
-        return VipsBlankPageMaker()
+        imaging = settings.imaging
+        return VipsRenditionWriter(
+            preview_long_side_px=imaging.preview_long_side_px,
+            thumbnail_long_side_px=imaging.thumbnail_long_side_px,
+            jpeg_quality=imaging.jpeg_quality,
+        )
 
     @provide
     def tiler(self, settings: Settings) -> Tiler:

@@ -46,7 +46,8 @@ SECOND_PART_WIDTH_PX: int = 210
 # Pages of the sample indirect DjVu documents
 DJVU_PAGES: tuple[DjvuPage, ...] = (DjvuPage(), DjvuPage(size_px=(250, 350)), DjvuPage(size_px=(320, 420)))
 # The events of an import of one image, in the order they are published: the job queued and running, the job with
-# its total, the source and its pages, the job with its first scan done, the scan, and the job with its result
+# its total, the source and its pages, the job with its first scan done, the scan, the stage of its page and the job
+# with its result
 ONE_IMAGE_EVENTS: list[EventName] = [
     EventName.JOB_CHANGED,
     EventName.JOB_CHANGED,
@@ -55,6 +56,7 @@ ONE_IMAGE_EVENTS: list[EventName] = [
     EventName.PAGES_CHANGED,
     EventName.JOB_CHANGED,
     EventName.SCAN_READY,
+    EventName.PAGE_STAGE_CHANGED,
     EventName.JOB_CHANGED,
 ]
 

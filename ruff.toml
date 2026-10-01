@@ -30,8 +30,10 @@ runtime-evaluated-base-classes = [
 ]
 # dishka resolves the return annotations of its providers, and FastAPI and dishka those of routes, at runtime.
 # Ruff infers that a module's router is an APIRouter, so ``@router.get`` matches ``fastapi.APIRouter.get`` and a
-# route annotates its parameters in place, without module-level aliases.
+# route annotates its parameters in place, without module-level aliases. FastAPI reads the annotated fields of a
+# dataclass that holds the path parameters of a route, which a route takes with ``Depends()``, at runtime as well.
 runtime-evaluated-decorators = [
+    "dataclasses.dataclass",
     "dishka.provide",
     "dishka.integrations.fastapi.inject",
     "fastapi.APIRouter.get",

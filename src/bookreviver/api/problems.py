@@ -10,9 +10,11 @@ from bookreviver.domain.enums import UploadProblem
 from bookreviver.domain.errors import (
     ConflictError,
     DomainError,
+    InvalidParametersError,
     NotFoundError,
     PermissionDeniedError,
     UnsupportedSourceError,
+    UnsupportedTransformError,
     UploadRejectedError,
 )
 
@@ -72,6 +74,12 @@ class Conflict(ApiProblem):
     http_status = HTTPStatus.CONFLICT
 
 
+class UnprocessableContent(ApiProblem):
+    """The request is well formed, but its content is not valid, such as the parameters of a processing step."""
+
+    http_status = HTTPStatus.UNPROCESSABLE_CONTENT
+
+
 class ContentTooLarge(ApiProblem):
     """The upload is larger than the server accepts."""
 
@@ -97,6 +105,8 @@ PROBLEM_BY_ERROR: dict[type[DomainError], type[ApiProblem]] = {
     NotFoundError: NotFound,
     PermissionDeniedError: Forbidden,
     ConflictError: Conflict,
+    InvalidParametersError: UnprocessableContent,
+    UnsupportedTransformError: Conflict,
     UnsupportedSourceError: BadRequest,
     UploadRejectedError: BadRequest,
 }

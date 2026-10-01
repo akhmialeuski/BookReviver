@@ -3,7 +3,7 @@
 A domain entity and a table row have different shapes, and neither can stand in for the other. The entity is a frozen
 ``attrs`` class with nested value objects: a :class:`~bookreviver.domain.entities.Project` holds a
 :class:`~bookreviver.domain.values.BookDetails`, and a :class:`~bookreviver.domain.entities.PageVersion` a
-:class:`~bookreviver.domain.values.ProcessorRef` and a :class:`~bookreviver.domain.values.Transform`. The row is a
+:class:`~bookreviver.domain.values.ProcessorRef` and a :class:`~bookreviver.domain.geometry.Transform`. The row is a
 flat, mutable class instrumented by SQLAlchemy, which assigns its attributes on load and tracks their changes. The
 domain may not import SQLAlchemy, which import-linter enforces, so the translation lives here: ``to_row`` spreads the
 value objects over columns, or into JSON where no query looks inside them, and ``to_entity`` gathers them back.
@@ -22,15 +22,29 @@ from attrs import asdict
 
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     JobRow,
+    PageEditRow,
     PageRow,
+    PageStageRow,
     PageVersionRow,
     ProjectRow,
+    RecipeRow,
     ScanRow,
     SourceRow,
 )
-from bookreviver.domain.entities import Job, Page, PageVersion, Project, Scan, Source
+from bookreviver.domain.entities import Job, Page, PageEdit, PageStage, PageVersion, Project, Recipe, Scan, Source
 from bookreviver.domain.enums import ContributorRole, IdentifierScheme, RejectionReason, TransformKind
-from bookreviver.domain.ids import AccountId, JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId, StorageKey
+from bookreviver.domain.geometry import Point, Quad, Transform, geometry_from_data
+from bookreviver.domain.ids import (
+    AccountId,
+    JobId,
+    PageId,
+    PageVersionId,
+    ProjectId,
+    RecipeId,
+    ScanId,
+    SourceId,
+    StorageKey,
+)
 from bookreviver.domain.values import (
     BookDetails,
     BookIdentifier,
@@ -38,15 +52,13 @@ from bookreviver.domain.values import (
     ImportRequest,
     ImportResult,
     MetadataSuggestion,
-    Point,
     ProcessorRef,
     Progress,
-    Quad,
     RejectedFile,
     Renditions,
     ScanFacts,
     SourceFile,
-    Transform,
+    Step,
 )
 
 if TYPE_CHECKING:
@@ -317,6 +329,9 @@ class PageVersionMapper(RowMapper[PageVersion, PageVersionRow]):
                 else Renditions(ready=row.renditions_ready, full=row.renditions_full)
             ),
             state=row.state,
+            scale=row.scale,
+            edit_hash=row.edit_hash,
+            tiles_ready=row.tiles_ready,
             created_at=row.created_at,
         )
 
@@ -342,6 +357,9 @@ class PageVersionMapper(RowMapper[PageVersion, PageVersionRow]):
             renditions_ready=None if entity.renditions is None else entity.renditions.ready,
             renditions_full=None if entity.renditions is None else entity.renditions.full,
             state=entity.state,
+            scale=entity.scale,
+            edit_hash=entity.edit_hash,
+            tiles_ready=entity.tiles_ready,
             created_at=entity.created_at,
         )
 
@@ -360,6 +378,7 @@ class PageVersionMapper(RowMapper[PageVersion, PageVersionRow]):
             quad=None if quad is None else Quad(**{corner: Point(**point) for corner, point in quad.items()}),
             angle=stored['angle'],
             mesh_key=None if stored['mesh_key'] is None else StorageKey(stored['mesh_key']),
+            matrix=None if stored.get('matrix') is None else tuple(stored['matrix']),
         )
 
 
@@ -521,6 +540,7 @@ class JobMapper(RowMapper[Job, JobRow]):
             state=row.state,
             progress=Progress(done=row.progress_done, total=row.progress_total),
             error=row.error,
+            params=row.params,
             request=None if request is None else ImportRequest(files=[SourceFile(**file) for file in request['files']]),
             result=None
             if result is None
@@ -558,10 +578,139 @@ class JobMapper(RowMapper[Job, JobRow]):
             progress_done=entity.progress.done,
             progress_total=entity.progress.total,
             error=entity.error,
+            params=dict(entity.params),
             request=None if entity.request is None else asdict(entity.request),
             # A source identifier is a UUID, which JSON has no type for
             result=None if entity.result is None else asdict(entity.result, value_serializer=json_value),
             created_at=entity.created_at,
             started_at=entity.started_at,
             finished_at=entity.finished_at,
+        )
+
+
+class PageStageMapper(RowMapper[PageStage, PageStageRow]):
+    """Translation of the record of a stage of a page, whose columns are the fields of the entity."""
+
+    @override
+    def to_entity(self, row: PageStageRow) -> PageStage:
+        """Build the record stored in ``row``.
+
+        :param row: Page stage row loaded from the database.
+        :type row: PageStageRow
+        :returns: The record with its recipe, head version and state.
+        :rtype: PageStage
+        """
+        return PageStage(
+            page_id=PageId(row.page_id),
+            stage=row.stage,
+            recipe_id=None if row.recipe_id is None else RecipeId(row.recipe_id),
+            head_version_id=None if row.head_version_id is None else PageVersionId(row.head_version_id),
+            state=row.state,
+            updated_at=row.updated_at,
+        )
+
+    @override
+    def to_row(self, entity: PageStage) -> PageStageRow:
+        """Build the row of ``entity``.
+
+        :param entity: Record to store.
+        :type entity: PageStage
+        :returns: Transient page stage row.
+        :rtype: PageStageRow
+        """
+        return PageStageRow(
+            page_id=entity.page_id,
+            stage=entity.stage,
+            recipe_id=entity.recipe_id,
+            head_version_id=entity.head_version_id,
+            state=entity.state,
+            updated_at=entity.updated_at,
+        )
+
+
+class PageEditMapper(RowMapper[PageEdit, PageEditRow]):
+    """Translation of a manual edit, whose shape is stored as JSON data of its own kind."""
+
+    @override
+    def to_entity(self, row: PageEditRow) -> PageEdit:
+        """Build the edit stored in ``row``.
+
+        :param row: Page edit row loaded from the database.
+        :type row: PageEditRow
+        :returns: The edit with its shape rebuilt from its data.
+        :rtype: PageEdit
+        """
+        return PageEdit(
+            page_id=PageId(row.page_id),
+            stage=row.stage,
+            processor_key=row.processor_key,
+            kind=row.kind,
+            geometry=None if row.geometry is None else geometry_from_data(row.kind, row.geometry),
+            mask_key=None if row.mask_key is None else StorageKey(row.mask_key),
+            edit_hash=row.edit_hash,
+            updated_at=row.updated_at,
+        )
+
+    @override
+    def to_row(self, entity: PageEdit) -> PageEditRow:
+        """Build the row of ``entity``.
+
+        :param entity: Edit to store.
+        :type entity: PageEdit
+        :returns: Transient page edit row.
+        :rtype: PageEditRow
+        """
+        return PageEditRow(
+            page_id=entity.page_id,
+            stage=entity.stage,
+            processor_key=entity.processor_key,
+            kind=entity.kind,
+            geometry=None if entity.geometry is None else entity.geometry.to_data(),
+            mask_key=entity.mask_key,
+            edit_hash=entity.edit_hash,
+            updated_at=entity.updated_at,
+        )
+
+
+class RecipeMapper(RowMapper[Recipe, RecipeRow]):
+    """Translation of a recipe, whose steps are a JSON list."""
+
+    @override
+    def to_entity(self, row: RecipeRow) -> Recipe:
+        """Build the recipe stored in ``row``.
+
+        :param row: Recipe row loaded from the database.
+        :type row: RecipeRow
+        :returns: The recipe with its steps.
+        :rtype: Recipe
+        """
+        return Recipe(
+            id=RecipeId(row.id),
+            project_id=ProjectId(row.project_id),
+            stage=row.stage,
+            name=row.name,
+            steps=tuple(Step(processor_key=step['processor_key'], params=step['params']) for step in row.steps),
+            active=row.active,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    @override
+    def to_row(self, entity: Recipe) -> RecipeRow:
+        """Build the row of ``entity``.
+
+        :param entity: Recipe to store.
+        :type entity: Recipe
+        :returns: Transient recipe row.
+        :rtype: RecipeRow
+        """
+        return RecipeRow(
+            id=entity.id,
+            project_id=entity.project_id,
+            stage=entity.stage,
+            name=entity.name,
+            steps=[{'processor_key': step.processor_key, 'params': dict(step.params)} for step in entity.steps],
+            active=entity.active,
+            created_at=entity.created_at,
+            updated_at=entity.updated_at,
         )

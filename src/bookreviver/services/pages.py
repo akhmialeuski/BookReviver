@@ -19,12 +19,15 @@ data, and the next job takes it with the new ones, so no route repeats it.
 
 A page shows its base version because no later version is recorded yet. When the processing stages write versions of
 their own, the overview will name the current version of the stage the viewer asks for.
+
+The files of a base version are made by the processors ``split.none`` and ``pages.blank``, which a ``StepRunner`` runs,
+as it runs the steps of a recipe, and a base version that is ready becomes the current version of its stage in the
+record of the page, so the page split and the page order stage read like any other.
 """
 
 import logging
 import statistics
 from contextlib import asynccontextmanager
-from functools import partial
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -39,7 +42,6 @@ from bookreviver.domain.enums import (
     PageChange,
     PageOrigin,
     Side,
-    Stage,
     VersionData,
     VersionState,
 )
@@ -47,26 +49,30 @@ from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.events import JobChanged, PagesChanged, PageVersionReady
 from bookreviver.domain.ids import JobId, PageId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PageSize, Progress, Renditions, Slice
+from bookreviver.domain.values import PageSize, Progress, Slice
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from bookreviver.services.projects import owned_project
+from bookreviver.services.stage_records import StageRecords
+from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Collection, Sequence
+    from collections.abc import AsyncIterator, Collection, Mapping, Sequence
     from pathlib import Path
 
     from bookreviver.domain.changes import PageChanges
     from bookreviver.domain.entities import Actor, PageVersion
     from bookreviver.domain.ids import ProjectId, ScanId, SourceId, StorageKey
     from bookreviver.domain.values import NewPage, PageAnchor, PageNumbering, SliceRequest
-    from bookreviver.ports.imaging import BlankPageMaker
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
     from bookreviver.ports.storage import AssetStore
+    from bookreviver.services.steps import StepRunner
 
-# Stages whose pending and failed versions the ``prepare-pages`` job writes the files of
-PREPARED_STAGES: frozenset[Stage] = frozenset({Stage.PAGE_SPLIT, Stage.PAGE_ORDER})
+# The processors whose pending and failed versions the ``prepare-pages`` job writes the files of, which are the ones a
+# page is given when it is made. A version of another processor of the same stages, such as a half of a split spread,
+# belongs to the run that makes it
+PREPARED_PROCESSORS: frozenset[str] = frozenset({SPLIT_NONE.key, PAGES_BLANK.key})
 NO_BOOK_IMAGE: str = (
     'No page of the book that is cut from a scan and part of the book has a recorded size, so a blank leaf has no size '
     'to take. Give the size of the leaf.'
@@ -102,12 +108,12 @@ class PageRuntime:
 class PageImaging:
     """What writes the images of base versions.
 
-    :ivar base_versions: Builder of base versions and writer of their files.
-    :ivar blank_maker: Port making the image of a blank leaf, until the ``pages.blank`` processor replaces it.
+    :ivar base_versions: Builder of the rows of base versions.
+    :ivar runner: Runner of the processors ``split.none`` and ``pages.blank``, and writer of their files.
     """
 
     base_versions: BaseVersions
-    blank_maker: BlankPageMaker
+    runner: StepRunner
 
 
 class PageService:
@@ -123,7 +129,7 @@ class PageService:
         :type assets: AssetStore
         :param runtime: The publisher, the clock, the order keys and the job queue.
         :type runtime: PageRuntime
-        :param imaging: The base versions and the maker of blank leaves.
+        :param imaging: The builder of base versions and the runner of their processors.
         :type imaging: PageImaging
         """
         self._uow = uow
@@ -133,7 +139,8 @@ class PageService:
         self._clock = runtime.clock
         self._queue = runtime.queue
         self._base_versions = imaging.base_versions
-        self._blank_maker = imaging.blank_maker
+        self._runner = imaging.runner
+        self._records = StageRecords(uow=uow, publisher=runtime.publisher, clock=runtime.clock)
 
     async def manifest(
         self, actor: Actor, project_id: ProjectId, request: SliceRequest, *, included_only: bool = False
@@ -414,7 +421,7 @@ class PageService:
                   None when the job was cancelled, which stops it before its next version.
         :rtype: tuple[Job, int, int] | None
         """
-        versions = await self._uow.page_versions.list_to_prepare(job.project_id, PREPARED_STAGES)
+        versions = await self._uow.page_versions.list_to_prepare(job.project_id, PREPARED_PROCESSORS)
         failed = 0
         for done, version in enumerate(versions):
             progress = Progress(done=done, total=len(versions))
@@ -548,17 +555,40 @@ class PageService:
         versions = await self._uow.page_versions.list_base_versions([page.id for page in pages])
         # The versions come earliest first, so the newest base version of a page wins
         newest = {version.page_id: version for version in versions}
+        current = await self._current_images(pages)
         scans = await self._uow.scans.list_by_ids({page.scan_id for page in pages if page.scan_id is not None})
         sources = {scan.id: scan.source_id for scan in scans}
         return [
             PageOverview(
                 page=page,
                 position=first_position + index,
-                base_version=newest.get(page.id),
+                image_version=current.get(page.id, newest.get(page.id)),
                 source_id=sources.get(page.scan_id) if page.scan_id is not None else None,
             )
             for index, page in enumerate(pages)
         ]
+
+    async def _current_images(self, pages: Sequence[Page]) -> Mapping[PageId, PageVersion]:
+        """Find the version each page shows: the current version of the latest stage that has an image.
+
+        A page whose stages have no current version yet, such as a leaf waiting for its image, is left out, and the
+        caller falls back to its base version.
+
+        :param pages: Pages of one project.
+        :type pages: Sequence[Page]
+        :returns: The version to show by page identifier.
+        :rtype: Mapping[PageId, PageVersion]
+        """
+        records = await self._uow.page_stages.list_for_pages([page.id for page in pages])
+        head_ids = {record.head_version_id for record in records if record.head_version_id is not None}
+        heads = {version.id: version for version in await self._uow.page_versions.list_by_ids(head_ids)}
+        shown: dict[PageId, PageVersion] = {}
+        # The records come in the order of the stages, so the latest stage that has an image wins
+        for record in records:
+            head = None if record.head_version_id is None else heads.get(record.head_version_id)
+            if head is not None and head.renditions is not None and head.renditions.ready:
+                shown[record.page_id] = head
+        return shown
 
     async def _overview(self, page: Page) -> PageOverview:
         """Read the position, base version and source of one stored page.
@@ -745,7 +775,7 @@ class PageService:
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         """
-        waiting = await self._uow.page_versions.list_to_prepare(project_id, PREPARED_STAGES)
+        waiting = await self._uow.page_versions.list_to_prepare(project_id, PREPARED_PROCESSORS)
         if any(version.state is VersionState.PENDING for version in waiting):
             await self._enqueue_prepare(project_id)
 
@@ -789,18 +819,18 @@ class PageService:
         except NotFoundError:
             return True
         try:
-            await self._write_files(version, page)
+            made = await self._write_files(version, page)
         except DomainError as error:
             reason = str(error)
         except Exception:
             logger.exception('The files of page version %s could not be made', version.id)
             reason = UNEXPECTED_FAILURE
         else:
-            data = {key: value for key, value in version.data.items() if key != VersionData.ERROR}
-            full = version.renditions.full if version.renditions is not None else Renditions().full
-            ready = evolve(version, data=data, renditions=Renditions(ready=True, full=full), state=VersionState.READY)
-            if await self._store(page, ready):
-                await self._publisher.publish(PageVersionReady(project_id=page.project_id, version=ready))
+            if await self._store(page, made):
+                changed = await self._records.set_head(page.id, made.stage, head_version_id=made.id, recipe_id=None)
+                await self._uow.commit()
+                await self._publisher.publish(PageVersionReady(project_id=page.project_id, version=made))
+                await self._records.announce(page.project_id, changed)
             return True
         failed = evolve(version, data={**version.data, VersionData.ERROR: reason}, state=VersionState.FAILED)
         return not await self._store(page, failed)
@@ -824,31 +854,36 @@ class PageService:
         await self._uow.commit()
         return True
 
-    async def _write_files(self, version: PageVersion, page: Page) -> None:
-        """Write the files of a base version: a copy of its scan, or a generated white leaf.
+    async def _write_files(self, version: PageVersion, page: Page) -> PageVersion:
+        """Run the processor of a base version and write its files: a copy of its scan, or a generated white leaf.
 
         :param version: A pending or failed base version.
         :type version: PageVersion
         :param page: The page the version belongs to.
         :type page: Page
+        :returns: The version as ready, with its transform, data and renditions.
+        :rtype: PageVersion
         :raises ConflictError: If the scan to copy is deleted or not cut yet.
         :raises ValueError: If the version is neither ``split.none`` nor ``pages.blank``, or has no size to make.
         """
+        project = await self._uow.projects.get(page.project_id)
+        keys = ProjectKeys(project.id)
         if version.processor == SPLIT_NONE:
             if page.scan_id is None:
                 raise ConflictError(SCAN_DELETED)
             scan = await self._uow.scans.get(page.scan_id)
             if not scan.renditions.ready:
                 raise ConflictError(SCAN_NOT_CUT)
-            await self._base_versions.copy_scan(version, scan)
+            run = StepRun(
+                processor_key=SPLIT_NONE.key,
+                params=version.params,
+                input_data=scan.facts.as_data(),
+                image=keys.scan_rendition(scan, scan.renditions.full),
+            )
         elif version.processor == PAGES_BLANK and (size := PageSize.from_data(version.data)) is not None:
-            keys = ProjectKeys(page.project_id)
-            full = version.renditions.full if version.renditions is not None else Renditions().full
-            of_version = partial(keys.version_rendition, version)
-            await self._assets.delete_prefix(keys.version_directory(version))
-            async with self._assets.writable(of_version(full)) as target:
-                await self._blank_maker.make(target, width_px=size.width_px, height_px=size.height_px, dpi=size.dpi)
-            await self._base_versions.derive(of_version, full=full)
+            run = StepRun(processor_key=PAGES_BLANK.key, params=size.as_data(), input_data={})
         else:
             err_msg = f'Page version {version.id} made by {version.processor.key} has no files to write.'
             raise ValueError(err_msg)
+        async with self._runner.execute(run) as result:
+            return await self._runner.store(keys, version, result.outputs[0], policy=project.image_policy, tiles=True)

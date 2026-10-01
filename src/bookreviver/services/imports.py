@@ -65,8 +65,10 @@ from bookreviver.domain.values import (
     Renditions,
     UploadPath,
 )
-from bookreviver.services.base_versions import BaseVersions
+from bookreviver.services.base_versions import SPLIT_NONE, BaseVersions
 from bookreviver.services.projects import owned_project
+from bookreviver.services.stage_records import StageRecords
+from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -79,6 +81,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
     from bookreviver.ports.storage import AssetStore, IncomingFile, SourceStore
+    from bookreviver.services.steps import StepRunner
 
 IMPORT_ACTIVE: str = 'This project is already importing files. Wait for the import to finish, or cancel it.'
 NO_SOURCE_IMPORTED: str = 'None of the uploaded files could be imported.'
@@ -129,11 +132,13 @@ class ImportImaging:
     :ivar inspector: Port grouping an upload into sources and describing each source.
     :ivar rasterizer: Port writing one scan as an image.
     :ivar tiler: Port cutting the pyramid, the preview and the thumbnail of an image.
+    :ivar runner: Runner of the processor ``split.none``, which makes the base version of a page from its scan.
     """
 
     inspector: SourceInspector
     rasterizer: PageRasterizer
     tiler: Tiler
+    runner: StepRunner
 
 
 @frozen(kw_only=True)
@@ -173,7 +178,7 @@ class ImportRun:
         :type uow: UnitOfWork
         :param storage: The source store and the asset store.
         :type storage: ImportStorage
-        :param imaging: The inspector, the rasterizer and the tiler.
+        :param imaging: The inspector, the rasterizer, the tiler and the runner of processors.
         :type imaging: ImportImaging
         :param runtime: The publisher, the clock, the order keys and the limits.
         :type runtime: ImportRuntime
@@ -185,6 +190,8 @@ class ImportRun:
         self._assets = storage.assets
         self._inspector = imaging.inspector
         self._rasterizer = imaging.rasterizer
+        self._runner = imaging.runner
+        self._records = StageRecords(uow=uow, publisher=runtime.publisher, clock=runtime.clock)
         self._base_versions = BaseVersions(
             assets=storage.assets, tiler=imaging.tiler, iiif_root=runtime.limits.iiif_root
         )
@@ -433,16 +440,34 @@ class ImportRun:
             await self._rasterizer.extract(source.kind, files, scan.number, target, full=full)
         await self._base_versions.derive(of_scan, full=full)
         versions = []
+        run = StepRun(
+            processor_key=SPLIT_NONE.key,
+            params={},
+            input_data=ready.facts.as_data(),
+            image=of_scan(full),
+        )
         for page in pages:
             version = BaseVersions.split_none(page=page, scan=ready, state=VersionState.READY, moment=self._clock.now())
-            await self._base_versions.copy_scan(version, ready)
-            versions.append(version)
+            async with self._runner.execute(run) as result:
+                versions.append(
+                    await self._runner.store(
+                        self._keys, version, result.outputs[0], policy=project.image_policy, tiles=True
+                    )
+                )
         async with self._lock:
             await self._record_progress(done=1)
             await self._uow.page_versions.add_many(versions)
+            changed = [
+                record
+                for page, version in zip(pages, versions, strict=True)
+                for record in await self._records.set_head(
+                    page.id, version.stage, head_version_id=version.id, recipe_id=None
+                )
+            ]
             await self._uow.scans.update(ready)
             await self._commit()
             await self._publisher.publish(ScanReady(project_id=scan.project_id, scan=ready))
+            await self._records.announce(scan.project_id, changed)
 
     def _reject(self, names: Sequence[str], reason: RejectionReason, detail: str) -> None:
         """Record that the files of one source were not imported, and why.

@@ -2,22 +2,30 @@
 
 import re
 from collections.abc import Mapping
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Self, override
+from uuid import UUID
 
 from attrs import evolve, field, fields_dict, frozen, validators
 
 from bookreviver.domain.enums import (
     ContributorRole,
+    EditorKind,
+    JobKind,
     NewPageOrigin,
     Orthography,
+    ProcessorScope,
     Rendition,
     RightsStatus,
     Script,
-    TransformKind,
+    Stage,
     UploadProblem,
     VersionData,
+    VersionOutput,
+    WorkerPool,
 )
-from bookreviver.domain.errors import InvalidIdentifierError, UploadRejectedError
+from bookreviver.domain.errors import InvalidIdentifierError, InvalidParametersError, UploadRejectedError
+from bookreviver.domain.ids import PageId, PageVersionId, RecipeId
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -33,11 +41,15 @@ if TYPE_CHECKING:
         RejectionReason,
         Side,
         SourceKind,
+        VersionScale,
     )
-    from bookreviver.domain.ids import PageId, SourceId, StorageKey
+    from bookreviver.domain.geometry import EditGeometry
+    from bookreviver.domain.ids import SourceId
 
 # JSON-compatible metadata as read from a source file
 type MetadataMap = Mapping[str, Any]
+# Key of the colour mode among the facts of a scan that a processor reads
+COLOR_MODE_KEY: str = 'color_mode'
 # The description field a suggestion never fills
 TITLE_FIELD: str = 'title'
 # A SHA-256 digest as lower-case hexadecimal digits
@@ -324,6 +336,21 @@ class ScanFacts:
     has_text_layer: bool = False
     extra: MetadataMap = field(factory=dict)
 
+    def as_data(self) -> dict[str, Any]:
+        """Return the facts a processor that splits a scan reads, as the input data of its step.
+
+        :returns: The size, the colour mode as its value, and the resolution when the source records one.
+        :rtype: dict[str, Any]
+        """
+        data: dict[str, Any] = {
+            VersionData.WIDTH_PX: self.width_px,
+            VersionData.HEIGHT_PX: self.height_px,
+            COLOR_MODE_KEY: self.color_mode.value,
+        }
+        if dpi := max(filter(None, (self.dpi_x, self.dpi_y)), default=None):
+            data[VersionData.DPI] = dpi
+        return data
+
 
 @frozen(kw_only=True)
 class Renditions:
@@ -351,6 +378,20 @@ class Renditions:
 
 
 @frozen(kw_only=True)
+class RenditionInfo:
+    """What a writer of renditions made of an image: its size and the format of its ``full`` file.
+
+    :ivar width_px: Width of the image in pixels.
+    :ivar height_px: Height of the image in pixels.
+    :ivar full: Format the ``full`` image was written in.
+    """
+
+    width_px: int = field(validator=validators.gt(0))
+    height_px: int = field(validator=validators.gt(0))
+    full: Rendition = field(validator=validators.in_(Renditions.FULL_FORMATS))
+
+
+@frozen(kw_only=True)
 class ProcessorRef:
     """The processor that made a page version, by key and version.
 
@@ -363,70 +404,53 @@ class ProcessorRef:
 
 
 @frozen(kw_only=True)
-class Point:
-    """A point in the pixel coordinates of an image, whose origin is its top left corner.
+class Step:
+    """One step of a recipe: a processor and the parameters it runs with.
 
-    :ivar x: Distance from the left edge in pixels.
-    :ivar y: Distance from the top edge in pixels.
+    :ivar processor_key: Key of the processor, such as ``geometry.deskew``.
+    :ivar params: Parameters of the step, following the processor's JSON Schema.
     """
 
-    x: float
-    y: float
+    processor_key: str = field(validator=validators.min_len(1))
+    params: MetadataMap = field(factory=dict)
 
 
-@frozen(kw_only=True)
-class Quad:
-    """A quadrilateral in the pixel coordinates of an image, such as a half of a spread or a skewed page.
+@frozen
+class PageStageKey:
+    """The key of the record of a stage of a page, which a repository takes as one value.
 
-    :ivar top_left: Corner at the top left of the area.
-    :ivar top_right: Corner at the top right of the area.
-    :ivar bottom_right: Corner at the bottom right of the area.
-    :ivar bottom_left: Corner at the bottom left of the area.
+    :ivar page_id: Page the stage belongs to.
+    :ivar stage: The stage.
     """
 
-    top_left: Point
-    top_right: Point
-    bottom_right: Point
-    bottom_left: Point
+    page_id: PageId
+    stage: Stage
 
 
-@frozen(kw_only=True)
-class Transform:
-    """The transform of coordinates a processing step applies from its input image to its output image.
+@frozen
+class RecipeKey:
+    """The address of a recipe: the stage it belongs to and its identifier, which a use case takes as one value.
 
-    The chain of transforms from a scan to any page version maps coordinates of the version back to the scan. Each kind
-    takes its own argument: a crop and a perspective correction a quadrilateral, a rotation an angle, and a dewarping
-    the key of its stored mesh. The identity takes none.
-
-    :ivar kind: Kind of the transform.
-    :ivar quad: Area of the input that becomes the output, for a crop or a perspective correction.
-    :ivar angle: Angle of a rotation in degrees, counter-clockwise.
-    :ivar mesh_key: Storage key of the mesh a dewarping follows.
+    :ivar stage: The stage of the recipe.
+    :ivar recipe_id: Identifier of the recipe.
     """
 
-    ARGUMENTS: ClassVar[Mapping[TransformKind, frozenset[str]]] = {
-        TransformKind.IDENTITY: frozenset(),
-        TransformKind.CROP: frozenset({'quad'}),
-        TransformKind.ROTATE: frozenset({'angle'}),
-        TransformKind.PERSPECTIVE: frozenset({'quad'}),
-        TransformKind.MESH: frozenset({'mesh_key'}),
-    }
+    stage: Stage
+    recipe_id: RecipeId
 
-    kind: TransformKind = TransformKind.IDENTITY
-    quad: Quad | None = None
-    angle: float | None = None
-    mesh_key: StorageKey | None = None
 
-    def __attrs_post_init__(self) -> None:
-        """Check that exactly the arguments of the kind are given.
+@frozen
+class PageEditKey:
+    """The key of a manual edit: a processor's input on a page in a stage.
 
-        :raises ValueError: If an argument of the kind is missing or an argument of another kind is given.
-        """
-        every_argument = frozenset[str]().union(*self.ARGUMENTS.values())
-        given = {name for name in every_argument if getattr(self, name) is not None}
-        if given != (expected := self.ARGUMENTS[self.kind]):
-            err_msg = f'A {self.kind} transform takes {sorted(expected) or "no arguments"}, not {sorted(given)}.'
-            raise ValueError(err_msg)
+    :ivar page_id: Page the edit belongs to.
+    :ivar stage: Stage of the processor reading the edit.
+    :ivar processor_key: Key of the processor reading the edit.
+    """
+
+    page_id: PageId
+    stage: Stage
+    processor_key: str
 
 
 @frozen(kw_only=True)
@@ -699,3 +723,269 @@ class MailMessage:
     to: str
     subject: str
     body: str
+
+
+@frozen(kw_only=True)
+class ProcessorSpec:
+    """What a processor says about itself, which the catalogue lists without running it.
+
+    The spec is a plain value declared on the processor's class, so the API server lists every processor without
+    importing what a processor needs to run.
+
+    :ivar key: Key of the processor, ``<stage>.<name>`` or ``split.<name>``, such as ``geometry.deskew``.
+    :ivar version: Version of the algorithm, which joins the identifier of the page versions it makes.
+    :ivar title: Name the interface shows.
+    :ivar stage: Stage whose recipe the step may be put into.
+    :ivar scope: Whether the step makes one output for the page or one for each part of a scan.
+    :ivar outputs: What the step writes.
+    :ivar parameters: JSON Schema of the parameters, from which the interface builds the settings form.
+    :ivar editor: Editor of the manual edit the step reads.
+    :ivar pool: Class of worker the step runs on.
+    """
+
+    key: str = field(validator=validators.min_len(1))
+    version: str = field(validator=validators.min_len(1))
+    title: str = field(validator=validators.min_len(1))
+    stage: Stage
+    scope: ProcessorScope = ProcessorScope.PAGE
+    outputs: frozenset[VersionOutput] = frozenset({VersionOutput.IMAGE})
+    parameters: MetadataMap = field(factory=dict)
+    editor: EditorKind = EditorKind.NONE
+    pool: WorkerPool = WorkerPool.CPU
+
+    @property
+    def ref(self) -> ProcessorRef:
+        """The key and the version of the processor, as a page version records them."""
+        return ProcessorRef(key=self.key, version=self.version)
+
+
+def _params_error(kind: JobKind, error: Exception) -> InvalidParametersError:
+    """Build the error of the parameters of a job that its value class cannot read.
+
+    :param kind: Kind of the job whose parameters were read.
+    :type kind: JobKind
+    :param error: The error the reading raised.
+    :type error: Exception
+    :returns: The error to raise.
+    :rtype: InvalidParametersError
+    """
+    err_msg = f'The parameters of a {kind} job are not valid: {error}.'
+    return InvalidParametersError(err_msg)
+
+
+@frozen(kw_only=True)
+class NewPageEdit:
+    """A manual edit as the user sends it, before it is stored with its hash.
+
+    :ivar kind: Editor that made the edit.
+    :ivar geometry: The shape the user drew, or None for an edit that is only a mask.
+    """
+
+    kind: EditorKind
+    geometry: EditGeometry | None = None
+
+    def __attrs_post_init__(self) -> None:
+        """Check that the shape is the one the editor draws.
+
+        :raises ValueError: If the shape belongs to another editor.
+        """
+        if self.geometry is not None and self.geometry.editor is not self.kind:
+            err_msg = f'The {self.kind.label.lower()} editor does not draw a {self.geometry.editor.label.lower()}.'
+            raise ValueError(err_msg)
+
+
+@frozen(kw_only=True)
+class VersionFilter:
+    """Which versions of a page a listing returns.
+
+    :ivar stage: Stage whose versions are listed, or None for every stage.
+    :ivar scale: Scale of the runs listed, or None for both full runs and previews.
+    """
+
+    stage: Stage | None = None
+    scale: VersionScale | None = None
+
+
+@frozen(kw_only=True)
+class StageRun:
+    """What a ``run-stage`` job runs: a stage over some pages by a recipe.
+
+    :ivar stage: Stage to run.
+    :ivar recipe_id: Recipe to run it by, or None for the active recipe of the stage.
+    :ivar page_ids: Pages to run it on, or None for every page with an image.
+    :ivar confirm_unsplit: Whether the user confirmed that a page split that is undone deletes the right half of a
+                           spread, which a run that would do so refuses without it.
+    """
+
+    stage: Stage
+    recipe_id: RecipeId | None = None
+    page_ids: tuple[PageId, ...] | None = None
+    confirm_unsplit: bool = False
+
+    def to_map(self) -> dict[str, Any]:
+        """Return the value as the JSON object a job stores.
+
+        :returns: The stage, the recipe, the pages as text, and the confirmation.
+        :rtype: dict[str, Any]
+        """
+        return {
+            'stage': self.stage.value,
+            'recipe_id': None if self.recipe_id is None else str(self.recipe_id),
+            'page_ids': None if self.page_ids is None else [str(page_id) for page_id in self.page_ids],
+            'confirm_unsplit': self.confirm_unsplit,
+        }
+
+    @classmethod
+    def from_map(cls, stored: MetadataMap) -> Self:
+        """Read the value from the JSON object ``to_map`` wrote.
+
+        :param stored: The stored object.
+        :type stored: MetadataMap
+        :returns: The value.
+        :rtype: Self
+        :raises InvalidParametersError: If the object is not one of a ``run-stage`` job.
+        """
+        try:
+            page_ids = stored['page_ids']
+            return cls(
+                stage=Stage(stored['stage']),
+                recipe_id=None if stored['recipe_id'] is None else RecipeId(UUID(stored['recipe_id'])),
+                page_ids=None if page_ids is None else tuple(PageId(UUID(page_id)) for page_id in page_ids),
+                confirm_unsplit=bool(stored.get('confirm_unsplit', False)),
+            )
+        except (KeyError, ValueError, TypeError) as error:
+            raise _params_error(JobKind.RUN_STAGE, error) from error
+
+
+@frozen(kw_only=True)
+class StepPreview:
+    """What a ``preview-step`` job previews: the steps of a form on one page, up to one of them.
+
+    :ivar page_id: Page to preview on.
+    :ivar stage: Stage of the steps.
+    :ivar steps: The steps as the form has them, with parameters not yet saved in a recipe.
+    :ivar step_index: Index of the last step whose result is wanted; the steps before it run first.
+    """
+
+    page_id: PageId
+    stage: Stage
+    steps: tuple[Step, ...] = field(validator=validators.min_len(1))
+    step_index: int = field(validator=validators.ge(0))
+
+    def __attrs_post_init__(self) -> None:
+        """Check that the index names one of the steps.
+
+        :raises ValueError: If the index is past the last step.
+        """
+        if self.step_index >= len(self.steps):
+            err_msg = f'The step index {self.step_index} is past the {len(self.steps)} steps of the preview.'
+            raise ValueError(err_msg)
+
+    def to_map(self) -> dict[str, Any]:
+        """Return the value as the JSON object a job stores.
+
+        :returns: The page, the stage, the steps and the index.
+        :rtype: dict[str, Any]
+        """
+        return {
+            'page_id': str(self.page_id),
+            'stage': self.stage.value,
+            'steps': [{'processor_key': step.processor_key, 'params': dict(step.params)} for step in self.steps],
+            'step_index': self.step_index,
+        }
+
+    @classmethod
+    def from_map(cls, stored: MetadataMap) -> Self:
+        """Read the value from the JSON object ``to_map`` wrote.
+
+        :param stored: The stored object.
+        :type stored: MetadataMap
+        :returns: The value.
+        :rtype: Self
+        :raises InvalidParametersError: If the object is not one of a ``preview-step`` job.
+        """
+        try:
+            return cls(
+                page_id=PageId(UUID(stored['page_id'])),
+                stage=Stage(stored['stage']),
+                steps=tuple(
+                    Step(processor_key=step['processor_key'], params=step['params']) for step in stored['steps']
+                ),
+                step_index=stored['step_index'],
+            )
+        except (KeyError, ValueError, TypeError) as error:
+            raise _params_error(JobKind.PREVIEW_STEP, error) from error
+
+
+@frozen(kw_only=True)
+class TileCut:
+    """What a ``cut-tiles`` job cuts: the tile pyramids of some versions.
+
+    :ivar version_ids: Versions to cut.
+    """
+
+    version_ids: tuple[PageVersionId, ...] = field(validator=validators.min_len(1))
+
+    def to_map(self) -> dict[str, Any]:
+        """Return the value as the JSON object a job stores.
+
+        :returns: The identifiers of the versions.
+        :rtype: dict[str, Any]
+        """
+        return {'version_ids': list(self.version_ids)}
+
+    @classmethod
+    def from_map(cls, stored: MetadataMap) -> Self:
+        """Read the value from the JSON object ``to_map`` wrote.
+
+        :param stored: The stored object.
+        :type stored: MetadataMap
+        :returns: The value.
+        :rtype: Self
+        :raises InvalidParametersError: If the object is not one of a ``cut-tiles`` job.
+        """
+        try:
+            return cls(version_ids=tuple(PageVersionId(version_id) for version_id in stored['version_ids']))
+        except (KeyError, ValueError, TypeError) as error:
+            raise _params_error(JobKind.CUT_TILES, error) from error
+
+
+@frozen(kw_only=True)
+class VersionCollection:
+    """What a ``collect-versions`` job deletes: the versions older than two moments that nothing needs.
+
+    :ivar older_than: Full runs created before this moment may be deleted.
+    :ivar previews_older_than: Previews created before this moment may be deleted.
+    """
+
+    older_than: datetime
+    previews_older_than: datetime
+
+    def to_map(self) -> dict[str, Any]:
+        """Return the value as the JSON object a job stores.
+
+        :returns: The two moments as ISO 8601 text.
+        :rtype: dict[str, Any]
+        """
+        return {
+            'older_than': self.older_than.isoformat(),
+            'previews_older_than': self.previews_older_than.isoformat(),
+        }
+
+    @classmethod
+    def from_map(cls, stored: MetadataMap) -> Self:
+        """Read the value from the JSON object ``to_map`` wrote.
+
+        :param stored: The stored object.
+        :type stored: MetadataMap
+        :returns: The value.
+        :rtype: Self
+        :raises InvalidParametersError: If the object is not one of a ``collect-versions`` job.
+        """
+        try:
+            return cls(
+                older_than=datetime.fromisoformat(stored['older_than']),
+                previews_older_than=datetime.fromisoformat(stored['previews_older_than']),
+            )
+        except (KeyError, ValueError, TypeError) as error:
+            raise _params_error(JobKind.COLLECT_VERSIONS, error) from error

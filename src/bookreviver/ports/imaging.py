@@ -15,8 +15,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
-    from bookreviver.domain.enums import Rendition, SourceKind
-    from bookreviver.domain.values import SourceAnalysis, UploadedSource
+    from bookreviver.domain.enums import ColorMode, Rendition, SourceKind
+    from bookreviver.domain.values import RenditionInfo, SourceAnalysis, UploadedSource
 
 
 class SourceInspector(ABC):
@@ -122,23 +122,26 @@ class Tiler(ABC):
         """
 
 
-class BlankPageMaker(ABC):
-    """Makes the image of a blank leaf, until the plugin framework replaces it with the ``pages.blank`` processor.
-
-    The page order stage comes before the plugin framework, so the image of a generated blank leaf is made by this
-    temporary port, which is removed with its adapter once an ordinary processor makes the leaf.
-    """
+class RenditionWriter(ABC):
+    """Writes the files of a page version from the image a processor made: ``full``, ``preview`` and ``thumb``."""
 
     @abstractmethod
-    async def make(self, target: Path, *, width_px: int, height_px: int, dpi: float | None) -> None:
-        """Write a white page of the given size at ``target`` as a 1-bit PNG, which is the format of a bilevel page.
+    async def write(self, image: Path, target_dir: Path, *, full: Rendition, color_mode: ColorMode) -> RenditionInfo:
+        """Write ``full``, ``preview`` and ``thumb`` of ``image`` into the new directory ``target_dir``.
 
-        :param target: Path to write the PNG at, whose name the caller has chosen as ``Rendition.FULL_PNG``.
-        :type target: Path
-        :param width_px: Width of the page in pixels.
-        :type width_px: int
-        :param height_px: Height of the page in pixels.
-        :type height_px: int
-        :param dpi: Resolution to record in the file in dots per inch, or None for the default of the writer.
-        :type dpi: float | None
+        ``full`` is the image in the format asked for: a bilevel image is a 1-bit PNG with exactly two values, a JPEG
+        is written at the configured quality, and an image that already is a file of the format asked for is copied as
+        it is. ``preview`` and ``thumb`` are always JPEG. The pyramid is cut apart by the ``Tiler``.
+
+        :param image: Image the processor made, a PNG or a JPEG.
+        :type image: Path
+        :param target_dir: Directory to create, which holds the files.
+        :type target_dir: Path
+        :param full: Format of the ``full`` image, ``Rendition.FULL_JPEG`` or ``Rendition.FULL_PNG``.
+        :type full: Rendition
+        :param color_mode: Whether the image is bilevel, gray or colour.
+        :type color_mode: ColorMode
+        :returns: The size of the image and the format of its ``full`` file.
+        :rtype: RenditionInfo
+        :raises ValueError: If ``full`` is not a format of the ``full`` image.
         """

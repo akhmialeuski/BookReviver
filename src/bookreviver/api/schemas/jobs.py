@@ -9,8 +9,8 @@ import enum
 from datetime import datetime
 
 from bookreviver.api.schemas.base import ResponseModel
-from bookreviver.domain.enums import JobKind, JobState, PageChange, RejectionReason
-from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
+from bookreviver.domain.enums import JobKind, JobState, PageChange, RejectionReason, Stage, StageState
+from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
 
 
 class EventName(enum.StrEnum):
@@ -21,6 +21,7 @@ class EventName(enum.StrEnum):
     SCAN_READY = 'scan-ready'
     PAGES_CHANGED = 'pages-changed'
     PAGE_VERSION_READY = 'page-version-ready'
+    PAGE_STAGE_CHANGED = 'page-stage-changed'
     PROJECT_CHANGED = 'project-changed'
 
 
@@ -145,3 +146,22 @@ class PageVersionReadySchema(ResponseModel):
     project_id: ProjectId
     page_id: PageId
     version_id: PageVersionId
+
+
+class PageStageChangedSchema(ResponseModel):
+    """A stage of a page whose current version or state changed; the data of a ``page-stage-changed`` event.
+
+    :ivar project_id: Identifier of the project owning the page.
+    :ivar page_id: Identifier of the page.
+    :ivar stage: The stage that changed.
+    :ivar recipe_id: Recipe the page was processed by, or None.
+    :ivar head_version_id: The current version of the stage, or None.
+    :ivar state: Whether the current version matches the inputs of the stage.
+    """
+
+    project_id: ProjectId
+    page_id: PageId
+    stage: Stage
+    recipe_id: RecipeId | None
+    head_version_id: PageVersionId | None
+    state: StageState

@@ -1,5 +1,7 @@
 """Tests for the domain entities and values."""
 
+import hashlib
+import json
 import re
 from typing import Any
 from uuid import uuid4
@@ -7,21 +9,14 @@ from uuid import uuid4
 import pytest
 from attrs import evolve
 
-from bookreviver.domain.entities import VERSION_ID_PATTERN, PageVersion
-from bookreviver.domain.enums import PageOrigin, Rendition, TransformKind
-from bookreviver.domain.ids import PageId, PageVersionId, ScanId, StorageKey
-from bookreviver.domain.values import BookDetails, Point, ProcessorRef, Progress, Quad, Renditions, Transform
+from bookreviver.domain.entities import VERSION_ID_PATTERN, PageEdit, VersionInputs
+from bookreviver.domain.enums import PageOrigin, Rendition, VersionScale
+from bookreviver.domain.geometry import Line, Point, Rotation
+from bookreviver.domain.ids import PageId, PageVersionId, ScanId
+from bookreviver.domain.values import BookDetails, ProcessorRef, Progress, Renditions
 from tests.helpers.builders import SPLIT_NONE, make_page, make_page_version, make_project, new_account_id
 
 PAGE_ID: PageId = PageId(uuid4())
-
-# The left half of a spread 2200 px wide and 1561 px high
-QUAD: Quad = Quad(
-    top_left=Point(x=0, y=0),
-    top_right=Point(x=1100, y=0),
-    bottom_right=Point(x=1100, y=1561),
-    bottom_left=Point(x=0, y=1561),
-)
 
 
 class TestPage:
@@ -42,48 +37,6 @@ class TestPage:
         """Verify a page cut from a scan stays one when its scan is gone, since it keeps its own copy of the image."""
         page = evolve(make_page(project_id=make_project(owner_id=new_account_id()).id), origin=PageOrigin.SCAN)
         assert (page.origin, page.scan_id) == (PageOrigin.SCAN, None)
-
-
-class TestTransform:
-    """Tests for the arguments a Transform takes by its kind."""
-
-    @pytest.mark.parametrize(
-        'arguments',
-        [
-            {},
-            {'kind': TransformKind.CROP, 'quad': QUAD},
-            {'kind': TransformKind.PERSPECTIVE, 'quad': QUAD},
-            {'kind': TransformKind.ROTATE, 'angle': 0.8},
-            {'kind': TransformKind.MESH, 'mesh_key': StorageKey('projects/book/assets/pages/1/mesh.json')},
-        ],
-        ids=['identity', 'crop', 'perspective', 'rotate', 'mesh'],
-    )
-    def test_kind_with_its_argument_is_accepted(self, arguments: dict[str, Any]) -> None:
-        """Verify every kind is built from exactly its own argument, the identity from none.
-
-        :param arguments: Keyword arguments of the transform.
-        :type arguments: dict[str, Any]
-        """
-        assert Transform(**arguments).kind == arguments.get('kind', TransformKind.IDENTITY)
-
-    @pytest.mark.parametrize(
-        'arguments',
-        [
-            {'kind': TransformKind.CROP},
-            {'kind': TransformKind.ROTATE, 'quad': QUAD},
-            {'kind': TransformKind.IDENTITY, 'angle': 1.0},
-            {'kind': TransformKind.CROP, 'quad': QUAD, 'angle': 1.0},
-        ],
-        ids=['missing-argument', 'argument-of-another-kind', 'identity-with-argument', 'extra-argument'],
-    )
-    def test_kind_without_exactly_its_argument_is_rejected(self, arguments: dict[str, Any]) -> None:
-        """Reject a transform missing its argument or carrying one of another kind, which no step could apply.
-
-        :param arguments: Keyword arguments of the transform.
-        :type arguments: dict[str, Any]
-        """
-        with pytest.raises(ValueError, match='transform takes'):
-            Transform(**arguments)
 
 
 class TestPageVersion:
@@ -111,14 +64,14 @@ class TestPageVersion:
             evolve(make_page_version(page_id=PageId(uuid4())), id=PageVersionId(version_id))
 
 
-class TestPageVersionIdentify:
-    """Tests for PageVersion.identify()."""
+class TestVersionInputsIdentify:
+    """Tests for VersionInputs.identify()."""
 
     def test_equal_work_gets_the_same_identifier_of_16_hexadecimal_digits(self) -> None:
         """Verify a repeated step gets the identifier of its first run, which is the cache key of its result."""
         page_id = PageId(uuid4())
-        first = PageVersion.identify(page_id=page_id, processor=SPLIT_NONE)
-        again = PageVersion.identify(page_id=page_id, processor=SPLIT_NONE, params={})
+        first = VersionInputs(page_id=page_id, processor=SPLIT_NONE).identify()
+        again = VersionInputs(page_id=page_id, processor=SPLIT_NONE, params={}).identify()
         assert (first == again, re.fullmatch(VERSION_ID_PATTERN, first) is not None) == (True, True)
 
     @pytest.mark.parametrize(
@@ -129,8 +82,10 @@ class TestPageVersionIdentify:
             {'processor': ProcessorRef(key='split.spread', version='1')},
             {'params': {'angle': 0.8}},
             {'input_id': PageVersionId('0123456789abcdef')},
+            {'edit_hash': '0123456789abcdef'},
+            {'scale': VersionScale.PREVIEW},
         ],
-        ids=['page', 'processor-version', 'processor-key', 'params', 'input'],
+        ids=['page', 'processor-version', 'processor-key', 'params', 'input', 'edit', 'scale'],
     )
     def test_any_change_of_what_produced_the_version_changes_its_identifier(self, changed: dict[str, Any]) -> None:
         """Verify each ingredient of the hash moves the identifier, so different work never shares a directory.
@@ -139,13 +94,46 @@ class TestPageVersionIdentify:
         :type changed: dict[str, Any]
         """
         reference: dict[str, Any] = {'page_id': PAGE_ID, 'processor': SPLIT_NONE}
-        assert PageVersion.identify(**reference) != PageVersion.identify(**{**reference, **changed})
+        assert VersionInputs(**reference).identify() != VersionInputs(**{**reference, **changed}).identify()
 
     def test_order_of_parameters_does_not_matter(self) -> None:
         """Verify the same parameters written in another order are the same work."""
-        first = PageVersion.identify(page_id=PAGE_ID, processor=SPLIT_NONE, params={'a': 1, 'b': 2})
-        second = PageVersion.identify(page_id=PAGE_ID, processor=SPLIT_NONE, params={'b': 2, 'a': 1})
+        first = VersionInputs(page_id=PAGE_ID, processor=SPLIT_NONE, params={'a': 1, 'b': 2}).identify()
+        second = VersionInputs(page_id=PAGE_ID, processor=SPLIT_NONE, params={'b': 2, 'a': 1}).identify()
         assert first == second
+
+    def test_full_run_without_an_edit_keeps_the_identifier_it_had_before_edits_existed(self) -> None:
+        """Verify the identifier of a base version stays the hash of the four older ingredients."""
+        digest = hashlib.sha256(
+            json.dumps([str(PAGE_ID), 'split.none', '1', {}, None], sort_keys=True, separators=(',', ':')).encode()
+        )
+        assert VersionInputs(page_id=PAGE_ID, processor=SPLIT_NONE).identify() == digest.hexdigest()[:16]
+
+
+class TestPageEditHashOf:
+    """Tests for PageEdit.hash_of()."""
+
+    def test_equal_edits_have_equal_hashes_of_16_digits(self) -> None:
+        """Verify the same line and the same mask hash alike, so an old edit finds its old version again."""
+        line = Line(start=Point(x=1100, y=0), end=Point(x=1104, y=1561))
+        first = PageEdit.hash_of(line, 'a' * 64)
+        again = PageEdit.hash_of(Line(start=Point(x=1100, y=0), end=Point(x=1104, y=1561)), 'a' * 64)
+        assert (first == again, re.fullmatch(VERSION_ID_PATTERN, first) is not None) == (True, True)
+
+    @pytest.mark.parametrize(
+        ('geometry', 'mask_sha256'),
+        [(Rotation(degrees=1.5), None), (None, 'b' * 64), (Rotation(degrees=1.0), 'b' * 64)],
+        ids=['other-angle', 'mask-only', 'angle-and-mask'],
+    )
+    def test_any_change_of_the_edit_changes_its_hash(self, geometry: Rotation | None, mask_sha256: str | None) -> None:
+        """Verify the shape and the mask each move the hash.
+
+        :param geometry: Shape of the edit under test.
+        :type geometry: Rotation | None
+        :param mask_sha256: Digest of the mask of the edit under test.
+        :type mask_sha256: str | None
+        """
+        assert PageEdit.hash_of(geometry, mask_sha256) != PageEdit.hash_of(Rotation(degrees=1.0), None)
 
 
 class TestBookDetails:

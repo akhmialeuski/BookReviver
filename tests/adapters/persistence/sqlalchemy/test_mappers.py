@@ -23,19 +23,17 @@ from bookreviver.domain.enums import (
     TransformKind,
     VersionState,
 )
+from bookreviver.domain.geometry import Point, Quad, Transform
 from bookreviver.domain.ids import StorageKey
 from bookreviver.domain.values import (
     BookIdentifier,
     Contributor,
     MetadataSuggestion,
-    Point,
     ProcessorRef,
     Progress,
-    Quad,
     Renditions,
     ScanFacts,
     SourceFile,
-    Transform,
 )
 from tests.helpers.builders import (
     EPOCH,
@@ -196,7 +194,7 @@ class TestPageVersionMapper:
             processor=ProcessorRef(key='split.spread', version='1.2'),
             input_id=base.id,
             params={'spine': 'auto', 'margin_px': 12},
-            transform=Transform(kind=TransformKind.CROP, quad=HALF_QUAD),
+            transform=Transform(kind=TransformKind.CROP, quad=HALF_QUAD, matrix=(1, 0, -1100.5, 0, 1, 0, 0, 0, 1)),
             data={'spine_x': 1100.5, 'confidence': 0.93},
             renditions=renditions,
             state=VersionState.READY,
@@ -213,11 +211,12 @@ class TestPageVersionMapper:
     @pytest.mark.parametrize(
         'transform',
         [
-            Transform(kind=TransformKind.ROTATE, angle=-0.8),
-            Transform(kind=TransformKind.PERSPECTIVE, quad=HALF_QUAD),
+            Transform(kind=TransformKind.ROTATE, angle=-0.8, matrix=(0.99, -0.01, 3.5, 0.01, 0.99, -1.25, 0, 0, 1)),
+            Transform(kind=TransformKind.CROP, quad=HALF_QUAD, matrix=(1, 0, -1100.5, 0, 1, 0, 0, 0, 1)),
+            Transform(kind=TransformKind.PERSPECTIVE, quad=HALF_QUAD, matrix=(1, 0, 0, 0, 1, 0, 0.001, 0, 1)),
             Transform(kind=TransformKind.MESH, mesh_key=StorageKey('projects/x/assets/pages/y/edits/mesh')),
         ],
-        ids=['rotate', 'perspective', 'mesh'],
+        ids=['rotate', 'crop', 'perspective', 'mesh'],
     )
     async def test_every_transform_survives_the_database(
         self, fx_database: SqlDatabase, fx_owner_id: AccountId, transform: Transform

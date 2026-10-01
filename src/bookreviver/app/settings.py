@@ -7,6 +7,8 @@ from pathlib import Path
 from pydantic import BaseModel, Field, PositiveInt, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from bookreviver.domain.enums import WorkerPool
+
 
 class PersistenceBackend(enum.StrEnum):
     """Which persistence adapter the container builds."""
@@ -97,6 +99,19 @@ class ImagingSettings(BaseModel):
     djvulibre_timeout_s: PositiveInt = 120
 
 
+class ProcessingSettings(BaseModel):
+    """Processing of pages by plugins.
+
+    :ivar worker_pools: Pools of workers this process serves, whose processors the catalogue offers.
+    :ivar version_retention_days: Days a page version that is not current is kept before a collection may delete it.
+    :ivar preview_retention_hours: Hours a preview is kept before a collection may delete it.
+    """
+
+    worker_pools: frozenset[WorkerPool] = frozenset(WorkerPool)
+    version_retention_days: PositiveInt = 30
+    preview_retention_hours: PositiveInt = 24
+
+
 class Settings(BaseSettings):
     """All runtime configuration of the API server and the workers.
 
@@ -115,6 +130,7 @@ class Settings(BaseSettings):
     :ivar auth: Accounts, sessions and social sign-in; required, since it holds the signing secret.
     :ivar mail: Outgoing mail.
     :ivar imaging: Page extraction and tiling.
+    :ivar processing: Processing of pages by plugins.
     """
 
     model_config = SettingsConfigDict(
@@ -138,6 +154,7 @@ class Settings(BaseSettings):
     auth: AuthSettings
     mail: MailSettings = MailSettings()
     imaging: ImagingSettings = ImagingSettings()
+    processing: ProcessingSettings = ProcessingSettings()
 
     @cached_property
     def resolved_database_url(self) -> str:

@@ -11,6 +11,7 @@ when a change alters what it describes.
 
 ```bash
 uv sync                                  # backend environment
+uv sync --extra cv                       # with OpenCV, for the plugins split.spread and geometry.deskew
 uv run bookreviver-migrate upgrade head  # apply the schema migrations to the database of the settings, by hand only
 uv run fastapi dev                       # API on http://127.0.0.1:8000, data in ./data, needs .env and migrations
 uv run bookreviver-migrate make-migrations --autogenerate -m "Add the recipes table."  # revision from the tables

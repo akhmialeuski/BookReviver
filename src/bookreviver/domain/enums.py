@@ -87,6 +87,11 @@ class Stage(LabeledStrEnum):
     PROOFREADING = 'proofreading', 'Proofreading'
     TYPESETTING = 'typesetting', 'Typesetting'
 
+    @property
+    def position(self) -> int:
+        """The place of the stage in the pipeline from zero, by which a stage is earlier or later than another."""
+        return list(type(self)).index(self)
+
 
 class SourceKind(LabeledStrEnum):
     """What one source of a book is, which selects the format that reads it."""
@@ -363,12 +368,17 @@ class NewPageOrigin(LabeledStrEnum):
 
 
 class VersionData(LabeledStrEnum):
-    """Keys of the data of a base version, which the median size of a book's pages and a failed version read."""
+    """Keys of the data of a version: the size of its image, what its step found, and why it failed."""
 
     WIDTH_PX = 'width_px', 'Width of the image in pixels'
     HEIGHT_PX = 'height_px', 'Height of the image in pixels'
     DPI = 'dpi', 'Resolution of the image in dots per inch'
     ERROR = 'error', 'Why the version could not be made'
+    ANGLE = 'angle', 'Angle a page was turned by, in degrees'
+    CONFIDENCE = 'confidence', 'How sure the step is of what it found, from 0 to 1'
+    SKIPPED = 'skipped', 'Whether the step left the image as it was'
+    OVERLAP_PX = 'overlap_px', 'Width in pixels a half of a spread reaches over the cut'
+    CUT_X = 'cut_x', 'Place of the cut in the scan, as the distance in pixels from its left edge'
 
 
 class VersionState(LabeledStrEnum):
@@ -378,6 +388,58 @@ class VersionState(LabeledStrEnum):
     RUNNING = 'running', 'Running'
     READY = 'ready', 'Ready'
     FAILED = 'failed', 'Failed'
+
+
+class StageState(LabeledStrEnum):
+    """Whether the current version of a stage of a page still matches the inputs the stage would run on."""
+
+    FRESH = 'fresh', 'Up to date'
+    STALE = 'stale', 'Out of date'
+    FAILED = 'failed', 'Failed'
+
+
+class RunOutcome(LabeledStrEnum):
+    """What a run of a recipe came to on one page."""
+
+    DONE = 'done', 'Processed'
+    SKIPPED = 'skipped', 'Skipped, the page has no image to process'
+    FAILED = 'failed', 'Failed'
+
+
+class VersionScale(LabeledStrEnum):
+    """The size of the image a step ran on, which tells a full run from a preview of its parameters."""
+
+    FULL = 'full', 'Full image'
+    PREVIEW = 'preview', 'Preview image'
+
+
+class ProcessorScope(LabeledStrEnum):
+    """How many outputs a processor makes from its input."""
+
+    PAGE = 'page', 'One output for the page'
+    SPLIT = 'split', 'One output for each part of a scan'
+
+
+class VersionOutput(LabeledStrEnum):
+    """What a processing step writes."""
+
+    IMAGE = 'image', 'Page image'
+    MASK = 'mask', 'Mask'
+    REGIONS = 'regions', 'Regions'
+    TEXT = 'text', 'Text'
+
+
+class EditorKind(LabeledStrEnum):
+    """The editor a processor offers for the manual edit of its input."""
+
+    NONE = 'none', 'No editor'
+    RECT = 'rect', 'Frame'
+    QUAD = 'quad', 'Quadrilateral'
+    LINE = 'line', 'Line'
+    ROTATION = 'rotation', 'Rotation'
+    MESH = 'mesh', 'Mesh'
+    BRUSH_MASK = 'brush-mask', 'Brush mask'
+    REGIONS = 'regions', 'Regions'
 
 
 class TransformKind(LabeledStrEnum):
@@ -395,6 +457,22 @@ class JobKind(LabeledStrEnum):
 
     IMPORT_SOURCE = 'import-source', 'Import source'
     PREPARE_PAGES = 'prepare-pages', 'Prepare pages'
+    RUN_STAGE = 'run-stage', 'Run a stage'
+    PREVIEW_STEP = 'preview-step', 'Preview a step'
+    CUT_TILES = 'cut-tiles', 'Cut tiles'
+    COLLECT_VERSIONS = 'collect-versions', 'Collect old versions'
+
+    @classmethod
+    def processing(cls) -> frozenset[JobKind]:
+        """Return the kinds of job that read and write the versions of pages, of which a project runs one at a time.
+
+        A run, a preview and a tile cutting write the files of versions they may have found made already, and a
+        collection deletes them, so no two of them may overlap, and two of one kind would write the same files.
+
+        :returns: The kinds of the processing jobs.
+        :rtype: frozenset[JobKind]
+        """
+        return frozenset({cls.RUN_STAGE, cls.PREVIEW_STEP, cls.CUT_TILES, cls.COLLECT_VERSIONS})
 
 
 class JobState(LabeledStrEnum):
@@ -539,3 +617,4 @@ class Rendition(LabeledStrEnum):
     PREVIEW = 'preview.jpg', 'Preview, 2048 px on the longer side'
     THUMBNAIL = 'thumb.jpg', 'Thumbnail'
     TILES = 'iiif', 'IIIF tile pyramid'
+    MASK = 'mask.png', 'Mask of the areas a step removed'
