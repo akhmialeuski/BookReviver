@@ -323,7 +323,7 @@ class TestMove:
         """
         book = await _commit_book(fx_database, fx_actor)
         service = make_page_service(
-            fx_database, fx_asset_store, fx_runtime, order_keys=TakenKey(book.pages[2].order_key)
+            InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime, order_keys=TakenKey(book.pages[2].order_key)
         )
 
         with pytest.raises(ConflictError):

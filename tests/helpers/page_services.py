@@ -6,7 +6,6 @@ import anyio
 
 from bookreviver.adapters.imaging import VipsBlankPageMaker
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.ports.imaging import Tiler
 from bookreviver.services.base_versions import BaseVersions
@@ -15,9 +14,9 @@ from bookreviver.services.pages import PageImaging, PageRuntime, PageService
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.ports.imaging import BlankPageMaker
     from bookreviver.ports.ordering import OrderKeys
+    from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
     from bookreviver.ports.storage import AssetStore
 
@@ -79,17 +78,17 @@ class FakeTiler(Tiler):
 
 
 def make_page_service(
-    database: InMemoryDatabase,
+    uow: UnitOfWork,
     assets: AssetStore,
     runtime: tuple[EventPublisher, Clock, JobQueue],
     *,
     order_keys: OrderKeys | None = None,
     blank_maker: BlankPageMaker | None = None,
 ) -> PageService:
-    """Build a page service in a new unit of work, as a new request or job would get one.
+    """Build a page service over a unit of work, as a new request or job would get one.
 
-    :param database: In-memory database the unit of work opens over.
-    :type database: InMemoryDatabase
+    :param uow: Unit of work of the service, usually a new in-memory one over the database of the test.
+    :type uow: UnitOfWork
     :param assets: Asset store the service writes and reads files through.
     :type assets: AssetStore
     :param runtime: The publisher, the clock and the job queue the service reports through.
@@ -103,7 +102,7 @@ def make_page_service(
     """
     publisher, clock, queue = runtime
     return PageService(
-        uow=InMemoryUnitOfWork(database),
+        uow=uow,
         assets=assets,
         runtime=PageRuntime(
             publisher=publisher, clock=clock, order_keys=order_keys or FractionalOrderKeys(), queue=queue

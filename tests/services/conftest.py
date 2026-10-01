@@ -6,7 +6,7 @@ import pytest
 
 from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.jobs.recording import RecordingJobQueue
-from bookreviver.adapters.persistence.memory import InMemoryDatabase
+from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUnitOfWork
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from tests.helpers.builders import EPOCH
 from tests.helpers.fakes_jobs import RecordingEventBus
@@ -130,4 +130,4 @@ def fx_service(
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], PageService]
     """
-    return lambda: make_page_service(fx_database, fx_asset_store, fx_runtime)
+    return lambda: make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime)

@@ -13,6 +13,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import (
+    JobKind,
     JobState,
     PageKind,
     PageOrigin,
@@ -54,6 +55,8 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 PAGE_COUNT: int = 3
+# Two finished jobs and a queued one of the same kind in one project
+FINISHED_AND_QUEUED_JOBS: int = 3
 # Included pages, sources and scans of the book _add_book stores
 BOOK: tuple[int, int, int] = (PAGE_COUNT - 1, 1, PAGE_COUNT)
 EVERY_STATE: frozenset[JobState] = frozenset(JobState)
@@ -1378,6 +1381,39 @@ class TestPageVersionRepository:
         await uow.commit()
         assert await (await fx_uow_factory()).page_versions.list_for_page(page.id) == [evolve(later, input_id=None)]
 
+    async def test_update_of_a_version_deleted_with_its_page_by_another_transaction_raises_not_found(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a transaction that read a version cannot store it again once another committed its page's deletion.
+
+        A job writing the files of a page does exactly this when the page is deleted meanwhile, and the commit of the
+        update must not bring the version of a deleted page back.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        page = make_page(project_id=project.id)
+        version = make_page_version(page_id=page.id)
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.pages.add(page)
+        await uow.page_versions.add(version)
+        await uow.commit()
+        reading = await fx_uow_factory()
+        [read] = await reading.page_versions.list_for_page(page.id)
+        deleting = await fx_uow_factory()
+        await deleting.pages.delete(page.id)
+        await deleting.commit()
+
+        with pytest.raises(NotFoundError, match=version.id):
+            await reading.page_versions.update(evolve(read, state=VersionState.READY))
+        await reading.rollback()
+
+        assert await (await fx_uow_factory()).page_versions.list_for_page(page.id) == []
+
 
 class TestJobRepository:
     """Contract of JobRepository."""
@@ -1403,6 +1439,71 @@ class TestJobRepository:
         await uow.commit()
         listed = await (await fx_uow_factory()).jobs.list_for_project(project.id, {JobState.QUEUED, JobState.FAILED})
         assert [job.id for job in listed] == [new.id, old.id]
+
+    @pytest.mark.parametrize('first_state', sorted(JobState.active()), ids=str)
+    async def test_second_active_prepare_job_of_a_project_raises_conflict(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory, first_state: JobState
+    ) -> None:
+        """Verify a project stores one queued or running job writing page images, whichever state the first is in.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        :param first_state: Active state of the job already stored.
+        :type first_state: JobState
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        setup = await fx_uow_factory()
+        await setup.projects.add(project)
+        await setup.jobs.add(evolve(make_job(project_id=project.id, state=first_state), kind=JobKind.PREPARE_PAGES))
+        await setup.commit()
+        uow = await fx_uow_factory()
+        with pytest.raises(ConflictError):
+            await uow.jobs.add(evolve(make_job(project_id=project.id), kind=JobKind.PREPARE_PAGES))
+
+    @pytest.mark.parametrize('finished_state', FINAL_STATES, ids=str)
+    async def test_finished_prepare_job_leaves_room_for_the_next_one(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory, finished_state: JobState
+    ) -> None:
+        """Verify a finished job writing page images, whatever its final state, does not keep the next from queueing.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        :param finished_state: Final state of the earlier jobs.
+        :type finished_state: JobState
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        for minutes in (1, 2):
+            finished = make_job(project_id=project.id, state=finished_state, minutes=minutes)
+            await uow.jobs.add(evolve(finished, kind=JobKind.PREPARE_PAGES))
+        await uow.jobs.add(evolve(make_job(project_id=project.id, minutes=3), kind=JobKind.PREPARE_PAGES))
+        await uow.commit()
+        listed = await (await fx_uow_factory()).jobs.list_for_project(project.id, EVERY_STATE)
+        assert len(listed) == FINISHED_AND_QUEUED_JOBS
+
+    async def test_an_active_import_and_an_active_prepare_job_of_a_project_do_not_conflict(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the two kinds of job are limited apart, so images are written while a project imports.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.jobs.add(make_job(project_id=project.id, state=JobState.RUNNING))
+        await uow.jobs.add(evolve(make_job(project_id=project.id), kind=JobKind.PREPARE_PAGES))
+        await uow.commit()
+        kinds = [job.kind for job in await (await fx_uow_factory()).jobs.list_for_project(project.id, EVERY_STATE)]
+        assert sorted(kinds) == sorted([JobKind.IMPORT_SOURCE, JobKind.PREPARE_PAGES])
 
     @pytest.mark.parametrize('first_state', sorted(JobState.active()), ids=str)
     async def test_second_active_import_of_a_project_raises_conflict(

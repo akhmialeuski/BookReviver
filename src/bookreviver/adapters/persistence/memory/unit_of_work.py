@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 # Attribute holding the identifier of every entity addressed by one
 ID_ATTRIBUTE: str = 'id'
 # The kinds of job a project runs one of at a time, the rows of the partial unique index of the ``jobs`` table
-ONE_ACTIVE_AT_A_TIME: frozenset[JobKind] = frozenset({JobKind.IMPORT_SOURCE})
+ONE_ACTIVE_AT_A_TIME: frozenset[JobKind] = frozenset({JobKind.IMPORT_SOURCE, JobKind.PREPARE_PAGES})
 
 
 @define(kw_only=True)
@@ -684,13 +684,39 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
 class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionId], PageVersionRepository):
     """Versions of the pages of the book."""
 
-    def __init__(self, tables: InMemoryTables) -> None:
+    def __init__(self, tables: InMemoryTables, *, snapshot: InMemoryTables, committed: InMemoryTables) -> None:
         """Work on the page version table of the unit of work's copy, checking versions against pages.
 
         :param tables: Every table of the working copy.
         :type tables: InMemoryTables
+        :param snapshot: The committed tables as the transaction began, which tell its own rows from others'.
+        :type snapshot: InMemoryTables
+        :param committed: The committed tables shared with every unit of work, which another transaction may have
+                          changed since this one began.
+        :type committed: InMemoryTables
         """
         super().__init__(tables.page_versions, tables)
+        self._snapshot = snapshot
+        self._committed = committed
+
+    @override
+    async def update(self, entity: PageVersion) -> PageVersion:
+        """Replace the stored state of a version, which another transaction may have deleted with its page meanwhile.
+
+        A database statement updates no row then, so this fails like it instead of letting the commit bring the
+        deleted row back.
+
+        :param entity: Version with its new state.
+        :type entity: PageVersion
+        :returns: The version as stored.
+        :rtype: PageVersion
+        :raises NotFoundError: If the version, or a version or page it refers to, is not stored, or was deleted by a
+                               transaction that committed after this one began.
+        :raises ConflictError: If its new state takes a unique value of another version.
+        """
+        if entity.id in self._snapshot.page_versions and entity.id not in self._committed.page_versions:
+            raise NotFoundError(entity.id)
+        return await super().update(entity)
 
     @override
     def _check(self, entity: PageVersion) -> None:
@@ -815,20 +841,23 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
 
     @override
     def _check(self, entity: Job) -> None:
-        """Require the job's project, and no other queued or running import in it, as the partial unique index does.
+        """Require the job's project, and no other active job of its kind in it, as the partial unique indexes do.
 
         :param entity: Job about to be stored.
         :type entity: Job
         :raises NotFoundError: If the job's project is not stored.
-        :raises ConflictError: If the job is a queued or running import and the project has another.
+        :raises ConflictError: If the job is a queued or running import, or a queued or running job writing page
+                               images, and the project has another of the same kind.
         """
         require(self._tables.projects, entity.project_id)
         if entity.kind in ONE_ACTIVE_AT_A_TIME and entity.state in JobState.active():
-            # Every other job gets its own identifier as its value, so only a queued or running import can match
+            # Every other job gets its own identifier as its value, so only an active job of the same kind can match
             self._require_unique(
                 entity,
                 lambda job: (
-                    job.project_id if job.kind in ONE_ACTIVE_AT_A_TIME and job.state in JobState.active() else job.id
+                    (job.project_id, job.kind)
+                    if job.kind in ONE_ACTIVE_AT_A_TIME and job.state in JobState.active()
+                    else job.id
                 ),
             )
 
@@ -927,7 +956,9 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.sources = InMemorySourceRepository(self._tables)
         self.scans = InMemoryScanRepository(self._tables)
         self.pages = InMemoryPageRepository(self._tables)
-        self.page_versions = InMemoryPageVersionRepository(self._tables)
+        self.page_versions = InMemoryPageVersionRepository(
+            self._tables, snapshot=self._snapshot, committed=self._database.tables
+        )
         self.jobs = InMemoryJobRepository(
             self._tables, snapshot=self._snapshot, committed=self._database.tables, guards=self._guards
         )

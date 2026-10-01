@@ -532,7 +532,9 @@ page. The key is made the way a move makes it, between the anchor and its neighb
   its white image. Its size is the median of the sizes of the base versions of the pages that are included and cut from
   a scan, the width, the height and the resolution each taken apart with `statistics.median`, so a single fold-out map or
   cropped scan does not move it. A request may give the size and the resolution instead, and then no median is taken.
-  A book without a page that has a recorded size gives a blank leaf without a given size a `ConflictError`.
+  A book with no page that is included, cut from a scan and has a recorded size gives a blank leaf without a given
+  size a `ConflictError` that says it is the recorded size that is missing, which also holds for a book whose scan
+  pages are all kept out.
 
 The image of a blank leaf is made by the temporary port `BlankPageMaker`, whose adapter `VipsBlankPageMaker` makes a
 black image with `Image.black`, adds 255 and saves it with `pngsave` at a bit depth of 1, so the leaf is the 1-bit PNG
@@ -551,14 +553,24 @@ the page, its versions and, after the commit, everything under `assets/pages/<pa
 source.
 
 None of these requests writes an image. Each commits the page and its pending version, and then queues a job of the kind
-`prepare-pages` unless one is already queued, since a running job may have read its versions before the new one was
-committed. The task `prepare_pages` of `app/worker.py` calls `PageService.prepare_images`, which takes the pending and
+`prepare-pages` unless one is queued or running. The partial unique index `ix_jobs_one_active_prepare` keeps a project to
+one such job, so two requests that both found none cannot both store one: the one that loses gets a
+`ConflictError`, rolls back and relies on the job of the other, and two jobs never write the files of one version
+together. A running job may have read its versions before a new one was committed, so a job that ends looks for pending
+versions once more and queues a follow-up when it finds one, which is why a request may leave the queueing to the job
+that runs. The task `prepare_pages` of `app/worker.py` calls `PageService.prepare_images`, which takes the pending and
 the failed versions of the stages `page-split` and `page-order`, writes each one and commits it before the next, and
 publishes `PageVersionReady`, so the viewer swaps an empty frame for the image without reloading. A version `split.none`
 is a copy of its scan made by `BaseVersions`, the same code the import uses, and a version `pages.blank` is a white leaf.
 A version that cannot be made is stored as `failed` with its reason in `data['error']`, the job ends failed, and the
-next job takes the failed versions again with the new ones, so there is no route to repeat a job. A job queue that
-refuses the job leaves it failed, which keeps a job nobody will run from blocking the queueing of later ones.
+next job takes the failed versions again with the new ones, so there is no route to repeat a job. A page deleted while
+the job runs takes its versions with it, so a version whose page is gone is nothing to make and nothing that failed:
+the job removes the files it wrote for it and goes on. An error nobody expected ends the job failed with a general
+reason, so a job never stays running and blocks the next one.
+
+The pages are committed before the job is queued, so a queue that refuses the job does not fail the request that made
+the page, since a retry would add a second blank leaf. The job is then stored as failed with the reason
+`NOT_QUEUED`, announced, and logged, and the next page that is added queues a new one.
 
 ### Printed numbers
 
@@ -775,7 +787,9 @@ erDiagram
   `progress_done`, `progress_total`, `error`, `request` and `result` as JSON, both empty for a job that has none,
   `created_at`, `started_at` and `finished_at`. The partial unique index `ix_jobs_one_active_import` on `project_id`
   `WHERE kind = 'import-source' AND state IN ('queued', 'running')` keeps a project to one import at a time, and
-  both adapters report its violation as a `ConflictError` when the job is added.
+  both adapters report its violation as a `ConflictError` when the job is added. The partial unique index
+  `ix_jobs_one_active_prepare` on `project_id` `WHERE kind = 'prepare-pages' AND state IN ('queued', 'running')` does
+  the same for the jobs that write page images, and an import and a prepare job of one project do not collide.
 - `page_versions` has the primary key `id`, `page_id` with `ON DELETE CASCADE`, `input_id` with `ON DELETE SET NULL`,
   and an index on `(page_id, stage)`. Its columns are `stage`, `processor_key`, `processor_version`, `params`,
   `transform` and `data` as JSON, `renditions_ready`, `renditions_full`, `state` and `created_at`. Both renditions
@@ -1498,7 +1512,8 @@ The book model rests on these decisions, each with its reason.
 37. **Images of new pages are written by a job.** Copying a scan and drawing a leaf, with the tile pyramid, are heavy
     work, so a request commits the page and its pending base version and queues `prepare-pages`, whose failed versions
     the next job takes again, and no route repeats a job. Doing it in the request was refused because request handlers
-    never block on heavy work.
+    never block on heavy work. One such job runs per project, kept by a unique index like the import's rather than by
+    a check that two requests can both pass, and a job that ends looks for the versions committed meanwhile.
 38. **A blank leaf has the median size.** The median of the widths, of the heights and of the resolutions of the included
     scan pages follows neither one fold-out map nor one cropped scan, so the leaf stands level with its neighbours in a
     spread. Binding a scan is a route of its own, since a `PATCH` of `scan_id` would mix an instant edit of one row with

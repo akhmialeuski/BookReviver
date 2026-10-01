@@ -68,8 +68,8 @@ if TYPE_CHECKING:
 # Stages whose pending and failed versions the ``prepare-pages`` job writes the files of
 PREPARED_STAGES: frozenset[Stage] = frozenset({Stage.PAGE_SPLIT, Stage.PAGE_ORDER})
 NO_BOOK_IMAGE: str = (
-    'No page of the book has an image yet, so a blank leaf has no size to take. Give the size of the leaf, or add it '
-    'after the first scan is cut.'
+    'No page of the book that is cut from a scan and part of the book has a recorded size, so a blank leaf has no size '
+    'to take. Give the size of the leaf.'
 )
 SCAN_NOT_CUT: str = 'The scan has no image yet. Bind it after its import has cut it.'
 SCAN_DELETED: str = 'The scan of the page was deleted, so its image cannot be copied.'
@@ -387,29 +387,62 @@ class PageService:
             job = running
             await self._uow.commit()
         await self._publisher.publish(JobChanged(project_id=job.project_id, job=job))
+        try:
+            outcome = await self._prepare_all(job)
+        except Exception:
+            # A job left running would keep the project from ever queueing another, so it ends failed whatever
+            # went wrong
+            logger.exception('The prepare-pages job %s stopped', job_id)
+            await self._uow.rollback()
+            await self._conclude(job, JobState.FAILED, UNEXPECTED_FAILURE)
+            return
+        if outcome is None:
+            return
+        job, failed, total = outcome
+        if failed:
+            await self._conclude(job, JobState.FAILED, PAGES_FAILED.format(count=failed), total=total)
+        else:
+            await self._conclude(job, JobState.SUCCEEDED, '', total=total)
+        await self._follow_up(job.project_id)
+
+    async def _prepare_all(self, job: Job) -> tuple[Job, int, int] | None:
+        """Prepare every pending and failed version of the job's project, recording the progress as it goes.
+
+        :param job: The running job.
+        :type job: Job
+        :returns: The job as last stored, the number of versions that failed and the number the job went through, or
+                  None when the job was cancelled, which stops it before its next version.
+        :rtype: tuple[Job, int, int] | None
+        """
         versions = await self._uow.page_versions.list_to_prepare(job.project_id, PREPARED_STAGES)
         failed = 0
         for done, version in enumerate(versions):
             progress = Progress(done=done, total=len(versions))
             # The write is guarded by the state, so it is also the check that the job was not cancelled
-            if (
-                saved := await self._uow.jobs.update_if_state(
-                    evolve(job, progress=progress), expected=(JobState.RUNNING,)
-                )
-            ) is None:
+            saved = await self._uow.jobs.update_if_state(evolve(job, progress=progress), expected=(JobState.RUNNING,))
+            if saved is None:
                 await self._uow.rollback()
-                return
+                return None
             await self._uow.commit()
             job = saved
             failed += not await self._prepare(version)
-        state, error = (JobState.FAILED, PAGES_FAILED.format(count=failed)) if failed else (JobState.SUCCEEDED, '')
-        final = evolve(
-            job,
-            state=state,
-            error=error,
-            progress=Progress(done=len(versions), total=len(versions)),
-            finished_at=self._clock.now(),
-        )
+        return job, failed, len(versions)
+
+    async def _conclude(self, job: Job, state: JobState, error: str, *, total: int | None = None) -> None:
+        """Store the final state of a running job, unless it was cancelled meanwhile, and announce it.
+
+        :param job: The job as last stored by this run.
+        :type job: Job
+        :param state: The final state.
+        :type state: JobState
+        :param error: Why the job failed, or empty.
+        :type error: str
+        :param total: Number of versions the job went through, which becomes its complete progress, or None to keep the
+                      progress it has.
+        :type total: int | None
+        """
+        progress = job.progress if total is None else Progress(done=total, total=total)
+        final = evolve(job, state=state, error=error, progress=progress, finished_at=self._clock.now())
         stored = await self._uow.jobs.update_if_state(final, expected=(JobState.RUNNING,))
         await self._uow.commit()
         if stored is not None:
@@ -665,30 +698,56 @@ class PageService:
             await self._assets.delete_prefix(keys.page(page.id))
 
     async def _enqueue_prepare(self, project_id: ProjectId) -> None:
-        """Queue a ``prepare-pages`` job for the project, unless one is already queued and has not started.
+        """Queue a ``prepare-pages`` job for the project, unless one is queued or running already.
 
-        A running job may have read its versions before the one just committed, so only a queued job is waited for. A
-        job that cannot be handed to the queue is failed, since a queued job nobody will run would keep every later
-        page from queueing one.
+        A project has one such job at a time, so two jobs never write the files of one version together. The check is
+        a read and the insert a second step, so the unique index of the database decides when two requests pass the
+        check together, and the one that loses finds the job of the other. A job that is running when a version is
+        committed may have read its versions before it, which is why the job looks again when it ends, in
+        ``_follow_up``.
+
+        The page is committed already, so a queue that refuses the job does not fail the request: the job is stored
+        as failed, announced, and logged, which frees the project for the next job, and the version stays pending
+        until that job takes it.
 
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
-        :raises Exception: Whatever the queue raised, after the job is marked failed.
         """
-        queued = await self._uow.jobs.list_for_project(project_id, {JobState.QUEUED})
-        if any(job.kind is JobKind.PREPARE_PAGES for job in queued):
+        active = await self._uow.jobs.list_for_project(project_id, JobState.active())
+        if any(job.kind is JobKind.PREPARE_PAGES for job in active):
             return
         job = Job(id=JobId(uuid4()), project_id=project_id, kind=JobKind.PREPARE_PAGES, created_at=self._clock.now())
-        await self._uow.jobs.add(job)
-        await self._uow.commit()
+        try:
+            await self._uow.jobs.add(job)
+            await self._uow.commit()
+        except ConflictError:
+            await self._uow.rollback()
+            return
         await self._publisher.publish(JobChanged(project_id=project_id, job=job))
         try:
             await self._queue.enqueue(job)
         except Exception:
+            logger.exception('The prepare-pages job %s could not be queued', job.id)
             failed = evolve(job, state=JobState.FAILED, error=NOT_QUEUED, finished_at=self._clock.now())
-            await self._uow.jobs.update_if_state(failed, expected=(JobState.QUEUED,))
+            stored = await self._uow.jobs.update_if_state(failed, expected=(JobState.QUEUED,))
             await self._uow.commit()
-            raise
+            if stored is not None:
+                await self._publisher.publish(JobChanged(project_id=project_id, job=stored))
+
+    async def _follow_up(self, project_id: ProjectId) -> None:
+        """Queue another job when a version was committed while the job that just ended was running.
+
+        A request that commits a version while a job runs finds the job active and queues none, and the job may have
+        read its versions before that one. Here the job has ended, so a pending version that is left was committed
+        after the job read its versions, and it gets a job of its own. A version that failed is not pending, so a
+        version that cannot be made does not keep a job running again.
+
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        """
+        waiting = await self._uow.page_versions.list_to_prepare(project_id, PREPARED_STAGES)
+        if any(version.state is VersionState.PENDING for version in waiting):
+            await self._enqueue_prepare(project_id)
 
     async def _median_size(self, project_id: ProjectId) -> PageSize:
         """Return the size of a blank leaf that stands level with the pages of the book.
@@ -716,15 +775,21 @@ class PageService:
         """Write the files of one pending or failed version, and store its new state.
 
         A version that cannot be made is stored as failed with the reason in its data, and the job goes on with the
-        others.
+        others. A page deleted while the job runs takes its versions with it, so a version whose page is gone, before
+        or after its files were written, is nothing to make and nothing that failed: the files written for it are
+        removed and the job goes on.
 
         :param version: A pending or failed base version.
         :type version: PageVersion
-        :returns: Whether the version is ready now.
+        :returns: False when the version failed, and True when it is ready or its page is gone.
         :rtype: bool
         """
         try:
-            await self._write_files(version)
+            page = await self._uow.pages.get(version.page_id)
+        except NotFoundError:
+            return True
+        try:
+            await self._write_files(version, page)
         except DomainError as error:
             reason = str(error)
         except Exception:
@@ -734,25 +799,41 @@ class PageService:
             data = {key: value for key, value in version.data.items() if key != VersionData.ERROR}
             full = version.renditions.full if version.renditions is not None else Renditions().full
             ready = evolve(version, data=data, renditions=Renditions(ready=True, full=full), state=VersionState.READY)
-            await self._uow.page_versions.update(ready)
-            await self._uow.commit()
-            page = await self._uow.pages.get(version.page_id)
-            await self._publisher.publish(PageVersionReady(project_id=page.project_id, version=ready))
+            if await self._store(page, ready):
+                await self._publisher.publish(PageVersionReady(project_id=page.project_id, version=ready))
             return True
         failed = evolve(version, data={**version.data, VersionData.ERROR: reason}, state=VersionState.FAILED)
-        await self._uow.page_versions.update(failed)
-        await self._uow.commit()
-        return False
+        return not await self._store(page, failed)
 
-    async def _write_files(self, version: PageVersion) -> None:
+    async def _store(self, page: Page, version: PageVersion) -> bool:
+        """Store the new state of a version of a page, unless the page was deleted while its files were written.
+
+        :param page: The page the version belongs to, as read before its files were written.
+        :type page: Page
+        :param version: The version with its new state.
+        :type version: PageVersion
+        :returns: True when the version is stored, and False when its page is gone, whose files are removed then.
+        :rtype: bool
+        """
+        try:
+            await self._uow.page_versions.update(version)
+        except NotFoundError:
+            await self._uow.rollback()
+            await self._discard_files(page.project_id, [page])
+            return False
+        await self._uow.commit()
+        return True
+
+    async def _write_files(self, version: PageVersion, page: Page) -> None:
         """Write the files of a base version: a copy of its scan, or a generated white leaf.
 
         :param version: A pending or failed base version.
         :type version: PageVersion
+        :param page: The page the version belongs to.
+        :type page: Page
         :raises ConflictError: If the scan to copy is deleted or not cut yet.
         :raises ValueError: If the version is neither ``split.none`` nor ``pages.blank``, or has no size to make.
         """
-        page = await self._uow.pages.get(version.page_id)
         if version.processor == SPLIT_NONE:
             if page.scan_id is None:
                 raise ConflictError(SCAN_DELETED)
