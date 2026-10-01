@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, formDataBodySerializer, type Options as Options2, type RequestResult, type ServerSentEventsResult, type TDataShape, urlSearchParamsBodySerializer } from './client';
 import { client } from './client.gen';
-import type { AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutData, AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutErrors, AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponses, AuthCookieLoginApiV1AuthLoginPostData, AuthCookieLoginApiV1AuthLoginPostErrors, AuthCookieLoginApiV1AuthLoginPostResponses, AuthCookieLogoutApiV1AuthLogoutPostData, AuthCookieLogoutApiV1AuthLogoutPostErrors, AuthCookieLogoutApiV1AuthLogoutPostResponses, CancelJobApiV1JobsJobIdDeleteData, CancelJobApiV1JobsJobIdDeleteErrors, CancelJobApiV1JobsJobIdDeleteResponses, CreatePageApiV1ProjectsProjectIdPagesPostData, CreatePageApiV1ProjectsProjectIdPagesPostErrors, CreatePageApiV1ProjectsProjectIdPagesPostResponses, CreateProjectApiV1ProjectsPostData, CreateProjectApiV1ProjectsPostErrors, CreateProjectApiV1ProjectsPostResponses, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteData, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteErrors, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteResponses, DeleteProjectApiV1ProjectsProjectIdDeleteData, DeleteProjectApiV1ProjectsProjectIdDeleteErrors, DeleteProjectApiV1ProjectsProjectIdDeleteResponses, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteData, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteErrors, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteResponses, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetData, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetErrors, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetResponses, IiifFileApiV1IiifKeyGetData, IiifFileApiV1IiifKeyGetErrors, IiifFileApiV1IiifKeyGetResponses, ListPagesApiV1ProjectsProjectIdPagesGetData, ListPagesApiV1ProjectsProjectIdPagesGetErrors, ListPagesApiV1ProjectsProjectIdPagesGetResponses, ListProjectsApiV1ProjectsGetData, ListProjectsApiV1ProjectsGetErrors, ListProjectsApiV1ProjectsGetResponses, ListScansApiV1ProjectsProjectIdScansGetData, ListScansApiV1ProjectsProjectIdScansGetErrors, ListScansApiV1ProjectsProjectIdScansGetResponses, ListSourcesApiV1ProjectsProjectIdSourcesGetData, ListSourcesApiV1ProjectsProjectIdSourcesGetErrors, ListSourcesApiV1ProjectsProjectIdSourcesGetResponses, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostData, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostErrors, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostResponses, MovePagesApiV1ProjectsProjectIdPagesMovePostData, MovePagesApiV1ProjectsProjectIdPagesMovePostErrors, MovePagesApiV1ProjectsProjectIdPagesMovePostResponses, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostData, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostErrors, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostResponses, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostData, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostErrors, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostResponses, PageApiV1ProjectsProjectIdPagesPageIdGetData, PageApiV1ProjectsProjectIdPagesPageIdGetErrors, PageApiV1ProjectsProjectIdPagesPageIdGetResponses, ProjectApiV1ProjectsProjectIdGetData, ProjectApiV1ProjectsProjectIdGetErrors, ProjectApiV1ProjectsProjectIdGetResponses, ProjectEventsApiV1ProjectsProjectIdEventsGetData, ProjectEventsApiV1ProjectsProjectIdEventsGetErrors, ProjectEventsApiV1ProjectsProjectIdEventsGetResponses, ReadJobApiV1JobsJobIdGetData, ReadJobApiV1JobsJobIdGetErrors, ReadJobApiV1JobsJobIdGetResponses, RegisterRegisterApiV1AuthRegisterPostData, RegisterRegisterApiV1AuthRegisterPostErrors, RegisterRegisterApiV1AuthRegisterPostResponses, ResetForgotPasswordApiV1AuthForgotPasswordPostData, ResetForgotPasswordApiV1AuthForgotPasswordPostErrors, ResetForgotPasswordApiV1AuthForgotPasswordPostResponses, ResetResetPasswordApiV1AuthResetPasswordPostData, ResetResetPasswordApiV1AuthResetPasswordPostErrors, ResetResetPasswordApiV1AuthResetPasswordPostResponses, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchData, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchErrors, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchResponses, UpdateProjectApiV1ProjectsProjectIdPatchData, UpdateProjectApiV1ProjectsProjectIdPatchErrors, UpdateProjectApiV1ProjectsProjectIdPatchResponses, UploadSourcesApiV1ProjectsProjectIdSourcesPostData, UploadSourcesApiV1ProjectsProjectIdSourcesPostErrors, UploadSourcesApiV1ProjectsProjectIdSourcesPostResponses, UsersCurrentUserApiV1UsersMeGetData, UsersCurrentUserApiV1UsersMeGetErrors, UsersCurrentUserApiV1UsersMeGetResponses, UsersDeleteUserApiV1UsersIdDeleteData, UsersDeleteUserApiV1UsersIdDeleteErrors, UsersDeleteUserApiV1UsersIdDeleteResponses, UsersPatchCurrentUserApiV1UsersMePatchData, UsersPatchCurrentUserApiV1UsersMePatchErrors, UsersPatchCurrentUserApiV1UsersMePatchResponses, UsersPatchUserApiV1UsersIdPatchData, UsersPatchUserApiV1UsersIdPatchErrors, UsersPatchUserApiV1UsersIdPatchResponses, UsersUserApiV1UsersIdGetData, UsersUserApiV1UsersIdGetErrors, UsersUserApiV1UsersIdGetResponses, VerifyRequestTokenApiV1AuthRequestVerifyTokenPostData, VerifyRequestTokenApiV1AuthRequestVerifyTokenPostErrors, VerifyRequestTokenApiV1AuthRequestVerifyTokenPostResponses, VerifyVerifyApiV1AuthVerifyPostData, VerifyVerifyApiV1AuthVerifyPostErrors, VerifyVerifyApiV1AuthVerifyPostResponses } from './types.gen';
+import type { ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostData, ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostErrors, ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostResponses, AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutData, AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutErrors, AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponses, AuthCookieLoginApiV1AuthLoginPostData, AuthCookieLoginApiV1AuthLoginPostErrors, AuthCookieLoginApiV1AuthLoginPostResponses, AuthCookieLogoutApiV1AuthLogoutPostData, AuthCookieLogoutApiV1AuthLogoutPostErrors, AuthCookieLogoutApiV1AuthLogoutPostResponses, CancelJobApiV1JobsJobIdDeleteData, CancelJobApiV1JobsJobIdDeleteErrors, CancelJobApiV1JobsJobIdDeleteResponses, ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutData, ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutErrors, ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponses, CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostData, CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostErrors, CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponses, CreatePageApiV1ProjectsProjectIdPagesPostData, CreatePageApiV1ProjectsProjectIdPagesPostErrors, CreatePageApiV1ProjectsProjectIdPagesPostResponses, CreateProjectApiV1ProjectsPostData, CreateProjectApiV1ProjectsPostErrors, CreateProjectApiV1ProjectsPostResponses, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostData, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostErrors, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponses, CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostData, CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostErrors, CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponses, DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteData, DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteErrors, DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteResponses, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteData, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteErrors, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteResponses, DeleteProjectApiV1ProjectsProjectIdDeleteData, DeleteProjectApiV1ProjectsProjectIdDeleteErrors, DeleteProjectApiV1ProjectsProjectIdDeleteResponses, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteData, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteErrors, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteResponses, GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetData, GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetErrors, GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetResponses, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetData, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetErrors, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetResponses, GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetData, GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetErrors, GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetResponses, IiifFileApiV1IiifKeyGetData, IiifFileApiV1IiifKeyGetErrors, IiifFileApiV1IiifKeyGetResponses, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetErrors, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponses, ListPagesApiV1ProjectsProjectIdPagesGetData, ListPagesApiV1ProjectsProjectIdPagesGetErrors, ListPagesApiV1ProjectsProjectIdPagesGetResponses, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetErrors, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponses, ListProcessorsApiV1ProcessorsGetData, ListProcessorsApiV1ProcessorsGetErrors, ListProcessorsApiV1ProcessorsGetResponses, ListProjectsApiV1ProjectsGetData, ListProjectsApiV1ProjectsGetErrors, ListProjectsApiV1ProjectsGetResponses, ListScansApiV1ProjectsProjectIdScansGetData, ListScansApiV1ProjectsProjectIdScansGetErrors, ListScansApiV1ProjectsProjectIdScansGetResponses, ListSourcesApiV1ProjectsProjectIdSourcesGetData, ListSourcesApiV1ProjectsProjectIdSourcesGetErrors, ListSourcesApiV1ProjectsProjectIdSourcesGetResponses, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetData, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetErrors, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponses, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetErrors, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponses, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostData, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostErrors, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostResponses, MovePagesApiV1ProjectsProjectIdPagesMovePostData, MovePagesApiV1ProjectsProjectIdPagesMovePostErrors, MovePagesApiV1ProjectsProjectIdPagesMovePostResponses, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostData, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostErrors, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostResponses, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostData, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostErrors, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostResponses, PageApiV1ProjectsProjectIdPagesPageIdGetData, PageApiV1ProjectsProjectIdPagesPageIdGetErrors, PageApiV1ProjectsProjectIdPagesPageIdGetResponses, PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostData, PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostErrors, PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponses, ProjectApiV1ProjectsProjectIdGetData, ProjectApiV1ProjectsProjectIdGetErrors, ProjectApiV1ProjectsProjectIdGetResponses, ProjectEventsApiV1ProjectsProjectIdEventsGetData, ProjectEventsApiV1ProjectsProjectIdEventsGetErrors, ProjectEventsApiV1ProjectsProjectIdEventsGetResponses, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutData, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutErrors, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponses, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutData, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutErrors, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponses, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutData, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutErrors, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponses, ReadJobApiV1JobsJobIdGetData, ReadJobApiV1JobsJobIdGetErrors, ReadJobApiV1JobsJobIdGetResponses, RegisterRegisterApiV1AuthRegisterPostData, RegisterRegisterApiV1AuthRegisterPostErrors, RegisterRegisterApiV1AuthRegisterPostResponses, ResetForgotPasswordApiV1AuthForgotPasswordPostData, ResetForgotPasswordApiV1AuthForgotPasswordPostErrors, ResetForgotPasswordApiV1AuthForgotPasswordPostResponses, ResetResetPasswordApiV1AuthResetPasswordPostData, ResetResetPasswordApiV1AuthResetPasswordPostErrors, ResetResetPasswordApiV1AuthResetPasswordPostResponses, RunStageApiV1ProjectsProjectIdStagesStageRunPostData, RunStageApiV1ProjectsProjectIdStagesStageRunPostErrors, RunStageApiV1ProjectsProjectIdStagesStageRunPostResponses, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchData, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchErrors, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchResponses, UpdateProjectApiV1ProjectsProjectIdPatchData, UpdateProjectApiV1ProjectsProjectIdPatchErrors, UpdateProjectApiV1ProjectsProjectIdPatchResponses, UploadSourcesApiV1ProjectsProjectIdSourcesPostData, UploadSourcesApiV1ProjectsProjectIdSourcesPostErrors, UploadSourcesApiV1ProjectsProjectIdSourcesPostResponses, UsersCurrentUserApiV1UsersMeGetData, UsersCurrentUserApiV1UsersMeGetErrors, UsersCurrentUserApiV1UsersMeGetResponses, UsersDeleteUserApiV1UsersIdDeleteData, UsersDeleteUserApiV1UsersIdDeleteErrors, UsersDeleteUserApiV1UsersIdDeleteResponses, UsersPatchCurrentUserApiV1UsersMePatchData, UsersPatchCurrentUserApiV1UsersMePatchErrors, UsersPatchCurrentUserApiV1UsersMePatchResponses, UsersPatchUserApiV1UsersIdPatchData, UsersPatchUserApiV1UsersIdPatchErrors, UsersPatchUserApiV1UsersIdPatchResponses, UsersUserApiV1UsersIdGetData, UsersUserApiV1UsersIdGetErrors, UsersUserApiV1UsersIdGetResponses, VerifyRequestTokenApiV1AuthRequestVerifyTokenPostData, VerifyRequestTokenApiV1AuthRequestVerifyTokenPostErrors, VerifyRequestTokenApiV1AuthRequestVerifyTokenPostResponses, VerifyVerifyApiV1AuthVerifyPostData, VerifyVerifyApiV1AuthVerifyPostErrors, VerifyVerifyApiV1AuthVerifyPostResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -257,6 +257,199 @@ export const attachScanApiV1ProjectsProjectIdPagesPageIdScanPut = <ThrowOnError 
         ...options.headers
     }
 });
+
+/**
+ * Get Recipe
+ *
+ * Return the active recipe of a stage, which a project creates the first time the stage is asked for.
+ */
+export const getRecipeApiV1ProjectsProjectIdStagesStageRecipeGet = <ThrowOnError extends boolean = false>(options: Options<GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetData, ThrowOnError>): RequestResult<GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetResponses, GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetErrors, ThrowOnError> => (options.client ?? client).get<GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetResponses, GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetErrors, ThrowOnError>({ url: '/api/v1/projects/{project_id}/stages/{stage}/recipe', ...options });
+
+/**
+ * Put Recipe
+ *
+ * Replace the name and the steps of the active recipe, which marks the pages it processed stale.
+ *
+ * No page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown
+ * or of another stage, or whose parameters do not fit, answers 422.
+ */
+export const putRecipeApiV1ProjectsProjectIdStagesStageRecipePut = <ThrowOnError extends boolean = false>(options: Options<PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutData, ThrowOnError>): RequestResult<PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponses, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutErrors, ThrowOnError> => (options.client ?? client).put<PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponses, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutErrors, ThrowOnError>({
+    url: '/api/v1/projects/{project_id}/stages/{stage}/recipe',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List Variants
+ *
+ * List the recipes of a stage, the active one first and then the variants, oldest first.
+ */
+export const listVariantsApiV1ProjectsProjectIdStagesStageVariantsGet = <ThrowOnError extends boolean = false>(options: Options<ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetData, ThrowOnError>): RequestResult<ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponses, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetErrors, ThrowOnError> => (options.client ?? client).get<ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponses, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetErrors, ThrowOnError>({ url: '/api/v1/projects/{project_id}/stages/{stage}/variants', ...options });
+
+/**
+ * Create Variant
+ *
+ * Add a variant of a stage, which is not active until it is activated.
+ */
+export const createVariantApiV1ProjectsProjectIdStagesStageVariantsPost = <ThrowOnError extends boolean = false>(options: Options<CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostData, ThrowOnError>): RequestResult<CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponses, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostErrors, ThrowOnError> => (options.client ?? client).post<CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponses, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostErrors, ThrowOnError>({
+    url: '/api/v1/projects/{project_id}/stages/{stage}/variants',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Put Variant
+ *
+ * Replace the name and the steps of a recipe of a stage, which marks the pages it processed stale.
+ */
+export const putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPut = <ThrowOnError extends boolean = false>(options: Options<PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutData, ThrowOnError>): RequestResult<PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponses, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutErrors, ThrowOnError> => (options.client ?? client).put<PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponses, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutErrors, ThrowOnError>({
+    url: '/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Activate Variant
+ *
+ * Make a variant the active recipe of its stage, which marks the pages the old one processed stale.
+ */
+export const activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePost = <ThrowOnError extends boolean = false>(options: Options<ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostData, ThrowOnError>): RequestResult<ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostResponses, ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostErrors, ThrowOnError> => (options.client ?? client).post<ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostResponses, ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostErrors, ThrowOnError>({ url: '/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}/activate', ...options });
+
+/**
+ * Run Stage
+ *
+ * Run a stage over some pages by a recipe, in the background, and answer with the queued job.
+ *
+ * The job makes a version for every step on every page and reports one step of progress for each page. A project runs
+ * one stage at a time, and another run while one is queued or running answers 409.
+ */
+export const runStageApiV1ProjectsProjectIdStagesStageRunPost = <ThrowOnError extends boolean = false>(options: Options<RunStageApiV1ProjectsProjectIdStagesStageRunPostData, ThrowOnError>): RequestResult<RunStageApiV1ProjectsProjectIdStagesStageRunPostResponses, RunStageApiV1ProjectsProjectIdStagesStageRunPostErrors, ThrowOnError> => (options.client ?? client).post<RunStageApiV1ProjectsProjectIdStagesStageRunPostResponses, RunStageApiV1ProjectsProjectIdStagesStageRunPostErrors, ThrowOnError>({
+    url: '/api/v1/projects/{project_id}/stages/{stage}/run',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Preview Step
+ *
+ * Preview the steps of a form on one page, in the background, and answer with the queued job.
+ *
+ * The result is a version of the preview scale, announced as ``page-version-ready``, which never becomes the current
+ * version of the stage.
+ */
+export const previewStepApiV1ProjectsProjectIdStagesStagePreviewPost = <ThrowOnError extends boolean = false>(options: Options<PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostData, ThrowOnError>): RequestResult<PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponses, PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostErrors, ThrowOnError> => (options.client ?? client).post<PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponses, PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostErrors, ThrowOnError>({
+    url: '/api/v1/projects/{project_id}/stages/{stage}/preview',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List Page Stages
+ *
+ * List the stages a page has been through, with the current version and the state of each, in pipeline order.
+ */
+export const listPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGet = <ThrowOnError extends boolean = false>(options: Options<ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData, ThrowOnError>): RequestResult<ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponses, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetErrors, ThrowOnError> => (options.client ?? client).get<ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponses, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetErrors, ThrowOnError>({ url: '/api/v1/projects/{project_id}/pages/{page_id}/stages', ...options });
+
+/**
+ * Choose Version
+ *
+ * Make a version the current one of a stage of a page, which marks the later stages of the page stale.
+ *
+ * The version must be ready and made by a full run of this page in this stage. The answer is 409 for one that is not.
+ */
+export const chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePut = <ThrowOnError extends boolean = false>(options: Options<ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutData, ThrowOnError>): RequestResult<ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponses, ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutErrors, ThrowOnError> => (options.client ?? client).put<ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponses, ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutErrors, ThrowOnError>({
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/stages/{stage}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List Versions
+ *
+ * List the versions of a page, the earliest first, of one stage and one scale or of all.
+ */
+export const listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet = <ThrowOnError extends boolean = false>(options: Options<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData, ThrowOnError>): RequestResult<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponses, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetErrors, ThrowOnError> => (options.client ?? client).get<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponses, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetErrors, ThrowOnError>({ url: '/api/v1/projects/{project_id}/pages/{page_id}/versions', ...options });
+
+/**
+ * Get Version
+ *
+ * Return one version of a page, with its provenance, its transform and the paths of its images.
+ */
+export const getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGet = <ThrowOnError extends boolean = false>(options: Options<GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetData, ThrowOnError>): RequestResult<GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetResponses, GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetErrors, ThrowOnError> => (options.client ?? client).get<GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetResponses, GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetErrors, ThrowOnError>({ url: '/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}', ...options });
+
+/**
+ * Cut Version Tiles
+ *
+ * Cut the tile pyramid of a version in the background, which a viewer asks for when a version has none.
+ */
+export const cutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPost = <ThrowOnError extends boolean = false>(options: Options<CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostData, ThrowOnError>): RequestResult<CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponses, CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostErrors, ThrowOnError> => (options.client ?? client).post<CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponses, CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostErrors, ThrowOnError>({ url: '/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}/tiles', ...options });
+
+/**
+ * Collect Versions
+ *
+ * Delete the old versions nothing needs, in the background, and answer with the queued job.
+ *
+ * A version goes when it is not current, not in the chain of inputs of a current version, not a base version, and
+ * older than the retention period of its scale. A collection that is queued or running already is the answer.
+ */
+export const collectVersionsApiV1ProjectsProjectIdVersionsCollectPost = <ThrowOnError extends boolean = false>(options: Options<CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostData, ThrowOnError>): RequestResult<CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponses, CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostErrors, ThrowOnError> => (options.client ?? client).post<CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponses, CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostErrors, ThrowOnError>({ url: '/api/v1/projects/{project_id}/versions/collect', ...options });
+
+/**
+ * List Edits
+ *
+ * List the manual edits of one stage of a page, by processor.
+ */
+export const listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGet = <ThrowOnError extends boolean = false>(options: Options<ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData, ThrowOnError>): RequestResult<ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponses, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetErrors, ThrowOnError> => (options.client ?? client).get<ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponses, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetErrors, ThrowOnError>({ url: '/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}', ...options });
+
+/**
+ * Delete Edit
+ *
+ * Delete the edit a processor reads, and mark the stage of the page stale.
+ */
+export const deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDelete = <ThrowOnError extends boolean = false>(options: Options<DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteData, ThrowOnError>): RequestResult<DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteResponses, DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteErrors, ThrowOnError> => (options.client ?? client).delete<DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteResponses, DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteErrors, ThrowOnError>({ url: '/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{processor_key}', ...options });
+
+/**
+ * Put Edit
+ *
+ * Save the edit a processor reads, replacing the one it had, and mark the stage of the page stale.
+ *
+ * The form carries the editor that drew the edit, its shape as JSON text, and the mask as a file for a brush edit. The
+ * answer is 422 for an edit the processor does not read, and nothing is processed by this request.
+ */
+export const putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPut = <ThrowOnError extends boolean = false>(options: Options<PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutData, ThrowOnError>): RequestResult<PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponses, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutErrors, ThrowOnError> => (options.client ?? client).put<PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponses, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutErrors, ThrowOnError>({
+    ...urlSearchParamsBodySerializer,
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{processor_key}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ...options.headers
+    }
+});
+
+/**
+ * List Processors
+ *
+ * List the processors a recipe can use, by key, each with the JSON Schema of its parameters.
+ */
+export const listProcessorsApiV1ProcessorsGet = <ThrowOnError extends boolean = false>(options?: Options<ListProcessorsApiV1ProcessorsGetData, ThrowOnError>): RequestResult<ListProcessorsApiV1ProcessorsGetResponses, ListProcessorsApiV1ProcessorsGetErrors, ThrowOnError> => (options?.client ?? client).get<ListProcessorsApiV1ProcessorsGetResponses, ListProcessorsApiV1ProcessorsGetErrors, ThrowOnError>({ url: '/api/v1/processors', ...options });
 
 /**
  * Cancel Job
