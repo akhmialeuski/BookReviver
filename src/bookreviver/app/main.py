@@ -33,7 +33,8 @@ def create_app(settings: Settings | None = None, extra_providers: Sequence[Provi
     :type settings: Settings | None
     :param extra_providers: Providers added last, overriding earlier ones; tests use them to inject fakes.
     :type extra_providers: Sequence[Provider]
-    :returns: The application with its routers, exception handler, pagination, security and container installed.
+    :returns: The application with its routers, exception handler, pagination, security and container installed, and
+              the built frontend when ``settings.frontend_dir`` exists.
     :rtype: FastAPI
     """
     resolved = settings or Settings()
@@ -70,4 +71,11 @@ def create_app(settings: Settings | None = None, extra_providers: Sequence[Provi
     app.dependency_overrides[signed_in_user] = accounts.current_user
     install_security(app, resolved)
     setup_dishka(container, app)
+    # FastAPI checks its own routes first and the frontend only for what no route matched, so it is added last and
+    # an address of the API is never answered with a page. Without a build there is nothing to serve, which is the
+    # normal state of the backend on its own and of a development machine that runs the Vite server instead.
+    if resolved.frontend_dir.is_dir():
+        app.frontend('/', directory=resolved.frontend_dir)
+    else:
+        logger.info('No built frontend in %s, so only the API is served.', resolved.frontend_dir)
     return app

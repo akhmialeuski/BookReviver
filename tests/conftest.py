@@ -39,11 +39,13 @@ def fx_settings(tmp_path: Path) -> Settings:
 
     :param tmp_path: Temporary directory of the test, holding the data directory.
     :type tmp_path: Path
-    :returns: Settings with a test secret and cookies allowed over plain HTTP.
+    :returns: Settings with a test secret, cookies allowed over plain HTTP and no built frontend, so a build on the
+              developer's machine never changes what a test sees.
     :rtype: Settings
     """
     return Settings(
         data_dir=tmp_path / 'data',
+        frontend_dir=tmp_path / 'no-frontend',
         persistence=PersistenceBackend.MEMORY,
         auth=AuthSettings(secret=TEST_SECRET, cookie_secure=False),
     )
