@@ -1,8 +1,10 @@
 import { Link } from '@tanstack/react-router';
-import { ArrowLeftIcon } from 'lucide-react';
+import { ArrowLeftIcon, MoveIcon, PencilIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { PageSchema } from '@/api';
+import { MovePagesDialog } from '@/features/pages/MovePagesDialog';
 import { useManifest } from '@/features/pages/manifest';
+import { PageEditDialog } from '@/features/pages/PageEditDialog';
 import type { ViewerSearch } from '@/features/viewer/params';
 import {
   lastViewStart,
@@ -18,6 +20,8 @@ import { StageState, useViewerStage } from '@/features/viewer/useViewerStage';
 import { ViewerToolbar } from '@/features/viewer/ViewerToolbar';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
+import { Badge } from '@/shared/ui/badge';
+import { Button } from '@/shared/ui/button';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
@@ -47,6 +51,8 @@ export function ViewerPage({
   const manifest = useManifest(projectId);
   const [fitMode, setFitMode] = useState<FitMode>(FitMode.Page);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [moveIds, setMoveIds] = useState<readonly string[] | null>(null);
 
   const pages = manifest.data ?? NO_PAGES;
   const count = pages.length;
@@ -113,6 +119,34 @@ export function ViewerPage({
             .map((page) => MESSAGES.viewer.caption(page.label, page.position + 1, count))
             .join('   |   ')}
         </p>
+        {shown.map((page) => {
+          const name = MESSAGES.pages.name(page.position + 1, page.label);
+          return (
+            <div key={page.id} className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={MESSAGES.viewer.actions.edit(name)}
+                onClick={() => setEditId(page.id)}
+              >
+                <PencilIcon />
+                {MESSAGES.viewer.actions.editShort}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={MESSAGES.viewer.actions.move(name)}
+                onClick={() => setMoveIds([page.id])}
+              >
+                <MoveIcon />
+                {MESSAGES.viewer.actions.moveShort}
+              </Button>
+            </div>
+          );
+        })}
+        {shown.some((page) => !page.included) ? (
+          <Badge variant="secondary">{MESSAGES.pages.excluded}</Badge>
+        ) : null}
       </div>
 
       {count === 0 ? (
@@ -176,6 +210,17 @@ export function ViewerPage({
           </div>
         </>
       )}
+      <PageEditDialog
+        projectId={projectId}
+        page={pages.find((page) => page.id === editId) ?? null}
+        onClose={() => setEditId(null)}
+      />
+      <MovePagesDialog
+        projectId={projectId}
+        pages={pages}
+        target={moveIds === null ? null : { pageIds: moveIds }}
+        onClose={() => setMoveIds(null)}
+      />
     </div>
   );
 }

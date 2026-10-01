@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { ArrowLeftIcon, BookOpenIcon } from 'lucide-react';
 import { useState } from 'react';
 import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-query.gen';
+import { PageStrip } from '@/features/pages/PageStrip';
 import { BookDetails } from '@/features/projects/BookDetails';
 import { ScansPanel } from '@/features/projects/ScansPanel';
 import { SourcesPanel } from '@/features/projects/SourcesPanel';
@@ -15,7 +16,7 @@ import { Button } from '@/shared/ui/button';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
- * The page of one book: its title and counts, the description, the files it was made from and its scans.
+ * The page of one book: its title and counts, the description, its pages, the files it was made from and its scans.
  */
 
 export function ProjectPage({ projectId }: { projectId: string }): React.JSX.Element {
@@ -73,6 +74,7 @@ export function ProjectPage({ projectId }: { projectId: string }): React.JSX.Ele
         <ImportStatus projectId={projectId} jobId={jobId} onDismiss={() => setJobId(null)} />
       )}
       <BookDetails details={details} />
+      <PageStrip projectId={projectId} />
       <SourcesPanel
         projectId={projectId}
         selectedSourceId={sourceId}

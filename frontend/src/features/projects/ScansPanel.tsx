@@ -1,6 +1,9 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { listScansApiV1ProjectsProjectIdScansGetOptions } from '@/api/@tanstack/react-query.gen';
+import { useManifest } from '@/features/pages/manifest';
+import { firstPageOfScan } from '@/features/pages/order';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
@@ -10,7 +13,8 @@ import { Pager } from '@/shared/ui/pager';
 
 /**
  * The scans of the book as a grid of thumbnails, all of them or those of one source. A scan whose images are not
- * cut yet shows a placeholder, and appears with its picture when the server reports it ready.
+ * cut yet shows a placeholder, and appears with its picture when the server reports it ready. A scan that a page
+ * of the book was cut from opens that page in the viewer.
  */
 
 const PAGE_SIZE = 24;
@@ -34,6 +38,7 @@ export function ScansPanel({
     }),
     placeholderData: keepPreviousData,
   });
+  const pages = useManifest(projectId).data ?? [];
 
   let body: React.JSX.Element;
   if (scans.isError) {
@@ -49,22 +54,38 @@ export function ScansPanel({
           {scans.data.items.map((scan, index) => {
             // The number of a scan restarts in every source, so a book of one image per file would show only "1"
             const ordinal = (scans.data.page - 1) * scans.data.size + index + 1;
+            const pageOfScan = firstPageOfScan(pages, scan.id);
+            const picture = (
+              <div className="flex aspect-[3/4] items-center justify-center overflow-hidden rounded-md border bg-muted">
+                {scan.images === null ? (
+                  <span className="px-2 text-center text-muted-foreground">
+                    {MESSAGES.book.scans.pending}
+                  </span>
+                ) : (
+                  <img
+                    src={scan.images.thumbnail}
+                    alt={MESSAGES.book.scans.label(ordinal)}
+                    loading="lazy"
+                    className="size-full object-contain"
+                  />
+                )}
+              </div>
+            );
             return (
               <li key={scan.id} className="grid gap-1 text-xs">
-                <div className="flex aspect-[3/4] items-center justify-center overflow-hidden rounded-md border bg-muted">
-                  {scan.images === null ? (
-                    <span className="px-2 text-center text-muted-foreground">
-                      {MESSAGES.book.scans.pending}
-                    </span>
-                  ) : (
-                    <img
-                      src={scan.images.thumbnail}
-                      alt={MESSAGES.book.scans.label(ordinal)}
-                      loading="lazy"
-                      className="size-full object-contain"
-                    />
-                  )}
-                </div>
+                {pageOfScan === undefined ? (
+                  picture
+                ) : (
+                  <Link
+                    to="/projects/$projectId/viewer"
+                    params={{ projectId }}
+                    search={{ page: pageOfScan.id }}
+                    title={MESSAGES.book.scans.viewPage(MESSAGES.book.scans.label(ordinal))}
+                    className="rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  >
+                    {picture}
+                  </Link>
+                )}
                 <span className="font-medium">
                   {MESSAGES.book.scans.label(ordinal)}
                   {scan.source_label === '' ? '' : ` (${scan.source_label})`}
