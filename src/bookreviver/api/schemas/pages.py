@@ -10,28 +10,92 @@ or a page whose images are still being cut.
 from datetime import datetime
 from typing import TYPE_CHECKING, Self
 
-from bookreviver.api.schemas.base import ResponseModel
+from fastapi import Query
+from pydantic import model_validator
+
+from bookreviver.api.pagination import ManifestParams
+from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.api.schemas.images import ImagePathsSchema
-from bookreviver.domain.enums import PageKind, PageOrigin
-from bookreviver.domain.ids import PageId, ScanId
+from bookreviver.api.schemas.types import PageIdList
+from bookreviver.domain.enums import PageKind, PageOrigin, Side
+from bookreviver.domain.ids import PageId, ScanId, SourceId
 from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.values import PageAnchor
 
 if TYPE_CHECKING:
     from starlette.requests import Request
 
     from bookreviver.domain.entities import PageOverview
 
+EXACTLY_ONE_ANCHOR: str = 'Give exactly one of before_page_id and after_page_id.'
+
+
+class PageQuery(ManifestParams):
+    """The query of the page manifest: the page parameters, and whether to leave out the pages kept out of the book.
+
+    :ivar page: Number of the page of the manifest, from one.
+    :ivar size: Number of pages of the book in one page of the manifest.
+    :ivar included: Whether to list only the pages that are part of the book, numbered among themselves.
+    """
+
+    included: bool = Query(default=False, description='List only the pages that are part of the book')
+
+
+class PageAnchorBody(RequestModel):
+    """A place in the book, named by the page it lies before or after.
+
+    :ivar before_page_id: Page the place lies before, or omitted.
+    :ivar after_page_id: Page the place lies after, or omitted.
+    """
+
+    before_page_id: PageId | None = None
+    after_page_id: PageId | None = None
+
+    @model_validator(mode='after')
+    def _one_anchor(self) -> Self:
+        """Check that exactly one side is named.
+
+        :returns: The body unchanged.
+        :rtype: Self
+        :raises ValueError: If both sides or neither are given.
+        """
+        if (self.before_page_id is None) == (self.after_page_id is None):
+            raise ValueError(EXACTLY_ONE_ANCHOR)
+        return self
+
+    @property
+    def anchor(self) -> PageAnchor:
+        """The place as the domain states it."""
+        named = {Side.BEFORE: self.before_page_id, Side.AFTER: self.after_page_id}
+        side, page_id = next((side, page_id) for side, page_id in named.items() if page_id is not None)
+        return PageAnchor(page_id=page_id, side=side)
+
+
+class PageMove(PageAnchorBody):
+    """Where to put one page: before or after another page."""
+
+
+class PagesMove(PageAnchorBody):
+    """Where to put a group of pages, which keep their order in the book.
+
+    :ivar page_ids: The pages to move, each at most once.
+    """
+
+    page_ids: PageIdList
+
 
 class PageSchema(ResponseModel):
     """A page of a book.
 
     :ivar id: Identifier of the page, which stays the same when the page is moved.
-    :ivar position: Place of the page in the book from zero, counted over every page, excluded ones included.
+    :ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except
+                    in a manifest listing only the included pages, which numbers those.
     :ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.
     :ivar kind: Role of the page in the book.
     :ivar origin: Where the image of the page comes from.
     :ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was
                    deleted.
+    :ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.
     :ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.
     :ivar included: Whether the page is part of the book.
     :ivar notes: Notes of the user.
@@ -46,6 +110,7 @@ class PageSchema(ResponseModel):
     kind: PageKind
     origin: PageOrigin
     scan_id: ScanId | None
+    source_id: SourceId | None
     slot: int
     included: bool
     notes: str
@@ -78,6 +143,7 @@ class PageSchema(ResponseModel):
             kind=page.kind,
             origin=page.origin,
             scan_id=page.scan_id,
+            source_id=overview.source_id,
             slot=page.slot,
             included=page.included,
             notes=page.notes,

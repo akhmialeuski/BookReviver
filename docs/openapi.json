@@ -893,6 +893,99 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/sources/{source_id}/pages/move": {
+      "post": {
+        "tags": [
+          "sources"
+        ],
+        "summary": "Move Source Pages",
+        "description": "Put every page of one source in a run before or after a page, which places a missing part of the book at once.\n\nThe answer is 409 when the anchor is a page of the source. The new order reaches the browser as a ``pages-changed``\nevent, so the answer has no body.",
+        "operationId": "move_source_pages_api_v1_projects__project_id__sources__source_id__pages_move_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the source",
+              "title": "Source Id"
+            },
+            "description": "Identifier of the source"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PageAnchorBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project_id}/pages": {
       "get": {
         "tags": [
@@ -935,6 +1028,16 @@
               "minimum": 1,
               "default": 50,
               "title": "Size"
+            }
+          },
+          {
+            "name": "included",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Included"
             }
           }
         ],
@@ -1038,6 +1141,187 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pages/{page_id}/move": {
+      "post": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Move Page",
+        "description": "Put a page before or after another page of the book.\n\nThe answer is 409 when the anchor is the page itself, or another request took the new place first.",
+        "operationId": "move_page_api_v1_projects__project_id__pages__page_id__move_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PageMove"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pages/move": {
+      "post": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Move Pages",
+        "description": "Put several pages in a run before or after another page, keeping the order they have in the book.\n\nThe answer is 409 when the anchor is one of the pages. The new order reaches the browser as a ``pages-changed``\nevent, so the answer has no body.",
+        "operationId": "move_pages_api_v1_projects__project_id__pages_move_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PagesMove"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -3335,6 +3619,38 @@
         "title": "Orthography",
         "description": "Spelling norm of the printed text."
       },
+      "PageAnchorBody": {
+        "properties": {
+          "before_page_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Page Id"
+          },
+          "after_page_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Page Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PageAnchorBody",
+        "description": "A place in the book, named by the page it lies before or after.\n\n:ivar before_page_id: Page the place lies before, or omitted.\n:ivar after_page_id: Page the place lies after, or omitted."
+      },
       "PageKind": {
         "type": "string",
         "enum": [
@@ -3350,6 +3666,38 @@
         ],
         "title": "PageKind",
         "description": "Role of a page in the printed book."
+      },
+      "PageMove": {
+        "properties": {
+          "before_page_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Page Id"
+          },
+          "after_page_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Page Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PageMove",
+        "description": "Where to put one page: before or after another page."
       },
       "PageOrigin": {
         "type": "string",
@@ -3394,6 +3742,18 @@
             ],
             "title": "Scan Id"
           },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
           "slot": {
             "type": "integer",
             "title": "Slot"
@@ -3435,6 +3795,7 @@
           "kind",
           "origin",
           "scan_id",
+          "source_id",
           "slot",
           "included",
           "notes",
@@ -3443,7 +3804,7 @@
           "updated_at"
         ],
         "title": "PageSchema",
-        "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar kind: Role of the page in the book.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar images: Paths of the images of the page's base version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
+        "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except\n                in a manifest listing only the included pages, which numbers those.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar kind: Role of the page in the book.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar images: Paths of the images of the page's base version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
       },
       "Page_ProjectSchema_": {
         "properties": {
@@ -3564,6 +3925,51 @@
           "pages"
         ],
         "title": "Page[SourceSchema]"
+      },
+      "PagesMove": {
+        "properties": {
+          "before_page_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Page Id"
+          },
+          "after_page_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Page Id"
+          },
+          "page_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 2000,
+            "minItems": 1,
+            "title": "Page Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "page_ids"
+        ],
+        "title": "PagesMove",
+        "description": "Where to put a group of pages, which keep their order in the book.\n\n:ivar page_ids: The pages to move, each at most once."
       },
       "ProgressSchema": {
         "properties": {

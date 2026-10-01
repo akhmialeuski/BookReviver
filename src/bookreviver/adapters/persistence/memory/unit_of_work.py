@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, override
 from attrs import define, evolve, field, fields
 
 from bookreviver.domain.entities import Job, Page, PageVersion, Project, ProjectOverview, Scan, Source
-from bookreviver.domain.enums import JobKind, JobState
+from bookreviver.domain.enums import JobKind, JobState, Side
 from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
 from bookreviver.domain.values import Slice, SliceRequest
@@ -43,7 +43,7 @@ from bookreviver.ports.persistence import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Hashable, Mapping, Sequence
+    from collections.abc import Callable, Collection, Hashable, Iterable, Mapping, Sequence
 
     from bookreviver.domain.ids import AccountId
 
@@ -447,6 +447,17 @@ class InMemoryScanRepository(InMemoryRepository[Scan, ScanId], ScanRepository):
         return Slice(items=scans[request.offset : request.offset + request.limit], total=len(scans))
 
     @override
+    async def list_by_ids(self, scan_ids: Collection[ScanId]) -> Sequence[Scan]:
+        """Return the stored scans among the given identifiers.
+
+        :param scan_ids: Scans to read.
+        :type scan_ids: Collection[ScanId]
+        :returns: The scans that are stored.
+        :rtype: Sequence[Scan]
+        """
+        return [scan for scan_id in set(scan_ids) if (scan := self._rows.get(scan_id)) is not None]
+
+    @override
     async def list_unready(self, project_id: ProjectId) -> Sequence[Scan]:
         """Return the project's scans whose renditions are not ready, in the order ``list_for_project`` lists them.
 
@@ -500,21 +511,114 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
             self._tables.projects[project.id] = evolve(project, cover_page_id=None)
 
     @override
-    async def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Page]:
+    async def list_for_project(
+        self, project_id: ProjectId, request: SliceRequest, *, included_only: bool = False
+    ) -> Slice[Page]:
         """Return one window of a project's pages in the byte order of their order keys.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
         :param request: Offset and limit of the window.
         :type request: SliceRequest
-        :returns: The pages of the window and the number of all the project's pages.
+        :param included_only: Whether to leave out the pages kept out of the book.
+        :type included_only: bool
+        :returns: The pages of the window and the number of the pages listed, before the window.
         :rtype: Slice[Page]
         """
-        pages = sorted(
-            (page for page in self._rows.values() if page.project_id == project_id),
-            key=lambda page: page.order_key.encode(),
+        pages = self._in_book_order(
+            page
+            for page in self._rows.values()
+            if page.project_id == project_id and (page.included or not included_only)
         )
         return Slice(items=pages[request.offset : request.offset + request.limit], total=len(pages))
+
+    @override
+    async def list_by_ids(self, project_id: ProjectId, page_ids: Collection[PageId]) -> Sequence[Page]:
+        """Return the given pages of a project in the byte order of their order keys.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param page_ids: Identifiers of the pages to read.
+        :type page_ids: Collection[PageId]
+        :returns: The pages in book order.
+        :rtype: Sequence[Page]
+        :raises NotFoundError: If an identifier names no page of the project.
+        """
+        wanted = set(page_ids)
+        pages = [page for page in self._rows.values() if page.project_id == project_id and page.id in wanted]
+        if missing := wanted - {page.id for page in pages}:
+            raise NotFoundError(*missing)
+        return self._in_book_order(pages)
+
+    @override
+    async def list_for_source(self, project_id: ProjectId, source_id: SourceId) -> Sequence[Page]:
+        """Return the pages whose scans belong to the source, in book order.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param source_id: Source whose scans the pages show.
+        :type source_id: SourceId
+        :returns: The pages cut from the scans of the source.
+        :rtype: Sequence[Page]
+        """
+        scan_ids = {scan.id for scan in self._tables.scans.values() if scan.source_id == source_id}
+        return self._in_book_order(
+            page for page in self._rows.values() if page.project_id == project_id and page.scan_id in scan_ids
+        )
+
+    @override
+    async def neighbour_key(
+        self, project_id: ProjectId, key: str, side: Side, *, excluding: Collection[PageId] = ()
+    ) -> str | None:
+        """Return the nearest order key on one side of ``key``, without the excluded pages.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param key: Order key the neighbour is looked up from.
+        :type key: str
+        :param side: Whether to look before or after ``key``.
+        :type side: Side
+        :param excluding: Pages that do not count as neighbours.
+        :type excluding: Collection[PageId]
+        :returns: The nearest key on that side, or None when no page lies there.
+        :rtype: str | None
+        """
+        pivot = key.encode()
+        keys = [
+            page.order_key for page in self._rows.values() if page.project_id == project_id and page.id not in excluding
+        ]
+        if side is Side.BEFORE:
+            return max((other for other in keys if other.encode() < pivot), key=str.encode, default=None)
+        return min((other for other in keys if other.encode() > pivot), key=str.encode, default=None)
+
+    @override
+    async def update_many(self, pages: Sequence[Page]) -> None:
+        """Replace the stored state of several pages, all of them or none, as one database transaction does.
+
+        :param pages: Pages with their new state.
+        :type pages: Sequence[Page]
+        :raises NotFoundError: If a page is not stored.
+        :raises ConflictError: If the new state of a page takes a key another page has.
+        """
+        before = dict(self._rows)
+        try:
+            for page in pages:
+                await self.update(page)
+        except DomainError:
+            self._rows.clear()
+            self._rows.update(before)
+            raise
+
+    @staticmethod
+    def _in_book_order(pages: Iterable[Page]) -> list[Page]:
+        """Sort pages by the byte order of their order keys.
+
+        :param pages: Pages of one project.
+        :type pages: Iterable[Page]
+        :returns: The pages in book order.
+        :rtype: list[Page]
+        """
+        return sorted(pages, key=lambda page: page.order_key.encode())
 
     @override
     async def list_for_scan(self, scan_id: ScanId) -> Sequence[Page]:

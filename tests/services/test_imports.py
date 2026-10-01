@@ -21,6 +21,7 @@ from bookreviver.domain.enums import (
     DjvuDocumentKind,
     ImagePolicy,
     JobState,
+    PageChange,
     PageOrigin,
     RejectionReason,
     Rendition,
@@ -844,6 +845,8 @@ class TestRunImport:
         last_source = max(index for index, event in enumerate(published) if isinstance(event, SourceImported))
         expect(len(_events_of(fx_rig, SourceImported)) == len(_events_of(fx_rig, PagesChanged)) == SOURCE_COUNT)
         expect(len(_events_of(fx_rig, ScanReady)) == SCAN_COUNT)
+        expect({event.change for event in _events_of(fx_rig, PagesChanged)} == {PageChange.ADDED})
+        expect(sum(len(event.page_ids) for event in _events_of(fx_rig, PagesChanged)) == SCAN_COUNT)
         # Every source is announced before the first image is, so the browser knows the book before it is cut
         expect(last_source < first_scan)
         expect([event.job.state for event in jobs][:2] == [JobState.QUEUED, JobState.RUNNING])

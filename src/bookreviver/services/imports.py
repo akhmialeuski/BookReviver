@@ -39,6 +39,7 @@ from bookreviver.domain.enums import (
     FileType,
     JobKind,
     JobState,
+    PageChange,
     PageOrigin,
     RejectionReason,
     Rendition,
@@ -346,7 +347,9 @@ class ImportRun:
         self._imported.append(source.id)
         self._handled.update(uploaded.names)
         await self._publisher.publish(SourceImported(project_id=source.project_id, source=source))
-        await self._publisher.publish(PagesChanged(project_id=source.project_id))
+        await self._publisher.publish(
+            PagesChanged(project_id=source.project_id, page_ids=[page.id for page in pages], change=PageChange.ADDED)
+        )
         if described:
             await self._publisher.publish(ProjectChanged(project_id=source.project_id))
 

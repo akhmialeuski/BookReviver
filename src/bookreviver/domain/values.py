@@ -27,9 +27,10 @@ if TYPE_CHECKING:
         FileType,
         IdentifierScheme,
         RejectionReason,
+        Side,
         SourceKind,
     )
-    from bookreviver.domain.ids import SourceId, StorageKey
+    from bookreviver.domain.ids import PageId, SourceId, StorageKey
 
 # JSON-compatible metadata as read from a source file
 type MetadataMap = Mapping[str, Any]
@@ -422,6 +423,18 @@ class Transform:
         if given != (expected := self.ARGUMENTS[self.kind]):
             err_msg = f'A {self.kind} transform takes {sorted(expected) or "no arguments"}, not {sorted(given)}.'
             raise ValueError(err_msg)
+
+
+@frozen(kw_only=True)
+class PageAnchor:
+    """A place in the book named by a page and the side of it, where moved or new pages are put.
+
+    :ivar page_id: Page the place is next to.
+    :ivar side: Whether the place lies before or after that page.
+    """
+
+    page_id: PageId
+    side: Side
 
 
 @frozen(kw_only=True)

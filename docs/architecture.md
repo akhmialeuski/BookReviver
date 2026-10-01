@@ -123,6 +123,7 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Scans        | `Scan`, `ScanFacts`, `Renditions`                                                             |
 | Pages        | `Page`, `PageOverview`, `PageKind`, `PageOrigin`, `PageVersion`, `VersionState`, `Transform`, |
 |              | `PageStage`                                                                                   |
+| Page order   | `PageAnchor` (a page and a `Side`), `PageChange`, and `PageOverview` with its position        |
 | Storage keys | `StorageKey`, and `ProjectKeys` in `domain/keys.py`, the one builder of every key             |
 | Processing   | `Stage`, `ProcessorRef`, `Recipe`, `Step`, `Variant`, `ArtifactKind`, `Artifact`              |
 | Edits        | `PageEdit` with geometry (`Rect`, `Quad`, `Mesh`, `Region` with `RegionKind`) or a mask       |
@@ -492,6 +493,26 @@ Changing the setting after pages exist applies only to new versions, and old one
 every version is recorded with it in `Renditions.full`, which is why such a change cannot move the path of an image that
 is already stored. The base version of a page copies the format of the scan it is cut from.
 
+### Page order
+
+The page order stage is `PageService`. A page is moved by writing a new `order_key` to it and to nothing else, so a move
+of one page writes one row and a move of a group writes the rows of the group. Three moves exist, and each puts the
+pages before or after an anchor page, a `PageAnchor`:
+
+- **One page.** The service reads the key of the anchor and `neighbour_key` of the anchor on the chosen side, leaving the
+  moved page out, and writes `OrderKeys.between` of the two keys to the page.
+- **A group.** The pages are read in book order, and the service finds the neighbour of the anchor without any page of
+  the group and writes the keys `OrderKeys.spread` gives for the group's size between them, so the group stands
+  together in the order it had.
+- **A source.** The pages whose scans belong to the source are listed through `scans` and moved as a group, which puts
+  a missing part of the book, such as a cover file or a quire from another copy, in its place with one request.
+
+The anchor may not be one of the moved pages, since the place is then not defined, and that is a `ConflictError`. The
+unique key of `(project_id, order_key)` refuses a second move to a place another one took first, and the repository
+reports that as a `ConflictError` too, so the client answers it by reading the manifest again. A move writes the
+`updated_at` of the pages it moves, commits, and then publishes one `PagesChanged`. Keys are not rebalanced: a key
+grows by a character or two for a book arranged by hand, which a book of a few hundred pages never notices.
+
 ## Ports
 
 Ports are abstract base classes, so every adapter names its parent explicitly and the type checkers verify it.
@@ -514,7 +535,12 @@ The persistence ports address data through the source, the scan and the page of 
 `UnitOfWork`, so one use case changes all of them in one transaction. `PageRepository` addresses a page by its
 `PageId`, lists the pages of a project in `order_key` order and gives the last key of a book, and the position of a
 page in the book is computed when it is read, never stored: a window of the manifest numbers its pages from its
-offset, and `count_before` counts the pages before one page read alone. `PageVersionRepository.list_base_versions`
+offset, and `count_before` counts the pages before one page read alone. The page order stage adds the queries a move
+needs, all inside one project and in `order_key` order: `list_by_ids` reads the named pages and refuses an identifier
+of another project like a missing one, `list_for_source` joins `pages` with `scans` so that placeholders and blank
+leaves never belong to a source, `neighbour_key` finds the key next to a key on one side while leaving the moving pages
+out, and `update_many` writes several pages in the one transaction, all or none. `ScanRepository.list_by_ids` gives
+the manifest the source of every page of a window in one query. `PageVersionRepository.list_base_versions`
 reads the base versions of a whole window in one call, so the manifest costs no query per page.
 `ProjectRepository.overview` counts the book of one
 project, and the project listing counts every project of a window in the same query.
@@ -776,7 +802,7 @@ flowchart TD
 | `ProjectService`    | List, create, read, edit the description, cover and image policy, delete with files |
 | `ImportService`     | Accept an upload and enqueue the import, run the import job step by step            |
 | `SourceService`     | List and read the sources and scans of a book, delete a source with its files       |
-| `PageService`       | Page manifest, one page by identifier, asset locations for the viewer               |
+| `PageService`       | Page manifest, one page by identifier, moving pages, asset locations for the viewer |
 | `ProcessingService` | Recipes, previews, runs, variants, invalidation of later stages                     |
 | `EditService`       | Save and load manual page edits (frames, meshes, masks, regions)                    |
 | `JobService`        | Job state, cancellation, the event stream of a project                              |
@@ -1122,6 +1148,9 @@ the frontend client is generated from it. These endpoints of books, jobs and ima
 | `GET /projects/{id}/scans`                  | `list_scans`            | `SourceService.scans`        | 200 `Page[ScanSchema]`, `?source_id`            |
 | `GET /projects/{id}/pages`                  | `list_pages`            | `PageService.manifest`       | 200 `ManifestPage[PageSchema]`                  |
 | `GET /projects/{id}/pages/{page_id}`        | `get_page`              | `PageService.get`            | 200 `PageSchema`                                |
+| `POST /projects/{id}/pages/{page_id}/move`  | `move_page`             | `PageService.move`           | 200 `PageSchema`, 409 for an anchor of its own  |
+| `POST /projects/{id}/pages/move`            | `move_pages`            | `PageService.move_group`     | 204, 409 for an anchor inside the group         |
+| `POST /projects/{id}/sources/{source_id}/pages/move` | `move_source_pages` | `PageService.move_source` | 204, 409 for an anchor inside the source        |
 | `GET /iiif/{key}`                           | `iiif_file`             | `PageService.open_asset`     | the file as stored, immutable                   |
 | `GET /jobs/{id}`                            | `read_job`              | `JobService.get`             | 200 `JobSchema`                                 |
 | `DELETE /jobs/{id}`                         | `cancel_job`            | `JobService.cancel`          | 200 `JobSchema`                                 |
@@ -1135,7 +1164,7 @@ The rest of the design is not served yet, apart from the fastapi-users routers:
 | Account    | `GET /users/me`, `GET, PATCH /me/settings`, `GET, PUT, DELETE /me/credentials/{provider}`                 |
 | Catalogue  | `GET /engines`, `GET /processors`                                                                         |
 | Pages      | `POST /projects/{id}/pages`, `PATCH, DELETE /projects/{id}/pages/{page_id}`                               |
-| Page order | `POST /projects/{id}/pages/{page_id}/move`, `PUT /projects/{id}/pages/{page_id}/scan`                     |
+| Page order | `PUT /projects/{id}/pages/{page_id}/scan`                                                                 |
 | Edits      | `GET, PUT /projects/{id}/pages/{page_id}/edits/{stage}`                                                   |
 | Processing | `GET, PUT /projects/{id}/stages/{stage}/recipe`, `POST .../preview`, `POST .../run`, `GET .../variants`   |
 
@@ -1150,7 +1179,12 @@ account. The job's `result` lists the sources imported, the files rejected with 
 job skipped.
 
 Pages are addressed by their `PageId`, never by their position. `POST /projects/{id}/pages` adds a placeholder or a
-blank leaf, `POST .../move` moves a page to another position, and `PUT .../scan` binds a scan to a placeholder. A
+blank leaf, `PUT .../scan` binds a scan to a placeholder, and the three move routes put pages before or after an
+anchor page. A move body names the anchor with exactly one of `before_page_id` and `after_page_id`, which the shared
+`PageAnchorBody` checks with a `model_validator`. A group is named by `page_ids`, a list of 1 to 2000 distinct
+identifiers, and it keeps its order in the book. An anchor that is one of the moved pages, or a place another move took
+first, is a 409 problem, and a page, anchor or source of another project is a 404. The group routes answer 204, since
+their result is the `pages-changed` event and every other position changes anyway. A
 scan that the import already made into a page of its own is bound with the flag `take_over`, which moves the scan
 from that page to the placeholder. `POST /projects/{id}/source`, a `source` field of the project schema and page
 addresses by index are never published, because the frontend client is generated from the OpenAPI schema and would
@@ -1160,7 +1194,9 @@ The page manifest, `GET /projects/{id}/pages`, returns up to 1000 pages per requ
 the computed position of every page and never its order key. Because fastapi-pagination checks the query against the
 parameters of the response's page class too, the manifest answers with a customized page class, `ManifestPage`, that
 carries the same limit. Excluded pages are returned with `included` false, and the viewer asks for `?included=true`,
-a filter that is not served yet. A page carries `images`, the paths of its four images, once its base version has them
+which lists only the pages that are part of the book and numbers those among themselves, so a position is the place in
+the book the viewer shows. A page carries `source_id`, the source of its scan, by which the strip selects every page of
+a source, and it carries `images`, the paths of its four images, once its base version has them
 cut, and none before, for a placeholder too.
 
 `DELETE /projects/{id}/sources/{source_id}` answers 204 and leaves the pages of the book with their images. It answers
@@ -1173,7 +1209,9 @@ The events of a project reach the browser over `GET /projects/{id}/events`:
 - `JobChanged` when a job changes state or progress, its last one carrying the result of an import.
 - `SourceImported` when a source and its scans are committed.
 - `ScanReady` when the renditions of a scan can be shown.
-- `PagesChanged` when pages are added, removed or moved, or their labels or kinds change.
+- `PagesChanged` when pages are added, removed or moved, or their labels or kinds change. It carries `page_ids`, the
+  pages the change touched, and `change`, a `PageChange`: `moved`, `edited`, `added` or `removed`. A group of any size is
+  one event, so the stream does not grow with it, and the browser reads the manifest again.
 - `PageVersionReady` when a page version is ready.
 - `ProjectChanged` when the book description changes.
 
@@ -1366,6 +1404,17 @@ The book model rests on these decisions, each with its reason.
     called without the frontend and a page must not be lost silently. The browser removes them from its list too.
 36. **Number of files.** `max_upload_files` is enforced by the service alone, and the multipart parser is given no
     ceiling of its own, so every upload past the limit gets the same 413 problem and not the parser's 400.
+
+33. **Order keys are not rebalanced.** A key grows by a character or two for a book arranged by hand, and a rebalance
+    would rewrite every row of the book for what is one move. A linked list of previous and next pages was refused
+    because a move writes three rows and the manifest would need a recursive query, and floating-point positions
+    because halving a gap again and again loses precision.
+34. **Moves of many pages answer 204 and publish one event.** An answer holding every moved page would repeat the
+    manifest, whose other positions change anyway, and one `PagesChanged` naming the group keeps the event stream the
+    same size whatever the group.
+35. **An anchor inside the moved pages is a conflict.** The place is not defined then, so the service answers 409
+    instead of choosing one, and the body schema leaves the check to the service so that a group and a source are
+    handled alike.
 
 Smaller technical choices follow the same model. Languages are ISO 639-3 codes, XMP is parsed with defusedxml, the
 parameters of processing jobs are kept in `Job.params`, a DjVu source suggests a publication year only from its

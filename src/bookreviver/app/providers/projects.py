@@ -2,8 +2,9 @@
 
 from dishka import Provider, Scope, provide
 
+from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import UnitOfWork
-from bookreviver.ports.runtime import Clock
+from bookreviver.ports.runtime import Clock, EventPublisher
 from bookreviver.ports.storage import AssetStore, SourceStore
 from bookreviver.services.pages import PageService
 from bookreviver.services.projects import ProjectService
@@ -33,17 +34,25 @@ class ProjectsProvider(Provider):
         return ProjectService(uow=uow, clock=clock, sources=sources, assets=assets)
 
     @provide
-    def pages(self, uow: UnitOfWork, assets: AssetStore) -> PageService:
+    def pages(
+        self, uow: UnitOfWork, assets: AssetStore, order_keys: OrderKeys, publisher: EventPublisher, clock: Clock
+    ) -> PageService:
         """Build the page service over the request's unit of work.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
         :param assets: Asset store of the application.
         :type assets: AssetStore
+        :param order_keys: Order keys of the application.
+        :type order_keys: OrderKeys
+        :param publisher: Publisher of the application's event bus.
+        :type publisher: EventPublisher
+        :param clock: Clock of the application.
+        :type clock: Clock
         :returns: The page service of the request.
         :rtype: PageService
         """
-        return PageService(uow=uow, assets=assets)
+        return PageService(uow=uow, assets=assets, order_keys=order_keys, publisher=publisher, clock=clock)
 
     @provide
     def sources(self, uow: UnitOfWork, sources: SourceStore, assets: AssetStore) -> SourceService:

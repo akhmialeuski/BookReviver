@@ -9,8 +9,11 @@ from typing import TYPE_CHECKING
 from attrs import frozen
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from bookreviver.domain.entities import Job, PageVersion, Scan, Source
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.enums import PageChange
+    from bookreviver.domain.ids import PageId, ProjectId
 
 
 @frozen(kw_only=True)
@@ -55,7 +58,17 @@ class ScanReady(DomainEvent):
 
 @frozen(kw_only=True)
 class PagesChanged(DomainEvent):
-    """Pages of the book were added, removed or moved, or their labels or kinds changed."""
+    """Pages of the book were added, removed or moved, or their labels or kinds changed.
+
+    A use case that changes many pages publishes one event naming all of them, so the event stream does not grow with
+    the size of a group.
+
+    :ivar page_ids: Pages the change touched, in book order where the use case knows it.
+    :ivar change: What was done to them.
+    """
+
+    page_ids: Sequence[PageId]
+    change: PageChange
 
 
 @frozen(kw_only=True)

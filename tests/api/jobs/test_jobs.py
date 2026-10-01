@@ -10,7 +10,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import EventName
-from bookreviver.domain.enums import JobState
+from bookreviver.domain.enums import JobState, PageChange
 from bookreviver.domain.events import PagesChanged, PageVersionReady, ProjectChanged, ScanReady, SourceImported
 from bookreviver.domain.ids import PageId
 from tests.helpers.builders import (
@@ -202,11 +202,12 @@ class TestStreamProjectEvents:
         project_id = fx_queued_job.project_id
         source = make_source(project_id=project_id)
         scan = make_scan(source=source, number=0)
-        version = make_page_version(page_id=PageId(uuid4()))
+        page_id = PageId(uuid4())
+        version = make_page_version(page_id=page_id)
         events = [
             SourceImported(project_id=project_id, source=source),
             ScanReady(project_id=project_id, scan=scan),
-            PagesChanged(project_id=project_id),
+            PagesChanged(project_id=project_id, page_ids=[page_id], change=PageChange.MOVED),
             PageVersionReady(project_id=project_id, version=version),
         ]
         reader = EventStreamReader(count=len(events))
@@ -220,7 +221,9 @@ class TestStreamProjectEvents:
         assert reader.events == [
             StreamedEvent(EventName.SOURCE_IMPORTED, {**project, 'source_id': str(source.id)}),
             StreamedEvent(EventName.SCAN_READY, {**project, 'scan_id': str(scan.id)}),
-            StreamedEvent(EventName.PAGES_CHANGED, project),
+            StreamedEvent(
+                EventName.PAGES_CHANGED, {**project, 'page_ids': [str(page_id)], 'change': PageChange.MOVED.value}
+            ),
             StreamedEvent(
                 EventName.PAGE_VERSION_READY, {**project, 'page_id': str(version.page_id), 'version_id': version.id}
             ),

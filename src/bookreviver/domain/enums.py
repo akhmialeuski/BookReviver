@@ -275,6 +275,22 @@ class PageOrigin(LabeledStrEnum):
     PLACEHOLDER = 'placeholder', 'Placeholder waiting for a scan'
 
 
+class Side(LabeledStrEnum):
+    """Which side of a page in the book a neighbour or a new position lies on."""
+
+    BEFORE = 'before', 'Before the page'
+    AFTER = 'after', 'After the page'
+
+
+class PageChange(LabeledStrEnum):
+    """What a use case did to the pages of a book, which the ``PagesChanged`` event reports."""
+
+    MOVED = 'moved', 'Moved'
+    EDITED = 'edited', 'Edited'
+    ADDED = 'added', 'Added'
+    REMOVED = 'removed', 'Removed'
+
+
 class VersionState(LabeledStrEnum):
     """Lifecycle of a page version, from its creation to its result."""
 

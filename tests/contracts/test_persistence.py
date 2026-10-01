@@ -12,7 +12,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import JobState, PageKind, RejectionReason, Rendition
+from bookreviver.domain.enums import JobState, PageKind, RejectionReason, Rendition, Side
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import SourceId
 from bookreviver.domain.values import (
@@ -536,6 +536,31 @@ class TestSourceRepository:
 class TestScanRepository:
     """Contract of ScanRepository."""
 
+    async def test_list_by_ids_returns_the_stored_scans_among_them(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify scans read by identifier come back once each, and an identifier that is not stored is left out.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        source = make_source(project_id=project.id)
+        scans = [make_scan(source=source, number=number) for number in range(PAGE_COUNT)]
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.sources.add(source)
+        await uow.scans.add_many(scans)
+        await uow.commit()
+        repository = (await fx_uow_factory()).scans
+        unstored = make_scan(source=source, number=PAGE_COUNT)
+        found = await repository.list_by_ids([scans[0].id, scans[2].id, scans[2].id, unstored.id])
+        expect(sorted(found, key=attrgetter('number')) == [scans[0], scans[2]])
+        expect(await repository.list_by_ids([]) == [])
+        assert_expectations()
+
     async def test_scans_read_back_by_number_within_their_source(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
@@ -812,6 +837,208 @@ class TestPageRepository:
         expect(await pages.list_for_scan(spread.id) == [left, right])
         expect(await pages.list_for_scan(other.id) == [elsewhere])
         assert_expectations()
+
+    async def test_included_only_lists_the_pages_of_the_book_and_counts_them(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a listing of the included pages skips the excluded ones in its window and in its total.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        book = [make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1', 'a2')]
+        book[1] = evolve(book[1], included=False)
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.pages.add_many(book)
+        await uow.commit()
+        pages = (await fx_uow_factory()).pages
+        everything = await pages.list_for_project(project.id, SliceRequest(), included_only=True)
+        window = await pages.list_for_project(project.id, SliceRequest(offset=1, limit=1), included_only=True)
+        expect(list(everything.items) == [book[0], book[2]])
+        expect((list(window.items), window.total) == ([book[2]], 2))
+        assert_expectations()
+
+    async def test_list_by_ids_returns_the_pages_in_book_order(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify pages named in any order, with repeats, come back once each in the byte order of their keys.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        book = [make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS]
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.pages.add_many(book)
+        await uow.commit()
+        pages = (await fx_uow_factory()).pages
+        wanted = [book[0].id, book[2].id, book[4].id, book[2].id]
+        # Stored as a1, a0v, a0V, a0, Zz, so these three are a1, a0V and Zz
+        assert [page.order_key for page in await pages.list_by_ids(project.id, wanted)] == ['Zz', 'a0V', 'a1']
+
+    async def test_list_by_ids_refuses_a_missing_page_and_a_page_of_another_project(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify one identifier that names no page of the project fails the whole read, naming that identifier.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        own, foreign = make_page(project_id=project.id), make_page(project_id=other.id)
+        uow = await fx_uow_factory()
+        for owned in (project, other):
+            await uow.projects.add(owned)
+        await uow.pages.add_many([own, foreign])
+        await uow.commit()
+        pages = (await fx_uow_factory()).pages
+        missing = make_page(project_id=project.id)
+        with pytest.raises(NotFoundError, match=str(foreign.id)):
+            await pages.list_by_ids(project.id, [own.id, foreign.id])
+        with pytest.raises(NotFoundError, match=str(missing.id)):
+            await pages.list_by_ids(project.id, [own.id, missing.id])
+
+    async def test_list_for_source_returns_the_pages_of_its_scans_in_book_order(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the pages of one source list in book order, without pages of other sources or without a scan.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        first, second = (
+            make_source(project_id=project.id, name='a.pdf'),
+            make_source(project_id=project.id, name='b.pdf'),
+        )
+        scans = [
+            make_scan(source=first, number=0),
+            make_scan(source=second, number=0),
+            make_scan(source=first, number=1),
+        ]
+        late, elsewhere, early = (
+            make_page(project_id=project.id, order_key=key, scan=scan)
+            for key, scan in zip(('a2', 'a1', 'a0'), scans, strict=True)
+        )
+        placeholder = make_page(project_id=project.id, order_key='a3')
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.sources.add_many([first, second])
+        await uow.scans.add_many(scans)
+        await uow.pages.add_many([late, elsewhere, early, placeholder])
+        await uow.commit()
+        pages = (await fx_uow_factory()).pages
+        expect(await pages.list_for_source(project.id, first.id) == [early, late])
+        expect(await pages.list_for_source(project.id, second.id) == [elsewhere])
+        expect(await pages.list_for_source(project.id, SourceId(uuid4())) == [])
+        assert_expectations()
+
+    async def test_neighbour_key_is_the_nearest_key_on_a_side_without_the_excluded_pages(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the nearest key before or after another, in byte order, skipping pages left out and other projects.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        book = [make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS]
+        uow = await fx_uow_factory()
+        for owned in (project, other):
+            await uow.projects.add(owned)
+        await uow.pages.add_many([*book, make_page(project_id=other.id, order_key='a0W')])
+        await uow.commit()
+        pages = (await fx_uow_factory()).pages
+        # The keys are stored as a1, a0v, a0V, a0, Zz and sort as Zz, a0, a0V, a0v, a1
+        by_key = {page.order_key: page.id for page in book}
+        expect(await pages.neighbour_key(project.id, 'a0V', Side.BEFORE) == 'a0')
+        expect(await pages.neighbour_key(project.id, 'a0V', Side.AFTER) == 'a0v')
+        expect(await pages.neighbour_key(project.id, 'a0V', Side.AFTER, excluding=[by_key['a0v']]) == 'a1')
+        expect(
+            await pages.neighbour_key(project.id, 'a0V', Side.BEFORE, excluding=[by_key['a0'], by_key['Zz']]) is None
+        )
+        expect(await pages.neighbour_key(project.id, 'Zz', Side.BEFORE) is None)
+        expect(await pages.neighbour_key(project.id, 'a1', Side.AFTER) is None)
+        assert_expectations()
+
+    async def test_update_many_writes_every_page_in_one_transaction(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify several pages changed together read back changed, and the pages left out stay as they were.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        book = [make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1', 'a2')]
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.pages.add_many(book)
+        await uow.commit()
+        moved = [evolve(book[0], order_key='a1V'), evolve(book[1], order_key='a1G')]
+        uow = await fx_uow_factory()
+        await uow.pages.update_many(moved)
+        await uow.commit()
+        pages = (await fx_uow_factory()).pages
+        everything = await pages.list_for_project(project.id, SliceRequest())
+        assert list(everything.items) == [moved[1], moved[0], book[2]]
+
+    async def test_update_to_a_key_another_page_holds_raises_conflict(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a page cannot take another page's position by update, as a move that lost a race would try to.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        first, second = (make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1'))
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.pages.add_many([first, second])
+        await uow.commit()
+        uow = await fx_uow_factory()
+        with pytest.raises(ConflictError, match='a1'):
+            await uow.pages.update(evolve(first, order_key='a1'))
+        await uow.rollback()
+        with pytest.raises(ConflictError, match='a1'):
+            await uow.pages.update_many([evolve(first, order_key='a1')])
+
+    async def test_update_many_with_a_missing_page_raises_not_found(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a page that is not stored fails the update, naming its identifier.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        missing = make_page(project_id=project.id)
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        with pytest.raises(NotFoundError, match=str(missing.id)):
+            await uow.pages.update_many([missing])
 
     async def test_updated_page_reads_back(self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
         """Verify a page moved, numbered, given a kind and kept out of the book reads back so.
