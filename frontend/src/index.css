@@ -23,6 +23,12 @@
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
   --radius: 0.625rem;
+  /* The one colour of each state of a stage or a page, wherever it is drawn: strip, stage bar, library, panel */
+  --status-done: oklch(0.6 0.13 155);
+  --status-attention: oklch(0.72 0.15 70);
+  --status-failed: oklch(0.577 0.245 27.325);
+  --status-running: oklch(0.55 0.2 285);
+  --status-idle: oklch(0.87 0 0);
 }
 
 @theme inline {
@@ -44,6 +50,11 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-status-done: var(--status-done);
+  --color-status-attention: var(--status-attention);
+  --color-status-failed: var(--status-failed);
+  --color-status-running: var(--status-running);
+  --color-status-idle: var(--status-idle);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

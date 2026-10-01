@@ -5,10 +5,15 @@ import type {
   Orthography,
   PageKind,
   PageOrigin,
+  PageStageStatus,
   RejectionReason,
+  ReviewReason,
   Script,
+  Stage,
+  StageStatus,
 } from '@/api';
 import type { OAuthFailure } from '@/features/auth/oauth';
+import type { Phase } from '@/features/stages/stages';
 import { ProblemCode } from '@/shared/http/codes';
 import { pluralize } from '@/shared/lib/format';
 
@@ -342,6 +347,55 @@ export const MESSAGES = {
       submitting: 'Binding…',
       back: 'Back',
     },
+  },
+  stages: {
+    phases: {
+      prepare: 'Prepare',
+      image: 'Image',
+      text: 'Text',
+      publish: 'Publish',
+    } satisfies Record<Phase, string>,
+    names: {
+      import: 'Import',
+      'page-split': 'Split',
+      'page-order': 'Order',
+      geometry: 'Geometry',
+      cleanup: 'Cleanup',
+      layout: 'Layout',
+      background: 'Background',
+      recognition: 'Recognition',
+      proofreading: 'Proofreading',
+      typesetting: 'Typesetting',
+    } satisfies Record<Stage, string>,
+    summaries: {
+      import: 'Upload the files of the book. Each file holds scans, and the scans become pages.',
+      'page-split': 'Cut every scan of two facing pages into a left page and a right page.',
+      'page-order': 'Put the pages in the order of the book, number them and add the missing ones.',
+      geometry: 'Straighten each page so its lines of text run level.',
+      cleanup: 'Remove specks and stains, and make a black-and-white copy of each page.',
+      layout: 'Mark the text, the headings, the pictures and the page numbers on each page.',
+      background: 'Give every page of the book one even background.',
+      recognition: 'Read the text of each page.',
+      proofreading: 'Check the recognised text line by line and correct it.',
+      typesetting: 'Set the corrected text as a new edition of the book.',
+    } satisfies Record<Stage, string>,
+    status: {
+      done: 'Done',
+      attention: 'Needs a look',
+      running: 'Running',
+      waiting: 'Waiting',
+      unavailable: 'Soon',
+    } satisfies Record<StageStatus, string>,
+    pageStatus: {
+      fresh: 'Up to date',
+      stale: 'Out of date',
+      failed: 'Failed',
+      'not-run': 'Not processed',
+    } satisfies Record<PageStageStatus, string>,
+    review: {
+      'low-confidence': 'Check: the step was not sure of its result',
+      'not-applied': 'Check: the step left the page as it was',
+    } satisfies Record<ReviewReason, string>,
   },
   viewer: {
     title: 'Pages',
