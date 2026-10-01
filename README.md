@@ -8,14 +8,19 @@ The application is a JSON API with a React frontend. `docs/architecture.md` desc
 
 ## What to install
 
-| What | Needed for | When to install | How |
-| --- | --- | --- | --- |
-| [uv](https://docs.astral.sh/uv/) | The backend and its Python, which uv installs by itself | Before anything else | See the uv documentation |
-| [Node](https://nodejs.org/) 22.18 or newer, in an even-numbered release line (22, 24, 26 and so on) | Building the interface | Before the first start, and again after the frontend changes | See the Node documentation |
-| DjVuLibre | Reading DjVu books | Before the first start, or at the latest before the first DjVu upload | `sudo scripts/install-system-deps.sh` |
-| OpenCV, the optional group `cv` | The processing steps that split a spread and straighten a page | Only when you use those steps | `uv run --extra cv ...` |
-| An SMTP server | Real confirmation and password reset mail | Optional, without it the mail is written to the server log | `BOOKREVIVER_MAIL__*` in `.env`, see [Mail](#mail) |
-| Google and Facebook keys | The sign-in buttons of the two providers | Optional, before other people use the server | `BOOKREVIVER_AUTH__GOOGLE__*` and `BOOKREVIVER_AUTH__FACEBOOK__*` in `.env`, see [Sign-in with Google and Facebook](#sign-in-with-google-and-facebook) |
+- [uv](https://docs.astral.sh/uv/) runs the backend and installs its Python. Install it before anything else, following
+  the uv documentation.
+- [Node](https://nodejs.org/) 22.18 or newer, in an even-numbered release line (22, 24, 26 and so on), builds the
+  interface. Install it before the first start, and again after the frontend changes.
+- DjVuLibre reads DjVu books. Install it before the first start, or at the latest before the first DjVu upload, with
+  `sudo scripts/install-system-deps.sh`.
+- OpenCV, the optional group `cv`, runs the processing steps that split a spread and straighten a page. Install it only
+  when you use those steps, with `uv sync --extra cv`.
+- An SMTP server sends real confirmation and password reset mail. It is optional, and without it the mail is written to
+  the server log. Set `BOOKREVIVER_MAIL__*` in `.env`, see [Mail](#mail).
+- Google and Facebook keys switch on the sign-in buttons of the two providers. They are optional, until other people
+  use the server. Set `BOOKREVIVER_AUTH__GOOGLE__*` and `BOOKREVIVER_AUTH__FACEBOOK__*` in `.env`, see
+  [Sign-in with Google and Facebook](#sign-in-with-google-and-facebook).
 
 Everything except DjVuLibre comes from the package managers of the project. DjVuLibre is a system package, so no Python
 or Node command can bring it.
@@ -76,13 +81,16 @@ Run these once on a new machine, in this order, from the root of the repository.
 
 ## After you pull new code
 
-| What changed | What to run |
-| --- | --- |
-| A new file in `src/bookreviver/adapters/persistence/sqlalchemy/migrations/versions/` | `uv run bookreviver-migrate upgrade head`, after copying `data/` if it holds anything worth keeping. Until then the server refuses to start and names this command. |
-| `pyproject.toml` or `uv.lock` | `uv sync` |
-| Anything under `frontend/` | `npm --prefix frontend ci` and `npm --prefix frontend run build` |
-| A route or a schema of the API | `uv run bookreviver-openapi`, then `npm --prefix frontend run generate`, and commit both results |
-| The system packages, see the list above | `sudo scripts/install-system-deps.sh`, then start the server again |
+- A new file in `src/bookreviver/adapters/persistence/sqlalchemy/migrations/versions/` needs
+  `uv run bookreviver-migrate upgrade head`, after copying `data/` if it holds anything worth keeping. Until then the
+  server refuses to start and names this command.
+- A change of `pyproject.toml` or `uv.lock` needs `uv sync --extra cv`. Plain `uv sync` removes OpenCV, and the server
+  then starts without the steps that split a spread and straighten a page.
+- A change under `frontend/` needs `npm --prefix frontend ci` and `npm --prefix frontend run build`.
+- A new route or schema of the API needs `uv run bookreviver-openapi`, then `npm --prefix frontend run generate`, and
+  both results are committed.
+- A change of the system packages, see the list above, needs `sudo scripts/install-system-deps.sh`, and then the server
+  is started again.
 
 ## Running
 
@@ -148,6 +156,22 @@ BOOKREVIVER_MAIL__SMTP_USERNAME=you@gmail.com
 BOOKREVIVER_MAIL__SMTP_PASSWORD=<the 16-character app password>
 BOOKREVIVER_MAIL__SENDER=you@gmail.com
 ```
+
+To switch real mail on for a local run:
+
+1. Put the five variables in the `.env` file in the root of the repository, which git ignores, and never in a file
+   that is committed. `.env.example` lists them, with the sender commented out because an empty sender would replace
+   the default one.
+2. Leave `BOOKREVIVER_MAIL__SMTP_HOST` out, or commented with a `#`, until the password is in place. A host without
+   a password makes Gmail refuse the message, and the request that sent it fails. Without a host the messages go to
+   the server log as before.
+3. Restart the backend. It reads `.env` only when it starts, so the running server keeps the mail setting it began with.
+4. Register an account. The message arrives at the address of the account, and the server log shows the error of the
+   SMTP server if it does not.
+
+A link in a message is valid for one hour, and a new one is requested with "Send a new confirmation link" on the
+sign-in screen or with "Forgot password?". Copy a link whole: it is a long line, and a cut one is answered as not valid
+or expired.
 
 The Gmail values come from Google's documentation as remembered and could not be checked from the environment this
 was written in, which cannot reach Google's pages. Confirm them against the current
