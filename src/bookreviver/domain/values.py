@@ -26,6 +26,8 @@ if TYPE_CHECKING:
         ColorMode,
         FileType,
         IdentifierScheme,
+        LabelStyle,
+        PageKind,
         RejectionReason,
         Side,
         SourceKind,
@@ -438,6 +440,50 @@ class PageAnchor:
 
 
 @frozen(kw_only=True)
+class PageNumbering:
+    """How to write the printed numbers of a range of pages, which is applied once and not stored.
+
+    The range runs from one page to another in the order of the book. Pages kept out of the book, and pages of the kinds
+    in ``skip_kinds``, take no number and keep their label, since the plates of an old book are usually not counted.
+
+    :ivar first_page_id: First page of the range.
+    :ivar last_page_id: Last page of the range, which may be the first page but not stand before it.
+    :ivar style: How the numbers are written; ``none`` erases the labels of the range.
+    :ivar start: Number of the first numbered page, from 1.
+    :ivar bracketed: Whether the label is enclosed in square brackets, as a bibliographer marks a number that is not
+                     printed in the book.
+    :ivar skip_kinds: Kinds of page that are not numbered.
+    """
+
+    first_page_id: PageId
+    last_page_id: PageId
+    style: LabelStyle
+    start: int = field(default=1, validator=validators.ge(1))
+    bracketed: bool = False
+    skip_kinds: frozenset[PageKind] = frozenset()
+
+    def __attrs_post_init__(self) -> None:
+        """Check that the first number can be written in the style.
+
+        :raises ValueError: If the style is Roman and the first number is above 3999.
+        """
+        self.style.write(self.start)
+
+    def label(self, number: int) -> str:
+        """Write the label of the page that takes ``number``.
+
+        :param number: Number of the page, counted from ``start``.
+        :type number: int
+        :returns: The number in the style of the numbering, in square brackets when ``bracketed``, and empty for the
+                  style ``none``.
+        :rtype: str
+        :raises ValueError: If the style cannot write the number, such as 4000 in Roman numerals.
+        """
+        text = self.style.write(number)
+        return f'[{text}]' if self.bracketed and text else text
+
+
+@frozen(kw_only=True)
 class UploadedSource:
     """The staged files of an upload that make one source, as the source inspector groups them.
 
@@ -457,14 +503,36 @@ class SourceAnalysis:
 
     :ivar kind: Kind of the source that was inspected.
     :ivar scans: Facts of every scan in the order of the source, which gives the scans their numbers.
+    :ivar scan_labels: Page label the file gives each scan, such as the PDF page label ``xii``, aligned with ``scans``,
+                       or empty for a format that carries no labels.
     :ivar file_metadata: Technical metadata of the source's format, such as the document information of a PDF.
     :ivar suggestion: Description fields found in the source, offered to fill empty book details.
     """
 
     kind: SourceKind
     scans: Sequence[ScanFacts]
+    scan_labels: Sequence[str] = ()
     file_metadata: MetadataMap = field(factory=dict)
     suggestion: MetadataSuggestion = field(factory=MetadataSuggestion)
+
+    def __attrs_post_init__(self) -> None:
+        """Check that the labels, when a format gives any, are one per scan.
+
+        :raises ValueError: If there are labels, but not as many as scans.
+        """
+        if self.scan_labels and len(self.scan_labels) != len(self.scans):
+            err_msg = f'{len(self.scan_labels)} page labels do not fit {len(self.scans)} scans.'
+            raise ValueError(err_msg)
+
+    def label_of(self, number: int) -> str:
+        """Return the page label the file gives a scan.
+
+        :param number: Position of the scan in the source, starting at 0.
+        :type number: int
+        :returns: The label, or an empty string for a format without labels or a scan without one.
+        :rtype: str
+        """
+        return self.scan_labels[number] if self.scan_labels else ''
 
 
 @frozen(kw_only=True)

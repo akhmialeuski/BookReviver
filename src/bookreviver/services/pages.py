@@ -31,9 +31,10 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Collection, Sequence
     from pathlib import Path
 
+    from bookreviver.domain.changes import PageChanges
     from bookreviver.domain.entities import Actor, Page
     from bookreviver.domain.ids import PageId, ProjectId, SourceId, StorageKey
-    from bookreviver.domain.values import PageAnchor, SliceRequest
+    from bookreviver.domain.values import PageAnchor, PageNumbering, SliceRequest
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock, EventPublisher
@@ -112,6 +113,68 @@ class PageService:
         """
         await owned_project(self._uow.projects, actor, project_id)
         return await self._overview(await self._page(project_id, page_id))
+
+    async def update(self, actor: Actor, project_id: ProjectId, page_id: PageId, changes: PageChanges) -> PageOverview:
+        """Change the printed number, the kind, the inclusion or the notes of a page, which writes its one row.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param page_id: Identifier of the page.
+        :type page_id: PageId
+        :param changes: New values for the fields to change, None keeping a field.
+        :type changes: PageChanges
+        :returns: The changed page with its position.
+        :rtype: PageOverview
+        :raises NotFoundError: If the actor has no such project, or the project has no such page.
+        """
+        await owned_project(self._uow.projects, actor, project_id)
+        page = changes.apply_to(await self._page(project_id, page_id))
+        changed = evolve(page, updated_at=self._clock.now())
+        await self._uow.pages.update(changed)
+        overview = await self._overview(changed)
+        await self._finish(project_id, [changed], PageChange.EDITED)
+        return overview
+
+    async def number(self, actor: Actor, project_id: ProjectId, numbering: PageNumbering) -> None:
+        """Write the printed numbers of a range of pages into their labels.
+
+        The numbers count the pages of the range that are part of the book and not of a skipped kind, from the start of
+        the numbering, and the pages left out keep their label, as do the pages outside the range. Only the pages whose
+        label changes are written.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param numbering: The range, the style and the first number.
+        :type numbering: PageNumbering
+        :raises NotFoundError: If the actor has no such project, or the project lacks the first or the last page.
+        :raises ConflictError: If the range runs backwards, or a number does not fit the style, such as 4000 in Roman
+                               numerals.
+        """
+        await owned_project(self._uow.projects, actor, project_id)
+        first = await self._page(project_id, numbering.first_page_id)
+        last = await self._page(project_id, numbering.last_page_id)
+        if first.order_key.encode() > last.order_key.encode():
+            raise ConflictError(numbering.first_page_id, numbering.last_page_id)
+        pages = await self._uow.pages.list_range(project_id, first.order_key, last.order_key)
+        counted = [page for page in pages if page.included and page.kind not in numbering.skip_kinds]
+        moment = self._clock.now()
+        try:
+            labels = [numbering.label(number) for number in range(numbering.start, numbering.start + len(counted))]
+        except ValueError as error:
+            raise ConflictError(str(error)) from error
+        changed = [
+            evolve(page, label=label, updated_at=moment)
+            for page, label in zip(counted, labels, strict=True)
+            if page.label != label
+        ]
+        if not changed:
+            return
+        await self._uow.pages.update_many(changed)
+        await self._finish(project_id, changed, PageChange.EDITED)
 
     async def move(self, actor: Actor, project_id: ProjectId, page_id: PageId, anchor: PageAnchor) -> PageOverview:
         """Put one page before or after another, which writes one row and renumbers nothing.

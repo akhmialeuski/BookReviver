@@ -124,6 +124,7 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Pages        | `Page`, `PageOverview`, `PageKind`, `PageOrigin`, `PageVersion`, `VersionState`, `Transform`, |
 |              | `PageStage`                                                                                   |
 | Page order   | `PageAnchor` (a page and a `Side`), `PageChange`, and `PageOverview` with its position        |
+| Page labels  | `LabelStyle`, `PageNumbering`, and `PageChanges` for the editable fields of a page            |
 | Storage keys | `StorageKey`, and `ProjectKeys` in `domain/keys.py`, the one builder of every key             |
 | Processing   | `Stage`, `ProcessorRef`, `Recipe`, `Step`, `Variant`, `ArtifactKind`, `Artifact`              |
 | Edits        | `PageEdit` with geometry (`Rect`, `Quad`, `Mesh`, `Region` with `RegionKind`) or a mask       |
@@ -306,8 +307,10 @@ Each format reads its technical metadata with its own library:
 | TIFF, JPEG, JPEG 2000, PNG | Pillow (`PIL.Image`)                       |
 
 A PDF source records the PDF version, the Info dictionary (Title, Author, Subject, Keywords, Creator, Producer and
-the dates), whether it has XMP metadata, the page count, the page labels, the outline, whether the file had to be
-repaired and whether it is encrypted. XMP is parsed with defusedxml. A DjVu source records whether the document is
+the dates), whether it has XMP metadata, the page count, the outline, whether the file had to be repaired and whether
+it is encrypted. The page labels are not kept in the metadata but read for every page with PyMuPDF's
+`Page.get_label` and returned as `SourceAnalysis.scan_labels`, aligned with the scans, where a document that defines
+no label rules gives empty strings. XMP is parsed with defusedxml. A DjVu source records whether the document is
 bundled or indirect, the page count, the `print-meta` metadata, the `print-outline` outline and whether it has a text
 layer, and it suggests a publication year only from `print-meta`. An image source records the format, the Pillow
 mode, the frame count, the compression, the ICC profile, the EXIF data with `Orientation`, and the DPI.
@@ -512,6 +515,29 @@ unique key of `(project_id, order_key)` refuses a second move to a place another
 reports that as a `ConflictError` too, so the client answers it by reading the manifest again. A move writes the
 `updated_at` of the pages it moves, commits, and then publishes one `PagesChanged`. Keys are not rebalanced: a key
 grows by a character or two for a book arranged by hand, which a book of a few hundred pages never notices.
+
+### Printed numbers
+
+The printed number of a page is its `label`, a string, empty for an unnumbered page, and the ranges a numbering was made
+from are not stored. Four things write it:
+
+- **The import.** A new page takes the `source_label` of its scan, which for a PDF is the label the document's page
+  label rules give the page.
+- **A patch.** `PATCH /projects/{id}/pages/{page_id}` follows JSON Merge Patch and changes the four fields the stage
+  edits, `label`, `kind`, `included` and `notes`. A field left out is kept and a `null` label or note is cleared to an
+  empty string. The kind and the inclusion have no empty value, so `null` for either is a 422. The order, the origin and
+  the scan are changed by other routes, so a body naming them is a 422 too. `PageService.update` receives the domain
+  value `PageChanges`, in which `None` keeps a field.
+- **A numbering.** `POST /projects/{id}/pages/labels` takes a `LabelRange` and writes numbers into the pages from the
+  first to the last in the book. The domain value `PageNumbering` holds the range, the `LabelStyle`, the first number,
+  whether the label is in square brackets and the kinds to skip. The pages kept out of the book and the pages of a
+  skipped kind take no number and keep their label, because the plates of an old book usually stand outside its
+  pagination, and a page outside the range keeps its label as well. The style `none` erases the labels of the range.
+  Only the pages whose label changes are written, and one `PagesChanged` of kind `edited` follows. The range may not run
+  backwards, and a Roman style stops at 3999, so a numbering that would pass it is a 409 and the first number of a
+  Roman range above it is a 422.
+- **`LabelStyle.write`.** The Roman numerals are a dozen lines in the domain, because the domain imports only the
+  standard library and the `roman` package would be its one dependency for a function that small.
 
 ## Ports
 
@@ -1101,8 +1127,8 @@ flowchart TD
    pyramid's `info.json` carries as its `id` the IIIF root, `/api/v1/iiif`, and the key of the pyramid's directory,
    which `ProjectKeys` builds.
 6. The page split is skipped: every new scan is a page at the end of the book, made in the transaction of its
-   source, with the scan's `source_label` as its printed number, which is empty until the page order task reads the
-   PDF page labels. When a scan is cut, its page gets the base version `split.none`: `AssetStore.copy` copies `full`
+   source, with the scan's `source_label` as its printed number, which is the page label of a PDF page, such as `xii`,
+   and empty for a scan whose file carries none. When a scan is cut, its page gets the base version `split.none`: `AssetStore.copy` copies `full`
    into the version's own directory, and the four renditions are cut from that copy, so the page holds its own
    image and its own pyramid. The version records the same format of `full` as the scan. The scan and its versions are marked ready in one transaction with the progress of the
    job, and `ScanReady` follows, so the viewer shows the first pages while the rest are being cut. The user splits
@@ -1148,6 +1174,8 @@ the frontend client is generated from it. These endpoints of books, jobs and ima
 | `GET /projects/{id}/scans`                  | `list_scans`            | `SourceService.scans`        | 200 `Page[ScanSchema]`, `?source_id`            |
 | `GET /projects/{id}/pages`                  | `list_pages`            | `PageService.manifest`       | 200 `ManifestPage[PageSchema]`                  |
 | `GET /projects/{id}/pages/{page_id}`        | `get_page`              | `PageService.get`            | 200 `PageSchema`                                |
+| `PATCH /projects/{id}/pages/{page_id}`      | `update_page`           | `PageService.update`         | 200 `PageSchema`, JSON Merge Patch              |
+| `POST /projects/{id}/pages/labels`          | `number_pages`          | `PageService.number`         | 204, 409 for a range that runs backwards        |
 | `POST /projects/{id}/pages/{page_id}/move`  | `move_page`             | `PageService.move`           | 200 `PageSchema`, 409 for an anchor of its own  |
 | `POST /projects/{id}/pages/move`            | `move_pages`            | `PageService.move_group`     | 204, 409 for an anchor inside the group         |
 | `POST /projects/{id}/sources/{source_id}/pages/move` | `move_source_pages` | `PageService.move_source` | 204, 409 for an anchor inside the source        |
@@ -1163,7 +1191,7 @@ The rest of the design is not served yet, apart from the fastapi-users routers:
 | Auth       | fastapi-users routers under `/auth`: cookie login and logout, register, verify, reset, OAuth per provider |
 | Account    | `GET /users/me`, `GET, PATCH /me/settings`, `GET, PUT, DELETE /me/credentials/{provider}`                 |
 | Catalogue  | `GET /engines`, `GET /processors`                                                                         |
-| Pages      | `POST /projects/{id}/pages`, `PATCH, DELETE /projects/{id}/pages/{page_id}`                               |
+| Pages      | `POST /projects/{id}/pages`, `DELETE /projects/{id}/pages/{page_id}`                                      |
 | Page order | `PUT /projects/{id}/pages/{page_id}/scan`                                                                 |
 | Edits      | `GET, PUT /projects/{id}/pages/{page_id}/edits/{stage}`                                                   |
 | Processing | `GET, PUT /projects/{id}/stages/{stage}/recipe`, `POST .../preview`, `POST .../run`, `GET .../variants`   |
@@ -1415,6 +1443,11 @@ The book model rests on these decisions, each with its reason.
 35. **An anchor inside the moved pages is a conflict.** The place is not defined then, so the service answers 409
     instead of choosing one, and the body schema leaves the check to the service so that a group and a source are
     handled alike.
+
+36. **Numbers are written into the rows.** The numbering of a range computes the labels and stores them in the pages,
+    and the range, the style and the first number are forgotten, because the printed numbering of an old book has
+    plates outside the count and misprints that a stored range would need rules for. A repeated numbering of the same
+    range with other settings only writes the rows again.
 
 Smaller technical choices follow the same model. Languages are ISO 639-3 codes, XMP is parsed with defusedxml, the
 parameters of processing jobs are kept in `Job.params`, a DjVu source suggests a publication year only from its

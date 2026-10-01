@@ -10,11 +10,11 @@ from functools import partial
 from typing import Annotated
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
-from fastapi import APIRouter, Depends, Path, Request, status
+from fastapi import APIRouter, Body, Depends, Path, Request, status
 
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import ManifestPage, Pager
-from bookreviver.api.schemas.pages import PageMove, PageQuery, PageSchema, PagesMove
+from bookreviver.api.schemas.pages import LabelRange, PageMove, PageQuery, PageSchema, PagesMove, PageUpdate
 from bookreviver.domain.entities import PageOverview
 from bookreviver.domain.ids import PageId, ProjectId
 from bookreviver.services.pages import PageService
@@ -145,3 +145,59 @@ async def move_pages(
     :type pages: PageService
     """
     await pages.move_group(actor, project_id, body.page_ids, body.anchor)
+
+
+@router.patch('/{project_id}/pages/{page_id}')
+async def update_page(
+    address: Annotated[PagePath, Depends()],
+    body: Annotated[PageUpdate, Body()],
+    actor: ActorDep,
+    request: Request,
+    pages: FromDishka[PageService],
+) -> PageSchema:
+    """Merge the body into the page, as JSON Merge Patch (RFC 7396) defines.
+
+    A field left out keeps its value, and a label or notes sent as null are cleared. The kind and the inclusion cannot
+    be cleared, and the order, the origin and the scan of a page are changed by other routes.
+
+    \N{FORM FEED}
+    :param address: Identifiers of the project and of the page.
+    :type address: PagePath
+    :param body: Fields to change, with null for a label or notes to clear.
+    :type body: PageUpdate
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param request: The request, whose application knows the route that serves the images.
+    :type request: Request
+    :param pages: Page service of the request.
+    :type pages: PageService
+    :returns: The changed page.
+    :rtype: PageSchema
+    """
+    changed = await pages.update(actor, address.project_id, address.page_id, body.to_changes())
+    return PageSchema.from_overview(changed, request)
+
+
+@router.post('/{project_id}/pages/labels', status_code=status.HTTP_204_NO_CONTENT)
+async def number_pages(
+    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    body: LabelRange,
+    actor: ActorDep,
+    pages: FromDishka[PageService],
+) -> None:
+    """Write the printed numbers of a range of pages into their labels, in the style and from the number given.
+
+    Pages kept out of the book, and pages of the kinds to skip, take no number and keep their label. The answer is 409
+    when the range runs backwards. The new labels reach the browser as a ``pages-changed`` event.
+
+    \N{FORM FEED}
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :param body: The range of pages, the style of the numbers, the first number and the kinds to skip.
+    :type body: LabelRange
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param pages: Page service of the request.
+    :type pages: PageService
+    """
+    await pages.number(actor, project_id, body.to_numbering())

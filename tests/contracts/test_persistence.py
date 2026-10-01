@@ -945,6 +945,34 @@ class TestPageRepository:
         expect(await pages.list_for_source(project.id, SourceId(uuid4())) == [])
         assert_expectations()
 
+    async def test_list_range_returns_the_pages_between_two_keys_inclusive_in_book_order(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify both ends belong to the range, byte order decides it, a reversed range is empty, other books are out.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        uow = await fx_uow_factory()
+        for owned in (project, other):
+            await uow.projects.add(owned)
+        await uow.pages.add_many([make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS])
+        await uow.pages.add(make_page(project_id=other.id, order_key='a0W'))
+        await uow.commit()
+        pages = (await fx_uow_factory()).pages
+        # The keys sort as Zz, a0, a0V, a0v, a1
+        inclusive = await pages.list_range(project.id, 'a0', 'a0v')
+        single = await pages.list_range(project.id, 'a0V', 'a0V')
+        reversed_range = await pages.list_range(project.id, 'a0v', 'a0')
+        expect([page.order_key for page in inclusive] == ['a0', 'a0V', 'a0v'])
+        expect([page.order_key for page in single] == ['a0V'])
+        expect(list(reversed_range) == [])
+        assert_expectations()
+
     async def test_neighbour_key_is_the_nearest_key_on_a_side_without_the_excluded_pages(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:

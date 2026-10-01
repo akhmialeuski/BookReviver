@@ -551,6 +551,26 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         return self._in_book_order(pages)
 
     @override
+    async def list_range(self, project_id: ProjectId, first_key: str, last_key: str) -> Sequence[Page]:
+        """Return the pages whose order keys lie between the two keys in byte order, both included.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param first_key: Smallest order key of the range.
+        :type first_key: str
+        :param last_key: Greatest order key of the range.
+        :type last_key: str
+        :returns: The pages of the range in book order.
+        :rtype: Sequence[Page]
+        """
+        lower, upper = first_key.encode(), last_key.encode()
+        return self._in_book_order(
+            page
+            for page in self._rows.values()
+            if page.project_id == project_id and lower <= page.order_key.encode() <= upper
+        )
+
+    @override
     async def list_for_source(self, project_id: ProjectId, source_id: SourceId) -> Sequence[Page]:
         """Return the pages whose scans belong to the source, in book order.
 

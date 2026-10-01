@@ -23,6 +23,8 @@ LANGUAGES_MAX_LENGTH: int = 10
 SUBJECTS_MAX_LENGTH: int = 50
 TITLES_MAX_LENGTH: int = 10
 REPEATED_ITEMS: str = 'The list may not repeat an item.'
+# Longest printed number of a page, such as ``[xii]`` or ``12a``
+PAGE_LABEL_MAX_LENGTH: int = 50
 # Most pages one request moves or numbers, which bounds the rows it writes
 PAGE_BATCH_MAX_LENGTH: int = 2_000
 ASSET_KEY_MAX_LENGTH: int = 1_024
@@ -70,6 +72,8 @@ def _refuse_repeats[ItemT: Hashable](items: Sequence[ItemT]) -> Sequence[ItemT]:
 # The languages of a book without repeats
 LanguageList = Annotated[list[LanguageCode], Field(max_length=LANGUAGES_MAX_LENGTH), AfterValidator(_refuse_repeats)]
 SubjectList = Annotated[list[ListedText], Field(max_length=SUBJECTS_MAX_LENGTH)]
+# The printed number of a page, which is empty for a page that has none
+PageLabel = Annotated[str, StringConstraints(strip_whitespace=True, max_length=PAGE_LABEL_MAX_LENGTH)]
 # The pages one request acts on, at least one and each at most once
 PageIdList = Annotated[
     list[PageId],

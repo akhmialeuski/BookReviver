@@ -1185,6 +1185,104 @@
             }
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Update Page",
+        "description": "Merge the body into the page, as JSON Merge Patch (RFC 7396) defines.\n\nA field left out keeps its value, and a label or notes sent as null are cleared. The kind and the inclusion cannot\nbe cleared, and the order, the origin and the scan of a page are changed by other routes.",
+        "operationId": "update_page_api_v1_projects__project_id__pages__page_id__patch",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PageUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/projects/{project_id}/pages/{page_id}/move": {
@@ -1315,6 +1413,87 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PagesMove"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pages/labels": {
+      "post": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Number Pages",
+        "description": "Write the printed numbers of a range of pages into their labels, in the style and from the number given.\n\nPages kept out of the book, and pages of the kinds to skip, take no number and keep their label. The answer is 409\nwhen the range runs backwards. The new labels reach the browser as a ``pages-changed`` event.",
+        "operationId": "number_pages_api_v1_projects__project_id__pages_labels_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelRange"
               }
             }
           }
@@ -3513,6 +3692,61 @@
         "title": "JobState",
         "description": "Lifecycle of a background job."
       },
+      "LabelRange": {
+        "properties": {
+          "first_page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "First Page Id"
+          },
+          "last_page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Last Page Id"
+          },
+          "style": {
+            "$ref": "#/components/schemas/LabelStyle"
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Start",
+            "default": 1
+          },
+          "bracketed": {
+            "type": "boolean",
+            "title": "Bracketed",
+            "default": false
+          },
+          "skip_kinds": {
+            "items": {
+              "$ref": "#/components/schemas/PageKind"
+            },
+            "type": "array",
+            "title": "Skip Kinds"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "first_page_id",
+          "last_page_id",
+          "style"
+        ],
+        "title": "LabelRange",
+        "description": "A range of pages to number, from one page to another in the order of the book.\n\n:ivar first_page_id: First page of the range.\n:ivar last_page_id: Last page of the range, which may be the first page but not stand before it.\n:ivar style: How the numbers are written; ``none`` erases the labels of the range.\n:ivar start: Number of the first numbered page, from 1, and at most 3999 in a Roman style.\n:ivar bracketed: Whether to enclose the label in square brackets.\n:ivar skip_kinds: Kinds of page that take no number and keep their label, such as plates."
+      },
+      "LabelStyle": {
+        "type": "string",
+        "enum": [
+          "arabic",
+          "roman-lower",
+          "roman-upper",
+          "none"
+        ],
+        "title": "LabelStyle",
+        "description": "How the number of a page is written, which the numbering of a range of pages applies to its numbers.\n\nThe domain imports only the standard library, so the Roman numerals are written here and not taken from the\n``roman`` package, whose one function would be about a dozen lines of ours."
+      },
       "ManifestPage_PageSchema_": {
         "properties": {
           "items": {
@@ -3805,6 +4039,46 @@
         ],
         "title": "PageSchema",
         "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except\n                in a manifest listing only the included pages, which numbers those.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar kind: Role of the page in the book.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar images: Paths of the images of the page's base version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
+      },
+      "PageUpdate": {
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PageKind",
+            "title": "Kind"
+          },
+          "included": {
+            "type": "boolean",
+            "title": "Included"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 10000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PageUpdate",
+        "description": "A JSON Merge Patch of a page: an omitted field is kept, and a null label or note is cleared.\n\nThe kind and the inclusion of a page have no empty value, so they may be omitted but not null.\n\n:ivar label: New printed number, or None to clear it.\n:ivar kind: New role of the page in the book.\n:ivar included: New decision whether the page is part of the book.\n:ivar notes: New notes, or None to clear them."
       },
       "Page_ProjectSchema_": {
         "properties": {

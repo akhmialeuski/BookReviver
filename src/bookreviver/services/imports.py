@@ -308,7 +308,14 @@ class ImportRun:
             imported_at=moment,
         )
         scans = [
-            Scan(id=ScanId(uuid4()), project_id=source.project_id, source_id=source.id, number=number, facts=facts)
+            Scan(
+                id=ScanId(uuid4()),
+                project_id=source.project_id,
+                source_id=source.id,
+                number=number,
+                source_label=analysis.label_of(number),
+                facts=facts,
+            )
             for number, facts in enumerate(analysis.scans)
         ]
         order_keys = self._order_keys.spread(

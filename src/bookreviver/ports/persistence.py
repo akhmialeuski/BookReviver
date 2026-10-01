@@ -232,6 +232,20 @@ class PageRepository(Repository[Page, PageId]):
         """
 
     @abstractmethod
+    async def list_range(self, project_id: ProjectId, first_key: str, last_key: str) -> Sequence[Page]:
+        """Return the pages of a project whose order keys lie between two keys, both included, in book order.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param first_key: Smallest order key of the range, in byte order.
+        :type first_key: str
+        :param last_key: Greatest order key of the range, in byte order.
+        :type last_key: str
+        :returns: The pages from ``first_key`` to ``last_key``, none when the range is reversed.
+        :rtype: Sequence[Page]
+        """
+
+    @abstractmethod
     async def list_for_source(self, project_id: ProjectId, source_id: SourceId) -> Sequence[Page]:
         """Return the pages whose scans belong to a source, in book order.
 

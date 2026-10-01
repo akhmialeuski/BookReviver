@@ -8,19 +8,21 @@ or a page whose images are still being cut.
 """
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Annotated, Self
 
 from fastapi import Query
-from pydantic import model_validator
+from pydantic import Field, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from bookreviver.api.pagination import ManifestParams
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.api.schemas.images import ImagePathsSchema
-from bookreviver.api.schemas.types import PageIdList
-from bookreviver.domain.enums import PageKind, PageOrigin, Side
+from bookreviver.api.schemas.types import LongText, PageIdList, PageLabel
+from bookreviver.domain.changes import PageChanges
+from bookreviver.domain.enums import LabelStyle, PageKind, PageOrigin, Side
 from bookreviver.domain.ids import PageId, ScanId, SourceId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PageAnchor
+from bookreviver.domain.values import PageAnchor, PageNumbering
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -28,6 +30,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import PageOverview
 
 EXACTLY_ONE_ANCHOR: str = 'Give exactly one of before_page_id and after_page_id.'
+# Fields of a page patch that have no empty value, so a null is refused
+NOT_CLEARABLE_FIELDS: tuple[str, ...] = ('kind', 'included')
 
 
 class PageQuery(ManifestParams):
@@ -82,6 +86,98 @@ class PagesMove(PageAnchorBody):
     """
 
     page_ids: PageIdList
+
+
+class PageUpdate(RequestModel):
+    """A JSON Merge Patch of a page: an omitted field is kept, and a null label or note is cleared.
+
+    The kind and the inclusion of a page have no empty value, so they may be omitted but not null.
+
+    :ivar label: New printed number, or None to clear it.
+    :ivar kind: New role of the page in the book.
+    :ivar included: New decision whether the page is part of the book.
+    :ivar notes: New notes, or None to clear them.
+    """
+
+    label: PageLabel | None = None
+    kind: PageKind | SkipJsonSchema[None] = None
+    included: bool | SkipJsonSchema[None] = None
+    notes: LongText | None = None
+
+    @model_validator(mode='after')
+    def _kind_and_inclusion_are_not_cleared(self) -> Self:
+        """Refuse a kind or an inclusion that was sent, and sent as null.
+
+        :returns: The body unchanged.
+        :rtype: Self
+        :raises ValueError: If the client sent null for the kind or the inclusion.
+        """
+        if cleared := [
+            name for name in NOT_CLEARABLE_FIELDS if name in self.model_fields_set and getattr(self, name) is None
+        ]:
+            err_msg = f'The field {cleared[0]} may be omitted, but not null.'
+            raise ValueError(err_msg)
+        return self
+
+    def to_changes(self) -> PageChanges:
+        """Return the fields the client sent as a domain change, a null label or note changed to an empty string.
+
+        :returns: The change replacing exactly the fields present in the request body.
+        :rtype: PageChanges
+        """
+        sent = self.model_fields_set
+        return PageChanges(
+            label=(self.label or '') if 'label' in sent else None,
+            kind=self.kind,
+            included=self.included,
+            notes=(self.notes or '') if 'notes' in sent else None,
+        )
+
+
+class LabelRange(RequestModel):
+    """A range of pages to number, from one page to another in the order of the book.
+
+    :ivar first_page_id: First page of the range.
+    :ivar last_page_id: Last page of the range, which may be the first page but not stand before it.
+    :ivar style: How the numbers are written; ``none`` erases the labels of the range.
+    :ivar start: Number of the first numbered page, from 1, and at most 3999 in a Roman style.
+    :ivar bracketed: Whether to enclose the label in square brackets.
+    :ivar skip_kinds: Kinds of page that take no number and keep their label, such as plates.
+    """
+
+    first_page_id: PageId
+    last_page_id: PageId
+    style: LabelStyle
+    start: Annotated[int, Field(ge=1)] = 1
+    bracketed: bool = False
+    skip_kinds: list[PageKind] = Field(default_factory=list)
+
+    def to_numbering(self) -> PageNumbering:
+        """Return the range as the domain states it.
+
+        :returns: The numbering of the range.
+        :rtype: PageNumbering
+        :raises ValueError: If the style is Roman and the first number is above 3999.
+        """
+        return PageNumbering(
+            first_page_id=self.first_page_id,
+            last_page_id=self.last_page_id,
+            style=self.style,
+            start=self.start,
+            bracketed=self.bracketed,
+            skip_kinds=frozenset(self.skip_kinds),
+        )
+
+    @model_validator(mode='after')
+    def _first_number_fits_the_style(self) -> Self:
+        """Check that the first number can be written in the style.
+
+        :returns: The range unchanged.
+        :rtype: Self
+        :raises ValueError: If the style is Roman and the first number is above 3999.
+        """
+        self.style.write(self.start)
+        return self
 
 
 class PageSchema(ResponseModel):

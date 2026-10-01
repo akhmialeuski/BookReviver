@@ -600,6 +600,24 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
         return [self._mapper.to_entity(row) for row in rows]
 
     @override
+    async def list_range(self, project_id: ProjectId, first_key: str, last_key: str) -> Sequence[Page]:
+        """Return the pages between two order keys, both included, from the unique index of project and key.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param first_key: Smallest order key of the range.
+        :type first_key: str
+        :param last_key: Greatest order key of the range.
+        :type last_key: str
+        :returns: The pages of the range in book order.
+        :rtype: Sequence[Page]
+        """
+        rows = await self._rows.get_many(
+            PageRow.order_key.between(first_key, last_key), order_by=PageRow.order_key.asc(), project_id=project_id
+        )
+        return [self._mapper.to_entity(row) for row in rows]
+
+    @override
     async def list_for_source(self, project_id: ProjectId, source_id: SourceId) -> Sequence[Page]:
         """Return the pages whose scans belong to the source, joining ``pages`` with ``scans``.
 
