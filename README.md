@@ -4,48 +4,118 @@ A workbench for digitising old printed books, with a focus on pre-reform Russian
 book is a project that moves through stages: import, page split, cleanup, alignment, recognition and layout of a new
 printed edition. Every stage stays viewable at any time, so an earlier stage can be corrected and the later ones rerun.
 
-The application is being rebuilt as a JSON API with a React frontend. `docs/architecture.md` describes the design and
-the delivery plan.
+The application is a JSON API with a React frontend. `docs/architecture.md` describes the design and the delivery plan.
+
+## What to install
+
+| What | Needed for | When to install | How |
+| --- | --- | --- | --- |
+| [uv](https://docs.astral.sh/uv/) | The backend and its Python, which uv installs by itself | Before anything else | See the uv documentation |
+| [Node](https://nodejs.org/) 22.18 or newer, in an even-numbered release line (22, 24, 26 and so on) | Building the interface | Before the first start, and again after the frontend changes | See the Node documentation |
+| DjVuLibre | Reading DjVu books | Before the first start, or at the latest before the first DjVu upload | `sudo scripts/install-system-deps.sh` |
+| OpenCV, the optional group `cv` | The processing steps that split a spread and straighten a page | Only when you use those steps | `uv run --extra cv ...` |
+| An SMTP server | Real confirmation and password reset mail | Optional, without it the mail is written to the server log | `BOOKREVIVER_MAIL__*` in `.env`, see [Mail](#mail) |
+| Google and Facebook keys | The sign-in buttons of the two providers | Optional, before other people use the server | `BOOKREVIVER_AUTH__GOOGLE__*` and `BOOKREVIVER_AUTH__FACEBOOK__*` in `.env`, see [Sign-in with Google and Facebook](#sign-in-with-google-and-facebook) |
+
+Everything except DjVuLibre comes from the package managers of the project. DjVuLibre is a system package, so no Python
+or Node command can bring it.
+
+## First start, step by step
+
+Run these once on a new machine, in this order, from the root of the repository.
+
+1. **System packages.** Install DjVuLibre before you start the server, because the server looks for it once and keeps that answer until it restarts.
+
+   ```bash
+   sudo scripts/install-system-deps.sh
+   ```
+
+   The script picks `zypper`, `apt-get` or `dnf`, installs the package and checks that `djvused`, `djvudump` and `ddjvu`
+   are on the `PATH`. Skip this step when you never upload DjVu books. The other kinds of source do not need it.
+
+2. **Backend packages.**
+
+   ```bash
+   uv sync
+   ```
+
+3. **Settings.** The secret signs the confirmation and reset tokens and the CSRF cookie, so it has to be set.
+
+   ```bash
+   cp .env.example .env
+   python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+   ```
+
+   Paste the printed text as the value of `BOOKREVIVER_AUTH__SECRET` in `.env`. Every other setting has a default, and
+   the file lists them all.
+
+4. **Database.** The application never changes the schema itself, so create it by hand.
+
+   ```bash
+   uv run bookreviver-migrate upgrade head
+   ```
+
+   The command asks for a confirmation, and `--no-prompt` skips the question.
+
+5. **Interface.**
+
+   ```bash
+   npm --prefix frontend ci
+   npm --prefix frontend run build
+   ```
+
+6. **Start.**
+
+   ```bash
+   uv run fastapi dev
+   ```
+
+   Open http://127.0.0.1:8000. The first account is made on the registration screen, and the confirmation link goes to
+   your mailbox when SMTP is set and to the server log otherwise. The database, the uploaded books and the render
+   cache live in `data/`.
+
+## After you pull new code
+
+| What changed | What to run |
+| --- | --- |
+| A new file in `src/bookreviver/adapters/persistence/sqlalchemy/migrations/versions/` | `uv run bookreviver-migrate upgrade head`, after copying `data/` if it holds anything worth keeping. Until then the server refuses to start and names this command. |
+| `pyproject.toml` or `uv.lock` | `uv sync` |
+| Anything under `frontend/` | `npm --prefix frontend ci` and `npm --prefix frontend run build` |
+| A route or a schema of the API | `uv run bookreviver-openapi`, then `npm --prefix frontend run generate`, and commit both results |
+| The system packages, see the list above | `sudo scripts/install-system-deps.sh`, then start the server again |
 
 ## Running
 
-Requires [uv](https://docs.astral.sh/uv/), which installs the pinned Python version by itself.
+`uv run fastapi dev` restarts the server when the code changes and is meant for development. `uv run fastapi run` is the
+same server without the reload. Settings are read from `BOOKREVIVER_*` environment variables or a `.env` file.
+
+The processing steps `split.spread` and `geometry.deskew` need OpenCV, the optional group `cv`. Start the server with
+the group, so that `uv` keeps it installed:
 
 ```bash
-uv sync
-cp .env.example .env          # then set BOOKREVIVER_AUTH__SECRET
-uv run bookreviver-migrate upgrade head
-uv run fastapi dev
+uv run --extra cv fastapi dev
 ```
 
-The server listens on http://127.0.0.1:8000. The database, uploaded books and the render cache live in `data/`, and
-settings are read from `BOOKREVIVER_*` environment variables or a `.env` file, as listed in `.env.example`.
+A plain `uv run` or `uv sync` installs the environment without the group and removes OpenCV again, so do not mix the
+two forms in one checkout. The rest of the application works without it.
 
 ## Frontend
 
-The interface is a React application in `frontend/`, built with [Node](https://nodejs.org/) 22.18 or newer, in an even-numbered release line (22, 24, 26 and so on), which is what its tools support.
+The interface is a React application in `frontend/`. The server serves the build when the directory in
+`BOOKREVIVER_FRONTEND_DIR` (default `frontend/dist`, relative to where the server starts) exists, and the API alone
+otherwise. A confirmation mail that has no SMTP server to go through is written to the server log, and its link opens
+`/verify-email` of the application.
 
 ```bash
-npm --prefix frontend ci
-npm --prefix frontend run build   # writes frontend/dist, which the server then serves at http://127.0.0.1:8000/
-npm --prefix frontend run dev     # or: the Vite server on http://127.0.0.1:5173, proxying /api to port 8000
+npm --prefix frontend run dev     # the Vite server on http://127.0.0.1:5173, proxying /api to port 8000
+npm --prefix frontend run check   # Biome, the type check and the unit tests
+npm --prefix frontend run generate  # rebuilds frontend/src/api from docs/openapi.json
 ```
-
-The server serves the build when the directory in `BOOKREVIVER_FRONTEND_DIR` (default `frontend/dist`, relative to
-where the server starts) exists, and the API alone otherwise. A confirmation mail that has no SMTP server to go
-through is written to the server log, and its link opens `/verify-email` of the application.
-
-`npm --prefix frontend run generate` rebuilds `frontend/src/api` from `docs/openapi.json` after a route or a schema
-changes. `npm --prefix frontend run check` runs Biome, the type check and the unit tests.
 
 `npm --prefix frontend run e2e` builds the frontend and runs the Playwright scenarios against a real server, started
 on port 8765 with an empty database in `frontend/.e2e-data`, which is also where the confirmation mail is read from.
 It needs Playwright's Chromium (`npx --prefix frontend playwright install --with-deps chromium`), or another one named
 in `BOOKREVIVER_E2E_CHROMIUM`.
-
-The application never changes the database schema itself. After pulling code that adds a migration, copy `data/` if
-it holds anything worth keeping and run `uv run bookreviver-migrate upgrade head` again; until then the server
-refuses to start and names that command.
 
 ## Mail
 
@@ -149,10 +219,16 @@ Reading DjVu books needs the DjVuLibre command-line tools (`djvused`, `djvudump`
 runs the server and its workers. Without them the application still starts, logs a warning, and refuses every DjVu
 file with a message naming the package. The other kinds of source do not need them.
 
+The script of the first start runs the single package command of the distribution, which can also be typed by hand:
+
 ```bash
 sudo zypper install djvulibre                                   # openSUSE
 sudo apt-get install --no-install-recommends djvulibre-bin      # Debian and Ubuntu, in a Docker image too
 ```
+
+When a DjVu upload fails with "Reading DjVu files is not set up on this server", the packages are missing on the
+machine that runs the server. Install them and start the server again. Installing them while the server runs is not
+enough, because the server looks for the tools once and keeps that answer until it restarts.
 
 The DjVu tests build their samples with the same package (`c44`, `cjb2`, `djvm`, `djvmcvt`) and are skipped, with
 the reason "DjVuLibre is not installed", when it is missing.
@@ -163,6 +239,14 @@ the reason "DjVuLibre is not installed", when it is missing.
 uv run pytest
 uv run pre-commit install --install-hooks
 uv run pre-commit run --all-files
+```
+
+The `ty` hook needs OpenCV to resolve the processing plugins. Run the checks in an environment made with
+`uv sync --extra cv`, and tell `uv run` not to change it with `UV_NO_SYNC=1`:
+
+```bash
+uv sync --extra cv
+UV_NO_SYNC=1 uv run pre-commit run --all-files
 ```
 
 ## License
