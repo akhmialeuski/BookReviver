@@ -11,6 +11,7 @@ from bookreviver.api.routers import (
     processing,
     projects,
     sources,
+    stages,
 )
 
 ROUTERS = (
@@ -18,6 +19,7 @@ ROUTERS = (
     projects.router,
     sources.router,
     pages.router,
+    stages.router,
     processing.router,
     edits.router,
     catalogue.router,

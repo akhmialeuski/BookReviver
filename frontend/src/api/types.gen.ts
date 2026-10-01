@@ -635,6 +635,32 @@ export type ManifestPagePageSchema = {
 };
 
 /**
+ * ManifestPage[StagePageSchema]
+ */
+export type ManifestPageStagePageSchema = {
+    /**
+     * Items
+     */
+    items: Array<StagePageSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
+};
+
+/**
  * MetadataSuggestionSchema
  *
  * Description fields found in a source; an empty string or list means nothing was found.
@@ -687,6 +713,25 @@ export type MetadataSuggestionSchema = {
  * by binding a scan to a placeholder.
  */
 export type NewPageOrigin = 'blank' | 'placeholder';
+
+/**
+ * NumberedPageSchema
+ *
+ * A page and the label a numbering would give it, shown before the numbering is saved.
+ *
+ * :ivar page_id: The page.
+ * :ivar label: The label the page would have, empty for the style ``none``.
+ */
+export type NumberedPageSchema = {
+    /**
+     * Page Id
+     */
+    page_id: string;
+    /**
+     * Label
+     */
+    label: string;
+};
 
 /**
  * Orthography
@@ -937,6 +982,13 @@ export type PageStageSchema = {
 };
 
 /**
+ * PageStageStatus
+ *
+ * Where one page stands in one stage: the state of its record, or that the stage has not run on it yet.
+ */
+export type PageStageStatus = 'not-run' | 'fresh' | 'stale' | 'failed';
+
+/**
  * PageUpdate
  *
  * A JSON Merge Patch of a page: an omitted field is kept, and a null label or note is cleared.
@@ -980,6 +1032,7 @@ export type PageUpdate = {
  * :ivar params: Parameters of the step.
  * :ivar transform: Transform of coordinates from the input.
  * :ivar data: Data the step found, such as an angle or a confidence.
+ * :ivar review: Why the step asks for a second look at the page though it finished, or None when it was sure.
  * :ivar state: Where the version is in its life cycle.
  * :ivar scale: Whether the step ran on the full image or on a preview.
  * :ivar edit_hash: Hash of the manual edit the step read, or empty.
@@ -1017,6 +1070,7 @@ export type PageVersionSchema = {
     data: {
         [key: string]: unknown;
     };
+    review: ReviewReason | null;
     state: VersionState;
     scale: VersionScale;
     /**
@@ -1040,6 +1094,32 @@ export type PageVersionSchema = {
      * Created At
      */
     created_at: string;
+};
+
+/**
+ * Page[JobSchema]
+ */
+export type PageJobSchema = {
+    /**
+     * Items
+     */
+    items: Array<JobSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
 };
 
 /**
@@ -1232,6 +1312,32 @@ export type PageSourceSchema = {
      * Items
      */
     items: Array<SourceSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
+};
+
+/**
+ * Page[StageSummarySchema]
+ */
+export type PageStageSummarySchema = {
+    /**
+     * Items
+     */
+    items: Array<StageSummarySchema>;
     /**
      * Total
      */
@@ -1532,6 +1638,8 @@ export type ProjectCreate = {
  * :ivar page_count: Number of pages of the book, without the pages kept out of it.
  * :ivar source_count: Number of sources the book was assembled from.
  * :ivar scan_count: Number of scans in all the sources.
+ * :ivar progress: The status of every stage of the book, in the order of the pipeline.
+ * :ivar next_stage: The first available stage with work to do or being worked, or None when there is none.
  * :ivar created_at: When the project was created.
  * :ivar updated_at: When the project was last changed.
  */
@@ -1558,6 +1666,11 @@ export type ProjectSchema = {
      * Scan Count
      */
     scan_count: number;
+    /**
+     * Progress
+     */
+    progress: Array<StageProgressSchema>;
+    next_stage: Stage | null;
     /**
      * Created At
      */
@@ -1821,6 +1934,13 @@ export type RejectedFileSchema = {
 export type RejectionReason = 'duplicate' | 'unreadable' | 'unsupported-type' | 'system-file';
 
 /**
+ * ReviewReason
+ *
+ * Why a processed page is marked for a second look, though its step finished without an error.
+ */
+export type ReviewReason = 'low-confidence' | 'not-applied';
+
+/**
  * RightsStatus
  *
  * Whether the result of the work on a book may be published.
@@ -2070,6 +2190,44 @@ export type SourceSchema = {
 export type Stage = 'import' | 'page-split' | 'page-order' | 'geometry' | 'cleanup' | 'layout' | 'background' | 'recognition' | 'proofreading' | 'typesetting';
 
 /**
+ * StagePageSchema
+ *
+ * One page of a book in one stage: where it stands there and the version that is its result.
+ *
+ * :ivar page_id: The page.
+ * :ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.
+ * :ivar review: Why the result asks for a second look, or None.
+ * :ivar recipe_id: Recipe the page was processed by, or None.
+ * :ivar version: The current version of the stage on the page with its data and images, or None.
+ */
+export type StagePageSchema = {
+    /**
+     * Page Id
+     */
+    page_id: string;
+    status: PageStageStatus;
+    review: ReviewReason | null;
+    /**
+     * Recipe Id
+     */
+    recipe_id: string | null;
+    version: PageVersionSchema | null;
+};
+
+/**
+ * StageProgressSchema
+ *
+ * The status of one stage of a book in the book list.
+ *
+ * :ivar stage: The stage.
+ * :ivar status: Where the stage stands: done, needs a look, running, waiting, or not available yet.
+ */
+export type StageProgressSchema = {
+    stage: Stage;
+    status: StageStatus;
+};
+
+/**
  * StageRunBody
  *
  * What a run of a stage is asked to do; the stage is in the address.
@@ -2102,12 +2260,77 @@ export type StageRunBody = {
 export type StageState = 'fresh' | 'stale' | 'failed';
 
 /**
+ * StageStatus
+ *
+ * Where a whole stage stands in a book, summed over its pages.
+ */
+export type StageStatus = 'done' | 'attention' | 'running' | 'waiting' | 'unavailable';
+
+/**
+ * StageSummarySchema
+ *
+ * One stage of a book summed over its pages.
+ *
+ * :ivar stage: The stage.
+ * :ivar available: Whether the stage can be worked in: a stage done by hand always can, and any other when a
+ * processor of the stage is installed.
+ * :ivar manual: Whether the user does the stage by hand, so it has no counts.
+ * :ivar pages: Number of pages of the book with an image, which a run of the stage goes over.
+ * :ivar fresh: Pages whose result of the stage is up to date.
+ * :ivar stale: Pages whose result is out of date.
+ * :ivar failed: Pages the stage failed on.
+ * :ivar not_run: Pages the stage has not run on.
+ * :ivar review: Pages, not failed, whose result asks for a second look.
+ * :ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used.
+ */
+export type StageSummarySchema = {
+    stage: Stage;
+    /**
+     * Available
+     */
+    available: boolean;
+    /**
+     * Manual
+     */
+    manual: boolean;
+    /**
+     * Pages
+     */
+    pages: number;
+    /**
+     * Fresh
+     */
+    fresh: number;
+    /**
+     * Stale
+     */
+    stale: number;
+    /**
+     * Failed
+     */
+    failed: number;
+    /**
+     * Not Run
+     */
+    not_run: number;
+    /**
+     * Review
+     */
+    review: number;
+    /**
+     * Active Recipe Id
+     */
+    active_recipe_id: string | null;
+};
+
+/**
  * StepBody
  *
  * A step of a recipe or of a preview as the interface sends it.
  *
  * :ivar processor_key: Key of the processor.
  * :ivar params: Parameters of the step, which the processor checks and fills in.
+ * :ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.
  */
 export type StepBody = {
     /**
@@ -2120,6 +2343,10 @@ export type StepBody = {
     params?: {
         [key: string]: unknown;
     };
+    /**
+     * Enabled
+     */
+    enabled?: boolean;
 };
 
 /**
@@ -2153,6 +2380,7 @@ export type StepPreviewBody = {
  *
  * :ivar processor_key: Key of the processor.
  * :ivar params: Parameters of the step, with the defaults of the processor filled in.
+ * :ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters.
  */
 export type StepSchema = {
     /**
@@ -2165,6 +2393,10 @@ export type StepSchema = {
     params: {
         [key: string]: unknown;
     };
+    /**
+     * Enabled
+     */
+    enabled: boolean;
 };
 
 /**
@@ -3126,6 +3358,48 @@ export type NumberPagesApiV1ProjectsProjectIdPagesLabelsPostResponses = {
 
 export type NumberPagesApiV1ProjectsProjectIdPagesLabelsPostResponse = NumberPagesApiV1ProjectsProjectIdPagesLabelsPostResponses[keyof NumberPagesApiV1ProjectsProjectIdPagesLabelsPostResponses];
 
+export type PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostData = {
+    body: LabelRange;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/labels/preview';
+};
+
+export type PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostError = PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostErrors[keyof PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostErrors];
+
+export type PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostResponses = {
+    /**
+     * Response Preview Page Numbers Api V1 Projects  Project Id  Pages Labels Preview Post
+     *
+     * Successful Response
+     */
+    200: Array<NumberedPageSchema>;
+};
+
+export type PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostResponse = PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostResponses[keyof PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostResponses];
+
 export type AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutData = {
     body: ScanAttach;
     path: {
@@ -3171,6 +3445,108 @@ export type AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponses = {
 };
 
 export type AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponse = AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponses[keyof AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponses];
+
+export type ListStagesApiV1ProjectsProjectIdStagesGetData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+    };
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Size
+         */
+        size?: number;
+    };
+    url: '/api/v1/projects/{project_id}/stages';
+};
+
+export type ListStagesApiV1ProjectsProjectIdStagesGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ListStagesApiV1ProjectsProjectIdStagesGetError = ListStagesApiV1ProjectsProjectIdStagesGetErrors[keyof ListStagesApiV1ProjectsProjectIdStagesGetErrors];
+
+export type ListStagesApiV1ProjectsProjectIdStagesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageStageSummarySchema;
+};
+
+export type ListStagesApiV1ProjectsProjectIdStagesGetResponse = ListStagesApiV1ProjectsProjectIdStagesGetResponses[keyof ListStagesApiV1ProjectsProjectIdStagesGetResponses];
+
+export type ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+    };
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Size
+         */
+        size?: number;
+    };
+    url: '/api/v1/projects/{project_id}/stages/{stage}/pages';
+};
+
+export type ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetError = ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetErrors[keyof ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetErrors];
+
+export type ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ManifestPageStagePageSchema;
+};
+
+export type ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponse = ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponses[keyof ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponses];
 
 export type GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetData = {
     body?: never;
@@ -4149,6 +4525,59 @@ export type ReadJobApiV1JobsJobIdGetResponses = {
 };
 
 export type ReadJobApiV1JobsJobIdGetResponse = ReadJobApiV1JobsJobIdGetResponses[keyof ReadJobApiV1JobsJobIdGetResponses];
+
+export type ListProjectJobsApiV1ProjectsProjectIdJobsGetData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+    };
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Size
+         */
+        size?: number;
+        /**
+         * Active
+         */
+        active?: boolean;
+    };
+    url: '/api/v1/projects/{project_id}/jobs';
+};
+
+export type ListProjectJobsApiV1ProjectsProjectIdJobsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ListProjectJobsApiV1ProjectsProjectIdJobsGetError = ListProjectJobsApiV1ProjectsProjectIdJobsGetErrors[keyof ListProjectJobsApiV1ProjectsProjectIdJobsGetErrors];
+
+export type ListProjectJobsApiV1ProjectsProjectIdJobsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageJobSchema;
+};
+
+export type ListProjectJobsApiV1ProjectsProjectIdJobsGetResponse = ListProjectJobsApiV1ProjectsProjectIdJobsGetResponses[keyof ListProjectJobsApiV1ProjectsProjectIdJobsGetResponses];
 
 export type ProjectEventsApiV1ProjectsProjectIdEventsGetData = {
     body?: never;

@@ -28,6 +28,7 @@ from bookreviver.domain.enums import (
     EditorKind,
     ProcessorScope,
     Rendition,
+    ReviewReason,
     Stage,
     StageState,
     TransformKind,
@@ -79,10 +80,12 @@ class StepSchema(ResponseModel):
 
     :ivar processor_key: Key of the processor.
     :ivar params: Parameters of the step, with the defaults of the processor filled in.
+    :ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters.
     """
 
     processor_key: str
     params: dict[str, Any]
+    enabled: bool
 
 
 class RecipeSchema(ResponseModel):
@@ -113,10 +116,12 @@ class StepBody(RequestModel):
 
     :ivar processor_key: Key of the processor.
     :ivar params: Parameters of the step, which the processor checks and fills in.
+    :ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.
     """
 
     processor_key: ProcessorKeyText
     params: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
 
     def to_step(self) -> Step:
         """Return the step as the domain states it.
@@ -124,7 +129,7 @@ class StepBody(RequestModel):
         :returns: The step.
         :rtype: Step
         """
-        return Step(processor_key=self.processor_key, params=self.params)
+        return Step(processor_key=self.processor_key, params=self.params, enabled=self.enabled)
 
 
 class RecipeBody(RequestModel):
@@ -340,6 +345,7 @@ class PageVersionSchema(ResponseModel):
     :ivar params: Parameters of the step.
     :ivar transform: Transform of coordinates from the input.
     :ivar data: Data the step found, such as an angle or a confidence.
+    :ivar review: Why the step asks for a second look at the page though it finished, or None when it was sure.
     :ivar state: Where the version is in its life cycle.
     :ivar scale: Whether the step ran on the full image or on a preview.
     :ivar edit_hash: Hash of the manual edit the step read, or empty.
@@ -358,6 +364,7 @@ class PageVersionSchema(ResponseModel):
     params: dict[str, Any]
     transform: TransformSchema
     data: dict[str, Any]
+    review: ReviewReason | None
     state: VersionState
     scale: VersionScale
     edit_hash: str
@@ -401,6 +408,7 @@ class PageVersionSchema(ResponseModel):
             params=dict(version.params),
             transform=TransformSchema.model_validate(version.transform),
             data=dict(version.data),
+            review=version.review,
             state=version.state,
             scale=version.scale,
             edit_hash=version.edit_hash,

@@ -17,6 +17,7 @@ from bookreviver.api.pagination import ManifestPage, Pager
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.pages import (
     LabelRange,
+    NumberedPageSchema,
     PageCreate,
     PageMove,
     PageQuery,
@@ -240,6 +241,34 @@ async def number_pages(
     :type pages: PageService
     """
     await pages.number(actor, project_id, body.to_numbering())
+
+
+@router.post('/{project_id}/pages/labels/preview')
+async def preview_page_numbers(
+    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    body: LabelRange,
+    actor: ActorDep,
+    pages: FromDishka[PageService],
+) -> list[NumberedPageSchema]:
+    """Return the labels a numbering of the same body would write, and write nothing.
+
+    The labels come from the rule the numbering applies, so the interface shows exactly what saving stores. The answer
+    is 409 when the range runs backwards.
+
+    \N{FORM FEED}
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :param body: The range of pages, the style of the numbers, the first number and the kinds to skip.
+    :type body: LabelRange
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param pages: Page service of the request.
+    :type pages: PageService
+    :returns: Every page the numbering counts, in book order, with the label it would get.
+    :rtype: list[NumberedPageSchema]
+    """
+    numbered = await pages.preview_numbers(actor, project_id, body.to_numbering())
+    return [NumberedPageSchema.model_validate(page) for page in numbered]
 
 
 @router.post('/{project_id}/pages', status_code=status.HTTP_201_CREATED)

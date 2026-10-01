@@ -17,11 +17,14 @@ from typing import Annotated
 from dishka.integrations.fastapi import DishkaRoute, FromDishka, inject
 from fastapi import APIRouter, Depends, Path
 from fastapi.sse import EventSourceResponse, ServerSentEvent
+from fastapi_pagination import Page
 
 from bookreviver.api.auth import ActorDep
+from bookreviver.api.pagination import Pager
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import (
     EventName,
+    JobQuery,
     JobSchema,
     PagesChangedSchema,
     PageStageChangedSchema,
@@ -30,6 +33,7 @@ from bookreviver.api.schemas.jobs import (
     ScanReadySchema,
     SourceImportedSchema,
 )
+from bookreviver.domain.entities import Job
 from bookreviver.domain.events import (
     DomainEvent,
     JobChanged,
@@ -85,6 +89,31 @@ async def cancel_job(job_id: JobIdPath, actor: ActorDep, service: JobServiceDep)
     :rtype: JobSchema
     """
     return JobSchema.model_validate(await service.cancel(actor, job_id))
+
+
+@project_events.get('/{project_id}/jobs')
+async def list_project_jobs(
+    project_id: ProjectIdPath,
+    query: Annotated[JobQuery, Depends()],
+    actor: ActorDep,
+    service: JobServiceDep,
+) -> Page[JobSchema]:
+    """List the jobs of a project, the newest first, or only the ones queued or running with ``active=true``.
+
+    \N{FORM FEED}
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :param query: Page number and size, and whether to list running jobs alone.
+    :type query: JobQuery
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param service: Job service of the request.
+    :type service: JobService
+    :returns: One page of the project's jobs.
+    :rtype: Page[JobSchema]
+    """
+    pager = Pager[Job, JobSchema](query, JobSchema.model_validate)
+    return pager.page(await service.list_for_project(actor, project_id, pager.request, active=query.active))
 
 
 @inject

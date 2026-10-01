@@ -8,6 +8,9 @@ the client reads again the project, the sources, the scan, the page manifest or 
 import enum
 from datetime import datetime
 
+from fastapi import Query
+from fastapi_pagination import Params
+
 from bookreviver.api.schemas.base import ResponseModel
 from bookreviver.domain.enums import JobKind, JobState, PageChange, RejectionReason, Stage, StageState
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
@@ -89,6 +92,17 @@ class JobSchema(ResponseModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+
+
+class JobQuery(Params):
+    """The query of the list of jobs of a project: the page parameters, and whether to list running jobs alone.
+
+    :ivar page: Number of the page of the list, from one.
+    :ivar size: Number of jobs in one page of the list.
+    :ivar active: Whether to list only the jobs that are queued or running.
+    """
+
+    active: bool = Query(default=False, description='List only the jobs that are queued or running')
 
 
 class ProjectChangedSchema(ResponseModel):

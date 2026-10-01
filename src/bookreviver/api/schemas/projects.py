@@ -25,6 +25,7 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
+from bookreviver.api.schemas.stages import StageProgressSchema
 from bookreviver.api.schemas.types import (
     CONTRIBUTORS_MAX_LENGTH,
     IDENTIFIERS_MAX_LENGTH,
@@ -40,7 +41,15 @@ from bookreviver.api.schemas.types import (
 )
 from bookreviver.domain.changes import BookDetailsChanges, CoverChange, ProjectChanges
 from bookreviver.domain.entities import Project
-from bookreviver.domain.enums import ContributorRole, IdentifierScheme, ImagePolicy, Orthography, RightsStatus, Script
+from bookreviver.domain.enums import (
+    ContributorRole,
+    IdentifierScheme,
+    ImagePolicy,
+    Orthography,
+    RightsStatus,
+    Script,
+    Stage,
+)
 from bookreviver.domain.ids import PageId, ProjectId
 from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor
 
@@ -356,6 +365,8 @@ class ProjectSchema(ResponseModel):
     :ivar page_count: Number of pages of the book, without the pages kept out of it.
     :ivar source_count: Number of sources the book was assembled from.
     :ivar scan_count: Number of scans in all the sources.
+    :ivar progress: The status of every stage of the book, in the order of the pipeline.
+    :ivar next_stage: The first available stage with work to do or being worked, or None when there is none.
     :ivar created_at: When the project was created.
     :ivar updated_at: When the project was last changed.
     """
@@ -367,6 +378,8 @@ class ProjectSchema(ResponseModel):
     page_count: int
     source_count: int
     scan_count: int
+    progress: list[StageProgressSchema]
+    next_stage: Stage | None
     created_at: datetime
     updated_at: datetime
 
@@ -380,6 +393,7 @@ class ProjectSchema(ResponseModel):
         :rtype: Self
         """
         project = overview.project
+        progress = overview.progress
         return cls(
             id=project.id,
             details=BookDetailsSchema.model_validate(project.details),
@@ -388,6 +402,8 @@ class ProjectSchema(ResponseModel):
             page_count=overview.page_count,
             source_count=overview.source_count,
             scan_count=overview.scan_count,
+            progress=[] if progress is None else [StageProgressSchema.model_validate(one) for one in progress.stages],
+            next_stage=None if progress is None else progress.next_stage,
             created_at=project.created_at,
             updated_at=project.updated_at,
         )

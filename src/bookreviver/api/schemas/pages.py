@@ -279,6 +279,17 @@ class LabelRange(RequestModel):
         return self
 
 
+class NumberedPageSchema(ResponseModel):
+    """A page and the label a numbering would give it, shown before the numbering is saved.
+
+    :ivar page_id: The page.
+    :ivar label: The label the page would have, empty for the style ``none``.
+    """
+
+    page_id: PageId
+    label: str
+
+
 class PageSchema(ResponseModel):
     """A page of a book.
 
