@@ -20,7 +20,9 @@ function ProjectsPage(): React.JSX.Element {
   return (
     <ProjectList
       page={page}
-      onPageChange={(next) => void navigate({ search: { page: next > 1 ? next : undefined } })}
+      onPageChange={(next, replace) =>
+        void navigate({ search: { page: next > 1 ? next : undefined }, replace })
+      }
     />
   );
 }

@@ -2,47 +2,41 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { projectEventsApiV1ProjectsProjectIdEventsGet } from '@/api';
 import { applyProjectEvent, refreshProject } from '@/features/projects/events';
+import { keepListening } from '@/features/projects/reconnect';
 
 /**
  * Keeps the open book up to date while its page is shown, by listening to the project's event stream.
  *
  * The stream is read with the generated server-sent events client, which sends the session cookie and gives the
- * name and data of every event. The connection is closed when the page is left. A dropped connection is retried
- * with a growing delay by the client, and events missed meanwhile are made up for by refreshing everything once.
+ * name and data of every event. The connection is closed when the page is left. The generated client ends its stream
+ * without a word when the server closes it, so reconnecting is done by `keepListening`, which opens the stream again
+ * until the page is left and refreshes the book after every end, since the events of the gap are lost.
  */
 
-// Retries before the stream is given up; the job panel still polls, so a finished import is never missed
-const MAX_RETRIES = 10;
+// The generated client's own retry is off, so that one loop decides when to reconnect
+const GENERATED_CLIENT_ATTEMPTS = 1;
 
 export function useProjectEvents(projectId: string): void {
   const queryClient = useQueryClient();
 
   useEffect(() => {
     const controller = new AbortController();
-    const catchUp = (): void => {
-      if (!controller.signal.aborted) {
-        void refreshProject(queryClient, projectId);
-      }
-    };
-
-    const listen = async (): Promise<void> => {
-      try {
+    void keepListening({
+      signal: controller.signal,
+      catchUp: () => void refreshProject(queryClient, projectId),
+      open: async (onActivity) => {
         const { stream } = await projectEventsApiV1ProjectsProjectIdEventsGet({
           path: { project_id: projectId },
           signal: controller.signal,
-          sseMaxRetryAttempts: MAX_RETRIES,
-          onSseEvent: (event) => applyProjectEvent(queryClient, projectId, event),
-          onSseError: catchUp,
+          sseMaxRetryAttempts: GENERATED_CLIENT_ATTEMPTS,
+          onSseEvent: (event) => {
+            onActivity();
+            applyProjectEvent(queryClient, projectId, event);
+          },
         });
-        // The events reach onSseEvent while the stream is read, so reading it is the whole job
-        for await (const _event of stream) {
-          // intentionally empty
-        }
-      } catch {
-        catchUp();
-      }
-    };
-    void listen();
+        return stream;
+      },
+    });
 
     return () => controller.abort();
   }, [projectId, queryClient]);

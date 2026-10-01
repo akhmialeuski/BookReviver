@@ -18,7 +18,7 @@ uv run pytest tests/contracts            # port contracts, run against every ada
 uv run lint-imports                      # the layer contracts on their own
 uv run bookreviver-openapi               # write docs/openapi.json again after a route or a schema changes
 uv run pre-commit run --all-files        # the gate: ruff, ty, mypy, pyrefly, import-linter, file fixers
-npm --prefix frontend ci                 # frontend dependencies, Node 22 or newer
+npm --prefix frontend ci                 # frontend dependencies, Node 22.18 or newer (even-numbered releases only)
 npm --prefix frontend run dev            # frontend on http://127.0.0.1:5173, proxies /api to the backend
 npm --prefix frontend run build          # frontend/dist, which the backend serves at / when the directory exists
 npm --prefix frontend run generate       # frontend/src/api again, after docs/openapi.json changes

@@ -3,11 +3,14 @@
  */
 
 export const HttpStatus = {
+  BadRequest: 400,
   Unauthorized: 401,
   Forbidden: 403,
   NotFound: 404,
+  RequestTimeout: 408,
   Conflict: 409,
   PayloadTooLarge: 413,
+  TooManyRequests: 429,
   UnprocessableContent: 422,
   InternalServerError: 500,
 } as const;

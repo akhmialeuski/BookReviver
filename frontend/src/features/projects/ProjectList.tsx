@@ -1,7 +1,9 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { listProjectsApiV1ProjectsGetOptions } from '@/api/@tanstack/react-query.gen';
 import { CreateProjectDialog } from '@/features/projects/CreateProjectDialog';
 import { ProjectCard } from '@/features/projects/ProjectCard';
+import { pageToShow } from '@/features/projects/paging';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
 import { ErrorAlert } from '@/shared/ui/error-alert';
@@ -18,12 +20,22 @@ export function ProjectList({
   onPageChange,
 }: {
   page: number;
-  onPageChange: (page: number) => void;
+  /** `replace` asks for the history entry to be replaced, as for a correction the person did not make. */
+  onPageChange: (page: number, replace?: boolean) => void;
 }): React.JSX.Element {
   const projects = useQuery({
     ...listProjectsApiV1ProjectsGetOptions({ query: { page, size: PAGE_SIZE } }),
     placeholderData: keepPreviousData,
   });
+
+  // The address can name a page that is gone, for instance after the last book of the last page is deleted
+  const pages = projects.isPlaceholderData ? undefined : projects.data?.pages;
+  const target = pages === undefined ? page : pageToShow(page, pages);
+  useEffect(() => {
+    if (target !== page) {
+      onPageChange(target, true);
+    }
+  }, [target, page, onPageChange]);
 
   let body: React.JSX.Element;
   if (projects.isError) {

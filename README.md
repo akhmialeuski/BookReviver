@@ -23,7 +23,7 @@ settings are read from `BOOKREVIVER_*` environment variables or a `.env` file, a
 
 ## Frontend
 
-The interface is a React application in `frontend/`, built with [Node](https://nodejs.org/) 22 or newer.
+The interface is a React application in `frontend/`, built with [Node](https://nodejs.org/) 22.18 or newer, in an even-numbered release line (22, 24, 26 and so on), which is what its tools support.
 
 ```bash
 npm --prefix frontend ci
