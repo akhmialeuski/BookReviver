@@ -4019,6 +4019,64 @@
         }
       }
     },
+    "/api/v1/auth/providers": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "List Providers",
+        "description": "List the social sign-in providers this server offers.\n\nThe list is public, so the sign-in screen can show a button per provider before anyone is signed in. It holds\na name and a label only, never a client identifier or a secret.",
+        "operationId": "list_providers_api_v1_auth_providers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SignInProvider"
+                  },
+                  "type": "array",
+                  "title": "Response List Providers Api V1 Auth Providers Get"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "tags": [
@@ -8071,6 +8129,25 @@
         ],
         "title": "Script",
         "description": "Writing system of the printed text, which is separate from its spelling norm."
+      },
+      "SignInProvider": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "label"
+        ],
+        "title": "SignInProvider",
+        "description": "A social sign-in provider the server offers, which says nothing about how it is configured.\n\n:ivar name: Name in the provider's addresses, ``/auth/{name}/authorize`` and the page ``/auth/{name}/callback``.\n:ivar label: Name the interface shows on the sign-in button."
       },
       "SourceFileSchema": {
         "properties": {

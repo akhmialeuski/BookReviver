@@ -15,9 +15,11 @@ from tests.helpers.schema import create_schema
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
     from pathlib import Path
+    from typing import Any
 
     from dishka import Provider
     from fastapi import FastAPI
+    from httpx_oauth.oauth2 import BaseOAuth2
 
 TEST_BASE_URL: str = 'http://testserver'
 TEST_SECRET: str = 'test-secret-that-is-long-enough-for-signing'
@@ -72,8 +74,21 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 
 @pytest.fixture
+def fx_social_clients() -> Sequence[BaseOAuth2[Any]] | None:
+    """Return the social sign-in clients to offer in place of the configured ones; a test module overrides this.
+
+    :returns: ``None``, so the providers whose credentials are in the settings are offered.
+    :rtype: Sequence[BaseOAuth2[Any]] | None
+    """
+    return None
+
+
+@pytest.fixture
 async def fx_app(
-    fx_settings: Settings, fx_actor: Actor, fx_extra_providers: Sequence[Provider]
+    fx_settings: Settings,
+    fx_actor: Actor,
+    fx_extra_providers: Sequence[Provider],
+    fx_social_clients: Sequence[BaseOAuth2[Any]] | None,
 ) -> AsyncIterator[FastAPI]:
     """Run the application lifespan with ``fx_actor`` signed in and ``fx_extra_providers`` applied.
 
@@ -85,11 +100,13 @@ async def fx_app(
     :type fx_actor: Actor
     :param fx_extra_providers: Providers overriding the application's own.
     :type fx_extra_providers: Sequence[Provider]
+    :param fx_social_clients: Social sign-in clients offered in place of the configured ones, or ``None``.
+    :type fx_social_clients: Sequence[BaseOAuth2[Any]] | None
     :returns: Iterator yielding the running application and shutting it down afterwards.
     :rtype: AsyncIterator[FastAPI]
     """
     await create_schema(fx_settings)
-    app = create_app(fx_settings, fx_extra_providers)
+    app = create_app(fx_settings, fx_extra_providers, fx_social_clients)
     app.dependency_overrides[current_actor] = lambda: fx_actor
     async with app.router.lifespan_context(app):
         yield app
