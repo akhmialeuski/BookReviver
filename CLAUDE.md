@@ -22,7 +22,8 @@ npm --prefix frontend ci                 # frontend dependencies, Node 22 or new
 npm --prefix frontend run dev            # frontend on http://127.0.0.1:5173, proxies /api to the backend
 npm --prefix frontend run build          # frontend/dist, which the backend serves at / when the directory exists
 npm --prefix frontend run generate       # frontend/src/api again, after docs/openapi.json changes
-npm --prefix frontend run check          # Biome, tsc and Vitest```
+npm --prefix frontend run check          # Biome, tsc and Vitest
+npm --prefix frontend run e2e            # builds, then Playwright against a real backend with an empty database```
 
 ## Reuse before writing
 

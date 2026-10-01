@@ -105,7 +105,9 @@ export function FileReview({
                         <span className="w-10 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
                           {index + 1}
                         </span>
-                        <span className="min-w-0 flex-1 break-all">{name}</span>
+                        <span className="min-w-0 flex-1 break-all" data-testid="file-name">
+                          {name}
+                        </span>
                         <Badge variant="outline">{MESSAGES.upload.kinds[file.kind]}</Badge>
                         <span className="hidden w-16 shrink-0 text-right text-xs text-muted-foreground sm:inline">
                           {formatBytes(file.file.size)}

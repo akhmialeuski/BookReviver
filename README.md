@@ -38,6 +38,11 @@ through is written to the server log, and its link opens `/verify-email` of the 
 `npm --prefix frontend run generate` rebuilds `frontend/src/api` from `docs/openapi.json` after a route or a schema
 changes. `npm --prefix frontend run check` runs Biome, the type check and the unit tests.
 
+`npm --prefix frontend run e2e` builds the frontend and runs the Playwright scenarios against a real server, started
+on port 8765 with an empty database in `frontend/.e2e-data`, which is also where the confirmation mail is read from.
+It needs Playwright's Chromium (`npx --prefix frontend playwright install --with-deps chromium`), or another one named
+in `BOOKREVIVER_E2E_CHROMIUM`.
+
 The application never changes the database schema itself. After pulling code that adds a migration, copy `data/` if
 it holds anything worth keeping and run `uv run bookreviver-migrate upgrade head` again; until then the server
 refuses to start and names that command.
