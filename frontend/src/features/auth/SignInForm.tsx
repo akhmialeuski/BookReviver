@@ -6,6 +6,8 @@ import {
   verifyRequestTokenApiV1AuthRequestVerifyTokenPostMutation,
 } from '@/api/@tanstack/react-query.gen';
 import { AuthCard } from '@/features/auth/AuthCard';
+import type { OAuthFailure } from '@/features/auth/oauth';
+import { SocialSignIn } from '@/features/auth/SocialSignIn';
 import { ProblemCode } from '@/shared/http/codes';
 import { describeError, ProblemError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
@@ -19,7 +21,13 @@ import { TextField } from '@/shared/ui/text-field';
  * was sent from. An account whose address is not confirmed can ask for a new confirmation link right here.
  */
 
-export function SignInForm({ redirectTo }: { redirectTo: string }): React.JSX.Element {
+export function SignInForm({
+  redirectTo,
+  oauthError,
+}: {
+  redirectTo: string;
+  oauthError?: OAuthFailure;
+}): React.JSX.Element {
   const queryClient = useQueryClient();
   const router = useRouter();
   const [email, setEmail] = useState('');
@@ -65,6 +73,9 @@ export function SignInForm({ redirectTo }: { redirectTo: string }): React.JSX.El
           value={password}
           onChange={(event) => setPassword(event.target.value)}
         />
+        {oauthError === undefined ? null : (
+          <ErrorAlert message={MESSAGES.auth.providers.failures[oauthError]} />
+        )}
         {signIn.isError ? <ErrorAlert message={describeError(signIn.error)} /> : null}
         {unverified ? (
           <Button
@@ -86,6 +97,12 @@ export function SignInForm({ redirectTo }: { redirectTo: string }): React.JSX.El
           {signIn.isPending ? MESSAGES.auth.signIn.submitting : MESSAGES.auth.signIn.submit}
         </Button>
       </form>
+      <SocialSignIn />
+      <p className="text-center text-sm text-muted-foreground">
+        <Link to="/forgot-password" className="text-foreground underline underline-offset-4">
+          {MESSAGES.auth.signIn.forgotPassword}
+        </Link>
+      </p>
       <p className="text-center text-sm text-muted-foreground">
         {MESSAGES.auth.signIn.noAccount}{' '}
         <Link to="/register" className="text-foreground underline underline-offset-4">

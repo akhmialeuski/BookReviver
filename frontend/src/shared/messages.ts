@@ -1,4 +1,5 @@
 import type { FileType, JobState, Orthography, RejectionReason, Script } from '@/api';
+import type { OAuthFailure } from '@/features/auth/oauth';
 import { ProblemCode } from '@/shared/http/codes';
 import { pluralize } from '@/shared/lib/format';
 
@@ -39,6 +40,8 @@ export const MESSAGES = {
         'This address is not confirmed yet. Follow the link in the message we sent you.',
       [ProblemCode.VerifyBadToken]: 'This confirmation link is not valid or has expired.',
       [ProblemCode.VerifyAlreadyVerified]: 'This address is already confirmed. You can sign in.',
+      [ProblemCode.ResetBadToken]:
+        'This reset link is not valid or has expired. Ask for a new one.',
     } as Readonly<Record<string, string>>,
   },
   auth: {
@@ -49,6 +52,7 @@ export const MESSAGES = {
       submitting: 'Signing in…',
       noAccount: 'No account yet?',
       register: 'Create one',
+      forgotPassword: 'Forgot password?',
       resend: 'Send a new confirmation link',
       resent: 'If this address has an account, a new confirmation link is on its way.',
     },
@@ -74,6 +78,47 @@ export const MESSAGES = {
     fields: {
       email: 'Email address',
       password: 'Password',
+      newPassword: 'New password',
+    },
+    providers: {
+      divider: 'or',
+      continueWith: (label: string) => `Continue with ${label}`,
+      redirecting: (label: string) => `Taking you to ${label}…`,
+      callback: {
+        title: 'Signing you in',
+        pending: 'Finishing the sign-in…',
+        back: 'Back to sign in',
+      },
+      failures: {
+        refused: 'The sign-in was cancelled, or the provider did not confirm it. Try again.',
+        'invalid-state':
+          'This sign-in could not be checked, because it was started in another browser or has expired. Start it again from here.',
+        'no-email':
+          'The provider did not share your email address, so there is no account to sign in to. Allow access to the address, or register with a password.',
+        failed: 'The sign-in with the provider did not work. Try again in a moment.',
+      } satisfies Record<OAuthFailure, string>,
+    },
+    forgotPassword: {
+      title: 'Reset your password',
+      description:
+        'Enter the address of your account and we will send a link to choose a new password.',
+      submit: 'Send the link',
+      submitting: 'Sending…',
+      doneTitle: 'Check your mail',
+      doneText: 'If this address has an account, a link to choose a new password is on its way.',
+      back: 'Back to sign in',
+    },
+    resetPassword: {
+      title: 'Choose a new password',
+      description:
+        'The password must have at least 12 characters and not contain your email address.',
+      submit: 'Save the password',
+      submitting: 'Saving…',
+      missingToken: 'This link has no reset token. Open the link from the message again.',
+      doneTitle: 'Password changed',
+      doneText: 'Your password is changed. Sign in with the new one.',
+      signIn: 'Go to sign in',
+      askAgain: 'Ask for a new link',
     },
     signOut: 'Sign out',
     signingOut: 'Signing out…',
