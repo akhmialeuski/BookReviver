@@ -65,6 +65,7 @@ describe('applyProjectEvent', () => {
     });
 
     expect(invalidated().sort()).toEqual([
+      'listPagesApiV1ProjectsProjectIdPagesGet',
       'listProjectsApiV1ProjectsGet',
       'listScansApiV1ProjectsProjectIdScansGet',
       'listSourcesApiV1ProjectsProjectIdSourcesGet',
@@ -83,18 +84,29 @@ describe('applyProjectEvent', () => {
     [
       EventName.SourceImported,
       [
+        'listPagesApiV1ProjectsProjectIdPagesGet',
         'listProjectsApiV1ProjectsGet',
         'listSourcesApiV1ProjectsProjectIdSourcesGet',
         'projectApiV1ProjectsProjectIdGet',
       ],
     ],
-    [EventName.ScanReady, ['listScansApiV1ProjectsProjectIdScansGet']],
-    [EventName.PagesChanged, ['listProjectsApiV1ProjectsGet', 'projectApiV1ProjectsProjectIdGet']],
+    [
+      EventName.ScanReady,
+      ['listPagesApiV1ProjectsProjectIdPagesGet', 'listScansApiV1ProjectsProjectIdScansGet'],
+    ],
+    [
+      EventName.PagesChanged,
+      [
+        'listPagesApiV1ProjectsProjectIdPagesGet',
+        'listProjectsApiV1ProjectsGet',
+        'projectApiV1ProjectsProjectIdGet',
+      ],
+    ],
     [
       EventName.ProjectChanged,
       ['listProjectsApiV1ProjectsGet', 'projectApiV1ProjectsProjectIdGet'],
     ],
-    [EventName.PageVersionReady, []],
+    [EventName.PageVersionReady, ['listPagesApiV1ProjectsProjectIdPagesGet']],
   ])('on %s marks %j stale', (name, expected) => {
     applyProjectEvent(queryClient, PROJECT_ID, { event: name, data: {} });
 

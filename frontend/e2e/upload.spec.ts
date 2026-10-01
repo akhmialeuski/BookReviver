@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { SERVER_LOG } from './support/env';
+import { confirmationLink, PASSWORD } from './support/account';
 import { solidPng } from './support/png';
 
 /**
@@ -11,7 +11,6 @@ import { solidPng } from './support/png';
  * pages once the import has run.
  */
 
-const PASSWORD = 'correct horse battery staple';
 const PAGE_SIZE = 40;
 
 // Page images by their path in the chosen folder, each with a colour of its own so none repeats another
@@ -37,19 +36,6 @@ async function writeBookFolder(): Promise<string> {
   await writeFile(path.join(root, 'vol1', '._1.png'), 'resource fork');
   await writeFile(path.join(root, 'vol2', 'notes.txt'), 'not a page');
   return root;
-}
-
-/** Wait for the mail of the registration and return the confirmation link it holds. */
-async function confirmationLink(): Promise<string> {
-  let link = '';
-  await expect
-    .poll(async () => {
-      const log = await readFile(SERVER_LOG, 'utf8').catch(() => '');
-      link = log.match(/https?:\/\/\S+\/verify-email\?token=\S+/g)?.at(-1) ?? '';
-      return link;
-    })
-    .not.toBe('');
-  return link;
 }
 
 test('a reader uploads a folder and sees the book with its pages', async ({ page }) => {

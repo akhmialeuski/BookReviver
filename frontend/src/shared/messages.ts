@@ -1,4 +1,12 @@
-import type { FileType, JobState, Orthography, RejectionReason, Script } from '@/api';
+import type {
+  FileType,
+  JobState,
+  Orthography,
+  PageKind,
+  PageOrigin,
+  RejectionReason,
+  Script,
+} from '@/api';
 import type { OAuthFailure } from '@/features/auth/oauth';
 import { ProblemCode } from '@/shared/http/codes';
 import { pluralize } from '@/shared/lib/format';
@@ -153,6 +161,7 @@ export const MESSAGES = {
     back: 'All books',
   },
   book: {
+    viewPages: 'View pages',
     details: 'Description',
     noDetails: 'The description of this book is empty.',
     fields: {
@@ -192,6 +201,64 @@ export const MESSAGES = {
       label: (position: number) => `Scan ${position}`,
       pending: 'Preparing images…',
       size: (width: number, height: number) => `${width} × ${height} px`,
+    },
+  },
+  pages: {
+    kinds: {
+      cover: 'Cover',
+      'back-cover': 'Back cover',
+      endpaper: 'Endpaper',
+      frontispiece: 'Frontispiece',
+      title: 'Title page',
+      text: 'Text',
+      plate: 'Plate',
+      blank: 'Blank',
+      other: 'Other',
+    } satisfies Record<PageKind, string>,
+    origins: {
+      scan: 'Scan',
+      blank: 'Blank leaf',
+      placeholder: 'Placeholder',
+    } satisfies Record<PageOrigin, string>,
+    excluded: 'Excluded',
+    unnumbered: 'No number',
+    position: (position: number) => `№ ${position}`,
+    noImage: 'No image',
+    preparing: 'Preparing image…',
+  },
+  viewer: {
+    title: 'Pages',
+    back: 'Back to the book',
+    loading: 'Loading the pages…',
+    empty: 'This book has no pages yet. Upload files to the book to see them here.',
+    unknownPage: 'The page in this link is not in the book any more, so the first page is shown.',
+    noImage: 'This page has no image yet.',
+    loadFailed: 'The image of this page could not be loaded. It may still be being prepared.',
+    ready: 'Page shown',
+    caption: (label: string, position: number, count: number) =>
+      `${label === '' ? 'No number' : `Page ${label}`} · ${position} of ${count}`,
+    toolbar: {
+      first: 'First page',
+      previous: 'Previous page',
+      next: 'Next page',
+      last: 'Last page',
+      slider: 'Position in the book',
+      goTo: 'Go to position',
+      goToSubmit: 'Go',
+      goToOf: (count: number) => `of ${count}`,
+      fitPage: 'Fit the whole page',
+      fitWidth: 'Fit to width',
+      zoomIn: 'Zoom in',
+      zoomOut: 'Zoom out',
+      onePage: 'One page',
+      twoPages: 'Two pages',
+      showPanel: 'Show the page panel',
+      hidePanel: 'Hide the page panel',
+    },
+    panel: {
+      title: 'Page panel',
+      page: (position: number, label: string) =>
+        label === '' ? `Page at position ${position}` : `Page ${label}, position ${position}`,
     },
   },
   upload: {

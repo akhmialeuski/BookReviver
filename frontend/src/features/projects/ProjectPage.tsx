@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { ArrowLeftIcon } from 'lucide-react';
+import { ArrowLeftIcon, BookOpenIcon } from 'lucide-react';
 import { useState } from 'react';
 import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-query.gen';
 import { BookDetails } from '@/features/projects/BookDetails';
@@ -8,10 +8,10 @@ import { ScansPanel } from '@/features/projects/ScansPanel';
 import { SourcesPanel } from '@/features/projects/SourcesPanel';
 import { ImportStatus } from '@/features/projects/upload/ImportStatus';
 import { UploadDialog } from '@/features/projects/upload/UploadDialog';
-import { useProjectEvents } from '@/features/projects/useProjectEvents';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
 import { Badge } from '@/shared/ui/badge';
+import { Button } from '@/shared/ui/button';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
@@ -24,7 +24,6 @@ export function ProjectPage({ projectId }: { projectId: string }): React.JSX.Ele
   const project = useQuery(
     projectApiV1ProjectsProjectIdGetOptions({ path: { project_id: projectId } }),
   );
-  useProjectEvents(projectId);
 
   if (project.isError) {
     return <ErrorAlert message={describeError(project.error)} />;
@@ -60,7 +59,15 @@ export function ProjectPage({ projectId }: { projectId: string }): React.JSX.Ele
             </Badge>
           </div>
         </div>
-        <UploadDialog projectId={projectId} onUploaded={(job) => setJobId(job.id)} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild variant="outline">
+            <Link to="/projects/$projectId/viewer" params={{ projectId }}>
+              <BookOpenIcon />
+              {MESSAGES.book.viewPages}
+            </Link>
+          </Button>
+          <UploadDialog projectId={projectId} onUploaded={(job) => setJobId(job.id)} />
+        </div>
       </div>
       {jobId === null ? null : (
         <ImportStatus projectId={projectId} jobId={jobId} onDismiss={() => setJobId(null)} />

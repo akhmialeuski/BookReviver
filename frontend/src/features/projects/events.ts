@@ -2,6 +2,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import type { JobSchema, JobState } from '@/api';
 import { readJobApiV1JobsJobIdGetQueryKey } from '@/api/@tanstack/react-query.gen';
 import {
+  invalidatePages,
   invalidateProject,
   invalidateProjectList,
   invalidateScans,
@@ -72,6 +73,7 @@ export async function refreshProject(queryClient: QueryClient, projectId: string
     invalidateSources(queryClient, projectId),
     invalidateScans(queryClient, projectId),
     invalidateProjectList(queryClient),
+    invalidatePages(queryClient, projectId),
   ]);
 }
 
@@ -95,19 +97,30 @@ export function applyProjectEvent(
       break;
     case EventName.SourceImported:
       void invalidateSources(queryClient, projectId);
+      void invalidatePages(queryClient, projectId);
       void invalidateProject(queryClient, projectId);
       void invalidateProjectList(queryClient);
       break;
     case EventName.ScanReady:
       void invalidateScans(queryClient, projectId);
+      // A page whose scan was just cut gets its images in the manifest
+      void invalidatePages(queryClient, projectId);
       break;
     case EventName.PagesChanged:
+      void invalidatePages(queryClient, projectId);
+      void invalidateProject(queryClient, projectId);
+      void invalidateProjectList(queryClient);
+      break;
+    case EventName.PageVersionReady:
+      // The image of a blank leaf or of a bound scan is written by a job, and its path appears in the manifest
+      void invalidatePages(queryClient, projectId);
+      break;
     case EventName.ProjectChanged:
       void invalidateProject(queryClient, projectId);
       void invalidateProjectList(queryClient);
       break;
     default:
-      // page-version-ready and any event a later server adds change nothing this interface shows
+      // Any event a later server adds changes nothing this interface shows
       break;
   }
 }
