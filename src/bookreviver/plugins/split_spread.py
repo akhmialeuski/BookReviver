@@ -5,6 +5,11 @@ it. The mean brightness of every column is taken over the central ``search_band`
 darkest column is the cut. A page whose columns are all of one brightness is cut at the middle of the band. The user may
 draw the cut instead, as a line that need not be vertical, which is the ``line`` edit and replaces the search.
 
+The confidence of a found cut is how deep the gutter is under the paper beside it: the brightness of the darkest column
+below the median of the band, as a share of the median, from 0 for a band with no gutter in it to 1 for a black one.
+A cut below ``min_confidence`` is still made, since a spread has to be cut somewhere, but both halves are marked for
+review so the user checks it. A cut the user drew has the confidence 1.
+
 The step makes two outputs, the left half and then the right half. Each is the part of the scan on its side of the cut,
 cut to the rectangle that holds it, with what lies on the other side of a slanting cut painted white. ``overlap_px``
 lets each half reach that many pixels over the cut, so the margin of a page that was bound tight is not lost. The
@@ -19,13 +24,21 @@ import numpy as np
 from attrs import frozen
 from pydantic import Field
 
-from bookreviver.domain.enums import ProcessorScope, Stage, TransformKind, VersionData, VersionOutput
+from bookreviver.domain.enums import (
+    ProcessorScope,
+    ReviewReason,
+    Stage,
+    TransformKind,
+    VersionData,
+    VersionOutput,
+)
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Line, Point, Quad, Transform
 from bookreviver.domain.values import ProcessorSpec
 from bookreviver.plugins.base import ModelProcessor, Params
 from bookreviver.plugins.cv_image import (
     COLOR_PLANES,
+    MANUAL_CONFIDENCE,
     NO_IMAGE,
     WHITE,
     color_mode_of,
@@ -55,10 +68,29 @@ class SpreadParams(Params):
 
     :ivar search_band: Fraction of the width, around the middle of the scan, in which the gutter is looked for.
     :ivar overlap_px: Pixels each half reaches over the cut into the other.
+    :ivar min_confidence: Confidence of the found cut below which both halves are marked for review.
     """
 
-    search_band: float = Field(default=0.3, gt=0, le=1, description='Fraction of the width, in the middle, to search')
-    overlap_px: int = Field(default=0, ge=0, description='Pixels each half reaches over the cut')
+    search_band: float = Field(
+        default=0.3,
+        gt=0,
+        le=1,
+        title='Search width',
+        description='Fraction of the width, in the middle, to search',
+    )
+    overlap_px: int = Field(
+        default=0,
+        ge=0,
+        title='Overlap',
+        description='Pixels each half reaches over the cut',
+    )
+    min_confidence: float = Field(
+        default=0.1,
+        ge=0,
+        le=1,
+        title='Least confidence',
+        description='Confidence of the found gutter below which the cut is marked for a check',
+    )
 
 
 @frozen(kw_only=True)
@@ -67,10 +99,12 @@ class Cut:
 
     :ivar top_x: Distance of the cut from the left edge at the top row.
     :ivar bottom_x: Distance of the cut from the left edge at the bottom row.
+    :ivar confidence: How sure the cut is, from 0 to 1, which is 1 for a cut the user drew.
     """
 
     top_x: float
     bottom_x: float
+    confidence: float = MANUAL_CONFIDENCE
 
     def at_rows(self, height: int) -> Floats:
         """Give the place of the cut on every row.
@@ -115,6 +149,7 @@ class SplitSpread(ModelProcessor):
         height, width = scan.shape[:2]
         cut = self._cut(scan, params, step_input)
         color_mode = color_mode_of(scan, step_input.input_data)
+        review = ReviewReason.LOW_CONFIDENCE if cut.confidence < params.min_confidence else None
         columns = np.arange(width)[np.newaxis, :]
         edge = cut.at_rows(height)[:, np.newaxis]
         outputs = []
@@ -125,13 +160,16 @@ class SplitSpread(ModelProcessor):
             data = image_data(half, step_input.input_data, color_mode) | {
                 VersionData.OVERLAP_PX: params.overlap_px,
                 VersionData.CUT_X: float((cut.top_x + cut.bottom_x) / 2),
+                VersionData.CONFIDENCE: cut.confidence,
             }
             transform = Transform(
                 kind=TransformKind.CROP,
                 quad=self._rectangle(origin, half),
                 matrix=(1.0, 0.0, -float(origin), 0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
             )
-            outputs.append(StepOutput(image=target, color_mode=color_mode, transform=transform, data=data))
+            outputs.append(
+                StepOutput(image=target, color_mode=color_mode, transform=transform, data=data, review=review)
+            )
         return StepResult(outputs=outputs)
 
     @staticmethod
@@ -183,7 +221,9 @@ class SplitSpread(ModelProcessor):
         :type scan: Samples
         :param band: Fraction of the width, around the middle, to search in.
         :type band: float
-        :returns: A vertical cut through the darkest column, or through the middle when no column stands out.
+        :returns: A vertical cut through the middle of the gutter, or through the middle of the band with the
+                  confidence 0 when no column stands out. Otherwise the confidence is the depth of the darkest column
+                  under the median of the band, as a share of the median.
         :rtype: Cut
         """
         gray = cv2.cvtColor(scan, cv2.COLOR_BGR2GRAY) if scan.ndim == COLOR_PLANES else scan
@@ -196,7 +236,7 @@ class SplitSpread(ModelProcessor):
         smooth = cv2.blur(profile.reshape(1, -1), (window, 1), borderType=cv2.BORDER_REPLICATE).ravel()
         if float(np.ptp(smooth)) < MIN_CONTRAST:
             middle = (first + last) / 2
-            return Cut(top_x=middle, bottom_x=middle)
+            return Cut(top_x=middle, bottom_x=middle, confidence=0.0)
         # The gutter is as wide as the shadow, so the cut goes through the middle of the run of columns around the
         # darkest one that are as dark as it. A second dark region of the band is another run and does not count
         as_dark = smooth <= smooth.min() + PLATEAU_FRACTION * float(np.ptp(smooth))
@@ -204,7 +244,10 @@ class SplitSpread(ModelProcessor):
         lighter = np.flatnonzero(~as_dark)
         start = int(lighter[lighter < darkest].max(initial=-1)) + 1
         end = int(lighter[lighter > darkest].min(initial=len(smooth)))
-        return Cut(top_x=first + (start + end) / 2, bottom_x=first + (start + end) / 2)
+        median = float(np.median(smooth))
+        depth = (median - float(smooth.min())) / max(median, 1.0)
+        middle = first + (start + end) / 2
+        return Cut(top_x=middle, bottom_x=middle, confidence=min(1.0, depth))
 
     @staticmethod
     def _half(scan: Samples, columns: Indices, edge: Floats, reach: int, side: int) -> tuple[Samples, int]:

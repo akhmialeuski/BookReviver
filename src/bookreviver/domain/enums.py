@@ -22,6 +22,7 @@ LCCN_SERIAL_LENGTH: Final = 6
 # A normalized LCCN has up to four characters of prefix and year, and ends with eight digits
 LCCN_NORMALIZED: Final = re.compile(r'[a-z0-9]{0,4}[0-9]{8}')
 OCLC_NUMBER: Final = re.compile(r'[0-9]+')
+WHITESPACE: Final = re.compile(r'\s')
 # Longest shelfmark and longest URL of a copy the domain accepts
 SHELFMARK_MAX_LENGTH: Final = 300
 URL_MAX_LENGTH: Final = 2_048
@@ -91,6 +92,11 @@ class Stage(LabeledStrEnum):
     def position(self) -> int:
         """The place of the stage in the pipeline from zero, by which a stage is earlier or later than another."""
         return list(type(self)).index(self)
+
+    @property
+    def manual(self) -> bool:
+        """Whether the user does the stage by hand, so it is available whatever plugins are installed."""
+        return self in {Stage.IMPORT, Stage.PAGE_ORDER}
 
 
 class SourceKind(LabeledStrEnum):
@@ -198,7 +204,7 @@ class IdentifierScheme(LabeledStrEnum):
                 normalized = text
                 valid = OCLC_NUMBER.fullmatch(normalized) is not None
             case IdentifierScheme.LCCN:
-                normalized = re.sub(r'\s', '', text).lower().partition('/')[0]
+                normalized = WHITESPACE.sub('', text).lower().partition('/')[0]
                 head, hyphen, serial = normalized.partition('-')
                 if hyphen:
                     normalized = head + serial.zfill(LCCN_SERIAL_LENGTH)
@@ -241,7 +247,7 @@ class IdentifierScheme(LabeledStrEnum):
         :returns: Whether it is such an address.
         :rtype: bool
         """
-        if not 0 < len(text) <= URL_MAX_LENGTH or re.search(r'\s', text):
+        if not 0 < len(text) <= URL_MAX_LENGTH or WHITESPACE.search(text):
             return False
         try:
             parts = urlsplit(text)
@@ -398,6 +404,43 @@ class StageState(LabeledStrEnum):
     FAILED = 'failed', 'Failed'
 
 
+class PageStageStatus(LabeledStrEnum):
+    """Where one page stands in one stage: the state of its record, or that the stage has not run on it yet."""
+
+    NOT_RUN = 'not-run', 'Not processed'
+    FRESH = 'fresh', 'Up to date'
+    STALE = 'stale', 'Out of date'
+    FAILED = 'failed', 'Failed'
+
+    @classmethod
+    def of(cls, state: StageState | None) -> PageStageStatus:
+        """Give the status of a page from the state of its record of a stage.
+
+        :param state: State of the record, or None for a page the stage has no record of.
+        :type state: StageState | None
+        :returns: The status, which is not run for a page without a record.
+        :rtype: PageStageStatus
+        """
+        return cls.NOT_RUN if state is None else cls(state.value)
+
+
+class StageStatus(LabeledStrEnum):
+    """Where a whole stage stands in a book, summed over its pages."""
+
+    DONE = 'done', 'Done'
+    ATTENTION = 'attention', 'Needs a look'
+    RUNNING = 'running', 'Running'
+    WAITING = 'waiting', 'Waiting'
+    UNAVAILABLE = 'unavailable', 'Not available yet'
+
+
+class ReviewReason(LabeledStrEnum):
+    """Why a processed page is marked for a second look, though its step finished without an error."""
+
+    LOW_CONFIDENCE = 'low-confidence', 'The step was not sure of its result'
+    NOT_APPLIED = 'not-applied', 'The step left the page as it was, because it was not sure'
+
+
 class RunOutcome(LabeledStrEnum):
     """What a run of a recipe came to on one page."""
 
@@ -427,6 +470,14 @@ class VersionOutput(LabeledStrEnum):
     MASK = 'mask', 'Mask'
     REGIONS = 'regions', 'Regions'
     TEXT = 'text', 'Text'
+
+
+class StepField(LabeledStrEnum):
+    """Keys of a step of a recipe in the JSON it is stored as, in a recipe row and in the parameters of a job."""
+
+    PROCESSOR_KEY = 'processor_key', 'Key of the processor that runs the step'
+    PARAMS = 'params', 'Parameters the processor runs with'
+    ENABLED = 'enabled', 'Whether a run and a preview run the step'
 
 
 class EditorKind(LabeledStrEnum):

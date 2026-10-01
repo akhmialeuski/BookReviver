@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import ProjectOverview
     from bookreviver.domain.enums import JobState, Side, Stage, VersionScale
     from bookreviver.domain.ids import AccountId
+    from bookreviver.domain.stage_summaries import StageTally
     from bookreviver.domain.values import PageSize, Slice, SliceRequest
 
 
@@ -531,6 +532,20 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         :rtype: Collection[PageVersionId]
         """
 
+    @abstractmethod
+    async def tally(self, project_ids: Collection[ProjectId]) -> Sequence[StageTally]:
+        """Count the records of every stage of the given projects by state, in one grouped query for all of them.
+
+        Only pages with an image are counted, so a placeholder never is. A page counts as marked for review when the
+        current version of its record carries a review mark and the record is not failed. A stage that no page has a
+        record of has no tally.
+
+        :param project_ids: Projects whose stages are counted.
+        :type project_ids: Collection[ProjectId]
+        :returns: One tally for each stage of each project that has a record, in no particular order.
+        :rtype: Sequence[StageTally]
+        """
+
 
 class PageEditRepository(Repository[PageEdit, PageEditKey]):
     """Manual edits, one for each processor on each stage of each page; deleting a page removes its edits."""
@@ -599,6 +614,16 @@ class RecipeRepository(Repository[Recipe, RecipeId]):
         :rtype: Recipe | None
         """
 
+    @abstractmethod
+    async def list_active(self, project_id: ProjectId) -> Sequence[Recipe]:
+        """Return the active recipe of every stage of a project that has one, in the order of the stages.
+
+        :param project_id: Project owning the recipes.
+        :type project_id: ProjectId
+        :returns: The active recipes, one for each stage that has been used.
+        :rtype: Sequence[Recipe]
+        """
+
 
 class JobRepository(Repository[Job, JobId]):
     """Background jobs; a project has at most one import job queued or running at a time."""
@@ -628,6 +653,20 @@ class JobRepository(Repository[Job, JobId]):
         :param states: States a returned job may be in.
         :type states: Collection[JobState]
         :returns: The matching jobs, most recently created first.
+        :rtype: Sequence[Job]
+        """
+
+    @abstractmethod
+    async def list_for_projects(
+        self, project_ids: Collection[ProjectId], states: Collection[JobState]
+    ) -> Sequence[Job]:
+        """Return the jobs of several projects in one of the given states, in one query for all of them.
+
+        :param project_ids: Projects owning the jobs.
+        :type project_ids: Collection[ProjectId]
+        :param states: States a returned job may be in.
+        :type states: Collection[JobState]
+        :returns: The matching jobs of all the projects, most recently created first.
         :rtype: Sequence[Job]
         """
 

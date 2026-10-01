@@ -46,6 +46,7 @@ from bookreviver.domain.enums import (
     PageKind,
     PageOrigin,
     Rendition,
+    ReviewReason,
     RightsStatus,
     Script,
     SourceKind,
@@ -478,6 +479,7 @@ class PageVersionRow(DefaultBase):
     :ivar params: Parameters of the step, as JSON.
     :ivar transform: Transform of coordinates from the input, as JSON.
     :ivar data: Data the step found, as JSON.
+    :ivar review: Why the step asks for a second look at the page, stored by value, or null when it was sure.
     :ivar renditions_ready: Whether the version's image files are published, or null for a step without an image.
     :ivar renditions_full: Format of the version's ``full`` image, stored by value, or null for a step without an image.
     :ivar state: Where the version is in its lifecycle, stored by value.
@@ -501,6 +503,7 @@ class PageVersionRow(DefaultBase):
     params: Mapped[dict[str, Any]]
     transform: Mapped[dict[str, Any]]
     data: Mapped[dict[str, Any]]
+    review: Mapped[ReviewReason | None] = mapped_column(enum_by_value(ReviewReason))
     renditions_ready: Mapped[bool | None]
     renditions_full: Mapped[Rendition | None] = mapped_column(enum_by_value(Rendition))
     state: Mapped[VersionState] = mapped_column(enum_by_value(VersionState))

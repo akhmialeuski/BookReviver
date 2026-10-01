@@ -41,6 +41,8 @@ COLOR_PLANES: int = 3
 UNREADABLE_IMAGE: str = 'The image {path} cannot be read.'
 UNWRITABLE_IMAGE: str = 'The image {path} cannot be written.'
 NO_IMAGE: str = 'The step {key} needs the image of its input.'
+# The confidence of what the user gave by hand, such as an angle or a cut line, which no search is sure of better
+MANUAL_CONFIDENCE: float = 1.0
 
 
 def read_samples(path: Path) -> Samples:

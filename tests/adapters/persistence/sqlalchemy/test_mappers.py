@@ -19,6 +19,7 @@ from bookreviver.domain.enums import (
     JobState,
     PageKind,
     Rendition,
+    ReviewReason,
     SourceKind,
     TransformKind,
     VersionState,
@@ -196,6 +197,7 @@ class TestPageVersionMapper:
             params={'spine': 'auto', 'margin_px': 12},
             transform=Transform(kind=TransformKind.CROP, quad=HALF_QUAD, matrix=(1, 0, -1100.5, 0, 1, 0, 0, 0, 1)),
             data={'spine_x': 1100.5, 'confidence': 0.93},
+            review=ReviewReason.LOW_CONFIDENCE,
             renditions=renditions,
             state=VersionState.READY,
         )

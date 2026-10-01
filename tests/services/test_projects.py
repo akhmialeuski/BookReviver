@@ -15,7 +15,9 @@ from bookreviver.domain.enums import ImagePolicy, Orthography
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.values import BookDetails, SliceRequest
 from bookreviver.services.projects import ProjectService
+from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import EPOCH, make_page, make_project, make_scan, make_source, new_account_id
+from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.seeding import commit_project
 from tests.helpers.storage import BookFiles
 
@@ -35,6 +37,23 @@ PAGE_COUNT: int = 2
 NEW_TITLE: str = 'Renamed'
 
 
+def _service(database: InMemoryDatabase, sources: LocalSourceStore, assets: LocalAssetStore) -> ProjectService:
+    """Build the project service for one request, over a new unit of work and a catalogue with no processors.
+
+    :param database: In-memory database every request of the test shares.
+    :type database: InMemoryDatabase
+    :param sources: Source store of the test.
+    :type sources: LocalSourceStore
+    :param assets: Asset store of the test.
+    :type assets: LocalAssetStore
+    :returns: The service, with a clock standing at ``NOW``.
+    :rtype: ProjectService
+    """
+    uow = InMemoryUnitOfWork(database)
+    stages = StageSummaries(uow=uow, catalogue=FakeCatalogue([]))
+    return ProjectService(uow=uow, clock=FixedClock(NOW), sources=sources, assets=assets, stages=stages)
+
+
 @pytest.fixture
 def fx_service(
     fx_database: InMemoryDatabase, fx_source_store: LocalSourceStore, fx_asset_store: LocalAssetStore
@@ -50,9 +69,7 @@ def fx_service(
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], ProjectService]
     """
-    return lambda: ProjectService(
-        uow=InMemoryUnitOfWork(fx_database), clock=FixedClock(NOW), sources=fx_source_store, assets=fx_asset_store
-    )
+    return lambda: _service(fx_database, fx_source_store, fx_asset_store)
 
 
 class StoreFailedError(OSError):
@@ -101,9 +118,7 @@ def fx_flaky_service(
     :rtype: Callable[[], ProjectService]
     """
     sources = SourceStoreFailingOnce(root=fx_storage_root)
-    return lambda: ProjectService(
-        uow=InMemoryUnitOfWork(fx_database), clock=FixedClock(NOW), sources=sources, assets=fx_asset_store
-    )
+    return lambda: _service(fx_database, sources, fx_asset_store)
 
 
 async def _stored(database: InMemoryDatabase, project: Project) -> Project:

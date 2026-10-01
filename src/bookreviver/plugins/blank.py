@@ -37,9 +37,11 @@ class BlankParams(Params):
     :ivar dpi: Resolution of the leaf in dots per inch, or None when it is unknown.
     """
 
-    width_px: int = Field(gt=0, description='Width of the leaf in pixels')
-    height_px: int = Field(gt=0, description='Height of the leaf in pixels')
-    dpi: float | None = Field(default=None, gt=0, description='Resolution of the leaf in dots per inch, if known')
+    width_px: int = Field(gt=0, title='Width', description='Width of the leaf in pixels')
+    height_px: int = Field(gt=0, title='Height', description='Height of the leaf in pixels')
+    dpi: float | None = Field(
+        default=None, gt=0, title='Resolution', description='Resolution of the leaf in dots per inch, if known'
+    )
 
 
 class BlankPage(ModelProcessor):

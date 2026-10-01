@@ -36,6 +36,7 @@ from bookreviver.services.processing_jobs import ProcessingJobs
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from bookreviver.services.stage_runs import StageRuntime
+from bookreviver.services.stage_summaries import StageSummaries
 from bookreviver.services.steps import StepRunner
 from tests.helpers.builders import (
     EPOCH,
@@ -156,6 +157,14 @@ class ProcessingKit:
         """
         uow = InMemoryUnitOfWork(self.database)
         return ProcessingService(uow=uow, catalogue=self.catalogue, parts=self.parts(uow))
+
+    def stages(self) -> StageSummaries:
+        """Build the sums of the stages of books over a new unit of work.
+
+        :returns: The stage summaries, which offer the processors of the kit.
+        :rtype: StageSummaries
+        """
+        return StageSummaries(uow=InMemoryUnitOfWork(self.database), catalogue=self.catalogue)
 
     def jobs(self) -> ProcessingJobs:
         """Build the work of the processing jobs over a new unit of work.

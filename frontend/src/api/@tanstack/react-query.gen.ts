@@ -3,8 +3,8 @@
 import { type InfiniteData, infiniteQueryOptions, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePost, attachScanApiV1ProjectsProjectIdPagesPageIdScanPut, authCookieLoginApiV1AuthLoginPost, authCookieLogoutApiV1AuthLogoutPost, cancelJobApiV1JobsJobIdDelete, chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePut, collectVersionsApiV1ProjectsProjectIdVersionsCollectPost, createPageApiV1ProjectsProjectIdPagesPost, createProjectApiV1ProjectsPost, createVariantApiV1ProjectsProjectIdStagesStageVariantsPost, cutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPost, deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDelete, deletePageApiV1ProjectsProjectIdPagesPageIdDelete, deleteProjectApiV1ProjectsProjectIdDelete, deleteSourceApiV1ProjectsProjectIdSourcesSourceIdDelete, getRecipeApiV1ProjectsProjectIdStagesStageRecipeGet, getSourceApiV1ProjectsProjectIdSourcesSourceIdGet, getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGet, iiifFileApiV1IiifKeyGet, listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGet, listPagesApiV1ProjectsProjectIdPagesGet, listPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGet, listProcessorsApiV1ProcessorsGet, listProjectsApiV1ProjectsGet, listProvidersApiV1AuthProvidersGet, listScansApiV1ProjectsProjectIdScansGet, listSourcesApiV1ProjectsProjectIdSourcesGet, listVariantsApiV1ProjectsProjectIdStagesStageVariantsGet, listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet, movePageApiV1ProjectsProjectIdPagesPageIdMovePost, movePagesApiV1ProjectsProjectIdPagesMovePost, moveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePost, numberPagesApiV1ProjectsProjectIdPagesLabelsPost, type Options, pageApiV1ProjectsProjectIdPagesPageIdGet, previewStepApiV1ProjectsProjectIdStagesStagePreviewPost, projectApiV1ProjectsProjectIdGet, putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPut, putRecipeApiV1ProjectsProjectIdStagesStageRecipePut, putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPut, readJobApiV1JobsJobIdGet, registerRegisterApiV1AuthRegisterPost, resetForgotPasswordApiV1AuthForgotPasswordPost, resetResetPasswordApiV1AuthResetPasswordPost, runStageApiV1ProjectsProjectIdStagesStageRunPost, updatePageApiV1ProjectsProjectIdPagesPageIdPatch, updateProjectApiV1ProjectsProjectIdPatch, uploadSourcesApiV1ProjectsProjectIdSourcesPost, usersCurrentUserApiV1UsersMeGet, usersDeleteUserApiV1UsersIdDelete, usersPatchCurrentUserApiV1UsersMePatch, usersPatchUserApiV1UsersIdPatch, usersUserApiV1UsersIdGet, verifyRequestTokenApiV1AuthRequestVerifyTokenPost, verifyVerifyApiV1AuthVerifyPost } from '../sdk.gen';
-import type { ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostData, ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostError, ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostResponse, AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutData, AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutError, AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponse, AuthCookieLoginApiV1AuthLoginPostData, AuthCookieLoginApiV1AuthLoginPostError, AuthCookieLoginApiV1AuthLoginPostResponse, AuthCookieLogoutApiV1AuthLogoutPostData, AuthCookieLogoutApiV1AuthLogoutPostError, AuthCookieLogoutApiV1AuthLogoutPostResponse, CancelJobApiV1JobsJobIdDeleteData, CancelJobApiV1JobsJobIdDeleteError, CancelJobApiV1JobsJobIdDeleteResponse, ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutData, ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutError, ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponse, CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostData, CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostError, CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponse, CreatePageApiV1ProjectsProjectIdPagesPostData, CreatePageApiV1ProjectsProjectIdPagesPostError, CreatePageApiV1ProjectsProjectIdPagesPostResponse, CreateProjectApiV1ProjectsPostData, CreateProjectApiV1ProjectsPostError, CreateProjectApiV1ProjectsPostResponse, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostData, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostError, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponse, CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostData, CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostError, CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponse, DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteData, DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteError, DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteResponse, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteData, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteError, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteResponse, DeleteProjectApiV1ProjectsProjectIdDeleteData, DeleteProjectApiV1ProjectsProjectIdDeleteError, DeleteProjectApiV1ProjectsProjectIdDeleteResponse, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteData, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteError, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteResponse, GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetData, GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetError, GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetResponse, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetData, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetError, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetResponse, GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetData, GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetError, GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetResponse, IiifFileApiV1IiifKeyGetData, IiifFileApiV1IiifKeyGetError, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetError, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponse, ListPagesApiV1ProjectsProjectIdPagesGetData, ListPagesApiV1ProjectsProjectIdPagesGetError, ListPagesApiV1ProjectsProjectIdPagesGetResponse, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetError, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponse, ListProcessorsApiV1ProcessorsGetData, ListProcessorsApiV1ProcessorsGetError, ListProcessorsApiV1ProcessorsGetResponse, ListProjectsApiV1ProjectsGetData, ListProjectsApiV1ProjectsGetError, ListProjectsApiV1ProjectsGetResponse, ListProvidersApiV1AuthProvidersGetData, ListProvidersApiV1AuthProvidersGetError, ListProvidersApiV1AuthProvidersGetResponse, ListScansApiV1ProjectsProjectIdScansGetData, ListScansApiV1ProjectsProjectIdScansGetError, ListScansApiV1ProjectsProjectIdScansGetResponse, ListSourcesApiV1ProjectsProjectIdSourcesGetData, ListSourcesApiV1ProjectsProjectIdSourcesGetError, ListSourcesApiV1ProjectsProjectIdSourcesGetResponse, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetData, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetError, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponse, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetError, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponse, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostData, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostError, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostResponse, MovePagesApiV1ProjectsProjectIdPagesMovePostData, MovePagesApiV1ProjectsProjectIdPagesMovePostError, MovePagesApiV1ProjectsProjectIdPagesMovePostResponse, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostData, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostError, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostResponse, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostData, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostError, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostResponse, PageApiV1ProjectsProjectIdPagesPageIdGetData, PageApiV1ProjectsProjectIdPagesPageIdGetError, PageApiV1ProjectsProjectIdPagesPageIdGetResponse, PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostData, PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostError, PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponse, ProjectApiV1ProjectsProjectIdGetData, ProjectApiV1ProjectsProjectIdGetError, ProjectApiV1ProjectsProjectIdGetResponse, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutData, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutError, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponse, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutData, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutError, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponse, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutData, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutError, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponse, ReadJobApiV1JobsJobIdGetData, ReadJobApiV1JobsJobIdGetError, ReadJobApiV1JobsJobIdGetResponse, RegisterRegisterApiV1AuthRegisterPostData, RegisterRegisterApiV1AuthRegisterPostError, RegisterRegisterApiV1AuthRegisterPostResponse, ResetForgotPasswordApiV1AuthForgotPasswordPostData, ResetForgotPasswordApiV1AuthForgotPasswordPostError, ResetResetPasswordApiV1AuthResetPasswordPostData, ResetResetPasswordApiV1AuthResetPasswordPostError, RunStageApiV1ProjectsProjectIdStagesStageRunPostData, RunStageApiV1ProjectsProjectIdStagesStageRunPostError, RunStageApiV1ProjectsProjectIdStagesStageRunPostResponse, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchData, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchError, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchResponse, UpdateProjectApiV1ProjectsProjectIdPatchData, UpdateProjectApiV1ProjectsProjectIdPatchError, UpdateProjectApiV1ProjectsProjectIdPatchResponse, UploadSourcesApiV1ProjectsProjectIdSourcesPostData, UploadSourcesApiV1ProjectsProjectIdSourcesPostError, UploadSourcesApiV1ProjectsProjectIdSourcesPostResponse, UsersCurrentUserApiV1UsersMeGetData, UsersCurrentUserApiV1UsersMeGetError, UsersCurrentUserApiV1UsersMeGetResponse, UsersDeleteUserApiV1UsersIdDeleteData, UsersDeleteUserApiV1UsersIdDeleteError, UsersDeleteUserApiV1UsersIdDeleteResponse, UsersPatchCurrentUserApiV1UsersMePatchData, UsersPatchCurrentUserApiV1UsersMePatchError, UsersPatchCurrentUserApiV1UsersMePatchResponse, UsersPatchUserApiV1UsersIdPatchData, UsersPatchUserApiV1UsersIdPatchError, UsersPatchUserApiV1UsersIdPatchResponse, UsersUserApiV1UsersIdGetData, UsersUserApiV1UsersIdGetError, UsersUserApiV1UsersIdGetResponse, VerifyRequestTokenApiV1AuthRequestVerifyTokenPostData, VerifyRequestTokenApiV1AuthRequestVerifyTokenPostError, VerifyVerifyApiV1AuthVerifyPostData, VerifyVerifyApiV1AuthVerifyPostError, VerifyVerifyApiV1AuthVerifyPostResponse } from '../types.gen';
+import { activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePost, attachScanApiV1ProjectsProjectIdPagesPageIdScanPut, authCookieLoginApiV1AuthLoginPost, authCookieLogoutApiV1AuthLogoutPost, cancelJobApiV1JobsJobIdDelete, chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePut, collectVersionsApiV1ProjectsProjectIdVersionsCollectPost, createPageApiV1ProjectsProjectIdPagesPost, createProjectApiV1ProjectsPost, createVariantApiV1ProjectsProjectIdStagesStageVariantsPost, cutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPost, deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDelete, deletePageApiV1ProjectsProjectIdPagesPageIdDelete, deleteProjectApiV1ProjectsProjectIdDelete, deleteSourceApiV1ProjectsProjectIdSourcesSourceIdDelete, getRecipeApiV1ProjectsProjectIdStagesStageRecipeGet, getSourceApiV1ProjectsProjectIdSourcesSourceIdGet, getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGet, iiifFileApiV1IiifKeyGet, listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGet, listPagesApiV1ProjectsProjectIdPagesGet, listPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGet, listProcessorsApiV1ProcessorsGet, listProjectJobsApiV1ProjectsProjectIdJobsGet, listProjectsApiV1ProjectsGet, listProvidersApiV1AuthProvidersGet, listScansApiV1ProjectsProjectIdScansGet, listSourcesApiV1ProjectsProjectIdSourcesGet, listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet, listStagesApiV1ProjectsProjectIdStagesGet, listVariantsApiV1ProjectsProjectIdStagesStageVariantsGet, listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet, movePageApiV1ProjectsProjectIdPagesPageIdMovePost, movePagesApiV1ProjectsProjectIdPagesMovePost, moveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePost, numberPagesApiV1ProjectsProjectIdPagesLabelsPost, type Options, pageApiV1ProjectsProjectIdPagesPageIdGet, previewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPost, previewStepApiV1ProjectsProjectIdStagesStagePreviewPost, projectApiV1ProjectsProjectIdGet, putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPut, putRecipeApiV1ProjectsProjectIdStagesStageRecipePut, putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPut, readJobApiV1JobsJobIdGet, registerRegisterApiV1AuthRegisterPost, resetForgotPasswordApiV1AuthForgotPasswordPost, resetResetPasswordApiV1AuthResetPasswordPost, runStageApiV1ProjectsProjectIdStagesStageRunPost, updatePageApiV1ProjectsProjectIdPagesPageIdPatch, updateProjectApiV1ProjectsProjectIdPatch, uploadSourcesApiV1ProjectsProjectIdSourcesPost, usersCurrentUserApiV1UsersMeGet, usersDeleteUserApiV1UsersIdDelete, usersPatchCurrentUserApiV1UsersMePatch, usersPatchUserApiV1UsersIdPatch, usersUserApiV1UsersIdGet, verifyRequestTokenApiV1AuthRequestVerifyTokenPost, verifyVerifyApiV1AuthVerifyPost } from '../sdk.gen';
+import type { ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostData, ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostError, ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostResponse, AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutData, AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutError, AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponse, AuthCookieLoginApiV1AuthLoginPostData, AuthCookieLoginApiV1AuthLoginPostError, AuthCookieLoginApiV1AuthLoginPostResponse, AuthCookieLogoutApiV1AuthLogoutPostData, AuthCookieLogoutApiV1AuthLogoutPostError, AuthCookieLogoutApiV1AuthLogoutPostResponse, CancelJobApiV1JobsJobIdDeleteData, CancelJobApiV1JobsJobIdDeleteError, CancelJobApiV1JobsJobIdDeleteResponse, ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutData, ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutError, ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponse, CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostData, CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostError, CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponse, CreatePageApiV1ProjectsProjectIdPagesPostData, CreatePageApiV1ProjectsProjectIdPagesPostError, CreatePageApiV1ProjectsProjectIdPagesPostResponse, CreateProjectApiV1ProjectsPostData, CreateProjectApiV1ProjectsPostError, CreateProjectApiV1ProjectsPostResponse, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostData, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostError, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponse, CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostData, CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostError, CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponse, DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteData, DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteError, DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteResponse, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteData, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteError, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteResponse, DeleteProjectApiV1ProjectsProjectIdDeleteData, DeleteProjectApiV1ProjectsProjectIdDeleteError, DeleteProjectApiV1ProjectsProjectIdDeleteResponse, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteData, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteError, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteResponse, GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetData, GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetError, GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetResponse, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetData, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetError, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetResponse, GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetData, GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetError, GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetResponse, IiifFileApiV1IiifKeyGetData, IiifFileApiV1IiifKeyGetError, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetError, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponse, ListPagesApiV1ProjectsProjectIdPagesGetData, ListPagesApiV1ProjectsProjectIdPagesGetError, ListPagesApiV1ProjectsProjectIdPagesGetResponse, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetError, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponse, ListProcessorsApiV1ProcessorsGetData, ListProcessorsApiV1ProcessorsGetError, ListProcessorsApiV1ProcessorsGetResponse, ListProjectJobsApiV1ProjectsProjectIdJobsGetData, ListProjectJobsApiV1ProjectsProjectIdJobsGetError, ListProjectJobsApiV1ProjectsProjectIdJobsGetResponse, ListProjectsApiV1ProjectsGetData, ListProjectsApiV1ProjectsGetError, ListProjectsApiV1ProjectsGetResponse, ListProvidersApiV1AuthProvidersGetData, ListProvidersApiV1AuthProvidersGetError, ListProvidersApiV1AuthProvidersGetResponse, ListScansApiV1ProjectsProjectIdScansGetData, ListScansApiV1ProjectsProjectIdScansGetError, ListScansApiV1ProjectsProjectIdScansGetResponse, ListSourcesApiV1ProjectsProjectIdSourcesGetData, ListSourcesApiV1ProjectsProjectIdSourcesGetError, ListSourcesApiV1ProjectsProjectIdSourcesGetResponse, ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData, ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetError, ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponse, ListStagesApiV1ProjectsProjectIdStagesGetData, ListStagesApiV1ProjectsProjectIdStagesGetError, ListStagesApiV1ProjectsProjectIdStagesGetResponse, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetData, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetError, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponse, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetError, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponse, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostData, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostError, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostResponse, MovePagesApiV1ProjectsProjectIdPagesMovePostData, MovePagesApiV1ProjectsProjectIdPagesMovePostError, MovePagesApiV1ProjectsProjectIdPagesMovePostResponse, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostData, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostError, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostResponse, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostData, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostError, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostResponse, PageApiV1ProjectsProjectIdPagesPageIdGetData, PageApiV1ProjectsProjectIdPagesPageIdGetError, PageApiV1ProjectsProjectIdPagesPageIdGetResponse, PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostData, PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostError, PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostResponse, PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostData, PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostError, PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponse, ProjectApiV1ProjectsProjectIdGetData, ProjectApiV1ProjectsProjectIdGetError, ProjectApiV1ProjectsProjectIdGetResponse, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutData, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutError, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponse, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutData, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutError, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponse, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutData, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutError, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponse, ReadJobApiV1JobsJobIdGetData, ReadJobApiV1JobsJobIdGetError, ReadJobApiV1JobsJobIdGetResponse, RegisterRegisterApiV1AuthRegisterPostData, RegisterRegisterApiV1AuthRegisterPostError, RegisterRegisterApiV1AuthRegisterPostResponse, ResetForgotPasswordApiV1AuthForgotPasswordPostData, ResetForgotPasswordApiV1AuthForgotPasswordPostError, ResetResetPasswordApiV1AuthResetPasswordPostData, ResetResetPasswordApiV1AuthResetPasswordPostError, RunStageApiV1ProjectsProjectIdStagesStageRunPostData, RunStageApiV1ProjectsProjectIdStagesStageRunPostError, RunStageApiV1ProjectsProjectIdStagesStageRunPostResponse, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchData, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchError, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchResponse, UpdateProjectApiV1ProjectsProjectIdPatchData, UpdateProjectApiV1ProjectsProjectIdPatchError, UpdateProjectApiV1ProjectsProjectIdPatchResponse, UploadSourcesApiV1ProjectsProjectIdSourcesPostData, UploadSourcesApiV1ProjectsProjectIdSourcesPostError, UploadSourcesApiV1ProjectsProjectIdSourcesPostResponse, UsersCurrentUserApiV1UsersMeGetData, UsersCurrentUserApiV1UsersMeGetError, UsersCurrentUserApiV1UsersMeGetResponse, UsersDeleteUserApiV1UsersIdDeleteData, UsersDeleteUserApiV1UsersIdDeleteError, UsersDeleteUserApiV1UsersIdDeleteResponse, UsersPatchCurrentUserApiV1UsersMePatchData, UsersPatchCurrentUserApiV1UsersMePatchError, UsersPatchCurrentUserApiV1UsersMePatchResponse, UsersPatchUserApiV1UsersIdPatchData, UsersPatchUserApiV1UsersIdPatchError, UsersPatchUserApiV1UsersIdPatchResponse, UsersUserApiV1UsersIdGetData, UsersUserApiV1UsersIdGetError, UsersUserApiV1UsersIdGetResponse, VerifyRequestTokenApiV1AuthRequestVerifyTokenPostData, VerifyRequestTokenApiV1AuthRequestVerifyTokenPostError, VerifyVerifyApiV1AuthVerifyPostData, VerifyVerifyApiV1AuthVerifyPostError, VerifyVerifyApiV1AuthVerifyPostResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -591,6 +591,28 @@ export const numberPagesApiV1ProjectsProjectIdPagesLabelsPostMutation = (options
 };
 
 /**
+ * Preview Page Numbers
+ *
+ * Return the labels a numbering of the same body would write, and write nothing.
+ *
+ * The labels come from the rule the numbering applies, so the interface shows exactly what saving stores. The answer
+ * is 409 when the range runs backwards.
+ */
+export const previewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostMutation = (options?: Partial<Options<PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostData>>): UseMutationOptions<PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostResponse, PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostError, Options<PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostData>> => {
+    const mutationOptions: UseMutationOptions<PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostResponse, PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostError, Options<PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await previewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPost({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
  * Attach Scan
  *
  * Bind a scan to a placeholder, which becomes a page of that scan once a job has copied its image.
@@ -610,6 +632,122 @@ export const attachScanApiV1ProjectsProjectIdPagesPageIdScanPutMutation = (optio
         }
     };
     return mutationOptions;
+};
+
+export const listStagesApiV1ProjectsProjectIdStagesGetQueryKey = (options: Options<ListStagesApiV1ProjectsProjectIdStagesGetData>) => createQueryKey('listStagesApiV1ProjectsProjectIdStagesGet', options);
+
+/**
+ * List Stages
+ *
+ * List the stages of a book in the order of the pipeline, each summed over the pages of the book.
+ *
+ * A stage is available when it is done by hand or a processor of it is installed. The counts of a stage done by hand
+ * are zero.
+ */
+export const listStagesApiV1ProjectsProjectIdStagesGetOptions = (options: Options<ListStagesApiV1ProjectsProjectIdStagesGetData>) => queryOptions<ListStagesApiV1ProjectsProjectIdStagesGetResponse, ListStagesApiV1ProjectsProjectIdStagesGetError, ListStagesApiV1ProjectsProjectIdStagesGetResponse, ReturnType<typeof listStagesApiV1ProjectsProjectIdStagesGetQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listStagesApiV1ProjectsProjectIdStagesGet({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listStagesApiV1ProjectsProjectIdStagesGetQueryKey(options)
+});
+
+export const listStagesApiV1ProjectsProjectIdStagesGetInfiniteQueryKey = (options: Options<ListStagesApiV1ProjectsProjectIdStagesGetData>): QueryKey<Options<ListStagesApiV1ProjectsProjectIdStagesGetData>> => createQueryKey('listStagesApiV1ProjectsProjectIdStagesGet', options, true);
+
+/**
+ * List Stages
+ *
+ * List the stages of a book in the order of the pipeline, each summed over the pages of the book.
+ *
+ * A stage is available when it is done by hand or a processor of it is installed. The counts of a stage done by hand
+ * are zero.
+ */
+export const listStagesApiV1ProjectsProjectIdStagesGetInfiniteOptions = (options: Options<ListStagesApiV1ProjectsProjectIdStagesGetData>) => {
+    const opts = infiniteQueryOptions<ListStagesApiV1ProjectsProjectIdStagesGetResponse, ListStagesApiV1ProjectsProjectIdStagesGetError, InfiniteData<ListStagesApiV1ProjectsProjectIdStagesGetResponse>, QueryKey<Options<ListStagesApiV1ProjectsProjectIdStagesGetData>>, number | Pick<QueryKey<Options<ListStagesApiV1ProjectsProjectIdStagesGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<ListStagesApiV1ProjectsProjectIdStagesGetData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    page: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await listStagesApiV1ProjectsProjectIdStagesGet({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: listStagesApiV1ProjectsProjectIdStagesGetInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+export const listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey = (options: Options<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData>) => createQueryKey('listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet', options);
+
+/**
+ * List Stage Pages
+ *
+ * List the pages of a book in book order, each with where it stands in a stage and the version that is its result.
+ *
+ * A page the stage has not run on has the status ``not-run`` and no version. A page holds up to a thousand rows, as
+ * the page manifest does, so a strip of a whole book takes few requests.
+ */
+export const listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetOptions = (options: Options<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData>) => queryOptions<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponse, ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetError, ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponse, ReturnType<typeof listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey(options)
+});
+
+export const listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetInfiniteQueryKey = (options: Options<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData>): QueryKey<Options<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData>> => createQueryKey('listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet', options, true);
+
+/**
+ * List Stage Pages
+ *
+ * List the pages of a book in book order, each with where it stands in a stage and the version that is its result.
+ *
+ * A page the stage has not run on has the status ``not-run`` and no version. A page holds up to a thousand rows, as
+ * the page manifest does, so a strip of a whole book takes few requests.
+ */
+export const listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetInfiniteOptions = (options: Options<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData>) => {
+    const opts = infiniteQueryOptions<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponse, ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetError, InfiniteData<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponse>, QueryKey<Options<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData>>, number | Pick<QueryKey<Options<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    page: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
 };
 
 export const getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey = (options: Options<GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetData>) => createQueryKey('getRecipeApiV1ProjectsProjectIdStagesStageRecipeGet', options);
@@ -1176,6 +1314,58 @@ export const readJobApiV1JobsJobIdGetOptions = (options: Options<ReadJobApiV1Job
     },
     queryKey: readJobApiV1JobsJobIdGetQueryKey(options)
 });
+
+export const listProjectJobsApiV1ProjectsProjectIdJobsGetQueryKey = (options: Options<ListProjectJobsApiV1ProjectsProjectIdJobsGetData>) => createQueryKey('listProjectJobsApiV1ProjectsProjectIdJobsGet', options);
+
+/**
+ * List Project Jobs
+ *
+ * List the jobs of a project, the newest first, or only the ones queued or running with ``active=true``.
+ */
+export const listProjectJobsApiV1ProjectsProjectIdJobsGetOptions = (options: Options<ListProjectJobsApiV1ProjectsProjectIdJobsGetData>) => queryOptions<ListProjectJobsApiV1ProjectsProjectIdJobsGetResponse, ListProjectJobsApiV1ProjectsProjectIdJobsGetError, ListProjectJobsApiV1ProjectsProjectIdJobsGetResponse, ReturnType<typeof listProjectJobsApiV1ProjectsProjectIdJobsGetQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listProjectJobsApiV1ProjectsProjectIdJobsGet({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listProjectJobsApiV1ProjectsProjectIdJobsGetQueryKey(options)
+});
+
+export const listProjectJobsApiV1ProjectsProjectIdJobsGetInfiniteQueryKey = (options: Options<ListProjectJobsApiV1ProjectsProjectIdJobsGetData>): QueryKey<Options<ListProjectJobsApiV1ProjectsProjectIdJobsGetData>> => createQueryKey('listProjectJobsApiV1ProjectsProjectIdJobsGet', options, true);
+
+/**
+ * List Project Jobs
+ *
+ * List the jobs of a project, the newest first, or only the ones queued or running with ``active=true``.
+ */
+export const listProjectJobsApiV1ProjectsProjectIdJobsGetInfiniteOptions = (options: Options<ListProjectJobsApiV1ProjectsProjectIdJobsGetData>) => {
+    const opts = infiniteQueryOptions<ListProjectJobsApiV1ProjectsProjectIdJobsGetResponse, ListProjectJobsApiV1ProjectsProjectIdJobsGetError, InfiniteData<ListProjectJobsApiV1ProjectsProjectIdJobsGetResponse>, QueryKey<Options<ListProjectJobsApiV1ProjectsProjectIdJobsGetData>>, number | Pick<QueryKey<Options<ListProjectJobsApiV1ProjectsProjectIdJobsGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<ListProjectJobsApiV1ProjectsProjectIdJobsGetData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    page: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await listProjectJobsApiV1ProjectsProjectIdJobsGet({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: listProjectJobsApiV1ProjectsProjectIdJobsGetInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
 
 export const iiifFileApiV1IiifKeyGetQueryKey = (options: Options<IiifFileApiV1IiifKeyGetData>) => createQueryKey('iiifFileApiV1IiifKeyGet', options);
 

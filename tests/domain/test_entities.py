@@ -10,13 +10,14 @@ import pytest
 from attrs import evolve
 
 from bookreviver.domain.entities import VERSION_ID_PATTERN, PageEdit, VersionInputs
-from bookreviver.domain.enums import PageOrigin, Rendition, VersionScale
+from bookreviver.domain.enums import PageOrigin, Rendition, StepField, VersionScale
 from bookreviver.domain.geometry import Line, Point, Rotation
 from bookreviver.domain.ids import PageId, PageVersionId, ScanId
-from bookreviver.domain.values import BookDetails, ProcessorRef, Progress, Renditions
-from tests.helpers.builders import SPLIT_NONE, make_page, make_page_version, make_project, new_account_id
+from bookreviver.domain.values import BookDetails, ProcessorRef, Progress, Renditions, Step
+from tests.helpers.builders import SPLIT_NONE, make_page, make_page_version, make_project, make_recipe, new_account_id
 
 PAGE_ID: PageId = PageId(uuid4())
+DESKEW_KEY: str = 'geometry.deskew'
 
 
 class TestPage:
@@ -62,6 +63,41 @@ class TestPageVersion:
         """
         with pytest.raises(ValueError, match='page version id'):
             evolve(make_page_version(page_id=PageId(uuid4())), id=PageVersionId(version_id))
+
+
+class TestStep:
+    """Tests for Step, which a recipe and the parameters of a job store as JSON."""
+
+    @pytest.mark.parametrize('enabled', [True, False], ids=['on', 'off'])
+    def test_step_reads_back_from_its_json(self, *, enabled: bool) -> None:
+        """Verify a step, with its parameters and whether it is switched on, survives a round trip through JSON.
+
+        :param enabled: Whether the step is on.
+        :type enabled: bool
+        """
+        step = Step(processor_key=DESKEW_KEY, params={'max_angle': 5.0}, enabled=enabled)
+        assert Step.from_map(json.loads(json.dumps(step.to_map()))) == step
+
+    def test_step_stored_before_the_switch_existed_is_on(self) -> None:
+        """Verify a recipe saved without the ``enabled`` key still runs every step, as it did when it was saved."""
+        stored: dict[str, Any] = {StepField.PROCESSOR_KEY: DESKEW_KEY, StepField.PARAMS: {}}
+        assert Step.from_map(stored).enabled is True
+
+    def test_object_without_a_processor_key_is_refused(self) -> None:
+        """Reject an object that names no processor, which the callers that read job parameters turn into an error."""
+        with pytest.raises(KeyError):
+            Step.from_map({StepField.PARAMS: {}})
+
+
+class TestRecipe:
+    """Tests for Recipe."""
+
+    def test_enabled_steps_are_the_steps_that_are_on_in_their_order(self) -> None:
+        """Verify the steps a run takes are the ones switched on, in the order of the recipe."""
+        recipe = make_recipe(project_id=make_project(owner_id=new_account_id()).id)
+        first, third = Step(processor_key='geometry.first'), Step(processor_key='geometry.third')
+        second = Step(processor_key='geometry.second', enabled=False)
+        assert evolve(recipe, steps=(first, second, third)).enabled_steps == (first, third)
 
 
 class TestVersionInputsIdentify:

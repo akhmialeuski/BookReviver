@@ -11,7 +11,7 @@ from delayed_assert import assert_expectations, expect
 from PIL import Image, ImageDraw
 
 from bookreviver.domain.entities import PageEdit
-from bookreviver.domain.enums import EditorKind, ProcessorScope, Stage, TransformKind, VersionData
+from bookreviver.domain.enums import EditorKind, ProcessorScope, ReviewReason, Stage, TransformKind, VersionData
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
 from bookreviver.domain.geometry import Line, Point
 from bookreviver.domain.ids import PageId
@@ -88,6 +88,8 @@ class TestSplitSpread:
         expect(left.data[VersionData.WIDTH_PX] + right.data[VersionData.WIDTH_PX] == 2 * PAGE_WIDTH_PX)
         expect((left.data[VersionData.HEIGHT_PX], right.data[VersionData.HEIGHT_PX]) == (HEIGHT_PX, HEIGHT_PX))
         expect((left.data[VersionData.OVERLAP_PX], right.data[VersionData.OVERLAP_PX]) == (0, 0))
+        expect(left.data[VersionData.CONFIDENCE] == right.data[VersionData.CONFIDENCE] > params['min_confidence'])
+        expect((left.review, right.review) == (None, None))
         assert_expectations()
 
     def test_a_second_dark_region_in_the_band_does_not_pull_the_cut_off_the_gutter(
@@ -207,6 +209,43 @@ class TestSplitSpread:
         left, right = halves_of(fx_split_spread, StepInput(image=image, params=params, workdir=tmp_path))
         expect(abs(left.data[VersionData.CUT_X] - 500) <= 1)
         expect(left.data[VersionData.WIDTH_PX] + right.data[VersionData.WIDTH_PX] == 1_000)
+        expect((left.data[VersionData.CONFIDENCE], right.data[VersionData.CONFIDENCE]) == (0.0, 0.0))
+        expect((left.review, right.review) == (ReviewReason.LOW_CONFIDENCE, ReviewReason.LOW_CONFIDENCE))
+        assert_expectations()
+
+    def test_a_minimum_of_one_marks_even_a_clear_gutter_for_review(
+        self, fx_split_spread: Processor, tmp_path: Path
+    ) -> None:
+        """Verify the minimum is what decides the mark: the cut is as good as before and both halves are marked.
+
+        :param fx_split_spread: The processor under test.
+        :type fx_split_spread: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        image = save(spread(PAGE_WIDTH_PX, HEIGHT_PX), tmp_path / 'scan.png')
+        params = fx_split_spread.validate_params({'min_confidence': 1})
+        left, right = halves_of(fx_split_spread, StepInput(image=image, params=params, workdir=tmp_path))
+        expect(abs(left.data[VersionData.CUT_X] - PAGE_WIDTH_PX) < CUT_TOLERANCE_PX)
+        expect((left.review, right.review) == (ReviewReason.LOW_CONFIDENCE, ReviewReason.LOW_CONFIDENCE))
+        assert_expectations()
+
+    def test_a_cut_the_user_drew_is_fully_confident_and_never_marked(
+        self, fx_split_spread: Processor, tmp_path: Path
+    ) -> None:
+        """Verify a line edit has the confidence 1 and no mark, even with a minimum of 1 and a scan with no gutter.
+
+        :param fx_split_spread: The processor under test.
+        :type fx_split_spread: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        image = save(Image.new('L', (1_000, 400), PAPER), tmp_path / 'blank.png')
+        edit = make_line_edit(Point(x=500, y=0), Point(x=500, y=399))
+        params = fx_split_spread.validate_params({'min_confidence': 1})
+        left, right = halves_of(fx_split_spread, StepInput(image=image, params=params, edit=edit, workdir=tmp_path))
+        expect((left.data[VersionData.CONFIDENCE], right.data[VersionData.CONFIDENCE]) == (1.0, 1.0))
+        expect((left.review, right.review) == (None, None))
         assert_expectations()
 
     @pytest.mark.parametrize(
@@ -273,5 +312,5 @@ class TestSplitSpread:
         spec = fx_split_spread.spec
         expect((spec.key, spec.stage, spec.scope) == ('split.spread', Stage.PAGE_SPLIT, ProcessorScope.SPLIT))
         expect(spec.editor is EditorKind.LINE)
-        expect(fx_split_spread.validate_params({}) == {'search_band': 0.3, 'overlap_px': 0})
+        expect(fx_split_spread.validate_params({}) == {'search_band': 0.3, 'overlap_px': 0, 'min_confidence': 0.1})
         assert_expectations()

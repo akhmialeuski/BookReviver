@@ -41,9 +41,10 @@ from bookreviver.domain.entities import (
     Scan,
     Source,
 )
-from bookreviver.domain.enums import JobKind, JobState, PageOrigin, Side, Stage, VersionScale, VersionState
+from bookreviver.domain.enums import JobKind, JobState, PageOrigin, Side, Stage, StageState, VersionScale, VersionState
 from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
+from bookreviver.domain.stage_summaries import StageTally
 from bookreviver.domain.values import PageEditKey, PageSize, PageStageKey, Slice, SliceRequest
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
@@ -324,6 +325,10 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
             page_count=sum(page.project_id == project.id and page.included for page in tables.pages.values()),
             source_count=sum(source.project_id == project.id for source in tables.sources.values()),
             scan_count=sum(scan.project_id == project.id for scan in tables.scans.values()),
+            image_page_count=sum(
+                page.project_id == project.id and page.origin is not PageOrigin.PLACEHOLDER
+                for page in tables.pages.values()
+            ),
         )
 
     @override
@@ -1070,6 +1075,45 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
             if record.page_id in pages and record.head_version_id is not None
         }
 
+    @override
+    async def tally(self, project_ids: Collection[ProjectId]) -> Sequence[StageTally]:
+        """Count the records of every stage of the given projects by state, leaving out the pages with no image.
+
+        :param project_ids: Projects whose stages are counted.
+        :type project_ids: Collection[ProjectId]
+        :returns: One tally for each stage of each project that has a record.
+        :rtype: Sequence[StageTally]
+        """
+        groups: dict[tuple[ProjectId, Stage], list[PageStage]] = {}
+        for record in self._rows.values():
+            page = self._tables.pages[record.page_id]
+            if page.project_id in project_ids and page.origin is not PageOrigin.PLACEHOLDER:
+                groups.setdefault((page.project_id, record.stage), []).append(record)
+
+        def marked(record: PageStage) -> bool:
+            """Tell whether a record that has not failed has a current version with a review mark.
+
+            :param record: The record.
+            :type record: PageStage
+            :returns: Whether the record counts as marked for review.
+            :rtype: bool
+            """
+            if record.state is StageState.FAILED or record.head_version_id is None:
+                return False
+            return self._tables.page_versions[record.head_version_id].review is not None
+
+        return [
+            StageTally(
+                project_id=project_id,
+                stage=stage,
+                fresh=sum(record.state is StageState.FRESH for record in records),
+                stale=sum(record.state is StageState.STALE for record in records),
+                failed=sum(record.state is StageState.FAILED for record in records),
+                review=sum(marked(record) for record in records),
+            )
+            for (project_id, stage), records in groups.items()
+        ]
+
 
 class InMemoryPageEditRepository(InMemoryRepository[PageEdit, PageEditKey], PageEditRepository):
     """Manual edits of the pages."""
@@ -1212,6 +1256,20 @@ class InMemoryRecipeRepository(InMemoryRepository[Recipe, RecipeId], RecipeRepos
             None,
         )
 
+    @override
+    async def list_active(self, project_id: ProjectId) -> Sequence[Recipe]:
+        """Return the active recipe of every stage of a project that has one, in the order of the stages.
+
+        :param project_id: Project owning the recipes.
+        :type project_id: ProjectId
+        :returns: The active recipes.
+        :rtype: Sequence[Recipe]
+        """
+        return sorted(
+            (recipe for recipe in self._rows.values() if recipe.project_id == project_id and recipe.active),
+            key=lambda recipe: recipe.stage.position,
+        )
+
 
 class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
     """Jobs of every project."""
@@ -1295,6 +1353,22 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
         :rtype: Sequence[Job]
         """
         jobs = (job for job in self._tables.jobs.values() if job.project_id == project_id and job.state in states)
+        return sorted(jobs, key=attrgetter('created_at'), reverse=True)
+
+    @override
+    async def list_for_projects(
+        self, project_ids: Collection[ProjectId], states: Collection[JobState]
+    ) -> Sequence[Job]:
+        """Return the jobs of several projects in the given states, newest first.
+
+        :param project_ids: Projects owning the jobs.
+        :type project_ids: Collection[ProjectId]
+        :param states: States a returned job may be in.
+        :type states: Collection[JobState]
+        :returns: The matching jobs of all the projects, most recently created first.
+        :rtype: Sequence[Job]
+        """
+        jobs = (job for job in self._tables.jobs.values() if job.project_id in project_ids and job.state in states)
         return sorted(jobs, key=attrgetter('created_at'), reverse=True)
 
     @override

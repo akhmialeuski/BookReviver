@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.entities import PageEdit
-    from bookreviver.domain.enums import ColorMode
+    from bookreviver.domain.enums import ColorMode, ReviewReason
     from bookreviver.domain.values import MetadataMap, ProcessorSpec
 
 
@@ -59,6 +59,8 @@ class StepOutput:
     :ivar color_mode: Whether the image is bilevel, gray or colour, which decides the format it is stored in.
     :ivar transform: Transform of coordinates from the input image to this one.
     :ivar data: Data of the step, such as an angle, a confidence, or the size of the image.
+    :ivar review: Why the step wants the page looked at again though it finished, or None when it is sure. The service
+                  stores it with the version as it is and reads nothing of ``data`` to find it.
     :ivar mask: Mask of the areas the step removed, in ``workdir``, or None.
     """
 
@@ -66,6 +68,7 @@ class StepOutput:
     color_mode: ColorMode
     transform: Transform = field(factory=Transform)
     data: MetadataMap = field(factory=dict)
+    review: ReviewReason | None = None
     mask: Path | None = None
 
 

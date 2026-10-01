@@ -19,6 +19,7 @@ from bookreviver.domain.enums import (
     RightsStatus,
     Script,
     Stage,
+    StepField,
     UploadProblem,
     VersionData,
     VersionOutput,
@@ -409,10 +410,43 @@ class Step:
 
     :ivar processor_key: Key of the processor, such as ``geometry.deskew``.
     :ivar params: Parameters of the step, following the processor's JSON Schema.
+    :ivar enabled: Whether a run and a preview run the step. A step that is off stays in the recipe with its parameters,
+                   so switching it on again loses nothing.
     """
 
     processor_key: str = field(validator=validators.min_len(1))
     params: MetadataMap = field(factory=dict)
+    enabled: bool = True
+
+    def to_map(self) -> dict[str, Any]:
+        """Return the step as the JSON object a recipe and the parameters of a job store.
+
+        :returns: The processor key, the parameters and whether the step is on.
+        :rtype: dict[str, Any]
+        """
+        return {
+            StepField.PROCESSOR_KEY: self.processor_key,
+            StepField.PARAMS: dict(self.params),
+            StepField.ENABLED: self.enabled,
+        }
+
+    @classmethod
+    def from_map(cls, stored: MetadataMap) -> Self:
+        """Read the step from the JSON object ``to_map`` wrote.
+
+        A step stored before the switch existed has no ``enabled`` key and is on, as every step was.
+
+        :param stored: The stored object.
+        :type stored: MetadataMap
+        :returns: The step.
+        :rtype: Self
+        :raises KeyError: If the object has no processor key or no parameters.
+        """
+        return cls(
+            processor_key=stored[StepField.PROCESSOR_KEY],
+            params=stored[StepField.PARAMS],
+            enabled=stored.get(StepField.ENABLED, True),
+        )
 
 
 @frozen
@@ -507,6 +541,18 @@ class PageNumbering:
         """
         text = self.style.write(number)
         return f'[{text}]' if self.bracketed and text else text
+
+
+@frozen(kw_only=True)
+class NumberedPage:
+    """A page and the label a numbering would give it, which a preview shows before anything is written.
+
+    :ivar page_id: The page.
+    :ivar label: The label the page would have, empty for the numbering style ``none``.
+    """
+
+    page_id: PageId
+    label: str
 
 
 @frozen(kw_only=True)
@@ -890,7 +936,7 @@ class StepPreview:
         return {
             'page_id': str(self.page_id),
             'stage': self.stage.value,
-            'steps': [{'processor_key': step.processor_key, 'params': dict(step.params)} for step in self.steps],
+            'steps': [step.to_map() for step in self.steps],
             'step_index': self.step_index,
         }
 
@@ -908,9 +954,7 @@ class StepPreview:
             return cls(
                 page_id=PageId(UUID(stored['page_id'])),
                 stage=Stage(stored['stage']),
-                steps=tuple(
-                    Step(processor_key=step['processor_key'], params=step['params']) for step in stored['steps']
-                ),
+                steps=tuple(Step.from_map(step) for step in stored['steps']),
                 step_index=stored['step_index'],
             )
         except (KeyError, ValueError, TypeError) as error:

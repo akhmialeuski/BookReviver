@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.runtime import Clock
 
 NO_STEPS: str = 'A recipe needs at least one step.'
+ALL_STEPS_OFF: str = 'A recipe needs at least one step that is switched on.'
 WRONG_STAGE: str = 'The processor {key} belongs to the {actual} stage, not to the {expected} stage.'
 UNKNOWN_PROCESSOR: str = 'There is no processor {key}.'
 NO_RECIPE: str = 'The {stage} stage has no recipe, since no processor for it is installed.'
@@ -237,11 +238,13 @@ class RecipeBook:
         :type steps: Sequence[Step]
         :returns: The steps with the defaults of each processor filled in.
         :rtype: tuple[Step, ...]
-        :raises InvalidParametersError: If there is no step, a processor does not exist or belongs to another stage, or
-                                        a parameter is wrong.
+        :raises InvalidParametersError: If there is no step or every step is switched off, a processor does not exist
+                                        or belongs to another stage, or a parameter is wrong.
         """
         if not steps:
             raise InvalidParametersError(NO_STEPS)
+        if not any(step.enabled for step in steps):
+            raise InvalidParametersError(ALL_STEPS_OFF)
         return tuple([await self._check_step(stage, step) for step in steps])
 
     async def _check_step(self, stage: Stage, step: Step) -> Step:
@@ -265,7 +268,7 @@ class RecipeBook:
                 key=step.processor_key, actual=processor.spec.stage.label, expected=stage.label
             )
             raise InvalidParametersError(err_msg)
-        return Step(processor_key=step.processor_key, params=processor.validate_params(step.params))
+        return evolve(step, params=processor.validate_params(step.params))
 
     def _offers(self, key: str) -> bool:
         """Tell whether the catalogue has a processor.

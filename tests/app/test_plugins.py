@@ -10,6 +10,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.app.plugins import PROCESSOR_GROUP, EntryPointCatalog
 from bookreviver.domain.enums import WorkerPool
 from bookreviver.domain.errors import NotFoundError
+from bookreviver.plugins.base import ModelProcessor
 from tests.helpers.samples import CV_MISSING
 
 if TYPE_CHECKING:
@@ -44,6 +45,23 @@ class TestEntryPointCatalog:
         pytest.importorskip('cv2', reason=CV_MISSING)
         keys = [spec.key for spec in EntryPointCatalog(pools=set(WorkerPool)).specs()]
         assert {'split.spread', 'geometry.deskew'} <= set(keys)
+
+    def test_every_parameter_of_a_built_in_processor_has_a_title_and_a_description_of_its_own(self) -> None:
+        """Verify the form of a processor has a label and a hint for each field, not the name of the field.
+
+        Pydantic fills a title in from the name of the field, such as ``Overlap Px``, so the JSON Schema alone cannot
+        tell a title written for the form from one made of the name. The check reads the model, where a title that
+        nobody wrote is None. The processors that need OpenCV are checked where it is installed.
+        """
+        catalog = EntryPointCatalog(pools=set(WorkerPool))
+        unlabelled = [
+            f'{spec.key}: {name}'
+            for spec in catalog.specs()
+            if isinstance(processor := catalog.get(spec.key), ModelProcessor)
+            for name, field in processor.params_model.model_fields.items()
+            if not field.title or not field.description
+        ]
+        assert unlabelled == []
 
     def test_specs_are_listed_by_key(self) -> None:
         """Verify the specs come ordered by key, whatever order the entry points were found in."""

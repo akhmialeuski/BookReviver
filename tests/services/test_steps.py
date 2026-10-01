@@ -11,6 +11,7 @@ from bookreviver.domain.enums import (
     ColorMode,
     ImagePolicy,
     Rendition,
+    ReviewReason,
     Stage,
     VersionScale,
     VersionState,
@@ -53,9 +54,11 @@ def _scan() -> Scan:
 class Rig:
     """A runner of processors over a local asset store, with the fake writer and tiler that record what they cut.
 
+    :ivar assets: The local asset store the runner stores files in.
     :ivar runner: The runner under test.
     :ivar tiler: The fake tiler.
     :ivar writer: The fake writer of renditions.
+    :ivar fake: The fake processor the catalogue offers beside ``split.none``.
     :ivar keys: Keys of the project of the scan.
     :ivar scan: A scan whose ``full`` image is not stored yet.
     :ivar version: The pending base version of a page shown from the scan.
@@ -167,6 +170,23 @@ class TestStore:
         ready = await fx_rig.make()
         facts = fx_rig.scan.facts
         assert dict(ready.data) == {'width_px': facts.width_px, 'height_px': facts.height_px}
+
+    @pytest.mark.parametrize('review', [None, ReviewReason.LOW_CONFIDENCE, ReviewReason.NOT_APPLIED])
+    async def test_review_mark_comes_from_the_output_as_it_is(self, fx_rig: Rig, review: ReviewReason | None) -> None:
+        """Verify the version carries the mark its processor gave, or none, and the service reads nothing of ``data``.
+
+        :param fx_rig: The runner and what it works on.
+        :type fx_rig: Rig
+        :param review: Mark the output of the step carries.
+        :type review: ReviewReason | None
+        """
+        await fx_rig.store_scan()
+        async with fx_rig.runner.execute(fx_rig.split_none()) as result:
+            marked = evolve(result.outputs[0], review=review)
+            ready = await fx_rig.runner.store(
+                fx_rig.keys, fx_rig.version, marked, policy=ImagePolicy.COMPACT, tiles=False
+            )
+        assert ready.review is review
 
     async def test_replaces_what_an_earlier_attempt_left_in_the_directory(
         self, fx_rig: Rig, fx_storage_root: Path

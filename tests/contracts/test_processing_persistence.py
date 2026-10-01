@@ -12,11 +12,11 @@ import pytest
 from attrs import evolve
 
 from bookreviver.domain.entities import PageEdit
-from bookreviver.domain.enums import Stage, StageState, VersionScale, VersionState
+from bookreviver.domain.enums import PageOrigin, ReviewReason, Stage, StageState, VersionScale, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.geometry import Line, Point
 from bookreviver.domain.ids import PageId, PageVersionId, ProjectId
-from bookreviver.domain.values import PageEditKey, PageStageKey, SliceRequest
+from bookreviver.domain.values import PageEditKey, PageStageKey, SliceRequest, Step
 from tests.helpers.builders import (
     EPOCH,
     make_job,
@@ -30,7 +30,8 @@ from tests.helpers.builders import (
 )
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import PageVersion
+    from bookreviver.domain.entities import Page, PageVersion
+    from bookreviver.ports.persistence import UnitOfWork
     from tests.contracts.conftest import OwnerFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
@@ -38,6 +39,7 @@ pytestmark = pytest.mark.anyio
 # A version created long before the moment a collection looks back to, and one created after it
 OLD: timedelta = timedelta(days=60)
 RECENT: timedelta = timedelta(days=1)
+VARIANT_NAME: str = 'Variant'
 NOW = EPOCH + timedelta(days=100)
 FULL_CUTOFF = NOW - timedelta(days=30)
 PREVIEW_CUTOFF = NOW - timedelta(hours=1)
@@ -60,6 +62,35 @@ async def _store_page(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory) -
     await uow.pages.add(page)
     await uow.commit()
     return project.id, page.id
+
+
+def _blank_page(project_id: ProjectId, order_key: str) -> Page:
+    """Build a page that has an image, a blank leaf, since a placeholder has none.
+
+    :param project_id: Project owning the page.
+    :type project_id: ProjectId
+    :param order_key: Order key placing the page in the book.
+    :type order_key: str
+    :returns: The page.
+    :rtype: Page
+    """
+    return evolve(make_page(project_id=project_id, order_key=order_key), origin=PageOrigin.BLANK)
+
+
+async def _add_marked_head(uow: UnitOfWork, page: Page) -> PageVersionId:
+    """Store a base version of a page and a version of the geometry stage marked for review.
+
+    :param uow: Unit of work to add to, in which the page is stored.
+    :type uow: UnitOfWork
+    :param page: The page.
+    :type page: Page
+    :returns: The identifier of the marked version.
+    :rtype: PageVersionId
+    """
+    base = make_page_version(page_id=page.id)
+    head = evolve(_version(base), review=ReviewReason.LOW_CONFIDENCE)
+    await uow.page_versions.add_many([base, head])
+    return head.id
 
 
 def _version(
@@ -131,7 +162,7 @@ class TestRecipeRepository:
         project = make_project(owner_id=await fx_new_owner())
         await uow.projects.add(project)
         active = make_recipe(project_id=project.id, active=True)
-        variant = make_recipe(project_id=project.id, name='Variant', minutes=1)
+        variant = make_recipe(project_id=project.id, name=VARIANT_NAME, minutes=1)
         other_stage = make_recipe(project_id=project.id, stage=Stage.CLEANUP, active=True)
         await uow.recipes.add_many([variant, active, other_stage])
         await uow.commit()
@@ -158,8 +189,36 @@ class TestRecipeRepository:
             await uow.recipes.find_active(project.id, Stage.CLEANUP),
         ) == (active, None)
 
+    async def test_list_active_returns_the_active_recipe_of_each_stage_in_pipeline_order(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify variants and the recipes of another project are left out, and the stages keep the pipeline order.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        cleanup = make_recipe(project_id=project.id, stage=Stage.CLEANUP, active=True)
+        geometry = make_recipe(project_id=project.id, active=True)
+        uow = await fx_uow_factory()
+        for owned in (project, other):
+            await uow.projects.add(owned)
+        for recipe in (
+            cleanup,
+            geometry,
+            make_recipe(project_id=project.id, name=VARIANT_NAME, minutes=1),
+            make_recipe(project_id=other.id, active=True),
+        ):
+            await uow.recipes.add(recipe)
+        await uow.commit()
+        recipes = (await fx_uow_factory()).recipes
+        assert [recipe.id for recipe in await recipes.list_active(project.id)] == [geometry.id, cleanup.id]
+
     async def test_steps_survive_the_store(self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
-        """Verify a recipe reads back with its steps and their parameters.
+        """Verify a recipe reads back with its steps, their parameters and which of them are switched off.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -168,7 +227,8 @@ class TestRecipeRepository:
         """
         uow = await fx_uow_factory()
         project = make_project(owner_id=await fx_new_owner())
-        recipe = make_recipe(project_id=project.id)
+        plain = make_recipe(project_id=project.id)
+        recipe = evolve(plain, steps=(*plain.steps, Step(processor_key='geometry.other', params={}, enabled=False)))
         await uow.projects.add(project)
         await uow.recipes.add(recipe)
         await uow.commit()
@@ -382,6 +442,46 @@ class TestPageStageRepository:
         await uow.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.CLEANUP))
         assert set(await uow.page_stages.head_ids(project_id)) == {version.id}
 
+    async def test_tally_counts_the_records_of_each_stage_by_state_and_review(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify one grouped count gives each stage its states and marks, and leaves out what does not count.
+
+        A mark on a failed page, a placeholder and the pages of another project are not counted.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        uow = await fx_uow_factory()
+        for owned in (project, other):
+            await uow.projects.add(owned)
+        marked, stale, failed = (_blank_page(project.id, f'a{number}') for number in range(3))
+        placeholder = make_page(project_id=project.id, order_key='b0')
+        elsewhere = _blank_page(other.id, 'a0')
+        await uow.pages.add_many([marked, stale, failed, placeholder, elsewhere])
+        marked_head = await _add_marked_head(uow, marked)
+        failed_head = await _add_marked_head(uow, failed)
+        for record in (
+            make_page_stage(page_id=marked.id, head_version_id=marked_head),
+            make_page_stage(page_id=stale.id, state=StageState.STALE),
+            make_page_stage(page_id=failed.id, head_version_id=failed_head, state=StageState.FAILED),
+            make_page_stage(page_id=placeholder.id),
+            make_page_stage(page_id=marked.id, stage=Stage.CLEANUP),
+            make_page_stage(page_id=elsewhere.id),
+        ):
+            await uow.page_stages.save(record)
+        await uow.commit()
+        repository = (await fx_uow_factory()).page_stages
+        tallies = await repository.tally({project.id})
+        counts = {(tally.stage, tally.fresh, tally.stale, tally.failed, tally.review) for tally in tallies}
+        assert counts == {(Stage.GEOMETRY, 1, 1, 1, 1), (Stage.CLEANUP, 1, 0, 0, 0)}
+        assert {tally.project_id for tally in tallies} == {project.id}
+        assert await repository.tally(set()) == []
+
     async def test_deleting_the_head_version_leaves_the_record_without_it(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
@@ -533,7 +633,7 @@ class TestPageVersionProcessing:
     async def test_scale_edit_and_pyramid_survive_the_store(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the scale, the edit hash and the state of the pyramid of a version read back.
+        """Verify the scale, the edit hash, the state of the pyramid and the review mark of a version read back.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -543,7 +643,10 @@ class TestPageVersionProcessing:
         _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         base = make_page_version(page_id=page_id)
-        version = _version(base, scale=VersionScale.PREVIEW, edit_hash='0123456789abcdef', tiles_ready=True)
+        version = evolve(
+            _version(base, scale=VersionScale.PREVIEW, edit_hash='0123456789abcdef', tiles_ready=True),
+            review=ReviewReason.LOW_CONFIDENCE,
+        )
         await uow.page_versions.add_many([base, version])
         await uow.commit()
         assert await (await fx_uow_factory()).page_versions.get(version.id) == version

@@ -1714,6 +1714,98 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/pages/labels/preview": {
+      "post": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Preview Page Numbers",
+        "description": "Return the labels a numbering of the same body would write, and write nothing.\n\nThe labels come from the rule the numbering applies, so the interface shows exactly what saving stores. The answer\nis 409 when the range runs backwards.",
+        "operationId": "preview_page_numbers_api_v1_projects__project_id__pages_labels_preview_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelRange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NumberedPageSchema"
+                  },
+                  "title": "Response Preview Page Numbers Api V1 Projects  Project Id  Pages Labels Preview Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project_id}/pages/{page_id}/scan": {
       "put": {
         "tags": [
@@ -1765,6 +1857,218 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PageSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/stages": {
+      "get": {
+        "tags": [
+          "stages"
+        ],
+        "summary": "List Stages",
+        "description": "List the stages of a book in the order of the pipeline, each summed over the pages of the book.\n\nA stage is available when it is done by hand or a processor of it is installed. The counts of a stage done by hand\nare zero.",
+        "operationId": "list_stages_api_v1_projects__project_id__stages_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_StageSummarySchema_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/stages/{stage}/pages": {
+      "get": {
+        "tags": [
+          "stages"
+        ],
+        "summary": "List Stage Pages",
+        "description": "List the pages of a book in book order, each with where it stands in a stage and the version that is its result.\n\nA page the stage has not run on has the status ``not-run`` and no version. A page holds up to a thousand rows, as\nthe page manifest does, so a strip of a whole book takes few requests.",
+        "operationId": "list_stage_pages_api_v1_projects__project_id__stages__stage__pages_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 50,
+              "title": "Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestPage_StagePageSchema_"
                 }
               }
             }
@@ -3805,6 +4109,117 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/JobSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/jobs": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List Project Jobs",
+        "description": "List the jobs of a project, the newest first, or only the ones queued or running with ``active=true``.",
+        "operationId": "list_project_jobs_api_v1_projects__project_id__jobs_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Size"
+            }
+          },
+          {
+            "name": "active",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Active"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_JobSchema_"
                 }
               }
             }
@@ -6076,6 +6491,46 @@
         ],
         "title": "ManifestPage[PageSchema]"
       },
+      "ManifestPage_StagePageSchema_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StagePageSchema"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "ManifestPage[StagePageSchema]"
+      },
       "MetadataSuggestionSchema": {
         "properties": {
           "title": {
@@ -6140,6 +6595,26 @@
         ],
         "title": "NewPageOrigin",
         "description": "Where the image of a page the user adds comes from.\n\nOnly a blank leaf and a placeholder are added by hand, since a page cut from a scan is made by the page split and\nby binding a scan to a placeholder."
+      },
+      "NumberedPageSchema": {
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Page Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_id",
+          "label"
+        ],
+        "title": "NumberedPageSchema",
+        "description": "A page and the label a numbering would give it, shown before the numbering is saved.\n\n:ivar page_id: The page.\n:ivar label: The label the page would have, empty for the style ``none``."
       },
       "Orthography": {
         "type": "string",
@@ -6549,6 +7024,17 @@
         "title": "PageStageSchema",
         "description": "The current version of a stage of a page and whether it is up to date; the data of a stage event too.\n\n:ivar page_id: Page the record belongs to.\n:ivar stage: The stage.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar head_version_id: The current version of the stage, or None.\n:ivar state: Whether the current version matches the inputs of the stage.\n:ivar updated_at: When the record last changed."
       },
+      "PageStageStatus": {
+        "type": "string",
+        "enum": [
+          "not-run",
+          "fresh",
+          "stale",
+          "failed"
+        ],
+        "title": "PageStageStatus",
+        "description": "Where one page stands in one stage: the state of its record, or that the stage has not run on it yet."
+      },
       "PageUpdate": {
         "properties": {
           "label": {
@@ -6630,6 +7116,16 @@
             "type": "object",
             "title": "Data"
           },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "state": {
             "$ref": "#/components/schemas/VersionState"
           },
@@ -6685,6 +7181,7 @@
           "params",
           "transform",
           "data",
+          "review",
           "state",
           "scale",
           "edit_hash",
@@ -6695,7 +7192,47 @@
           "created_at"
         ],
         "title": "PageVersionSchema",
-        "description": "The result of one processing step on one page.\n\n:ivar id: Identifier of the version, the hash of what produced it.\n:ivar page_id: Page the version belongs to.\n:ivar stage: Stage of the step.\n:ivar processor: Processor that ran the step.\n:ivar input_id: Version the step read, or None for a base version.\n:ivar params: Parameters of the step.\n:ivar transform: Transform of coordinates from the input.\n:ivar data: Data the step found, such as an angle or a confidence.\n:ivar state: Where the version is in its life cycle.\n:ivar scale: Whether the step ran on the full image or on a preview.\n:ivar edit_hash: Hash of the manual edit the step read, or empty.\n:ivar tiles_ready: Whether the tile pyramid is cut, which a client asks for when it is not.\n:ivar error: Why the version failed, or empty.\n:ivar images: Paths of the images of a ready full run that has an image, or None.\n:ivar preview: Path of the preview image of a preview run, or None.\n:ivar created_at: When the version was created."
+        "description": "The result of one processing step on one page.\n\n:ivar id: Identifier of the version, the hash of what produced it.\n:ivar page_id: Page the version belongs to.\n:ivar stage: Stage of the step.\n:ivar processor: Processor that ran the step.\n:ivar input_id: Version the step read, or None for a base version.\n:ivar params: Parameters of the step.\n:ivar transform: Transform of coordinates from the input.\n:ivar data: Data the step found, such as an angle or a confidence.\n:ivar review: Why the step asks for a second look at the page though it finished, or None when it was sure.\n:ivar state: Where the version is in its life cycle.\n:ivar scale: Whether the step ran on the full image or on a preview.\n:ivar edit_hash: Hash of the manual edit the step read, or empty.\n:ivar tiles_ready: Whether the tile pyramid is cut, which a client asks for when it is not.\n:ivar error: Why the version failed, or empty.\n:ivar images: Paths of the images of a ready full run that has an image, or None.\n:ivar preview: Path of the preview image of a preview run, or None.\n:ivar created_at: When the version was created."
+      },
+      "Page_JobSchema_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/JobSchema"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[JobSchema]"
       },
       "Page_PageEditSchema_": {
         "properties": {
@@ -7016,6 +7553,46 @@
           "pages"
         ],
         "title": "Page[SourceSchema]"
+      },
+      "Page_StageSummarySchema_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StageSummarySchema"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[StageSummarySchema]"
       },
       "PagesMove": {
         "properties": {
@@ -7413,6 +7990,23 @@
             "type": "integer",
             "title": "Scan Count"
           },
+          "progress": {
+            "items": {
+              "$ref": "#/components/schemas/StageProgressSchema"
+            },
+            "type": "array",
+            "title": "Progress"
+          },
+          "next_stage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Stage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -7433,11 +8027,13 @@
           "page_count",
           "source_count",
           "scan_count",
+          "progress",
+          "next_stage",
           "created_at",
           "updated_at"
         ],
         "title": "ProjectSchema",
-        "description": "A book being digitised.\n\n:ivar id: Identifier of the project.\n:ivar details: Bibliographic description of the book.\n:ivar image_policy: How the images of the project's scans and page versions are stored.\n:ivar cover_page_id: Page whose thumbnail the project list shows, or None for the first page of the book.\n:ivar page_count: Number of pages of the book, without the pages kept out of it.\n:ivar source_count: Number of sources the book was assembled from.\n:ivar scan_count: Number of scans in all the sources.\n:ivar created_at: When the project was created.\n:ivar updated_at: When the project was last changed."
+        "description": "A book being digitised.\n\n:ivar id: Identifier of the project.\n:ivar details: Bibliographic description of the book.\n:ivar image_policy: How the images of the project's scans and page versions are stored.\n:ivar cover_page_id: Page whose thumbnail the project list shows, or None for the first page of the book.\n:ivar page_count: Number of pages of the book, without the pages kept out of it.\n:ivar source_count: Number of sources the book was assembled from.\n:ivar scan_count: Number of scans in all the sources.\n:ivar progress: The status of every stage of the book, in the order of the pipeline.\n:ivar next_stage: The first available stage with work to do or being worked, or None when there is none.\n:ivar created_at: When the project was created.\n:ivar updated_at: When the project was last changed."
       },
       "ProjectUpdate": {
         "properties": {
@@ -7943,6 +8539,15 @@
         "title": "RejectionReason",
         "description": "Why one file of an upload was not imported, while the other files of the upload were."
       },
+      "ReviewReason": {
+        "type": "string",
+        "enum": [
+          "low-confidence",
+          "not-applied"
+        ],
+        "title": "ReviewReason",
+        "description": "Why a processed page is marked for a second look, though its step finished without an error."
+      },
       "RightsStatus": {
         "type": "string",
         "enum": [
@@ -8280,6 +8885,77 @@
         "title": "Stage",
         "description": "A step of the digitisation pipeline, in pipeline order."
       },
+      "StagePageSchema": {
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Page Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PageStageStatus"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recipe_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipe Id"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PageVersionSchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_id",
+          "status",
+          "review",
+          "recipe_id",
+          "version"
+        ],
+        "title": "StagePageSchema",
+        "description": "One page of a book in one stage: where it stands there and the version that is its result.\n\n:ivar page_id: The page.\n:ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.\n:ivar review: Why the result asks for a second look, or None.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar version: The current version of the stage on the page with its data and images, or None."
+      },
+      "StageProgressSchema": {
+        "properties": {
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StageStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stage",
+          "status"
+        ],
+        "title": "StageProgressSchema",
+        "description": "The status of one stage of a book in the book list.\n\n:ivar stage: The stage.\n:ivar status: Where the stage stands: done, needs a look, running, waiting, or not available yet."
+      },
       "StageRunBody": {
         "properties": {
           "recipe_id": {
@@ -8332,6 +9008,84 @@
         "title": "StageState",
         "description": "Whether the current version of a stage of a page still matches the inputs the stage would run on."
       },
+      "StageStatus": {
+        "type": "string",
+        "enum": [
+          "done",
+          "attention",
+          "running",
+          "waiting",
+          "unavailable"
+        ],
+        "title": "StageStatus",
+        "description": "Where a whole stage stands in a book, summed over its pages."
+      },
+      "StageSummarySchema": {
+        "properties": {
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "manual": {
+            "type": "boolean",
+            "title": "Manual"
+          },
+          "pages": {
+            "type": "integer",
+            "title": "Pages"
+          },
+          "fresh": {
+            "type": "integer",
+            "title": "Fresh"
+          },
+          "stale": {
+            "type": "integer",
+            "title": "Stale"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed"
+          },
+          "not_run": {
+            "type": "integer",
+            "title": "Not Run"
+          },
+          "review": {
+            "type": "integer",
+            "title": "Review"
+          },
+          "active_recipe_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Recipe Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stage",
+          "available",
+          "manual",
+          "pages",
+          "fresh",
+          "stale",
+          "failed",
+          "not_run",
+          "review",
+          "active_recipe_id"
+        ],
+        "title": "StageSummarySchema",
+        "description": "One stage of a book summed over its pages.\n\n:ivar stage: The stage.\n:ivar available: Whether the stage can be worked in: a stage done by hand always can, and any other when a\n                 processor of the stage is installed.\n:ivar manual: Whether the user does the stage by hand, so it has no counts.\n:ivar pages: Number of pages of the book with an image, which a run of the stage goes over.\n:ivar fresh: Pages whose result of the stage is up to date.\n:ivar stale: Pages whose result is out of date.\n:ivar failed: Pages the stage failed on.\n:ivar not_run: Pages the stage has not run on.\n:ivar review: Pages, not failed, whose result asks for a second look.\n:ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used."
+      },
       "StepBody": {
         "properties": {
           "processor_key": {
@@ -8344,6 +9098,11 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Params"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
           }
         },
         "additionalProperties": false,
@@ -8352,7 +9111,7 @@
           "processor_key"
         ],
         "title": "StepBody",
-        "description": "A step of a recipe or of a preview as the interface sends it.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which the processor checks and fills in."
+        "description": "A step of a recipe or of a preview as the interface sends it.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which the processor checks and fills in.\n:ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off."
       },
       "StepPreviewBody": {
         "properties": {
@@ -8396,15 +9155,20 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Params"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
           }
         },
         "type": "object",
         "required": [
           "processor_key",
-          "params"
+          "params",
+          "enabled"
         ],
         "title": "StepSchema",
-        "description": "One step of a recipe: a processor and the parameters it runs with.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, with the defaults of the processor filled in."
+        "description": "One step of a recipe: a processor and the parameters it runs with.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, with the defaults of the processor filled in.\n:ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters."
       },
       "TransformKind": {
         "type": "string",
