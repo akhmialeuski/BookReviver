@@ -17,6 +17,8 @@ downloads/
 eggs/
 .eggs/
 lib/
+# The frontend keeps its helper modules in src/shared/lib, which the Python rule above would hide
+!frontend/src/shared/lib/
 lib64/
 parts/
 sdist/
