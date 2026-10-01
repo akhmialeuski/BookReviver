@@ -20,6 +20,7 @@ import { Route as AuthenticatedProjectsIndexRouteImport } from './routes/_authen
 import { Route as AuthenticatedProjectsProjectIdRouteRouteImport } from './routes/_authenticated/projects/$projectId/route'
 import { Route as AuthProviderCallbackRouteImport } from './routes/auth.$provider.callback'
 import { Route as AuthenticatedProjectsProjectIdIndexRouteImport } from './routes/_authenticated/projects/$projectId/index'
+import { Route as AuthenticatedProjectsProjectIdAboutRouteImport } from './routes/_authenticated/projects/$projectId/about'
 import { Route as AuthenticatedProjectsProjectIdViewerRouteImport } from './routes/_authenticated/projects/$projectId/viewer'
 
 const IndexRoute = IndexRouteImport.update({
@@ -79,6 +80,12 @@ const AuthenticatedProjectsProjectIdIndexRoute =
     path: '/',
     getParentRoute: () => AuthenticatedProjectsProjectIdRouteRoute,
   } as any)
+const AuthenticatedProjectsProjectIdAboutRoute =
+  AuthenticatedProjectsProjectIdAboutRouteImport.update({
+    id: '/about',
+    path: '/about',
+    getParentRoute: () => AuthenticatedProjectsProjectIdRouteRoute,
+  } as any)
 const AuthenticatedProjectsProjectIdViewerRoute =
   AuthenticatedProjectsProjectIdViewerRouteImport.update({
     id: '/viewer',
@@ -96,6 +103,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteRouteWithChildren
   '/auth/$provider/callback': typeof AuthProviderCallbackRoute
   '/projects/': typeof AuthenticatedProjectsIndexRoute
+  '/projects/$projectId/about': typeof AuthenticatedProjectsProjectIdAboutRoute
   '/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
   '/projects/$projectId/': typeof AuthenticatedProjectsProjectIdIndexRoute
 }
@@ -108,6 +116,7 @@ export interface FileRoutesByTo {
   '/verify-email': typeof VerifyEmailRoute
   '/auth/$provider/callback': typeof AuthProviderCallbackRoute
   '/projects': typeof AuthenticatedProjectsIndexRoute
+  '/projects/$projectId/about': typeof AuthenticatedProjectsProjectIdAboutRoute
   '/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdIndexRoute
 }
@@ -123,6 +132,7 @@ export interface FileRoutesById {
   '/_authenticated/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteRouteWithChildren
   '/auth/$provider/callback': typeof AuthProviderCallbackRoute
   '/_authenticated/projects/': typeof AuthenticatedProjectsIndexRoute
+  '/_authenticated/projects/$projectId/about': typeof AuthenticatedProjectsProjectIdAboutRoute
   '/_authenticated/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
   '/_authenticated/projects/$projectId/': typeof AuthenticatedProjectsProjectIdIndexRoute
 }
@@ -138,6 +148,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/auth/$provider/callback'
     | '/projects/'
+    | '/projects/$projectId/about'
     | '/projects/$projectId/viewer'
     | '/projects/$projectId/'
   fileRoutesByTo: FileRoutesByTo
@@ -150,6 +161,7 @@ export interface FileRouteTypes {
     | '/verify-email'
     | '/auth/$provider/callback'
     | '/projects'
+    | '/projects/$projectId/about'
     | '/projects/$projectId/viewer'
     | '/projects/$projectId'
   id:
@@ -164,6 +176,7 @@ export interface FileRouteTypes {
     | '/_authenticated/projects/$projectId'
     | '/auth/$provider/callback'
     | '/_authenticated/projects/'
+    | '/_authenticated/projects/$projectId/about'
     | '/_authenticated/projects/$projectId/viewer'
     | '/_authenticated/projects/$projectId/'
   fileRoutesById: FileRoutesById
@@ -258,6 +271,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProjectsProjectIdIndexRouteImport
       parentRoute: typeof AuthenticatedProjectsProjectIdRouteRoute
     }
+    '/_authenticated/projects/$projectId/about': {
+      id: '/_authenticated/projects/$projectId/about'
+      path: '/about'
+      fullPath: '/projects/$projectId/about'
+      preLoaderRoute: typeof AuthenticatedProjectsProjectIdAboutRouteImport
+      parentRoute: typeof AuthenticatedProjectsProjectIdRouteRoute
+    }
     '/_authenticated/projects/$projectId/viewer': {
       id: '/_authenticated/projects/$projectId/viewer'
       path: '/viewer'
@@ -269,12 +289,15 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedProjectsProjectIdRouteRouteChildren {
+  AuthenticatedProjectsProjectIdAboutRoute: typeof AuthenticatedProjectsProjectIdAboutRoute
   AuthenticatedProjectsProjectIdViewerRoute: typeof AuthenticatedProjectsProjectIdViewerRoute
   AuthenticatedProjectsProjectIdIndexRoute: typeof AuthenticatedProjectsProjectIdIndexRoute
 }
 
 const AuthenticatedProjectsProjectIdRouteRouteChildren: AuthenticatedProjectsProjectIdRouteRouteChildren =
   {
+    AuthenticatedProjectsProjectIdAboutRoute:
+      AuthenticatedProjectsProjectIdAboutRoute,
     AuthenticatedProjectsProjectIdViewerRoute:
       AuthenticatedProjectsProjectIdViewerRoute,
     AuthenticatedProjectsProjectIdIndexRoute:
