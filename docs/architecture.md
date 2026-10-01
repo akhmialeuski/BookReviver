@@ -1276,12 +1276,16 @@ the frontend client is generated from it. These endpoints of books, jobs and ima
 | `PUT /projects/{id}/pages/{page_id}/scan`   | `attach_scan`           | `PageService.attach_scan`    | 200 `PageSchema`, 409 for a scan another page shows |
 | `PATCH /projects/{id}/pages/{page_id}`      | `update_page`           | `PageService.update`         | 200 `PageSchema`, JSON Merge Patch              |
 | `POST /projects/{id}/pages/labels`          | `number_pages`          | `PageService.number`         | 204, 409 for a range that runs backwards        |
+| `POST /projects/{id}/pages/labels/preview`  | `preview_page_numbers`  | `PageService.preview_numbers` | 200 `list[NumberedPageSchema]`, writes nothing  |
+| `GET /projects/{id}/stages`                 | `list_stages`           | `ProjectService.stages`      | 200 `Page[StageSummarySchema]`                  |
+| `GET /projects/{id}/stages/{stage}/pages`   | `list_stage_pages`      | `ProjectService.stage_pages` | 200 `ManifestPage[StagePageSchema]`             |
 | `POST /projects/{id}/pages/{page_id}/move`  | `move_page`             | `PageService.move`           | 200 `PageSchema`, 409 for an anchor of its own  |
 | `POST /projects/{id}/pages/move`            | `move_pages`            | `PageService.move_group`     | 204, 409 for an anchor inside the group         |
 | `POST /projects/{id}/sources/{source_id}/pages/move` | `move_source_pages` | `PageService.move_source` | 204, 409 for an anchor inside the source        |
 | `GET /iiif/{key}`                           | `iiif_file`             | `PageService.open_asset`     | the file as stored, immutable                   |
 | `GET /jobs/{id}`                            | `read_job`              | `JobService.get`             | 200 `JobSchema`                                 |
 | `DELETE /jobs/{id}`                         | `cancel_job`            | `JobService.cancel`          | 200 `JobSchema`                                 |
+| `GET /projects/{id}/jobs`                   | `list_project_jobs`     | `JobService.list_for_project` | 200 `Page[JobSchema]`, `?active`                |
 | `GET /projects/{id}/events`                 | `stream_project_events` | `JobService.events`          | SSE                                             |
 | `GET /auth/providers`                       | `list_providers`        | `AccountRoutes.list_providers` | 200 `list[SignInProvider]`, public            |
 
@@ -1325,6 +1329,30 @@ which lists only the pages that are part of the book and numbers those among the
 the book the viewer shows. A page carries `source_id`, the source of its scan, by which the strip selects every page of
 a source, and it carries `images`, the paths of its four images, once its base version has them
 cut, and none before, for a placeholder too.
+
+The stage workspace draws from three reads that each answer for the whole book, so it never asks page by page.
+`GET /projects/{id}/stages` gives the ten stages in pipeline order, each with `available`, `manual`, `pages` (the pages
+with an image, which a run goes over), `fresh`, `stale`, `failed`, `not_run`, `review` and `active_recipe_id`. A stage
+done by hand, the import and the page order, is always available and has no counts. Any other stage is available when
+a processor of it is in the catalogue, so a stage stops being "soon" the day its first plugin is installed.
+`GET /projects/{id}/stages/{stage}/pages` gives each page of the book in book order with its `status` in the stage
+(`not-run` when the stage has no record of it), its `review` mark and its current version whole, so the strip shows
+the result of that very stage. Both come from `StageSummaries`, which counts the `page_stages` records with one
+`GROUP BY` and conditional sums in `PageStageRepository.tally`. `GET /projects/{id}/jobs?active=true` lists the
+queued and running jobs of the book for the activity chip.
+
+A project in `ProjectSchema` carries `progress`, one `StageStatus` per stage, and `next_stage`, the first available
+stage with work to do. The status follows one rule: a stage that is not available is `unavailable`, a stage a queued
+or running `run-stage` job works in is `running`, a stage with a stale, failed or marked page is `attention`, a stage
+every page of which is up to date is `done`, and any other `waiting`. The book list reads the progress of a whole
+window with the same number of queries for any number of books.
+
+A page version carries `review`, a `ReviewReason` its processor gave when it finished but was not sure:
+`not-applied` from `geometry.deskew` for a page it left unturned, and `low-confidence` from `split.spread` for a cut
+whose gutter confidence is below its `min_confidence`. A step of a recipe carries `enabled`. A step that is off keeps
+its parameters, a run and a preview skip it, and a recipe with every step off is refused.
+`POST /projects/{id}/pages/labels/preview` takes the body of the numbering and answers the label each counted page
+would get, from the same rule `number` applies, and writes nothing.
 
 `DELETE /projects/{id}/sources/{source_id}` answers 204 and leaves the pages of the book with their images. It answers
 409 while an import of the project is queued or running, and 404 for a source of another project or account.
