@@ -87,6 +87,11 @@ class Stage(LabeledStrEnum):
     PROOFREADING = 'proofreading', 'Proofreading'
     TYPESETTING = 'typesetting', 'Typesetting'
 
+    @property
+    def position(self) -> int:
+        """The place of the stage in the pipeline from zero, by which a stage is earlier or later than another."""
+        return list(type(self)).index(self)
+
 
 class SourceKind(LabeledStrEnum):
     """What one source of a book is, which selects the format that reads it."""
@@ -388,6 +393,14 @@ class StageState(LabeledStrEnum):
     FAILED = 'failed', 'Failed'
 
 
+class RunOutcome(LabeledStrEnum):
+    """What a run of a recipe came to on one page."""
+
+    DONE = 'done', 'Processed'
+    SKIPPED = 'skipped', 'Skipped, the page has no image to process'
+    FAILED = 'failed', 'Failed'
+
+
 class VersionScale(LabeledStrEnum):
     """The size of the image a step ran on, which tells a full run from a preview of its parameters."""
 
@@ -439,6 +452,10 @@ class JobKind(LabeledStrEnum):
 
     IMPORT_SOURCE = 'import-source', 'Import source'
     PREPARE_PAGES = 'prepare-pages', 'Prepare pages'
+    RUN_STAGE = 'run-stage', 'Run a stage'
+    PREVIEW_STEP = 'preview-step', 'Preview a step'
+    CUT_TILES = 'cut-tiles', 'Cut tiles'
+    COLLECT_VERSIONS = 'collect-versions', 'Collect old versions'
 
 
 class JobState(LabeledStrEnum):

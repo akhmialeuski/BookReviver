@@ -10,11 +10,19 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import EventName
-from bookreviver.domain.enums import JobState, PageChange
-from bookreviver.domain.events import PagesChanged, PageVersionReady, ProjectChanged, ScanReady, SourceImported
+from bookreviver.domain.enums import JobState, PageChange, Stage, StageState
+from bookreviver.domain.events import (
+    PagesChanged,
+    PageStageChanged,
+    PageVersionReady,
+    ProjectChanged,
+    ScanReady,
+    SourceImported,
+)
 from bookreviver.domain.ids import PageId
 from tests.helpers.builders import (
     make_job,
+    make_page_stage,
     make_page_version,
     make_project,
     make_scan,
@@ -209,6 +217,10 @@ class TestStreamProjectEvents:
             ScanReady(project_id=project_id, scan=scan),
             PagesChanged(project_id=project_id, page_ids=[page_id], change=PageChange.MOVED),
             PageVersionReady(project_id=project_id, version=version),
+            PageStageChanged(
+                project_id=project_id,
+                stage=make_page_stage(page_id=page_id, head_version_id=None, state=StageState.STALE),
+            ),
         ]
         reader = EventStreamReader(count=len(events))
         async with anyio.create_task_group() as group:
@@ -226,6 +238,17 @@ class TestStreamProjectEvents:
             ),
             StreamedEvent(
                 EventName.PAGE_VERSION_READY, {**project, 'page_id': str(version.page_id), 'version_id': version.id}
+            ),
+            StreamedEvent(
+                EventName.PAGE_STAGE_CHANGED,
+                {
+                    **project,
+                    'page_id': str(page_id),
+                    'stage': Stage.GEOMETRY.value,
+                    'recipe_id': None,
+                    'head_version_id': None,
+                    'state': StageState.STALE.value,
+                },
             ),
         ]
 

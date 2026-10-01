@@ -7,7 +7,7 @@ from dishka import make_async_container
 
 from bookreviver.app.providers.imaging import ImagingProvider
 from bookreviver.app.settings import Settings
-from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
+from bookreviver.ports.imaging import PageRasterizer, RenditionWriter, SourceInspector, Tiler
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -63,3 +63,15 @@ async def fx_tiler(fx_imaging: AsyncContainer) -> Tiler:
     :rtype: Tiler
     """
     return await fx_imaging.get(Tiler)
+
+
+@pytest.fixture
+async def fx_renditions(fx_imaging: AsyncContainer) -> RenditionWriter:
+    """Return the application's rendition writer.
+
+    :param fx_imaging: Container holding only the imaging provider.
+    :type fx_imaging: AsyncContainer
+    :returns: The writer the imaging provider builds.
+    :rtype: RenditionWriter
+    """
+    return await fx_imaging.get(RenditionWriter)

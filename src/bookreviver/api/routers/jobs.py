@@ -24,6 +24,7 @@ from bookreviver.api.schemas.jobs import (
     EventName,
     JobSchema,
     PagesChangedSchema,
+    PageStageChangedSchema,
     PageVersionReadySchema,
     ProjectChangedSchema,
     ScanReadySchema,
@@ -33,6 +34,7 @@ from bookreviver.domain.events import (
     DomainEvent,
     JobChanged,
     PagesChanged,
+    PageStageChanged,
     PageVersionReady,
     ProjectChanged,
     ScanReady,
@@ -143,6 +145,18 @@ async def stream_project_events(
                 yield ServerSentEvent(
                     event=EventName.PAGE_VERSION_READY,
                     data=PageVersionReadySchema(project_id=project_id, page_id=version.page_id, version_id=version.id),
+                )
+            case PageStageChanged(project_id=project_id, stage=record):
+                yield ServerSentEvent(
+                    event=EventName.PAGE_STAGE_CHANGED,
+                    data=PageStageChangedSchema(
+                        project_id=project_id,
+                        page_id=record.page_id,
+                        stage=record.stage,
+                        recipe_id=record.recipe_id,
+                        head_version_id=record.head_version_id,
+                        state=record.state,
+                    ),
                 )
             case ProjectChanged(project_id=project_id):
                 yield ServerSentEvent(event=EventName.PROJECT_CHANGED, data=ProjectChangedSchema(project_id=project_id))

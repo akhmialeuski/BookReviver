@@ -5,6 +5,7 @@ from bookreviver.adapters.imaging.djvu import DjvuFormat, DjvuLibreTools
 from bookreviver.adapters.imaging.images import ImageFormat
 from bookreviver.adapters.imaging.pdf import PdfFormat
 from bookreviver.adapters.imaging.reader import SourceFormat, SourceReader
+from bookreviver.adapters.imaging.renditions import VipsRenditionWriter
 from bookreviver.adapters.imaging.tiler import VipsTiler
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     'SourceFormat',
     'SourceReader',
     'VipsBlankPageMaker',
+    'VipsRenditionWriter',
     'VipsTiler',
 ]

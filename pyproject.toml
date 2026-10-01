@@ -53,6 +53,12 @@ bookreviver-migrate = "bookreviver.app.migrate:migrate"
 # Writes the OpenAPI schema the frontend client is generated from to docs/openapi.json
 bookreviver-openapi = "bookreviver.app.openapi:main"
 
+# Processing plugins, found by the catalogue in the application through importlib.metadata.entry_points. An external
+# package registers its own processors in this group in the same way
+[project.entry-points."bookreviver.processors"]
+"split.none" = "bookreviver.plugins.split_none:SplitNone"
+"pages.blank" = "bookreviver.plugins.blank:BlankPage"
+
 [tool.fastapi]
 entrypoint = "bookreviver.app.asgi:app"
 

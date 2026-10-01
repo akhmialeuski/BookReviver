@@ -4,7 +4,8 @@ from typing import TYPE_CHECKING, Annotated
 
 from pydantic import AfterValidator, Field, StringConstraints
 
-from bookreviver.domain.ids import PageId
+from bookreviver.domain.entities import VERSION_ID_PATTERN
+from bookreviver.domain.ids import PageId, PageVersionId
 
 if TYPE_CHECKING:
     from collections.abc import Hashable, Sequence
@@ -88,3 +89,15 @@ PageIdList = Annotated[
     AfterValidator(_refuse_repeats),
 ]
 TitleList = Annotated[list[ListedText], Field(max_length=TITLES_MAX_LENGTH)]
+
+# The most steps a recipe holds, and the longest key of a processor, which bound what a request stores
+RECIPE_STEPS_MAX_LENGTH: int = 50
+PROCESSOR_KEY_MAX_LENGTH: int = 100
+# The name of a recipe, which is never empty
+RecipeName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=TEXT_MAX_LENGTH)]
+# The key of a processor, such as ``geometry.deskew``
+ProcessorKeyText = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=PROCESSOR_KEY_MAX_LENGTH)
+]
+# The identifier of a page version, a hash cut to 16 hexadecimal digits
+VersionIdentifier = Annotated[PageVersionId, StringConstraints(pattern=f'^{VERSION_ID_PATTERN}$')]

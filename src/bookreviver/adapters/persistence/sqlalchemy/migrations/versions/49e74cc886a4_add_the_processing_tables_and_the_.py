@@ -199,6 +199,21 @@ def schema_upgrades() -> None:
         batch_op.create_index(batch_op.f('ix_page_stages_recipe_id'), ['recipe_id'], unique=False)
 
     with op.batch_alter_table('jobs', schema=None) as batch_op:
+        batch_op.alter_column(
+            'kind',
+            existing_type=sa.VARCHAR(length=13),
+            type_=sa.Enum(
+                'import-source',
+                'prepare-pages',
+                'run-stage',
+                'preview-step',
+                'cut-tiles',
+                'collect-versions',
+                name='jobkind',
+                native_enum=False,
+            ),
+            existing_nullable=False,
+        )
         batch_op.add_column(
             sa.Column(
                 'params',
@@ -236,6 +251,21 @@ def schema_downgrades() -> None:
 
     with op.batch_alter_table('jobs', schema=None) as batch_op:
         batch_op.drop_column('params')
+        batch_op.alter_column(
+            'kind',
+            existing_type=sa.Enum(
+                'import-source',
+                'prepare-pages',
+                'run-stage',
+                'preview-step',
+                'cut-tiles',
+                'collect-versions',
+                name='jobkind',
+                native_enum=False,
+            ),
+            type_=sa.VARCHAR(length=13),
+            existing_nullable=False,
+        )
 
     with op.batch_alter_table('page_stages', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_page_stages_recipe_id'))

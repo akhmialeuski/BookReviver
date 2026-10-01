@@ -1,7 +1,8 @@
 """Domain events published while use cases run, delivered to the browser as server-sent events.
 
 Each event names what changed in the book, so the browser reads again only the part it shows: a job, a source with its
-scans, the images of one scan, the order of the pages, one page version, or the description of the book.
+scans, the images of one scan, the order of the pages, one page version, the stage of a page, or the description of
+the book.
 """
 
 from typing import TYPE_CHECKING
@@ -11,7 +12,7 @@ from attrs import frozen
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Job, PageVersion, Scan, Source
+    from bookreviver.domain.entities import Job, PageStage, PageVersion, Scan, Source
     from bookreviver.domain.enums import PageChange
     from bookreviver.domain.ids import PageId, ProjectId
 
@@ -79,6 +80,16 @@ class PageVersionReady(DomainEvent):
     """
 
     version: PageVersion
+
+
+@frozen(kw_only=True)
+class PageStageChanged(DomainEvent):
+    """The current version or the state of a stage of a page changed.
+
+    :ivar stage: The record of the stage in its new state.
+    """
+
+    stage: PageStage
 
 
 @frozen(kw_only=True)

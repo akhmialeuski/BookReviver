@@ -1814,6 +1814,1892 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/stages/{stage}/recipe": {
+      "get": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Get Recipe",
+        "description": "Return the active recipe of a stage, which a project creates the first time the stage is asked for.",
+        "operationId": "get_recipe_api_v1_projects__project_id__stages__stage__recipe_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Put Recipe",
+        "description": "Replace the name and the steps of the active recipe, which marks the pages it processed stale.\n\nNo page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown\nor of another stage, or whose parameters do not fit, answers 422.",
+        "operationId": "put_recipe_api_v1_projects__project_id__stages__stage__recipe_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecipeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/stages/{stage}/variants": {
+      "get": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "List Variants",
+        "description": "List the recipes of a stage, the active one first and then the variants, oldest first.",
+        "operationId": "list_variants_api_v1_projects__project_id__stages__stage__variants_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_RecipeSchema_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Create Variant",
+        "description": "Add a variant of a stage, which is not active until it is activated.",
+        "operationId": "create_variant_api_v1_projects__project_id__stages__stage__variants_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecipeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}": {
+      "put": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Put Variant",
+        "description": "Replace the name and the steps of a recipe of a stage, which marks the pages it processed stale.",
+        "operationId": "put_variant_api_v1_projects__project_id__stages__stage__variants__recipe_id__put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          },
+          {
+            "name": "recipe_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe",
+              "title": "Recipe Id"
+            },
+            "description": "Identifier of the recipe"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecipeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}/activate": {
+      "post": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Activate Variant",
+        "description": "Make a variant the active recipe of its stage, which marks the pages the old one processed stale.",
+        "operationId": "activate_variant_api_v1_projects__project_id__stages__stage__variants__recipe_id__activate_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          },
+          {
+            "name": "recipe_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe",
+              "title": "Recipe Id"
+            },
+            "description": "Identifier of the recipe"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/stages/{stage}/run": {
+      "post": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Run Stage",
+        "description": "Run a stage over some pages by a recipe, in the background, and answer with the queued job.\n\nThe job makes a version for every step on every page and reports one step of progress for each page. A project runs\none stage at a time, and another run while one is queued or running answers 409.",
+        "operationId": "run_stage_api_v1_projects__project_id__stages__stage__run_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StageRunBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/stages/{stage}/preview": {
+      "post": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Preview Step",
+        "description": "Preview the steps of a form on one page, in the background, and answer with the queued job.\n\nThe result is a version of the preview scale, announced as ``page-version-ready``, which never becomes the current\nversion of the stage.",
+        "operationId": "preview_step_api_v1_projects__project_id__stages__stage__preview_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StepPreviewBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pages/{page_id}/stages": {
+      "get": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "List Page Stages",
+        "description": "List the stages a page has been through, with the current version and the state of each, in pipeline order.",
+        "operationId": "list_page_stages_api_v1_projects__project_id__pages__page_id__stages_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PageStageSchema_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pages/{page_id}/stages/{stage}": {
+      "put": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Choose Version",
+        "description": "Make a version the current one of a stage of a page, which marks the later stages of the page stale.\n\nThe version must be ready and made by a full run of this page in this stage. The answer is 409 for one that is not.",
+        "operationId": "choose_version_api_v1_projects__project_id__pages__page_id__stages__stage__put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeadChoice"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageStageSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pages/{page_id}/versions": {
+      "get": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "List Versions",
+        "description": "List the versions of a page, the earliest first, of one stage and one scale or of all.",
+        "operationId": "list_versions_api_v1_projects__project_id__pages__page_id__versions_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Size"
+            }
+          },
+          {
+            "name": "stage",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Stage"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stage"
+            }
+          },
+          {
+            "name": "scale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/VersionScale"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scale"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PageVersionSchema_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}": {
+      "get": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Get Version",
+        "description": "Return one version of a page, with its provenance, its transform and the paths of its images.",
+        "operationId": "get_version_api_v1_projects__project_id__pages__page_id__versions__version_id__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{16}$",
+              "description": "Identifier of the page version",
+              "title": "Version Id"
+            },
+            "description": "Identifier of the page version"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageVersionSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}/tiles": {
+      "post": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Cut Version Tiles",
+        "description": "Cut the tile pyramid of a version in the background, which a viewer asks for when a version has none.",
+        "operationId": "cut_version_tiles_api_v1_projects__project_id__pages__page_id__versions__version_id__tiles_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{16}$",
+              "description": "Identifier of the page version",
+              "title": "Version Id"
+            },
+            "description": "Identifier of the page version"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/versions/collect": {
+      "post": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Collect Versions",
+        "description": "Delete the old versions nothing needs, in the background, and answer with the queued job.\n\nA version goes when it is not current, not in the chain of inputs of a current version, not a base version, and\nolder than the retention period of its scale. A collection that is queued or running already is the answer.",
+        "operationId": "collect_versions_api_v1_projects__project_id__versions_collect_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}": {
+      "get": {
+        "tags": [
+          "edits"
+        ],
+        "summary": "List Edits",
+        "description": "List the manual edits of one stage of a page, by processor.",
+        "operationId": "list_edits_api_v1_projects__project_id__pages__page_id__edits__stage__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the processor that reads the edit"
+            },
+            "description": "Stage of the processor that reads the edit"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PageEditSchema_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{processor_key}": {
+      "put": {
+        "tags": [
+          "edits"
+        ],
+        "summary": "Put Edit",
+        "description": "Save the edit a processor reads, replacing the one it had, and mark the stage of the page stale.\n\nThe form carries the editor that drew the edit, its shape as JSON text, and the mask as a file for a brush edit. The\nanswer is 422 for an edit the processor does not read, and nothing is processed by this request.",
+        "operationId": "put_edit_api_v1_projects__project_id__pages__page_id__edits__stage___processor_key__put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the processor that reads the edit"
+            },
+            "description": "Stage of the processor that reads the edit"
+          },
+          {
+            "name": "processor_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100,
+              "description": "Key of the processor that reads the edit",
+              "title": "Processor Key"
+            },
+            "description": "Key of the processor that reads the edit"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/EditForm"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageEditSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "edits"
+        ],
+        "summary": "Delete Edit",
+        "description": "Delete the edit a processor reads, and mark the stage of the page stale.",
+        "operationId": "delete_edit_api_v1_projects__project_id__pages__page_id__edits__stage___processor_key__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the processor that reads the edit"
+            },
+            "description": "Stage of the processor that reads the edit"
+          },
+          {
+            "name": "processor_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100,
+              "description": "Key of the processor that reads the edit",
+              "title": "Processor Key"
+            },
+            "description": "Key of the processor that reads the edit"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/processors": {
+      "get": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "List Processors",
+        "description": "List the processors a recipe can use, by key, each with the JSON Schema of its parameters.",
+        "operationId": "list_processors_api_v1_processors_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ProcessorSchema_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{job_id}": {
       "get": {
         "tags": [
@@ -3687,6 +5573,63 @@
         "title": "ContributorSchema",
         "description": "A person who took part in the making of a book, with the role they had.\n\n:ivar name: Name as printed in the book.\n:ivar role: Role of the person, a code of the MARC list of relators."
       },
+      "EditForm": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/EditorKind"
+          },
+          "geometry": {
+            "anyOf": [
+              {
+                "type": "string",
+                "contentMediaType": "application/json",
+                "contentSchema": {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geometry"
+          },
+          "mask": {
+            "anyOf": [
+              {
+                "type": "string",
+                "contentMediaType": "application/octet-stream"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mask"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "EditForm",
+        "description": "A manual edit as the form of a request carries it.\n\n:ivar kind: Editor that drew the edit.\n:ivar geometry: The shape the user drew as JSON, or omitted for an edit that is only a mask.\n:ivar mask: The mask the user painted, or omitted."
+      },
+      "EditorKind": {
+        "type": "string",
+        "enum": [
+          "none",
+          "rect",
+          "quad",
+          "line",
+          "rotation",
+          "mesh",
+          "brush-mask",
+          "regions"
+        ],
+        "title": "EditorKind",
+        "description": "The editor a processor offers for the manual edit of its input."
+      },
       "ErrorModel": {
         "properties": {
           "detail": {
@@ -3752,6 +5695,22 @@
           "errors"
         ],
         "title": "RequestValidationError"
+      },
+      "HeadChoice": {
+        "properties": {
+          "version_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$",
+            "title": "Version Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version_id"
+        ],
+        "title": "HeadChoice",
+        "description": "The version to make the current one of a stage.\n\n:ivar version_id: Identifier of the version, which must be ready and made by a full run of this page and stage."
       },
       "IdentifierSchema": {
         "properties": {
@@ -3862,7 +5821,11 @@
         "type": "string",
         "enum": [
           "import-source",
-          "prepare-pages"
+          "prepare-pages",
+          "run-stage",
+          "preview-step",
+          "cut-tiles",
+          "collect-versions"
         ],
         "title": "JobKind",
         "description": "What a background job does."
@@ -4255,6 +6218,70 @@
         "title": "PageCreate",
         "description": "A page to add without a scan: a placeholder that waits for one, or a generated blank leaf.\n\nThe place is the page it lies before or after, and the end of the book when neither is given. A blank leaf has the\nmedian size of the book's pages unless its size is given, in which case both sides are, and the resolution may be.\n\n:ivar origin: Whether the page is a blank leaf or a placeholder; a page from a scan is made by the split and by\n              binding a scan.\n:ivar kind: Role of the page in the book.\n:ivar label: Printed number of the page, or empty.\n:ivar notes: Notes of the user.\n:ivar width_px: Width of a blank leaf in pixels, given with its height.\n:ivar height_px: Height of a blank leaf in pixels, given with its width.\n:ivar dpi: Resolution of a blank leaf in dots per inch, given with its size."
       },
+      "PageEditSchema": {
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Page Id"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "processor_key": {
+            "type": "string",
+            "title": "Processor Key"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EditorKind"
+          },
+          "geometry": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geometry"
+          },
+          "mask": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mask"
+          },
+          "edit_hash": {
+            "type": "string",
+            "title": "Edit Hash"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_id",
+          "stage",
+          "processor_key",
+          "kind",
+          "geometry",
+          "mask",
+          "edit_hash",
+          "updated_at"
+        ],
+        "title": "PageEditSchema",
+        "description": "A manual edit of a page.\n\n:ivar page_id: Page the edit belongs to.\n:ivar stage: Stage of the processor that reads the edit.\n:ivar processor_key: Key of that processor.\n:ivar kind: Editor that drew the edit.\n:ivar geometry: The shape as JSON, or None for an edit that is only a mask.\n:ivar mask: Path of the mask on the IIIF route, or None.\n:ivar edit_hash: Hash of the shape and the mask.\n:ivar updated_at: When the edit was last saved."
+      },
       "PageKind": {
         "type": "string",
         "enum": [
@@ -4410,6 +6437,60 @@
         "title": "PageSchema",
         "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except\n                in a manifest listing only the included pages, which numbers those.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar kind: Role of the page in the book.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar images: Paths of the images of the page's base version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
       },
+      "PageStageSchema": {
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Page Id"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "recipe_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipe Id"
+          },
+          "head_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Version Id"
+          },
+          "state": {
+            "$ref": "#/components/schemas/StageState"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_id",
+          "stage",
+          "recipe_id",
+          "head_version_id",
+          "state",
+          "updated_at"
+        ],
+        "title": "PageStageSchema",
+        "description": "The current version of a stage of a page and whether it is up to date; the data of a stage event too.\n\n:ivar page_id: Page the record belongs to.\n:ivar stage: The stage.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar head_version_id: The current version of the stage, or None.\n:ivar state: Whether the current version matches the inputs of the stage.\n:ivar updated_at: When the record last changed."
+      },
       "PageUpdate": {
         "properties": {
           "label": {
@@ -4450,6 +6531,274 @@
         "title": "PageUpdate",
         "description": "A JSON Merge Patch of a page: an omitted field is kept, and a null label or note is cleared.\n\nThe kind and the inclusion of a page have no empty value, so they may be omitted but not null.\n\n:ivar label: New printed number, or None to clear it.\n:ivar kind: New role of the page in the book.\n:ivar included: New decision whether the page is part of the book.\n:ivar notes: New notes, or None to clear them."
       },
+      "PageVersionSchema": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Page Id"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "processor": {
+            "$ref": "#/components/schemas/ProcessorRefSchema"
+          },
+          "input_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Id"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "transform": {
+            "$ref": "#/components/schemas/TransformSchema"
+          },
+          "data": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Data"
+          },
+          "state": {
+            "$ref": "#/components/schemas/VersionState"
+          },
+          "scale": {
+            "$ref": "#/components/schemas/VersionScale"
+          },
+          "edit_hash": {
+            "type": "string",
+            "title": "Edit Hash"
+          },
+          "tiles_ready": {
+            "type": "boolean",
+            "title": "Tiles Ready"
+          },
+          "error": {
+            "type": "string",
+            "title": "Error"
+          },
+          "images": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ImagePathsSchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "page_id",
+          "stage",
+          "processor",
+          "input_id",
+          "params",
+          "transform",
+          "data",
+          "state",
+          "scale",
+          "edit_hash",
+          "tiles_ready",
+          "error",
+          "images",
+          "preview",
+          "created_at"
+        ],
+        "title": "PageVersionSchema",
+        "description": "The result of one processing step on one page.\n\n:ivar id: Identifier of the version, the hash of what produced it.\n:ivar page_id: Page the version belongs to.\n:ivar stage: Stage of the step.\n:ivar processor: Processor that ran the step.\n:ivar input_id: Version the step read, or None for a base version.\n:ivar params: Parameters of the step.\n:ivar transform: Transform of coordinates from the input.\n:ivar data: Data the step found, such as an angle or a confidence.\n:ivar state: Where the version is in its life cycle.\n:ivar scale: Whether the step ran on the full image or on a preview.\n:ivar edit_hash: Hash of the manual edit the step read, or empty.\n:ivar tiles_ready: Whether the tile pyramid is cut, which a client asks for when it is not.\n:ivar error: Why the version failed, or empty.\n:ivar images: Paths of the images of a ready full run that has an image, or None.\n:ivar preview: Path of the preview image of a preview run, or None.\n:ivar created_at: When the version was created."
+      },
+      "Page_PageEditSchema_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PageEditSchema"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[PageEditSchema]"
+      },
+      "Page_PageStageSchema_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PageStageSchema"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[PageStageSchema]"
+      },
+      "Page_PageVersionSchema_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PageVersionSchema"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[PageVersionSchema]"
+      },
+      "Page_ProcessorSchema_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProcessorSchema"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[ProcessorSchema]"
+      },
       "Page_ProjectSchema_": {
         "properties": {
           "items": {
@@ -4489,6 +6838,46 @@
           "pages"
         ],
         "title": "Page[ProjectSchema]"
+      },
+      "Page_RecipeSchema_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecipeSchema"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[RecipeSchema]"
       },
       "Page_ScanSchema_": {
         "properties": {
@@ -4614,6 +7003,107 @@
         ],
         "title": "PagesMove",
         "description": "Where to put a group of pages, which keep their order in the book.\n\n:ivar page_ids: The pages to move, each at most once."
+      },
+      "PointSchema": {
+        "properties": {
+          "x": {
+            "type": "number",
+            "title": "X"
+          },
+          "y": {
+            "type": "number",
+            "title": "Y"
+          }
+        },
+        "type": "object",
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "PointSchema",
+        "description": "A point in the pixels of an image.\n\n:ivar x: Distance from the left edge.\n:ivar y: Distance from the top edge."
+      },
+      "ProcessorRefSchema": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "version"
+        ],
+        "title": "ProcessorRefSchema",
+        "description": "The processor that made a version.\n\n:ivar key: Key of the processor.\n:ivar version: Version of its algorithm."
+      },
+      "ProcessorSchema": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ProcessorScope"
+          },
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/VersionOutput"
+            },
+            "type": "array",
+            "title": "Outputs"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parameters"
+          },
+          "editor": {
+            "$ref": "#/components/schemas/EditorKind"
+          },
+          "pool": {
+            "$ref": "#/components/schemas/WorkerPool"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "version",
+          "title",
+          "stage",
+          "scope",
+          "outputs",
+          "parameters",
+          "editor",
+          "pool"
+        ],
+        "title": "ProcessorSchema",
+        "description": "A processor a recipe can use.\n\n:ivar key: Key of the processor, such as ``geometry.deskew``.\n:ivar version: Version of its algorithm.\n:ivar title: Name the interface shows.\n:ivar stage: Stage whose recipe it can be put into.\n:ivar scope: Whether it makes one output for a page or one for each part of a scan.\n:ivar outputs: What it writes.\n:ivar parameters: JSON Schema of its parameters, from which the interface builds the form.\n:ivar editor: Editor of the manual edit it reads.\n:ivar pool: Class of worker it runs on."
+      },
+      "ProcessorScope": {
+        "type": "string",
+        "enum": [
+          "page",
+          "split"
+        ],
+        "title": "ProcessorScope",
+        "description": "How many outputs a processor makes from its input."
       },
       "ProgressSchema": {
         "properties": {
@@ -5254,6 +7744,113 @@
         "title": "ProjectUpdate",
         "description": "A JSON Merge Patch of a book description: an omitted field is kept and a null one is cleared.\n\n:ivar title: New title, which may be omitted but not null.\n:ivar subtitle: New subtitle, or None to clear it.\n:ivar parallel_titles: New titles in other languages, replacing the list, or None to empty it.\n:ivar original_title: New title of the original work, or None to clear it.\n:ivar contributors: New people who made the book, replacing the list, or None to empty it.\n:ivar publisher: New publisher, or None to clear it.\n:ivar printer: New printing house, or None to clear it.\n:ivar publication_place: New city of publication, or None to clear it.\n:ivar publication_year: New year of publication, or None to clear it.\n:ivar edition: New edition statement, or None to clear it.\n:ivar censorship: New censor's permit, or None to clear it.\n:ivar series: New series, or None to clear it.\n:ivar series_number: New number in the series, or None to clear it.\n:ivar volume: New volume, or None to clear it.\n:ivar languages: New ISO 639-3 codes, replacing the list, or None to empty it.\n:ivar orthography: New orthography, or None to set it to unknown.\n:ivar script: New writing system, or None to set it to unknown.\n:ivar printed_pagination: New pagination, or None to clear it.\n:ivar height_cm: New height in centimetres, or None to clear it.\n:ivar illustrations: New statement of the illustrations, or None to clear it.\n:ivar binding: New binding, or None to clear it.\n:ivar identifiers: New identifiers, replacing the list, or None to empty it.\n:ivar subjects: New topics, replacing the list, or None to empty it.\n:ivar rights: New publishing rights, or None to set them to unknown.\n:ivar copy_holder: New owner of the scanned copy, or None to clear it.\n:ivar copy_notes: New marks of the scanned copy, or None to clear them.\n:ivar notes: New notes, or None to clear them.\n:ivar image_policy: New way to store the images of new scans and page versions, or None to set the default.\n:ivar cover_page_id: New cover page, which must be a page of the project, or None to fall back to the first page."
       },
+      "QuadSchema": {
+        "properties": {
+          "top_left": {
+            "$ref": "#/components/schemas/PointSchema"
+          },
+          "top_right": {
+            "$ref": "#/components/schemas/PointSchema"
+          },
+          "bottom_right": {
+            "$ref": "#/components/schemas/PointSchema"
+          },
+          "bottom_left": {
+            "$ref": "#/components/schemas/PointSchema"
+          }
+        },
+        "type": "object",
+        "required": [
+          "top_left",
+          "top_right",
+          "bottom_right",
+          "bottom_left"
+        ],
+        "title": "QuadSchema",
+        "description": "A quadrilateral in the pixels of an image.\n\n:ivar top_left: Corner at the top left.\n:ivar top_right: Corner at the top right.\n:ivar bottom_right: Corner at the bottom right.\n:ivar bottom_left: Corner at the bottom left."
+      },
+      "RecipeBody": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/StepBody"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Steps"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "steps"
+        ],
+        "title": "RecipeBody",
+        "description": "The name and the steps of a recipe, for the active recipe and for a variant alike.\n\n:ivar name: Name of the recipe.\n:ivar steps: Its steps in the order they run, each checked against its processor."
+      },
+      "RecipeSchema": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/StepSchema"
+            },
+            "type": "array",
+            "title": "Steps"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "stage",
+          "name",
+          "steps",
+          "active",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "RecipeSchema",
+        "description": "A recipe: the ordered steps of one stage, active or a variant.\n\n:ivar id: Identifier of the recipe.\n:ivar project_id: Project owning the recipe.\n:ivar stage: Stage the recipe processes.\n:ivar name: Name the user sees.\n:ivar steps: The steps in the order they run.\n:ivar active: Whether the recipe is the one the stage runs by default.\n:ivar created_at: When the recipe was created.\n:ivar updated_at: When the recipe was last changed."
+      },
       "RejectedFileSchema": {
         "properties": {
           "file_name": {
@@ -5589,6 +8186,219 @@
         "title": "SourceSchema",
         "description": "An uploaded file of a book, or the files of one indirect DjVu document, never changed after its import.\n\n:ivar id: Identifier of the source.\n:ivar kind: Kind of the source, which selects the format that reads it.\n:ivar file_type: Exact format of the main file.\n:ivar file_name: Name the browser sent for the main file.\n:ivar files: Stored files, the main file first; more than one only for an indirect DjVu document.\n:ivar size_bytes: Total size of the files in bytes.\n:ivar sha256: SHA-256 digest of the main file.\n:ivar scan_count: Number of scans the source holds.\n:ivar metadata: Technical metadata of the format, whose keys depend on the kind of source.\n:ivar suggestion: Values of the book description found in the file.\n:ivar import_job_id: Import job that created the source, or None once that job is deleted.\n:ivar imported_at: When the source became part of the project."
       },
+      "Stage": {
+        "type": "string",
+        "enum": [
+          "import",
+          "page-split",
+          "page-order",
+          "geometry",
+          "cleanup",
+          "layout",
+          "background",
+          "recognition",
+          "proofreading",
+          "typesetting"
+        ],
+        "title": "Stage",
+        "description": "A step of the digitisation pipeline, in pipeline order."
+      },
+      "StageRunBody": {
+        "properties": {
+          "recipe_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipe Id"
+          },
+          "page_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array",
+                "maxItems": 2000,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "StageRunBody",
+        "description": "What a run of a stage is asked to do; the stage is in the address.\n\n:ivar recipe_id: Recipe to run it by, or omitted for the active recipe.\n:ivar page_ids: Pages to run it on, or omitted for every page with an image."
+      },
+      "StageState": {
+        "type": "string",
+        "enum": [
+          "fresh",
+          "stale",
+          "failed"
+        ],
+        "title": "StageState",
+        "description": "Whether the current version of a stage of a page still matches the inputs the stage would run on."
+      },
+      "StepBody": {
+        "properties": {
+          "processor_key": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Processor Key"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "processor_key"
+        ],
+        "title": "StepBody",
+        "description": "A step of a recipe or of a preview as the interface sends it.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which the processor checks and fills in."
+      },
+      "StepPreviewBody": {
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Page Id"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/StepBody"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Steps"
+          },
+          "step_index": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Step Index"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "page_id",
+          "steps",
+          "step_index"
+        ],
+        "title": "StepPreviewBody",
+        "description": "The steps of a form to preview on one page, up to one of them; the stage is in the address.\n\n:ivar page_id: Page to preview on.\n:ivar steps: The steps as the form has them.\n:ivar step_index: Index of the last step whose result is wanted."
+      },
+      "StepSchema": {
+        "properties": {
+          "processor_key": {
+            "type": "string",
+            "title": "Processor Key"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          }
+        },
+        "type": "object",
+        "required": [
+          "processor_key",
+          "params"
+        ],
+        "title": "StepSchema",
+        "description": "One step of a recipe: a processor and the parameters it runs with.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, with the defaults of the processor filled in."
+      },
+      "TransformKind": {
+        "type": "string",
+        "enum": [
+          "identity",
+          "crop",
+          "rotate",
+          "perspective",
+          "mesh"
+        ],
+        "title": "TransformKind",
+        "description": "Kind of the coordinate transform a processing step applies from its input to its output."
+      },
+      "TransformSchema": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/TransformKind"
+          },
+          "quad": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuadSchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "angle": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Angle"
+          },
+          "mesh_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mesh Key"
+          },
+          "matrix": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matrix"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "quad",
+          "angle",
+          "mesh_key",
+          "matrix"
+        ],
+        "title": "TransformSchema",
+        "description": "How a step moves the coordinates of its input image to its output image.\n\n:ivar kind: Kind of the transform.\n:ivar quad: Area of the input that becomes the output, for a crop or a perspective correction.\n:ivar angle: Angle of a rotation in degrees, counter-clockwise.\n:ivar mesh_key: Storage key of the mesh a dewarping follows.\n:ivar matrix: The nine numbers of the 3 by 3 matrix from the input to the output, in rows."
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -5628,6 +8438,47 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VersionOutput": {
+        "type": "string",
+        "enum": [
+          "image",
+          "mask",
+          "regions",
+          "text"
+        ],
+        "title": "VersionOutput",
+        "description": "What a processing step writes."
+      },
+      "VersionScale": {
+        "type": "string",
+        "enum": [
+          "full",
+          "preview"
+        ],
+        "title": "VersionScale",
+        "description": "The size of the image a step ran on, which tells a full run from a preview of its parameters."
+      },
+      "VersionState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "ready",
+          "failed"
+        ],
+        "title": "VersionState",
+        "description": "Lifecycle of a page version, from its creation to its result."
+      },
+      "WorkerPool": {
+        "type": "string",
+        "enum": [
+          "cpu",
+          "gpu",
+          "llm"
+        ],
+        "title": "WorkerPool",
+        "description": "Class of worker a job needs, which routes it to the right queue."
       },
       "Problem": {
         "properties": {

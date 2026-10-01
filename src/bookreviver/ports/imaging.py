@@ -15,8 +15,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
-    from bookreviver.domain.enums import Rendition, SourceKind
-    from bookreviver.domain.values import SourceAnalysis, UploadedSource
+    from bookreviver.domain.enums import ColorMode, Rendition, SourceKind
+    from bookreviver.domain.values import RenditionInfo, SourceAnalysis, UploadedSource
 
 
 class SourceInspector(ABC):
@@ -119,6 +119,31 @@ class Tiler(ABC):
         :type image: Path
         :param target: Path to write the thumbnail at.
         :type target: Path
+        """
+
+
+class RenditionWriter(ABC):
+    """Writes the files of a page version from the image a processor made: ``full``, ``preview`` and ``thumb``."""
+
+    @abstractmethod
+    async def write(self, image: Path, target_dir: Path, *, full: Rendition, color_mode: ColorMode) -> RenditionInfo:
+        """Write ``full``, ``preview`` and ``thumb`` of ``image`` into the new directory ``target_dir``.
+
+        ``full`` is the image in the format asked for: a bilevel image is a 1-bit PNG with exactly two values, a JPEG
+        is written at the configured quality, and an image that already is a file of the format asked for is copied as
+        it is. ``preview`` and ``thumb`` are always JPEG. The pyramid is cut apart by the ``Tiler``.
+
+        :param image: Image the processor made, a PNG or a JPEG.
+        :type image: Path
+        :param target_dir: Directory to create, which holds the files.
+        :type target_dir: Path
+        :param full: Format of the ``full`` image, ``Rendition.FULL_JPEG`` or ``Rendition.FULL_PNG``.
+        :type full: Rendition
+        :param color_mode: Whether the image is bilevel, gray or colour.
+        :type color_mode: ColorMode
+        :returns: The size of the image and the format of its ``full`` file.
+        :rtype: RenditionInfo
+        :raises ValueError: If ``full`` is not a format of the ``full`` image.
         """
 
 

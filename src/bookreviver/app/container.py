@@ -10,6 +10,7 @@ from bookreviver.app.providers.database import DatabaseProvider
 from bookreviver.app.providers.imaging import ImagingProvider
 from bookreviver.app.providers.imports import ImportsProvider
 from bookreviver.app.providers.persistence import PERSISTENCE_PROVIDERS
+from bookreviver.app.providers.processing import ProcessingProvider
 from bookreviver.app.providers.projects import ProjectsProvider
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.settings import Settings
@@ -39,6 +40,7 @@ def build_container(settings: Settings, extra_providers: Sequence[Provider] = ()
         AccountsProvider(),
         ImportsProvider(),
         ProjectsProvider(),
+        ProcessingProvider(),
         *extra_providers,
         context={Settings: settings},
     )
