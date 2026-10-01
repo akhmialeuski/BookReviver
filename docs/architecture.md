@@ -626,8 +626,10 @@ needs, all inside one project and in `order_key` order: `list_by_ids` reads the 
 of another project like a missing one, `list_for_source` joins `pages` with `scans` so that placeholders and blank
 leaves never belong to a source, `neighbour_key` finds the key next to a key on one side while leaving the moving pages
 out, and `update_many` writes several pages in the one transaction, all or none. `ScanRepository.list_by_ids` gives
-the manifest the source of every page of a window in one query. `PageVersionRepository.list_base_versions`
-reads the base versions of a whole window in one call, so the manifest costs no query per page.
+the manifest the source of every page of a window in one query. The manifest shows each page by its current version of
+the latest stage that has an image, found by the `PageStage` records, and by its newest base version when no stage has
+one yet. `PageStageRepository.list_for_pages`, `PageVersionRepository.list_by_ids` and `list_base_versions` read those
+for a whole window in one call each, so the manifest costs no query per page, and the shape of its answer is the same.
 `ProjectRepository.overview` counts the book of one
 project, and the project listing counts every project of a window in the same query.
 `OrderKeys` is a port with an adapter on fractional-indexing, because the domain imports only the standard library

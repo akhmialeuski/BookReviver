@@ -842,6 +842,20 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
         )
 
     @override
+    async def list_by_ids(self, version_ids: Collection[PageVersionId]) -> Sequence[PageVersion]:
+        """Return the stored versions among the given identifiers, the earliest first, ties by identifier.
+
+        :param version_ids: Identifiers of the versions to read.
+        :type version_ids: Collection[PageVersionId]
+        :returns: The versions found.
+        :rtype: Sequence[PageVersion]
+        """
+        return sorted(
+            (version for version in self._rows.values() if version.id in version_ids),
+            key=attrgetter('created_at', ID_ATTRIBUTE),
+        )
+
+    @override
     async def find(self, version_id: PageVersionId) -> PageVersion | None:
         """Return the version with this identifier.
 
@@ -994,6 +1008,21 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         order = list(Stage)
         return sorted(
             (stage for stage in self._rows.values() if stage.page_id == page_id), key=lambda s: order.index(s.stage)
+        )
+
+    @override
+    async def list_for_pages(self, page_ids: Collection[PageId]) -> Sequence[PageStage]:
+        """Return the records of several pages, by page and then in the order of the stages.
+
+        :param page_ids: Pages whose records are read.
+        :type page_ids: Collection[PageId]
+        :returns: Every record of those pages.
+        :rtype: Sequence[PageStage]
+        """
+        order = list(Stage)
+        return sorted(
+            (record for record in self._rows.values() if record.page_id in page_ids),
+            key=lambda record: (str(record.page_id), order.index(record.stage)),
         )
 
     @override

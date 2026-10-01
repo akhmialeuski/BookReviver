@@ -8,11 +8,20 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
+from bookreviver.domain.enums import Stage, VersionState
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import PageId, StorageKey
 from bookreviver.domain.keys import KeySegment, ProjectKeys
-from bookreviver.domain.values import SliceRequest
-from tests.helpers.builders import make_page, make_page_version, make_project, make_scan, make_source, new_account_id
+from bookreviver.domain.values import Renditions, SliceRequest
+from tests.helpers.builders import (
+    make_page,
+    make_page_stage,
+    make_page_version,
+    make_project,
+    make_scan,
+    make_source,
+    new_account_id,
+)
 from tests.helpers.seeding import commit_project
 
 if TYPE_CHECKING:
@@ -30,6 +39,17 @@ STORED_KEYS: list[str] = ['a1', 'a0', 'a0V']
 BOOK_ORDER: list[int] = [1, 2, 0]
 WINDOW: SliceRequest = SliceRequest(offset=1, limit=1)
 FILE_CONTENT: bytes = b'derived file'
+
+
+def _ready(version: PageVersion) -> PageVersion:
+    """Make a version that has its files written.
+
+    :param version: A pending version.
+    :type version: PageVersion
+    :returns: The version as ready, with its renditions ready.
+    :rtype: PageVersion
+    """
+    return evolve(version, renditions=Renditions(ready=True), state=VersionState.READY)
 
 
 async def _commit_book(database: InMemoryDatabase, project: Project) -> tuple[list[Page], list[PageVersion]]:
@@ -75,7 +95,7 @@ class TestManifest:
 
         expect([overview.page for overview in manifest.items] == [pages[index] for index in BOOK_ORDER])
         expect([overview.position for overview in manifest.items] == [0, 1, 2])
-        expect([overview.base_version for overview in manifest.items] == [None, versions[1], versions[0]])
+        expect([overview.image_version for overview in manifest.items] == [None, versions[1], versions[0]])
         expect(manifest.total == len(pages))
         assert_expectations()
 
@@ -119,7 +139,61 @@ class TestManifest:
 
         manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest())
 
-        assert [overview.base_version for overview in manifest.items] == [new]
+        assert [overview.image_version for overview in manifest.items] == [new]
+
+    async def test_shows_the_current_version_of_the_latest_stage_that_has_an_image(
+        self, fx_service: Callable[[], PageService], fx_database: InMemoryDatabase, fx_actor: Actor
+    ) -> None:
+        """Verify the page shows its deskewed version, and not the base version it was made from or the regions without an image.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        page = make_page(project_id=project.id)
+        base = _ready(make_page_version(page_id=page.id, minutes=1))
+        deskewed = evolve(_ready(make_page_version(page_id=page.id, minutes=2)), stage=Stage.GEOMETRY, input_id=base.id)
+        regions = evolve(make_page_version(page_id=page.id, minutes=3), stage=Stage.LAYOUT, input_id=deskewed.id)
+        await commit_project(fx_database, project, page, versions=[base, deskewed, regions])
+        uow = InMemoryUnitOfWork(fx_database)
+        for version in (base, deskewed):
+            await uow.page_stages.save(
+                make_page_stage(page_id=page.id, stage=version.stage, head_version_id=version.id)
+            )
+        await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.LAYOUT, head_version_id=regions.id))
+        await uow.commit()
+
+        manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest())
+
+        assert [overview.image_version for overview in manifest.items] == [deskewed]
+
+    async def test_shows_the_current_version_even_when_a_newer_base_version_exists(
+        self, fx_service: Callable[[], PageService], fx_database: InMemoryDatabase, fx_actor: Actor
+    ) -> None:
+        """Verify a version the user chose as current is shown over a base version that was made after it.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        page = make_page(project_id=project.id)
+        chosen, newer = (_ready(make_page_version(page_id=page.id, minutes=minutes)) for minutes in (1, 2))
+        await commit_project(fx_database, project, page, versions=[chosen, newer])
+        uow = InMemoryUnitOfWork(fx_database)
+        await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=chosen.id))
+        await uow.commit()
+
+        manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest())
+
+        assert [overview.image_version for overview in manifest.items] == [chosen]
 
     async def test_another_accounts_project_is_not_found(
         self, fx_service: Callable[[], PageService], fx_database: InMemoryDatabase, fx_actor: Actor
@@ -206,7 +280,7 @@ class TestGet:
 
         expect(overview.page == pages[0])
         expect(overview.position == len(pages) - 1)
-        expect(overview.base_version == versions[0])
+        expect(overview.image_version == versions[0])
         assert_expectations()
 
     async def test_page_of_another_project_of_the_actor_is_not_found(

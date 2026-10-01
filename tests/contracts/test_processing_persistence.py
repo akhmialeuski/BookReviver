@@ -296,6 +296,31 @@ class TestPageStageRepository:
             Stage.CLEANUP,
         ]
 
+    async def test_list_for_pages_reads_the_records_of_the_given_pages_only(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify one read gives the records of several pages in pipeline order, and none of the other pages.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        _, first = await _store_page(fx_uow_factory, fx_new_owner)
+        _, second = await _store_page(fx_uow_factory, fx_new_owner)
+        _, other = await _store_page(fx_uow_factory, fx_new_owner)
+        uow = await fx_uow_factory()
+        for page_id in (first, second, other):
+            for stage in (Stage.GEOMETRY, Stage.PAGE_SPLIT):
+                await uow.page_stages.save(make_page_stage(page_id=page_id, stage=stage))
+        found = await uow.page_stages.list_for_pages([first, second])
+        by_page = {page_id: [r.stage for r in found if r.page_id == page_id] for page_id in (first, second, other)}
+        assert by_page == {
+            first: [Stage.PAGE_SPLIT, Stage.GEOMETRY],
+            second: [Stage.PAGE_SPLIT, Stage.GEOMETRY],
+            other: [],
+        }
+
     async def test_head_version_and_recipe_are_checked(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
@@ -541,6 +566,25 @@ class TestPageVersionProcessing:
             base,
             None,
         )
+
+    async def test_list_by_ids_reads_the_versions_found_and_leaves_out_the_others(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify one read gives the stored versions among the identifiers, the earliest first.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        uow = await fx_uow_factory()
+        older = make_page_version(page_id=page_id, minutes=1)
+        newer = make_page_version(page_id=page_id, minutes=2)
+        unwanted = make_page_version(page_id=page_id, minutes=3)
+        await uow.page_versions.add_many([newer, older, unwanted])
+        found = await uow.page_versions.list_by_ids([newer.id, older.id, PageVersionId('f' * 16)])
+        assert [version.id for version in found] == [older.id, newer.id]
 
     async def test_list_for_stage_filters_and_pages_the_versions_of_a_page(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory

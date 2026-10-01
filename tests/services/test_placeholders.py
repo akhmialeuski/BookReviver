@@ -279,7 +279,7 @@ class TestAddPlaceholder:
         )
         expect((page.scan_id, page.slot, page.included) == (None, 0, True))
         expect(page.order_key > book.pages[0].order_key)
-        expect((overview.position, overview.base_version) == (1, None))
+        expect((overview.position, overview.image_version) == (1, None))
         expect(_stored_versions(fx_database, page) == [])
         expect(_job_kinds(fx_database) == [])
         expect(

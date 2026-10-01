@@ -847,6 +847,21 @@ class SqlAlchemyPageVersionRepository(
         return [self._mapper.to_entity(row) for row in rows]
 
     @override
+    async def list_by_ids(self, version_ids: Collection[PageVersionId]) -> Sequence[PageVersion]:
+        """Return the stored versions among the given identifiers, in one ``IN`` query.
+
+        :param version_ids: Identifiers of the versions to read.
+        :type version_ids: Collection[PageVersionId]
+        :returns: The versions found, the earliest first, ties by identifier.
+        :rtype: Sequence[PageVersion]
+        """
+        rows = await self._rows.get_many(
+            CollectionFilter(field_name=PageVersionRow.id, values=version_ids),
+            order_by=[PageVersionRow.created_at.asc(), PageVersionRow.id.asc()],
+        )
+        return [self._mapper.to_entity(row) for row in rows]
+
+    @override
     async def find(self, version_id: PageVersionId) -> PageVersion | None:
         """Return the version with this identifier.
 
@@ -1030,6 +1045,20 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
         order = list(Stage)
         records = [self._mapper.to_entity(row) for row in await self._rows.get_many(page_id=page_id)]
         return sorted(records, key=lambda record: order.index(record.stage))
+
+    @override
+    async def list_for_pages(self, page_ids: Collection[PageId]) -> Sequence[PageStage]:
+        """Return the records of several pages in one ``IN`` query, by page and then in the order of the stages.
+
+        :param page_ids: Pages whose records are read.
+        :type page_ids: Collection[PageId]
+        :returns: Every record of those pages.
+        :rtype: Sequence[PageStage]
+        """
+        order = list(Stage)
+        rows = await self._rows.get_many(CollectionFilter(field_name=PageStageRow.page_id, values=page_ids))
+        records = [self._mapper.to_entity(row) for row in rows]
+        return sorted(records, key=lambda record: (str(record.page_id), order.index(record.stage)))
 
     @override
     async def list_for_recipe(self, recipe_id: RecipeId) -> Sequence[PageStage]:

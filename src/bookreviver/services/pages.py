@@ -57,7 +57,7 @@ from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Collection, Sequence
+    from collections.abc import AsyncIterator, Collection, Mapping, Sequence
     from pathlib import Path
 
     from bookreviver.domain.changes import PageChanges
@@ -554,17 +554,40 @@ class PageService:
         versions = await self._uow.page_versions.list_base_versions([page.id for page in pages])
         # The versions come earliest first, so the newest base version of a page wins
         newest = {version.page_id: version for version in versions}
+        current = await self._current_images(pages)
         scans = await self._uow.scans.list_by_ids({page.scan_id for page in pages if page.scan_id is not None})
         sources = {scan.id: scan.source_id for scan in scans}
         return [
             PageOverview(
                 page=page,
                 position=first_position + index,
-                base_version=newest.get(page.id),
+                image_version=current.get(page.id, newest.get(page.id)),
                 source_id=sources.get(page.scan_id) if page.scan_id is not None else None,
             )
             for index, page in enumerate(pages)
         ]
+
+    async def _current_images(self, pages: Sequence[Page]) -> Mapping[PageId, PageVersion]:
+        """Find the version each page shows: the current version of the latest stage that has an image.
+
+        A page whose stages have no current version yet, such as a leaf waiting for its image, is left out, and the
+        caller falls back to its base version.
+
+        :param pages: Pages of one project.
+        :type pages: Sequence[Page]
+        :returns: The version to show by page identifier.
+        :rtype: Mapping[PageId, PageVersion]
+        """
+        records = await self._uow.page_stages.list_for_pages([page.id for page in pages])
+        head_ids = {record.head_version_id for record in records if record.head_version_id is not None}
+        heads = {version.id: version for version in await self._uow.page_versions.list_by_ids(head_ids)}
+        shown: dict[PageId, PageVersion] = {}
+        # The records come in the order of the stages, so the latest stage that has an image wins
+        for record in records:
+            head = None if record.head_version_id is None else heads.get(record.head_version_id)
+            if head is not None and head.renditions is not None and head.renditions.ready:
+                shown[record.page_id] = head
+        return shown
 
     async def _overview(self, page: Page) -> PageOverview:
         """Read the position, base version and source of one stored page.

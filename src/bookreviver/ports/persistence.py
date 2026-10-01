@@ -384,6 +384,16 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         """
 
     @abstractmethod
+    async def list_by_ids(self, version_ids: Collection[PageVersionId]) -> Sequence[PageVersion]:
+        """Return the stored versions among the given identifiers, in one read.
+
+        :param version_ids: Identifiers of the versions to read, of which those that are not stored are left out.
+        :type version_ids: Collection[PageVersionId]
+        :returns: The versions found, the earliest first, ties by identifier.
+        :rtype: Sequence[PageVersion]
+        """
+
+    @abstractmethod
     async def find(self, version_id: PageVersionId) -> PageVersion | None:
         """Return the version with this identifier, which a repeated run reuses instead of computing it again.
 
@@ -474,6 +484,16 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         :param page_id: Page owning the records.
         :type page_id: PageId
         :returns: Every record of the page.
+        :rtype: Sequence[PageStage]
+        """
+
+    @abstractmethod
+    async def list_for_pages(self, page_ids: Collection[PageId]) -> Sequence[PageStage]:
+        """Return the records of several pages in one read, by page and then in the order of the stages.
+
+        :param page_ids: Pages whose records are read.
+        :type page_ids: Collection[PageId]
+        :returns: Every record of those pages.
         :rtype: Sequence[PageStage]
         """
 
