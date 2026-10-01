@@ -17,14 +17,10 @@ import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as AuthenticatedProjectsIndexRouteImport } from './routes/_authenticated/projects/index'
-<<<<<<< HEAD
-import { Route as AuthenticatedProjectsProjectIdRouteImport } from './routes/_authenticated/projects/$projectId'
-import { Route as AuthProviderCallbackRouteImport } from './routes/auth.$provider.callback'
-=======
 import { Route as AuthenticatedProjectsProjectIdRouteRouteImport } from './routes/_authenticated/projects/$projectId/route'
+import { Route as AuthProviderCallbackRouteImport } from './routes/auth.$provider.callback'
 import { Route as AuthenticatedProjectsProjectIdIndexRouteImport } from './routes/_authenticated/projects/$projectId/index'
 import { Route as AuthenticatedProjectsProjectIdViewerRouteImport } from './routes/_authenticated/projects/$projectId/viewer'
->>>>>>> 01be35f (feat(frontend): add the page viewer on OpenSeadragon)
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -72,13 +68,11 @@ const AuthenticatedProjectsProjectIdRouteRoute =
     path: '/projects/$projectId',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
-<<<<<<< HEAD
 const AuthProviderCallbackRoute = AuthProviderCallbackRouteImport.update({
   id: '/auth/$provider/callback',
   path: '/auth/$provider/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
-=======
 const AuthenticatedProjectsProjectIdIndexRoute =
   AuthenticatedProjectsProjectIdIndexRouteImport.update({
     id: '/',
@@ -91,7 +85,6 @@ const AuthenticatedProjectsProjectIdViewerRoute =
     path: '/viewer',
     getParentRoute: () => AuthenticatedProjectsProjectIdRouteRoute,
   } as any)
->>>>>>> 01be35f (feat(frontend): add the page viewer on OpenSeadragon)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -100,12 +93,8 @@ export interface FileRoutesByFullPath {
   '/reset-password': typeof ResetPasswordRoute
   '/sign-in': typeof SignInRoute
   '/verify-email': typeof VerifyEmailRoute
-<<<<<<< HEAD
-  '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
-  '/auth/$provider/callback': typeof AuthProviderCallbackRoute
-=======
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteRouteWithChildren
->>>>>>> 01be35f (feat(frontend): add the page viewer on OpenSeadragon)
+  '/auth/$provider/callback': typeof AuthProviderCallbackRoute
   '/projects/': typeof AuthenticatedProjectsIndexRoute
   '/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
   '/projects/$projectId/': typeof AuthenticatedProjectsProjectIdIndexRoute
@@ -117,11 +106,7 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/sign-in': typeof SignInRoute
   '/verify-email': typeof VerifyEmailRoute
-<<<<<<< HEAD
-  '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
   '/auth/$provider/callback': typeof AuthProviderCallbackRoute
-=======
->>>>>>> 01be35f (feat(frontend): add the page viewer on OpenSeadragon)
   '/projects': typeof AuthenticatedProjectsIndexRoute
   '/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdIndexRoute
@@ -135,12 +120,8 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/sign-in': typeof SignInRoute
   '/verify-email': typeof VerifyEmailRoute
-<<<<<<< HEAD
-  '/_authenticated/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
-  '/auth/$provider/callback': typeof AuthProviderCallbackRoute
-=======
   '/_authenticated/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteRouteWithChildren
->>>>>>> 01be35f (feat(frontend): add the page viewer on OpenSeadragon)
+  '/auth/$provider/callback': typeof AuthProviderCallbackRoute
   '/_authenticated/projects/': typeof AuthenticatedProjectsIndexRoute
   '/_authenticated/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
   '/_authenticated/projects/$projectId/': typeof AuthenticatedProjectsProjectIdIndexRoute
@@ -167,11 +148,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/sign-in'
     | '/verify-email'
-<<<<<<< HEAD
-    | '/projects/$projectId'
     | '/auth/$provider/callback'
-=======
->>>>>>> 01be35f (feat(frontend): add the page viewer on OpenSeadragon)
     | '/projects'
     | '/projects/$projectId/viewer'
     | '/projects/$projectId'
@@ -267,14 +244,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProjectsProjectIdRouteRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-<<<<<<< HEAD
     '/auth/$provider/callback': {
       id: '/auth/$provider/callback'
       path: '/auth/$provider/callback'
       fullPath: '/auth/$provider/callback'
       preLoaderRoute: typeof AuthProviderCallbackRouteImport
       parentRoute: typeof rootRouteImport
-=======
+    }
     '/_authenticated/projects/$projectId/': {
       id: '/_authenticated/projects/$projectId/'
       path: '/'
@@ -288,7 +264,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/projects/$projectId/viewer'
       preLoaderRoute: typeof AuthenticatedProjectsProjectIdViewerRouteImport
       parentRoute: typeof AuthenticatedProjectsProjectIdRouteRoute
->>>>>>> 01be35f (feat(frontend): add the page viewer on OpenSeadragon)
     }
   }
 }
