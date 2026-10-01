@@ -946,9 +946,12 @@ hashing, sessions and the OAuth flow are what it already maintains. The rules th
   cannot sign a visitor into an account of the attacker. A mutating request without a session is not checked. OAuth
   callbacks are exempt because a provider redirects to them with a GET, and FastAPI Users compares their state with
   a cookie of its own. The frontend reads the `csrftoken` cookie and sends its value in the `x-csrftoken` header.
-  A failed check is answered with a 403 RFC 9457 problem. `ProblemCSRFMiddleware` subclasses the starlette-csrf
-  middleware and overrides its private `_get_error_response`, so its signature has to be checked whenever
-  starlette-csrf is upgraded.
+  A failed check is answered with a 403 RFC 9457 problem. starlette-csrf hands out a token only to a browser that
+  has none, so a browser keeping a token signed with an earlier secret would fail every form for good. A token the
+  server cannot read therefore counts as none: every answer to such a browser, the refusal included, sets a new one,
+  and the next attempt passes. `ProblemCSRFMiddleware` subclasses the starlette-csrf middleware and overrides its
+  `send` and its private `_get_error_response`, so their signatures have to be checked whenever starlette-csrf is
+  upgraded.
 - **Rate limit.** The sign-in routes accept `10/minute;100/hour` per client address and path, and the counters are
   kept in process memory. A server behind a reverse proxy, or one that runs several processes, needs a Redis store
   and the real client address, otherwise every client shares the proxy's address and each process counts alone. The
