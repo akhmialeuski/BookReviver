@@ -3,8 +3,8 @@
 import { type InfiniteData, infiniteQueryOptions, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { attachScanApiV1ProjectsProjectIdPagesPageIdScanPut, authCookieLoginApiV1AuthLoginPost, authCookieLogoutApiV1AuthLogoutPost, cancelJobApiV1JobsJobIdDelete, createPageApiV1ProjectsProjectIdPagesPost, createProjectApiV1ProjectsPost, deletePageApiV1ProjectsProjectIdPagesPageIdDelete, deleteProjectApiV1ProjectsProjectIdDelete, deleteSourceApiV1ProjectsProjectIdSourcesSourceIdDelete, getSourceApiV1ProjectsProjectIdSourcesSourceIdGet, iiifFileApiV1IiifKeyGet, listPagesApiV1ProjectsProjectIdPagesGet, listProjectsApiV1ProjectsGet, listScansApiV1ProjectsProjectIdScansGet, listSourcesApiV1ProjectsProjectIdSourcesGet, movePageApiV1ProjectsProjectIdPagesPageIdMovePost, movePagesApiV1ProjectsProjectIdPagesMovePost, moveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePost, numberPagesApiV1ProjectsProjectIdPagesLabelsPost, type Options, pageApiV1ProjectsProjectIdPagesPageIdGet, projectApiV1ProjectsProjectIdGet, readJobApiV1JobsJobIdGet, registerRegisterApiV1AuthRegisterPost, resetForgotPasswordApiV1AuthForgotPasswordPost, resetResetPasswordApiV1AuthResetPasswordPost, updatePageApiV1ProjectsProjectIdPagesPageIdPatch, updateProjectApiV1ProjectsProjectIdPatch, uploadSourcesApiV1ProjectsProjectIdSourcesPost, usersCurrentUserApiV1UsersMeGet, usersDeleteUserApiV1UsersIdDelete, usersPatchCurrentUserApiV1UsersMePatch, usersPatchUserApiV1UsersIdPatch, usersUserApiV1UsersIdGet, verifyRequestTokenApiV1AuthRequestVerifyTokenPost, verifyVerifyApiV1AuthVerifyPost } from '../sdk.gen';
-import type { AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutData, AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutError, AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponse, AuthCookieLoginApiV1AuthLoginPostData, AuthCookieLoginApiV1AuthLoginPostError, AuthCookieLoginApiV1AuthLoginPostResponse, AuthCookieLogoutApiV1AuthLogoutPostData, AuthCookieLogoutApiV1AuthLogoutPostError, AuthCookieLogoutApiV1AuthLogoutPostResponse, CancelJobApiV1JobsJobIdDeleteData, CancelJobApiV1JobsJobIdDeleteError, CancelJobApiV1JobsJobIdDeleteResponse, CreatePageApiV1ProjectsProjectIdPagesPostData, CreatePageApiV1ProjectsProjectIdPagesPostError, CreatePageApiV1ProjectsProjectIdPagesPostResponse, CreateProjectApiV1ProjectsPostData, CreateProjectApiV1ProjectsPostError, CreateProjectApiV1ProjectsPostResponse, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteData, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteError, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteResponse, DeleteProjectApiV1ProjectsProjectIdDeleteData, DeleteProjectApiV1ProjectsProjectIdDeleteError, DeleteProjectApiV1ProjectsProjectIdDeleteResponse, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteData, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteError, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteResponse, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetData, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetError, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetResponse, IiifFileApiV1IiifKeyGetData, IiifFileApiV1IiifKeyGetError, ListPagesApiV1ProjectsProjectIdPagesGetData, ListPagesApiV1ProjectsProjectIdPagesGetError, ListPagesApiV1ProjectsProjectIdPagesGetResponse, ListProjectsApiV1ProjectsGetData, ListProjectsApiV1ProjectsGetError, ListProjectsApiV1ProjectsGetResponse, ListScansApiV1ProjectsProjectIdScansGetData, ListScansApiV1ProjectsProjectIdScansGetError, ListScansApiV1ProjectsProjectIdScansGetResponse, ListSourcesApiV1ProjectsProjectIdSourcesGetData, ListSourcesApiV1ProjectsProjectIdSourcesGetError, ListSourcesApiV1ProjectsProjectIdSourcesGetResponse, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostData, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostError, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostResponse, MovePagesApiV1ProjectsProjectIdPagesMovePostData, MovePagesApiV1ProjectsProjectIdPagesMovePostError, MovePagesApiV1ProjectsProjectIdPagesMovePostResponse, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostData, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostError, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostResponse, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostData, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostError, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostResponse, PageApiV1ProjectsProjectIdPagesPageIdGetData, PageApiV1ProjectsProjectIdPagesPageIdGetError, PageApiV1ProjectsProjectIdPagesPageIdGetResponse, ProjectApiV1ProjectsProjectIdGetData, ProjectApiV1ProjectsProjectIdGetError, ProjectApiV1ProjectsProjectIdGetResponse, ReadJobApiV1JobsJobIdGetData, ReadJobApiV1JobsJobIdGetError, ReadJobApiV1JobsJobIdGetResponse, RegisterRegisterApiV1AuthRegisterPostData, RegisterRegisterApiV1AuthRegisterPostError, RegisterRegisterApiV1AuthRegisterPostResponse, ResetForgotPasswordApiV1AuthForgotPasswordPostData, ResetForgotPasswordApiV1AuthForgotPasswordPostError, ResetResetPasswordApiV1AuthResetPasswordPostData, ResetResetPasswordApiV1AuthResetPasswordPostError, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchData, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchError, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchResponse, UpdateProjectApiV1ProjectsProjectIdPatchData, UpdateProjectApiV1ProjectsProjectIdPatchError, UpdateProjectApiV1ProjectsProjectIdPatchResponse, UploadSourcesApiV1ProjectsProjectIdSourcesPostData, UploadSourcesApiV1ProjectsProjectIdSourcesPostError, UploadSourcesApiV1ProjectsProjectIdSourcesPostResponse, UsersCurrentUserApiV1UsersMeGetData, UsersCurrentUserApiV1UsersMeGetError, UsersCurrentUserApiV1UsersMeGetResponse, UsersDeleteUserApiV1UsersIdDeleteData, UsersDeleteUserApiV1UsersIdDeleteError, UsersDeleteUserApiV1UsersIdDeleteResponse, UsersPatchCurrentUserApiV1UsersMePatchData, UsersPatchCurrentUserApiV1UsersMePatchError, UsersPatchCurrentUserApiV1UsersMePatchResponse, UsersPatchUserApiV1UsersIdPatchData, UsersPatchUserApiV1UsersIdPatchError, UsersPatchUserApiV1UsersIdPatchResponse, UsersUserApiV1UsersIdGetData, UsersUserApiV1UsersIdGetError, UsersUserApiV1UsersIdGetResponse, VerifyRequestTokenApiV1AuthRequestVerifyTokenPostData, VerifyRequestTokenApiV1AuthRequestVerifyTokenPostError, VerifyVerifyApiV1AuthVerifyPostData, VerifyVerifyApiV1AuthVerifyPostError, VerifyVerifyApiV1AuthVerifyPostResponse } from '../types.gen';
+import { activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePost, attachScanApiV1ProjectsProjectIdPagesPageIdScanPut, authCookieLoginApiV1AuthLoginPost, authCookieLogoutApiV1AuthLogoutPost, cancelJobApiV1JobsJobIdDelete, chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePut, collectVersionsApiV1ProjectsProjectIdVersionsCollectPost, createPageApiV1ProjectsProjectIdPagesPost, createProjectApiV1ProjectsPost, createVariantApiV1ProjectsProjectIdStagesStageVariantsPost, cutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPost, deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDelete, deletePageApiV1ProjectsProjectIdPagesPageIdDelete, deleteProjectApiV1ProjectsProjectIdDelete, deleteSourceApiV1ProjectsProjectIdSourcesSourceIdDelete, getRecipeApiV1ProjectsProjectIdStagesStageRecipeGet, getSourceApiV1ProjectsProjectIdSourcesSourceIdGet, getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGet, iiifFileApiV1IiifKeyGet, listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGet, listPagesApiV1ProjectsProjectIdPagesGet, listPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGet, listProcessorsApiV1ProcessorsGet, listProjectsApiV1ProjectsGet, listScansApiV1ProjectsProjectIdScansGet, listSourcesApiV1ProjectsProjectIdSourcesGet, listVariantsApiV1ProjectsProjectIdStagesStageVariantsGet, listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet, movePageApiV1ProjectsProjectIdPagesPageIdMovePost, movePagesApiV1ProjectsProjectIdPagesMovePost, moveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePost, numberPagesApiV1ProjectsProjectIdPagesLabelsPost, type Options, pageApiV1ProjectsProjectIdPagesPageIdGet, previewStepApiV1ProjectsProjectIdStagesStagePreviewPost, projectApiV1ProjectsProjectIdGet, putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPut, putRecipeApiV1ProjectsProjectIdStagesStageRecipePut, putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPut, readJobApiV1JobsJobIdGet, registerRegisterApiV1AuthRegisterPost, resetForgotPasswordApiV1AuthForgotPasswordPost, resetResetPasswordApiV1AuthResetPasswordPost, runStageApiV1ProjectsProjectIdStagesStageRunPost, updatePageApiV1ProjectsProjectIdPagesPageIdPatch, updateProjectApiV1ProjectsProjectIdPatch, uploadSourcesApiV1ProjectsProjectIdSourcesPost, usersCurrentUserApiV1UsersMeGet, usersDeleteUserApiV1UsersIdDelete, usersPatchCurrentUserApiV1UsersMePatch, usersPatchUserApiV1UsersIdPatch, usersUserApiV1UsersIdGet, verifyRequestTokenApiV1AuthRequestVerifyTokenPost, verifyVerifyApiV1AuthVerifyPost } from '../sdk.gen';
+import type { ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostData, ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostError, ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostResponse, AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutData, AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutError, AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponse, AuthCookieLoginApiV1AuthLoginPostData, AuthCookieLoginApiV1AuthLoginPostError, AuthCookieLoginApiV1AuthLoginPostResponse, AuthCookieLogoutApiV1AuthLogoutPostData, AuthCookieLogoutApiV1AuthLogoutPostError, AuthCookieLogoutApiV1AuthLogoutPostResponse, CancelJobApiV1JobsJobIdDeleteData, CancelJobApiV1JobsJobIdDeleteError, CancelJobApiV1JobsJobIdDeleteResponse, ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutData, ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutError, ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponse, CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostData, CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostError, CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponse, CreatePageApiV1ProjectsProjectIdPagesPostData, CreatePageApiV1ProjectsProjectIdPagesPostError, CreatePageApiV1ProjectsProjectIdPagesPostResponse, CreateProjectApiV1ProjectsPostData, CreateProjectApiV1ProjectsPostError, CreateProjectApiV1ProjectsPostResponse, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostData, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostError, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponse, CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostData, CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostError, CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponse, DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteData, DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteError, DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteResponse, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteData, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteError, DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteResponse, DeleteProjectApiV1ProjectsProjectIdDeleteData, DeleteProjectApiV1ProjectsProjectIdDeleteError, DeleteProjectApiV1ProjectsProjectIdDeleteResponse, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteData, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteError, DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteResponse, GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetData, GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetError, GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetResponse, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetData, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetError, GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetResponse, GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetData, GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetError, GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetResponse, IiifFileApiV1IiifKeyGetData, IiifFileApiV1IiifKeyGetError, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetError, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponse, ListPagesApiV1ProjectsProjectIdPagesGetData, ListPagesApiV1ProjectsProjectIdPagesGetError, ListPagesApiV1ProjectsProjectIdPagesGetResponse, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetError, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponse, ListProcessorsApiV1ProcessorsGetData, ListProcessorsApiV1ProcessorsGetError, ListProcessorsApiV1ProcessorsGetResponse, ListProjectsApiV1ProjectsGetData, ListProjectsApiV1ProjectsGetError, ListProjectsApiV1ProjectsGetResponse, ListScansApiV1ProjectsProjectIdScansGetData, ListScansApiV1ProjectsProjectIdScansGetError, ListScansApiV1ProjectsProjectIdScansGetResponse, ListSourcesApiV1ProjectsProjectIdSourcesGetData, ListSourcesApiV1ProjectsProjectIdSourcesGetError, ListSourcesApiV1ProjectsProjectIdSourcesGetResponse, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetData, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetError, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponse, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetError, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponse, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostData, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostError, MovePageApiV1ProjectsProjectIdPagesPageIdMovePostResponse, MovePagesApiV1ProjectsProjectIdPagesMovePostData, MovePagesApiV1ProjectsProjectIdPagesMovePostError, MovePagesApiV1ProjectsProjectIdPagesMovePostResponse, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostData, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostError, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostResponse, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostData, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostError, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostResponse, PageApiV1ProjectsProjectIdPagesPageIdGetData, PageApiV1ProjectsProjectIdPagesPageIdGetError, PageApiV1ProjectsProjectIdPagesPageIdGetResponse, PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostData, PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostError, PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponse, ProjectApiV1ProjectsProjectIdGetData, ProjectApiV1ProjectsProjectIdGetError, ProjectApiV1ProjectsProjectIdGetResponse, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutData, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutError, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponse, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutData, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutError, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponse, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutData, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutError, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponse, ReadJobApiV1JobsJobIdGetData, ReadJobApiV1JobsJobIdGetError, ReadJobApiV1JobsJobIdGetResponse, RegisterRegisterApiV1AuthRegisterPostData, RegisterRegisterApiV1AuthRegisterPostError, RegisterRegisterApiV1AuthRegisterPostResponse, ResetForgotPasswordApiV1AuthForgotPasswordPostData, ResetForgotPasswordApiV1AuthForgotPasswordPostError, ResetResetPasswordApiV1AuthResetPasswordPostData, ResetResetPasswordApiV1AuthResetPasswordPostError, RunStageApiV1ProjectsProjectIdStagesStageRunPostData, RunStageApiV1ProjectsProjectIdStagesStageRunPostError, RunStageApiV1ProjectsProjectIdStagesStageRunPostResponse, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchData, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchError, UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchResponse, UpdateProjectApiV1ProjectsProjectIdPatchData, UpdateProjectApiV1ProjectsProjectIdPatchError, UpdateProjectApiV1ProjectsProjectIdPatchResponse, UploadSourcesApiV1ProjectsProjectIdSourcesPostData, UploadSourcesApiV1ProjectsProjectIdSourcesPostError, UploadSourcesApiV1ProjectsProjectIdSourcesPostResponse, UsersCurrentUserApiV1UsersMeGetData, UsersCurrentUserApiV1UsersMeGetError, UsersCurrentUserApiV1UsersMeGetResponse, UsersDeleteUserApiV1UsersIdDeleteData, UsersDeleteUserApiV1UsersIdDeleteError, UsersDeleteUserApiV1UsersIdDeleteResponse, UsersPatchCurrentUserApiV1UsersMePatchData, UsersPatchCurrentUserApiV1UsersMePatchError, UsersPatchCurrentUserApiV1UsersMePatchResponse, UsersPatchUserApiV1UsersIdPatchData, UsersPatchUserApiV1UsersIdPatchError, UsersPatchUserApiV1UsersIdPatchResponse, UsersUserApiV1UsersIdGetData, UsersUserApiV1UsersIdGetError, UsersUserApiV1UsersIdGetResponse, VerifyRequestTokenApiV1AuthRequestVerifyTokenPostData, VerifyRequestTokenApiV1AuthRequestVerifyTokenPostError, VerifyVerifyApiV1AuthVerifyPostData, VerifyVerifyApiV1AuthVerifyPostError, VerifyVerifyApiV1AuthVerifyPostResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -610,6 +610,532 @@ export const attachScanApiV1ProjectsProjectIdPagesPageIdScanPutMutation = (optio
         }
     };
     return mutationOptions;
+};
+
+export const getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey = (options: Options<GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetData>) => createQueryKey('getRecipeApiV1ProjectsProjectIdStagesStageRecipeGet', options);
+
+/**
+ * Get Recipe
+ *
+ * Return the active recipe of a stage, which a project creates the first time the stage is asked for.
+ */
+export const getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetOptions = (options: Options<GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetData>) => queryOptions<GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetResponse, GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetError, GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetResponse, ReturnType<typeof getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getRecipeApiV1ProjectsProjectIdStagesStageRecipeGet({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey(options)
+});
+
+/**
+ * Put Recipe
+ *
+ * Replace the name and the steps of the active recipe, which marks the pages it processed stale.
+ *
+ * No page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown
+ * or of another stage, or whose parameters do not fit, answers 422.
+ */
+export const putRecipeApiV1ProjectsProjectIdStagesStageRecipePutMutation = (options?: Partial<Options<PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutData>>): UseMutationOptions<PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponse, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutError, Options<PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutData>> => {
+    const mutationOptions: UseMutationOptions<PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponse, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutError, Options<PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await putRecipeApiV1ProjectsProjectIdStagesStageRecipePut({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey = (options: Options<ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetData>) => createQueryKey('listVariantsApiV1ProjectsProjectIdStagesStageVariantsGet', options);
+
+/**
+ * List Variants
+ *
+ * List the recipes of a stage, the active one first and then the variants, oldest first.
+ */
+export const listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetOptions = (options: Options<ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetData>) => queryOptions<ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponse, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetError, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponse, ReturnType<typeof listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listVariantsApiV1ProjectsProjectIdStagesStageVariantsGet({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey(options)
+});
+
+export const listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetInfiniteQueryKey = (options: Options<ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetData>): QueryKey<Options<ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetData>> => createQueryKey('listVariantsApiV1ProjectsProjectIdStagesStageVariantsGet', options, true);
+
+/**
+ * List Variants
+ *
+ * List the recipes of a stage, the active one first and then the variants, oldest first.
+ */
+export const listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetInfiniteOptions = (options: Options<ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetData>) => {
+    const opts = infiniteQueryOptions<ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponse, ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetError, InfiniteData<ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponse>, QueryKey<Options<ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetData>>, number | Pick<QueryKey<Options<ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    page: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await listVariantsApiV1ProjectsProjectIdStagesStageVariantsGet({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+/**
+ * Create Variant
+ *
+ * Add a variant of a stage, which is not active until it is activated.
+ */
+export const createVariantApiV1ProjectsProjectIdStagesStageVariantsPostMutation = (options?: Partial<Options<CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostData>>): UseMutationOptions<CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponse, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostError, Options<CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostData>> => {
+    const mutationOptions: UseMutationOptions<CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponse, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostError, Options<CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await createVariantApiV1ProjectsProjectIdStagesStageVariantsPost({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Put Variant
+ *
+ * Replace the name and the steps of a recipe of a stage, which marks the pages it processed stale.
+ */
+export const putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation = (options?: Partial<Options<PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutData>>): UseMutationOptions<PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponse, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutError, Options<PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutData>> => {
+    const mutationOptions: UseMutationOptions<PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponse, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutError, Options<PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPut({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Activate Variant
+ *
+ * Make a variant the active recipe of its stage, which marks the pages the old one processed stale.
+ */
+export const activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostMutation = (options?: Partial<Options<ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostData>>): UseMutationOptions<ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostResponse, ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostError, Options<ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostData>> => {
+    const mutationOptions: UseMutationOptions<ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostResponse, ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostError, Options<ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePost({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Run Stage
+ *
+ * Run a stage over some pages by a recipe, in the background, and answer with the queued job.
+ *
+ * The job makes a version for every step on every page and reports one step of progress for each page. A project runs
+ * one stage at a time, and another run while one is queued or running answers 409.
+ */
+export const runStageApiV1ProjectsProjectIdStagesStageRunPostMutation = (options?: Partial<Options<RunStageApiV1ProjectsProjectIdStagesStageRunPostData>>): UseMutationOptions<RunStageApiV1ProjectsProjectIdStagesStageRunPostResponse, RunStageApiV1ProjectsProjectIdStagesStageRunPostError, Options<RunStageApiV1ProjectsProjectIdStagesStageRunPostData>> => {
+    const mutationOptions: UseMutationOptions<RunStageApiV1ProjectsProjectIdStagesStageRunPostResponse, RunStageApiV1ProjectsProjectIdStagesStageRunPostError, Options<RunStageApiV1ProjectsProjectIdStagesStageRunPostData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await runStageApiV1ProjectsProjectIdStagesStageRunPost({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Preview Step
+ *
+ * Preview the steps of a form on one page, in the background, and answer with the queued job.
+ *
+ * The result is a version of the preview scale, announced as ``page-version-ready``, which never becomes the current
+ * version of the stage.
+ */
+export const previewStepApiV1ProjectsProjectIdStagesStagePreviewPostMutation = (options?: Partial<Options<PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostData>>): UseMutationOptions<PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponse, PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostError, Options<PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostData>> => {
+    const mutationOptions: UseMutationOptions<PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponse, PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostError, Options<PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await previewStepApiV1ProjectsProjectIdStagesStagePreviewPost({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const listPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetQueryKey = (options: Options<ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData>) => createQueryKey('listPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGet', options);
+
+/**
+ * List Page Stages
+ *
+ * List the stages a page has been through, with the current version and the state of each, in pipeline order.
+ */
+export const listPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetOptions = (options: Options<ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData>) => queryOptions<ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponse, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetError, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponse, ReturnType<typeof listPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGet({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetQueryKey(options)
+});
+
+export const listPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetInfiniteQueryKey = (options: Options<ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData>): QueryKey<Options<ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData>> => createQueryKey('listPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGet', options, true);
+
+/**
+ * List Page Stages
+ *
+ * List the stages a page has been through, with the current version and the state of each, in pipeline order.
+ */
+export const listPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetInfiniteOptions = (options: Options<ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData>) => {
+    const opts = infiniteQueryOptions<ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponse, ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetError, InfiniteData<ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponse>, QueryKey<Options<ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData>>, number | Pick<QueryKey<Options<ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    page: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await listPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGet({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: listPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+/**
+ * Choose Version
+ *
+ * Make a version the current one of a stage of a page, which marks the later stages of the page stale.
+ *
+ * The version must be ready and made by a full run of this page in this stage. The answer is 409 for one that is not.
+ */
+export const chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutMutation = (options?: Partial<Options<ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutData>>): UseMutationOptions<ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponse, ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutError, Options<ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutData>> => {
+    const mutationOptions: UseMutationOptions<ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponse, ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutError, Options<ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePut({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey = (options: Options<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData>) => createQueryKey('listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet', options);
+
+/**
+ * List Versions
+ *
+ * List the versions of a page, the earliest first, of one stage and one scale or of all.
+ */
+export const listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetOptions = (options: Options<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData>) => queryOptions<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponse, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetError, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponse, ReturnType<typeof listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey(options)
+});
+
+export const listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetInfiniteQueryKey = (options: Options<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData>): QueryKey<Options<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData>> => createQueryKey('listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet', options, true);
+
+/**
+ * List Versions
+ *
+ * List the versions of a page, the earliest first, of one stage and one scale or of all.
+ */
+export const listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetInfiniteOptions = (options: Options<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData>) => {
+    const opts = infiniteQueryOptions<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponse, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetError, InfiniteData<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponse>, QueryKey<Options<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData>>, number | Pick<QueryKey<Options<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    page: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+export const getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetQueryKey = (options: Options<GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetData>) => createQueryKey('getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGet', options);
+
+/**
+ * Get Version
+ *
+ * Return one version of a page, with its provenance, its transform and the paths of its images.
+ */
+export const getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetOptions = (options: Options<GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetData>) => queryOptions<GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetResponse, GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetError, GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetResponse, ReturnType<typeof getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGet({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetQueryKey(options)
+});
+
+/**
+ * Cut Version Tiles
+ *
+ * Cut the tile pyramid of a version in the background, which a viewer asks for when a version has none.
+ */
+export const cutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostMutation = (options?: Partial<Options<CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostData>>): UseMutationOptions<CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponse, CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostError, Options<CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostData>> => {
+    const mutationOptions: UseMutationOptions<CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponse, CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostError, Options<CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await cutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPost({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Collect Versions
+ *
+ * Delete the old versions nothing needs, in the background, and answer with the queued job.
+ *
+ * A version goes when it is not current, not in the chain of inputs of a current version, not a base version, and
+ * older than the retention period of its scale. A collection that is queued or running already is the answer.
+ */
+export const collectVersionsApiV1ProjectsProjectIdVersionsCollectPostMutation = (options?: Partial<Options<CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostData>>): UseMutationOptions<CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponse, CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostError, Options<CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostData>> => {
+    const mutationOptions: UseMutationOptions<CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponse, CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostError, Options<CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await collectVersionsApiV1ProjectsProjectIdVersionsCollectPost({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetQueryKey = (options: Options<ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData>) => createQueryKey('listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGet', options);
+
+/**
+ * List Edits
+ *
+ * List the manual edits of one stage of a page, by processor.
+ */
+export const listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetOptions = (options: Options<ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData>) => queryOptions<ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponse, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetError, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponse, ReturnType<typeof listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGet({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetQueryKey(options)
+});
+
+export const listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetInfiniteQueryKey = (options: Options<ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData>): QueryKey<Options<ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData>> => createQueryKey('listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGet', options, true);
+
+/**
+ * List Edits
+ *
+ * List the manual edits of one stage of a page, by processor.
+ */
+export const listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetInfiniteOptions = (options: Options<ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData>) => {
+    const opts = infiniteQueryOptions<ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponse, ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetError, InfiniteData<ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponse>, QueryKey<Options<ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData>>, number | Pick<QueryKey<Options<ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    page: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGet({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
+};
+
+/**
+ * Delete Edit
+ *
+ * Delete the edit a processor reads, and mark the stage of the page stale.
+ */
+export const deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteMutation = (options?: Partial<Options<DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteData>>): UseMutationOptions<DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteResponse, DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteError, Options<DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteData>> => {
+    const mutationOptions: UseMutationOptions<DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteResponse, DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteError, Options<DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDelete({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+/**
+ * Put Edit
+ *
+ * Save the edit a processor reads, replacing the one it had, and mark the stage of the page stale.
+ *
+ * The form carries the editor that drew the edit, its shape as JSON text, and the mask as a file for a brush edit. The
+ * answer is 422 for an edit the processor does not read, and nothing is processed by this request.
+ */
+export const putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutMutation = (options?: Partial<Options<PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutData>>): UseMutationOptions<PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponse, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutError, Options<PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutData>> => {
+    const mutationOptions: UseMutationOptions<PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponse, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutError, Options<PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutData>> = {
+        mutationFn: async (fnOptions) => {
+            const { data } = await putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPut({
+                ...options,
+                ...fnOptions,
+                throwOnError: true
+            });
+            return data;
+        }
+    };
+    return mutationOptions;
+};
+
+export const listProcessorsApiV1ProcessorsGetQueryKey = (options?: Options<ListProcessorsApiV1ProcessorsGetData>) => createQueryKey('listProcessorsApiV1ProcessorsGet', options);
+
+/**
+ * List Processors
+ *
+ * List the processors a recipe can use, by key, each with the JSON Schema of its parameters.
+ */
+export const listProcessorsApiV1ProcessorsGetOptions = (options?: Options<ListProcessorsApiV1ProcessorsGetData>) => queryOptions<ListProcessorsApiV1ProcessorsGetResponse, ListProcessorsApiV1ProcessorsGetError, ListProcessorsApiV1ProcessorsGetResponse, ReturnType<typeof listProcessorsApiV1ProcessorsGetQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await listProcessorsApiV1ProcessorsGet({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: listProcessorsApiV1ProcessorsGetQueryKey(options)
+});
+
+export const listProcessorsApiV1ProcessorsGetInfiniteQueryKey = (options?: Options<ListProcessorsApiV1ProcessorsGetData>): QueryKey<Options<ListProcessorsApiV1ProcessorsGetData>> => createQueryKey('listProcessorsApiV1ProcessorsGet', options, true);
+
+/**
+ * List Processors
+ *
+ * List the processors a recipe can use, by key, each with the JSON Schema of its parameters.
+ */
+export const listProcessorsApiV1ProcessorsGetInfiniteOptions = (options?: Options<ListProcessorsApiV1ProcessorsGetData>) => {
+    const opts = infiniteQueryOptions<ListProcessorsApiV1ProcessorsGetResponse, ListProcessorsApiV1ProcessorsGetError, InfiniteData<ListProcessorsApiV1ProcessorsGetResponse>, QueryKey<Options<ListProcessorsApiV1ProcessorsGetData>>, number | Pick<QueryKey<Options<ListProcessorsApiV1ProcessorsGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
+    // @ts-ignore
+    {
+        queryFn: async ({ pageParam, queryKey, signal }) => {
+            // @ts-ignore
+            const page: Pick<QueryKey<Options<ListProcessorsApiV1ProcessorsGetData>>[0], 'body' | 'headers' | 'path' | 'query'> = typeof pageParam === 'object' ? pageParam : {
+                query: {
+                    page: pageParam
+                }
+            };
+            const params = createInfiniteParams(queryKey, page);
+            const { data } = await listProcessorsApiV1ProcessorsGet({
+                ...options,
+                ...params,
+                signal,
+                throwOnError: true
+            });
+            return data;
+        },
+        queryKey: listProcessorsApiV1ProcessorsGetInfiniteQueryKey(options)
+    });
+    return opts as Omit<typeof opts, 'initialData'>;
 };
 
 /**

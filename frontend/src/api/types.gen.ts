@@ -336,6 +336,34 @@ export type ContributorSchema = {
 };
 
 /**
+ * EditForm
+ *
+ * A manual edit as the form of a request carries it.
+ *
+ * :ivar kind: Editor that drew the edit.
+ * :ivar geometry: The shape the user drew as JSON, or omitted for an edit that is only a mask.
+ * :ivar mask: The mask the user painted, or omitted.
+ */
+export type EditForm = {
+    kind: EditorKind;
+    /**
+     * Geometry
+     */
+    geometry?: string | null;
+    /**
+     * Mask
+     */
+    mask?: Blob | File | null;
+};
+
+/**
+ * EditorKind
+ *
+ * The editor a processor offers for the manual edit of its input.
+ */
+export type EditorKind = 'none' | 'rect' | 'quad' | 'line' | 'rotation' | 'mesh' | 'brush-mask' | 'regions';
+
+/**
  * ErrorModel
  */
 export type ErrorModel = {
@@ -371,6 +399,20 @@ export type HttpValidationError = {
      */
     status: number;
     errors: Array<ValidationError>;
+};
+
+/**
+ * HeadChoice
+ *
+ * The version to make the current one of a stage.
+ *
+ * :ivar version_id: Identifier of the version, which must be ready and made by a full run of this page and stage.
+ */
+export type HeadChoice = {
+    /**
+     * Version Id
+     */
+    version_id: string;
 };
 
 /**
@@ -464,7 +506,7 @@ export type ImportResultSchema = {
  *
  * What a background job does.
  */
-export type JobKind = 'import-source' | 'prepare-pages';
+export type JobKind = 'import-source' | 'prepare-pages' | 'run-stage' | 'preview-step' | 'cut-tiles' | 'collect-versions';
 
 /**
  * JobSchema
@@ -720,6 +762,51 @@ export type PageCreate = {
 };
 
 /**
+ * PageEditSchema
+ *
+ * A manual edit of a page.
+ *
+ * :ivar page_id: Page the edit belongs to.
+ * :ivar stage: Stage of the processor that reads the edit.
+ * :ivar processor_key: Key of that processor.
+ * :ivar kind: Editor that drew the edit.
+ * :ivar geometry: The shape as JSON, or None for an edit that is only a mask.
+ * :ivar mask: Path of the mask on the IIIF route, or None.
+ * :ivar edit_hash: Hash of the shape and the mask.
+ * :ivar updated_at: When the edit was last saved.
+ */
+export type PageEditSchema = {
+    /**
+     * Page Id
+     */
+    page_id: string;
+    stage: Stage;
+    /**
+     * Processor Key
+     */
+    processor_key: string;
+    kind: EditorKind;
+    /**
+     * Geometry
+     */
+    geometry: {
+        [key: string]: unknown;
+    } | null;
+    /**
+     * Mask
+     */
+    mask: string | null;
+    /**
+     * Edit Hash
+     */
+    edit_hash: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+};
+
+/**
  * PageKind
  *
  * Role of a page in the printed book.
@@ -766,7 +853,7 @@ export type PageOrigin = 'scan' | 'blank' | 'placeholder';
  * :ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.
  * :ivar included: Whether the page is part of the book.
  * :ivar notes: Notes of the user.
- * :ivar images: Paths of the images of the page's base version, or None while it has none.
+ * :ivar images: Paths of the images of the page's current version, or None while it has none.
  * :ivar created_at: When the page was created.
  * :ivar updated_at: When the page was last changed.
  */
@@ -817,6 +904,39 @@ export type PageSchema = {
 };
 
 /**
+ * PageStageSchema
+ *
+ * The current version of a stage of a page and whether it is up to date; the data of a stage event too.
+ *
+ * :ivar page_id: Page the record belongs to.
+ * :ivar stage: The stage.
+ * :ivar recipe_id: Recipe the page was processed by, or None.
+ * :ivar head_version_id: The current version of the stage, or None.
+ * :ivar state: Whether the current version matches the inputs of the stage.
+ * :ivar updated_at: When the record last changed.
+ */
+export type PageStageSchema = {
+    /**
+     * Page Id
+     */
+    page_id: string;
+    stage: Stage;
+    /**
+     * Recipe Id
+     */
+    recipe_id: string | null;
+    /**
+     * Head Version Id
+     */
+    head_version_id: string | null;
+    state: StageState;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+};
+
+/**
  * PageUpdate
  *
  * A JSON Merge Patch of a page: an omitted field is kept, and a null label or note is cleared.
@@ -848,6 +968,185 @@ export type PageUpdate = {
 };
 
 /**
+ * PageVersionSchema
+ *
+ * The result of one processing step on one page.
+ *
+ * :ivar id: Identifier of the version, the hash of what produced it.
+ * :ivar page_id: Page the version belongs to.
+ * :ivar stage: Stage of the step.
+ * :ivar processor: Processor that ran the step.
+ * :ivar input_id: Version the step read, or None for a base version.
+ * :ivar params: Parameters of the step.
+ * :ivar transform: Transform of coordinates from the input.
+ * :ivar data: Data the step found, such as an angle or a confidence.
+ * :ivar state: Where the version is in its life cycle.
+ * :ivar scale: Whether the step ran on the full image or on a preview.
+ * :ivar edit_hash: Hash of the manual edit the step read, or empty.
+ * :ivar tiles_ready: Whether the tile pyramid is cut, which a client asks for when it is not.
+ * :ivar error: Why the version failed, or empty.
+ * :ivar images: Paths of the images of a ready full run that has an image, or None.
+ * :ivar preview: Path of the preview image of a preview run, or None.
+ * :ivar created_at: When the version was created.
+ */
+export type PageVersionSchema = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Page Id
+     */
+    page_id: string;
+    stage: Stage;
+    processor: ProcessorRefSchema;
+    /**
+     * Input Id
+     */
+    input_id: string | null;
+    /**
+     * Params
+     */
+    params: {
+        [key: string]: unknown;
+    };
+    transform: TransformSchema;
+    /**
+     * Data
+     */
+    data: {
+        [key: string]: unknown;
+    };
+    state: VersionState;
+    scale: VersionScale;
+    /**
+     * Edit Hash
+     */
+    edit_hash: string;
+    /**
+     * Tiles Ready
+     */
+    tiles_ready: boolean;
+    /**
+     * Error
+     */
+    error: string;
+    images: ImagePathsSchema | null;
+    /**
+     * Preview
+     */
+    preview: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
+ * Page[PageEditSchema]
+ */
+export type PagePageEditSchema = {
+    /**
+     * Items
+     */
+    items: Array<PageEditSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
+};
+
+/**
+ * Page[PageStageSchema]
+ */
+export type PagePageStageSchema = {
+    /**
+     * Items
+     */
+    items: Array<PageStageSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
+};
+
+/**
+ * Page[PageVersionSchema]
+ */
+export type PagePageVersionSchema = {
+    /**
+     * Items
+     */
+    items: Array<PageVersionSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
+};
+
+/**
+ * Page[ProcessorSchema]
+ */
+export type PageProcessorSchema = {
+    /**
+     * Items
+     */
+    items: Array<ProcessorSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
+};
+
+/**
  * Page[ProjectSchema]
  */
 export type PageProjectSchema = {
@@ -855,6 +1154,32 @@ export type PageProjectSchema = {
      * Items
      */
     items: Array<ProjectSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
+};
+
+/**
+ * Page[RecipeSchema]
+ */
+export type PageRecipeSchema = {
+    /**
+     * Items
+     */
+    items: Array<RecipeSchema>;
     /**
      * Total
      */
@@ -946,6 +1271,95 @@ export type PagesMove = {
      */
     page_ids: Array<string>;
 };
+
+/**
+ * PointSchema
+ *
+ * A point in the pixels of an image.
+ *
+ * :ivar x: Distance from the left edge.
+ * :ivar y: Distance from the top edge.
+ */
+export type PointSchema = {
+    /**
+     * X
+     */
+    x: number;
+    /**
+     * Y
+     */
+    y: number;
+};
+
+/**
+ * ProcessorRefSchema
+ *
+ * The processor that made a version.
+ *
+ * :ivar key: Key of the processor.
+ * :ivar version: Version of its algorithm.
+ */
+export type ProcessorRefSchema = {
+    /**
+     * Key
+     */
+    key: string;
+    /**
+     * Version
+     */
+    version: string;
+};
+
+/**
+ * ProcessorSchema
+ *
+ * A processor a recipe can use.
+ *
+ * :ivar key: Key of the processor, such as ``geometry.deskew``.
+ * :ivar version: Version of its algorithm.
+ * :ivar title: Name the interface shows.
+ * :ivar stage: Stage whose recipe it can be put into.
+ * :ivar scope: Whether it makes one output for a page or one for each part of a scan.
+ * :ivar outputs: What it writes.
+ * :ivar parameters: JSON Schema of its parameters, from which the interface builds the form.
+ * :ivar editor: Editor of the manual edit it reads.
+ * :ivar pool: Class of worker it runs on.
+ */
+export type ProcessorSchema = {
+    /**
+     * Key
+     */
+    key: string;
+    /**
+     * Version
+     */
+    version: string;
+    /**
+     * Title
+     */
+    title: string;
+    stage: Stage;
+    scope: ProcessorScope;
+    /**
+     * Outputs
+     */
+    outputs: Array<VersionOutput>;
+    /**
+     * Parameters
+     */
+    parameters: {
+        [key: string]: unknown;
+    };
+    editor: EditorKind;
+    pool: WorkerPool;
+};
+
+/**
+ * ProcessorScope
+ *
+ * How many outputs a processor makes from its input.
+ */
+export type ProcessorScope = 'page' | 'split';
 
 /**
  * ProgressSchema
@@ -1297,6 +1711,88 @@ export type ProjectUpdate = {
 };
 
 /**
+ * QuadSchema
+ *
+ * A quadrilateral in the pixels of an image.
+ *
+ * :ivar top_left: Corner at the top left.
+ * :ivar top_right: Corner at the top right.
+ * :ivar bottom_right: Corner at the bottom right.
+ * :ivar bottom_left: Corner at the bottom left.
+ */
+export type QuadSchema = {
+    top_left: PointSchema;
+    top_right: PointSchema;
+    bottom_right: PointSchema;
+    bottom_left: PointSchema;
+};
+
+/**
+ * RecipeBody
+ *
+ * The name and the steps of a recipe, for the active recipe and for a variant alike.
+ *
+ * :ivar name: Name of the recipe.
+ * :ivar steps: Its steps in the order they run, each checked against its processor.
+ */
+export type RecipeBody = {
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Steps
+     */
+    steps: Array<StepBody>;
+};
+
+/**
+ * RecipeSchema
+ *
+ * A recipe: the ordered steps of one stage, active or a variant.
+ *
+ * :ivar id: Identifier of the recipe.
+ * :ivar project_id: Project owning the recipe.
+ * :ivar stage: Stage the recipe processes.
+ * :ivar name: Name the user sees.
+ * :ivar steps: The steps in the order they run.
+ * :ivar active: Whether the recipe is the one the stage runs by default.
+ * :ivar created_at: When the recipe was created.
+ * :ivar updated_at: When the recipe was last changed.
+ */
+export type RecipeSchema = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Project Id
+     */
+    project_id: string;
+    stage: Stage;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Steps
+     */
+    steps: Array<StepSchema>;
+    /**
+     * Active
+     */
+    active: boolean;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+};
+
+/**
  * RejectedFileSchema
  *
  * A file of an upload that was not imported, with the reason shown to the user.
@@ -1548,6 +2044,146 @@ export type SourceSchema = {
 };
 
 /**
+ * Stage
+ *
+ * A step of the digitisation pipeline, in pipeline order.
+ */
+export type Stage = 'import' | 'page-split' | 'page-order' | 'geometry' | 'cleanup' | 'layout' | 'background' | 'recognition' | 'proofreading' | 'typesetting';
+
+/**
+ * StageRunBody
+ *
+ * What a run of a stage is asked to do; the stage is in the address.
+ *
+ * :ivar recipe_id: Recipe to run it by, or omitted for the active recipe.
+ * :ivar page_ids: Pages to run it on, or omitted for every page with an image.
+ * :ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a
+ * run that would do so leaves that page failed.
+ */
+export type StageRunBody = {
+    /**
+     * Recipe Id
+     */
+    recipe_id?: string | null;
+    /**
+     * Page Ids
+     */
+    page_ids?: Array<string> | null;
+    /**
+     * Confirm Unsplit
+     */
+    confirm_unsplit?: boolean;
+};
+
+/**
+ * StageState
+ *
+ * Whether the current version of a stage of a page still matches the inputs the stage would run on.
+ */
+export type StageState = 'fresh' | 'stale' | 'failed';
+
+/**
+ * StepBody
+ *
+ * A step of a recipe or of a preview as the interface sends it.
+ *
+ * :ivar processor_key: Key of the processor.
+ * :ivar params: Parameters of the step, which the processor checks and fills in.
+ */
+export type StepBody = {
+    /**
+     * Processor Key
+     */
+    processor_key: string;
+    /**
+     * Params
+     */
+    params?: {
+        [key: string]: unknown;
+    };
+};
+
+/**
+ * StepPreviewBody
+ *
+ * The steps of a form to preview on one page, up to one of them; the stage is in the address.
+ *
+ * :ivar page_id: Page to preview on.
+ * :ivar steps: The steps as the form has them.
+ * :ivar step_index: Index of the last step whose result is wanted.
+ */
+export type StepPreviewBody = {
+    /**
+     * Page Id
+     */
+    page_id: string;
+    /**
+     * Steps
+     */
+    steps: Array<StepBody>;
+    /**
+     * Step Index
+     */
+    step_index: number;
+};
+
+/**
+ * StepSchema
+ *
+ * One step of a recipe: a processor and the parameters it runs with.
+ *
+ * :ivar processor_key: Key of the processor.
+ * :ivar params: Parameters of the step, with the defaults of the processor filled in.
+ */
+export type StepSchema = {
+    /**
+     * Processor Key
+     */
+    processor_key: string;
+    /**
+     * Params
+     */
+    params: {
+        [key: string]: unknown;
+    };
+};
+
+/**
+ * TransformKind
+ *
+ * Kind of the coordinate transform a processing step applies from its input to its output.
+ */
+export type TransformKind = 'identity' | 'crop' | 'rotate' | 'perspective' | 'mesh';
+
+/**
+ * TransformSchema
+ *
+ * How a step moves the coordinates of its input image to its output image.
+ *
+ * :ivar kind: Kind of the transform.
+ * :ivar quad: Area of the input that becomes the output, for a crop or a perspective correction.
+ * :ivar angle: Angle of a rotation in degrees, counter-clockwise.
+ * :ivar mesh_key: Storage key of the mesh a dewarping follows.
+ * :ivar matrix: The nine numbers of the 3 by 3 matrix from the input to the output, in rows.
+ */
+export type TransformSchema = {
+    kind: TransformKind;
+    quad: QuadSchema | null;
+    /**
+     * Angle
+     */
+    angle: number | null;
+    /**
+     * Mesh Key
+     */
+    mesh_key: string | null;
+    /**
+     * Matrix
+     */
+    matrix: Array<number> | null;
+};
+
+/**
  * ValidationError
  */
 export type ValidationError = {
@@ -1574,6 +2210,34 @@ export type ValidationError = {
         [key: string]: unknown;
     };
 };
+
+/**
+ * VersionOutput
+ *
+ * What a processing step writes.
+ */
+export type VersionOutput = 'image' | 'mask' | 'regions' | 'text';
+
+/**
+ * VersionScale
+ *
+ * The size of the image a step ran on, which tells a full run from a preview of its parameters.
+ */
+export type VersionScale = 'full' | 'preview';
+
+/**
+ * VersionState
+ *
+ * Lifecycle of a page version, from its creation to its result.
+ */
+export type VersionState = 'pending' | 'running' | 'ready' | 'failed';
+
+/**
+ * WorkerPool
+ *
+ * Class of worker a job needs, which routes it to the right queue.
+ */
+export type WorkerPool = 'cpu' | 'gpu' | 'llm';
 
 /**
  * Problem
@@ -2488,6 +3152,904 @@ export type AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponses = {
 };
 
 export type AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponse = AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponses[keyof AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponses];
+
+export type GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/{stage}/recipe';
+};
+
+export type GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetError = GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetErrors[keyof GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetErrors];
+
+export type GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: RecipeSchema;
+};
+
+export type GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetResponse = GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetResponses[keyof GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetResponses];
+
+export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutData = {
+    body: RecipeBody;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/{stage}/recipe';
+};
+
+export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutError = PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutErrors[keyof PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutErrors];
+
+export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponses = {
+    /**
+     * Successful Response
+     */
+    200: RecipeSchema;
+};
+
+export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponse = PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponses[keyof PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponses];
+
+export type ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+    };
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Size
+         */
+        size?: number;
+    };
+    url: '/api/v1/projects/{project_id}/stages/{stage}/variants';
+};
+
+export type ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetError = ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetErrors[keyof ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetErrors];
+
+export type ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageRecipeSchema;
+};
+
+export type ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponse = ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponses[keyof ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponses];
+
+export type CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostData = {
+    body: RecipeBody;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/{stage}/variants';
+};
+
+export type CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostError = CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostErrors[keyof CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostErrors];
+
+export type CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponses = {
+    /**
+     * Successful Response
+     */
+    201: RecipeSchema;
+};
+
+export type CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponse = CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponses[keyof CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponses];
+
+export type PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutData = {
+    body: RecipeBody;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+        /**
+         * Recipe Id
+         *
+         * Identifier of the recipe
+         */
+        recipe_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}';
+};
+
+export type PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutError = PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutErrors[keyof PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutErrors];
+
+export type PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: RecipeSchema;
+};
+
+export type PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponse = PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponses[keyof PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponses];
+
+export type ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+        /**
+         * Recipe Id
+         *
+         * Identifier of the recipe
+         */
+        recipe_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}/activate';
+};
+
+export type ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostError = ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostErrors[keyof ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostErrors];
+
+export type ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostResponses = {
+    /**
+     * Successful Response
+     */
+    200: RecipeSchema;
+};
+
+export type ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostResponse = ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostResponses[keyof ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostResponses];
+
+export type RunStageApiV1ProjectsProjectIdStagesStageRunPostData = {
+    body: StageRunBody;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/{stage}/run';
+};
+
+export type RunStageApiV1ProjectsProjectIdStagesStageRunPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type RunStageApiV1ProjectsProjectIdStagesStageRunPostError = RunStageApiV1ProjectsProjectIdStagesStageRunPostErrors[keyof RunStageApiV1ProjectsProjectIdStagesStageRunPostErrors];
+
+export type RunStageApiV1ProjectsProjectIdStagesStageRunPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: JobSchema;
+};
+
+export type RunStageApiV1ProjectsProjectIdStagesStageRunPostResponse = RunStageApiV1ProjectsProjectIdStagesStageRunPostResponses[keyof RunStageApiV1ProjectsProjectIdStagesStageRunPostResponses];
+
+export type PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostData = {
+    body: StepPreviewBody;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/{stage}/preview';
+};
+
+export type PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostError = PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostErrors[keyof PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostErrors];
+
+export type PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: JobSchema;
+};
+
+export type PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponse = PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponses[keyof PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponses];
+
+export type ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+    };
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Size
+         */
+        size?: number;
+    };
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/stages';
+};
+
+export type ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetError = ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetErrors[keyof ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetErrors];
+
+export type ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: PagePageStageSchema;
+};
+
+export type ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponse = ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponses[keyof ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponses];
+
+export type ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutData = {
+    body: HeadChoice;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/stages/{stage}';
+};
+
+export type ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutError = ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutErrors[keyof ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutErrors];
+
+export type ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageStageSchema;
+};
+
+export type ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponse = ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponses[keyof ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponses];
+
+export type ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+    };
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Size
+         */
+        size?: number;
+        /**
+         * Stage
+         */
+        stage?: Stage | null;
+        /**
+         * Scale
+         */
+        scale?: VersionScale | null;
+    };
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/versions';
+};
+
+export type ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetError = ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetErrors[keyof ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetErrors];
+
+export type ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: PagePageVersionSchema;
+};
+
+export type ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponse = ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponses[keyof ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponses];
+
+export type GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Version Id
+         *
+         * Identifier of the page version
+         */
+        version_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}';
+};
+
+export type GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetError = GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetErrors[keyof GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetErrors];
+
+export type GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageVersionSchema;
+};
+
+export type GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetResponse = GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetResponses[keyof GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetResponses];
+
+export type CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Version Id
+         *
+         * Identifier of the page version
+         */
+        version_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}/tiles';
+};
+
+export type CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostError = CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostErrors[keyof CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostErrors];
+
+export type CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: JobSchema;
+};
+
+export type CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponse = CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponses[keyof CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponses];
+
+export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/versions/collect';
+};
+
+export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostError = CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostErrors[keyof CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostErrors];
+
+export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: JobSchema;
+};
+
+export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponse = CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponses[keyof CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponses];
+
+export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Stage of the processor that reads the edit
+         */
+        stage: Stage;
+    };
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Size
+         */
+        size?: number;
+    };
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}';
+};
+
+export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetError = ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetErrors[keyof ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetErrors];
+
+export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: PagePageEditSchema;
+};
+
+export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponse = ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponses[keyof ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponses];
+
+export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Stage of the processor that reads the edit
+         */
+        stage: Stage;
+        /**
+         * Processor Key
+         *
+         * Key of the processor that reads the edit
+         */
+        processor_key: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{processor_key}';
+};
+
+export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteError = DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteErrors[keyof DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteErrors];
+
+export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteResponse = DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteResponses[keyof DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteResponses];
+
+export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutData = {
+    body: EditForm;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Stage of the processor that reads the edit
+         */
+        stage: Stage;
+        /**
+         * Processor Key
+         *
+         * Key of the processor that reads the edit
+         */
+        processor_key: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{processor_key}';
+};
+
+export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutError = PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutErrors[keyof PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutErrors];
+
+export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageEditSchema;
+};
+
+export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponse = PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponses[keyof PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponses];
+
+export type ListProcessorsApiV1ProcessorsGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Size
+         */
+        size?: number;
+    };
+    url: '/api/v1/processors';
+};
+
+export type ListProcessorsApiV1ProcessorsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ListProcessorsApiV1ProcessorsGetError = ListProcessorsApiV1ProcessorsGetErrors[keyof ListProcessorsApiV1ProcessorsGetErrors];
+
+export type ListProcessorsApiV1ProcessorsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageProcessorSchema;
+};
+
+export type ListProcessorsApiV1ProcessorsGetResponse = ListProcessorsApiV1ProcessorsGetResponses[keyof ListProcessorsApiV1ProcessorsGetResponses];
 
 export type CancelJobApiV1JobsJobIdDeleteData = {
     body?: never;
