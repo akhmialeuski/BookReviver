@@ -5,11 +5,20 @@ from typing import TYPE_CHECKING
 
 import pytest
 from delayed_assert import assert_expectations, expect
+from itsdangerous import URLSafeSerializer
 from limits import parse_many
 
 from bookreviver.app.providers.accounts import SESSION_COOKIE
 from bookreviver.app.security import CSRF_FAILED, PROBLEM_MEDIA_TYPE, SIGN_IN_ATTEMPTS
-from tests.helpers.fakes_accounts import CSRF_HEADER, DETAIL_FIELD, EMAIL_FIELD, FORGOT_PATH, LOGOUT_PATH, ME_PATH
+from tests.helpers.fakes_accounts import (
+    CSRF_COOKIE,
+    CSRF_HEADER,
+    DETAIL_FIELD,
+    EMAIL_FIELD,
+    FORGOT_PATH,
+    LOGOUT_PATH,
+    ME_PATH,
+)
 
 if TYPE_CHECKING:
     import httpx
@@ -23,6 +32,22 @@ EMAIL: str = 'reader@example.org'
 UNCHECKED_PATH: str = '/test/unchecked'
 FORGED_TOKEN: str = 'forged'
 CONTENT_TYPE: str = 'content-type'
+# The secret of a server that ran before this one, and the token it signed into the browser
+EARLIER_SECRET: str = 'the-secret-of-the-server-before-it-was-set-up-again'
+STALE_TOKEN_VALUE: str = 'issued-before'
+
+
+def _hold_token_of_another_secret(visitor: Visitor) -> None:
+    """Put in the visitor's browser a CSRF token that a server with another secret signed, and send it in the header.
+
+    :param visitor: Visitor whose browser keeps the token.
+    :type visitor: Visitor
+    """
+    stale = URLSafeSerializer(EARLIER_SECRET, CSRF_COOKIE).dumps(STALE_TOKEN_VALUE)
+    # The value of the cookie the server issued is replaced, so its domain and path are the ones a new cookie overwrites
+    issued = next(cookie for cookie in visitor.client.cookies.jar if cookie.name == CSRF_COOKIE)
+    visitor.client.cookies.set(CSRF_COOKIE, stale, domain=issued.domain, path=issued.path)
+    visitor.client.headers[CSRF_HEADER] = stale
 
 
 @pytest.fixture
@@ -75,6 +100,45 @@ class TestCsrfProtection:
         expect(logout.status_code == HTTPStatus.FORBIDDEN)
         expect(me.status_code == HTTPStatus.OK)
         assert_expectations()
+
+    async def test_cookie_signed_with_another_secret_is_replaced_by_the_next_get(self, fx_visitor: Visitor) -> None:
+        """Verify a browser holding a token of an earlier secret gets a valid one from any page it loads.
+
+        The secret changes when the server is set up again, and the browser keeps the old cookie. Without a new one
+        every form fails the check, and reloading the page, which the message advises, would not help.
+
+        :param fx_visitor: Signed-out visitor whose client sends the CSRF header.
+        :type fx_visitor: Visitor
+        """
+        _hold_token_of_another_secret(fx_visitor)
+        await fx_visitor.client.get(ME_PATH)
+        fx_visitor.client.headers[CSRF_HEADER] = fx_visitor.client.cookies[CSRF_COOKIE]
+        response = await fx_visitor.register(EMAIL)
+        assert response.status_code == HTTPStatus.CREATED
+
+    async def test_refusal_of_a_cookie_of_another_secret_carries_a_valid_one(self, fx_visitor: Visitor) -> None:
+        """Verify the refused form already brings a valid token, so sending it again passes without a reload.
+
+        :param fx_visitor: Signed-out visitor whose client sends the CSRF header.
+        :type fx_visitor: Visitor
+        """
+        _hold_token_of_another_secret(fx_visitor)
+        refused = await fx_visitor.register(EMAIL)
+        fx_visitor.client.headers[CSRF_HEADER] = fx_visitor.client.cookies[CSRF_COOKIE]
+        again = await fx_visitor.register(EMAIL)
+        expect(refused.status_code == HTTPStatus.FORBIDDEN)
+        expect(CSRF_COOKIE in refused.cookies)
+        expect(again.status_code == HTTPStatus.CREATED)
+        assert_expectations()
+
+    async def test_a_valid_cookie_is_kept(self, fx_browser: httpx.AsyncClient) -> None:
+        """Verify a browser whose token is valid is not handed a new one, which would race with forms open in tabs.
+
+        :param fx_browser: Signed-out client holding a valid CSRF cookie.
+        :type fx_browser: httpx.AsyncClient
+        """
+        response = await fx_browser.get(ME_PATH)
+        assert CSRF_COOKIE not in response.cookies
 
     @pytest.mark.usefixtures('fx_unchecked_route')
     async def test_request_without_session_elsewhere_is_not_checked(self, fx_client: httpx.AsyncClient) -> None:
