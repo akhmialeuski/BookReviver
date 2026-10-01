@@ -1,4 +1,5 @@
 import type { RejectionReason } from '@/api';
+import { ProblemCode } from '@/shared/http/codes';
 import { pluralize } from '@/shared/lib/format';
 
 /**
@@ -33,11 +34,11 @@ export const MESSAGES = {
     invalidInput: 'Some of the values are not valid.',
     // The wording of a code the account routes send in the detail of a problem
     codes: {
-      LOGIN_BAD_CREDENTIALS: 'The email address or the password is wrong.',
-      LOGIN_USER_NOT_VERIFIED:
+      [ProblemCode.LoginBadCredentials]: 'The email address or the password is wrong.',
+      [ProblemCode.LoginUserNotVerified]:
         'This address is not confirmed yet. Follow the link in the message we sent you.',
-      VERIFY_USER_BAD_TOKEN: 'This confirmation link is not valid or has expired.',
-      VERIFY_USER_ALREADY_VERIFIED: 'This address is already confirmed. You can sign in.',
+      [ProblemCode.VerifyBadToken]: 'This confirmation link is not valid or has expired.',
+      [ProblemCode.VerifyAlreadyVerified]: 'This address is already confirmed. You can sign in.',
     } as Readonly<Record<string, string>>,
   },
   auth: {

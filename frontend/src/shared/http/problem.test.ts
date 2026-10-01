@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MESSAGES } from '@/shared/messages';
+import { ProblemCode } from './codes';
 import { describeError, ProblemError, parseProblem } from './problem';
 
 /**
@@ -18,7 +19,7 @@ describe('parseProblem', () => {
       400,
     );
 
-    expect(error.message).toBe(MESSAGES.problems.codes.LOGIN_BAD_CREDENTIALS);
+    expect(error.message).toBe(MESSAGES.problems.codes[ProblemCode.LoginBadCredentials]);
     expect(error.code).toBe('LOGIN_BAD_CREDENTIALS');
     expect(error.status).toBe(400);
   });

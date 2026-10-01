@@ -1,10 +1,13 @@
-import { createFileRoute } from '@tanstack/react-router';
-import { MESSAGES } from '@/shared/messages';
+import { createFileRoute, redirect } from '@tanstack/react-router';
+import { DEFAULT_LANDING } from '@/features/auth/redirect';
 
 /**
- * The landing route, a placeholder until the sign-in guard and the book list replace it.
+ * The root address has no screen of its own: it leads to the list of books, and the guard of that area sends a
+ * visitor on to the sign-in page.
  */
 
 export const Route = createFileRoute('/')({
-  component: () => <main className="p-6 text-xl font-semibold">{MESSAGES.app.name}</main>,
+  beforeLoad: () => {
+    throw redirect({ href: DEFAULT_LANDING });
+  },
 });
