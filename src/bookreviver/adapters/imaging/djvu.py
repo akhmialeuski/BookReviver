@@ -210,10 +210,11 @@ class DjvuFormat(SourceFormat):
 
         A bundled document and a single-page file are a source of their own. A file that is not DjVu, and an index that
         the tools cannot read, are left as sources of their own too, so ``inspect`` refuses them by name without
-        stopping the other files. A file the index names but the upload lacks is not joined, and ``inspect`` reports it
-        as missing. Without the tools every file is a source of its own, since only the tools read an index.
+        stopping the other files. A file the index names but the folder of the index lacks is not joined, and
+        ``inspect`` reports it as missing. Without the tools every file is a source of its own, since only the tools
+        read an index.
 
-        :param files: Local paths of the staged DjVu files, in the natural order of their names.
+        :param files: Local paths of the staged DjVu files, in the order of the upload.
         :type files: Sequence[Path]
         :returns: The files of each source in the order of their main files, the index first and then its files in the
                   order of the index, all its components and not only the pages.
@@ -221,7 +222,7 @@ class DjvuFormat(SourceFormat):
         """
         if self._tools is None:
             return super().group(files)
-        by_name = {path.name: path for path in files}
+        by_name = {(path.parent, path.name): path for path in files}
         members: dict[Path, list[Path]] = {}
         claimed: set[Path] = set()
         for path in files:
@@ -231,10 +232,12 @@ class DjvuFormat(SourceFormat):
                 components = self._components(path)
             except UnsupportedSourceError, OSError:
                 continue
+            # An index names its files by name, so they are the ones in its own folder: two volumes can both have p001
             members[path] = [
-                by_name[component.name]
+                by_name[path.parent, component.name]
                 for component in components
-                if component.name in by_name and by_name[component.name] not in {path, *claimed}
+                if (path.parent, component.name) in by_name
+                and by_name[path.parent, component.name] not in {path, *claimed}
             ]
             claimed.update(members[path])
         return [[path, *members.get(path, [])] for path in files if path not in claimed]

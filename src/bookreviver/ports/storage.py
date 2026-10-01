@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
     from contextlib import AbstractAsyncContextManager
     from pathlib import Path
 
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 class IncomingFile(Protocol):
     """An uploaded file being received; FastAPI's ``UploadFile`` satisfies it.
 
-    :ivar filename: Name the client sent for the file, possibly with a client-side path, or None.
+    :ivar filename: Name the client sent for the file, with the relative path of a directory upload, or None.
     """
 
     filename: str | None
@@ -51,7 +51,9 @@ class SourceStore(ABC):
     ) -> Sequence[SourceFile]:
         """Receive the upload of an import job, replacing whatever an interrupted upload of the same job left.
 
-        The sources the project already has do not matter: another upload adds sources beside them.
+        A file is kept under the relative path ``UploadPath`` makes of its name, so the files of a chosen directory
+        keep their folders and ``vol1/001.tif`` and ``vol2/001.tif`` are two files. The sources the project already has
+        do not matter: another upload adds sources beside them.
 
         :param project_id: Project receiving the upload.
         :type project_id: ProjectId
@@ -63,15 +65,17 @@ class SourceStore(ABC):
         :type max_bytes: int
         :returns: Name, size and SHA-256 digest of every staged file, in upload order.
         :rtype: Sequence[SourceFile]
-        :raises UploadRejectedError: If the upload breaks an upload rule, such as growing past ``max_bytes``; nothing
-                                     of it is kept then.
+        :raises UploadRejectedError: If the upload breaks an upload rule, such as a name that is empty or leaves its
+                                     folder, two paths that differ only in letter case, or growing past ``max_bytes``;
+                                     nothing of it is kept then.
         """
 
     @abstractmethod
     async def promote(self, project_id: ProjectId, job_id: JobId, source_id: SourceId, *, names: Sequence[str]) -> None:
         """Move the staged files of one source into the source's own directory in one step.
 
-        The source is never seen half written, and the files it takes are no longer staged afterwards.
+        The source is never seen half written, and the files it takes are no longer staged afterwards. Each file is
+        stored under the last segment of its name alone, so the folders of a directory upload end at the source.
 
         :param project_id: Project owning the upload and the source.
         :type project_id: ProjectId
@@ -82,7 +86,8 @@ class SourceStore(ABC):
         :param names: Names of the staged files that make the source, as ``stage`` reported them.
         :type names: Sequence[str]
         :raises NotFoundError: If the job has no staged upload, or a name is not among its staged files.
-        :raises ConflictError: If the source already has files, which are never replaced.
+        :raises ConflictError: If the source already has files, which are never replaced, or two of the names end in
+                               the same file name.
         :raises ValueError: If ``names`` is empty.
         """
 
@@ -97,15 +102,16 @@ class SourceStore(ABC):
         """
 
     @abstractmethod
-    def staged_files(self, project_id: ProjectId, job_id: JobId) -> AbstractAsyncContextManager[Sequence[Path]]:
+    def staged_files(self, project_id: ProjectId, job_id: JobId) -> AbstractAsyncContextManager[Mapping[str, Path]]:
         """Give local paths of the files an import job has staged and not promoted, while the context is open.
 
         :param project_id: Project owning the upload.
         :type project_id: ProjectId
         :param job_id: Import job whose upload is read.
         :type job_id: JobId
-        :returns: Context manager yielding the paths in name order.
-        :rtype: AbstractAsyncContextManager[Sequence[Path]]
+        :returns: Context manager yielding the path of every file by its name as ``stage`` reported it, the relative
+                  path of the upload, in the order of those names. The base names of two files can be equal.
+        :rtype: AbstractAsyncContextManager[Mapping[str, Path]]
         :raises NotFoundError: If the job has no staged upload, when the context opens.
         """
 

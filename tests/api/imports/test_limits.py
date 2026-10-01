@@ -99,22 +99,26 @@ class TestUploadLimits:
         expect(response.json()['detail'] == UploadProblem.TOO_MANY_FILES.label)
         assert_expectations()
 
-    async def test_upload_of_two_files_more_than_the_rule_allows_is_refused_by_the_parser(
-        self, fx_client: httpx.AsyncClient, fx_project: Project
+    @pytest.mark.parametrize('extra_files', [2, MAX_FILES], ids=['two-more', 'twice-as-many'])
+    async def test_upload_of_many_files_more_than_the_rule_allows_is_a_413_problem_as_well(
+        self, fx_client: httpx.AsyncClient, fx_project: Project, extra_files: int
     ) -> None:
-        """Verify an upload far past the rule is stopped by the multipart parser before any file is received.
+        """Verify the service decides for any number of files past the rule, and the parser never answers instead.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
         :param fx_project: Project of the signed-in account.
         :type fx_project: Project
+        :param extra_files: Number of files past the limit of the upload rule.
+        :type extra_files: int
         """
         response = await fx_client.post(
-            SOURCES_PATH.format(project_id=fx_project.id), files=_text_files(MAX_FILES + 2, size=1)
+            SOURCES_PATH.format(project_id=fx_project.id), files=_text_files(MAX_FILES + extra_files, size=1)
         )
 
-        expect(response.status_code == HTTPStatus.BAD_REQUEST)
+        expect(response.status_code == HTTPStatus.CONTENT_TOO_LARGE)
         expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
+        expect(response.json()['detail'] == UploadProblem.TOO_MANY_FILES.label)
         assert_expectations()
 
     async def test_upload_larger_than_the_rule_allows_is_a_413_problem(

@@ -17,6 +17,11 @@ The base version of a page, ``split.none``, holds the page's own copy of its sca
 cut from that copy, so the page stands on its own once its scan is deleted. Until the plugin framework exists this
 module writes it, and the ``split.none`` processor replaces this code.
 
+A file is named by its relative path in the upload, such as ``vol1/001.tif``, and the order of the upload is the order
+of the book: the job lists its files as the user gave them, sources are created in that order, and the pages of their
+scans join the end of the book in it, with nothing sorted on the way. A system file of a directory is rejected by name
+like a file of an unsupported type.
+
 Services touch no file: names and sizes come from the staged files the store reported, and every image is read and
 written through the imaging and asset ports.
 """
@@ -38,6 +43,7 @@ from bookreviver.domain.enums import (
     RejectionReason,
     Rendition,
     Stage,
+    SystemFile,
     UploadProblem,
     VersionState,
 )
@@ -51,7 +57,15 @@ from bookreviver.domain.errors import (
 from bookreviver.domain.events import JobChanged, PagesChanged, ProjectChanged, ScanReady, SourceImported
 from bookreviver.domain.ids import JobId, PageId, ScanId, SourceId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import ImportRequest, ImportResult, ProcessorRef, Progress, RejectedFile, Renditions
+from bookreviver.domain.values import (
+    ImportRequest,
+    ImportResult,
+    ProcessorRef,
+    Progress,
+    RejectedFile,
+    Renditions,
+    UploadPath,
+)
 from bookreviver.services.projects import owned_project
 
 if TYPE_CHECKING:
@@ -213,7 +227,7 @@ class ImportRun:
         """
         try:
             async with self._sources.staged_files(self.job.project_id, self.job.id) as paths:
-                staged = {path.name for path in paths}
+                staged = set(paths)
         except NotFoundError:
             staged = set()
         for source in await self._uow.sources.list_for_project(self.job.project_id):
@@ -231,21 +245,28 @@ class ImportRun:
         return staged
 
     async def _import_sources(self, names: Sequence[str]) -> None:
-        """Group the named staged files into sources and import each one, in the order the inspector gives.
+        """Group the named staged files into sources and import each one, in the order of the upload.
 
-        A file of a type no source can be is rejected on its own, so it does not stop the upload.
+        A system file of a directory, such as ``Thumbs.db`` or ``._001.tif``, and a file of a type no source can be are
+        each rejected on its own, so they do not stop the upload and are named in its result. The names come in the
+        order of the upload, which the inspector keeps, so that order becomes the order of the pages of the book.
 
-        :param names: Names of the staged files this run has not dealt with yet.
+        :param names: Relative names of the staged files this run has not dealt with yet, in the order of the upload.
         :type names: Sequence[str]
         :raises ImportCancelledError: If the job was cancelled.
         """
-        supported = [name for name in names if FileType.from_name(name) is not None]
-        for name in set(names) - set(supported):
-            self._reject([name], RejectionReason.UNSUPPORTED_TYPE, RejectionReason.UNSUPPORTED_TYPE.label)
+        supported: list[str] = []
+        for name in names:
+            if SystemFile.matches(name):
+                self._reject([name], RejectionReason.SYSTEM_FILE, RejectionReason.SYSTEM_FILE.label)
+            elif FileType.from_name(name) is None:
+                self._reject([name], RejectionReason.UNSUPPORTED_TYPE, RejectionReason.UNSUPPORTED_TYPE.label)
+            else:
+                supported.append(name)
         if not supported:
             return
         async with self._sources.staged_files(self.job.project_id, self.job.id) as paths:
-            grouped = await self._inspector.group([path for path in paths if path.name in supported])
+            grouped = await self._inspector.group({name: paths[name] for name in supported})
         for uploaded in grouped:
             await self._import_source(uploaded)
 
@@ -264,9 +285,8 @@ class ImportRun:
             )
             return
         async with self._sources.staged_files(self.job.project_id, self.job.id) as paths:
-            chosen = [path for path in paths if path.name in uploaded.names]
             try:
-                analysis = await self._inspector.inspect(uploaded.kind, chosen)
+                analysis = await self._inspector.inspect(uploaded.kind, [paths[name] for name in uploaded.names])
             except UnsupportedSourceError as error:
                 self._reject(uploaded.names, RejectionReason.UNREADABLE, str(error))
                 return
@@ -562,8 +582,8 @@ class ImportService:
         :returns: The queued job, whose request lists the staged files.
         :rtype: Job
         :raises NotFoundError: If the actor has no such project.
-        :raises UploadRejectedError: If there are no files or too many, a file has no usable name or shares its name
-                                     with another, or the upload is larger than allowed.
+        :raises UploadRejectedError: If there are no files or too many, a file has no usable name or a path that leaves
+                                     its folder, two files share a path, or the upload is larger than allowed.
         :raises ConflictError: If the project already has an import queued or running.
         """
         await self.authorize_upload(actor, project_id)
@@ -571,6 +591,9 @@ class ImportService:
             raise UploadRejectedError(UploadProblem.NO_FILES)
         if len(files) > self._limits.max_files:
             raise UploadRejectedError(UploadProblem.TOO_MANY_FILES)
+        # A path that cannot be stored is found before the first file is streamed, not after hundreds of megabytes
+        for file in files:
+            UploadPath.parse(file.filename or '')
         job_id = JobId(uuid4())
         staged = await self._storage.sources.stage(project_id, job_id, files, max_bytes=self._limits.max_bytes)
         job = Job(

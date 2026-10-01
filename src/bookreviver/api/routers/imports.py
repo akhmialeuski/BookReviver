@@ -7,12 +7,12 @@ result and the events of the project tell the browser how it goes.
 FastAPI parses a declared body before it runs any dependency, so a route with a ``File()`` parameter would spool the
 upload to disk before the caller is known to be signed in, to own the project or to be allowed another import. The
 route therefore declares no body. A dependency reads the form after the actor and the project have been checked, and
-the schema of the body is given to OpenAPI by ``openapi_extra``. The form is parsed with the file limit of the upload
-rule, since Starlette's parser stops at 1000 files, and with one file more, so an upload past the rule reaches
-``ImportService.start_import`` and is answered with its 413 problem rather than with the parser's own 400. An upload
-of two files past the rule is still refused by the parser.
+the schema of the body is given to OpenAPI by ``openapi_extra``. Starlette's parser stops at 1000 files and answers a
+400 of its own, so it is given no ceiling. The one limit is then ``max_upload_files``, which
+``ImportService.start_import`` enforces and answers with its 413 problem for any number of files past it.
 """
 
+import math
 from collections.abc import AsyncIterator
 from typing import Annotated
 
@@ -25,9 +25,10 @@ from bookreviver.api.auth import ActorDep
 from bookreviver.api.schemas.imports import UploadForm
 from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.domain.ids import ProjectId
-from bookreviver.services.imports import ImportLimits, ImportService
+from bookreviver.services.imports import ImportService
 
-MULTIPART_FILES_OVER_THE_RULE: int = 1
+# Starlette's parser takes a float limit, and infinity leaves the count of files to the service
+MULTIPART_FILES_UNLIMITED: float = math.inf
 MULTIPART_MEDIA_TYPE: str = 'multipart/form-data'
 FILES_FIELD: str = 'files'
 
@@ -38,7 +39,6 @@ async def read_upload(
     project_id: Annotated[ProjectId, Path(description='Identifier of the project')],
     actor: ActorDep,
     imports: FromDishka[ImportService],
-    limits: FromDishka[ImportLimits],
 ) -> AsyncIterator[list[UploadFile]]:
     """Read the uploaded files of the request, once the caller may import into the project.
 
@@ -52,14 +52,12 @@ async def read_upload(
     :type actor: Actor
     :param imports: Import service of the request.
     :type imports: ImportService
-    :param limits: Bounds of an upload, of which the number of files is read.
-    :type limits: ImportLimits
     :returns: Iterator yielding once the uploaded files, and closing the form afterwards.
     :rtype: AsyncIterator[list[UploadFile]]
     :raises RequestValidationError: If the form holds no file, or a ``files`` field that is not one.
     """
     await imports.authorize_upload(actor, project_id)
-    form = await request.form(max_files=limits.max_files + MULTIPART_FILES_OVER_THE_RULE)
+    form = await request.form(max_files=MULTIPART_FILES_UNLIMITED)
     # try/finally rather than a context manager around the yield, because FastAPI drives this generator
     try:
         try:

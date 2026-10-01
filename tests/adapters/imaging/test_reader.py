@@ -114,38 +114,46 @@ class TestGroup:
         CASE_ARG,
         [
             GroupCase(names=['book.pdf'], sources=[_source(SourceKind.PDF, FileType.PDF, 'book.pdf')]),
-            # Each part of a book is a source of its own, and only the natural order puts part 2 before part 10
+            # Each part of a book is a source of its own, and the order of the upload decides, not the order of the names
             GroupCase(
                 names=['part10.pdf', 'part2.PDF'],
                 sources=[
-                    _source(SourceKind.PDF, FileType.PDF, 'part2.PDF'),
                     _source(SourceKind.PDF, FileType.PDF, 'part10.pdf'),
+                    _source(SourceKind.PDF, FileType.PDF, 'part2.PDF'),
                 ],
             ),
             # A cover from another copy, a PDF part and a multi-page TIFF are accepted together
             GroupCase(
                 names=['scans.tif', 'kniga.pdf', 'cover.JPG'],
                 sources=[
-                    _source(SourceKind.IMAGE, FileType.JPEG, 'cover.JPG'),
-                    _source(SourceKind.PDF, FileType.PDF, 'kniga.pdf'),
                     _source(SourceKind.IMAGE, FileType.TIFF, 'scans.tif'),
+                    _source(SourceKind.PDF, FileType.PDF, 'kniga.pdf'),
+                    _source(SourceKind.IMAGE, FileType.JPEG, 'cover.JPG'),
                 ],
             ),
             GroupCase(
                 names=['002.png', '001.jp2', DJVU_NAME],
                 sources=[
-                    _source(SourceKind.IMAGE, FileType.JPEG_2000, '001.jp2'),
                     _source(SourceKind.IMAGE, FileType.PNG, '002.png'),
+                    _source(SourceKind.IMAGE, FileType.JPEG_2000, '001.jp2'),
                     _source(SourceKind.DJVU, FileType.DJVU, DJVU_NAME),
                 ],
             ),
+            # The files of a chosen directory are named by their relative paths, and one name may occur in several
+            GroupCase(
+                names=['vol2/001.tif', 'vol1/001.tif'],
+                sources=[
+                    _source(SourceKind.IMAGE, FileType.TIFF, 'vol2/001.tif'),
+                    _source(SourceKind.IMAGE, FileType.TIFF, 'vol1/001.tif'),
+                ],
+            ),
         ],
-        ids=['one-pdf', 'pdf-parts', 'mixed-kinds', 'image-files-and-djvu'],
+        ids=['one-pdf', 'pdf-parts', 'mixed-kinds', 'image-files-and-djvu', 'folders'],
     )
-    async def test_makes_one_source_per_file_in_natural_order(
+    async def test_makes_one_source_per_file_in_the_order_of_the_upload(
         self, fx_inspector: SourceInspector, tmp_path: Path, case: GroupCase
     ) -> None:
-        """Verify every file is a source of its own kind and type, ordered by the natural order of the names.
+        """Verify every file is a source of its own kind and type, in the order the files were uploaded in.
 
         :param fx_inspector: Source inspector built by the application's imaging provider.
         :type fx_inspector: SourceInspector
@@ -154,7 +162,7 @@ class TestGroup:
         :param case: An upload, and the sources it must be grouped into.
         :type case: GroupCase
         """
-        sources = await fx_inspector.group([tmp_path / name for name in case.names])
+        sources = await fx_inspector.group({name: tmp_path / name for name in case.names})
 
         assert list(sources) == list(case.sources)
 
@@ -180,7 +188,7 @@ class TestGroup:
         :type case: RejectedGroupCase
         """
         with pytest.raises(UploadRejectedError) as error:
-            await fx_inspector.group([tmp_path / name for name in case.names])
+            await fx_inspector.group({name: tmp_path / name for name in case.names})
 
         assert error.value.problem is case.problem
 

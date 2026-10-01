@@ -468,6 +468,19 @@ class TestInspect:
             await fx_inspector.inspect(SourceKind.DJVU, [first, second])
 
 
+def _named(root: Path, files: Sequence[Path]) -> dict[str, Path]:
+    """Name files by their path under ``root``, in the order given, as the staged files of an upload are.
+
+    :param root: Directory the upload was staged in.
+    :type root: Path
+    :param files: Paths of the files, in the order of the upload.
+    :type files: Sequence[Path]
+    :returns: Each path by its ``/`` separated relative path.
+    :rtype: dict[str, Path]
+    """
+    return {path.relative_to(root).as_posix(): path for path in files}
+
+
 def _source(*names: str) -> UploadedSource:
     """Return an expected DjVu source made of the named files.
 
@@ -495,18 +508,42 @@ class TestGroup:
         """
         files = _write(DjvuDocumentKind.INDIRECT, tmp_path)
 
-        sources = await fx_inspector.group(files[::-1])
+        sources = await fx_inspector.group(_named(tmp_path, files[::-1]))
 
         assert list(sources) == [_source(INDEX_NAME, 'p0001.djvu', 'p0002.djvu', 'p0003.djvu')]
 
     @requires_djvulibre
-    async def test_makes_a_source_of_every_document_and_page_file_in_natural_order(
+    async def test_joins_an_index_only_with_the_files_of_its_own_folder(
+        self, fx_inspector: SourceInspector, tmp_path: Path
+    ) -> None:
+        """Verify two volumes whose page files share their names are two sources, each with its own files.
+
+        :param fx_inspector: Source inspector built by the application's imaging provider.
+        :type fx_inspector: SourceInspector
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        for volume in ('vol1', 'vol2'):
+            (tmp_path / volume).mkdir()
+        first = write_djvu_indirect(tmp_path / 'vol1', pages=PAGES[:2])
+        second = write_djvu_indirect(tmp_path / 'vol2', pages=PAGES[:2])
+
+        sources = await fx_inspector.group(_named(tmp_path, [*second, *first]))
+
+        assert list(sources) == [
+            _source('vol2/index.djvu', 'vol2/p0001.djvu', 'vol2/p0002.djvu'),
+            _source('vol1/index.djvu', 'vol1/p0001.djvu', 'vol1/p0002.djvu'),
+        ]
+
+    @requires_djvulibre
+    async def test_makes_a_source_of_every_document_and_page_file_in_the_order_of_the_upload(
         self, fx_inspector: SourceInspector, tmp_path: Path
     ) -> None:
         """Verify two indirect documents, a bundled one, single pages and a file that is no DjVu group as one upload.
 
         Every index takes only the files it names, a bundled document and a single page are sources of their own, and
-        so is a file no tool reads, which ``inspect`` refuses by name later.
+        so is a file no tool reads, which ``inspect`` refuses by name later. The sources follow their main files in the
+        upload, whatever their names, since the order of the upload is the order of the book.
 
         :param fx_inspector: Source inspector built by the application's imaging provider.
         :type fx_inspector: SourceInspector
@@ -522,15 +559,15 @@ class TestGroup:
         notes.write_bytes(b'not a DjVu file, though long enough to hold a header')
         upload = [notes, *singles[::-1], bundle, *second[::-1], *first]
 
-        sources = await fx_inspector.group(upload)
+        sources = await fx_inspector.group(_named(tmp_path, upload))
 
         assert list(sources) == [
-            _source('a-index.djvu', 'a0001.djvu', 'a0002.djvu'),
-            _source('b-index.djvu', 'b0001.djvu', 'b0002.djvu'),
-            _source('c-book.djvu'),
-            _source('d0001.djvu'),
-            _source('d0002.djvu'),
             _source('e-notes.djvu'),
+            _source('d0002.djvu'),
+            _source('d0001.djvu'),
+            _source('c-book.djvu'),
+            _source('b-index.djvu', 'b0001.djvu', 'b0002.djvu'),
+            _source('a-index.djvu', 'a0001.djvu', 'a0002.djvu'),
         ]
 
     @requires_djvulibre
@@ -546,7 +583,7 @@ class TestGroup:
         """
         index, first, *_ = _write(DjvuDocumentKind.INDIRECT, tmp_path)
 
-        sources = await fx_inspector.group([index, first])
+        sources = await fx_inspector.group(_named(tmp_path, [index, first]))
 
         assert list(sources) == [_source(INDEX_NAME, 'p0001.djvu')]
 

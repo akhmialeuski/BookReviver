@@ -1,12 +1,21 @@
 """Immutable value objects of the domain."""
 
+import re
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self, override
 
 from attrs import evolve, field, fields_dict, frozen, validators
 
-from bookreviver.domain.enums import ContributorRole, Orthography, Rendition, RightsStatus, Script, TransformKind
-from bookreviver.domain.errors import InvalidIdentifierError
+from bookreviver.domain.enums import (
+    ContributorRole,
+    Orthography,
+    Rendition,
+    RightsStatus,
+    Script,
+    TransformKind,
+    UploadProblem,
+)
+from bookreviver.domain.errors import InvalidIdentifierError, UploadRejectedError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -28,6 +37,11 @@ type MetadataMap = Mapping[str, Any]
 TITLE_FIELD: str = 'title'
 # A SHA-256 digest as lower-case hexadecimal digits
 SHA256_PATTERN: str = r'[0-9a-f]{64}'
+# Segments of an uploaded path that do not name a file or a folder
+NAMELESS_SEGMENTS: frozenset[str] = frozenset({'', '.', '..'})
+# A Windows drive letter opening a path, as in ``C:\scans`` or ``C:scans``
+DRIVE_LETTER: re.Pattern[str] = re.compile(r'[A-Za-z]:')
+CONTROL_CHARACTERS: re.Pattern[str] = re.compile(r'[\x00-\x1f\x7f]')
 
 
 @frozen(kw_only=True)
@@ -206,10 +220,67 @@ class MetadataSuggestion:
 
 
 @frozen(kw_only=True)
+class UploadPath:
+    """The relative path of an uploaded file inside the folder the user chose, checked to stay inside it.
+
+    A browser sends ``vol1/001.tif`` for a file of a chosen directory and the bare name for a file chosen alone, and a
+    client of the API may send anything, so the path is parsed before any file is written. It is always relative,
+    separated by ``/``, and has no empty, ``.`` or ``..`` segment and no drive letter.
+
+    :ivar segments: The folders of the path from the chosen directory down, then the file name last.
+    """
+
+    segments: tuple[str, ...] = field(validator=validators.min_len(1))
+
+    @classmethod
+    def parse(cls, raw: str) -> Self:
+        """Check the path a client sent for a file and return it with ``/`` between its segments.
+
+        :param raw: Path as sent, with a slash or a backslash between segments, or an empty string for no name.
+        :type raw: str
+        :returns: The checked path.
+        :rtype: Self
+        :raises UploadRejectedError: With ``EMPTY_NAME`` if the file name is empty, ``.`` or ``..``, and with
+                                     ``UNSAFE_PATH`` if the path is absolute, starts with a drive letter, holds an
+                                     empty, ``.`` or ``..`` folder segment or holds a control character.
+        """
+        segments = raw.replace('\\', '/').split('/')
+        if segments[-1] in NAMELESS_SEGMENTS:
+            raise UploadRejectedError(UploadProblem.EMPTY_NAME)
+        if (
+            DRIVE_LETTER.match(segments[0])
+            or any(segment in NAMELESS_SEGMENTS for segment in segments)
+            or CONTROL_CHARACTERS.search(raw)
+        ):
+            raise UploadRejectedError(UploadProblem.UNSAFE_PATH)
+        return cls(segments=tuple(segments))
+
+    @property
+    def name(self) -> str:
+        """The file name, the last segment, under which the file is stored in its source's directory."""
+        return self.segments[-1]
+
+    @property
+    def folders(self) -> tuple[str, ...]:
+        """The path of every folder the file lies in, from the outermost down, each as a ``/`` separated path."""
+        return tuple('/'.join(self.segments[:end]) for end in range(1, len(self.segments)))
+
+    @override
+    def __str__(self) -> str:
+        """Return the path with ``/`` between its segments.
+
+        :returns: The path as it is shown and stored.
+        :rtype: str
+        """
+        return '/'.join(self.segments)
+
+
+@frozen(kw_only=True)
 class SourceFile:
     """One file of a source as uploaded, whether still staged or stored in the source's directory.
 
-    :ivar name: Name of the file inside the source's directory.
+    :ivar name: Relative path of the file in the upload, as ``UploadPath`` writes it; the source's directory stores
+                the file under the last segment alone.
     :ivar size_bytes: Size of the file in bytes.
     :ivar sha256: SHA-256 digest of the file's content as lower-case hexadecimal digits.
     """

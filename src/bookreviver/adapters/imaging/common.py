@@ -1,18 +1,16 @@
-"""Facts, limits, ordering and JPEG rules shared by every source format of the imaging adapters.
+"""Facts, limits and JPEG rules shared by every source format of the imaging adapters.
 
 The facts a format reports beyond the typed ``ScanFacts`` fields go into ``extra`` and ``file_metadata`` under the keys
-of ``FactKey``, so every format spells a key the same way. ``natural_order`` is the one order of the files of an
-upload, which becomes the order of their sources in the book. ``only_file`` is the one rule that a PDF or an image
+of ``FactKey``, so every format spells a key the same way. No function here sorts the files of an upload, because the
+order the user gave them is the order of the book. ``only_file`` is the one rule that a PDF or an image
 source is a single file. ``is_portable_jpeg`` is the one rule deciding whether a stored JPEG may be copied as the
 image of a scan, whether it comes from a PDF page or from an image file. ``write_full`` is the one place that writes a
 page image in the format the caller asked for, so every source format encodes a JPEG and a PNG alike.
 """
 
 import enum
-from operator import attrgetter
 from typing import TYPE_CHECKING
 
-from natsort import natsorted
 from PIL import ExifTags, Image
 
 from bookreviver.domain.enums import Rendition
@@ -64,17 +62,6 @@ class FactKey(enum.StrEnum):
     DJVU_KIND = 'djvu_kind'
     COMPONENT_COUNT = 'component_count'
     DJVU_CHUNKS = 'djvu_chunks'
-
-
-def natural_order(files: Sequence[Path]) -> list[Path]:
-    """Return the files of an upload in book order, the natural sort of their names, so ``part2`` precedes ``part10``.
-
-    :param files: Files of the upload in any order.
-    :type files: Sequence[Path]
-    :returns: The same paths in book order.
-    :rtype: list[Path]
-    """
-    return natsorted(files, key=attrgetter('name'))
 
 
 def only_file(files: Sequence[Path], *, kind: SourceKind) -> Path:

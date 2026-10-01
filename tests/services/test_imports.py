@@ -345,8 +345,22 @@ REFUSED_UPLOADS: list[UploadCase] = [
     UploadCase(names=['a.jpg'], problem=UploadProblem.TOO_LARGE, max_bytes=3),
     UploadCase(names=[None], problem=UploadProblem.EMPTY_NAME),
     UploadCase(names=['a.jpg', 'A.JPG'], problem=UploadProblem.DUPLICATE_NAME),
+    UploadCase(names=['vol1/a.jpg', 'VOL1\\A.JPG'], problem=UploadProblem.DUPLICATE_NAME),
+    UploadCase(names=['a.jpg', '../b.jpg'], problem=UploadProblem.UNSAFE_PATH),
+    UploadCase(names=['/etc/a.jpg'], problem=UploadProblem.UNSAFE_PATH),
+    UploadCase(names=['C:\\scans\\a.jpg'], problem=UploadProblem.UNSAFE_PATH),
 ]
-REFUSED_IDS: list[str] = ['no-files', 'too-many-files', 'too-large', 'empty-name', 'duplicate-name']
+REFUSED_IDS: list[str] = [
+    'no-files',
+    'too-many-files',
+    'too-large',
+    'empty-name',
+    'duplicate-name',
+    'duplicate-path-in-a-folder',
+    'parent-folder',
+    'absolute-path',
+    'drive-letter',
+]
 
 
 class FullFormatCase(NamedTuple):
@@ -388,8 +402,20 @@ BAD_FILES: list[BadFile] = [
     BadFile(name='bad.jpg', content=BROKEN_PDF, reason=RejectionReason.UNREADABLE),
     BadFile(name='book.djvu', content=DJVU_HEADER, reason=RejectionReason.UNREADABLE),
     BadFile(name='notes.txt', content=b'plain text', reason=RejectionReason.UNSUPPORTED_TYPE),
+    BadFile(name='Thumbs.db', content=b'thumbnails', reason=RejectionReason.SYSTEM_FILE),
+    BadFile(name='vol1/.DS_Store', content=b'folder view', reason=RejectionReason.SYSTEM_FILE),
+    # The suffix of the image it accompanies, which no reader could make a source of
+    BadFile(name='._page.jpg', content=b'resource fork', reason=RejectionReason.SYSTEM_FILE),
 ]
-BAD_FILE_IDS: list[str] = ['damaged-pdf', 'damaged-image', 'truncated-djvu', 'unsupported-type']
+BAD_FILE_IDS: list[str] = [
+    'damaged-pdf',
+    'damaged-image',
+    'truncated-djvu',
+    'unsupported-type',
+    'thumbs-db',
+    'ds-store-in-folder',
+    'apple-double',
+]
 
 
 class TestStartImport:
@@ -413,7 +439,7 @@ class TestStartImport:
 
         stored = await fx_rig.stored_job(job)
         async with fx_rig.sources.staged_files(fx_project.id, job.id) as staged:
-            staged_names = sorted(path.name for path in staged)
+            staged_names = sorted(staged)
         expect(stored == job)
         expect((job.state, job.progress.total) == (JobState.QUEUED, 0))
         expect(
@@ -613,7 +639,9 @@ class TestRunImport:
     async def test_imports_every_file_as_a_source_of_its_own_with_its_pages_in_book_order(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_book_files: list[UploadFile]
     ) -> None:
-        """Verify two PDF parts and a cover become three sources, and their scans become pages in the order of names.
+        """Verify two PDF parts and a cover become three sources, and their scans become pages in the upload order.
+
+        The files are uploaded out of the order of their names, and the book follows the upload.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
@@ -633,9 +661,9 @@ class TestRunImport:
         )
         by_id = {scan.id: scan for scan in scans}
         expect(job.state is JobState.SUCCEEDED)
-        expect([source.file_name for source in sources] == ['part1.pdf', 'part2.pdf', 'part3-cover.jpg'])
+        expect([source.file_name for source in sources] == ['part3-cover.jpg', 'part2.pdf', 'part1.pdf'])
         expect(all(source.import_job_id == job.id for source in sources))
-        expect([source.scan_count for source in sources] == [FIRST_PART_PAGES, SECOND_PART_PAGES, 1])
+        expect([source.scan_count for source in sources] == [1, SECOND_PART_PAGES, FIRST_PART_PAGES])
         expect(job.result is not None and list(job.result.imported) == [source.id for source in sources])
         expect(len(scans) == len(pages) == SCAN_COUNT)
         expect(all(page.origin is PageOrigin.SCAN and page.scan_id in by_id for page in pages))
@@ -643,6 +671,81 @@ class TestRunImport:
             [(by_id[page.scan_id].source_id, by_id[page.scan_id].number) for page in pages if page.scan_id]
             == [(source.id, number) for source in sources for number in range(source.scan_count)]
         )
+        assert_expectations()
+
+    async def test_files_of_different_folders_with_one_name_are_two_sources_named_by_their_paths(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify ``vol1/001.tif`` and ``vol2/001.tif`` are two sources, kept under their paths and in upload order.
+
+        Each source stores its file under the base name in a directory of its own, so the same name never clashes.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        second = image_upload(fx_samples, 'second.tif', width_px=SECOND_PART_WIDTH_PX)
+        first = image_upload(fx_samples, 'first.tif')
+        uploads = [
+            upload('vol2/001.tif', content=second.file.read()),
+            upload('vol1/001.tif', content=first.file.read()),
+        ]
+
+        job = await _import(fx_rig, fx_owner, fx_project.id, uploads)
+
+        sources = await _sources(fx_rig, fx_project.id)
+        stored = []
+        for source in sources:
+            async with fx_rig.sources.source_files(fx_project.id, source.id) as files:
+                stored.append([path.name for path in files])
+        expect(job.state is JobState.SUCCEEDED)
+        expect([source.file_name for source in sources] == ['vol2/001.tif', 'vol1/001.tif'])
+        expect([[file.name for file in source.files] for source in sources] == [['vol2/001.tif'], ['vol1/001.tif']])
+        expect(stored == [['001.tif'], ['001.tif']])
+        expect(job.result is not None and job.result.rejected == ())
+        assert_expectations()
+
+    async def test_system_files_of_a_directory_are_named_in_the_result_and_do_not_stop_the_import(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify the files an operating system adds to a folder are rejected as such, in upload order, and the rest imports.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        scan = image_upload(fx_samples, 'scan.jpg')
+        uploads = [
+            upload('book/.DS_Store', content=b'folder view'),
+            upload('book/001.jpg', content=scan.file.read()),
+            upload('book/._001.jpg', content=b'resource fork'),
+            upload('book/Thumbs.db', content=b'thumbnails'),
+        ]
+
+        job = await _import(fx_rig, fx_owner, fx_project.id, uploads)
+
+        assert job.result is not None
+        expect(job.state is JobState.SUCCEEDED)
+        expect([source.file_name for source in await _sources(fx_rig, fx_project.id)] == ['book/001.jpg'])
+        expect(
+            [(file.file_name, file.reason) for file in job.result.rejected]
+            == [
+                ('book/.DS_Store', RejectionReason.SYSTEM_FILE),
+                ('book/._001.jpg', RejectionReason.SYSTEM_FILE),
+                ('book/Thumbs.db', RejectionReason.SYSTEM_FILE),
+            ]
+        )
+        expect(job.result.skipped == ())
         assert_expectations()
 
     async def test_writes_the_renditions_of_every_scan_and_the_base_version_of_every_page(
@@ -941,7 +1044,7 @@ class TestRunImportDjvu:
 
         job = await _import(fx_rig, fx_owner, fx_project.id, uploads)
 
-        djvu, pdf = await _sources(fx_rig, fx_project.id)
+        pdf, djvu = await _sources(fx_rig, fx_project.id)
         scans = [scan for scan in await _scans(fx_rig, fx_project.id) if scan.source_id == djvu.id]
         async with fx_rig.sources.source_files(fx_project.id, djvu.id) as stored:
             stored_names = sorted(path.name for path in stored)
@@ -955,10 +1058,10 @@ class TestRunImportDjvu:
         expect(all(scan.renditions.ready for scan in scans))
         assert_expectations()
 
-    async def test_makes_a_source_of_every_bundled_part_and_orders_the_pages_by_the_names_of_the_parts(
+    async def test_makes_a_source_of_every_bundled_part_and_orders_the_pages_by_the_order_of_the_upload(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
     ) -> None:
-        """Verify two bundled parts uploaded out of order are two sources, whose pages follow the natural order.
+        """Verify two bundled parts are two sources, whose pages follow the upload and not the names of the parts.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
@@ -980,9 +1083,9 @@ class TestRunImportDjvu:
             await _pages(fx_rig, fx_project.id),
         )
         widths = {scan.id: scan.facts.width_px for scan in scans}
-        expect([source.file_name for source in sources] == ['part2.djvu', 'part10.djvu'])
+        expect([source.file_name for source in sources] == ['part10.djvu', 'part2.djvu'])
         expect([source.scan_count for source in sources] == [2, 2])
-        expect([widths[page.scan_id] for page in pages if page.scan_id] == [*DJVU_WIDTHS[:2], *DJVU_WIDTHS[1:]])
+        expect([widths[page.scan_id] for page in pages if page.scan_id] == [*DJVU_WIDTHS[1:], *DJVU_WIDTHS[:2]])
         assert_expectations()
 
     async def test_makes_a_source_of_every_single_page_file(
@@ -1619,7 +1722,7 @@ class TestRunImportFailures:
             await fx_rig.service().run_import(job.id)
 
         async with fx_rig.sources.staged_files(fx_project.id, job.id) as staged:
-            expect([path.name for path in staged] == ['a.jpg'])
+            expect(list(staged) == ['a.jpg'])
         expect((await fx_rig.stored_job(job)).state is JobState.RUNNING)
         assert_expectations()
 
