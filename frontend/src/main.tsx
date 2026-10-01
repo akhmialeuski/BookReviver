@@ -4,11 +4,14 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { queryClient } from '@/app/query-client';
 import { router } from '@/app/router';
+import { configureApiClient } from '@/shared/http/client';
 import './index.css';
 
 /**
  * Entry point of the browser application: mounts the router inside the query client provider.
  */
+
+configureApiClient(() => document.cookie);
 
 const container = document.getElementById('root');
 if (container === null) {
