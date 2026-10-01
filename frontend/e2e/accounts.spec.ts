@@ -77,6 +77,9 @@ test('a reader who forgot the password resets it from the mailed link', async ({
   await test.step('ask for a reset mail from the sign-in screen', async () => {
     await page.goto('/sign-in');
     await page.getByRole('link', { name: 'Forgot password?' }).click();
+    // Both screens have an "Email address" field, so without this wait the text goes into the sign-in form that is
+    // still on the screen and the reset form then opens empty. The card title is a div, not a heading.
+    await expect(page.getByText('Reset your password', { exact: true })).toBeVisible();
     await page.getByLabel('Email address').fill(email);
     await page.getByRole('button', { name: 'Send the link' }).click();
     await expect(page.getByText('Check your mail')).toBeVisible();

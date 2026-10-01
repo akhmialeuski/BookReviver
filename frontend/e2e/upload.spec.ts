@@ -49,6 +49,9 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
 
   await test.step('register and confirm the address from the mailed link', async () => {
     await page.getByRole('link', { name: 'Create one' }).click();
+    // Both screens have an "Email address" field, so without this wait the text goes into the sign-in form that is
+    // still on the screen and the register form then opens empty. The card title is a div, not a heading.
+    await expect(page.getByText('Create an account', { exact: true })).toBeVisible();
     await page.getByLabel('Email address').fill(email);
     await page.getByLabel('Password').fill(PASSWORD);
     await page.getByRole('button', { name: 'Create account' }).click();
