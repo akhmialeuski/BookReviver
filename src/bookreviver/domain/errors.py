@@ -29,6 +29,14 @@ class ConflictError(DomainError):
     """The operation conflicts with the current state, for example a running import."""
 
 
+class UnsupportedTransformError(DomainError):
+    """A point cannot be mapped through a transform, such as one that follows a stored mesh."""
+
+
+class InvalidParametersError(DomainError):
+    """The parameters of a processing step do not follow the schema of its processor."""
+
+
 class UnsupportedSourceError(DomainError):
     """The files of a source are not a readable source of its kind, such as a damaged PDF or image file."""
 

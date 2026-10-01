@@ -121,14 +121,15 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Book parts   | `Contributor`, `ContributorRole`, `BookIdentifier`, `IdentifierScheme`, `Script`, `RightsStatus` |
 | Sources      | `Source`, `SourceFile`, `SourceKind`, `FileType`, `MetadataSuggestion`                        |
 | Scans        | `Scan`, `ScanFacts`, `Renditions`                                                             |
-| Pages        | `Page`, `PageOverview`, `PageKind`, `PageOrigin`, `PageVersion`, `VersionState`, `Transform`, |
-|              | `PageStage`                                                                                   |
+| Pages        | `Page`, `PageOverview`, `PageKind`, `PageOrigin`, `PageVersion`, `VersionInputs`,             |
+|              | `VersionState`, `VersionScale`, `PageStage` and its `StageState`                              |
 | Page order   | `PageAnchor` (a page and a `Side`), `PageChange`, and `PageOverview` with its position        |
 | Page labels  | `LabelStyle`, `PageNumbering`, and `PageChanges` for the editable fields of a page            |
 | New pages    | `NewPage`, `NewPageOrigin` (blank or placeholder), `PageSize`, `VersionData` (data keys)      |
 | Storage keys | `StorageKey`, and `ProjectKeys` in `domain/keys.py`, the one builder of every key             |
-| Processing   | `Stage`, `ProcessorRef`, `Recipe`, `Step`, `Variant`, `ArtifactKind`, `Artifact`              |
-| Edits        | `PageEdit` with geometry (`Rect`, `Quad`, `Mesh`, `Region` with `RegionKind`) or a mask       |
+| Processing   | `Stage`, `ProcessorRef`, `Recipe` (a variant is a recipe that is not active), `Step`          |
+| Geometry     | `Point`, `Size`, `Rect`, `Quad`, `Line`, `Rotation` and `Transform` in `domain/geometry.py`   |
+| Edits        | `PageEdit` with its `EditorKind` and a shape (`Rect`, `Quad`, `Line`, `Rotation`) or a mask   |
 | Events       | `JobChanged`, `SourceImported`, `ScanReady`, `PagesChanged`, `PageVersionReady`, and others   |
 | Jobs         | `Job`, `JobKind` (`import-source`, `prepare-pages`), `JobState`, `Progress`, `WorkerPool`     |
 | Imports      | `ImportRequest`, `ImportResult`, `RejectedFile`, `RejectionReason`, `UploadProblem`           |
@@ -784,7 +785,7 @@ erDiagram
   the unique pairs `(project_id, order_key)` and `(scan_id, slot)`. Its columns are `order_key`, `label`, `kind`,
   `origin`, `slot`, `included`, `notes`, `created_at` and `updated_at`.
 - `jobs` has the primary key `id` and `project_id` with `ON DELETE CASCADE`. Its columns are `kind`, `state`,
-  `progress_done`, `progress_total`, `error`, `request` and `result` as JSON, both empty for a job that has none,
+  `progress_done`, `progress_total`, `error`, `request`, `params` and `result`, the last two as JSON, `request` and `result` empty for a job that has none and `params` an empty object,
   `created_at`, `started_at` and `finished_at`. The partial unique index `ix_jobs_one_active_import` on `project_id`
   `WHERE kind = 'import-source' AND state IN ('queued', 'running')` keeps a project to one import at a time, and
   both adapters report its violation as a `ConflictError` when the job is added. The partial unique index
@@ -792,14 +793,16 @@ erDiagram
   the same for the jobs that write page images, and an import and a prepare job of one project do not collide.
 - `page_versions` has the primary key `id`, `page_id` with `ON DELETE CASCADE`, `input_id` with `ON DELETE SET NULL`,
   and an index on `(page_id, stage)`. Its columns are `stage`, `processor_key`, `processor_version`, `params`,
-  `transform` and `data` as JSON, `renditions_ready`, `renditions_full`, `state` and `created_at`. Both renditions
-  columns are null for a step without an image.
-- `page_stages` has the primary key `(page_id, stage)` and `head_version_id` with `ON DELETE SET NULL`. Its columns
-  are `recipe_id`, `state` and `updated_at`.
-- `page_edits` has the primary key `(page_id, stage, processor_key)`. Its columns are `kind`, `geometry` as JSON,
-  `mask_key` and `updated_at`.
-- `recipes` has the primary key `id` and `project_id` with `ON DELETE CASCADE`. Its columns are `stage`, `name`,
-  `steps` as JSON and `active`.
+  `transform` and `data` as JSON, `renditions_ready`, `renditions_full`, `state`, `scale` (`full` or `preview`),
+  `edit_hash`, `tiles_ready` and `created_at`. Both renditions columns are null for a step without an image, and
+  `tiles_ready` says whether the IIIF pyramid is cut, which a run does only for a current version.
+- `page_stages` has the primary key `(page_id, stage)`, `page_id` with `ON DELETE CASCADE`, and `head_version_id` and
+  `recipe_id` with `ON DELETE SET NULL`. Its columns are `state` and `updated_at`.
+- `page_edits` has the primary key `(page_id, stage, processor_key)` and `page_id` with `ON DELETE CASCADE`. Its
+  columns are `kind`, `geometry` as JSON, `mask_key`, `edit_hash` and `updated_at`.
+- `recipes` has the primary key `id`, `project_id` with `ON DELETE CASCADE`, an index on `(project_id, stage)`, and the
+  partial unique index `ix_recipes_one_active` on `(project_id, stage)` `WHERE active`, which keeps one active recipe
+  per stage. Its columns are `stage`, `name`, `steps` as JSON, `active`, `created_at` and `updated_at`.
 
 `order_key` holds a fractional index string from the fractional-indexing package, such as `a0`, `a0V` or `a1`, so
 inserting a page between two neighbours writes one row instead of renumbering the book. Keys compare byte by byte,
@@ -813,7 +816,8 @@ the in-memory adapter has no accounts and there is no accounts port.
 
 The tables `sources`, `scans`, `pages` and `page_versions` come with the book model, because a page gets its base
 version with its own copy of the image when it is created, and the baseline migration creates them. `page_stages`,
-`page_edits` and `recipes` come with the processing framework, each through a migration of its own. The `request` and
+`page_edits` and `recipes`, the columns `scale`, `edit_hash` and `tiles_ready` of `page_versions` and the column `params`
+of `jobs` come with the processing framework, in one revision. The `request` and
 `result` columns and the partial unique index of `jobs` came with the import job, in their own revision, and the
 `renditions_full` columns of `scans` and `page_versions` came with the choice of the format of `full`, in another.
 The columns of the extended description came in a revision of their own, which turns a non-empty `authors` string into one

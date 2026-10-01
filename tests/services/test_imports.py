@@ -14,7 +14,7 @@ from PIL import Image
 from bookreviver.adapters.imaging.common import FactKey
 from bookreviver.adapters.jobs.recording import RecordingJobQueue
 from bookreviver.adapters.persistence.memory.unit_of_work import InMemoryJobRepository, InMemoryScanRepository
-from bookreviver.domain.entities import Actor
+from bookreviver.domain.entities import Actor, VersionInputs
 from bookreviver.domain.enums import (
     ColorMode,
     ContributorRole,
@@ -821,7 +821,7 @@ class TestRunImport:
                 == (Stage.PAGE_SPLIT, SPLIT_NONE, VersionState.READY, None)
                 and version.renditions is not None
                 and version.renditions.ready
-                and version.id == version.identify(page_id=version.page_id, processor=SPLIT_NONE)
+                and version.id == VersionInputs(page_id=version.page_id, processor=SPLIT_NONE).identify()
                 for version in versions
             )
         )

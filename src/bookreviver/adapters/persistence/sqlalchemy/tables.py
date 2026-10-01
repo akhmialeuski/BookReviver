@@ -1,8 +1,8 @@
 """Tables of the books feature, private to the SQLAlchemy persistence adapter.
 
-The module declares the ``projects``, ``jobs``, ``sources``, ``scans``, ``pages`` and ``page_versions`` tables in the
-SQLAlchemy 2.0 declarative style: ``Mapped`` annotations, ``mapped_column`` and ``relationship`` with
-``back_populates``. Every table derives from
+The module declares the ``projects``, ``jobs``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
+``page_edits`` and ``recipes`` tables in the SQLAlchemy 2.0 declarative style: ``Mapped`` annotations,
+``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from
 advanced-alchemy's :class:`~advanced_alchemy.base.DefaultBase`, which is a ``DeclarativeBase`` carrying the metadata
 shared with the account tables, the portable ``GUID``, ``DateTimeUTC`` and ``JsonB`` column types for ``UUID``,
 ``datetime`` and ``dict`` annotations, and the naming convention of keys and constraints.
@@ -10,10 +10,11 @@ shared with the account tables, the portable ``GUID``, ``DateTimeUTC`` and ``Jso
 Rows never leave the adapter. The mappers in :mod:`bookreviver.adapters.persistence.sqlalchemy.mappers` turn them into
 frozen domain entities, so nothing outside this package depends on the shape of a table.
 
-A project owns its sources, scans, pages and jobs, a source owns its scans, and a page owns its versions. The foreign
-keys carry ``ON DELETE CASCADE``, so the database removes them with their owner. An optional reference carries
-``ON DELETE SET NULL`` instead: a page keeps its row when its scan is deleted, a source when its import job is, and a
-version when its input version is, because a page of the book holds its own copy of its image. The relationships use
+A project owns its sources, scans, pages, recipes and jobs, a source owns its scans, and a page owns its versions,
+its stage records and its edits. The foreign keys carry ``ON DELETE CASCADE``, so the database removes them with their
+owner. An optional reference carries ``ON DELETE SET NULL`` instead: a page keeps its row when its scan is deleted, a
+source when its import job is, a version when its input version is, and a stage record when its head version or its
+recipe is, because a page of the book holds its own copy of its image. The relationships use
 ``passive_deletes=True`` to leave that deletion to the database, and ``lazy="raise"`` because an ``AsyncSession``
 cannot load a relationship implicitly on attribute access. Unique keys are declared with their table, and the shared
 naming convention names them.
@@ -30,12 +31,13 @@ from uuid import UUID
 
 from advanced_alchemy.base import DefaultBase
 from advanced_alchemy.types import JsonB
-from sqlalchemy import Enum, ForeignKey, Index, String, UniqueConstraint, text
+from sqlalchemy import Enum, ForeignKey, Index, String, UniqueConstraint, false, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.domain.enums import (
     ColorMode,
+    EditorKind,
     FileType,
     ImagePolicy,
     JobKind,
@@ -48,6 +50,8 @@ from bookreviver.domain.enums import (
     Script,
     SourceKind,
     Stage,
+    StageState,
+    VersionScale,
     VersionState,
 )
 
@@ -70,11 +74,16 @@ EMPTY_TEXT: Final = ''
 EMPTY_LIST: Final = '[]'
 PAGES_TABLE: Final = 'pages'
 PAGE_VERSIONS_TABLE: Final = 'page_versions'
+RECIPES_TABLE: Final = 'recipes'
 # Length of a page version identifier, a hash cut to 16 hexadecimal digits
 VERSION_ID_LENGTH: Final = 16
 POSTGRESQL_DIALECT: Final = 'postgresql'
 # Order keys compare byte by byte: SQLite's default BINARY collation does, and PostgreSQL needs the C collation
 ORDER_KEY_TYPE: Final = String().with_variant(String(collation='C'), POSTGRESQL_DIALECT)
+# Server default of a column that holds a JSON object
+EMPTY_OBJECT: Final = '{}'
+# The rows of the partial unique index of ``recipes``: the active recipe of a stage
+ACTIVE_RECIPE: Final = text('active')
 # The rows of the partial unique index of ``jobs``: the imports that are queued or running
 ACTIVE_IMPORT: Final = text(
     f"kind = '{JobKind.IMPORT_SOURCE}' AND state IN ('{JobState.QUEUED}', '{JobState.RUNNING}')"
@@ -93,6 +102,9 @@ class Relation(enum.StrEnum):
     PAGES = 'pages'
     VERSIONS = 'versions'
     JOBS = 'jobs'
+    RECIPES = 'recipes'
+    STAGES = 'stages'
+    EDITS = 'edits'
     PROJECT = 'project'
     SOURCE = 'source'
     PAGE = 'page'
@@ -160,6 +172,7 @@ class ProjectRow(DefaultBase):
     :ivar updated_at: Time of the last change, set by the domain through its ``Clock``.
     :ivar sources: Sources of the project, never loaded implicitly.
     :ivar pages: Pages of the project, never loaded implicitly.
+    :ivar recipes: Recipes of the project, never loaded implicitly.
     :ivar jobs: Background jobs of the project, never loaded implicitly.
     """
 
@@ -214,6 +227,9 @@ class ProjectRow(DefaultBase):
         lazy=NO_IMPLICIT_LOAD,
         foreign_keys=lambda: [PageRow.project_id],
     )
+    recipes: Mapped[list[RecipeRow]] = relationship(
+        back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
+    )
     jobs: Mapped[list[JobRow]] = relationship(
         back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
@@ -230,6 +246,7 @@ class JobRow(DefaultBase):
     :ivar progress_total: Number of units of work in the job.
     :ivar error: Message of the failure, empty unless the job failed.
     :ivar request: The files an import job was asked to import, as JSON, or null for a job that takes none.
+    :ivar params: What a processing job was asked to do, as a JSON object, empty for a job without.
     :ivar result: What an import job did with them, as JSON, or null until it has finished.
     :ivar created_at: Time the job was queued.
     :ivar started_at: Time the job started, or null while queued.
@@ -266,6 +283,7 @@ class JobRow(DefaultBase):
     progress_total: Mapped[int]
     error: Mapped[str]
     request: Mapped[dict[str, Any] | None]
+    params: Mapped[dict[str, Any]] = mapped_column(JsonB, server_default=EMPTY_OBJECT)
     result: Mapped[dict[str, Any] | None]
     created_at: Mapped[datetime]
     started_at: Mapped[datetime | None]
@@ -395,6 +413,8 @@ class PageRow(DefaultBase):
     :ivar updated_at: Time the page was last changed.
     :ivar project: Project owning the page, never loaded implicitly.
     :ivar versions: Versions of the page, never loaded implicitly.
+    :ivar stages: Stage records of the page, never loaded implicitly.
+    :ivar edits: Manual edits of the page, never loaded implicitly.
     """
 
     __tablename__ = PAGES_TABLE
@@ -419,6 +439,12 @@ class PageRow(DefaultBase):
     versions: Mapped[list[PageVersionRow]] = relationship(
         back_populates=Relation.PAGE, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
+    stages: Mapped[list[PageStageRow]] = relationship(
+        back_populates=Relation.PAGE, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
+    )
+    edits: Mapped[list[PageEditRow]] = relationship(
+        back_populates=Relation.PAGE, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
+    )
 
 
 class PageVersionRow(DefaultBase):
@@ -440,6 +466,9 @@ class PageVersionRow(DefaultBase):
     :ivar renditions_ready: Whether the version's image files are published, or null for a step without an image.
     :ivar renditions_full: Format of the version's ``full`` image, stored by value, or null for a step without an image.
     :ivar state: Where the version is in its lifecycle, stored by value.
+    :ivar scale: Whether the step ran on the full image or on the preview, stored by value.
+    :ivar edit_hash: Hash of the manual edit the step read, or empty.
+    :ivar tiles_ready: Whether the IIIF pyramid of the version is cut.
     :ivar created_at: Time the version was created.
     :ivar page: Page owning the version, never loaded implicitly.
     """
@@ -460,6 +489,107 @@ class PageVersionRow(DefaultBase):
     renditions_ready: Mapped[bool | None]
     renditions_full: Mapped[Rendition | None] = mapped_column(enum_by_value(Rendition))
     state: Mapped[VersionState] = mapped_column(enum_by_value(VersionState))
+    scale: Mapped[VersionScale] = mapped_column(enum_by_value(VersionScale), server_default=VersionScale.FULL.value)
+    edit_hash: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
+    tiles_ready: Mapped[bool] = mapped_column(server_default=false())
     created_at: Mapped[datetime]
 
     page: Mapped[PageRow] = relationship(back_populates=Relation.VERSIONS, lazy=NO_IMPLICIT_LOAD)
+
+
+class PageStageRow(DefaultBase):
+    """Row of the current version of one stage of one page, keyed by the page and the stage.
+
+    The head version and the recipe are optional references that the database empties when the version or the recipe
+    is deleted, so a record outlives both.
+
+    :ivar page_id: Page the record belongs to.
+    :ivar stage: The stage, stored by value.
+    :ivar recipe_id: Recipe the page was processed by, or null.
+    :ivar head_version_id: Current version of the stage, or null.
+    :ivar state: Whether the current version matches the inputs of the stage, stored by value.
+    :ivar updated_at: Time the record last changed.
+    :ivar page: Page owning the record, never loaded implicitly.
+    """
+
+    __tablename__ = 'page_stages'
+
+    page_id: Mapped[UUID] = mapped_column(ForeignKey(PageRow.id, ondelete=CASCADE), primary_key=True)
+    stage: Mapped[Stage] = mapped_column(enum_by_value(Stage), primary_key=True)
+    # By table name, since the recipe class is declared after this one
+    recipe_id: Mapped[UUID | None] = mapped_column(ForeignKey(f'{RECIPES_TABLE}.id', ondelete=SET_NULL), index=True)
+    head_version_id: Mapped[str | None] = mapped_column(ForeignKey(PageVersionRow.id, ondelete=SET_NULL), index=True)
+    state: Mapped[StageState] = mapped_column(enum_by_value(StageState))
+    updated_at: Mapped[datetime]
+
+    page: Mapped[PageRow] = relationship(back_populates=Relation.STAGES, lazy=NO_IMPLICIT_LOAD)
+
+
+class PageEditRow(DefaultBase):
+    """Row of one manual edit, keyed by the page, the stage and the processor that reads it.
+
+    :ivar page_id: Page the edit belongs to.
+    :ivar stage: Stage of the processor, stored by value.
+    :ivar processor_key: Key of the processor reading the edit.
+    :ivar kind: Editor that made the edit, stored by value.
+    :ivar geometry: The shape the user drew, as JSON, or null for an edit that is only a mask.
+    :ivar mask_key: Storage key of the painted mask, or null.
+    :ivar edit_hash: Hash of the geometry and the mask.
+    :ivar updated_at: Time the edit was last saved.
+    :ivar page: Page owning the edit, never loaded implicitly.
+    """
+
+    __tablename__ = 'page_edits'
+
+    page_id: Mapped[UUID] = mapped_column(ForeignKey(PageRow.id, ondelete=CASCADE), primary_key=True)
+    stage: Mapped[Stage] = mapped_column(enum_by_value(Stage), primary_key=True)
+    processor_key: Mapped[str] = mapped_column(primary_key=True)
+    kind: Mapped[EditorKind] = mapped_column(enum_by_value(EditorKind))
+    geometry: Mapped[dict[str, Any] | None] = mapped_column(JsonB)
+    mask_key: Mapped[str | None]
+    edit_hash: Mapped[str]
+    updated_at: Mapped[datetime]
+
+    page: Mapped[PageRow] = relationship(back_populates=Relation.EDITS, lazy=NO_IMPLICIT_LOAD)
+
+
+class RecipeRow(DefaultBase):
+    """Row of one recipe of a stage of a project, of which at most one per stage is active.
+
+    The steps are a JSON list of ``{processor_key, params}`` objects, since no query looks inside them.
+
+    :ivar id: Recipe identifier, assigned by the domain.
+    :ivar project_id: Project owning the recipe.
+    :ivar stage: Stage the recipe processes, stored by value.
+    :ivar name: Name the user sees.
+    :ivar steps: The steps in order, as JSON.
+    :ivar active: Whether the recipe is the one the stage runs by default.
+    :ivar created_at: Time the recipe was created.
+    :ivar updated_at: Time the recipe last changed.
+    :ivar project: Project owning the recipe, never loaded implicitly.
+    """
+
+    __tablename__ = RECIPES_TABLE
+    # The database keeps two requests that both switch the active recipe of a stage from both succeeding
+    __table_args__ = (
+        Index('ix_recipes_project_id_stage', 'project_id', 'stage'),
+        Index(
+            'ix_recipes_one_active',
+            'project_id',
+            'stage',
+            unique=True,
+            sqlite_where=ACTIVE_RECIPE,
+            postgresql_where=ACTIVE_RECIPE,
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE))
+    stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
+    name: Mapped[str]
+    steps: Mapped[list[dict[str, Any]]] = mapped_column(JsonB)
+    active: Mapped[bool]
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
+
+    project: Mapped[ProjectRow] = relationship(back_populates=Relation.RECIPES, lazy=NO_IMPLICIT_LOAD)

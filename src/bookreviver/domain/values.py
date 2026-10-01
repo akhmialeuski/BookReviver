@@ -13,7 +13,6 @@ from bookreviver.domain.enums import (
     Rendition,
     RightsStatus,
     Script,
-    TransformKind,
     UploadProblem,
     VersionData,
 )
@@ -33,8 +32,9 @@ if TYPE_CHECKING:
         RejectionReason,
         Side,
         SourceKind,
+        Stage,
     )
-    from bookreviver.domain.ids import PageId, SourceId, StorageKey
+    from bookreviver.domain.ids import PageId, SourceId
 
 # JSON-compatible metadata as read from a source file
 type MetadataMap = Mapping[str, Any]
@@ -363,70 +363,41 @@ class ProcessorRef:
 
 
 @frozen(kw_only=True)
-class Point:
-    """A point in the pixel coordinates of an image, whose origin is its top left corner.
+class Step:
+    """One step of a recipe: a processor and the parameters it runs with.
 
-    :ivar x: Distance from the left edge in pixels.
-    :ivar y: Distance from the top edge in pixels.
+    :ivar processor_key: Key of the processor, such as ``geometry.deskew``.
+    :ivar params: Parameters of the step, following the processor's JSON Schema.
     """
 
-    x: float
-    y: float
+    processor_key: str = field(validator=validators.min_len(1))
+    params: MetadataMap = field(factory=dict)
 
 
-@frozen(kw_only=True)
-class Quad:
-    """A quadrilateral in the pixel coordinates of an image, such as a half of a spread or a skewed page.
+@frozen
+class PageStageKey:
+    """The key of the record of a stage of a page, which a repository takes as one value.
 
-    :ivar top_left: Corner at the top left of the area.
-    :ivar top_right: Corner at the top right of the area.
-    :ivar bottom_right: Corner at the bottom right of the area.
-    :ivar bottom_left: Corner at the bottom left of the area.
+    :ivar page_id: Page the stage belongs to.
+    :ivar stage: The stage.
     """
 
-    top_left: Point
-    top_right: Point
-    bottom_right: Point
-    bottom_left: Point
+    page_id: PageId
+    stage: Stage
 
 
-@frozen(kw_only=True)
-class Transform:
-    """The transform of coordinates a processing step applies from its input image to its output image.
+@frozen
+class PageEditKey:
+    """The key of a manual edit: a processor's input on a page in a stage.
 
-    The chain of transforms from a scan to any page version maps coordinates of the version back to the scan. Each kind
-    takes its own argument: a crop and a perspective correction a quadrilateral, a rotation an angle, and a dewarping
-    the key of its stored mesh. The identity takes none.
-
-    :ivar kind: Kind of the transform.
-    :ivar quad: Area of the input that becomes the output, for a crop or a perspective correction.
-    :ivar angle: Angle of a rotation in degrees, counter-clockwise.
-    :ivar mesh_key: Storage key of the mesh a dewarping follows.
+    :ivar page_id: Page the edit belongs to.
+    :ivar stage: Stage of the processor reading the edit.
+    :ivar processor_key: Key of the processor reading the edit.
     """
 
-    ARGUMENTS: ClassVar[Mapping[TransformKind, frozenset[str]]] = {
-        TransformKind.IDENTITY: frozenset(),
-        TransformKind.CROP: frozenset({'quad'}),
-        TransformKind.ROTATE: frozenset({'angle'}),
-        TransformKind.PERSPECTIVE: frozenset({'quad'}),
-        TransformKind.MESH: frozenset({'mesh_key'}),
-    }
-
-    kind: TransformKind = TransformKind.IDENTITY
-    quad: Quad | None = None
-    angle: float | None = None
-    mesh_key: StorageKey | None = None
-
-    def __attrs_post_init__(self) -> None:
-        """Check that exactly the arguments of the kind are given.
-
-        :raises ValueError: If an argument of the kind is missing or an argument of another kind is given.
-        """
-        every_argument = frozenset[str]().union(*self.ARGUMENTS.values())
-        given = {name for name in every_argument if getattr(self, name) is not None}
-        if given != (expected := self.ARGUMENTS[self.kind]):
-            err_msg = f'A {self.kind} transform takes {sorted(expected) or "no arguments"}, not {sorted(given)}.'
-            raise ValueError(err_msg)
+    page_id: PageId
+    stage: Stage
+    processor_key: str
 
 
 @frozen(kw_only=True)

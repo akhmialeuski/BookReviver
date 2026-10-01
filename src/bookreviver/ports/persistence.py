@@ -8,14 +8,16 @@ contract suite in ``tests/contracts``, which is what makes them interchangeable.
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, override
 
-from bookreviver.domain.entities import Job, Page, PageVersion, Project, Scan, Source
-from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
+from bookreviver.domain.entities import Job, Page, PageEdit, PageStage, PageVersion, Project, Recipe, Scan, Source
+from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
+from bookreviver.domain.values import PageEditKey, PageStageKey
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
+    from datetime import datetime
 
     from bookreviver.domain.entities import ProjectOverview
-    from bookreviver.domain.enums import JobState, Side, Stage
+    from bookreviver.domain.enums import JobState, Side, Stage, VersionScale
     from bookreviver.domain.ids import AccountId
     from bookreviver.domain.values import PageSize, Slice, SliceRequest
 
@@ -381,6 +383,200 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         :rtype: Sequence[PageVersion]
         """
 
+    @abstractmethod
+    async def find(self, version_id: PageVersionId) -> PageVersion | None:
+        """Return the version with this identifier, which a repeated run reuses instead of computing it again.
+
+        :param version_id: Identifier of the version, the hash of what produces it.
+        :type version_id: PageVersionId
+        :returns: The stored version, ready or failed or still running, or None when no run has made it.
+        :rtype: PageVersion | None
+        """
+
+    @abstractmethod
+    async def list_for_stage(
+        self, page_id: PageId, stage: Stage | None, scale: VersionScale | None, request: SliceRequest
+    ) -> Slice[PageVersion]:
+        """Return a window of the versions of one page, filtered by stage and scale, the earliest first.
+
+        :param page_id: Page owning the versions.
+        :type page_id: PageId
+        :param stage: Stage whose versions are listed, or None for every stage.
+        :type stage: Stage | None
+        :param scale: Scale of the runs listed, or None for both.
+        :type scale: VersionScale | None
+        :param request: Offset and limit of the window.
+        :type request: SliceRequest
+        :returns: The versions of the window and the number of all that match, ties by identifier.
+        :rtype: Slice[PageVersion]
+        """
+
+    @abstractmethod
+    async def collectable(
+        self, project_id: ProjectId, older_than: datetime, previews_older_than: datetime
+    ) -> Sequence[PageVersion]:
+        """Return the versions a collection may delete: not current, not base, not the input of a current chain, old.
+
+        A version is kept when a stage record names it as its head, directly or through the chain of input versions of
+        a head, and when it is a base version, which has no input. A full run is collectable once it was created before
+        ``older_than``, and a preview once it was created before ``previews_older_than``.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param older_than: Full runs created before this moment may go.
+        :type older_than: datetime
+        :param previews_older_than: Previews created before this moment may go.
+        :type previews_older_than: datetime
+        :returns: The versions that may be deleted, the earliest first, ties by identifier.
+        :rtype: Sequence[PageVersion]
+        """
+
+    @abstractmethod
+    async def delete_many(self, version_ids: Collection[PageVersionId]) -> None:
+        """Remove the rows of several versions in the one transaction; a version that is not stored is left alone.
+
+        :param version_ids: Versions to remove.
+        :type version_ids: Collection[PageVersionId]
+        """
+
+
+class PageStageRepository(Repository[PageStage, PageStageKey]):
+    """The current version of each stage of each page; deleting a page removes its records.
+
+    A record keeps its row when its head version or its recipe is deleted, and loses only that reference.
+    """
+
+    @abstractmethod
+    async def save(self, stage: PageStage) -> PageStage:
+        """Store the record of a stage of a page, replacing the one stored.
+
+        :param stage: Record to store.
+        :type stage: PageStage
+        :returns: The record as stored.
+        :rtype: PageStage
+        :raises NotFoundError: If the page, the head version or the recipe is not stored.
+        """
+
+    @abstractmethod
+    async def find(self, key: PageStageKey) -> PageStage | None:
+        """Return the record of a stage of a page.
+
+        :param key: Page and stage.
+        :type key: PageStageKey
+        :returns: The record, or None for a stage that has not run on the page.
+        :rtype: PageStage | None
+        """
+
+    @abstractmethod
+    async def list_for_page(self, page_id: PageId) -> Sequence[PageStage]:
+        """Return the records of one page in the order of the stages.
+
+        :param page_id: Page owning the records.
+        :type page_id: PageId
+        :returns: Every record of the page.
+        :rtype: Sequence[PageStage]
+        """
+
+    @abstractmethod
+    async def list_for_recipe(self, recipe_id: RecipeId) -> Sequence[PageStage]:
+        """Return the records of the pages a recipe processed, by page identifier.
+
+        :param recipe_id: Recipe whose pages are listed.
+        :type recipe_id: RecipeId
+        :returns: Every record that names the recipe.
+        :rtype: Sequence[PageStage]
+        """
+
+    @abstractmethod
+    async def list_for_project_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[PageStage]:
+        """Return the records of one stage over the pages of a project, by page identifier.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: Every record of the stage in the project.
+        :rtype: Sequence[PageStage]
+        """
+
+    @abstractmethod
+    async def head_ids(self, project_id: ProjectId) -> Collection[PageVersionId]:
+        """Return the identifiers of the versions that are the current version of a stage of a page of the project.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: The distinct head versions.
+        :rtype: Collection[PageVersionId]
+        """
+
+
+class PageEditRepository(Repository[PageEdit, PageEditKey]):
+    """Manual edits, one for each processor on each stage of each page; deleting a page removes its edits."""
+
+    @abstractmethod
+    async def save(self, edit: PageEdit) -> PageEdit:
+        """Store an edit, replacing the one the same processor reads on the same page and stage.
+
+        :param edit: Edit to store.
+        :type edit: PageEdit
+        :returns: The edit as stored.
+        :rtype: PageEdit
+        :raises NotFoundError: If the page is not stored.
+        """
+
+    @abstractmethod
+    async def find(self, key: PageEditKey) -> PageEdit | None:
+        """Return one edit.
+
+        :param key: Page, stage and processor.
+        :type key: PageEditKey
+        :returns: The edit, or None when the user made none.
+        :rtype: PageEdit | None
+        """
+
+    @abstractmethod
+    async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageEdit]:
+        """Return the edits of one page, those of one stage or of all, by stage and processor.
+
+        :param page_id: Page owning the edits.
+        :type page_id: PageId
+        :param stage: Stage whose edits are listed, or None for every stage.
+        :type stage: Stage | None
+        :returns: The edits of the page.
+        :rtype: Sequence[PageEdit]
+        """
+
+
+class RecipeRepository(Repository[Recipe, RecipeId]):
+    """Recipes of the projects; a stage of a project has at most one active recipe, which the database keeps.
+
+    Deleting a recipe leaves the page stages it processed without their recipe.
+    """
+
+    @abstractmethod
+    async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[Recipe]:
+        """Return the recipes of one stage of a project, the active one first, then by creation, ties by identifier.
+
+        :param project_id: Project owning the recipes.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The active recipe and the variants of the stage.
+        :rtype: Sequence[Recipe]
+        """
+
+    @abstractmethod
+    async def find_active(self, project_id: ProjectId, stage: Stage) -> Recipe | None:
+        """Return the active recipe of a stage of a project.
+
+        :param project_id: Project owning the recipe.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The active recipe, or None before the stage has been used.
+        :rtype: Recipe | None
+        """
+
 
 class JobRepository(Repository[Job, JobId]):
     """Background jobs; a project has at most one import job queued or running at a time."""
@@ -440,6 +636,9 @@ class UnitOfWork(ABC):
     :ivar scans: Scan repository of this transaction.
     :ivar pages: Page repository of this transaction.
     :ivar page_versions: Page version repository of this transaction.
+    :ivar page_stages: Page stage repository of this transaction.
+    :ivar page_edits: Page edit repository of this transaction.
+    :ivar recipes: Recipe repository of this transaction.
     :ivar jobs: Job repository of this transaction.
     """
 
@@ -448,6 +647,9 @@ class UnitOfWork(ABC):
     scans: ScanRepository
     pages: PageRepository
     page_versions: PageVersionRepository
+    page_stages: PageStageRepository
+    page_edits: PageEditRepository
+    recipes: RecipeRepository
     jobs: JobRepository
 
     @abstractmethod

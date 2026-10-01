@@ -4,7 +4,7 @@ import hashlib
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from bookreviver.domain.entities import Job, Page, PageVersion, Project, Scan, Source
+from bookreviver.domain.entities import Job, Page, PageEdit, PageStage, PageVersion, Project, Recipe, Scan, Source
 from bookreviver.domain.enums import (
     ColorMode,
     ContributorRole,
@@ -18,9 +18,19 @@ from bookreviver.domain.enums import (
     Script,
     SourceKind,
     Stage,
+    StageState,
 )
-from bookreviver.domain.ids import AccountId, JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
-from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor, ProcessorRef, ScanFacts, SourceFile
+from bookreviver.domain.geometry import Rotation
+from bookreviver.domain.ids import AccountId, JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
+from bookreviver.domain.values import (
+    BookDetails,
+    BookIdentifier,
+    Contributor,
+    ProcessorRef,
+    ScanFacts,
+    SourceFile,
+    Step,
+)
 
 EPOCH: datetime = datetime(2026, 1, 1, tzinfo=UTC)
 # A description with every field filled in, in the shape of a pre-reform Belarusian edition
@@ -69,6 +79,8 @@ SOURCE_SCAN_COUNT: int = 12
 SPLIT_NONE: ProcessorRef = ProcessorRef(key='split.none', version='1')
 # Length of a page version identifier in hexadecimal digits
 VERSION_ID_DIGITS: int = 16
+# The deskew step of the geometry stage, which the processing tests run
+DESKEW: ProcessorRef = ProcessorRef(key='geometry.deskew', version='1')
 
 
 def new_account_id() -> AccountId:
@@ -203,4 +215,97 @@ def make_job(*, project_id: ProjectId, state: JobState = JobState.QUEUED, minute
         kind=JobKind.IMPORT_SOURCE,
         state=state,
         created_at=EPOCH + timedelta(minutes=minutes),
+    )
+
+
+def make_recipe(
+    *,
+    project_id: ProjectId,
+    stage: Stage = Stage.GEOMETRY,
+    name: str = 'Deskew',
+    active: bool = False,
+    minutes: int = 0,
+) -> Recipe:
+    """Build a recipe of one deskew step, created ``minutes`` after the epoch.
+
+    :param project_id: Project owning the recipe.
+    :type project_id: ProjectId
+    :param stage: Stage the recipe processes.
+    :type stage: Stage
+    :param name: Name of the recipe.
+    :type name: str
+    :param active: Whether the recipe is the active one of its stage.
+    :type active: bool
+    :param minutes: Minutes after ``EPOCH`` the recipe was created.
+    :type minutes: int
+    :returns: A recipe with a fresh identifier.
+    :rtype: Recipe
+    """
+    moment = EPOCH + timedelta(minutes=minutes)
+    return Recipe(
+        id=RecipeId(uuid4()),
+        project_id=project_id,
+        stage=stage,
+        name=name,
+        steps=(Step(processor_key=DESKEW.key, params={'max_angle_deg': 5}),),
+        active=active,
+        created_at=moment,
+        updated_at=moment,
+    )
+
+
+def make_page_stage(
+    *,
+    page_id: PageId,
+    stage: Stage = Stage.GEOMETRY,
+    recipe_id: RecipeId | None = None,
+    head_version_id: PageVersionId | None = None,
+    state: StageState = StageState.FRESH,
+) -> PageStage:
+    """Build the record of a stage of a page.
+
+    :param page_id: Page the record belongs to.
+    :type page_id: PageId
+    :param stage: The stage.
+    :type stage: Stage
+    :param recipe_id: Recipe the page was processed by.
+    :type recipe_id: RecipeId | None
+    :param head_version_id: Current version of the stage.
+    :type head_version_id: PageVersionId | None
+    :param state: Whether the current version is up to date.
+    :type state: StageState
+    :returns: A record changed at the epoch.
+    :rtype: PageStage
+    """
+    return PageStage(
+        page_id=page_id,
+        stage=stage,
+        recipe_id=recipe_id,
+        head_version_id=head_version_id,
+        state=state,
+        updated_at=EPOCH,
+    )
+
+
+def make_page_edit(*, page_id: PageId, stage: Stage = Stage.GEOMETRY, degrees: float = 1.5) -> PageEdit:
+    """Build the manual rotation of a page that the deskew processor reads.
+
+    :param page_id: Page the edit belongs to.
+    :type page_id: PageId
+    :param stage: Stage of the processor.
+    :type stage: Stage
+    :param degrees: Angle the user gave.
+    :type degrees: float
+    :returns: An edit saved at the epoch.
+    :rtype: PageEdit
+    """
+    geometry = Rotation(degrees=degrees)
+    return PageEdit(
+        page_id=page_id,
+        stage=stage,
+        processor_key=DESKEW.key,
+        kind=geometry.editor,
+        geometry=geometry,
+        edit_hash=PageEdit.hash_of(geometry, None),
+        updated_at=EPOCH,
     )

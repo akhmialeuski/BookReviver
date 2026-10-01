@@ -7,6 +7,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.api.routing import IIIF_ROOT
+from bookreviver.domain.entities import VersionInputs
 from bookreviver.domain.enums import ColorMode, Rendition, Stage, VersionState
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import PageSize, Renditions
@@ -59,7 +60,7 @@ class TestSplitNone:
 
         expect((version.stage, version.processor, version.state) == (Stage.PAGE_SPLIT, SPLIT_NONE, state))
         expect(version.renditions == Renditions(ready=state is VersionState.READY, full=Rendition.FULL_PNG))
-        expect(version.id == version.identify(page_id=page.id, processor=SPLIT_NONE))
+        expect(version.id == VersionInputs(page_id=page.id, processor=SPLIT_NONE).identify())
         assert_expectations()
 
     @pytest.mark.parametrize(

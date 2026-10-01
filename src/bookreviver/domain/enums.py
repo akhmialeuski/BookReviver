@@ -380,6 +380,50 @@ class VersionState(LabeledStrEnum):
     FAILED = 'failed', 'Failed'
 
 
+class StageState(LabeledStrEnum):
+    """Whether the current version of a stage of a page still matches the inputs the stage would run on."""
+
+    FRESH = 'fresh', 'Up to date'
+    STALE = 'stale', 'Out of date'
+    FAILED = 'failed', 'Failed'
+
+
+class VersionScale(LabeledStrEnum):
+    """The size of the image a step ran on, which tells a full run from a preview of its parameters."""
+
+    FULL = 'full', 'Full image'
+    PREVIEW = 'preview', 'Preview image'
+
+
+class ProcessorScope(LabeledStrEnum):
+    """How many outputs a processor makes from its input."""
+
+    PAGE = 'page', 'One output for the page'
+    SPLIT = 'split', 'One output for each part of a scan'
+
+
+class VersionOutput(LabeledStrEnum):
+    """What a processing step writes."""
+
+    IMAGE = 'image', 'Page image'
+    MASK = 'mask', 'Mask'
+    REGIONS = 'regions', 'Regions'
+    TEXT = 'text', 'Text'
+
+
+class EditorKind(LabeledStrEnum):
+    """The editor a processor offers for the manual edit of its input."""
+
+    NONE = 'none', 'No editor'
+    RECT = 'rect', 'Frame'
+    QUAD = 'quad', 'Quadrilateral'
+    LINE = 'line', 'Line'
+    ROTATION = 'rotation', 'Rotation'
+    MESH = 'mesh', 'Mesh'
+    BRUSH_MASK = 'brush-mask', 'Brush mask'
+    REGIONS = 'regions', 'Regions'
+
+
 class TransformKind(LabeledStrEnum):
     """Kind of the coordinate transform a processing step applies from its input to its output."""
 
@@ -539,3 +583,4 @@ class Rendition(LabeledStrEnum):
     PREVIEW = 'preview.jpg', 'Preview, 2048 px on the longer side'
     THUMBNAIL = 'thumb.jpg', 'Thumbnail'
     TILES = 'iiif', 'IIIF tile pyramid'
+    MASK = 'mask.png', 'Mask of the areas a step removed'

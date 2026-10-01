@@ -22,34 +22,54 @@ from advanced_alchemy.exceptions import DuplicateKeyError, ForeignKeyError
 from advanced_alchemy.exceptions import NotFoundError as MissingRowError
 from advanced_alchemy.filters import CollectionFilter, LimitOffset
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
-from sqlalchemy import Table, UniqueConstraint, exists, func, inspect, select, update
+from sqlalchemy import Table, UniqueConstraint, and_, delete, exists, func, inspect, or_, select, update
 
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     JobMapper,
+    PageEditMapper,
     PageMapper,
+    PageStageMapper,
     PageVersionMapper,
     ProjectMapper,
+    RecipeMapper,
     ScanMapper,
     SourceMapper,
 )
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     JobRow,
+    PageEditRow,
     PageRow,
+    PageStageRow,
     PageVersionRow,
     ProjectRow,
+    RecipeRow,
     ScanRow,
     SourceRow,
 )
-from bookreviver.domain.entities import Job, Page, PageVersion, Project, ProjectOverview, Scan, Source
-from bookreviver.domain.enums import PageOrigin, Side, VersionState
+from bookreviver.domain.entities import (
+    Job,
+    Page,
+    PageEdit,
+    PageStage,
+    PageVersion,
+    Project,
+    ProjectOverview,
+    Recipe,
+    Scan,
+    Source,
+)
+from bookreviver.domain.enums import PageOrigin, Side, Stage, VersionScale, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
-from bookreviver.domain.values import PageSize, Slice
+from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
+from bookreviver.domain.values import PageEditKey, PageSize, PageStageKey, Slice
 from bookreviver.ports.persistence import (
     JobRepository,
+    PageEditRepository,
     PageRepository,
+    PageStageRepository,
     PageVersionRepository,
     ProjectRepository,
+    RecipeRepository,
     Repository,
     ScanRepository,
     SourceRepository,
@@ -57,6 +77,7 @@ from bookreviver.ports.persistence import (
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterator, Sequence
+    from datetime import datetime
     from uuid import UUID
 
     from advanced_alchemy.base import ModelProtocol
@@ -66,7 +87,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import QueryableAttribute
 
     from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
-    from bookreviver.domain.enums import JobState, Stage
+    from bookreviver.domain.enums import JobState
     from bookreviver.domain.ids import AccountId
     from bookreviver.domain.values import SliceRequest
 
@@ -215,6 +236,24 @@ class PageVersionRows(RowRepository[PageVersionRow]):
     """Rows of the ``page_versions`` table."""
 
     model_type = PageVersionRow
+
+
+class PageStageRows(RowRepository[PageStageRow]):
+    """Rows of the ``page_stages`` table."""
+
+    model_type = PageStageRow
+
+
+class PageEditRows(RowRepository[PageEditRow]):
+    """Rows of the ``page_edits`` table."""
+
+    model_type = PageEditRow
+
+
+class RecipeRows(RowRepository[RecipeRow]):
+    """Rows of the ``recipes`` table."""
+
+    model_type = RecipeRow
 
 
 class JobRows(RowRepository[JobRow]):
@@ -806,6 +845,366 @@ class SqlAlchemyPageVersionRepository(
             order_by=[PageVersionRow.created_at.asc(), PageVersionRow.id.asc()],
         )
         return [self._mapper.to_entity(row) for row in rows]
+
+    @override
+    async def find(self, version_id: PageVersionId) -> PageVersion | None:
+        """Return the version with this identifier.
+
+        :param version_id: Identifier of the version.
+        :type version_id: PageVersionId
+        :returns: The stored version, or None.
+        :rtype: PageVersion | None
+        """
+        row = await self._rows.get_one_or_none(id=version_id)
+        return None if row is None else self._mapper.to_entity(row)
+
+    @override
+    async def list_for_stage(
+        self, page_id: PageId, stage: Stage | None, scale: VersionScale | None, request: SliceRequest
+    ) -> Slice[PageVersion]:
+        """Return a window of the versions of one page matching a stage and a scale, the earliest first.
+
+        :param page_id: Page owning the versions.
+        :type page_id: PageId
+        :param stage: Stage listed, or None for every stage.
+        :type stage: Stage | None
+        :param scale: Scale listed, or None for both.
+        :type scale: VersionScale | None
+        :param request: Offset and limit of the window.
+        :type request: SliceRequest
+        :returns: The window and the number of versions that match.
+        :rtype: Slice[PageVersion]
+        """
+        filters: dict[str, Any] = {'page_id': page_id}
+        if stage is not None:
+            filters['stage'] = stage
+        if scale is not None:
+            filters['scale'] = scale
+        rows, total = await self._rows.get_many_and_count(
+            LimitOffset(limit=request.limit, offset=request.offset),
+            order_by=[PageVersionRow.created_at.asc(), PageVersionRow.id.asc()],
+            **filters,
+        )
+        return Slice(items=[self._mapper.to_entity(row) for row in rows], total=total)
+
+    @override
+    async def collectable(
+        self, project_id: ProjectId, older_than: datetime, previews_older_than: datetime
+    ) -> Sequence[PageVersion]:
+        """Return the old versions that are neither base versions nor in the chain of a current version.
+
+        The chains are followed here, from the heads of the stage records through the input of each version, over the
+        two columns of the project's versions, since a recursive query is not portable to every database.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param older_than: Full runs created before this moment may go.
+        :type older_than: datetime
+        :param previews_older_than: Previews created before this moment may go.
+        :type previews_older_than: datetime
+        :returns: The versions that may be deleted, the earliest first, ties by identifier.
+        :rtype: Sequence[PageVersion]
+        """
+        session = self._rows.session
+        inputs_of = dict(
+            (
+                await session.execute(
+                    select(PageVersionRow.id, PageVersionRow.input_id)
+                    .join(PageRow, PageVersionRow.page_id == PageRow.id)
+                    .where(PageRow.project_id == project_id)
+                )
+            )
+            .tuples()
+            .all()
+        )
+        heads = (
+            await session.scalars(
+                select(PageStageRow.head_version_id)
+                .join(PageRow, PageStageRow.page_id == PageRow.id)
+                .where(PageRow.project_id == project_id, PageStageRow.head_version_id.is_not(None))
+            )
+        ).all()
+        kept: set[str] = set()
+        pending = [head for head in heads if head is not None]
+        while pending:
+            if (version_id := pending.pop()) in kept:
+                continue
+            kept.add(version_id)
+            if (input_id := inputs_of.get(version_id)) is not None:
+                pending.append(input_id)
+        statement = (
+            select(PageVersionRow)
+            .join(PageRow, PageVersionRow.page_id == PageRow.id)
+            .where(
+                PageRow.project_id == project_id,
+                PageVersionRow.input_id.is_not(None),
+                PageVersionRow.id.not_in(kept),
+                or_(
+                    and_(PageVersionRow.scale == VersionScale.FULL, PageVersionRow.created_at < older_than),
+                    and_(PageVersionRow.scale == VersionScale.PREVIEW, PageVersionRow.created_at < previews_older_than),
+                ),
+            )
+            .order_by(PageVersionRow.created_at, PageVersionRow.id)
+        )
+        return [self._mapper.to_entity(row) for row in (await session.scalars(statement)).all()]
+
+    @override
+    async def delete_many(self, version_ids: Collection[PageVersionId]) -> None:
+        """Remove the stored versions among the given ones, with the actions of the keys that refer to them.
+
+        :param version_ids: Versions to remove.
+        :type version_ids: Collection[PageVersionId]
+        """
+        if version_ids:
+            await self._rows.session.execute(delete(PageVersionRow).where(PageVersionRow.id.in_(version_ids)))
+
+
+class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey, PageStageRow], PageStageRepository):
+    """The current version of each stage of each page, addressed by the page and the stage."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Create the repository over the ``page_stages`` table.
+
+        :param session: Session of the unit of work.
+        :type session: AsyncSession
+        """
+        super().__init__(rows=PageStageRows(session=session), mapper=PageStageMapper())
+
+    @override
+    async def get(self, entity_id: PageStageKey) -> PageStage:
+        """Return the record of a stage of a page.
+
+        :param entity_id: Page and stage.
+        :type entity_id: PageStageKey
+        :returns: The stored record.
+        :rtype: PageStage
+        :raises NotFoundError: If the stage has no record on the page.
+        """
+        return self._mapper.to_entity(await self._rows.get((entity_id.page_id, entity_id.stage)))
+
+    @override
+    async def delete(self, entity_id: PageStageKey) -> None:
+        """Remove the record of a stage of a page.
+
+        :param entity_id: Page and stage.
+        :type entity_id: PageStageKey
+        :raises NotFoundError: If the stage has no record on the page.
+        """
+        await self._rows.delete((entity_id.page_id, entity_id.stage))
+
+    @override
+    async def save(self, stage: PageStage) -> PageStage:
+        """Store the record, replacing the one of the same page and stage.
+
+        :param stage: Record to store.
+        :type stage: PageStage
+        :returns: The record as stored.
+        :rtype: PageStage
+        :raises NotFoundError: If the page, the head version or the recipe is not stored.
+        """
+        if await self.find(stage.key) is None:
+            return await self.add(stage)
+        return await self.update(stage)
+
+    @override
+    async def find(self, key: PageStageKey) -> PageStage | None:
+        """Return the record of a stage of a page.
+
+        :param key: Page and stage.
+        :type key: PageStageKey
+        :returns: The record, or None.
+        :rtype: PageStage | None
+        """
+        row = await self._rows.get_one_or_none(page_id=key.page_id, stage=key.stage)
+        return None if row is None else self._mapper.to_entity(row)
+
+    @override
+    async def list_for_page(self, page_id: PageId) -> Sequence[PageStage]:
+        """Return the records of one page in the order of the stages.
+
+        :param page_id: Page owning the records.
+        :type page_id: PageId
+        :returns: Every record of the page.
+        :rtype: Sequence[PageStage]
+        """
+        order = list(Stage)
+        records = [self._mapper.to_entity(row) for row in await self._rows.get_many(page_id=page_id)]
+        return sorted(records, key=lambda record: order.index(record.stage))
+
+    @override
+    async def list_for_recipe(self, recipe_id: RecipeId) -> Sequence[PageStage]:
+        """Return the records that name the recipe, by page identifier.
+
+        :param recipe_id: Recipe whose pages are listed.
+        :type recipe_id: RecipeId
+        :returns: Every record that names the recipe.
+        :rtype: Sequence[PageStage]
+        """
+        rows = await self._rows.get_many(order_by=PageStageRow.page_id.asc(), recipe_id=recipe_id)
+        return [self._mapper.to_entity(row) for row in rows]
+
+    @override
+    async def list_for_project_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[PageStage]:
+        """Return the records of one stage over the pages of a project, by page identifier.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: Every record of the stage in the project.
+        :rtype: Sequence[PageStage]
+        """
+        statement = (
+            select(PageStageRow)
+            .join(PageRow, PageStageRow.page_id == PageRow.id)
+            .where(PageRow.project_id == project_id, PageStageRow.stage == stage)
+            .order_by(PageStageRow.page_id)
+        )
+        return [self._mapper.to_entity(row) for row in (await self._rows.session.scalars(statement)).all()]
+
+    @override
+    async def head_ids(self, project_id: ProjectId) -> Collection[PageVersionId]:
+        """Return the distinct head versions of the stage records of the project's pages.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: The identifiers of the current versions.
+        :rtype: Collection[PageVersionId]
+        """
+        statement = (
+            select(PageStageRow.head_version_id)
+            .join(PageRow, PageStageRow.page_id == PageRow.id)
+            .where(PageRow.project_id == project_id, PageStageRow.head_version_id.is_not(None))
+            .distinct()
+        )
+        return {
+            PageVersionId(version_id)
+            for version_id in (await self._rows.session.scalars(statement)).all()
+            if version_id
+        }
+
+
+class SqlAlchemyPageEditRepository(SqlAlchemyRepository[PageEdit, PageEditKey, PageEditRow], PageEditRepository):
+    """Manual edits, addressed by the page, the stage and the processor."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Create the repository over the ``page_edits`` table.
+
+        :param session: Session of the unit of work.
+        :type session: AsyncSession
+        """
+        super().__init__(rows=PageEditRows(session=session), mapper=PageEditMapper())
+
+    @override
+    async def get(self, entity_id: PageEditKey) -> PageEdit:
+        """Return one edit.
+
+        :param entity_id: Page, stage and processor.
+        :type entity_id: PageEditKey
+        :returns: The stored edit.
+        :rtype: PageEdit
+        :raises NotFoundError: If the processor has no edit on the page and stage.
+        """
+        row = await self._rows.get((entity_id.page_id, entity_id.stage, entity_id.processor_key))
+        return self._mapper.to_entity(row)
+
+    @override
+    async def delete(self, entity_id: PageEditKey) -> None:
+        """Remove one edit.
+
+        :param entity_id: Page, stage and processor.
+        :type entity_id: PageEditKey
+        :raises NotFoundError: If the processor has no edit on the page and stage.
+        """
+        await self._rows.delete((entity_id.page_id, entity_id.stage, entity_id.processor_key))
+
+    @override
+    async def save(self, edit: PageEdit) -> PageEdit:
+        """Store an edit, replacing the one of the same page, stage and processor.
+
+        :param edit: Edit to store.
+        :type edit: PageEdit
+        :returns: The edit as stored.
+        :rtype: PageEdit
+        :raises NotFoundError: If the page is not stored.
+        """
+        if await self.find(edit.key) is None:
+            return await self.add(edit)
+        return await self.update(edit)
+
+    @override
+    async def find(self, key: PageEditKey) -> PageEdit | None:
+        """Return one edit.
+
+        :param key: Page, stage and processor.
+        :type key: PageEditKey
+        :returns: The edit, or None.
+        :rtype: PageEdit | None
+        """
+        row = await self._rows.get_one_or_none(page_id=key.page_id, stage=key.stage, processor_key=key.processor_key)
+        return None if row is None else self._mapper.to_entity(row)
+
+    @override
+    async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageEdit]:
+        """Return the edits of one page, by stage and processor.
+
+        :param page_id: Page owning the edits.
+        :type page_id: PageId
+        :param stage: Stage listed, or None for every stage.
+        :type stage: Stage | None
+        :returns: The edits of the page.
+        :rtype: Sequence[PageEdit]
+        """
+        filters: dict[str, Any] = {'page_id': page_id}
+        if stage is not None:
+            filters['stage'] = stage
+        order = list(Stage)
+        edits = [self._mapper.to_entity(row) for row in await self._rows.get_many(**filters)]
+        return sorted(edits, key=lambda edit: (order.index(edit.stage), edit.processor_key))
+
+
+class SqlAlchemyRecipeRepository(SqlAlchemyRepository[Recipe, RecipeId, RecipeRow], RecipeRepository):
+    """Recipes of the projects, of which a stage has one active."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Create the repository over the ``recipes`` table.
+
+        :param session: Session of the unit of work.
+        :type session: AsyncSession
+        """
+        super().__init__(rows=RecipeRows(session=session), mapper=RecipeMapper())
+
+    @override
+    async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[Recipe]:
+        """Return the recipes of one stage, the active one first, then by creation, ties by identifier.
+
+        :param project_id: Project owning the recipes.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The active recipe and the variants.
+        :rtype: Sequence[Recipe]
+        """
+        rows = await self._rows.get_many(
+            order_by=[RecipeRow.active.desc(), RecipeRow.created_at.asc(), RecipeRow.id.asc()],
+            project_id=project_id,
+            stage=stage,
+        )
+        return [self._mapper.to_entity(row) for row in rows]
+
+    @override
+    async def find_active(self, project_id: ProjectId, stage: Stage) -> Recipe | None:
+        """Return the active recipe of a stage of a project.
+
+        :param project_id: Project owning the recipe.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The active recipe, or None.
+        :rtype: Recipe | None
+        """
+        row = await self._rows.get_one_or_none(project_id=project_id, stage=stage, active=True)
+        return None if row is None else self._mapper.to_entity(row)
 
 
 class SqlAlchemyJobRepository(SqlAlchemyRepository[Job, JobId, JobRow], JobRepository):

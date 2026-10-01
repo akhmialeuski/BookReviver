@@ -7,16 +7,33 @@ from typing import TYPE_CHECKING, ClassVar
 
 from attrs import field, frozen, validators
 
-from bookreviver.domain.enums import ImagePolicy, JobState, PageKind, PageOrigin, VersionState
+from bookreviver.domain.enums import (
+    ImagePolicy,
+    JobState,
+    PageKind,
+    PageOrigin,
+    StageState,
+    VersionScale,
+    VersionState,
+)
+from bookreviver.domain.geometry import Transform
 from bookreviver.domain.ids import PageVersionId
-from bookreviver.domain.values import SHA256_PATTERN, MetadataSuggestion, Progress, Renditions, Transform
+from bookreviver.domain.values import (
+    SHA256_PATTERN,
+    MetadataSuggestion,
+    PageEditKey,
+    PageStageKey,
+    Progress,
+    Renditions,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from bookreviver.domain.enums import FileType, JobKind, SourceKind, Stage
-    from bookreviver.domain.ids import AccountId, JobId, PageId, ProjectId, ScanId, SourceId
+    from bookreviver.domain.enums import EditorKind, FileType, JobKind, SourceKind, Stage
+    from bookreviver.domain.geometry import EditGeometry
+    from bookreviver.domain.ids import AccountId, JobId, PageId, ProjectId, RecipeId, ScanId, SourceId, StorageKey
     from bookreviver.domain.values import (
         BookDetails,
         ImportRequest,
@@ -25,6 +42,7 @@ if TYPE_CHECKING:
         ProcessorRef,
         ScanFacts,
         SourceFile,
+        Step,
     )
 
 # The length of a page version identifier: a hash cut to 16 hexadecimal digits
@@ -204,11 +222,55 @@ class Page:
 
 
 @frozen(kw_only=True)
+class VersionInputs:
+    """Everything the result of one step on one page depends on, which the identifier of the version hashes.
+
+    Equal inputs give equal results, so a repeated step finds the files of its earlier result, and an input that changes
+    the image must change the identifier or the cache would return another result. What does not change the image, such
+    as the time of the run or the recipe a step came from, is not an input, so one step with the same parameters in two
+    variants of a recipe is one version.
+
+    :ivar page_id: Page the step runs on. It is hashed because a base version has no input version, and two blank
+                   leaves of one size would share an identifier without it.
+    :ivar processor: Key and version of the processor running the step.
+    :ivar params: Parameters of the step after validation, which must be JSON-compatible.
+    :ivar input_id: Version the step reads, or None for a base version.
+    :ivar edit_hash: Hash of the manual edit the step reads, or empty for none.
+    :ivar scale: Whether the step runs on the full image or on the preview.
+    """
+
+    page_id: PageId
+    processor: ProcessorRef
+    params: MetadataMap = field(factory=dict)
+    input_id: PageVersionId | None = None
+    edit_hash: str = ''
+    scale: VersionScale = VersionScale.FULL
+
+    def identify(self) -> PageVersionId:
+        """Return the identifier of the version these inputs produce, a hash of all of them.
+
+        The edit and the scale join the hash only when they are not the empty edit and the full scale, so a full run
+        without an edit hashes what it hashed before they existed, and the identifiers already stored stay the ones a
+        repeated run finds.
+
+        :returns: The SHA-256 of the inputs in canonical JSON, cut to 16 lower-case hexadecimal digits.
+        :rtype: PageVersionId
+        """
+        produced_by = [str(self.page_id), self.processor.key, self.processor.version, self.params, self.input_id]
+        if self.edit_hash:
+            produced_by.append({'edit': self.edit_hash})
+        if self.scale is not VersionScale.FULL:
+            produced_by.append({'scale': self.scale.value})
+        digest = hashlib.sha256(json.dumps(produced_by, sort_keys=True, separators=(',', ':')).encode())
+        return PageVersionId(digest.hexdigest()[:VERSION_ID_LENGTH])
+
+
+@frozen(kw_only=True)
 class PageVersion:
     """The result of one processing step on one page of the book, never changed once ready.
 
-    A version is identified by a hash of the page, the processor, its parameters, the input version and the manual
-    edit, so equal work gets the same identifier and its cached result. The first version of a page, its base version,
+    A version is identified by the hash of its ``VersionInputs``, so equal work gets the same identifier and its cached
+    result. The first version of a page, its base version,
     has no input version: its input is a scan or, for a blank leaf, nothing.
 
     :ivar id: Identifier of the version, the hash of what produced it.
@@ -221,6 +283,10 @@ class PageVersion:
     :ivar data: Data the step found, such as an angle, a frame or a confidence.
     :ivar renditions: State of the version's image files, or None for a step without an image.
     :ivar state: Where the version is in its lifecycle.
+    :ivar scale: Whether the step ran on the full image or on the preview, which only the preview of a parameter shows.
+    :ivar edit_hash: Hash of the manual edit the step read, or empty for a step without one.
+    :ivar tiles_ready: Whether the IIIF tile pyramid of the version is cut, which is done for the current version of a
+                       stage and for any other version on request.
     :ivar created_at: When the version was created.
     """
 
@@ -234,6 +300,9 @@ class PageVersion:
     data: MetadataMap = field(factory=dict)
     renditions: Renditions | None = field(factory=Renditions)
     state: VersionState = VersionState.PENDING
+    scale: VersionScale = VersionScale.FULL
+    edit_hash: str = ''
+    tiles_ready: bool = False
     created_at: datetime
 
     def __attrs_post_init__(self) -> None:
@@ -248,35 +317,6 @@ class PageVersion:
         if self.renditions is not None and self.renditions.version != Renditions.FIRST_VERSION:
             err_msg = 'The renditions of a page version are written once and stay at their first version.'
             raise ValueError(err_msg)
-
-    @staticmethod
-    def identify(
-        *,
-        page_id: PageId,
-        processor: ProcessorRef,
-        params: MetadataMap | None = None,
-        input_id: PageVersionId | None = None,
-    ) -> PageVersionId:
-        """Return the identifier of the version a step produces, a hash of everything that produced it.
-
-        Equal work gets the same identifier, so a repeated step finds the files of its earlier result. The hash covers
-        the page, the processor key and version, the parameters and the input version; manual edits join it when
-        they exist.
-
-        :param page_id: Page the step runs on.
-        :type page_id: PageId
-        :param processor: Key and version of the processor running the step.
-        :type processor: ProcessorRef
-        :param params: Parameters of the step, which must be JSON-compatible, or None for none.
-        :type params: MetadataMap | None
-        :param input_id: Version the step reads, or None for a base version.
-        :type input_id: PageVersionId | None
-        :returns: The hash of the arguments, cut to 16 lower-case hexadecimal digits.
-        :rtype: PageVersionId
-        """
-        produced_by = [str(page_id), processor.key, processor.version, params or {}, input_id]
-        digest = hashlib.sha256(json.dumps(produced_by, sort_keys=True, separators=(',', ':')).encode())
-        return PageVersionId(digest.hexdigest()[:VERSION_ID_LENGTH])
 
 
 @frozen(kw_only=True)
@@ -308,6 +348,7 @@ class Job:
     :ivar progress: How many of its steps are done.
     :ivar error: Why the job failed, shown to the user, or empty.
     :ivar request: The files an import job was asked to import, or None for a job that takes none.
+    :ivar params: What a processing job was asked to do, in the form its value class writes, empty for a job without.
     :ivar result: What an import job did with them, or None until it has finished.
     :ivar created_at: When the job was recorded.
     :ivar started_at: When a worker started the job, or None while it is queued.
@@ -321,7 +362,112 @@ class Job:
     progress: Progress = field(factory=Progress)
     error: str = ''
     request: ImportRequest | None = None
+    params: MetadataMap = field(factory=dict)
     result: ImportResult | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+
+@frozen(kw_only=True)
+class Recipe:
+    """The ordered steps of one stage, saved in a project, which the pages of the stage are processed by.
+
+    A stage has exactly one active recipe, by which a page without a choice of its own is processed. Every other recipe
+    of the stage is a variant, which the user tries on some pages or compares with the active one.
+
+    :ivar id: Identifier of the recipe.
+    :ivar project_id: Project owning the recipe.
+    :ivar stage: Stage the recipe processes.
+    :ivar name: Name the user sees, such as ``Spread``.
+    :ivar steps: The steps in the order they run, each a processor with its parameters.
+    :ivar active: Whether the recipe is the one the stage runs by default, which no variant is.
+    :ivar created_at: When the recipe was created.
+    :ivar updated_at: When the recipe was last changed.
+    """
+
+    id: RecipeId
+    project_id: ProjectId
+    stage: Stage
+    name: str = field(validator=validators.min_len(1))
+    steps: tuple[Step, ...]
+    active: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+
+@frozen(kw_only=True)
+class PageStage:
+    """The current version of one stage of one page, and whether it still matches the stage's inputs.
+
+    The record keeps the last version of the recipe the page was processed by, so a version knows nothing of whether it
+    is current. A change of an earlier stage marks the later ones stale and deletes none of their versions, so the
+    interface shows the old result until it is recomputed.
+
+    :ivar page_id: Page the record belongs to.
+    :ivar stage: The stage.
+    :ivar recipe_id: Recipe the page was processed by, or None when the recipe was deleted or none ran yet.
+    :ivar head_version_id: Last version of the recipe's steps, which is the current version of the stage, or None.
+    :ivar state: Whether the current version matches the inputs of the stage.
+    :ivar updated_at: When the record last changed.
+    """
+
+    page_id: PageId
+    stage: Stage
+    recipe_id: RecipeId | None = None
+    head_version_id: PageVersionId | None = None
+    state: StageState = StageState.FRESH
+    updated_at: datetime
+
+    @property
+    def key(self) -> PageStageKey:
+        """The key the record is stored under."""
+        return PageStageKey(self.page_id, self.stage)
+
+
+@frozen(kw_only=True)
+class PageEdit:
+    """A manual edit of a page that a processor reads as an input beside its parameters.
+
+    A frame, an angle, a split line or the mask of an eraser is stored apart from the parameters of the step. The hash
+    of the edit joins the identifier of the versions that read it, so a changed edit gives a new version and the old
+    edit finds the old version again.
+
+    :ivar page_id: Page the edit belongs to.
+    :ivar stage: Stage of the processor reading the edit.
+    :ivar processor_key: Key of the processor reading the edit.
+    :ivar kind: Editor that made the edit.
+    :ivar geometry: The shape the user drew, or None for an edit that is only a mask.
+    :ivar mask_key: Storage key of the mask the user painted, or None for an edit without one.
+    :ivar edit_hash: Hash of the geometry and of the mask, which joins the identifiers of the versions that read it.
+    :ivar updated_at: When the edit was last saved.
+    """
+
+    page_id: PageId
+    stage: Stage
+    processor_key: str = field(validator=validators.min_len(1))
+    kind: EditorKind
+    geometry: EditGeometry | None = None
+    mask_key: StorageKey | None = None
+    edit_hash: str = field(validator=validators.min_len(1))
+    updated_at: datetime
+
+    @property
+    def key(self) -> PageEditKey:
+        """The key the edit is stored under."""
+        return PageEditKey(self.page_id, self.stage, self.processor_key)
+
+    @staticmethod
+    def hash_of(geometry: EditGeometry | None, mask_sha256: str | None) -> str:
+        """Return the hash of an edit, from its shape in canonical JSON and the SHA-256 digest of its mask.
+
+        :param geometry: The shape the user drew, or None.
+        :type geometry: EditGeometry | None
+        :param mask_sha256: SHA-256 digest of the mask file, or None for an edit without one.
+        :type mask_sha256: str | None
+        :returns: The hash cut to 16 lower-case hexadecimal digits, as long as a version identifier.
+        :rtype: str
+        """
+        shape = None if geometry is None else {'kind': geometry.editor.value, **geometry.to_data()}
+        text = json.dumps([shape, mask_sha256], sort_keys=True, separators=(',', ':'))
+        return hashlib.sha256(text.encode()).hexdigest()[:VERSION_ID_LENGTH]

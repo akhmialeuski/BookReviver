@@ -16,7 +16,7 @@ The class touches no file itself: images are read and written through the asset 
 from functools import partial
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.entities import PageVersion
+from bookreviver.domain.entities import PageVersion, VersionInputs
 from bookreviver.domain.enums import Rendition, Stage, VersionState
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import PageSize, ProcessorRef, Renditions
@@ -75,7 +75,7 @@ class BaseVersions:
             dpi=max(filter(None, (facts.dpi_x, facts.dpi_y)), default=None),
         )
         return PageVersion(
-            id=PageVersion.identify(page_id=page.id, processor=SPLIT_NONE),
+            id=VersionInputs(page_id=page.id, processor=SPLIT_NONE).identify(),
             page_id=page.id,
             stage=Stage.PAGE_SPLIT,
             processor=SPLIT_NONE,
@@ -101,7 +101,7 @@ class BaseVersions:
         :rtype: PageVersion
         """
         return PageVersion(
-            id=PageVersion.identify(page_id=page.id, processor=PAGES_BLANK),
+            id=VersionInputs(page_id=page.id, processor=PAGES_BLANK).identify(),
             page_id=page.id,
             stage=Stage.PAGE_ORDER,
             processor=PAGES_BLANK,
