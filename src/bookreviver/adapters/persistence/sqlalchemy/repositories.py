@@ -41,10 +41,10 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     SourceRow,
 )
 from bookreviver.domain.entities import Job, Page, PageVersion, Project, ProjectOverview, Scan, Source
-from bookreviver.domain.enums import Side
+from bookreviver.domain.enums import PageOrigin, Side, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
-from bookreviver.domain.values import Slice
+from bookreviver.domain.values import PageSize, Slice
 from bookreviver.ports.persistence import (
     JobRepository,
     PageRepository,
@@ -66,7 +66,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import QueryableAttribute
 
     from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
-    from bookreviver.domain.enums import JobState
+    from bookreviver.domain.enums import JobState, Stage
     from bookreviver.domain.ids import AccountId
     from bookreviver.domain.values import SliceRequest
 
@@ -742,6 +742,54 @@ class SqlAlchemyPageVersionRepository(
             order_by=[PageVersionRow.created_at.asc(), PageVersionRow.id.asc()], page_id=page_id
         )
         return [self._mapper.to_entity(row) for row in rows]
+
+    @override
+    async def list_to_prepare(self, project_id: ProjectId, stages: Collection[Stage]) -> Sequence[PageVersion]:
+        """Return the pending and failed versions of the project's pages in the given stages, joining ``pages``.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param stages: Stages whose versions are returned.
+        :type stages: Collection[Stage]
+        :returns: The versions still to prepare, the earliest first, ties by identifier.
+        :rtype: Sequence[PageVersion]
+        """
+        statement = (
+            select(PageVersionRow)
+            .join(PageRow, PageVersionRow.page_id == PageRow.id)
+            .where(
+                PageRow.project_id == project_id,
+                PageVersionRow.stage.in_(stages),
+                PageVersionRow.state.in_([VersionState.PENDING, VersionState.FAILED]),
+            )
+            .order_by(PageVersionRow.created_at, PageVersionRow.id)
+        )
+        return [self._mapper.to_entity(row) for row in (await self._rows.session.scalars(statement)).all()]
+
+    @override
+    async def base_sizes(self, project_id: ProjectId) -> Sequence[PageSize]:
+        """Return the sizes the base versions of the project's included scan pages record in their data.
+
+        Only the data column is read, and the sizes are taken from it here, since the column is JSON and the same
+        reading serves every database.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: The size of every such base version that records one.
+        :rtype: Sequence[PageSize]
+        """
+        statement = (
+            select(PageVersionRow.data)
+            .join(PageRow, PageVersionRow.page_id == PageRow.id)
+            .where(
+                PageRow.project_id == project_id,
+                PageRow.included.is_(True),
+                PageRow.origin == PageOrigin.SCAN,
+                PageVersionRow.input_id.is_(None),
+            )
+        )
+        sizes = (PageSize.from_data(data) for data in (await self._rows.session.scalars(statement)).all())
+        return [size for size in sizes if size is not None]
 
     @override
     async def list_base_versions(self, page_ids: Collection[PageId]) -> Sequence[PageVersion]:

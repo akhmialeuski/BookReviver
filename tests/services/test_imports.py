@@ -41,11 +41,11 @@ from bookreviver.domain.events import (
 )
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import Contributor, SliceRequest
+from bookreviver.services.base_versions import SPLIT_NONE
 from bookreviver.services.imports import (
     IMPORT_ACTIVE,
     NO_SOURCE_IMPORTED,
     NOT_QUEUED,
-    SPLIT_NONE,
     UNEXPECTED_FAILURE,
     ImportCancelledError,
     ImportRun,

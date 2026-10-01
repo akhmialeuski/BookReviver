@@ -5,14 +5,23 @@ project that is never stored takes a bare account identifier.
 """
 
 from operator import attrgetter
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import JobState, PageKind, RejectionReason, Rendition, Side
+from bookreviver.domain.enums import (
+    JobState,
+    PageKind,
+    PageOrigin,
+    RejectionReason,
+    Rendition,
+    Side,
+    Stage,
+    VersionState,
+)
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import SourceId
 from bookreviver.domain.values import (
@@ -20,6 +29,7 @@ from bookreviver.domain.values import (
     ImportRequest,
     ImportResult,
     MetadataSuggestion,
+    PageSize,
     RejectedFile,
     Renditions,
     SliceRequest,
@@ -1187,6 +1197,90 @@ class TestPageRepository:
 
 class TestPageVersionRepository:
     """Contract of PageVersionRepository."""
+
+    async def test_list_to_prepare_returns_pending_and_failed_versions_of_the_stages_of_the_project(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the versions still to write come back earliest first, and nothing else does.
+
+        Ready and running versions, versions of other stages and versions of another project are left out.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        pages = [make_page(project_id=project.id, order_key=f'a{number}') for number in range(5)]
+        elsewhere = make_page(project_id=other.id)
+        pending = make_page_version(page_id=pages[0].id, minutes=3)
+        failed = evolve(
+            make_page_version(page_id=pages[1].id, minutes=1), stage=Stage.PAGE_ORDER, state=VersionState.FAILED
+        )
+        ready = evolve(make_page_version(page_id=pages[2].id), state=VersionState.READY)
+        running = evolve(make_page_version(page_id=pages[3].id), state=VersionState.RUNNING)
+        later_stage = evolve(make_page_version(page_id=pages[4].id), stage=Stage.GEOMETRY)
+        uow = await fx_uow_factory()
+        for owned in (project, other):
+            await uow.projects.add(owned)
+        await uow.pages.add_many([*pages, elsewhere])
+        await uow.page_versions.add_many(
+            [pending, failed, ready, running, later_stage, make_page_version(page_id=elsewhere.id)]
+        )
+        await uow.commit()
+        versions = (await fx_uow_factory()).page_versions
+        found = await versions.list_to_prepare(project.id, {Stage.PAGE_SPLIT, Stage.PAGE_ORDER})
+        expect(list(found) == [failed, pending])
+        expect(list(await versions.list_to_prepare(project.id, {Stage.PAGE_ORDER})) == [failed])
+        assert_expectations()
+
+    async def test_base_sizes_are_those_of_the_base_versions_of_the_included_scan_pages(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify only the recorded sizes of base versions of included pages cut from a scan are returned.
+
+        A page kept out, a generated leaf, a later version, a version recording no size and another project's page take
+        no part.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        sources = [make_source(project_id=owned.id) for owned in (project, other)]
+        scans = [make_scan(source=sources[0], number=number) for number in range(5)]
+        foreign_scan = make_scan(source=sources[1], number=0)
+        pages = [
+            make_page(project_id=project.id, order_key=f'a{number}', scan=scan) for number, scan in enumerate(scans)
+        ]
+        pages[1] = evolve(pages[1], included=False)
+        leaf = evolve(make_page(project_id=project.id, order_key='b0'), origin=PageOrigin.BLANK)
+        foreign_page = make_page(project_id=other.id, scan=foreign_scan)
+        sized = {'width_px': 2000, 'height_px': 3000, 'dpi': 300.0}
+        # The sizes of the pages in order: counted, kept out, generated, recording none, recording no resolution, foreign
+        recorded: list[dict[str, Any]] = [sized, sized, sized, {}, {'width_px': 10, 'height_px': 20}, sized]
+        versions = [
+            evolve(make_page_version(page_id=page.id), data=data)
+            for page, data in zip([*pages[:2], leaf, *pages[3:], foreign_page], recorded, strict=True)
+        ]
+        derived = evolve(make_page_version(page_id=pages[2].id, minutes=1), input_id=versions[0].id, data=sized)
+        uow = await fx_uow_factory()
+        for owned in (project, other):
+            await uow.projects.add(owned)
+        await uow.sources.add_many(sources)
+        await uow.scans.add_many([*scans, foreign_scan])
+        await uow.pages.add_many([*pages, leaf, foreign_page])
+        await uow.page_versions.add_many(versions)
+        await uow.page_versions.add(derived)
+        await uow.commit()
+        found = await (await fx_uow_factory()).page_versions.base_sizes(project.id)
+        assert sorted(found, key=attrgetter('width_px')) == [
+            PageSize(width_px=10, height_px=20, dpi=None),
+            PageSize(width_px=2000, height_px=3000, dpi=300.0),
+        ]
 
     async def test_versions_read_back_in_creation_order(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory

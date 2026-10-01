@@ -346,6 +346,31 @@ class PageChange(LabeledStrEnum):
     REMOVED = 'removed', 'Removed'
 
 
+class NewPageOrigin(LabeledStrEnum):
+    """Where the image of a page the user adds comes from.
+
+    Only a blank leaf and a placeholder are added by hand, since a page cut from a scan is made by the page split and
+    by binding a scan to a placeholder.
+    """
+
+    BLANK = 'blank', 'Generated blank leaf'
+    PLACEHOLDER = 'placeholder', 'Placeholder waiting for a scan'
+
+    @property
+    def page_origin(self) -> PageOrigin:
+        """The origin of the page this one makes."""
+        return PageOrigin(self.value)
+
+
+class VersionData(LabeledStrEnum):
+    """Keys of the data of a base version, which the median size of a book's pages and a failed version read."""
+
+    WIDTH_PX = 'width_px', 'Width of the image in pixels'
+    HEIGHT_PX = 'height_px', 'Height of the image in pixels'
+    DPI = 'dpi', 'Resolution of the image in dots per inch'
+    ERROR = 'error', 'Why the version could not be made'
+
+
 class VersionState(LabeledStrEnum):
     """Lifecycle of a page version, from its creation to its result."""
 
@@ -369,6 +394,7 @@ class JobKind(LabeledStrEnum):
     """What a background job does."""
 
     IMPORT_SOURCE = 'import-source', 'Import source'
+    PREPARE_PAGES = 'prepare-pages', 'Prepare pages'
 
 
 class JobState(LabeledStrEnum):

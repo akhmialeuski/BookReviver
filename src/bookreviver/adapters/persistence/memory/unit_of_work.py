@@ -27,10 +27,10 @@ from typing import TYPE_CHECKING, override
 from attrs import define, evolve, field, fields
 
 from bookreviver.domain.entities import Job, Page, PageVersion, Project, ProjectOverview, Scan, Source
-from bookreviver.domain.enums import JobKind, JobState, Side
+from bookreviver.domain.enums import JobKind, JobState, PageOrigin, Side, VersionState
 from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, ScanId, SourceId
-from bookreviver.domain.values import Slice, SliceRequest
+from bookreviver.domain.values import PageSize, Slice, SliceRequest
 from bookreviver.ports.persistence import (
     JobRepository,
     PageRepository,
@@ -45,6 +45,7 @@ from bookreviver.ports.persistence import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Hashable, Iterable, Mapping, Sequence
 
+    from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import AccountId
 
 # Attribute holding the identifier of every entity addressed by one
@@ -725,6 +726,50 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
             (version for version in self._rows.values() if version.page_id == page_id),
             key=attrgetter('created_at', ID_ATTRIBUTE),
         )
+
+    @override
+    async def list_to_prepare(self, project_id: ProjectId, stages: Collection[Stage]) -> Sequence[PageVersion]:
+        """Return the pending and failed versions of the project's pages in the given stages.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param stages: Stages whose versions are returned.
+        :type stages: Collection[Stage]
+        :returns: The versions still to prepare, the earliest first, ties by identifier.
+        :rtype: Sequence[PageVersion]
+        """
+        waiting = {VersionState.PENDING, VersionState.FAILED}
+        return sorted(
+            (
+                version
+                for version in self._rows.values()
+                if version.stage in stages
+                and version.state in waiting
+                and self._tables.pages[version.page_id].project_id == project_id
+            ),
+            key=attrgetter('created_at', ID_ATTRIBUTE),
+        )
+
+    @override
+    async def base_sizes(self, project_id: ProjectId) -> Sequence[PageSize]:
+        """Return the recorded sizes of the base versions of the project's included pages cut from a scan.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: The size of every such base version that records one.
+        :rtype: Sequence[PageSize]
+        """
+        shown = {
+            page.id
+            for page in self._tables.pages.values()
+            if page.project_id == project_id and page.included and page.origin is PageOrigin.SCAN
+        }
+        sizes = (
+            PageSize.from_data(version.data)
+            for version in self._rows.values()
+            if version.page_id in shown and version.input_id is None
+        )
+        return [size for size in sizes if size is not None]
 
     @override
     async def list_base_versions(self, page_ids: Collection[PageId]) -> Sequence[PageVersion]:

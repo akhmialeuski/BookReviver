@@ -8,12 +8,14 @@ from attrs import evolve, field, fields_dict, frozen, validators
 
 from bookreviver.domain.enums import (
     ContributorRole,
+    NewPageOrigin,
     Orthography,
     Rendition,
     RightsStatus,
     Script,
     TransformKind,
     UploadProblem,
+    VersionData,
 )
 from bookreviver.domain.errors import InvalidIdentifierError, UploadRejectedError
 
@@ -481,6 +483,77 @@ class PageNumbering:
         """
         text = self.style.write(number)
         return f'[{text}]' if self.bracketed and text else text
+
+
+@frozen(kw_only=True)
+class PageSize:
+    """The size of a page image in pixels and the resolution it was made at, as a base version records them.
+
+    The median of these over the pages of a book gives the size of a generated blank leaf, so the leaf stands level
+    with its neighbours in a spread.
+
+    :ivar width_px: Width of the image in pixels.
+    :ivar height_px: Height of the image in pixels.
+    :ivar dpi: Resolution in dots per inch, or None when the page has none recorded.
+    """
+
+    width_px: int = field(validator=validators.gt(0))
+    height_px: int = field(validator=validators.gt(0))
+    dpi: float | None = field(default=None, validator=validators.optional(validators.gt(0)))
+
+    @classmethod
+    def from_data(cls, data: MetadataMap) -> Self | None:
+        """Read the size a base version recorded in its data.
+
+        :param data: Data of a page version.
+        :type data: MetadataMap
+        :returns: The size, or None when the data holds no usable width and height.
+        :rtype: Self | None
+        """
+        width, height, dpi = (data.get(key) for key in (VersionData.WIDTH_PX, VersionData.HEIGHT_PX, VersionData.DPI))
+        if not (isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0):
+            return None
+        return cls(width_px=width, height_px=height, dpi=dpi if isinstance(dpi, int | float) and dpi > 0 else None)
+
+    def as_data(self) -> dict[str, Any]:
+        """Return the size as the data of a base version, which leaves out an unknown resolution.
+
+        :returns: The width and height, and the resolution when it is known.
+        :rtype: dict[str, Any]
+        """
+        data: dict[str, Any] = {VersionData.WIDTH_PX: self.width_px, VersionData.HEIGHT_PX: self.height_px}
+        if self.dpi is not None:
+            data[VersionData.DPI] = self.dpi
+        return data
+
+
+@frozen(kw_only=True)
+class NewPage:
+    """A page the user adds to the book without a scan: a blank leaf or a placeholder.
+
+    :ivar origin: Whether the page is a generated blank leaf or a placeholder that waits for a scan.
+    :ivar kind: Role of the page in the book.
+    :ivar label: Printed number of the page, or empty.
+    :ivar notes: Notes of the user.
+    :ivar anchor: Place the page is put at, or None for the end of the book.
+    :ivar size: Size of a blank leaf, or None for the median size of the book's pages; never given for a placeholder.
+    """
+
+    origin: NewPageOrigin
+    kind: PageKind
+    label: str = ''
+    notes: str = ''
+    anchor: PageAnchor | None = None
+    size: PageSize | None = None
+
+    def __attrs_post_init__(self) -> None:
+        """Check that only a blank leaf has a size.
+
+        :raises ValueError: If a placeholder is given a size, since it has no image.
+        """
+        if self.size is not None and self.origin is not NewPageOrigin.BLANK:
+            err_msg = f'A {self.origin.label.lower()} has no image, so it has no size.'
+            raise ValueError(err_msg)
 
 
 @frozen(kw_only=True)

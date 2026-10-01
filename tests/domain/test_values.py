@@ -46,7 +46,9 @@ class TestUploadPath:
             ParsedPathCase(
                 raw='book\\vol1\\001.tif', path='book/vol1/001.tif', name='001.tif', folders=('book', 'book/vol1')
             ),
-            ParsedPathCase(raw='Том первый/001.tif', path='Том первый/001.tif', name='001.tif', folders=('Том первый',)),
+            ParsedPathCase(
+                raw='Том первый/001.tif', path='Том первый/001.tif', name='001.tif', folders=('Том первый',)
+            ),
             ParsedPathCase(raw='vol.1/.hidden', path='vol.1/.hidden', name='.hidden', folders=('vol.1',)),
             ParsedPathCase(raw='ab:c.tif', path='ab:c.tif', name='ab:c.tif', folders=()),
         ],

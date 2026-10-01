@@ -1095,6 +1095,92 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Create Page",
+        "description": "Add a placeholder or a blank leaf to the book, and point to the page in the ``Location`` header.\n\nA placeholder has no image. A blank leaf has the median size of the book's pages unless its size is given, and\nits white image is written by a job, so its images appear once the job is done. The answer is 409 for a blank\nleaf without a size when no page of the book has an image to take the median of.",
+        "operationId": "create_page_api_v1_projects__project_id__pages_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PageCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/projects/{project_id}/pages/{page_id}": {
@@ -1102,9 +1188,9 @@
         "tags": [
           "pages"
         ],
-        "summary": "Get Page",
+        "summary": "Page",
         "description": "Return one page of a project.",
-        "operationId": "get_page_api_v1_projects__project_id__pages__page_id__get",
+        "operationId": "page_api_v1_projects__project_id__pages__page_id__get",
         "parameters": [
           {
             "name": "project_id",
@@ -1239,6 +1325,87 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Delete Page",
+        "description": "Delete a page with its versions and files, leaving its scan and the source of the scan.",
+        "operationId": "delete_page_api_v1_projects__project_id__pages__page_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -1501,6 +1668,106 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pages/{page_id}/scan": {
+      "put": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Attach Scan",
+        "description": "Bind a scan to a placeholder, which becomes a page of that scan once a job has copied its image.\n\nThe answer is 409 for a page that is not a placeholder, a scan that is not cut yet, and a scan another page shows,\nunless ``take_over`` is set, which deletes that page. A scan of another project is a 404.",
+        "operationId": "attach_scan_api_v1_projects__project_id__pages__page_id__scan_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanAttach"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageSchema"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -3594,7 +3861,8 @@
       "JobKind": {
         "type": "string",
         "enum": [
-          "import-source"
+          "import-source",
+          "prepare-pages"
         ],
         "title": "JobKind",
         "description": "What a background job does."
@@ -3843,6 +4111,15 @@
         "title": "MetadataSuggestionSchema",
         "description": "Description fields found in a source; an empty string or list means nothing was found.\n\n:ivar title: Title found in the source.\n:ivar contributors: People found in the source, each with the role the metadata gives them.\n:ivar publisher: Publisher found in the source.\n:ivar publication_year: Year of publication found in the source.\n:ivar languages: ISO 639-3 codes of the languages found in the source.\n:ivar identifiers: Valid ISBNs and web addresses found in the source.\n:ivar subjects: Topics found in the source."
       },
+      "NewPageOrigin": {
+        "type": "string",
+        "enum": [
+          "blank",
+          "placeholder"
+        ],
+        "title": "NewPageOrigin",
+        "description": "Where the image of a page the user adds comes from.\n\nOnly a blank leaf and a placeholder are added by hand, since a page cut from a scan is made by the page split and\nby binding a scan to a placeholder."
+      },
       "Orthography": {
         "type": "string",
         "enum": [
@@ -3883,7 +4160,100 @@
         "additionalProperties": false,
         "type": "object",
         "title": "PageAnchorBody",
-        "description": "A place in the book, named by the page it lies before or after.\n\n:ivar before_page_id: Page the place lies before, or omitted.\n:ivar after_page_id: Page the place lies after, or omitted."
+        "description": "A place in the book that the body has to name, by the page it lies before or after."
+      },
+      "PageCreate": {
+        "properties": {
+          "before_page_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Page Id"
+          },
+          "after_page_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Page Id"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/NewPageOrigin"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PageKind"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 50,
+            "title": "Label",
+            "default": ""
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 10000,
+            "title": "Notes",
+            "default": ""
+          },
+          "width_px": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 30000.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width Px"
+          },
+          "height_px": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 30000.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height Px"
+          },
+          "dpi": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 4800.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dpi"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "origin",
+          "kind"
+        ],
+        "title": "PageCreate",
+        "description": "A page to add without a scan: a placeholder that waits for one, or a generated blank leaf.\n\nThe place is the page it lies before or after, and the end of the book when neither is given. A blank leaf has the\nmedian size of the book's pages unless its size is given, in which case both sides are, and the resolution may be.\n\n:ivar origin: Whether the page is a blank leaf or a placeholder; a page from a scan is made by the split and by\n              binding a scan.\n:ivar kind: Role of the page in the book.\n:ivar label: Printed number of the page, or empty.\n:ivar notes: Notes of the user.\n:ivar width_px: Width of a blank leaf in pixels, given with its height.\n:ivar height_px: Height of a blank leaf in pixels, given with its width.\n:ivar dpi: Resolution of a blank leaf in dots per inch, given with its size."
       },
       "PageKind": {
         "type": "string",
@@ -4927,6 +5297,27 @@
         ],
         "title": "RightsStatus",
         "description": "Whether the result of the work on a book may be published."
+      },
+      "ScanAttach": {
+        "properties": {
+          "scan_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Scan Id"
+          },
+          "take_over": {
+            "type": "boolean",
+            "title": "Take Over",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scan_id"
+        ],
+        "title": "ScanAttach",
+        "description": "The scan to bind to a placeholder.\n\n:ivar scan_id: Scan to bind, which must be a scan of the project.\n:ivar take_over: Whether to take the scan from the pages that show it already, such as the page the import made of\n                 it, which deletes them."
       },
       "ScanFactsSchema": {
         "properties": {

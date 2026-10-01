@@ -24,6 +24,7 @@ from bookreviver.app.settings import JobBroker
 from bookreviver.domain.enums import JobKind
 from bookreviver.domain.ids import JobId
 from bookreviver.services.imports import ImportService
+from bookreviver.services.pages import PageService
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -53,7 +54,21 @@ async def import_source(job_id: str, container: FromDishka[AsyncContainer]) -> N
     await service.run_import(JobId(UUID(job_id)))
 
 
-JOB_TASKS: Mapping[JobKind, JobTask] = MappingProxyType({JobKind.IMPORT_SOURCE: import_source})
+async def prepare_pages(job_id: str, container: FromDishka[AsyncContainer]) -> None:
+    """Run a job that writes the images of pending page versions: the entry point of ``JobKind.PREPARE_PAGES``.
+
+    :param job_id: Identifier of the job as text, the one argument the queue sends.
+    :type job_id: str
+    :param container: Request-scoped container of the task.
+    :type container: AsyncContainer
+    """
+    service = await container.get(PageService)
+    await service.prepare_images(JobId(UUID(job_id)))
+
+
+JOB_TASKS: Mapping[JobKind, JobTask] = MappingProxyType(
+    {JobKind.IMPORT_SOURCE: import_source, JobKind.PREPARE_PAGES: prepare_pages}
+)
 
 
 def create_broker(

@@ -120,3 +120,25 @@ class Tiler(ABC):
         :param target: Path to write the thumbnail at.
         :type target: Path
         """
+
+
+class BlankPageMaker(ABC):
+    """Makes the image of a blank leaf, until the plugin framework replaces it with the ``pages.blank`` processor.
+
+    The page order stage comes before the plugin framework, so the image of a generated blank leaf is made by this
+    temporary port, which is removed with its adapter once an ordinary processor makes the leaf.
+    """
+
+    @abstractmethod
+    async def make(self, target: Path, *, width_px: int, height_px: int, dpi: float | None) -> None:
+        """Write a white page of the given size at ``target`` as a 1-bit PNG, which is the format of a bilevel page.
+
+        :param target: Path to write the PNG at, whose name the caller has chosen as ``Rendition.FULL_PNG``.
+        :type target: Path
+        :param width_px: Width of the page in pixels.
+        :type width_px: int
+        :param height_px: Height of the page in pixels.
+        :type height_px: int
+        :param dpi: Resolution to record in the file in dots per inch, or None for the default of the writer.
+        :type dpi: float | None
+        """

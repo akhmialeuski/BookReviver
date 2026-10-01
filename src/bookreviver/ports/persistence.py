@@ -15,9 +15,9 @@ if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
     from bookreviver.domain.entities import ProjectOverview
-    from bookreviver.domain.enums import JobState, Side
+    from bookreviver.domain.enums import JobState, Side, Stage
     from bookreviver.domain.ids import AccountId
-    from bookreviver.domain.values import Slice, SliceRequest
+    from bookreviver.domain.values import PageSize, Slice, SliceRequest
 
 
 class Repository[EntityT, IdT](ABC):
@@ -339,6 +339,33 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         :type page_id: PageId
         :returns: Every version of the page, the earliest first.
         :rtype: Sequence[PageVersion]
+        """
+
+    @abstractmethod
+    async def list_to_prepare(self, project_id: ProjectId, stages: Collection[Stage]) -> Sequence[PageVersion]:
+        """Return the versions of a project whose files still have to be written: the pending and the failed ones.
+
+        A failed version is returned with the pending ones, so the next job of the project tries it again and no route
+        of its own is needed to repeat it.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param stages: Stages whose versions are returned, such as the page split and the page order.
+        :type stages: Collection[Stage]
+        :returns: The pending and failed versions of those stages, the earliest first, ties by identifier.
+        :rtype: Sequence[PageVersion]
+        """
+
+    @abstractmethod
+    async def base_sizes(self, project_id: ProjectId) -> Sequence[PageSize]:
+        """Return the sizes of the base versions of the project's pages that show a scan and are part of the book.
+
+        The median of these is the size of a generated blank leaf. A version that records no size is left out.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: The recorded size of every such base version, in no particular order.
+        :rtype: Sequence[PageSize]
         """
 
     @abstractmethod
