@@ -46,31 +46,35 @@ export function ScansPanel({
     body = (
       <>
         <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-          {scans.data.items.map((scan) => (
-            <li key={scan.id} className="grid gap-1 text-xs">
-              <div className="flex aspect-[3/4] items-center justify-center overflow-hidden rounded-md border bg-muted">
-                {scan.images === null ? (
-                  <span className="px-2 text-center text-muted-foreground">
-                    {MESSAGES.book.scans.pending}
-                  </span>
-                ) : (
-                  <img
-                    src={scan.images.thumbnail}
-                    alt={MESSAGES.book.scans.label(scan.number)}
-                    loading="lazy"
-                    className="size-full object-contain"
-                  />
-                )}
-              </div>
-              <span className="font-medium">
-                {MESSAGES.book.scans.label(scan.number)}
-                {scan.source_label === '' ? '' : ` (${scan.source_label})`}
-              </span>
-              <span className="text-muted-foreground">
-                {MESSAGES.book.scans.size(scan.facts.width_px, scan.facts.height_px)}
-              </span>
-            </li>
-          ))}
+          {scans.data.items.map((scan, index) => {
+            // The number of a scan restarts in every source, so a book of one image per file would show only "1"
+            const ordinal = (scans.data.page - 1) * scans.data.size + index + 1;
+            return (
+              <li key={scan.id} className="grid gap-1 text-xs">
+                <div className="flex aspect-[3/4] items-center justify-center overflow-hidden rounded-md border bg-muted">
+                  {scan.images === null ? (
+                    <span className="px-2 text-center text-muted-foreground">
+                      {MESSAGES.book.scans.pending}
+                    </span>
+                  ) : (
+                    <img
+                      src={scan.images.thumbnail}
+                      alt={MESSAGES.book.scans.label(ordinal)}
+                      loading="lazy"
+                      className="size-full object-contain"
+                    />
+                  )}
+                </div>
+                <span className="font-medium">
+                  {MESSAGES.book.scans.label(ordinal)}
+                  {scan.source_label === '' ? '' : ` (${scan.source_label})`}
+                </span>
+                <span className="text-muted-foreground">
+                  {MESSAGES.book.scans.size(scan.facts.width_px, scan.facts.height_px)}
+                </span>
+              </li>
+            );
+          })}
         </ul>
         <Pager
           page={scans.data.page}

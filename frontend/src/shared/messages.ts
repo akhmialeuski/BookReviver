@@ -1,4 +1,4 @@
-import type { FileType, Orthography, RejectionReason, Script } from '@/api';
+import type { FileType, JobState, Orthography, RejectionReason, Script } from '@/api';
 import { ProblemCode } from '@/shared/http/codes';
 import { pluralize } from '@/shared/lib/format';
 
@@ -144,7 +144,7 @@ export const MESSAGES = {
       title: 'Scans',
       empty: 'The scans appear here as the uploaded files are imported.',
       showAll: 'Show all scans',
-      label: (number: number) => `Scan ${number + 1}`,
+      label: (position: number) => `Scan ${position}`,
       pending: 'Preparing images…',
       size: (width: number, height: number) => `${width} × ${height} px`,
     },
@@ -184,9 +184,11 @@ export const MESSAGES = {
     skipped: {
       title: (count: number) => `${count} ${pluralize(count, 'file', 'files')} skipped`,
       description: 'These files are not sent.',
-      systemFile: 'System file of the operating system, not a part of the book.',
-      unsupported: 'This type of file cannot be imported.',
-      duplicate: 'Already in the list.',
+      reasons: {
+        'system-file': 'System file of the operating system, not a part of the book.',
+        'unsupported-type': 'This type of file cannot be imported.',
+        duplicate: 'Already in the list.',
+      },
     },
     submit: (count: number) => `Upload ${count} ${pluralize(count, 'file', 'files')}`,
     submitting: 'Uploading…',
@@ -201,7 +203,7 @@ export const MESSAGES = {
       succeeded: 'Finished',
       failed: 'Failed',
       cancelled: 'Cancelled',
-    },
+    } satisfies Record<JobState, string>,
     progress: (done: number, total: number) =>
       total > 0 ? `${done} of ${total} steps done` : 'Starting…',
     cancel: 'Cancel import',

@@ -6,6 +6,9 @@ import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-q
 import { BookDetails } from '@/features/projects/BookDetails';
 import { ScansPanel } from '@/features/projects/ScansPanel';
 import { SourcesPanel } from '@/features/projects/SourcesPanel';
+import { ImportStatus } from '@/features/projects/upload/ImportStatus';
+import { UploadDialog } from '@/features/projects/upload/UploadDialog';
+import { useProjectEvents } from '@/features/projects/useProjectEvents';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
 import { Badge } from '@/shared/ui/badge';
@@ -17,9 +20,11 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 
 export function ProjectPage({ projectId }: { projectId: string }): React.JSX.Element {
   const [sourceId, setSourceId] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
   const project = useQuery(
     projectApiV1ProjectsProjectIdGetOptions({ path: { project_id: projectId } }),
   );
+  useProjectEvents(projectId);
 
   if (project.isError) {
     return <ErrorAlert message={describeError(project.error)} />;
@@ -55,7 +60,11 @@ export function ProjectPage({ projectId }: { projectId: string }): React.JSX.Ele
             </Badge>
           </div>
         </div>
+        <UploadDialog projectId={projectId} onUploaded={(job) => setJobId(job.id)} />
       </div>
+      {jobId === null ? null : (
+        <ImportStatus projectId={projectId} jobId={jobId} onDismiss={() => setJobId(null)} />
+      )}
       <BookDetails details={details} />
       <SourcesPanel
         projectId={projectId}
