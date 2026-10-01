@@ -102,6 +102,8 @@ class Settings(BaseSettings):
 
     :ivar public_url: Address the application is reached at from outside.
     :ivar data_dir: Directory holding the SQLite database and the storage root.
+    :ivar frontend_dir: Directory of the built frontend, served at ``/`` when it exists; ``npm --prefix frontend run
+                        build`` writes it.
     :ivar database_url: SQLAlchemy async database URL, or empty for an SQLite file in ``data_dir``.
     :ivar persistence: Persistence backend the container builds.
     :ivar storage: Storage backend the container builds for sources and derived files.
@@ -124,6 +126,7 @@ class Settings(BaseSettings):
 
     public_url: str = 'http://127.0.0.1:8000'
     data_dir: Path = Path('data')
+    frontend_dir: Path = Path('frontend/dist')
     database_url: str = ''
     persistence: PersistenceBackend = PersistenceBackend.SQLALCHEMY
     storage: StorageBackend = StorageBackend.LOCAL

@@ -21,6 +21,23 @@ uv run fastapi dev
 The server listens on http://127.0.0.1:8000. The database, uploaded books and the render cache live in `data/`, and
 settings are read from `BOOKREVIVER_*` environment variables or a `.env` file, as listed in `.env.example`.
 
+## Frontend
+
+The interface is a React application in `frontend/`, built with [Node](https://nodejs.org/) 22 or newer.
+
+```bash
+npm --prefix frontend ci
+npm --prefix frontend run build   # writes frontend/dist, which the server then serves at http://127.0.0.1:8000/
+npm --prefix frontend run dev     # or: the Vite server on http://127.0.0.1:5173, proxying /api to port 8000
+```
+
+The server serves the build when the directory in `BOOKREVIVER_FRONTEND_DIR` (default `frontend/dist`, relative to
+where the server starts) exists, and the API alone otherwise. A confirmation mail that has no SMTP server to go
+through is written to the server log, and its link opens `/verify-email` of the application.
+
+`npm --prefix frontend run generate` rebuilds `frontend/src/api` from `docs/openapi.json` after a route or a schema
+changes. `npm --prefix frontend run check` runs Biome, the type check and the unit tests.
+
 The application never changes the database schema itself. After pulling code that adds a migration, copy `data/` if
 it holds anything worth keeping and run `uv run bookreviver-migrate upgrade head` again; until then the server
 refuses to start and names that command.
