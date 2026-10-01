@@ -174,13 +174,7 @@ class StageWork:
         if not scan.renditions.ready:
             return None
         facts = scan.facts
-        data: dict[str, object] = {
-            VersionData.WIDTH_PX: facts.width_px,
-            VersionData.HEIGHT_PX: facts.height_px,
-            'color_mode': facts.color_mode.value,
-        }
-        if dpi := max(filter(None, (facts.dpi_x, facts.dpi_y)), default=None):
-            data[VersionData.DPI] = dpi
+        data = facts.as_data()
         if scale is VersionScale.PREVIEW:
             return StepSource(
                 version_id=None,

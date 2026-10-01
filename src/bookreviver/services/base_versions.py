@@ -1,24 +1,22 @@
 """The base versions of pages: the first version of a page, which holds the page's own copy of its image.
 
 A page cut from a whole scan, with the page split skipped, has the base version ``split.none``, and a generated blank
-leaf has ``pages.blank``. Until the plugin framework exists, the import and the page order stage write these versions
-with this class, and the two processors replace it. It builds the versions, copies the ``full`` image of a scan into the
-directory of a version, and cuts the preview, the thumbnail and the tile pyramid from a ``full`` image, for a scan as
-well as for a version. The import and the binding of a scan to a placeholder both copy a scan, so they call the same
-code, and a page made either way is the same to every later stage.
+leaf has ``pages.blank``. Both are processors, and this class only builds the rows of their versions: the identifier
+comes from ``VersionInputs`` like that of every version, so equal work gets the same identifier, and the parameters of
+a blank leaf are its size. A version is built pending, or ready when a use case has written its files already, and a
+``StepRunner`` runs the processor and writes the files, which the import and the ``prepare-pages`` job both do, so a
+page made either way is the same to every later stage.
 
-Every base version records the size of its image in its data, under the keys of ``VersionData``, which gives a blank
-leaf the median size of the pages of the book.
+It also cuts the preview, the thumbnail and the tile pyramid of a scan, which the import needs for the renditions of a
+scan, from the ``full`` image stored under the keys of a scan.
 
 The class touches no file itself: images are read and written through the asset store, and cut by the tiler.
 """
 
-from functools import partial
 from typing import TYPE_CHECKING
 
 from bookreviver.domain.entities import PageVersion, VersionInputs
 from bookreviver.domain.enums import Rendition, Stage, VersionState
-from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import PageSize, ProcessorRef, Renditions
 
 if TYPE_CHECKING:
@@ -31,16 +29,16 @@ if TYPE_CHECKING:
     from bookreviver.ports.storage import AssetStore
 
 # The step that gives a page cut from a whole scan its base version while the page split is skipped, and the step that
-# gives a generated blank leaf its base version, until their processors exist
+# gives a generated blank leaf its base version
 SPLIT_NONE: ProcessorRef = ProcessorRef(key='split.none', version='1')
 PAGES_BLANK: ProcessorRef = ProcessorRef(key='pages.blank', version='1')
 
 
 class BaseVersions:
-    """Builds the base versions of pages and writes their files."""
+    """Builds the base versions of pages and cuts the files of scans."""
 
     def __init__(self, *, assets: AssetStore, tiler: Tiler, iiif_root: str) -> None:
-        """Write the files of versions through the asset store, and cut them with the tiler.
+        """Cut the files of scans through the asset store with the tiler.
 
         :param assets: Store of the derived files.
         :type assets: AssetStore
@@ -101,33 +99,16 @@ class BaseVersions:
         :rtype: PageVersion
         """
         return PageVersion(
-            id=VersionInputs(page_id=page.id, processor=PAGES_BLANK).identify(),
+            id=VersionInputs(page_id=page.id, processor=PAGES_BLANK, params=size.as_data()).identify(),
             page_id=page.id,
             stage=Stage.PAGE_ORDER,
             processor=PAGES_BLANK,
+            params=size.as_data(),
             data=size.as_data(),
             renditions=Renditions(ready=False, full=full),
             state=VersionState.PENDING,
             created_at=moment,
         )
-
-    async def copy_scan(self, version: PageVersion, scan: Scan) -> None:
-        """Give a version its own copy of a scan's ``full`` image, and cut its preview, thumbnail and pyramid.
-
-        What an earlier attempt left in the directory of the version is removed first, since a stored file is never
-        replaced.
-
-        :param version: The base version, whose ``full`` format is the scan's.
-        :type version: PageVersion
-        :param scan: Scan to copy, whose renditions are ready.
-        :type scan: Scan
-        """
-        keys = ProjectKeys(scan.project_id)
-        full = scan.renditions.full
-        of_version = partial(keys.version_rendition, version)
-        await self._assets.delete_prefix(keys.version_directory(version))
-        await self._assets.copy(keys.scan_rendition(scan, full), of_version(full))
-        await self.derive(of_version, full=full)
 
     async def derive(self, key: Callable[[Rendition], StorageKey], *, full: Rendition) -> None:
         """Cut the preview, the thumbnail and the tile pyramid from the ``full`` image stored under the keys.

@@ -16,12 +16,11 @@ from bookreviver.adapters.imaging import (
     ImageFormat,
     PdfFormat,
     SourceReader,
-    VipsBlankPageMaker,
     VipsRenditionWriter,
     VipsTiler,
 )
 from bookreviver.app.settings import Settings
-from bookreviver.ports.imaging import BlankPageMaker, PageRasterizer, RenditionWriter, SourceInspector, Tiler
+from bookreviver.ports.imaging import PageRasterizer, RenditionWriter, SourceInspector, Tiler
 
 logger = logging.getLogger(__name__)
 
@@ -51,15 +50,6 @@ class ImagingProvider(Provider):
         return SourceReader(
             formats=(PdfFormat(jpeg_quality=jpeg_quality), ImageFormat(jpeg_quality=jpeg_quality), djvu)
         )
-
-    @provide
-    def blank_page_maker(self) -> BlankPageMaker:
-        """Build the maker of blank leaves, a temporary adapter that the ``pages.blank`` processor will replace.
-
-        :returns: The libvips blank page maker.
-        :rtype: BlankPageMaker
-        """
-        return VipsBlankPageMaker()
 
     @provide
     def rendition_writer(self, settings: Settings) -> RenditionWriter:

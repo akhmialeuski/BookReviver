@@ -537,12 +537,11 @@ page. The key is made the way a move makes it, between the anchor and its neighb
   size a `ConflictError` that says it is the recorded size that is missing, which also holds for a book whose scan
   pages are all kept out.
 
-The image of a blank leaf is made by the temporary port `BlankPageMaker`, whose adapter `VipsBlankPageMaker` makes a
-black image with `Image.black`, adds 255 and saves it with `pngsave` at a bit depth of 1, so the leaf is the 1-bit PNG
-of a bilevel page whatever the project's image policy. The version records the format the policy's `full_format` gives a
-bilevel page, `full.png`, so no format is chosen a second time. The port and its adapter are removed when the
-`pages.blank` processor exists. libvips always writes a resolution into a PNG, so a leaf made without one carries its own
-default, and the data of the base version, which says the resolution is unknown, is what the book relies on.
+The image of a blank leaf is made by the `pages.blank` processor, which runs through `StepRunner` like every step. It
+makes a black image with `Image.black`, adds 255 and saves it with `pngsave` at a bit depth of 1, so the leaf is the
+1-bit PNG of a bilevel page whatever the project's image policy. libvips always writes a resolution into a PNG, so a
+leaf made without one carries its own default, and the data of the base version, which says the resolution is unknown,
+is what the book relies on.
 
 `PUT /projects/{id}/pages/{page_id}/scan` binds a scan to a placeholder with a `ScanAttach`. It refuses a page that is
 not a placeholder, a scan that is not cut yet and a scan that another page shows, which is a 409 naming those pages, and
@@ -607,7 +606,6 @@ Ports are abstract base classes, so every adapter names its parent explicitly an
 | Storage     | `SourceStore` (uploads and the files of each source), `AssetStore` (derived files by key)        |
 | Mail        | `Mailer`                                                                                         |
 | Imaging     | `SourceInspector` (group an upload into sources, inspect one), `PageRasterizer`, `Tiler`,        |
-|             | and until the plugin framework `BlankPageMaker` (the image of a blank leaf)                      |
 | AI engines  | `TextRecognizer`, `LayoutAnalyzer`, `LanguageModel`, each with an engine catalogue               |
 | Processing  | `Processor` (the plugin contract), `ProcessorCatalog`                                            |
 | Runtime     | `JobQueue`, `EventPublisher`, `EventStream`, `Clock`                                             |
@@ -1522,8 +1520,8 @@ The book model rests on these decisions, each with its reason.
     scan pages follows neither one fold-out map nor one cropped scan, so the leaf stands level with its neighbours in a
     spread. Binding a scan is a route of its own, since a `PATCH` of `scan_id` would mix an instant edit of one row with
     the making of a version and a job.
-39. **The leaf is made by a temporary port.** `BlankPageMaker` and its libvips adapter exist because the page order stage
-    comes before the plugin framework, and they are removed when the `pages.blank` processor makes the leaf.
+39. **A leaf is a plugin run.** `pages.blank` and `split.none` are plugins, and the page order and import stages run
+    them through `StepRunner`, so every base version is made the way a version of a recipe is.
 
 Smaller technical choices follow the same model. Languages are ISO 639-3 codes, XMP is parsed with defusedxml, the
 parameters of processing jobs are kept in `Job.params`, a DjVu source suggests a publication year only from its

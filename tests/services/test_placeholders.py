@@ -29,12 +29,12 @@ from bookreviver.domain.events import JobChanged, PagesChanged, PageVersionReady
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import NewPage, PageAnchor, PageSize, Renditions
-from bookreviver.ports.imaging import BlankPageMaker
 from bookreviver.ports.runtime import JobQueue
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from bookreviver.services.pages import NOT_QUEUED, UNEXPECTED_FAILURE
 from tests.helpers.books import IMAGE
 from tests.helpers.builders import EPOCH, make_job, make_page, make_project, make_scan, make_source, new_account_id
+from tests.helpers.fake_processing import FakeRenditionWriter
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.page_services import PREVIEW_CONTENT, THUMBNAIL_CONTENT, make_page_service
 from tests.helpers.seeding import commit_project
@@ -48,7 +48,9 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Page, PageVersion, Project, Scan, Source
+    from bookreviver.domain.enums import ColorMode
     from bookreviver.domain.events import DomainEvent
+    from bookreviver.domain.values import RenditionInfo
     from bookreviver.services.pages import PageService
 
 pytestmark = pytest.mark.anyio
@@ -80,10 +82,10 @@ class BookOfScans(NamedTuple):
     versions: list[PageVersion]
 
 
-class FlakyBlankMaker(BlankPageMaker):
-    """A maker of blank leaves that fails the first time it is asked, as a full disk would.
+class FlakyRenditionWriter(FakeRenditionWriter):
+    """A writer of the files of a version that fails the first times it is asked, as a full disk would.
 
-    :ivar calls: Number of times it was asked.
+    :ivar attempts: Number of times it was asked.
     """
 
     def __init__(self, *, fail_first: int) -> None:
@@ -92,28 +94,31 @@ class FlakyBlankMaker(BlankPageMaker):
         :param fail_first: Number of calls to fail before one succeeds.
         :type fail_first: int
         """
-        self.calls = 0
+        super().__init__()
+        self.attempts = 0
         self._fail_first = fail_first
 
     @override
-    async def make(self, target: Path, *, width_px: int, height_px: int, dpi: float | None) -> None:
-        """Fail, or write a token file.
+    async def write(self, image: Path, target_dir: Path, *, full: Rendition, color_mode: ColorMode) -> RenditionInfo:
+        """Fail, or write the files as the fake writer does.
 
-        :param target: Path to write at.
-        :type target: Path
-        :param width_px: Ignored.
-        :type width_px: int
-        :param height_px: Ignored.
-        :type height_px: int
-        :param dpi: Ignored.
-        :type dpi: float | None
+        :param image: Image to write.
+        :type image: Path
+        :param target_dir: Directory to create.
+        :type target_dir: Path
+        :param full: Format of the ``full`` image.
+        :type full: Rendition
+        :param color_mode: Colour of the image.
+        :type color_mode: ColorMode
+        :returns: What the fake writer returns.
+        :rtype: RenditionInfo
         :raises OSError: For the first calls.
         """
-        self.calls += 1
-        if self.calls <= self._fail_first:
+        self.attempts += 1
+        if self.attempts <= self._fail_first:
             err_msg = 'No space left on device'
             raise OSError(err_msg)
-        await anyio.Path(target).write_bytes(b'png')
+        return await super().write(image, target_dir, full=full, color_mode=color_mode)
 
 
 class BrokenQueue(JobQueue):
@@ -1058,7 +1063,7 @@ class TestPrepareImages:
         :param fx_runtime: The recording bus, the stopped clock and the recording queue of the test.
         :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
         """
-        flaky = FlakyBlankMaker(fail_first=1)
+        flaky = FlakyRenditionWriter(fail_first=1)
         queue = fx_runtime[2]
 
         def service() -> PageService:
@@ -1067,7 +1072,7 @@ class TestPrepareImages:
             :returns: The page service of a new unit of work.
             :rtype: PageService
             """
-            return make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime, blank_maker=flaky)
+            return make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime, renditions=flaky)
 
         project = make_project(owner_id=fx_actor.account_id)
         await commit_project(fx_database, project)
@@ -1206,38 +1211,41 @@ class TwoLeaves(NamedTuple):
     root: Path
 
 
-class ActingBlankMaker(BlankPageMaker):
-    """A maker of blank leaves that lets something else happen in the middle of the first leaf, as another request would.
+class ActingRenditionWriter(FakeRenditionWriter):
+    """A writer that lets something else happen in the middle of the first version, as another request would.
 
-    :ivar calls: Number of leaves it was asked for.
+    :ivar attempts: Number of versions it was asked to write.
     """
 
     def __init__(self, act: Callable[[PageId], Awaitable[None]]) -> None:
-        """Run ``act`` while the first leaf is being written.
+        """Run ``act`` while the first version is being written.
 
-        :param act: Coroutine function called with the identifier of the page whose leaf is being written.
+        :param act: Coroutine function called with the identifier of the page whose version is being written.
         :type act: Callable[[PageId], Awaitable[None]]
         """
-        self.calls = 0
+        super().__init__()
+        self.attempts = 0
         self._act = act
 
     @override
-    async def make(self, target: Path, *, width_px: int, height_px: int, dpi: float | None) -> None:
-        """Act in the middle of the first leaf, and write a token file.
+    async def write(self, image: Path, target_dir: Path, *, full: Rendition, color_mode: ColorMode) -> RenditionInfo:
+        """Act in the middle of the first version, and write the files as the fake writer does.
 
-        :param target: Path to write at, which lies under the directory of the page the leaf belongs to.
-        :type target: Path
-        :param width_px: Ignored.
-        :type width_px: int
-        :param height_px: Ignored.
-        :type height_px: int
-        :param dpi: Ignored.
-        :type dpi: float | None
+        :param image: Image to write.
+        :type image: Path
+        :param target_dir: Directory to create, which lies under the directory of the page the version belongs to.
+        :type target_dir: Path
+        :param full: Format of the ``full`` image.
+        :type full: Rendition
+        :param color_mode: Colour of the image.
+        :type color_mode: ColorMode
+        :returns: What the fake writer returns.
+        :rtype: RenditionInfo
         """
-        self.calls += 1
-        if self.calls == 1:
-            await self._act(PageId(UUID(target.parts[target.parts.index(PAGES_DIRECTORY) + 1])))
-        await anyio.Path(target).write_bytes(b'png')
+        self.attempts += 1
+        if self.attempts == 1:
+            await self._act(PageId(UUID(target_dir.parts[target_dir.parts.index(PAGES_DIRECTORY) + 1])))
+        return await super().write(image, target_dir, full=full, color_mode=color_mode)
 
 
 class FailingBus(RecordingEventBus):
@@ -1358,7 +1366,7 @@ class TestPrepareImagesWhileTheBookChanges:
             InMemoryUnitOfWork(fx_database),
             fx_asset_store,
             fx_runtime,
-            blank_maker=ActingBlankMaker(delete_in_another_transaction),
+            renditions=ActingRenditionWriter(delete_in_another_transaction),
         )
 
         await service.prepare_images(queue.enqueued[0].id)
@@ -1468,7 +1476,7 @@ class TestPrepareImagesWhileTheBookChanges:
             queued_while_running.append(len(queue.enqueued))
 
         service = make_page_service(
-            InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime, blank_maker=ActingBlankMaker(add_a_leaf)
+            InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime, renditions=ActingRenditionWriter(add_a_leaf)
         )
 
         await service.prepare_images(queue.enqueued[0].id)

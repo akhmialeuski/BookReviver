@@ -4,17 +4,20 @@ from typing import TYPE_CHECKING, override
 
 import anyio
 
-from bookreviver.adapters.imaging import VipsBlankPageMaker
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.routing import IIIF_ROOT
+from bookreviver.plugins.blank import BlankPage
+from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import Tiler
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.pages import PageImaging, PageRuntime, PageService
+from bookreviver.services.steps import StepRunner
+from tests.helpers.fake_processing import FakeCatalogue, FakeRenditionWriter
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bookreviver.ports.imaging import BlankPageMaker
+    from bookreviver.ports.imaging import RenditionWriter
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
@@ -83,7 +86,7 @@ def make_page_service(
     runtime: tuple[EventPublisher, Clock, JobQueue],
     *,
     order_keys: OrderKeys | None = None,
-    blank_maker: BlankPageMaker | None = None,
+    renditions: RenditionWriter | None = None,
 ) -> PageService:
     """Build a page service over a unit of work, as a new request or job would get one.
 
@@ -95,12 +98,14 @@ def make_page_service(
     :type runtime: tuple[EventPublisher, Clock, JobQueue]
     :param order_keys: Order keys to build keys with, or None for the fractional-indexing adapter.
     :type order_keys: OrderKeys | None
-    :param blank_maker: Maker of blank leaves, or None for the libvips adapter.
-    :type blank_maker: BlankPageMaker | None
-    :returns: The service, whose tiler is a fake that writes token files.
+    :param renditions: Writer of the files of a version, or None for one that copies the image and writes tokens.
+    :type renditions: RenditionWriter | None
+    :returns: The service, whose processors are the real ``split.none`` and ``pages.blank``, and whose tiler and writer of
+              renditions write token files.
     :rtype: PageService
     """
     publisher, clock, queue = runtime
+    tiler = FakeTiler()
     return PageService(
         uow=uow,
         assets=assets,
@@ -108,7 +113,13 @@ def make_page_service(
             publisher=publisher, clock=clock, order_keys=order_keys or FractionalOrderKeys(), queue=queue
         ),
         imaging=PageImaging(
-            base_versions=BaseVersions(assets=assets, tiler=FakeTiler(), iiif_root=IIIF_ROOT),
-            blank_maker=blank_maker or VipsBlankPageMaker(),
+            base_versions=BaseVersions(assets=assets, tiler=tiler, iiif_root=IIIF_ROOT),
+            runner=StepRunner(
+                assets=assets,
+                catalogue=FakeCatalogue([SplitNone(), BlankPage()]),
+                renditions=renditions or FakeRenditionWriter(),
+                tiler=tiler,
+                iiif_root=IIIF_ROOT,
+            ),
         ),
     )

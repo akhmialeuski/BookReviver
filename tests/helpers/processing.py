@@ -7,9 +7,8 @@ tell which files a version has and in which format its ``full`` was asked for.
 """
 
 from datetime import timedelta
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING
 
-import anyio
 from attrs import evolve
 from dishka import Provider, Scope, provide
 
@@ -25,13 +24,10 @@ from bookreviver.domain.enums import (
     StageState,
     VersionState,
 )
-from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import RenditionInfo, Renditions
+from bookreviver.domain.values import Renditions
 from bookreviver.plugins.split_none import SplitNone
-from bookreviver.ports.imaging import RenditionWriter
 from bookreviver.ports.processing import ProcessorCatalog
-from bookreviver.ports.runtime import JobQueue
 from bookreviver.services.edits import EditService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
@@ -49,28 +45,26 @@ from tests.helpers.builders import (
     make_source,
     new_account_id,
 )
+from tests.helpers.fake_processing import (
+    IMAGE_SIZE_PX,
+    FakeCatalogue,
+    FakeRenditionWriter,
+)
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.page_services import FakeTiler
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
-    from bookreviver.domain.entities import Job, Page, PageVersion, Project, Scan
-    from bookreviver.domain.enums import (
-        ColorMode,
-    )
+    from bookreviver.domain.entities import Page, PageVersion, Project, Scan
     from bookreviver.domain.ids import PageVersionId
-    from bookreviver.domain.values import MetadataMap, ProcessorSpec
+    from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.processing import Processor
+    from bookreviver.ports.runtime import JobQueue
     from bookreviver.ports.storage import AssetStore
 
-# What the fake writer says every image measures
-IMAGE_SIZE_PX: int = 100
 IMAGE_CONTENT: bytes = b'image'
-PREVIEW_TOKEN: bytes = b'preview'
-THUMBNAIL_TOKEN: bytes = b'thumbnail'
 RETENTION_DAYS: int = 30
 PREVIEW_RETENTION_HOURS: int = 24
 PREVIEW_LONG_SIDE_PX: int = 2048
@@ -81,90 +75,6 @@ DEFAULTS: DefaultRecipes = DefaultRecipes(
         Stage.CLEANUP: (RecipeTemplate(name='Cleanup', processor_keys=(CleanupProcessor.spec.key,)),),
     }
 )
-
-
-class RefusingJobQueue(JobQueue):
-    """A queue that refuses every job, as a broker that is down does."""
-
-    @override
-    async def enqueue(self, job: Job) -> None:
-        """Refuse the job.
-
-        :param job: The job handed to the queue.
-        :type job: Job
-        :raises RuntimeError: Always.
-        """
-        err_msg = f'The queue is down, so it cannot take {job.id}.'
-        raise RuntimeError(err_msg)
-
-
-class FakeCatalogue(ProcessorCatalog):
-    """A catalogue of the processors it was given."""
-
-    def __init__(self, processors: Sequence[Processor]) -> None:
-        """Offer the given processors.
-
-        :param processors: The processors, found by the keys of their specs.
-        :type processors: Sequence[Processor]
-        """
-        self._processors = {processor.spec.key: processor for processor in processors}
-
-    @override
-    def get(self, key: str) -> Processor:
-        """Return the processor with this key.
-
-        :param key: Key of the processor.
-        :type key: str
-        :returns: The processor.
-        :rtype: Processor
-        :raises NotFoundError: If the catalogue has none with this key.
-        """
-        if (processor := self._processors.get(key)) is None:
-            raise NotFoundError(key)
-        return processor
-
-    @override
-    def specs(self) -> Sequence[ProcessorSpec]:
-        """List the specs by key.
-
-        :returns: The specs of the processors.
-        :rtype: Sequence[ProcessorSpec]
-        """
-        return [self._processors[key].spec for key in sorted(self._processors)]
-
-
-class FakeRenditionWriter(RenditionWriter):
-    """A writer that copies the image as ``full`` and writes token files for the other two.
-
-    :ivar calls: The format and the colour of every ``full`` it was asked to write, in order.
-    """
-
-    def __init__(self) -> None:
-        """Start with nothing written."""
-        self.calls: list[tuple[Rendition, ColorMode]] = []
-
-    @override
-    async def write(self, image: Path, target_dir: Path, *, full: Rendition, color_mode: ColorMode) -> RenditionInfo:
-        """Write the three files of an image.
-
-        :param image: Image to copy.
-        :type image: Path
-        :param target_dir: Directory to create.
-        :type target_dir: Path
-        :param full: Format of the ``full`` image.
-        :type full: Rendition
-        :param color_mode: Colour of the image.
-        :type color_mode: ColorMode
-        :returns: A fixed size and the format asked for.
-        :rtype: RenditionInfo
-        """
-        self.calls.append((full, color_mode))
-        directory = anyio.Path(target_dir)
-        await directory.mkdir(parents=True)
-        await (directory / full).write_bytes(await anyio.Path(image).read_bytes())
-        await (directory / Rendition.PREVIEW).write_bytes(PREVIEW_TOKEN)
-        await (directory / Rendition.THUMBNAIL).write_bytes(THUMBNAIL_TOKEN)
-        return RenditionInfo(width_px=IMAGE_SIZE_PX, height_px=IMAGE_SIZE_PX, full=full)
 
 
 class ProcessingKit:

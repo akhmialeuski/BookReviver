@@ -12,7 +12,8 @@ from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.ids import PageId, RecipeId
 from bookreviver.domain.values import PageStageKey, SliceRequest, StageRun, Step
 from tests.helpers.builders import make_page_stage
-from tests.helpers.processing import ProcessingKit, RefusingJobQueue
+from tests.helpers.fake_processing import RefusingJobQueue
+from tests.helpers.processing import ProcessingKit
 from tests.helpers.processors import FakeProcessor
 
 if TYPE_CHECKING:

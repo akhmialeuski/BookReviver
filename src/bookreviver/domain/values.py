@@ -48,6 +48,8 @@ if TYPE_CHECKING:
 
 # JSON-compatible metadata as read from a source file
 type MetadataMap = Mapping[str, Any]
+# Key of the colour mode among the facts of a scan that a processor reads
+COLOR_MODE_KEY: str = 'color_mode'
 # The description field a suggestion never fills
 TITLE_FIELD: str = 'title'
 # A SHA-256 digest as lower-case hexadecimal digits
@@ -333,6 +335,21 @@ class ScanFacts:
     height_mm: float | None = None
     has_text_layer: bool = False
     extra: MetadataMap = field(factory=dict)
+
+    def as_data(self) -> dict[str, Any]:
+        """Return the facts a processor that splits a scan reads, as the input data of its step.
+
+        :returns: The size, the colour mode as its value, and the resolution when the source records one.
+        :rtype: dict[str, Any]
+        """
+        data: dict[str, Any] = {
+            VersionData.WIDTH_PX: self.width_px,
+            VersionData.HEIGHT_PX: self.height_px,
+            COLOR_MODE_KEY: self.color_mode.value,
+        }
+        if dpi := max(filter(None, (self.dpi_x, self.dpi_y)), default=None):
+            data[VersionData.DPI] = dpi
+        return data
 
 
 @frozen(kw_only=True)

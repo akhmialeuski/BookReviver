@@ -33,6 +33,7 @@ from bookreviver.services.imports import (
     ImportStorage,
 )
 from bookreviver.services.jobs import JobService
+from bookreviver.services.steps import StepRunner
 
 
 class ImportsProvider(Provider):
@@ -115,7 +116,9 @@ class ImportsProvider(Provider):
         return ImportStorage(sources=sources, assets=assets)
 
     @provide(scope=Scope.APP)
-    def import_imaging(self, inspector: SourceInspector, rasterizer: PageRasterizer, tiler: Tiler) -> ImportImaging:
+    def import_imaging(
+        self, inspector: SourceInspector, rasterizer: PageRasterizer, tiler: Tiler, runner: StepRunner
+    ) -> ImportImaging:
         """Gather the imaging ports an import reads its sources and cuts its scans with.
 
         :param inspector: Source inspector of the application.
@@ -124,10 +127,12 @@ class ImportsProvider(Provider):
         :type rasterizer: PageRasterizer
         :param tiler: Tiler of the application.
         :type tiler: Tiler
+        :param runner: Runner of processors of the application, which makes the base version of a page.
+        :type runner: StepRunner
         :returns: The imaging ports.
         :rtype: ImportImaging
         """
-        return ImportImaging(inspector=inspector, rasterizer=rasterizer, tiler=tiler)
+        return ImportImaging(inspector=inspector, rasterizer=rasterizer, tiler=tiler, runner=runner)
 
     @provide(scope=Scope.APP)
     def import_runtime(

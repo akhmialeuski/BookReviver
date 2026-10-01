@@ -15,16 +15,27 @@ import anyio
 from attrs import frozen
 
 from bookreviver.adapters.clock.system import FixedClock
-from bookreviver.adapters.imaging import DjvuFormat, DjvuLibreTools, ImageFormat, PdfFormat, SourceReader, VipsTiler
+from bookreviver.adapters.imaging import (
+    DjvuFormat,
+    DjvuLibreTools,
+    ImageFormat,
+    PdfFormat,
+    SourceReader,
+    VipsRenditionWriter,
+    VipsTiler,
+)
 from bookreviver.adapters.jobs.recording import RecordingJobQueue
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.app.settings import ImagingSettings
+from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.services.imports import ImportImaging, ImportLimits, ImportRuntime, ImportService, ImportStorage
+from bookreviver.services.steps import StepRunner
 from tests.adapters.imaging.samples import PdfPage, ScanImage, write_image, write_pdf
 from tests.helpers.builders import EPOCH
+from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.fakes_jobs import JobFakes, RecordingEventBus
 from tests.helpers.storage import upload
 
@@ -424,6 +435,24 @@ class ImportRig:
         """The database every unit of work of the rig opens over."""
         return self.fakes.database
 
+    def runner(self) -> StepRunner:
+        """Build the runner of ``split.none``, which makes the base version of a page, over the rig's assets and tiler.
+
+        :returns: The runner, with the application's own writer of renditions.
+        :rtype: StepRunner
+        """
+        return StepRunner(
+            assets=self.assets,
+            catalogue=FakeCatalogue([SplitNone()]),
+            renditions=VipsRenditionWriter(
+                preview_long_side_px=ImagingSettings().preview_long_side_px,
+                thumbnail_long_side_px=ImagingSettings().thumbnail_long_side_px,
+                jpeg_quality=ImagingSettings().jpeg_quality,
+            ),
+            tiler=self.tiler,
+            iiif_root=IIIF_ROOT,
+        )
+
     def open_uow(self) -> UnitOfWork:
         """Open a unit of work, as a new request or job would.
 
@@ -459,7 +488,9 @@ class ImportRig:
         return ImportService(
             uow=uow or self.open_uow(),
             storage=ImportStorage(sources=sources or self.sources, assets=self.assets),
-            imaging=ImportImaging(inspector=self.inspector, rasterizer=self.rasterizer, tiler=self.tiler),
+            imaging=ImportImaging(
+                inspector=self.inspector, rasterizer=self.rasterizer, tiler=self.tiler, runner=self.runner()
+            ),
             runtime=ImportRuntime(
                 publisher=self.fakes.events,
                 clock=self.fakes.clock,

@@ -21,7 +21,8 @@ from bookreviver.domain.events import PageStageChanged, PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import PageStageKey, SliceRequest, StageRun, Step, StepPreview
 from tests.helpers.builders import make_page
-from tests.helpers.processing import IMAGE_CONTENT, PREVIEW_TOKEN
+from tests.helpers.fake_processing import PREVIEW_TOKEN
+from tests.helpers.processing import IMAGE_CONTENT
 from tests.helpers.processors import FakeProcessor
 
 if TYPE_CHECKING:

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, override
 
 from bookreviver.domain.enums import ColorMode, ProcessorScope, Stage, VersionOutput
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.values import PageSize, ProcessorSpec
+from bookreviver.domain.values import COLOR_MODE_KEY, PageSize, ProcessorSpec
 from bookreviver.plugins.base import ModelProcessor, Params
 from bookreviver.ports.processing import StepOutput, StepResult
 
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.processing import StepInput
 
 NO_SCAN_IMAGE: str = 'The step split.none needs the image of a scan.'
+NO_SCAN_SIZE: str = 'The step split.none needs the size of the scan.'
 
 
 class NoParams(Params):
@@ -52,10 +53,11 @@ class SplitNone(ModelProcessor):
         if step_input.image is None:
             raise ConflictError(NO_SCAN_IMAGE)
         facts = step_input.input_data
-        size = PageSize(width_px=facts['width_px'], height_px=facts['height_px'], dpi=facts.get('dpi'))
+        if (size := PageSize.from_data(facts)) is None:
+            raise ConflictError(NO_SCAN_SIZE)
         output = StepOutput(
             image=step_input.image,
-            color_mode=ColorMode(facts['color_mode']),
+            color_mode=ColorMode(facts[COLOR_MODE_KEY]),
             data=size.as_data(),
         )
         return StepResult(outputs=[output])

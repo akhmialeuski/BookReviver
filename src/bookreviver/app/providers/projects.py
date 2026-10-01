@@ -3,7 +3,7 @@
 from dishka import Provider, Scope, provide
 
 from bookreviver.api.routing import IIIF_ROOT
-from bookreviver.ports.imaging import BlankPageMaker, Tiler
+from bookreviver.ports.imaging import Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
@@ -12,6 +12,7 @@ from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.pages import PageImaging, PageRuntime, PageService
 from bookreviver.services.projects import ProjectService
 from bookreviver.services.sources import SourceService
+from bookreviver.services.steps import StepRunner
 
 
 class ProjectsProvider(Provider):
@@ -56,20 +57,20 @@ class ProjectsProvider(Provider):
         return PageRuntime(publisher=publisher, clock=clock, order_keys=order_keys, queue=queue)
 
     @provide(scope=Scope.APP)
-    def page_imaging(self, assets: AssetStore, tiler: Tiler, blank_maker: BlankPageMaker) -> PageImaging:
-        """Gather what writes the images of base versions, whose pyramids are served from the IIIF root of the routes.
+    def page_imaging(self, assets: AssetStore, tiler: Tiler, runner: StepRunner) -> PageImaging:
+        """Gather what builds base versions and runs their processors, whose pyramids are served from the IIIF root.
 
         :param assets: Asset store of the application.
         :type assets: AssetStore
         :param tiler: Tiler of the application.
         :type tiler: Tiler
-        :param blank_maker: Maker of blank leaves of the application.
-        :type blank_maker: BlankPageMaker
-        :returns: The base versions and the maker of blank leaves.
+        :param runner: Runner of processors of the application.
+        :type runner: StepRunner
+        :returns: The builder of base versions and the runner of their processors.
         :rtype: PageImaging
         """
         base_versions = BaseVersions(assets=assets, tiler=tiler, iiif_root=IIIF_ROOT)
-        return PageImaging(base_versions=base_versions, blank_maker=blank_maker)
+        return PageImaging(base_versions=base_versions, runner=runner)
 
     @provide
     def pages(self, uow: UnitOfWork, assets: AssetStore, runtime: PageRuntime, imaging: PageImaging) -> PageService:
@@ -81,7 +82,7 @@ class ProjectsProvider(Provider):
         :type assets: AssetStore
         :param runtime: The publisher, clock, order keys and job queue of the application.
         :type runtime: PageRuntime
-        :param imaging: The base versions and the maker of blank leaves of the application.
+        :param imaging: The builder of base versions and the runner of their processors.
         :type imaging: PageImaging
         :returns: The page service of the request or job.
         :rtype: PageService
