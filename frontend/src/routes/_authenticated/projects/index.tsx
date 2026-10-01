@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { ProjectList } from '@/features/projects/ProjectList';
+import { PageContainer } from '@/shared/ui/page-container';
 
 /**
  * The list of the books of the signed-in account. The page of the list is in the address, so a page can be linked
@@ -18,11 +19,13 @@ function ProjectsPage(): React.JSX.Element {
   const { page = 1 } = Route.useSearch();
   const navigate = Route.useNavigate();
   return (
-    <ProjectList
-      page={page}
-      onPageChange={(next, replace) =>
-        void navigate({ search: { page: next > 1 ? next : undefined }, replace })
-      }
-    />
+    <PageContainer>
+      <ProjectList
+        page={page}
+        onPageChange={(next, replace) =>
+          void navigate({ search: { page: next > 1 ? next : undefined }, replace })
+        }
+      />
+    </PageContainer>
   );
 }

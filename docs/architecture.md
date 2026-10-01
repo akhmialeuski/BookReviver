@@ -1397,6 +1397,21 @@ The project list counts in `page_count` the included pages of the book, and show
 - The viewer is OpenSeadragon over IIIF tiles: one page or a two-page spread, page turns by buttons, keys, slider and
   go-to field, zoom by wheel, pinch, fit-to-width and fit-to-page, preloading of neighbouring pages, and a
   collapsible page panel.
+  - The route is `/projects/<id>/viewer?page=<page id>&spread=true`. The page is a `PageId`, never a position, so a
+    link keeps pointing at the same page when pages are moved. A spread keeps the first page alone, as the cover
+    lies on the right, and pairs an odd page with the even one after it.
+  - The viewer shows every page of the book, the excluded ones included, so a page can be put back from the viewer.
+    `features/pages/manifest.ts` reads the whole manifest as one TanStack Query shared by the viewer and the page
+    strip, and the events `scan-ready`, `source-imported`, `pages-changed` and `page-version-ready` invalidate it.
+  - The next and previous views are loaded into the OpenSeadragon world hidden, with an opacity of zero and
+    `preload` on, so a turn only swaps opacities. The tile route serves the stored files and no IIIF size keywords,
+    and OpenSeadragon asks for a tile that is a whole image as `full/max/`, which `dzsave` stores as
+    `full/<width>,<height>/`, so the stage rewrites that one address.
+- The page strip on the book page and the viewer edit the pages through `features/pages/actions.ts`: moves of pages,
+  of a selected group and of all pages of a source, the label, kind, inclusion and notes, the numbering of a range,
+  placeholders and blank leaves, binding a scan, and deleting a page or a source. A move is applied to the cached
+  manifest at once by the same rule as the server's (`features/pages/order.ts`), put back if it fails, and the
+  manifest is read again afterwards. A 409 is shown with the server's reason and a note that the list is current.
 - Editors are a react-konva layer kept in step with the OpenSeadragon viewport. An editor registry maps each
   `EditorKind` to a component: draggable frame, quad with corner handles, rotation handle, dewarp mesh, brush and
   eraser, region polygons labelled text or illustration.

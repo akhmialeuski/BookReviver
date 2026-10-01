@@ -1,5 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query';
 import {
+  listPagesApiV1ProjectsProjectIdPagesGetQueryKey,
   listProjectsApiV1ProjectsGetQueryKey,
   listScansApiV1ProjectsProjectIdScansGetQueryKey,
   listSourcesApiV1ProjectsProjectIdSourcesGetQueryKey,
@@ -31,6 +32,13 @@ export function invalidateSources(queryClient: QueryClient, projectId: string): 
     queryKey: listSourcesApiV1ProjectsProjectIdSourcesGetQueryKey({
       path: { project_id: projectId },
     }),
+  });
+}
+
+/** Refresh the pages of a book, in every request shape the manifest has been read with. */
+export function invalidatePages(queryClient: QueryClient, projectId: string): Promise<void> {
+  return queryClient.invalidateQueries({
+    queryKey: listPagesApiV1ProjectsProjectIdPagesGetQueryKey({ path: { project_id: projectId } }),
   });
 }
 
