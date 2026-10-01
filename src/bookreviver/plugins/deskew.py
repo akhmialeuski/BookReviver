@@ -7,8 +7,9 @@ coarse set of angles over the whole range finds the neighbourhood of it, and a f
 
 The confidence is how far the best angle stands out of the rest of the coarse set, from 0 for a page whose rows sum the
 same at every angle, such as a blank one, to nearly 1 for a page of clear lines. A page whose confidence is below the
-parameter ``min_confidence`` is left as it is, and the version says it was skipped, so a picture or a blank leaf is not
-turned by a guess. An angle the user gave as a rotation edit replaces the search and has the confidence 1.
+parameter ``min_confidence`` is left as it is. The version says it was skipped and is marked for review, so a picture or
+a blank leaf is not turned by a guess and is easy to find. An angle the user gave as a rotation edit replaces the search
+and has the confidence 1.
 
 The page keeps its size. What the turn leaves uncovered at the corners is white, and a bilevel page stays bilevel. The
 transform is the rotation matrix OpenCV turned the page by, which maps a point of the input to the output, so the chain
@@ -21,13 +22,22 @@ import cv2
 import numpy as np
 from pydantic import Field
 
-from bookreviver.domain.enums import ColorMode, ProcessorScope, Stage, TransformKind, VersionData, VersionOutput
+from bookreviver.domain.enums import (
+    ColorMode,
+    ProcessorScope,
+    ReviewReason,
+    Stage,
+    TransformKind,
+    VersionData,
+    VersionOutput,
+)
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Rotation, Transform
 from bookreviver.domain.values import ProcessorSpec
 from bookreviver.plugins.base import ModelProcessor, Params
 from bookreviver.plugins.cv_image import (
     COLOR_PLANES,
+    MANUAL_CONFIDENCE,
     NO_IMAGE,
     WHITE,
     color_mode_of,
@@ -47,8 +57,6 @@ DESKEWED_IMAGE_NAME: str = 'deskewed.png'
 SEARCH_LONG_SIDE_PX: int = 1_000
 # How many angles each of the two sets of the search has
 ANGLES_PER_SET: int = 21
-# The confidence of an angle the user gave
-MANUAL_CONFIDENCE: float = 1.0
 
 
 class DeskewParams(Params):
@@ -58,9 +66,19 @@ class DeskewParams(Params):
     :ivar min_confidence: Confidence below which the page is left as it is.
     """
 
-    max_angle: float = Field(default=5.0, gt=0, le=45, description='Largest angle in degrees to look for, each way')
+    max_angle: float = Field(
+        default=5.0,
+        gt=0,
+        le=45,
+        title='Largest slant',
+        description='Largest angle in degrees to look for, each way',
+    )
     min_confidence: float = Field(
-        default=0.3, ge=0, le=1, description='Confidence below which the page is left as it is'
+        default=0.3,
+        ge=0,
+        le=1,
+        title='Least confidence',
+        description='Confidence below which the page is left as it is',
     )
 
 
@@ -98,7 +116,10 @@ class Deskew(ModelProcessor):
         angle, confidence = self._angle(image, params, step_input)
         if confidence < params.min_confidence:
             data |= {VersionData.ANGLE: 0.0, VersionData.CONFIDENCE: confidence, VersionData.SKIPPED: True}
-            return StepResult(outputs=[StepOutput(image=step_input.image, color_mode=color_mode, data=data)])
+            skipped = StepOutput(
+                image=step_input.image, color_mode=color_mode, data=data, review=ReviewReason.NOT_APPLIED
+            )
+            return StepResult(outputs=[skipped])
         turned, matrix = self._turn(image, angle, color_mode)
         target = step_input.workdir / DESKEWED_IMAGE_NAME
         write_png(turned, target)

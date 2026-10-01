@@ -323,6 +323,7 @@ class PageVersionMapper(RowMapper[PageVersion, PageVersionRow]):
             params=row.params,
             transform=self._transform(row.transform),
             data=row.data,
+            review=row.review,
             renditions=(
                 None
                 if row.renditions_ready is None or row.renditions_full is None
@@ -354,6 +355,7 @@ class PageVersionMapper(RowMapper[PageVersion, PageVersionRow]):
             params=dict(entity.params),
             transform=asdict(entity.transform),
             data=dict(entity.data),
+            review=entity.review,
             renditions_ready=None if entity.renditions is None else entity.renditions.ready,
             renditions_full=None if entity.renditions is None else entity.renditions.full,
             state=entity.state,
@@ -689,7 +691,7 @@ class RecipeMapper(RowMapper[Recipe, RecipeRow]):
             project_id=ProjectId(row.project_id),
             stage=row.stage,
             name=row.name,
-            steps=tuple(Step(processor_key=step['processor_key'], params=step['params']) for step in row.steps),
+            steps=tuple(Step.from_map(step) for step in row.steps),
             active=row.active,
             created_at=row.created_at,
             updated_at=row.updated_at,
@@ -709,7 +711,7 @@ class RecipeMapper(RowMapper[Recipe, RecipeRow]):
             project_id=entity.project_id,
             stage=entity.stage,
             name=entity.name,
-            steps=[{'processor_key': step.processor_key, 'params': dict(step.params)} for step in entity.steps],
+            steps=[step.to_map() for step in entity.steps],
             active=entity.active,
             created_at=entity.created_at,
             updated_at=entity.updated_at,

@@ -11,7 +11,15 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
-from bookreviver.domain.enums import ColorMode, EditorKind, ProcessorScope, Stage, TransformKind, VersionData
+from bookreviver.domain.enums import (
+    ColorMode,
+    EditorKind,
+    ProcessorScope,
+    ReviewReason,
+    Stage,
+    TransformKind,
+    VersionData,
+)
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
 from bookreviver.domain.geometry import Point
 from bookreviver.domain.ids import PageId
@@ -76,6 +84,7 @@ class TestDeskew:
         expect(abs(output.data[VersionData.ANGLE] + skew) < ANGLE_TOLERANCE)
         expect(output.data[VersionData.CONFIDENCE] > params['min_confidence'])
         expect(output.data[VersionData.SKIPPED] is False)
+        expect(output.review is None)
         expect(output.transform.kind is TransformKind.ROTATE)
         expect(output.transform.angle == output.data[VersionData.ANGLE])
         assert_expectations()
@@ -100,7 +109,7 @@ class TestDeskew:
         assert abs(again[VersionData.ANGLE]) < ANGLE_TOLERANCE
 
     def test_a_blank_page_is_left_as_it_is_and_says_it_was_skipped(self, fx_deskew: Processor, tmp_path: Path) -> None:
-        """Verify a page with no lines to follow gives its own image, an identity transform and no angle.
+        """Verify a page with no lines to follow gives its own image, an identity transform, no angle and a review mark.
 
         :param fx_deskew: The processor under test.
         :type fx_deskew: Processor
@@ -113,6 +122,7 @@ class TestDeskew:
         expect(output.image == image)
         expect(output.transform.kind is TransformKind.IDENTITY)
         expect((output.data[VersionData.ANGLE], output.data[VersionData.SKIPPED]) == (0.0, True))
+        expect(output.review is ReviewReason.NOT_APPLIED)
         assert_expectations()
 
     def test_confidence_below_the_minimum_skips_the_page(self, fx_deskew: Processor, tmp_path: Path) -> None:
@@ -124,8 +134,11 @@ class TestDeskew:
         :type tmp_path: Path
         """
         image = save(turned(text_page(900, 1200), 2.0), tmp_path / 'page.png')
-        data = run_on(fx_deskew, image, tmp_path, min_confidence=1)
-        assert data[VersionData.SKIPPED] is True
+        params = fx_deskew.validate_params({'min_confidence': 1})
+        [output] = fx_deskew.run(StepInput(image=image, params=params, workdir=tmp_path)).outputs
+        expect(output.data[VersionData.SKIPPED] is True)
+        expect(output.review is ReviewReason.NOT_APPLIED)
+        assert_expectations()
 
     def test_rotation_edit_replaces_the_search(self, fx_deskew: Processor, tmp_path: Path) -> None:
         """Verify the angle of the user is used as it is, with full confidence, even on a page with no lines.
@@ -143,6 +156,7 @@ class TestDeskew:
         expect(output.data[VersionData.ANGLE] == EDIT_DEGREES)
         expect(output.data[VersionData.CONFIDENCE] == pytest.approx(1.0))
         expect(output.data[VersionData.SKIPPED] is False)
+        expect(output.review is None)
         expect(abs(output.transform.to_output(centre).x - centre.x) < 1)
         assert_expectations()
 

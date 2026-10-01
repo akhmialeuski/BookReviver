@@ -12,11 +12,11 @@ import pytest
 from attrs import evolve
 
 from bookreviver.domain.entities import PageEdit
-from bookreviver.domain.enums import Stage, StageState, VersionScale, VersionState
+from bookreviver.domain.enums import ReviewReason, Stage, StageState, VersionScale, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.geometry import Line, Point
 from bookreviver.domain.ids import PageId, PageVersionId, ProjectId
-from bookreviver.domain.values import PageEditKey, PageStageKey, SliceRequest
+from bookreviver.domain.values import PageEditKey, PageStageKey, SliceRequest, Step
 from tests.helpers.builders import (
     EPOCH,
     make_job,
@@ -159,7 +159,7 @@ class TestRecipeRepository:
         ) == (active, None)
 
     async def test_steps_survive_the_store(self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
-        """Verify a recipe reads back with its steps and their parameters.
+        """Verify a recipe reads back with its steps, their parameters and which of them are switched off.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -168,7 +168,8 @@ class TestRecipeRepository:
         """
         uow = await fx_uow_factory()
         project = make_project(owner_id=await fx_new_owner())
-        recipe = make_recipe(project_id=project.id)
+        plain = make_recipe(project_id=project.id)
+        recipe = evolve(plain, steps=(*plain.steps, Step(processor_key='geometry.other', params={}, enabled=False)))
         await uow.projects.add(project)
         await uow.recipes.add(recipe)
         await uow.commit()
@@ -533,7 +534,7 @@ class TestPageVersionProcessing:
     async def test_scale_edit_and_pyramid_survive_the_store(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the scale, the edit hash and the state of the pyramid of a version read back.
+        """Verify the scale, the edit hash, the state of the pyramid and the review mark of a version read back.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -543,7 +544,10 @@ class TestPageVersionProcessing:
         _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         base = make_page_version(page_id=page_id)
-        version = _version(base, scale=VersionScale.PREVIEW, edit_hash='0123456789abcdef', tiles_ready=True)
+        version = evolve(
+            _version(base, scale=VersionScale.PREVIEW, edit_hash='0123456789abcdef', tiles_ready=True),
+            review=ReviewReason.LOW_CONFIDENCE,
+        )
         await uow.page_versions.add_many([base, version])
         await uow.commit()
         assert await (await fx_uow_factory()).page_versions.get(version.id) == version

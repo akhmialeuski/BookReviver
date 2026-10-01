@@ -124,13 +124,14 @@ class SpreadSplit:
 
         :param recipe: The recipe of the stage.
         :type recipe: Recipe
-        :returns: True when the first step of the recipe is of the scope ``split``.
+        :returns: True when the first step of the recipe that is switched on is of the scope ``split``.
         :rtype: bool
         :raises NotFoundError: If the processor of the step is not in the catalogue.
         """
-        if recipe.stage is not Stage.PAGE_SPLIT or not recipe.steps:
+        steps = recipe.enabled_steps
+        if recipe.stage is not Stage.PAGE_SPLIT or not steps:
             return False
-        return self._catalogue.get(recipe.steps[0].processor_key).spec.scope is ProcessorScope.SPLIT
+        return self._catalogue.get(steps[0].processor_key).spec.scope is ProcessorScope.SPLIT
 
     async def split(self, page: Page, recipe: Recipe, source: StepSource) -> bool:
         """Split the scan of a page into two pages, and make the base version of each half the current one.
@@ -148,7 +149,7 @@ class SpreadSplit:
         :raises InvalidParametersError: If the parameters do not fit the processor.
         :raises ConflictError: If the page has no scan.
         """
-        step = recipe.steps[0]
+        step = recipe.enabled_steps[0]
         processor = self._catalogue.get(step.processor_key)
         params = processor.validate_params(step.params)
         edit = await self._uow.page_edits.find(PageEditKey(page.id, Stage.PAGE_SPLIT, step.processor_key))

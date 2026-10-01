@@ -97,16 +97,17 @@ class TestSaveRecipe:
         ('steps', 'match'),
         [
             ([], 'at least one step'),
+            ([Step(processor_key=FAKE_KEY, enabled=False)], 'switched on'),
             ([Step(processor_key='geometry.missing')], 'no processor'),
             ([Step(processor_key='cleanup.fake')], 'not to the Geometry stage'),
             ([Step(processor_key=FAKE_KEY, params={'unknown': 1})], 'Unknown parameters'),
         ],
-        ids=['no-steps', 'unknown-processor', 'wrong-stage', 'bad-parameters'],
+        ids=['no-steps', 'all-steps-off', 'unknown-processor', 'wrong-stage', 'bad-parameters'],
     )
     async def test_steps_that_do_not_fit_their_processors_are_rejected(
         self, fx_kit: ProcessingKit, steps: list[Step], match: str
     ) -> None:
-        """Reject a recipe with no step, a processor that does not exist, one of another stage, or bad parameters.
+        """Reject a recipe with no step, none switched on, an unknown or foreign processor, or bad parameters.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -139,6 +140,29 @@ class TestSaveRecipe:
         expect(record.state is StageState.STALE)
         expect(any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
         expect(fx_kit.recording.enqueued == [])
+        assert_expectations()
+
+    async def test_switching_a_step_off_keeps_its_parameters_and_marks_the_pages_stale(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a step that is switched off stays in the recipe with its checked parameters, and changes the recipe.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project = await fx_kit.seed_project()
+        page, _ = await fx_kit.seed_scan_page(project)
+        await fx_kit.seed_base_version(page)
+        recipe = await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        uow = fx_kit.uow()
+        await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id))
+        await uow.commit()
+        steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={'strength': 9}, enabled=False)]
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, 'One of two', steps)
+        stored = await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        expect([(step.enabled, step.params['strength']) for step in stored.steps] == [(True, 1), (False, 9)])
+        expect(record.state is StageState.STALE)
         assert_expectations()
 
 

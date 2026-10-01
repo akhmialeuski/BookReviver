@@ -61,6 +61,7 @@ EARLIER_STAGE_FAILED: str = (
     'The {stage} stage of the page is out of date and could not be run again, so a later stage cannot read it.'
 )
 NO_PREVIEW_INPUT: str = 'The page has no image to preview a step on.'
+NO_STEP_TO_PREVIEW: str = 'Every step up to this one is switched off, so there is nothing to preview.'
 
 logger = logging.getLogger(__name__)
 
@@ -399,7 +400,7 @@ class RecipeRun(StageWork):
         return RunOutcome.DONE
 
     async def _run_steps(self, page: Page, recipe: Recipe, source: StepSource) -> PageVersion | None:
-        """Make the version of each step of the recipe, and cut the pyramid of the last one.
+        """Make the version of each step of the recipe that is switched on, and cut the pyramid of the last one.
 
         :param page: Page to process.
         :type page: Page
@@ -412,7 +413,7 @@ class RecipeRun(StageWork):
         :raises DomainError: If a processor is missing, its parameters do not fit, or the pyramid cannot be cut.
         """
         version: PageVersion | None = None
-        for step in recipe.steps:
+        for step in recipe.enabled_steps:
             version = await self._make_version(page, recipe.stage, step, source, VersionScale.FULL)
             if version.state is not VersionState.READY:
                 return None
@@ -469,23 +470,25 @@ class PreviewRun(StageWork):
         :type page: Page
         :param stage: Stage of the steps.
         :type stage: Stage
-        :param steps: The steps of the form, whose parameters are not saved in a recipe.
+        :param steps: The steps of the form, whose parameters are not saved in a recipe. A step that is switched off is
+                      left out, as in a run.
         :type steps: Sequence[Step]
         :param step_index: Index of the last step to run.
         :type step_index: int
-        :returns: The preview version of the last step.
+        :returns: The preview version of the last step that is on.
         :rtype: PageVersion
-        :raises ConflictError: If the page has no image to preview on, or a step failed.
+        :raises ConflictError: If the page has no image to preview on, every step up to the index is off, or a step
+                               failed.
         """
         source = await self._source(page, stage, VersionScale.PREVIEW)
         if source is None:
             raise ConflictError(NO_PREVIEW_INPUT)
         version: PageVersion | None = None
-        for step in steps[: step_index + 1]:
+        for step in (step for step in steps[: step_index + 1] if step.enabled):
             version = await self._make_version(page, stage, step, source, VersionScale.PREVIEW)
             if version.state is not VersionState.READY:
                 raise ConflictError(version.data[VersionData.ERROR])
             source = self._version_source(version, VersionScale.PREVIEW)
         if version is None:
-            raise ConflictError(NO_PREVIEW_INPUT)
+            raise ConflictError(NO_STEP_TO_PREVIEW)
         return version

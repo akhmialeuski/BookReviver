@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from bookreviver.domain.enums import EditorKind, FileType, JobKind, SourceKind, Stage
+    from bookreviver.domain.enums import EditorKind, FileType, JobKind, ReviewReason, SourceKind, Stage
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.ids import AccountId, JobId, PageId, ProjectId, RecipeId, ScanId, SourceId, StorageKey
     from bookreviver.domain.values import (
@@ -283,6 +283,8 @@ class PageVersion:
     :ivar params: Parameters of the step, following the processor's JSON Schema.
     :ivar transform: Transform of coordinates from the input to this version.
     :ivar data: Data the step found, such as an angle, a frame or a confidence.
+    :ivar review: Why the page is to be looked at again though the step finished, as the processor reported it, or None
+                  when the step was sure of its result.
     :ivar renditions: State of the version's image files, or None for a step without an image.
     :ivar state: Where the version is in its lifecycle.
     :ivar scale: Whether the step ran on the full image or on the preview, which only the preview of a parameter shows.
@@ -300,6 +302,7 @@ class PageVersion:
     params: MetadataMap = field(factory=dict)
     transform: Transform = field(factory=Transform)
     data: MetadataMap = field(factory=dict)
+    review: ReviewReason | None = None
     renditions: Renditions | None = field(factory=Renditions)
     state: VersionState = VersionState.PENDING
     scale: VersionScale = VersionScale.FULL
@@ -397,6 +400,11 @@ class Recipe:
     active: bool = False
     created_at: datetime
     updated_at: datetime
+
+    @property
+    def enabled_steps(self) -> tuple[Step, ...]:
+        """The steps a run and a preview run, in order, which leaves out the ones switched off."""
+        return tuple(step for step in self.steps if step.enabled)
 
 
 @frozen(kw_only=True)

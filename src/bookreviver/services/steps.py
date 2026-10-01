@@ -149,7 +149,7 @@ class StepRunner:
         :type policy: ImagePolicy
         :param tiles: Whether to cut the tile pyramid too, which a full run does for a current version only.
         :type tiles: bool
-        :returns: The version with its transform, data, renditions and the state ready.
+        :returns: The version with its transform, data, review mark, renditions and the state ready.
         :rtype: PageVersion
         """
         directory = keys.version_directory(version)
@@ -173,6 +173,7 @@ class StepRunner:
             version,
             transform=output.transform,
             data=dict(output.data),
+            review=output.review,
             renditions=renditions,
             state=VersionState.READY,
         )

@@ -363,6 +363,22 @@ class TestRunStage:
         first = await fx_kit.stored_version(last.input_id)
         assert (first.tiles_ready, last.tiles_ready) == (False, True)
 
+    async def test_step_switched_off_is_not_run(self, fx_kit: ProcessingKit) -> None:
+        """Verify a run makes the versions of the steps that are on alone, as if the other were not in the recipe.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page = await prepared_page(fx_kit)
+        steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={'strength': 7}, enabled=False)]
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, 'One of two', steps)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        versions = await fx_kit.uow().page_versions.list_for_stage(page.id, Stage.GEOMETRY, None, EVERYTHING)
+        head = await head_of(fx_kit, page, Stage.GEOMETRY)
+        expect((fx_kit.fake.runs, versions.total) == (1, 1))
+        expect(head.params['strength'] == 1)
+        assert_expectations()
+
     async def test_cancelled_job_stops_before_its_next_page(self, fx_kit: ProcessingKit) -> None:
         """Verify a job cancelled while queued does nothing when a worker takes it.
 
@@ -456,6 +472,37 @@ class TestPreviewStep:
             job = await fx_kit.service().start_preview(actor, project.id, preview)
             await fx_kit.jobs().preview_step(job.id)
         assert fx_kit.fake.previews == 3
+
+    async def test_step_switched_off_is_left_out_of_the_preview(self, fx_kit: ProcessingKit) -> None:
+        """Verify a preview up to the last step runs the steps that are on alone, which here is the first.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page = await prepared_page(fx_kit)
+        steps = (Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={'strength': 2}, enabled=False))
+        preview = StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=steps, step_index=1)
+        job = await fx_kit.service().start_preview(actor, project.id, preview)
+        await fx_kit.jobs().preview_step(job.id)
+        stored = await fx_kit.uow().jobs.get(job.id)
+        expect((stored.state, fx_kit.fake.previews) == (JobState.SUCCEEDED, 1))
+        assert_expectations()
+
+    async def test_preview_with_every_step_up_to_the_index_off_fails_its_job(self, fx_kit: ProcessingKit) -> None:
+        """Verify there is nothing to show when the steps up to the one asked for are all off, and the job says so.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page = await prepared_page(fx_kit)
+        steps = (Step(processor_key=FAKE_KEY, enabled=False), Step(processor_key=FAKE_KEY, params={'strength': 2}))
+        preview = StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=steps, step_index=0)
+        job = await fx_kit.service().start_preview(actor, project.id, preview)
+        await fx_kit.jobs().preview_step(job.id)
+        stored = await fx_kit.uow().jobs.get(job.id)
+        expect((stored.state, fx_kit.fake.previews) == (JobState.FAILED, 0))
+        expect('switched off' in stored.error)
+        assert_expectations()
 
     async def test_step_of_a_form_that_does_not_fit_its_processor_is_rejected_at_the_request(
         self, fx_kit: ProcessingKit
