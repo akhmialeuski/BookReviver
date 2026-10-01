@@ -219,6 +219,7 @@ class TestProjectRepository:
         second = await repository.list_for_owner(owner_id, SliceRequest(offset=1, limit=1))
         expect([item.project.id for item in full.items] == [newer.id, older.id])
         expect([(item.page_count, item.source_count, item.scan_count) for item in full.items] == [(0, 0, 0), BOOK])
+        expect([item.image_page_count for item in full.items] == [0, PAGE_COUNT])
         expect(full.total == 2)
         expect([item.project.id for item in second.items] == [older.id])
         expect(second.total == 2)
@@ -244,6 +245,29 @@ class TestProjectRepository:
         projects = (await fx_uow_factory()).projects
         overview = await projects.overview(project)
         assert (overview.project, overview.page_count, overview.source_count, overview.scan_count) == (project, *BOOK)
+
+    async def test_overview_counts_the_pages_with_an_image_kept_out_of_the_book_but_not_placeholders(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the pages a run goes over are every page with an image, kept out of the book or not, no placeholder.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await _add_book(uow, project)
+        await uow.pages.add(make_page(project_id=project.id, order_key='b0'))
+        await uow.commit()
+        projects = (await fx_uow_factory()).projects
+        overview = await projects.overview(project)
+        listed = (await projects.list_for_owner(project.owner_id, SliceRequest())).items[0]
+        expect((overview.page_count, overview.image_page_count) == (BOOK[0] + 1, PAGE_COUNT))
+        expect(listed.image_page_count == PAGE_COUNT)
+        assert_expectations()
 
     async def test_list_for_owner_breaks_ties_by_identifier(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1450,6 +1474,38 @@ class TestJobRepository:
         await uow.commit()
         listed = await (await fx_uow_factory()).jobs.list_for_project(project.id, {JobState.QUEUED, JobState.FAILED})
         assert [job.id for job in listed] == [new.id, old.id]
+
+    async def test_list_for_projects_reads_the_jobs_of_the_given_projects_in_the_given_states(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify one query returns the matching jobs of several projects, newest first, and none of another project.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        first, second, other = (make_project(owner_id=owner_id) for _ in range(3))
+        wanted = [
+            make_job(project_id=first.id, state=JobState.RUNNING, minutes=1),
+            make_job(project_id=second.id, state=JobState.QUEUED, minutes=3),
+        ]
+        ignored = [
+            make_job(project_id=first.id, state=JobState.SUCCEEDED, minutes=2),
+            make_job(project_id=other.id, state=JobState.RUNNING, minutes=4),
+        ]
+        uow = await fx_uow_factory()
+        for project in (first, second, other):
+            await uow.projects.add(project)
+        for job in (*wanted, *ignored):
+            await uow.jobs.add(job)
+        await uow.commit()
+        jobs = (await fx_uow_factory()).jobs
+        listed = await jobs.list_for_projects({first.id, second.id}, JobState.active())
+        expect([job.id for job in listed] == [wanted[1].id, wanted[0].id])
+        expect(await jobs.list_for_projects(set(), JobState.active()) == [])
+        assert_expectations()
 
     @pytest.mark.parametrize('first_state', sorted(JobState.active()), ids=str)
     async def test_second_active_prepare_job_of_a_project_raises_conflict(

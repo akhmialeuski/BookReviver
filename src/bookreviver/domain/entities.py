@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.enums import EditorKind, FileType, JobKind, ReviewReason, SourceKind, Stage
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.ids import AccountId, JobId, PageId, ProjectId, RecipeId, ScanId, SourceId, StorageKey
+    from bookreviver.domain.stage_summaries import BookProgress
     from bookreviver.domain.values import (
         BookDetails,
         ImportRequest,
@@ -105,12 +106,17 @@ class ProjectOverview:
     :ivar page_count: Number of pages of the book, without the pages kept out of it.
     :ivar source_count: Number of sources the book was assembled from.
     :ivar scan_count: Number of scans in all the sources.
+    :ivar image_page_count: Number of pages with an image, kept out of the book or not, which a run goes over.
+    :ivar progress: How far the book has come along the pipeline, which a repository cannot tell and a service adds, or
+                    None before it has.
     """
 
     project: Project
     page_count: int = field(default=0, validator=validators.ge(0))
     source_count: int = field(default=0, validator=validators.ge(0))
     scan_count: int = field(default=0, validator=validators.ge(0))
+    image_page_count: int = field(default=0, validator=validators.ge(0))
+    progress: BookProgress | None = None
 
 
 @frozen(kw_only=True)

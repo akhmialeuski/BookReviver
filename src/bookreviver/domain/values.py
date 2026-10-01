@@ -544,6 +544,18 @@ class PageNumbering:
 
 
 @frozen(kw_only=True)
+class NumberedPage:
+    """A page and the label a numbering would give it, which a preview shows before anything is written.
+
+    :ivar page_id: The page.
+    :ivar label: The label the page would have, empty for the numbering style ``none``.
+    """
+
+    page_id: PageId
+    label: str
+
+
+@frozen(kw_only=True)
 class PageSize:
     """The size of a page image in pixels and the resolution it was made at, as a base version records them.
 

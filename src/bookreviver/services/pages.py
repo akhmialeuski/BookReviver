@@ -49,7 +49,7 @@ from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.events import JobChanged, PagesChanged, PageVersionReady
 from bookreviver.domain.ids import JobId, PageId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PageSize, Progress, Slice
+from bookreviver.domain.values import NumberedPage, PageSize, Progress, Slice
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from bookreviver.services.projects import owned_project
 from bookreviver.services.stage_records import StageRecords
@@ -224,26 +224,65 @@ class PageService:
                                numerals.
         """
         await owned_project(self._uow.projects, actor, project_id)
-        first = await self._page(project_id, numbering.first_page_id)
-        last = await self._page(project_id, numbering.last_page_id)
-        if first.order_key.encode() > last.order_key.encode():
-            raise ConflictError(numbering.first_page_id, numbering.last_page_id)
-        pages = await self._uow.pages.list_range(project_id, first.order_key, last.order_key)
-        counted = [page for page in pages if page.included and page.kind not in numbering.skip_kinds]
         moment = self._clock.now()
-        try:
-            labels = [numbering.label(number) for number in range(numbering.start, numbering.start + len(counted))]
-        except ValueError as error:
-            raise ConflictError(str(error)) from error
         changed = [
             evolve(page, label=label, updated_at=moment)
-            for page, label in zip(counted, labels, strict=True)
+            for page, label in await self._numbered(project_id, numbering)
             if page.label != label
         ]
         if not changed:
             return
         await self._uow.pages.update_many(changed)
         await self._finish(project_id, changed, PageChange.EDITED)
+
+    async def preview_numbers(
+        self, actor: Actor, project_id: ProjectId, numbering: PageNumbering
+    ) -> list[NumberedPage]:
+        """Give the labels a numbering would write, without writing any.
+
+        The labels come from the same rule ``number`` applies, so a client shows exactly what saving would store.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param numbering: The range, the style and the first number.
+        :type numbering: PageNumbering
+        :returns: One entry for each page the numbering counts, in book order, with the label it would get, whether
+                  that is its label now or not.
+        :rtype: list[NumberedPage]
+        :raises NotFoundError: If the actor has no such project, or the project lacks the first or the last page.
+        :raises ConflictError: If the range runs backwards, or a number does not fit the style.
+        """
+        await owned_project(self._uow.projects, actor, project_id)
+        return [
+            NumberedPage(page_id=page.id, label=label) for page, label in await self._numbered(project_id, numbering)
+        ]
+
+    async def _numbered(self, project_id: ProjectId, numbering: PageNumbering) -> list[tuple[Page, str]]:
+        """Pair each page a numbering counts with the label it gets, which is the one rule of numbering.
+
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param numbering: The range, the style and the first number.
+        :type numbering: PageNumbering
+        :returns: The pages of the range that are part of the book and not of a skipped kind, in book order, each with
+                  its new label.
+        :rtype: list[tuple[Page, str]]
+        :raises NotFoundError: If the project lacks the first or the last page.
+        :raises ConflictError: If the range runs backwards, or a number does not fit the style.
+        """
+        first = await self._page(project_id, numbering.first_page_id)
+        last = await self._page(project_id, numbering.last_page_id)
+        if first.order_key.encode() > last.order_key.encode():
+            raise ConflictError(numbering.first_page_id, numbering.last_page_id)
+        pages = await self._uow.pages.list_range(project_id, first.order_key, last.order_key)
+        counted = [page for page in pages if page.included and page.kind not in numbering.skip_kinds]
+        try:
+            labels = [numbering.label(number) for number in range(numbering.start, numbering.start + len(counted))]
+        except ValueError as error:
+            raise ConflictError(str(error)) from error
+        return list(zip(counted, labels, strict=True))
 
     async def add(self, actor: Actor, project_id: ProjectId, new_page: NewPage) -> PageOverview:
         """Add a placeholder or a blank leaf at a place of the book, or at its end.

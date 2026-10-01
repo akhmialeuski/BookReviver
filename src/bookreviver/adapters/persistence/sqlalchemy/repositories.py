@@ -22,7 +22,7 @@ from advanced_alchemy.exceptions import DuplicateKeyError, ForeignKeyError
 from advanced_alchemy.exceptions import NotFoundError as MissingRowError
 from advanced_alchemy.filters import CollectionFilter, LimitOffset
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
-from sqlalchemy import Table, UniqueConstraint, and_, delete, exists, func, inspect, or_, select, update
+from sqlalchemy import Table, UniqueConstraint, and_, case, delete, exists, func, inspect, or_, select, update
 
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     JobMapper,
@@ -58,9 +58,10 @@ from bookreviver.domain.entities import (
     Scan,
     Source,
 )
-from bookreviver.domain.enums import PageOrigin, Side, Stage, VersionScale, VersionState
+from bookreviver.domain.enums import PageOrigin, Side, Stage, StageState, VersionScale, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
+from bookreviver.domain.stage_summaries import StageTally
 from bookreviver.domain.values import PageEditKey, PageSize, PageStageKey, Slice
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
@@ -420,9 +421,13 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
         rows = await self._rows.session.execute(statement)
         overviews = [
             ProjectOverview(
-                project=self._mapper.to_entity(row), page_count=pages, source_count=sources, scan_count=scans
+                project=self._mapper.to_entity(row),
+                page_count=pages,
+                source_count=sources,
+                scan_count=scans,
+                image_page_count=with_image,
             )
-            for row, pages, sources, scans in rows
+            for row, pages, sources, scans, with_image in rows
         ]
         return Slice(items=overviews, total=await self._rows.count(owner_id=owner_id))
 
@@ -435,8 +440,12 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
         :returns: The project with its counts.
         :rtype: ProjectOverview
         """
-        pages, sources, scans = (await self._rows.session.execute(select(*self._book_counts(project.id)))).one()
-        return ProjectOverview(project=project, page_count=pages, source_count=sources, scan_count=scans)
+        pages, sources, scans, with_image = (
+            await self._rows.session.execute(select(*self._book_counts(project.id)))
+        ).one()
+        return ProjectOverview(
+            project=project, page_count=pages, source_count=sources, scan_count=scans, image_page_count=with_image
+        )
 
     @staticmethod
     def _book_counts(project_id: QueryableAttribute[UUID] | ProjectId) -> tuple[ScalarSelect[int], ...]:
@@ -445,7 +454,7 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
         :param project_id: The project's identifier, or the identifier column of the enclosing query's project rows,
                            which the subqueries then correlate with.
         :type project_id: QueryableAttribute[UUID] | ProjectId
-        :returns: The count of included pages, of sources and of scans, in this order.
+        :returns: The count of included pages, of sources, of scans and of pages with an image, in this order.
         :rtype: tuple[ScalarSelect[int], ...]
         """
         return tuple(
@@ -454,6 +463,7 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
                 (PageRow.project_id == project_id, PageRow.included.is_(True)),
                 (SourceRow.project_id == project_id,),
                 (ScanRow.project_id == project_id,),
+                (PageRow.project_id == project_id, PageRow.origin != PageOrigin.PLACEHOLDER),
             )
         )
 
@@ -1106,6 +1116,45 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
             if version_id
         }
 
+    @override
+    async def tally(self, project_ids: Collection[ProjectId]) -> Sequence[StageTally]:
+        """Count the records of every stage of the given projects by state with one grouped statement.
+
+        The counts are conditional sums, which every database computes alike, and the head version is joined outside
+        so a record without one still counts. Placeholders have no image, so their records are not counted.
+
+        :param project_ids: Projects whose stages are counted.
+        :type project_ids: Collection[ProjectId]
+        :returns: One tally for each stage of each project that has a record.
+        :rtype: Sequence[StageTally]
+        """
+        if not project_ids:
+            return list[StageTally]()
+        marked = and_(PageStageRow.state != StageState.FAILED, PageVersionRow.review.is_not(None))
+        counted = (
+            func.coalesce(func.sum(case((condition, 1), else_=0)), 0)
+            for condition in (
+                PageStageRow.state == StageState.FRESH,
+                PageStageRow.state == StageState.STALE,
+                PageStageRow.state == StageState.FAILED,
+                marked,
+            )
+        )
+        statement = (
+            select(PageRow.project_id, PageStageRow.stage, *counted)
+            .select_from(PageStageRow)
+            .join(PageRow, PageStageRow.page_id == PageRow.id)
+            .outerjoin(PageVersionRow, PageStageRow.head_version_id == PageVersionRow.id)
+            .where(PageRow.project_id.in_(project_ids), PageRow.origin != PageOrigin.PLACEHOLDER)
+            .group_by(PageRow.project_id, PageStageRow.stage)
+        )
+        return [
+            StageTally(
+                project_id=ProjectId(project), stage=stage, fresh=fresh, stale=stale, failed=failed, review=review
+            )
+            for project, stage, fresh, stale, failed, review in await self._rows.session.execute(statement)
+        ]
+
 
 class SqlAlchemyPageEditRepository(SqlAlchemyRepository[PageEdit, PageEditKey, PageEditRow], PageEditRepository):
     """Manual edits, addressed by the page, the stage and the processor."""
@@ -1229,6 +1278,18 @@ class SqlAlchemyRecipeRepository(SqlAlchemyRepository[Recipe, RecipeId, RecipeRo
         row = await self._rows.get_one_or_none(project_id=project_id, stage=stage, active=True)
         return None if row is None else self._mapper.to_entity(row)
 
+    @override
+    async def list_active(self, project_id: ProjectId) -> Sequence[Recipe]:
+        """Return the active recipe of every stage of a project that has one, in the order of the stages.
+
+        :param project_id: Project owning the recipes.
+        :type project_id: ProjectId
+        :returns: The active recipes.
+        :rtype: Sequence[Recipe]
+        """
+        rows = await self._rows.get_many(project_id=project_id, active=True)
+        return sorted((self._mapper.to_entity(row) for row in rows), key=lambda recipe: recipe.stage.position)
+
 
 class SqlAlchemyJobRepository(SqlAlchemyRepository[Job, JobId, JobRow], JobRepository):
     """Jobs, listed per project and state."""
@@ -1256,6 +1317,28 @@ class SqlAlchemyJobRepository(SqlAlchemyRepository[Job, JobId, JobRow], JobRepos
             CollectionFilter(field_name=JobRow.state, values=states),
             order_by=JobRow.created_at.desc(),
             project_id=project_id,
+        )
+        return [self._mapper.to_entity(row) for row in rows]
+
+    @override
+    async def list_for_projects(
+        self, project_ids: Collection[ProjectId], states: Collection[JobState]
+    ) -> Sequence[Job]:
+        """Return the jobs of several projects in one of the given states with one query, newest first.
+
+        :param project_ids: Projects whose jobs are listed.
+        :type project_ids: Collection[ProjectId]
+        :param states: States a listed job may be in.
+        :type states: Collection[JobState]
+        :returns: Matching jobs of all the projects, newest first.
+        :rtype: Sequence[Job]
+        """
+        if not project_ids:
+            return list[Job]()
+        rows = await self._rows.get_many(
+            CollectionFilter(field_name=JobRow.state, values=states),
+            CollectionFilter(field_name=JobRow.project_id, values=project_ids),
+            order_by=JobRow.created_at.desc(),
         )
         return [self._mapper.to_entity(row) for row in rows]
 

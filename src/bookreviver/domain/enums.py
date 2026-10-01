@@ -93,6 +93,11 @@ class Stage(LabeledStrEnum):
         """The place of the stage in the pipeline from zero, by which a stage is earlier or later than another."""
         return list(type(self)).index(self)
 
+    @property
+    def manual(self) -> bool:
+        """Whether the user does the stage by hand, so it is available whatever plugins are installed."""
+        return self in {Stage.IMPORT, Stage.PAGE_ORDER}
+
 
 class SourceKind(LabeledStrEnum):
     """What one source of a book is, which selects the format that reads it."""
@@ -397,6 +402,36 @@ class StageState(LabeledStrEnum):
     FRESH = 'fresh', 'Up to date'
     STALE = 'stale', 'Out of date'
     FAILED = 'failed', 'Failed'
+
+
+class PageStageStatus(LabeledStrEnum):
+    """Where one page stands in one stage: the state of its record, or that the stage has not run on it yet."""
+
+    NOT_RUN = 'not-run', 'Not processed'
+    FRESH = 'fresh', 'Up to date'
+    STALE = 'stale', 'Out of date'
+    FAILED = 'failed', 'Failed'
+
+    @classmethod
+    def of(cls, state: StageState | None) -> PageStageStatus:
+        """Give the status of a page from the state of its record of a stage.
+
+        :param state: State of the record, or None for a page the stage has no record of.
+        :type state: StageState | None
+        :returns: The status, which is not run for a page without a record.
+        :rtype: PageStageStatus
+        """
+        return cls.NOT_RUN if state is None else cls(state.value)
+
+
+class StageStatus(LabeledStrEnum):
+    """Where a whole stage stands in a book, summed over its pages."""
+
+    DONE = 'done', 'Done'
+    ATTENTION = 'attention', 'Needs a look'
+    RUNNING = 'running', 'Running'
+    WAITING = 'waiting', 'Waiting'
+    UNAVAILABLE = 'unavailable', 'Not available yet'
 
 
 class ReviewReason(LabeledStrEnum):

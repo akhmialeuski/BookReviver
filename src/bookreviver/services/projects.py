@@ -19,15 +19,18 @@ from attrs import evolve
 from bookreviver.domain.entities import Project, ProjectOverview
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import ProjectId
-from bookreviver.domain.values import SliceRequest
+from bookreviver.domain.values import Slice, SliceRequest
 
 if TYPE_CHECKING:
     from bookreviver.domain.changes import ProjectChanges
     from bookreviver.domain.entities import Actor
-    from bookreviver.domain.values import BookDetails, Slice
+    from bookreviver.domain.enums import Stage
+    from bookreviver.domain.stage_summaries import StageRow, StageSummary
+    from bookreviver.domain.values import BookDetails
     from bookreviver.ports.persistence import ProjectRepository, UnitOfWork
     from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore, SourceStore
+    from bookreviver.services.stage_summaries import StageSummaries
 
 
 async def owned_project(projects: ProjectRepository, actor: Actor, project_id: ProjectId) -> Project:
@@ -52,7 +55,9 @@ async def owned_project(projects: ProjectRepository, actor: Actor, project_id: P
 class ProjectService:
     """Projects of the acting account, with their description and their files."""
 
-    def __init__(self, *, uow: UnitOfWork, clock: Clock, sources: SourceStore, assets: AssetStore) -> None:
+    def __init__(
+        self, *, uow: UnitOfWork, clock: Clock, sources: SourceStore, assets: AssetStore, stages: StageSummaries
+    ) -> None:
         """Work over the ports of one request.
 
         :param uow: Unit of work of the request, whose commit ends every changing use case.
@@ -63,11 +68,14 @@ class ProjectService:
         :type sources: SourceStore
         :param assets: Store of the derived files, emptied when a project is deleted.
         :type assets: AssetStore
+        :param stages: Sums of the stages of books, which give each project its progress.
+        :type stages: StageSummaries
         """
         self._uow = uow
         self._clock = clock
         self._sources = sources
         self._assets = assets
+        self._stages = stages
 
     async def list(self, actor: Actor, request: SliceRequest) -> Slice[ProjectOverview]:
         """Return a window of the actor's projects, most recently updated first.
@@ -76,11 +84,12 @@ class ProjectService:
         :type actor: Actor
         :param request: Offset and limit of the window.
         :type request: SliceRequest
-        :returns: The projects of the window with the counts of their books, and the number of all the actor's
-                  projects.
+        :returns: The projects of the window with the counts and the progress of their books, and the number of all the
+                  actor's projects.
         :rtype: Slice[ProjectOverview]
         """
-        return await self._uow.projects.list_for_owner(actor.account_id, request)
+        window = await self._uow.projects.list_for_owner(actor.account_id, request)
+        return Slice(items=await self._stages.with_progress(window.items), total=window.total)
 
     async def create(self, actor: Actor, details: BookDetails) -> ProjectOverview:
         """Create an empty project owned by the actor.
@@ -98,7 +107,7 @@ class ProjectService:
         )
         stored = await self._uow.projects.add(project)
         await self._uow.commit()
-        return ProjectOverview(project=stored)
+        return await self._with_progress(ProjectOverview(project=stored))
 
     async def get(self, actor: Actor, project_id: ProjectId) -> ProjectOverview:
         """Return one of the actor's projects.
@@ -107,11 +116,49 @@ class ProjectService:
         :type actor: Actor
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
-        :returns: The project with the counts of its book.
+        :returns: The project with the counts and the progress of its book.
         :rtype: ProjectOverview
         :raises NotFoundError: If the actor has no such project.
         """
-        return await self._uow.projects.overview(await owned_project(self._uow.projects, actor, project_id))
+        project = await owned_project(self._uow.projects, actor, project_id)
+        return await self._with_progress(await self._uow.projects.overview(project))
+
+    async def stages(self, actor: Actor, project_id: ProjectId, request: SliceRequest) -> Slice[StageSummary]:
+        """Return the stages of one of the actor's projects, each summed over the pages of the book.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param request: Offset and limit of the window of stages.
+        :type request: SliceRequest
+        :returns: The window of the stages in the order of the pipeline, and the number of all the stages.
+        :rtype: Slice[StageSummary]
+        :raises NotFoundError: If the actor has no such project.
+        """
+        project = await owned_project(self._uow.projects, actor, project_id)
+        summaries = await self._stages.of_book(await self._uow.projects.overview(project))
+        return Slice(items=summaries[request.offset : request.offset + request.limit], total=len(summaries))
+
+    async def stage_pages(
+        self, actor: Actor, project_id: ProjectId, stage: Stage, request: SliceRequest
+    ) -> Slice[StageRow]:
+        """Return a window of the pages of one of the actor's projects, each with where it stands in a stage.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :param request: Offset and limit of the window of pages.
+        :type request: SliceRequest
+        :returns: The rows of the window in book order, and the number of pages of the book.
+        :rtype: Slice[StageRow]
+        :raises NotFoundError: If the actor has no such project.
+        """
+        project = await owned_project(self._uow.projects, actor, project_id)
+        return await self._stages.rows(project, stage, request)
 
     async def update(self, actor: Actor, project_id: ProjectId, changes: ProjectChanges) -> ProjectOverview:
         """Change some fields of the project, such as its description or its cover, and mark it as updated.
@@ -122,7 +169,7 @@ class ProjectService:
         :type project_id: ProjectId
         :param changes: New values of the fields to change.
         :type changes: ProjectChanges
-        :returns: The changed project with the counts of its book.
+        :returns: The changed project with the counts and the progress of its book.
         :rtype: ProjectOverview
         :raises NotFoundError: If the actor has no such project, or the new cover is not a page of the project.
         :raises ValueError: If the changed description breaks one of its rules, such as an empty title.
@@ -131,7 +178,18 @@ class ProjectService:
         changed = evolve(changes.apply_to(project), updated_at=self._clock.now())
         stored = await self._uow.projects.update(changed)
         await self._uow.commit()
-        return await self._uow.projects.overview(stored)
+        return await self._with_progress(await self._uow.projects.overview(stored))
+
+    async def _with_progress(self, overview: ProjectOverview) -> ProjectOverview:
+        """Add the progress of the book to the overview of one project.
+
+        :param overview: The project with the counts of its book.
+        :type overview: ProjectOverview
+        :returns: The same project with its progress.
+        :rtype: ProjectOverview
+        """
+        [with_progress] = await self._stages.with_progress([overview])
+        return with_progress
 
     async def delete(self, actor: Actor, project_id: ProjectId) -> None:
         """Delete the project's source files and derived files, then the project with every row of its book.

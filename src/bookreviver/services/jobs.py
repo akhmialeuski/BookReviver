@@ -20,6 +20,7 @@ from attrs import evolve
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.events import JobChanged
+from bookreviver.domain.values import Slice
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Job
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import JobId, ProjectId
+    from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock, EventPublisher, EventStream
 
@@ -68,6 +70,27 @@ class JobService:
         job = await self._uow.jobs.get(job_id)
         await self._check_owner(actor, job.project_id)
         return job
+
+    async def list_for_project(
+        self, actor: Actor, project_id: ProjectId, request: SliceRequest, *, active: bool
+    ) -> Slice[Job]:
+        """Return a window of the jobs of one of the actor's projects, the newest first.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param request: Offset and limit of the window.
+        :type request: SliceRequest
+        :param active: Whether to list only the jobs that are queued or running.
+        :type active: bool
+        :returns: The jobs of the window, and the number of jobs the filter matches.
+        :rtype: Slice[Job]
+        :raises NotFoundError: If the project does not exist or belongs to another account.
+        """
+        await self._check_owner(actor, project_id)
+        jobs = await self._uow.jobs.list_for_project(project_id, JobState.active() if active else set(JobState))
+        return Slice(items=jobs[request.offset : request.offset + request.limit], total=len(jobs))
 
     async def cancel(self, actor: Actor, job_id: JobId) -> Job:
         """Cancel a queued or running job, and announce it; a running job stops before its next step.

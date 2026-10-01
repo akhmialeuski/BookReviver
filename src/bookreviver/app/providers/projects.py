@@ -6,12 +6,14 @@ from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.ports.imaging import Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import UnitOfWork
+from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
 from bookreviver.ports.storage import AssetStore, SourceStore
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.pages import PageImaging, PageRuntime, PageService
 from bookreviver.services.projects import ProjectService
 from bookreviver.services.sources import SourceService
+from bookreviver.services.stage_summaries import StageSummaries
 from bookreviver.services.steps import StepRunner
 
 
@@ -21,7 +23,22 @@ class ProjectsProvider(Provider):
     scope = Scope.REQUEST
 
     @provide
-    def projects(self, uow: UnitOfWork, clock: Clock, sources: SourceStore, assets: AssetStore) -> ProjectService:
+    def stage_summaries(self, uow: UnitOfWork, catalogue: ProcessorCatalog) -> StageSummaries:
+        """Build the sums of the stages of books over the request's unit of work.
+
+        :param uow: Unit of work of the current request.
+        :type uow: UnitOfWork
+        :param catalogue: The processors of the application, which say which stages are available.
+        :type catalogue: ProcessorCatalog
+        :returns: The stage summaries of the request.
+        :rtype: StageSummaries
+        """
+        return StageSummaries(uow=uow, catalogue=catalogue)
+
+    @provide
+    def projects(
+        self, uow: UnitOfWork, clock: Clock, sources: SourceStore, assets: AssetStore, stages: StageSummaries
+    ) -> ProjectService:
         """Build the project service over the request's unit of work.
 
         :param uow: Unit of work of the current request.
@@ -32,10 +49,12 @@ class ProjectsProvider(Provider):
         :type sources: SourceStore
         :param assets: Asset store of the application.
         :type assets: AssetStore
+        :param stages: Sums of the stages of books of the request.
+        :type stages: StageSummaries
         :returns: The project service of the request.
         :rtype: ProjectService
         """
-        return ProjectService(uow=uow, clock=clock, sources=sources, assets=assets)
+        return ProjectService(uow=uow, clock=clock, sources=sources, assets=assets, stages=stages)
 
     @provide(scope=Scope.APP)
     def page_runtime(
