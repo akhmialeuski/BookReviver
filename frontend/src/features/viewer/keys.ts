@@ -35,12 +35,19 @@ export interface KeyPress {
   target: EventTarget | null;
 }
 
+// A slider takes the arrow keys, Home and End for itself, as the sliders of the settings of a step do
+const SLIDER_SELECTOR = '[role="slider"]';
+
 /** Tell whether a key pressed on this element is typing or a control's own key, which the viewer leaves alone. */
 export function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false;
   }
-  return EDITABLE_TAGS.has(target.tagName) || target.isContentEditable;
+  return (
+    EDITABLE_TAGS.has(target.tagName) ||
+    target.isContentEditable ||
+    target.closest(SLIDER_SELECTOR) !== null
+  );
 }
 
 /**

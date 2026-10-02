@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { page, row } from '@/features/workspace/fixtures';
 import { PageFilter } from '@/features/workspace/params';
 import { StageStrip } from '@/features/workspace/StageStrip';
-import { countFilters, joinRows } from '@/features/workspace/strip';
+import { countFilters, joinRows, type StripItem } from '@/features/workspace/strip';
 
 /**
  * The strip of a long book keeps only the rows in sight in the document.
@@ -37,11 +37,18 @@ describe('StageStrip', () => {
     vi.unstubAllGlobals();
   });
 
-  function render(length: number): void {
+  function render(
+    length: number,
+    extra: {
+      filter?: PageFilter;
+      reasonOf?: (item: StripItem) => string | null;
+      withWide?: boolean;
+    } = {},
+  ): void {
     const pages = Array.from({ length }, (_, index) => page(`p-${index}`, { position: index }));
     const items = joinRows(
       pages,
-      pages.map((entry) => row(entry.id)),
+      pages.map((entry) => row(entry.id, { status: 'stale' })),
     );
     act(() =>
       root.render(
@@ -49,11 +56,13 @@ describe('StageStrip', () => {
           items={items}
           total={length}
           counts={countFilters(items)}
-          filter={PageFilter.All}
+          filter={extra.filter ?? PageFilter.All}
           currentId={undefined}
           onFilter={vi.fn()}
           onOpen={vi.fn()}
           onGrid={vi.fn()}
+          reasonOf={extra.reasonOf}
+          withWide={extra.withWide}
         />,
       ),
     );
@@ -81,5 +90,34 @@ describe('StageStrip', () => {
     render(3);
 
     expect(container.querySelectorAll('[data-testid="strip-page"]')).toHaveLength(3);
+  });
+
+  it('writes the reason under each page when the Check filter is on', () => {
+    render(2, { filter: PageFilter.Check, reasonOf: (item) => `Reason of ${item.page.id}` });
+
+    const reasons = [...container.querySelectorAll('[data-testid="strip-reason"]')];
+    expect(reasons.map((reason) => reason.textContent)).toEqual(['Reason of p-0', 'Reason of p-1']);
+  });
+
+  it('writes no reason under a page when another filter is on', () => {
+    render(2, { filter: PageFilter.All, reasonOf: () => 'A reason' });
+
+    expect(container.querySelector('[data-testid="strip-reason"]')).toBeNull();
+  });
+
+  it('writes no reason for a page the stage has none for', () => {
+    render(2, { filter: PageFilter.Check, reasonOf: () => null });
+
+    expect(container.querySelector('[data-testid="strip-reason"]')).toBeNull();
+  });
+
+  it('offers the Wide filter only when it is asked for', () => {
+    render(2);
+    expect(container.querySelector('[data-testid="strip-filter-wide"]')).toBeNull();
+
+    render(2, { withWide: true });
+    expect(container.querySelector('[data-testid="strip-filter-wide"]')?.textContent).toBe(
+      'Wide 0',
+    );
   });
 });

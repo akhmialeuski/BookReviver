@@ -17,12 +17,15 @@ import { MESSAGES } from '@/shared/messages';
 export function PageTile({
   item,
   highlighted,
+  caption = null,
   onClick,
   onDoubleClick,
 }: {
   item: StripItem;
   /** Whether the page is the one open on the canvas or one of the selected pages. */
   highlighted: boolean;
+  /** Why the page asks for a look, written under its label, or null for no line. */
+  caption?: string | null;
   onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
   onDoubleClick?: () => void;
 }): React.JSX.Element {
@@ -78,6 +81,17 @@ export function PageTile({
           <span className="sr-only">{MESSAGES.workspace.strip.leftOut}</span>
         ) : null}
       </span>
+      {caption === null ? null : (
+        <span
+          className={cn(
+            'text-center text-[11px] leading-tight',
+            row?.status === 'failed' ? 'text-status-failed' : 'text-status-attention',
+          )}
+          data-testid="strip-reason"
+        >
+          {caption}
+        </span>
+      )}
     </button>
   );
 }

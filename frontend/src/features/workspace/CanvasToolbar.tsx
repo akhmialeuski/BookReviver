@@ -1,5 +1,6 @@
 import {
   BookOpenIcon,
+  CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   FileIcon,
@@ -8,15 +9,31 @@ import {
   ZoomInIcon,
   ZoomOutIcon,
 } from 'lucide-react';
+import { CompareMode } from '@/features/workspace/params';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/shared/ui/dropdown-menu';
 
 /**
  * The bar floating at the foot of the canvas: page turns, the number of the open page, one page or a spread, zoom,
  * and the place of the before-and-after mode.
  *
- * The compare button is drawn and disabled. The processing stages turn it on.
+ * The compare button is drawn and disabled for a stage that does not process pages. A stage that does gives it the mode
+ * and the way to change it, and it becomes a menu of the ways to compare.
  */
+
+const COMPARE_CHOICES = [
+  [CompareMode.Off, MESSAGES.processing.compare.off],
+  [CompareMode.Swipe, MESSAGES.processing.compare.swipe],
+  [CompareMode.Side, MESSAGES.processing.compare.side],
+] as const;
 
 export function CanvasToolbar({
   caption,
@@ -29,6 +46,7 @@ export function CanvasToolbar({
   onFit,
   onZoomIn,
   onZoomOut,
+  compare,
 }: {
   /** The label and place of the open page, such as `p. 14 · 18 of 126`. */
   caption: string;
@@ -41,6 +59,16 @@ export function CanvasToolbar({
   onFit: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
+  /**
+   * The before-and-after control of a stage that processes pages. Absent for a stage that does not, which draws the
+   * button disabled.
+   */
+  compare?: {
+    mode: CompareMode;
+    onChange: (mode: CompareMode) => void;
+    /** Why comparing is not possible now, or null when it is. */
+    unavailable: string | null;
+  };
 }): React.JSX.Element {
   const labels = MESSAGES.workspace.canvas;
   return (
@@ -117,10 +145,45 @@ export function CanvasToolbar({
         <ZoomInIcon />
       </Button>
       <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
-      <Button variant="ghost" size="sm" disabled title={labels.compareSoon}>
-        <GitCompareIcon />
-        {labels.compare}
-      </Button>
+      {compare === undefined ? (
+        <Button variant="ghost" size="sm" disabled title={labels.compareSoon}>
+          <GitCompareIcon />
+          {labels.compare}
+        </Button>
+      ) : (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant={compare.mode === CompareMode.Off ? 'ghost' : 'secondary'}
+              size="sm"
+              disabled={compare.unavailable !== null}
+              title={compare.unavailable ?? undefined}
+              data-testid="compare-menu"
+            >
+              <GitCompareIcon />
+              {MESSAGES.processing.compare.toggle}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" side="top">
+            <DropdownMenuLabel>{MESSAGES.processing.compare.modeLabel}</DropdownMenuLabel>
+            {COMPARE_CHOICES.map(([mode, text]) => (
+              <DropdownMenuItem
+                key={mode}
+                data-testid={`compare-${mode}`}
+                aria-checked={compare.mode === mode}
+                onSelect={() => compare.onChange(mode)}
+              >
+                <CheckIcon className={compare.mode === mode ? 'opacity-100' : 'opacity-0'} />
+                {text}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            <p className="px-2 py-1.5 text-xs text-muted-foreground">
+              {MESSAGES.processing.compare.hold}
+            </p>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   );
 }

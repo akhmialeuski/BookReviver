@@ -14,6 +14,8 @@ export interface StripItem {
   page: PageSchema;
   /** The state of the page in the open stage, or undefined while the rows of the stage are still loading. */
   row: StagePageSchema | undefined;
+  /** Whether the page is cut from a scan wider than tall, which only the Split stage looks for. */
+  wide?: boolean;
 }
 
 /** How many pages each filter of the strip would list. */
@@ -24,14 +26,20 @@ export type FilterCounts = Record<PageFilter, number>;
  *
  * @param pages The pages of the book in book order.
  * @param rows The rows of the stage, in any order.
+ * @param wideScans The identifiers of the scans wider than tall, for the stage that looks for them.
  * @returns One item per page in book order; a page without a row has an undefined row.
  */
 export function joinRows(
   pages: readonly PageSchema[],
   rows: readonly StagePageSchema[],
+  wideScans: ReadonlySet<string> = new Set(),
 ): StripItem[] {
   const rowOf = new Map(rows.map((row) => [row.page_id, row]));
-  return pages.map((page) => ({ page, row: rowOf.get(page.id) }));
+  return pages.map((page) => ({
+    page,
+    row: rowOf.get(page.id),
+    wide: page.scan_id !== null && wideScans.has(page.scan_id),
+  }));
 }
 
 /** Tell whether a page asks for a look in the stage: its result is out of date, failed or marked as unsure. */
@@ -47,10 +55,16 @@ export function isLeftOut(item: StripItem): boolean {
   return !item.page.included;
 }
 
+/** Tell whether a page is cut from a scan wider than tall. */
+export function isWide(item: StripItem): boolean {
+  return item.wide === true;
+}
+
 const FILTERS: Readonly<Record<PageFilter, (item: StripItem) => boolean>> = {
   [PageFilter.All]: () => true,
   [PageFilter.Check]: needsCheck,
   [PageFilter.LeftOut]: isLeftOut,
+  [PageFilter.Wide]: isWide,
 };
 
 /** Keep the items a filter lists, in their order. */
@@ -64,6 +78,7 @@ export function countFilters(items: readonly StripItem[]): FilterCounts {
     [PageFilter.All]: items.length,
     [PageFilter.Check]: items.filter(needsCheck).length,
     [PageFilter.LeftOut]: items.filter(isLeftOut).length,
+    [PageFilter.Wide]: items.filter(isWide).length,
   };
 }
 

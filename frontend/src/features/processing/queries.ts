@@ -1,0 +1,230 @@
+import {
+  type QueryClient,
+  queryOptions,
+  type UseQueryResult,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
+import {
+  listScansApiV1ProjectsProjectIdScansGet,
+  listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet,
+  type PageVersionSchema,
+  type ScanSchema,
+  type Stage,
+} from '@/api';
+import {
+  activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostMutation,
+  chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutMutation,
+  createVariantApiV1ProjectsProjectIdStagesStageVariantsPostMutation,
+  getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey,
+  listProcessorsApiV1ProcessorsGetOptions,
+  listScansApiV1ProjectsProjectIdScansGetQueryKey,
+  listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetOptions,
+  listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey,
+  listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey,
+  previewStepApiV1ProjectsProjectIdStagesStagePreviewPostMutation,
+  putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation,
+  runStageApiV1ProjectsProjectIdStagesStageRunPostMutation,
+} from '@/api/@tanstack/react-query.gen';
+import {
+  invalidateJobs,
+  invalidateProject,
+  invalidateStageRows,
+  invalidateStageSummary,
+} from '@/features/projects/queries';
+
+/**
+ * The queries and changes behind the processing workspace: the catalogue of processors, the recipes of a stage, the
+ * versions of a page, and the saving, running, previewing and choosing that act on them.
+ *
+ * The keys are the generated ones, so a change of a recipe marks exactly the reads of that stage stale. A recipe is
+ * always saved through the route of its id, which serves the active recipe as well as a variant, so one change covers
+ * both. A save marks the pages it processed out of date on the server, and the rows and the summary of the stage are
+ * read again at once, since the counts on the panel and the bar depend on them.
+ */
+
+/** Items asked for per request of a short list; the routes accept at most this many. */
+const LIST_SIZE = 100;
+
+/** Read the catalogue of processors, which a stage is built from. */
+export function useProcessors() {
+  return useQuery({
+    ...listProcessorsApiV1ProcessorsGetOptions({ query: { size: LIST_SIZE } }),
+    select: (page) => page.items,
+    // The installed plugins change with a restart of the server, not while a screen is open
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+/** Read the recipes of a stage, the active one first and then the variants. */
+export function useRecipes(projectId: string, stage: Stage, enabled: boolean) {
+  return useQuery({
+    ...listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetOptions({
+      path: { project_id: projectId, stage },
+      query: { size: LIST_SIZE },
+    }),
+    select: (page) => page.items,
+    enabled,
+  });
+}
+
+/** Query options of the full results a stage made on one page, earliest first. */
+export function versionsOptions(projectId: string, pageId: string, stage: Stage) {
+  const query = { stage, scale: 'full', size: LIST_SIZE } as const;
+  return queryOptions({
+    queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
+      path: { project_id: projectId, page_id: pageId },
+      query,
+    }),
+    queryFn: async ({ signal }): Promise<PageVersionSchema[]> => {
+      const versions: PageVersionSchema[] = [];
+      let page = 1;
+      let total = 1;
+      while (page <= total) {
+        const { data } = await listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet({
+          path: { project_id: projectId, page_id: pageId },
+          query: { ...query, page },
+          signal,
+          throwOnError: true,
+        });
+        versions.push(...data.items);
+        total = data.pages;
+        page += 1;
+      }
+      return versions;
+    },
+  });
+}
+
+/** Read the results a stage made on a page, for the history of the page. */
+export function useVersions(
+  projectId: string,
+  pageId: string | undefined,
+  stage: Stage,
+): UseQueryResult<PageVersionSchema[]> {
+  return useQuery({
+    ...versionsOptions(projectId, pageId ?? '', stage),
+    enabled: pageId !== undefined,
+  });
+}
+
+/** Mark stale what a change of the recipes or of the results of a stage changes. */
+async function refreshStage(
+  queryClient: QueryClient,
+  projectId: string,
+  stage: Stage,
+): Promise<void> {
+  await Promise.all([
+    queryClient.invalidateQueries({
+      queryKey: listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey({
+        path: { project_id: projectId, stage },
+      }),
+    }),
+    queryClient.invalidateQueries({
+      queryKey: getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey({
+        path: { project_id: projectId, stage },
+      }),
+    }),
+    invalidateStageRows(queryClient, projectId, stage),
+    invalidateStageSummary(queryClient, projectId),
+    invalidateProject(queryClient, projectId),
+    invalidateJobs(queryClient, projectId),
+  ]);
+}
+
+/** Save the name and the steps of a recipe, the active one or a variant. */
+export function useSaveRecipe(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation(),
+    onSettled: () => refreshStage(queryClient, projectId, stage),
+  });
+}
+
+/** Add a variant of the stage, which is not active until it is activated. */
+export function useCreateVariant(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...createVariantApiV1ProjectsProjectIdStagesStageVariantsPostMutation(),
+    onSettled: () => refreshStage(queryClient, projectId, stage),
+  });
+}
+
+/** Make a variant the recipe the stage runs by, which marks the pages the old one processed out of date. */
+export function useActivateRecipe(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostMutation(),
+    onSettled: () => refreshStage(queryClient, projectId, stage),
+  });
+}
+
+/** Run the stage over some pages in the background, which the activity of the book then follows. */
+export function useRunStage(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...runStageApiV1ProjectsProjectIdStagesStageRunPostMutation(),
+    onSettled: () => invalidateJobs(queryClient, projectId),
+    onSuccess: () => refreshStage(queryClient, projectId, stage),
+  });
+}
+
+/** Preview the steps of the form on one page in the background; the picture arrives as an event. */
+export function usePreviewStep(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...previewStepApiV1ProjectsProjectIdStagesStagePreviewPostMutation(),
+    onSettled: () => invalidateJobs(queryClient, projectId),
+  });
+}
+
+/** Make one of the results of a page its current result in the stage. */
+export function useChooseVersion(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutMutation(),
+    onSettled: (_data, _error, variables) =>
+      Promise.all([
+        refreshStage(queryClient, projectId, stage),
+        queryClient.invalidateQueries({
+          queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
+            path: { project_id: projectId, page_id: variables.path.page_id },
+          }),
+        }),
+      ]),
+  });
+}
+
+/**
+ * Read every scan of the book as one list, which the Split stage needs for the size of each.
+ *
+ * The key extends the generated key of the list of scans, so the invalidation of the scans reaches it, and the extra
+ * part keeps it apart from the one-page lists the Import stage reads.
+ */
+export function useAllScans(projectId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [
+      ...listScansApiV1ProjectsProjectIdScansGetQueryKey({ path: { project_id: projectId } }),
+      'all',
+    ],
+    queryFn: async ({ signal }): Promise<ScanSchema[]> => {
+      const scans: ScanSchema[] = [];
+      let page = 1;
+      let total = 1;
+      while (page <= total) {
+        const { data } = await listScansApiV1ProjectsProjectIdScansGet({
+          path: { project_id: projectId },
+          query: { page, size: LIST_SIZE },
+          signal,
+          throwOnError: true,
+        });
+        scans.push(...data.items);
+        total = data.pages;
+        page += 1;
+      }
+      return scans;
+    },
+    enabled,
+  });
+}

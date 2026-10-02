@@ -5,6 +5,21 @@ import type { PageSchema, Stage, StagePageSchema } from '@/api';
 import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-query.gen';
 import { useManifest } from '@/features/pages/manifest';
 import { pruneSelection } from '@/features/pages/selection';
+import { CompareCanvas } from '@/features/processing/CompareCanvas';
+import {
+  beforeSourceOf,
+  type ImageSource,
+  SourceKind,
+  sourceOfPreview,
+} from '@/features/processing/compare';
+import { ProcessingPanel } from '@/features/processing/ProcessingPanel';
+import { useAllScans } from '@/features/processing/queries';
+import { reasonOf } from '@/features/processing/reasons';
+import { StageBanners } from '@/features/processing/StageBanners';
+import { wideScanIds } from '@/features/processing/split';
+import { useEarlierRows } from '@/features/processing/useEarlierRows';
+import { useProcessing } from '@/features/processing/useProcessing';
+import { stageBefore } from '@/features/stages/stages';
 import { PageCanvas, type PageCanvasHandle } from '@/features/viewer/PageCanvas';
 import {
   lastViewStart,
@@ -16,7 +31,7 @@ import {
 import { FitMode, type StagePage } from '@/features/viewer/stage';
 import { useViewerKeys } from '@/features/viewer/useViewerKeys';
 import { CanvasToolbar } from '@/features/workspace/CanvasToolbar';
-import { PageFilter, type StageSearch, ViewMode } from '@/features/workspace/params';
+import { CompareMode, PageFilter, type StageSearch, ViewMode } from '@/features/workspace/params';
 import { useStageRows, useStageSummaries } from '@/features/workspace/queries';
 import { StageGrid } from '@/features/workspace/StageGrid';
 import { StagePanel } from '@/features/workspace/StagePanel';
@@ -103,7 +118,12 @@ export function StageScreen({
     () => ({ ...stored, selected: pruneSelection(stored.selected, pages) }),
     [stored, pages],
   );
-  const items = useMemo(() => joinRows(pages, rows.data ?? NO_ROWS), [pages, rows.data]);
+  // Only the Split stage looks at how wide a scan is
+  const scans = useAllScans(projectId, stage === 'page-split');
+  const items = useMemo(
+    () => joinRows(pages, rows.data ?? NO_ROWS, wideScanIds(scans.data ?? [])),
+    [pages, rows.data, scans.data],
+  );
   const counts = useMemo(() => countFilters(items), [items]);
   const filter = search.filter ?? PageFilter.All;
   const filtered = useMemo(() => applyFilter(items, filter), [items, filter]);
@@ -130,6 +150,17 @@ export function StageScreen({
   const around = [next, previous].flatMap((start) =>
     start === null ? [] : [stagePages(viewIndexes(start, count, spread).map((i) => items[i]))],
   );
+
+  // A stage built from processors adds its recipe, its preview and its before-and-after compare to the frame
+  const compareChoice = search.compare ?? CompareMode.Off;
+  const currentItem = items[currentIndex];
+  const processing = useProcessing(projectId, stage, currentItem, () => {
+    // A preview is drawn in the half after of the compare, so asking for one turns the compare on
+    if (compareChoice === CompareMode.Off) {
+      onSearchChange({ compare: CompareMode.Swipe });
+    }
+  });
+  const earlierRows = useEarlierRows(projectId, stage, processing.available);
 
   // The grid shows no open page, so the page keys and the strip have nothing to turn there
   const openPage = (pageId: string | undefined): void => {
@@ -209,12 +240,69 @@ export function StageScreen({
     );
   });
 
+  // The compare draws the picture before beside the picture after, which is the preview while one is on
+  const processed = processing.available;
+  const beforeSource =
+    currentItem === undefined
+      ? null
+      : beforeSourceOf(currentItem.page, currentItem.row, earlierRows);
+  const previewShown =
+    processing.preview.on && processing.preview.shown?.page_id === currentItem?.page.id
+      ? processing.preview.shown
+      : null;
+  const resultUrl = currentItem === undefined ? null : canvasSourceOf(currentItem);
+  const afterSource: ImageSource | null =
+    sourceOfPreview(previewShown) ??
+    (resultUrl === null ? null : { kind: SourceKind.Iiif, url: resultUrl });
+  const compareBlocked = spread
+    ? MESSAGES.processing.compare.spreadOnly
+    : beforeSource === null
+      ? MESSAGES.processing.compare.none
+      : null;
+  const compareMode = compareBlocked === null ? compareChoice : CompareMode.Off;
+  const stageName = MESSAGES.stages.names[stage];
+  const stageBeforeThis = stageBefore(stage);
+  const { preview } = processing;
+  const previewNotice = !preview.on
+    ? null
+    : preview.error !== null
+      ? {
+          text:
+            preview.error === ''
+              ? MESSAGES.processing.preview.failed
+              : `${MESSAGES.processing.preview.failed} ${preview.error}`,
+          working: false,
+        }
+      : preview.waiting
+        ? { text: MESSAGES.processing.preview.busy, working: true }
+        : preview.working
+          ? { text: MESSAGES.processing.preview.working, working: true }
+          : null;
+
   const canvasArea =
     count === 0 ? (
       <p className="p-4 text-sm text-muted-foreground">{MESSAGES.workspace.canvas.empty}</p>
     ) : (
       <div className="relative size-full">
-        <PageCanvas view={view} around={around} fitMode={FitMode.Page} handle={canvas} />
+        {processed && !spread ? (
+          <CompareCanvas
+            pairs={{ before: beforeSource, after: afterSource }}
+            mode={compareMode}
+            beforeLabel={MESSAGES.processing.compare.before(
+              stageBeforeThis === null ? '' : MESSAGES.stages.names[stageBeforeThis],
+            )}
+            afterLabel={
+              previewShown === null
+                ? MESSAGES.processing.compare.after(stageName)
+                : MESSAGES.processing.preview.after(stageName)
+            }
+            notice={previewNotice}
+            pageIds={shown.map((item) => item.page.id)}
+            handle={canvas}
+          />
+        ) : (
+          <PageCanvas view={view} around={around} fitMode={FitMode.Page} handle={canvas} />
+        )}
         {unknownPage ? (
           <p className="absolute inset-x-0 top-3 mx-auto w-fit rounded-md bg-background/90 px-3 py-1 text-sm shadow">
             {MESSAGES.viewer.unknownPage}
@@ -233,6 +321,16 @@ export function StageScreen({
               onFit={() => canvas.current?.fit(FitMode.Page)}
               onZoomIn={() => canvas.current?.zoomIn()}
               onZoomOut={() => canvas.current?.zoomOut()}
+              compare={
+                processed
+                  ? {
+                      mode: compareMode,
+                      onChange: (value) =>
+                        onSearchChange({ compare: value === CompareMode.Off ? undefined : value }),
+                      unavailable: compareBlocked,
+                    }
+                  : undefined
+              }
             />
           </div>
         </div>
@@ -255,6 +353,8 @@ export function StageScreen({
                 onFilter={(value) => onSearchChange({ filter: value })}
                 onOpen={openPage}
                 onGrid={() => switchView(ViewMode.Grid)}
+                reasonOf={processed ? reasonOf : undefined}
+                withWide={stage === 'page-split'}
               />
             )
           }
@@ -272,12 +372,30 @@ export function StageScreen({
                 onClearSelection={() => setPicked({ stage, state: NOTHING_SELECTED })}
                 onOpen={(pageId) => onSearchChange({ view: undefined, page: pageId })}
                 onList={() => switchView(ViewMode.Page)}
+                reasonOf={processed ? reasonOf : undefined}
+                withWide={stage === 'page-split'}
               />
+            ) : processed ? (
+              <div className="flex size-full flex-col">
+                <StageBanners processing={processing} items={items} />
+                <div className="min-h-0 flex-1">{canvasArea}</div>
+              </div>
             ) : (
               canvasArea
             )
           }
-          panel={<StagePanel stage={stage} available={available} />}
+          panel={
+            processed ? (
+              <ProcessingPanel
+                processing={processing}
+                items={items}
+                current={currentItem}
+                selected={selection.selected}
+              />
+            ) : (
+              <StagePanel stage={stage} available={available} />
+            )
+          }
         />
       </div>
     </div>

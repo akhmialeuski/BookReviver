@@ -15,6 +15,7 @@ export function StripToolbar({
   counts,
   filter,
   grid,
+  withWide = false,
   onFilter,
   onSwitchView,
 }: {
@@ -26,6 +27,8 @@ export function StripToolbar({
   filter: PageFilter;
   /** Whether the pages are drawn as a grid, so the switch goes back to the strip. */
   grid: boolean;
+  /** Whether the filter of the pages cut from wide scans is offered, which the Split stage has. */
+  withWide?: boolean;
   onFilter: (filter: PageFilter) => void;
   onSwitchView: () => void;
 }): React.JSX.Element {
@@ -55,6 +58,9 @@ export function StripToolbar({
         {filterButton(PageFilter.All, labels.filters.all)}
         {filterButton(PageFilter.Check, labels.filters.check(counts[PageFilter.Check]))}
         {filterButton(PageFilter.LeftOut, labels.filters.leftOut(counts[PageFilter.LeftOut]))}
+        {withWide
+          ? filterButton(PageFilter.Wide, labels.filters.wide(counts[PageFilter.Wide]))
+          : null}
         <Button
           variant="ghost"
           size="icon-sm"

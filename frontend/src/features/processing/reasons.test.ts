@@ -1,0 +1,52 @@
+import { describe, expect, it } from 'vitest';
+import { version } from '@/features/processing/fixtures';
+import { reasonOf } from '@/features/processing/reasons';
+import { page, row } from '@/features/workspace/fixtures';
+
+function item(overrides: Parameters<typeof row>[1] = {}) {
+  return { page: page('a'), row: row('a', overrides) };
+}
+
+describe('reasonOf', () => {
+  it('says why a page failed, with what the step said', () => {
+    const failed = item({ status: 'failed', version: version('v', { error: 'image unreadable' }) });
+
+    expect(reasonOf(failed)).toBe('Failed: image unreadable');
+  });
+
+  it('says only that a page failed when the step gave no reason', () => {
+    expect(reasonOf(item({ status: 'failed' }))).toBe('Failed');
+  });
+
+  it('says that a result is out of date', () => {
+    expect(reasonOf(item({ status: 'stale' }))).toBe('Out of date');
+  });
+
+  it('says the step left the page as it was, with its confidence', () => {
+    const left = item({
+      review: 'not-applied',
+      version: version('v', { data: { confidence: 0.18 } }),
+    });
+
+    expect(reasonOf(left)).toBe('Left as it was · 0.18');
+  });
+
+  it('says the step was unsure, with its confidence when it has one', () => {
+    const unsure = item({
+      review: 'low-confidence',
+      version: version('v', { data: { confidence: 0.4 } }),
+    });
+
+    expect(reasonOf(unsure)).toBe('Unsure · 0.40');
+    expect(reasonOf(item({ review: 'low-confidence' }))).toBe('Unsure');
+  });
+
+  it('puts a failure before a mark of review, since a failed page has no result to doubt', () => {
+    expect(reasonOf(item({ status: 'failed', review: 'low-confidence' }))).toBe('Failed');
+  });
+
+  it('gives no reason to a page that needs no look or has no row yet', () => {
+    expect(reasonOf(item())).toBeNull();
+    expect(reasonOf({ page: page('a'), row: undefined })).toBeNull();
+  });
+});

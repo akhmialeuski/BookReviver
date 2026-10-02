@@ -11,7 +11,10 @@ import {
   invalidateSources,
   invalidateStageRows,
   invalidateStageSummary,
+  invalidateVersions,
   pageChangesInFlight,
+  type VersionReady,
+  versionReadyKey,
 } from '@/features/projects/queries';
 import { parseStage } from '@/features/stages/parse';
 import { Coalescer } from '@/shared/lib/coalescer';
@@ -153,6 +156,16 @@ export function applyProjectEvent(
     case EventName.PageVersionReady:
       // The image of a blank leaf or of a bound scan is written by a job, and its path appears in the manifest
       void invalidatePages(queryClient, projectId);
+      if (
+        isRecord(event.data) &&
+        typeof event.data.page_id === 'string' &&
+        typeof event.data.version_id === 'string'
+      ) {
+        // A preview waits for this, and the history of the page gains the result of a full run
+        const ready: VersionReady = { versionId: event.data.version_id, at: Date.now() };
+        queryClient.setQueryData(versionReadyKey(projectId, event.data.page_id), ready);
+        void invalidateVersions(queryClient, projectId, event.data.page_id);
+      }
       break;
     case EventName.ProjectChanged:
       void invalidateProject(queryClient, projectId);

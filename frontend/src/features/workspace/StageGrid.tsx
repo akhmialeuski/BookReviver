@@ -2,7 +2,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { XIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { PageTile } from '@/features/workspace/PageTile';
-import type { PageFilter } from '@/features/workspace/params';
+import { PageFilter } from '@/features/workspace/params';
 import { StripToolbar } from '@/features/workspace/StripToolbar';
 import type { FilterCounts, StripItem } from '@/features/workspace/strip';
 import { MESSAGES } from '@/shared/messages';
@@ -46,6 +46,8 @@ export function StageGrid({
   onClearSelection,
   onOpen,
   onList,
+  reasonOf,
+  withWide = false,
 }: {
   items: readonly StripItem[];
   total: number;
@@ -59,6 +61,10 @@ export function StageGrid({
   onOpen: (pageId: string) => void;
   /** Go back to the strip and the canvas. */
   onList: () => void;
+  /** Says why a page asks for a look; the Check filter writes it under the page. Absent for no reasons. */
+  reasonOf?: (item: StripItem) => string | null;
+  /** Whether the filter of the pages cut from wide scans is offered, which the Split stage has. */
+  withWide?: boolean;
 }): React.JSX.Element {
   const scroller = useRef<HTMLDivElement>(null);
   const width = useElementWidth(scroller);
@@ -79,6 +85,7 @@ export function StageGrid({
         counts={counts}
         filter={filter}
         grid
+        withWide={withWide}
         onFilter={onFilter}
         onSwitchView={onList}
       />
@@ -114,6 +121,7 @@ export function StageGrid({
                     key={item.page.id}
                     item={item}
                     highlighted={selected.has(item.page.id)}
+                    caption={filter === PageFilter.Check ? (reasonOf?.(item) ?? null) : null}
                     onClick={(event) =>
                       onSelect(item.page.id, {
                         range: event.shiftKey,

@@ -30,11 +30,15 @@ export const CompareMode = {
 /** One way of comparing (derived from {@link CompareMode}). */
 export type CompareMode = (typeof CompareMode)[keyof typeof CompareMode];
 
-/** Which pages the strip lists: all of them, the ones to check, or the ones left out of the book. */
+/**
+ * Which pages the strip lists: all of them, the ones to check, the ones left out of the book, or, on the Split stage,
+ * the ones cut from a scan wider than tall.
+ */
 export const PageFilter = {
   All: 'all',
   Check: 'check',
   LeftOut: 'left-out',
+  Wide: 'wide',
 } as const;
 
 /** One filter of the strip (derived from {@link PageFilter}). */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MESSAGES } from '@/shared/messages';
-import { Phase, STAGES, stageNumber } from './stages';
+import { Phase, STAGES, stageBefore, stageNumber } from './stages';
 
 describe('STAGES', () => {
   it('lists the ten stages once each, in the order of the pipeline the API uses', () => {
@@ -36,5 +36,16 @@ describe('stageNumber', () => {
   it('counts the stages from one', () => {
     expect(stageNumber('import')).toBe(1);
     expect(stageNumber('typesetting')).toBe(10);
+  });
+});
+
+describe('stageBefore', () => {
+  it('is the stage right before in the pipeline', () => {
+    expect(stageBefore('geometry')).toBe('page-order');
+    expect(stageBefore('page-split')).toBe('import');
+  });
+
+  it('is nothing for the first stage', () => {
+    expect(stageBefore('import')).toBeNull();
   });
 });
