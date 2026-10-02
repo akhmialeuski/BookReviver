@@ -39,6 +39,14 @@ function projectIdOf(page: Page): string {
 }
 
 /**
+ * Wait until the grid is no longer waiting for the server: no change is in flight, the pages are not being read again,
+ * and the labels of a numbering are not being worked out. Until then it may show the state before the last change.
+ */
+async function settled(page: Page): Promise<void> {
+  await expect(page.getByTestId('order-grid')).toHaveAttribute('aria-busy', 'false');
+}
+
+/**
  * Pick the focused tile up with the space bar, and wait for the announcement that follows the lift: the held page is
  * over itself, which is no place.
  *
@@ -175,6 +183,8 @@ test('a reader selects, shows and drags the pages of a book', async ({ page }) =
   });
 
   await test.step('a drag with the mouse draws the bar and moves the page', async () => {
+    // The order to start from is the one the server has, after the move before this one has been read back
+    await settled(page);
     const order = await tileIds(page);
     const source = tile(page, order[0] ?? '');
     const target = tile(page, order[2] ?? '');
@@ -270,6 +280,8 @@ test('a reader numbers pages with a preview and finds the pages that are missing
     await page.getByRole('button', { name: 'Number pages' }).click();
     await page.getByLabel('From', { exact: true }).selectOption(firstId);
     await page.getByLabel('First number').fill('10');
+    // Until the server has answered for this number, the grid still shows the numbers of the one before it
+    await settled(page);
     await expect(page.getByTestId('new-number')).toHaveCount(5);
     shown = await page.getByTestId('new-number').allTextContents();
 
@@ -345,6 +357,7 @@ test('a reader adds and deletes pages, and follows a link from a file', async ({
     await page.getByRole('button', { name: 'Insert', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Blank leaf before' }).click();
     await expect(tiles).toHaveCount(PAGES + 1);
+    await settled(page);
     const order = await tileIds(page);
     expect(order.slice(0, 2)).toEqual(ids.slice(0, 2));
     expect(order.slice(3)).toEqual(ids.slice(2));

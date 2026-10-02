@@ -64,6 +64,7 @@ export function OrderGrid({
   previewLabels,
   addingGapKey,
   moveError,
+  busy,
   focus,
   onDismissError,
   onSelect,
@@ -83,6 +84,12 @@ export function OrderGrid({
   addingGapKey: string | null;
   /** The words for the last move the server refused, or null. */
   moveError: string | null;
+  /**
+   * Whether the grid is waiting for the server: a change is in flight, the manifest is being read again, or the labels of
+   * a numbering are being worked out. What the grid shows may be one step behind until this is false, and the new numbers
+   * of a preview are dimmed for as long.
+   */
+  busy: boolean;
   focus: FocusRequest | null;
   onDismissError: () => void;
   onSelect: (pageId: string, click: TileClick) => void;
@@ -163,7 +170,11 @@ export function OrderGrid({
   const cell = spread ? size * 2 + GRID_GAP_PX : size;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col" data-testid="order-grid">
+    <div
+      className="group/grid flex min-h-0 flex-1 flex-col"
+      aria-busy={busy}
+      data-testid="order-grid"
+    >
       {moveError === null ? null : (
         <div className="flex items-start gap-2 p-3 pb-0" data-testid="move-error">
           <div className="flex-1">

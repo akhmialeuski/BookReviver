@@ -25,6 +25,8 @@ import {
   invalidateProjectList,
   invalidateScans,
   invalidateSources,
+  pageChangesInFlight,
+  pagesScope,
 } from '@/features/projects/queries';
 
 /**
@@ -42,8 +44,24 @@ interface Snapshot {
   previous: PageSchema[] | undefined;
 }
 
-/** Read the pages again, and the counts that depend on them. */
-async function refreshPages(queryClient: QueryClient, projectId: string): Promise<void> {
+/**
+ * Read the pages again, and the counts that depend on them, unless a change of the pages is still to come.
+ *
+ * A read now would show the pages without the change that is queued or in flight, and write that over the page order
+ * the grid is showing, which flips a page back for as long as the change takes. Each change reads the pages again when
+ * it ends, so the last one to end makes the read that matters.
+ *
+ * @param settling How many of the changes in flight are the one that calls this, which is one for a change that runs in
+ * the scope of the pages and none for one that does not.
+ */
+async function refreshPages(
+  queryClient: QueryClient,
+  projectId: string,
+  settling = 0,
+): Promise<void> {
+  if (pageChangesInFlight(queryClient, projectId) > settling) {
+    return;
+  }
   await Promise.all([
     invalidatePages(queryClient, projectId),
     invalidateProject(queryClient, projectId),
@@ -63,27 +81,28 @@ async function applyOptimistically(
   newOrder: (pages: PageSchema[]) => PageSchema[] | null,
 ): Promise<Snapshot> {
   const { queryKey } = manifestOptions(projectId);
+  // A read that is still in flight would write the old state over this one when it lands. It is cancelled with the
+  // default revert, which puts the query back to a success with the data it had. Cancelling without the revert leaves
+  // the query in the error state, and a screen that shows an error in place of the pages loses its grid until the
+  // next read ends
+  await queryClient.cancelQueries({ queryKey });
   const previous = queryClient.getQueryData(queryKey);
   const next = previous === undefined ? null : newOrder(previous);
-  // Written before anything is awaited, so a control that shows this state never has to wait for a read to give way
   if (next !== null) {
     queryClient.setQueryData(queryKey, next);
   }
-  // A read that is still in flight would write the old state over this one when it lands. Cancelling it must not
-  // revert the cache to what it held when the read began, which would take this write away too
-  await queryClient.cancelQueries({ queryKey }, { revert: false });
   return { previous };
 }
 
 /**
- * The scope of the changes that rewrite pages that exist, which TanStack Query runs one after the other.
- *
- * The server reads a page, changes it and writes the whole row, so two changes of one page that are in flight together
- * each write back the page as it was before the other, and the first change is lost. A reader changing the number, the
- * kind and the notes of a page in a row makes exactly that, and a move on top of an edit would too.
+ * The scope of the changes that rewrite pages that exist. A reader changing the number, the kind and the notes of a
+ * page in a row makes two changes of one page in flight together, and a move on top of an edit would too.
  */
-function rewriteScope(projectId: string): { id: string } {
-  return { id: `pages-${projectId}` };
+const rewriteScope = pagesScope;
+
+/** What a change that runs in the scope of the pages does when it ends: read the pages once the rest have ended. */
+function readWhenLast(queryClient: QueryClient, projectId: string): () => Promise<void> {
+  return () => refreshPages(queryClient, projectId, 1);
 }
 
 function restore(
@@ -108,7 +127,7 @@ export function useMovePages(projectId: string) {
         return anchor === null ? null : movePages(pages, body.page_ids, anchor);
       }),
     onError: (_error, _variables, snapshot) => restore(queryClient, projectId, snapshot),
-    onSettled: () => refreshPages(queryClient, projectId),
+    onSettled: readWhenLast(queryClient, projectId),
   });
 }
 
@@ -126,7 +145,7 @@ export function useMoveSourcePages(projectId: string) {
           : movePages(pages, pageIdsOfSource(pages, path.source_id), anchor);
       }),
     onError: (_error, _variables, snapshot) => restore(queryClient, projectId, snapshot),
-    onSettled: () => refreshPages(queryClient, projectId),
+    onSettled: readWhenLast(queryClient, projectId),
   });
 }
 
@@ -136,7 +155,7 @@ export function useUpdatePage(projectId: string) {
   return useMutation({
     ...updatePageApiV1ProjectsProjectIdPagesPageIdPatchMutation(),
     scope: rewriteScope(projectId),
-    onSettled: () => refreshPages(queryClient, projectId),
+    onSettled: readWhenLast(queryClient, projectId),
   });
 }
 
@@ -174,7 +193,7 @@ export function useUpdatePages(projectId: string) {
         ),
       );
     },
-    onSettled: () => refreshPages(queryClient, projectId),
+    onSettled: readWhenLast(queryClient, projectId),
   });
 }
 
@@ -224,7 +243,7 @@ export function useNumberPages(projectId: string) {
   return useMutation({
     ...numberPagesApiV1ProjectsProjectIdPagesLabelsPostMutation(),
     scope: rewriteScope(projectId),
-    onSettled: () => refreshPages(queryClient, projectId),
+    onSettled: readWhenLast(queryClient, projectId),
   });
 }
 

@@ -149,7 +149,10 @@ function NumberText({
       <s className="truncate text-muted-foreground" data-testid="old-number">
         {label === '' ? MESSAGES.order.tile.noNumber : label}
       </s>
-      <span className="truncate text-blue-600" data-testid="new-number">
+      <span
+        className="truncate text-blue-600 group-aria-busy/grid:opacity-50"
+        data-testid="new-number"
+      >
         {previewLabel === '' ? MESSAGES.order.tile.noNumber : previewLabel}
       </span>
       <span className="sr-only">

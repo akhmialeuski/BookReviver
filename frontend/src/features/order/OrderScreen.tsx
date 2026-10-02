@@ -1,3 +1,4 @@
+import { useIsMutating } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { useEffect, useMemo, useState } from 'react';
 import type { PageSchema } from '@/api';
@@ -102,6 +103,8 @@ export function OrderScreen({
   );
   const places = useMemo(() => placesToCheck(pages, gaps), [pages, gaps]);
   const preview = usePreviewLabels(projectId, pages, draft, manifest.dataUpdatedAt);
+  // The grid is a step behind the server while a change is in flight or a read is on its way
+  const busy = useIsMutating() > 0 || manifest.isFetching || preview.isFetching;
 
   // The last change that the server refused: a move, or the adding of pages
   const failed = movePages.isError || createPages.isError;
@@ -127,11 +130,13 @@ export function OrderScreen({
     }
   };
 
-  if (manifest.isError) {
-    return <ErrorAlert message={describeError(manifest.error)} />;
-  }
+  // A read that failed while the pages are in hand leaves them on screen, and the next read puts them right
   if (manifest.data === undefined) {
-    return <p className="p-4 text-sm text-muted-foreground">{MESSAGES.common.loading}</p>;
+    return manifest.isError ? (
+      <ErrorAlert message={describeError(manifest.error)} />
+    ) : (
+      <p className="p-4 text-sm text-muted-foreground">{MESSAGES.common.loading}</p>
+    );
   }
 
   const canvas = (
@@ -163,6 +168,7 @@ export function OrderScreen({
         previewLabels={draft === null ? undefined : preview.data}
         addingGapKey={adding}
         moveError={failed ? describePageError(failure) : null}
+        busy={busy}
         focus={focus}
         onDismissError={() => {
           movePages.reset();
