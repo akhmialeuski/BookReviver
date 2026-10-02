@@ -1512,17 +1512,32 @@ The project list counts in `page_count` the included pages of the book, and show
     in place of the counts of files and scans.
   - The Order stage is not a strip, a canvas and a recipe. The route hands it to `features/order/OrderScreen.tsx`, which
     draws the whole workspace of two parts, a grid of the pages and the panel on the right.
-    - The grid (`OrderGrid.tsx`) shows every page of the manifest, with the size of its tiles on a slider, one by one or
+    - The grid (`OrderGrid.tsx`) lays out every page of the manifest, with the size of its tiles on a slider, one by one or
       as the spreads of `features/viewer/spread.ts`, so the cover stands alone on the right and the pairs after it are an
       odd page with the even page that follows. A tile (`OrderTile.tsx`) shows the picture, the printed number or "no
       number", the kind, the place `#n` in the book, a mark for a page left out and a dashed box for a missing page.
       A click selects a page, `Shift` extends the selection and `Ctrl` or `Cmd` adds one, by `selectionAfterClick` of
       `features/workspace/selection.ts`.
+    - The grid is virtual, as the strip is. `columnsOf` of `features/order/layout.ts` counts the columns from the width
+      of the scroller (a `ResizeObserver`), the tile size and the gap, `rowsOf` cuts the cells of `layoutOf` into rows of
+      that many, and `useVirtualizer` of `@tanstack/react-virtual` draws only the rows in sight and two around them, with
+      `measureElement` because a row is as tall as its tallest picture or gap card. The key of a row names the tile size
+      and the column count, so heights measured at another width are not reused. The Order stage asks the grid to bring a
+      cell into view with a `FocusRequest` (a gap card or a page chosen from the places to check), and the grid turns the
+      cell into its row (`rowOfCells`) and calls `virtualizer.scrollToIndex`, which works for a row that is not in the
+      document. Selection, the numbering preview and the drop bar are state of the grid and the screen, not of a tile,
+      so a tile that comes back into the document shows them right.
     - Dragging is `@dnd-kit/core` with `@dnd-kit/sortable`. The tiles are sortable items that never shift, a bar on the
       side of the tile under the pointer shows the place, and a drag carries the selected pages when the held one is
       selected (`features/order/drag.ts`). A page dropped on a later page lands after it, and on an earlier page
       before it, and the drop on a carried page names no place. The keyboard sensor lifts with `Space`, moves with the
       arrows and drops with `Space`, while `Enter` keeps selecting, and the announcements are in `MESSAGES.order.drag`.
+      `SortableContext` lists the ids of all the pages, but only the tiles in the document are registered with dnd-kit, and
+      the auto-scroll of dnd-kit scrolls the scroller when a held page nears its edge, so the virtualizer draws the rows
+      that come into sight and a page can be dropped on any tile that has been drawn. The row of the held page stays in
+      the document while it is held (`rangeExtractor`), so the drag never loses its source. The keyboard sensor chooses its
+      next place among the tiles that are registered, so a keyboard move reaches the rows in the document and no row
+      beyond them, and the dialog "Move to another place" is the way to a distant place.
       A drop calls `useMovePages`, which applies the move to the manifest at once and puts it back on an error, and the
       screen says what the server refused above the grid.
     - A gap in the printed numbers is found in the browser by `features/pages/gaps.ts` from the labels in book order,
