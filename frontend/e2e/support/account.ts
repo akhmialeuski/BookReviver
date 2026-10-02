@@ -85,14 +85,11 @@ export async function openImportStage(page: Page): Promise<void> {
   await expect(page.getByTestId('stage-title')).toHaveText('Import');
 }
 
-/**
- * Open the Order stage of the open book, which shows the page strip and its actions until the Order workspace
- * replaces it.
- */
+/** Open the Order stage of the open book, which shows its pages as a grid. */
 export async function openOrderStage(page: Page): Promise<void> {
   await page.getByTestId('stage-page-order').click();
   await expect(page).toHaveURL(/\/projects\/[^/]+\/stages\/page-order(\?|$)/);
-  await expect(page.getByTestId('order-bridge')).toBeVisible();
+  await expect(page.getByTestId('order-grid')).toBeVisible();
 }
 
 /**

@@ -108,3 +108,53 @@ export function firstPageOfScan(
 ): PageSchema | undefined {
   return pages.find((page) => page.scan_id === scanId);
 }
+
+/** How many pages of the book are shown on each side of the moved ones in the sentence about the new order. */
+const READING_CONTEXT = 2;
+
+/** The moved pages shown before the rest are folded into one mark, so a long group still fits one line. */
+const READING_GROUP_SHOWN = 4;
+
+/** One step of the sentence about the new order: a page, with whether it is one of the moved ones, or a fold. */
+export type ReadingEntry = { kind: 'page'; page: PageSchema; moved: boolean } | { kind: 'more' };
+
+/**
+ * Show how the book reads around the place a move puts pages, before the move is made.
+ *
+ * @param pages The pages of the book in book order.
+ * @param ids The pages to move.
+ * @param anchor The place to move them to.
+ * @returns The two pages before the moved ones, the moved ones in a row (the middle of a long group folded into one
+ * mark), and the two pages after them, or null when the move cannot be made, as {@link movePages} gives null. Each page
+ * is the page as it is now, with the place in the book it has now, so the names in the sentence are the names on the
+ * screen.
+ */
+export function readingWindow(
+  pages: readonly PageSchema[],
+  ids: Iterable<string>,
+  anchor: PageAnchor,
+): ReadingEntry[] | null {
+  const moving = new Set(ids);
+  const moved = movePages(pages, moving, anchor);
+  if (moved === null) {
+    return null;
+  }
+  const current = new Map(pages.map((page) => [page.id, page]));
+  const entries = moved.map((page) => ({
+    kind: 'page' as const,
+    page: current.get(page.id) ?? page,
+    moved: moving.has(page.id),
+  }));
+  const first = entries.findIndex((entry) => entry.moved);
+  const last = entries.findLastIndex((entry) => entry.moved);
+  const group = entries.slice(first, last + 1);
+  const shown: ReadingEntry[] =
+    group.length > READING_GROUP_SHOWN
+      ? [...group.slice(0, READING_GROUP_SHOWN - 2), { kind: 'more' }, ...group.slice(-1)]
+      : group;
+  return [
+    ...entries.slice(Math.max(first - READING_CONTEXT, 0), first),
+    ...shown,
+    ...entries.slice(last + 1, last + 1 + READING_CONTEXT),
+  ];
+}
