@@ -78,6 +78,31 @@ export async function writePagesFolder(count: number): Promise<string> {
   return root;
 }
 
+const SCAN_SIZE = { width: 160, height: 90 };
+const TALL_SCAN_SIZE = { width: 60, height: 90 };
+
+/**
+ * Write a folder of wide solid-colour scans, which look like open books, and one tall page, and return its path.
+ *
+ * @param wideScans Number of scans wider than tall.
+ */
+export async function writeScansFolder(wideScans: number): Promise<string> {
+  const root = path.join(await mkdtemp(path.join(tmpdir(), 'bookreviver-')), 'scans');
+  await mkdir(root, { recursive: true });
+  for (let number = 1; number <= wideScans; number += 1) {
+    const color = [(number * 61) % 256, (number * 17) % 256, 200] as const;
+    await writeFile(
+      path.join(root, `scan-${number}.png`),
+      solidPng(SCAN_SIZE.width, SCAN_SIZE.height, color),
+    );
+  }
+  await writeFile(
+    path.join(root, 'tall.png'),
+    solidPng(TALL_SCAN_SIZE.width, TALL_SCAN_SIZE.height, [10, 200, 30]),
+  );
+  return root;
+}
+
 /** Return the identifier of the book open in the page, read from its address. */
 export function openProjectId(page: Page): string {
   const id = new URL(page.url()).pathname.match(/\/projects\/([^/]+)/)?.[1];

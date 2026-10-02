@@ -1,5 +1,6 @@
 import { LoaderCircleIcon } from 'lucide-react';
-import { type Ref, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { type ReactNode, type Ref, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import type { EditorScene } from '@/features/editors/scene';
 import type { ComparePair } from '@/features/processing/compare';
 import { clampDivider, DIVIDER_CENTRE } from '@/features/processing/compare';
 import { CompareStage } from '@/features/processing/compareStage';
@@ -17,6 +18,9 @@ import { MESSAGES } from '@/shared/messages';
  * changes. The swipe has a divider the reader drags, or moves with the arrow keys once it has the focus, and holding
  * Space shows the picture before in every mode. The `data-state` of the canvas says where the loading stands, which the
  * end-to-end scenarios wait on, as they do for the canvas of the reading mode.
+ *
+ * A page editor is drawn over the canvas by the `overlay` the screen passes in. It gets the viewer and the one picture
+ * the page is on, once that picture is loaded, and the page is fitted with room round it for the editor's labels.
  */
 
 const labels = MESSAGES.processing.compare;
@@ -32,6 +36,8 @@ export function CompareCanvas({
   notice,
   pageIds,
   handle,
+  overlay,
+  roomShare = 0,
 }: {
   pairs: ComparePair;
   mode: CompareMode;
@@ -45,6 +51,10 @@ export function CompareCanvas({
   notice: { text: string; working: boolean } | null;
   pageIds: readonly string[];
   handle?: Ref<PageCanvasHandle>;
+  /** Draws a page editor over the canvas, or is left out when no editor is open. */
+  overlay?: (scene: EditorScene) => ReactNode;
+  /** The room to leave round the page when it is fitted, as a share of its height. */
+  roomShare?: number;
 }): React.JSX.Element {
   const [first, setFirst] = useState<HTMLDivElement | null>(null);
   const [aside, setAside] = useState<HTMLDivElement | null>(null);
@@ -98,6 +108,7 @@ export function CompareCanvas({
   useEffect(() => stage?.setMode(mode), [stage, mode]);
   useEffect(() => stage?.setDivider(divider), [stage, divider]);
   useEffect(() => stage?.setHolding(holding), [stage, holding]);
+  useEffect(() => stage?.setPadding(roomShare), [stage, roomShare]);
 
   useImperativeHandle(handle, () => ({
     fit: () => stage?.fit(),
@@ -141,6 +152,10 @@ export function CompareCanvas({
           data-testid="viewer-canvas-after"
         />
       </div>
+
+      {overlay === undefined || stage === null || state !== 'ready' || stage.image === null
+        ? null
+        : overlay({ viewer: stage.viewer, image: stage.image })}
 
       {swipe ? (
         <div

@@ -1438,8 +1438,8 @@ The project list counts in `page_count` the included pages of the book, and show
 ## Frontend
 
 - React 19, TypeScript, Vite, TanStack Router (file-based routes) and TanStack Query, shadcn/ui on Radix with
-  Tailwind CSS 4, lucide icons, and `@dnd-kit/core` with `@dnd-kit/sortable` for dragging the pages of the Order
-  stage, since `@dnd-kit/react` is still at version 0.5. Biome lints and formats, `tsc --noEmit` checks types, Vitest
+  Tailwind CSS 4, lucide icons, `@dnd-kit/core` with `@dnd-kit/sortable` for dragging the pages of the Order
+  stage, since `@dnd-kit/react` is still at version 0.5, and `react-konva` for the page editors. Biome lints and formats, `tsc --noEmit` checks types, Vitest
   runs unit tests, Playwright runs end-to-end tests. FastAPI serves the built application through `app.frontend()` from
   `settings.frontend_dir` (`frontend/dist`) when that directory exists. The router of FastAPI tries the API routes
   first and answers an unknown path with `index.html` only to a request that accepts HTML, so a reload of a
@@ -1635,7 +1635,33 @@ The project list counts in `page_count` the included pages of the book, and show
   page and writes the whole row back, and two changes of one page in flight together would lose the first.
 - Editors are a react-konva layer kept in step with the OpenSeadragon viewport. An editor registry maps each
   `EditorKind` to a component: draggable frame, quad with corner handles, rotation handle, dewarp mesh, brush and
-  eraser, region polygons labelled text or illustration.
+  eraser, region polygons labelled text or illustration. The split line and the rotation exist so far
+  (`features/editors/`), and the others come with their plugins.
+  - The layer (`EditorLayer.tsx`) is a Konva `Stage` laid over the canvas of the compare. It follows the viewer through
+    `viewport-change`, `resize` and `animation-finish` (`scene.ts`) and turns the pixels of an edit into pixels of the
+    screen and back with `imageToViewerElementCoordinates` and `viewerElementToImageCoordinates` of the picture
+    (`mapping.ts`), so a shape keeps its place on the page at any zoom, pan and rotation of the view. Because the stage
+    covers the viewer it takes the pointer, so the wheel zooms and a drag on the empty page pans by the viewport, and a
+    drag that starts on a shape belongs to the shape. The layer is a slider for the keyboard, so the arrow keys are its
+    own and not page turns.
+  - An editor is written against its typed shape (`EditorDefinition<S>` in `types.ts`, shapes in `shapes.ts`) and
+    registered in `registry.tsx`, which wraps it so that the rest of the screen handles only the JSON of an edit.
+    `EditorShapes` lists the shapes, `EDITORS` must have an entry for each, and the entry of a kind must draw that
+    kind's shape, so a new editor is a shape, a definition and one line. The editor of a stage is the first processor of
+    its catalogue whose `editor` has an entry (`useEditorSession.tsx`).
+  - The `line` editor (`LineCanvas.tsx`) draws the cut over the whole scan in the pixels of the scan, with an end to
+    drag at the top and the bottom, arrow keys that move the line by 1 pixel or 10 with Shift, and above the scan the
+    labels of the halves with the pages they become. Its edit belongs to the left page of the scan and it is always
+    open on the Split stage. The `rotation` editor (`RotationCanvas.tsx`) opens with "Set by hand", turns the picture the
+    step reads by the angle as it is set, draws level guides over it, and takes the angle from a handle round the page,
+    the field in the panel or `Alt` and the wheel, a tenth of a degree a notch. While an editor is open the canvas shows
+    the one picture it lies on and the compare is off.
+  - An edit is saved with `PUT .../pages/{page_id}/edits/{stage}/{processor_key}` when the handle is let go, the field is
+    left or a pause follows the keys or the wheel, and then the stage is run on that one page with the recipe that uses
+    the processor, which waits while another job of the book is going and is asked once for any number of saves. A scan
+    kept whole is not cut by moving its line. "Auto" deletes the edit and runs again, and Ctrl+Z restores the edit the
+    page had before the last change, or deletes the edit when it had none (`history.ts`). The panel shows the method of
+    the result, `Automatic` or `By hand`, read from the `edit_hash` of the current version.
 
 ## Testing
 

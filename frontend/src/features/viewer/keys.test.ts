@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type KeyPress, viewerKeyAction } from '@/features/viewer/keys';
+import { isTypingTarget, type KeyPress, viewerKeyAction } from '@/features/viewer/keys';
 
 function press(key: string, extra: Partial<KeyPress> = {}): KeyPress {
   return {
@@ -53,5 +53,22 @@ describe('viewerKeyAction', () => {
   it('still acts on a key pressed on a button', () => {
     const target = document.createElement('button');
     expect(viewerKeyAction(press('ArrowLeft', { target }), false)).toBe('previous');
+  });
+});
+
+describe('isTypingTarget', () => {
+  it.each(['input', 'textarea', 'select'])('is true for a %s', (tag) => {
+    expect(isTypingTarget(document.createElement(tag))).toBe(true);
+  });
+
+  it('is false for a slider, which keeps its arrow keys but has no text to undo', () => {
+    const slider = document.createElement('div');
+    slider.setAttribute('role', 'slider');
+    expect(isTypingTarget(slider)).toBe(false);
+  });
+
+  it('is false for a button and for nothing', () => {
+    expect(isTypingTarget(document.createElement('button'))).toBe(false);
+    expect(isTypingTarget(null)).toBe(false);
   });
 });

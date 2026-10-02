@@ -68,6 +68,7 @@ export class CompareStage {
   private generation = 0;
   private syncing = false;
   private hasFitted = false;
+  private padding = 0;
 
   /**
    * Create the viewers inside two elements.
@@ -80,6 +81,28 @@ export class CompareStage {
     this.first = OpenSeadragon({ element, ...VIEWER_OPTIONS });
     this.first.addHandler('animation', () => this.follow(this.first, this.second));
     this.first.addHandler('resize', () => this.follow(this.first, this.second));
+  }
+
+  /** The first viewer, which a layer drawn over the canvas follows. */
+  get viewer(): OpenSeadragon.Viewer {
+    return this.first;
+  }
+
+  /** The picture an editor lies on: the one after, else the one before. */
+  get image(): OpenSeadragon.TiledImage | null {
+    return this.after ?? this.before;
+  }
+
+  /**
+   * Leave room round the page when it is fitted, such as for the labels an editor puts above it.
+   *
+   * @param share The room on each side as a share of the height of the page.
+   */
+  setPadding(share: number): void {
+    if (share !== this.padding) {
+      this.padding = share;
+      this.fit(true);
+    }
   }
 
   /**
@@ -167,7 +190,13 @@ export class CompareStage {
   fit(immediately = false): void {
     const size = (this.after ?? this.before)?.getContentSize();
     const aspect = size === undefined ? 0.7 : size.x / size.y;
-    const rect = new OpenSeadragon.Rect(0, 0, aspect * PAGE_HEIGHT, PAGE_HEIGHT);
+    const room = this.padding * PAGE_HEIGHT;
+    const rect = new OpenSeadragon.Rect(
+      -room,
+      -room,
+      aspect * PAGE_HEIGHT + 2 * room,
+      PAGE_HEIGHT + 2 * room,
+    );
     this.first.viewport.fitBounds(rect, immediately);
     this.second?.viewport.fitBounds(rect, immediately);
   }

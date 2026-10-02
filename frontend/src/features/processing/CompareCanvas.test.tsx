@@ -19,7 +19,10 @@ const stage = vi.hoisted(() => ({
   setMode: vi.fn(),
   setDivider: vi.fn(),
   setHolding: vi.fn(),
+  setPadding: vi.fn(),
   destroy: vi.fn(),
+  viewer: { name: 'viewer' },
+  image: { name: 'image' } as { name: string } | null,
 }));
 
 vi.mock('@/features/processing/compareStage', () => ({
@@ -31,7 +34,12 @@ vi.mock('@/features/processing/compareStage', () => ({
     setMode = stage.setMode;
     setDivider = stage.setDivider;
     setHolding = stage.setHolding;
+    setPadding = stage.setPadding;
     destroy = stage.destroy;
+    viewer = stage.viewer;
+    get image() {
+      return stage.image;
+    }
     fit = vi.fn();
     zoomIn = vi.fn();
     zoomOut = vi.fn();
@@ -49,6 +57,7 @@ describe('CompareCanvas', () => {
     mode: CompareMode,
     pairs: ComparePair = { before: BEFORE, after: AFTER },
     notice: { text: string; working: boolean } | null = null,
+    editor: Pick<React.ComponentProps<typeof CompareCanvas>, 'overlay' | 'roomShare'> = {},
   ): void {
     act(() =>
       root.render(
@@ -59,6 +68,7 @@ describe('CompareCanvas', () => {
           afterLabel="After · Geometry"
           notice={notice}
           pageIds={['p1']}
+          {...editor}
         />,
       ),
     );
@@ -75,7 +85,9 @@ describe('CompareCanvas', () => {
     stage.setMode.mockReset();
     stage.setDivider.mockReset();
     stage.setHolding.mockReset();
+    stage.setPadding.mockReset();
     stage.destroy.mockReset();
+    stage.image = { name: 'image' };
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -99,6 +111,33 @@ describe('CompareCanvas', () => {
     expect(
       container.querySelector('[data-testid="viewer-canvas"]')?.getAttribute('data-state'),
     ).toBe('ready');
+  });
+
+  it('draws an editor over the picture once it is loaded, with the viewer and the picture it lies on', async () => {
+    const overlay = vi.fn((scene: unknown) => (
+      <p data-testid="editor-stand-in">{JSON.stringify(scene)}</p>
+    ));
+    render(CompareMode.Off, { before: null, after: AFTER }, null, { overlay, roomShare: 0.08 });
+    expect(container.querySelector('[data-testid="editor-stand-in"]')).toBeNull();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="editor-stand-in"]')?.textContent).toBe(
+      JSON.stringify({ viewer: stage.viewer, image: stage.image }),
+    );
+    expect(stage.setPadding).toHaveBeenLastCalledWith(0.08);
+  });
+
+  it('draws no editor when none is passed in, and leaves no room round the page', async () => {
+    render(CompareMode.Off);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="editor-stand-in"]')).toBeNull();
+    expect(stage.setPadding).toHaveBeenLastCalledWith(0);
   });
 
   it('does not load the pictures again when only the mode changes', async () => {
