@@ -18,7 +18,8 @@ import {
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
- * A delete button that asks before it removes an uploaded file with its scans.
+ * A delete button, wide as the panel of the Import stage that holds it, that asks before it removes an uploaded file
+ * with its scans.
  *
  * The pages of the book keep their own copies of the images, so they stay; what is lost is the way back to the scan,
  * which the text of the question says. While the book is importing the server refuses with a conflict, and its
@@ -45,11 +46,11 @@ export function DeleteSourceDialog({
     >
       <DialogTrigger asChild>
         <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={MESSAGES.book.sources.remove(source.file_name)}
+          variant="outline"
+          className="w-full border-destructive/40 text-destructive hover:text-destructive"
         >
           <Trash2Icon />
+          {MESSAGES.book.sources.remove}
         </Button>
       </DialogTrigger>
       <DialogContent>

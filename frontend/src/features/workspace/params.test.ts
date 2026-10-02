@@ -7,6 +7,7 @@ describe('parseStageSearch', () => {
       parseStageSearch({
         page: 'p-1',
         scan: 's-1',
+        source: 'f-1',
         view: 'spread',
         compare: 'swipe',
         filter: 'left-out',
@@ -14,6 +15,7 @@ describe('parseStageSearch', () => {
     ).toEqual({
       page: 'p-1',
       scan: 's-1',
+      source: 'f-1',
       view: ViewMode.Spread,
       compare: CompareMode.Swipe,
       filter: PageFilter.LeftOut,
@@ -47,11 +49,18 @@ describe('parseStageSearch', () => {
   });
 
   it('writes back an identifier the router decoded as a number', () => {
-    expect(parseStageSearch({ page: 12, scan: 7 })).toEqual({ page: '12', scan: '7' });
+    expect(parseStageSearch({ page: 12, scan: 7, source: 3 })).toEqual({
+      page: '12',
+      scan: '7',
+      source: '3',
+    });
   });
 
   it('trims an identifier and drops an empty or foreign one', () => {
-    expect(parseStageSearch({ page: '  p-1 ', scan: '   ' })).toEqual({ page: 'p-1' });
-    expect(parseStageSearch({ page: {}, scan: ['s-1'] })).toEqual({});
+    expect(parseStageSearch({ page: '  p-1 ', scan: '   ', source: ' f-1' })).toEqual({
+      page: 'p-1',
+      source: 'f-1',
+    });
+    expect(parseStageSearch({ page: {}, scan: ['s-1'], source: {} })).toEqual({});
   });
 });

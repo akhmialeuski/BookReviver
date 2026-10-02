@@ -46,6 +46,11 @@ export interface StageSearch {
   page?: string;
   /** Identifier of the scan that is open on the stages that work on scans, or absent for the first scan. */
   scan?: string;
+  /**
+   * Identifier of the file, a source, that the screen is about: the file selected on the Import stage, and the file
+   * whose pages the Order stage selects. Absent for no file in particular.
+   */
+  source?: string;
   /** Absent for {@link ViewMode.Page}. */
   view?: ViewMode;
   /** Absent for {@link CompareMode.Off}. */
@@ -71,6 +76,7 @@ export function parseStageSearch(search: Record<string, unknown>): StageSearch {
   const result: StageSearch = {};
   const page = parseIdentifier(search.page);
   const scan = parseIdentifier(search.scan);
+  const source = parseIdentifier(search.source);
   const view = oneOf(ViewMode, search.view);
   const compare = oneOf(CompareMode, search.compare);
   const filter = oneOf(PageFilter, search.filter);
@@ -79,6 +85,9 @@ export function parseStageSearch(search: Record<string, unknown>): StageSearch {
   }
   if (scan !== undefined) {
     result.scan = scan;
+  }
+  if (source !== undefined) {
+    result.source = source;
   }
   if (view !== undefined) {
     result.view = view;

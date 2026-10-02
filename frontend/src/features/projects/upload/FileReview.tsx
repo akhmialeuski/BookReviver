@@ -1,5 +1,11 @@
 import { ArrowDownIcon, ArrowUpIcon, FolderIcon, XIcon } from 'lucide-react';
-import { Direction, fileNameOf, groupByFolder, totalBytes } from '@/features/projects/upload/files';
+import {
+  Direction,
+  fileNameOf,
+  groupByFolder,
+  type SkippedFile,
+  totalBytes,
+} from '@/features/projects/upload/files';
 import type { Selection, SelectionAction } from '@/features/projects/upload/selection';
 import { formatBytes } from '@/shared/lib/format';
 import { MESSAGES } from '@/shared/messages';
@@ -11,6 +17,38 @@ import { Button } from '@/shared/ui/button';
  * take it out and buttons to move it, and the same buttons for a whole folder. Files the upload leaves out, such as
  * the system files of a folder, are named below with the reason.
  */
+
+/** The files a pick leaves out, each with the reason, folded under their number; nothing when none was left out. */
+export function SkippedFiles({
+  skipped,
+}: {
+  skipped: readonly SkippedFile[];
+}): React.JSX.Element | null {
+  if (skipped.length === 0) {
+    return null;
+  }
+  return (
+    <details className="rounded-md border px-3 py-2 text-sm" data-testid="skipped-files">
+      <summary className="cursor-pointer font-medium">
+        {MESSAGES.upload.skipped.title(skipped.length)}
+      </summary>
+      <p className="mt-2 text-xs text-muted-foreground">{MESSAGES.upload.skipped.description}</p>
+      <ul className="mt-2 max-h-40 overflow-y-auto">
+        {skipped.map((entry) => (
+          <li
+            key={`${entry.reason}:${entry.path}`}
+            className="flex flex-wrap gap-x-3 py-0.5 text-xs"
+          >
+            <span className="break-all font-medium">{entry.path}</span>
+            <span className="text-muted-foreground">
+              {MESSAGES.upload.skipped.reasons[entry.reason]}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
 
 export function FileReview({
   selection,
@@ -163,29 +201,7 @@ export function FileReview({
         </ol>
       )}
 
-      {skipped.length === 0 ? null : (
-        <details className="rounded-md border px-3 py-2 text-sm" data-testid="skipped-files">
-          <summary className="cursor-pointer font-medium">
-            {MESSAGES.upload.skipped.title(skipped.length)}
-          </summary>
-          <p className="mt-2 text-xs text-muted-foreground">
-            {MESSAGES.upload.skipped.description}
-          </p>
-          <ul className="mt-2 max-h-40 overflow-y-auto">
-            {skipped.map((entry) => (
-              <li
-                key={`${entry.reason}:${entry.path}`}
-                className="flex flex-wrap gap-x-3 py-0.5 text-xs"
-              >
-                <span className="break-all font-medium">{entry.path}</span>
-                <span className="text-muted-foreground">
-                  {MESSAGES.upload.skipped.reasons[entry.reason]}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
+      <SkippedFiles skipped={skipped} />
     </div>
   );
 }

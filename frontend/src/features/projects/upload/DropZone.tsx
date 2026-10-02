@@ -15,8 +15,11 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 
 export function DropZone({
   onPick,
+  className,
 }: {
   onPick: (picked: PickedFile[]) => void;
+  /** Classes for the drop target, such as the padding of a zone that fills a screen. */
+  className?: string;
 }): React.JSX.Element {
   const folderInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -52,6 +55,7 @@ export function DropZone({
         className={cn(
           'flex flex-col items-center gap-3 rounded-lg border-2 border-dashed p-6 text-center transition-colors',
           dragging ? 'border-primary bg-accent' : 'border-input',
+          className,
         )}
         onDragOver={(event) => {
           event.preventDefault();

@@ -13,6 +13,7 @@ const NOT_A_DATE = '';
 
 const sizeFormat = new Intl.NumberFormat(LOCALE, { maximumFractionDigits: MAX_FRACTION_DIGITS });
 const dateFormat = new Intl.DateTimeFormat(LOCALE, { dateStyle: 'medium' });
+const dateTimeFormat = new Intl.DateTimeFormat(LOCALE, { dateStyle: 'medium', timeStyle: 'short' });
 
 /**
  * Write a size in bytes with the largest unit that keeps the number at or above one.
@@ -36,6 +37,16 @@ export function formatBytes(bytes: number): string {
 export function formatDate(timestamp: string): string {
   const date = new Date(timestamp);
   return Number.isNaN(date.getTime()) ? NOT_A_DATE : dateFormat.format(date);
+}
+
+/**
+ * Write the date and the time of an ISO 8601 timestamp the way a row quotes a moment, such as `Oct 1, 2026, 12:00 PM`.
+ *
+ * A text that is no date gives an empty string.
+ */
+export function formatDateTime(timestamp: string): string {
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? NOT_A_DATE : dateTimeFormat.format(date);
 }
 
 /** Pick the singular word for exactly one and the plural word for every other count. */

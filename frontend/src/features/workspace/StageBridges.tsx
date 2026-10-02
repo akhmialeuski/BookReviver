@@ -1,49 +1,14 @@
-import { useState } from 'react';
 import type { Stage } from '@/api';
 import { PageStrip } from '@/features/pages/PageStrip';
-import { ScansPanel } from '@/features/projects/ScansPanel';
-import { SourcesPanel } from '@/features/projects/SourcesPanel';
-import { ImportStatus } from '@/features/projects/upload/ImportStatus';
-import { UploadDialog } from '@/features/projects/upload/UploadDialog';
 
 /**
- * A bridge: what the old page of the book held, mounted on the stages that own it in the epic, until the tasks
- * "Import workspace" and "Order workspace" replace it with their own layouts.
+ * A bridge: what the old page of the book held, mounted on the stage that owns it in the epic, until the task
+ * "Order workspace" replaces it with its own layout.
  *
- * The Import stage shows the upload with its import status, the files of the book and its scans, and the Order stage
- * shows the page strip with its page actions. The components are the ones the page of the book used, as they were, so
- * the book can still get pages and have them arranged while the stage screens are built. Each stage that has a bridge
- * takes the place of the strip and the canvas of the workspace.
+ * The Order stage shows the page strip with its page actions, as the page of the book had it, so the pages can still
+ * be arranged while the stage screen is built. A stage that has a bridge takes the place of the strip and the canvas
+ * of the workspace. The Import stage has no bridge any more, since it has a screen of its own.
  */
-
-function ImportBridge({ projectId }: { projectId: string }): React.JSX.Element {
-  const [sourceId, setSourceId] = useState<string | null>(null);
-  const [jobId, setJobId] = useState<string | null>(null);
-
-  return (
-    <div
-      className="grid h-full content-start gap-6 overflow-y-auto p-4"
-      data-testid="import-bridge"
-    >
-      <div className="flex justify-end">
-        <UploadDialog projectId={projectId} onUploaded={(job) => setJobId(job.id)} />
-      </div>
-      {jobId === null ? null : (
-        <ImportStatus projectId={projectId} jobId={jobId} onDismiss={() => setJobId(null)} />
-      )}
-      <SourcesPanel
-        projectId={projectId}
-        selectedSourceId={sourceId}
-        onSelectSource={setSourceId}
-      />
-      <ScansPanel
-        projectId={projectId}
-        sourceId={sourceId}
-        onClearSource={() => setSourceId(null)}
-      />
-    </div>
-  );
-}
 
 function OrderBridge({ projectId }: { projectId: string }): React.JSX.Element {
   return (
@@ -62,8 +27,6 @@ function OrderBridge({ projectId }: { projectId: string }): React.JSX.Element {
  */
 export function bridgeOf(stage: Stage, projectId: string): React.ReactNode | null {
   switch (stage) {
-    case 'import':
-      return <ImportBridge projectId={projectId} />;
     case 'page-order':
       return <OrderBridge projectId={projectId} />;
     default:

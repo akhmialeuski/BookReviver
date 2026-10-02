@@ -6,12 +6,13 @@ import { confirmationLink, PASSWORD } from './support/account';
 import { solidPng } from './support/png';
 
 /**
- * The first journey of a reader: register, confirm the address from the mailed link, sign in, create a book, upload
- * a folder of page images with a system file and an unsupported file in it, rearrange it, and see the book with its
- * pages once the import has run.
+ * The first journey of a reader: register, confirm the address from the mailed link, sign in, create a book, drop a
+ * first file on the empty Import stage, add a folder of page images with a system file and an unsupported file in it
+ * through the dialog, rearrange it, and see the files of the book, their scans and the pages once the import has run.
  */
 
 const PAGE_SIZE = 40;
+const COVER_COLOR = [120, 60, 20] as const;
 
 // Page images by their path in the chosen folder, each with a colour of its own so none repeats another
 const PAGES: ReadonlyArray<readonly [string, readonly [number, number, number]]> = [
@@ -78,12 +79,34 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
   });
 
   await test.step('the Import stage has no files yet and the book waits for pages', async () => {
-    await expect(page.getByText('No files have been uploaded to this book yet.')).toBeVisible();
+    await expect(page.getByTestId('import-empty')).toBeVisible();
+    await expect(page.getByText('Drop a folder or files here')).toBeVisible();
+    await expect(page.getByTestId('import-tips')).toContainText('Good to know');
+    await expect(page.getByTestId('stage-import')).toContainText('No files yet');
     await expect(page.getByTestId('stage-page-order')).toContainText('Waits for pages');
   });
 
+  await test.step('a file dropped on the empty stage is imported without a dialog', async () => {
+    // A synthetic drop has no folder entries, so the zone reads the plain file, as it does for a dropped file
+    const dropped = await page.evaluateHandle(
+      (bytes) => {
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([new Uint8Array(bytes)], 'cover.png', { type: 'image/png' }));
+        return transfer;
+      },
+      Array.from(solidPng(PAGE_SIZE, PAGE_SIZE, COVER_COLOR)),
+    );
+    await page.getByTestId('drop-zone').dispatchEvent('drop', { dataTransfer: dropped });
+
+    await expect(page.getByTestId('source-name')).toHaveText(['cover.png'], { timeout: 60_000 });
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByTestId('import-row')).toHaveCount(0);
+    await expect(page.getByTestId('files-summary')).toContainText('1 file · 1 scan');
+    await expect(page.getByTestId('stage-import')).toContainText('1 file · 1 scan');
+  });
+
   await test.step('choose the folder and check the list before sending', async () => {
-    await page.getByRole('button', { name: 'Upload files' }).click();
+    await page.getByRole('button', { name: 'Add files' }).click();
     await page.getByTestId('folder-input').setInputFiles(folder);
 
     // Natural order: 10 comes after 2, and the folders follow each other
@@ -123,25 +146,48 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
 
   await test.step('send and follow the import to its end', async () => {
     await page.getByRole('button', { name: 'Upload 5 files' }).click();
-    await expect(page.getByTestId('job-state')).toHaveText('Finished', { timeout: 60_000 });
+    await expect(page.getByRole('dialog')).toHaveCount(0);
 
-    await expect(page.getByTestId('import-status')).toContainText(
-      '4 sources imported into the book.',
-    );
+    // The report of the import stays under the list until it is closed
+    const status = page.getByTestId('import-status');
+    await expect(status.getByTestId('job-state')).toHaveText('Finished', { timeout: 60_000 });
+    await expect(status).toContainText('4 files imported into the book.');
     const rejected = page.getByTestId('rejected-files');
     await expect(rejected).toContainText('book/vol2/broken.png');
     await expect(rejected).toContainText('Cannot be read');
+    await expect(page.getByTestId('import-row')).toHaveCount(0);
   });
 
-  await test.step('the book shows its pages, sources in the order that was chosen, and scans', async () => {
-    await expect(page.getByTestId('stage-page-order')).toContainText('4 pages');
+  await test.step('the book lists its files in the order that was chosen, and counts their pages', async () => {
+    await expect(page.getByTestId('stage-page-order')).toContainText('5 pages');
     await expect(page.getByTestId('source-name')).toHaveText([
+      'cover.png',
       'book/vol2/a-1.png',
       'book/vol1/1.png',
       'book/vol1/2.png',
       'book/vol1/10.png',
     ]);
-    await expect(page.getByRole('img', { name: /^Scan \d+$/ })).toHaveCount(4);
+    await expect(page.getByTestId('stage-import')).toContainText('5 files · 5 scans');
+  });
+
+  await test.step('choose a file to see its scans and what became of its pages', async () => {
+    // The first file is chosen until another is
+    await expect(page.getByTestId('source-row').first()).toHaveAttribute('aria-pressed', 'true');
+
+    await page.getByTestId('source-row').nth(2).click();
+    await expect(page).toHaveURL(/[?&]source=/);
+    await expect(page.getByTestId('source-row').nth(2)).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('file-panel')).toContainText('book/vol1/1.png');
+    await expect(page.getByTestId('file-pages')).toContainText(
+      'Its 1 scan became page 3 of the book.',
+    );
+    await expect(page.getByTestId('scan-tile')).toHaveCount(1);
+    await expect(page.getByRole('img', { name: 'Scan 1' })).toBeVisible();
+  });
+
+  await test.step('close the report of the import', async () => {
+    await page.getByTestId('import-status').getByRole('button', { name: 'Dismiss' }).click();
+    await expect(page.getByTestId('import-status')).toHaveCount(0);
   });
 
   await test.step('sign out closes the book again', async () => {
