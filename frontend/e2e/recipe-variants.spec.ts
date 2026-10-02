@@ -9,6 +9,7 @@ import {
   registerAndSignIn,
   snap,
   uploadFolder,
+  waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
 
@@ -81,6 +82,8 @@ test('plates get their own variant by a rule, a pinned variant survives a run on
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });
+    // The collection of old versions that follows the run refuses what the next step asks while it is queued or going
+    await waitForIdleJobs(page, openProjectId(page));
   };
   let bookPath = '';
   // The names of the two variants, read from the book once it is open: the active recipe, and the copy made of it
@@ -105,7 +108,11 @@ test('plates get their own variant by a rule, a pinned variant survives a run on
 
   await test.step('a copy of the recipe with settings of its own is the variant for the plates', async () => {
     await page.getByTestId('recipe-new').click();
-    await expect(page.getByTestId('recipe-select')).toContainText(platesVariant);
+    // The list holds the copy as an option before the screen switches to it, so the chosen option is awaited
+    await expect(page.getByTestId('recipe-select').locator('option:checked')).toContainText(
+      platesVariant,
+    );
+    await expect(page.getByTestId('recipe-active')).toHaveCount(0);
     // The recipe has several steps, closed at first, and only the deskew one has a largest slant
     const deskew = page.locator(
       `[data-testid="recipe-step"][data-processor="${DESKEW_PROCESSOR}"]`,
@@ -171,7 +178,8 @@ test('plates get their own variant by a rule, a pinned variant survives a run on
     await expect(first).toHaveAttribute('data-pinned', 'true');
     await expect(page.getByTestId('page-variant-source')).toHaveText('Pinned to this page');
 
-    // The run that pinned the variant is over once the menu of the run is free again
+    // The run that pinned the variant is over, with the collection that follows it, once the book has no job to wait for
+    await waitForIdleJobs(page, openProjectId(page));
     await expect(page.getByTestId('run-menu')).toBeEnabled({ timeout: RUN_TIMEOUT_MS });
     await page.getByTestId('recipe-select').selectOption({ index: 0 });
     await runAll();

@@ -18,7 +18,8 @@ import { invalidateStageRows, invalidateStageSummary } from '@/features/projects
 import { isTypingTarget } from '@/features/viewer/keys';
 import { useActiveJobs } from '@/features/workspace/queries';
 import type { StripItem } from '@/features/workspace/strip';
-import { describeError } from '@/shared/http/problem';
+import { describeError, ProblemError } from '@/shared/http/problem';
+import { HttpStatus } from '@/shared/http/status';
 import { MESSAGES } from '@/shared/messages';
 
 /**
@@ -131,7 +132,17 @@ export function useEditorSession({
         path: { project_id: projectId, stage },
         body: { recipe_id: wanted.recipeId, page_ids: [wanted.pageId] },
       },
-      { onError: (failure) => setError(describeError(failure)) },
+      {
+        onError: (failure) => {
+          if (failure instanceof ProblemError && failure.status === HttpStatus.Conflict) {
+            // A job the book queued after the last one, such as the clearing of old results, is not on the list of
+            // active jobs yet, so the run waits for the next quiet moment instead of being lost
+            setWanted((newer) => newer ?? { ...wanted });
+          } else {
+            setError(describeError(failure));
+          }
+        },
+      },
     );
   }, [wanted, idle, startRun, projectId, stage]);
 

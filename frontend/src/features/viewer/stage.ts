@@ -52,6 +52,8 @@ export interface ShownView {
 }
 
 const ZOOM_STEP = 1.5;
+/** Decimal digits of the width of a view, in page heights, that tell one layout from another. */
+const SHAPE_DIGITS = 2;
 const ANIMATION_SECONDS = 0.35;
 const HIDDEN = 0;
 const VISIBLE = 1;
@@ -100,6 +102,12 @@ export class ViewerStage {
   private layout: ViewLayout | null = null;
   private generation = 0;
   private hasFitted = false;
+  /**
+   * The pages, the fit and the layout of the view that was last fitted whole, or null while none was. A view that is
+   * the same keeps the reader's zoom when only the pictures of the pages are swapped, such as when a stage makes a new
+   * result of them.
+   */
+  private fittedFor: string | null = null;
   /** Whether the latest view is on the stage, so the position of the canvas belongs to it. */
   private settled = false;
 
@@ -118,6 +126,8 @@ export class ViewerStage {
       showNavigationControl: false,
       showNavigator: false,
       keyboardNavEnabled: false,
+      // The stage fits and restores the view itself, and a world that is down to one picture must not send it home
+      preserveViewport: true,
       animationTime: ANIMATION_SECONDS,
       visibilityRatio: 0.5,
       minZoomImageRatio: 0.5,
@@ -164,13 +174,16 @@ export class ViewerStage {
     for (const [url, item] of this.loaded) {
       item.setOpacity(current.has(url) ? VISIBLE : HIDDEN);
     }
-    // The first view of a screen goes back to where the reader left the canvas, and every later one is fitted
+    // The first view of a screen goes back to where the reader left the canvas, and every later one is fitted, unless
+    // it shows the same pages as the one fitted before, laid out the same, and only their pictures changed
+    const fittedFor = `${fit}:${view.map((page) => page.id).join(',')}:${layout.width.toFixed(SHAPE_DIGITS)}`;
     const restored = this.hasFitted ? null : (this.hooks.restore?.() ?? null);
-    if (restored === null) {
-      this.fit(fit, !this.hasFitted);
-    } else {
+    if (restored !== null) {
       this.look(restored);
+    } else if (fittedFor !== this.fittedFor) {
+      this.fit(fit, !this.hasFitted);
     }
+    this.fittedFor = failed.length === 0 ? fittedFor : null;
     this.hasFitted = true;
     this.settled = true;
 

@@ -328,6 +328,9 @@ test('a reader numbers pages with a preview and finds the pages that are missing
 
     await page.getByLabel('To', { exact: true }).selectOption(lastId);
     await expect(warning).toBeVisible();
+    // The warning of the numbering before is still shown until the server has answered for this one
+    await settled(page);
+    await expect(warning).toBeVisible();
     await page.getByRole('button', { name: 'Add the missing pages first' }).click();
     await expect(tiles).toHaveCount(PAGES + 2);
     await expect(page.getByTestId('hides-gap')).toHaveCount(0);

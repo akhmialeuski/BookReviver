@@ -71,6 +71,7 @@ export function CompareCanvas({
   const beforeUrl = pairs.before?.url ?? null;
   const afterKind = pairs.after?.kind ?? null;
   const afterUrl = pairs.after?.url ?? null;
+  const pageKey = pageIds.join(',');
 
   useHoldKey(hasBefore, setHolding);
   const place = usePlaceWriter();
@@ -103,7 +104,7 @@ export function CompareCanvas({
       beforeUrl === null || beforeKind === null ? null : { kind: beforeKind, url: beforeUrl };
     const after =
       afterUrl === null || afterKind === null ? null : { kind: afterKind, url: afterUrl };
-    void stage.show(before, after).then((shown) => {
+    void stage.show(before, after, pageKey).then((shown) => {
       if (current && shown !== null) {
         setState(shown.failed.length > 0 ? 'failed' : 'ready');
       }
@@ -111,7 +112,7 @@ export function CompareCanvas({
     return () => {
       current = false;
     };
-  }, [stage, beforeKind, beforeUrl, afterKind, afterUrl]);
+  }, [stage, beforeKind, beforeUrl, afterKind, afterUrl, pageKey]);
 
   useEffect(() => stage?.setMode(mode), [stage, mode]);
   useEffect(() => stage?.setDivider(divider), [stage, divider]);

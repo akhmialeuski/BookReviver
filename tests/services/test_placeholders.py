@@ -602,6 +602,57 @@ class TestAttachScan:
         expect([job.kind for job in fx_queue.enqueued] == [JobKind.PREPARE_PAGES])
         assert_expectations()
 
+    async def test_binds_the_scan_when_the_placeholder_is_changed_between_the_read_and_the_write(
+        self,
+        fx_database: InMemoryDatabase,
+        fx_asset_store: LocalAssetStore,
+        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        fx_actor: Actor,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Verify a printed number written while the scan is bound is kept, and the scan is bound anyway.
+
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_asset_store: Local asset store of the test.
+        :type fx_asset_store: LocalAssetStore
+        :param fx_runtime: The recording bus, the clock and the queue the service reports through.
+        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        :param monkeypatch: Fixture that restores the patched repository after the test.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        book, placeholder = await _placeholder_book(fx_database, fx_asset_store, fx_actor)
+        scan = await _spare_scan(fx_database, fx_asset_store, book)
+        uow = InMemoryUnitOfWork(fx_database)
+        read = uow.pages.get
+        rival_label = 'iv'
+
+        async def get_then_race(page_id: PageId) -> Page:
+            """Read a page, then let a rival request commit a new printed number of it.
+
+            :param page_id: Identifier of the page.
+            :type page_id: PageId
+            :returns: The page as it was before the rival wrote.
+            :rtype: Page
+            """
+            page = await read(page_id)
+            rival = InMemoryUnitOfWork(fx_database)
+            await rival.pages.update(evolve(await rival.pages.get(placeholder.id), label=rival_label))
+            await rival.commit()
+            return page
+
+        monkeypatch.setattr(uow.pages, 'get', get_then_race)
+
+        overview = await make_page_service(uow, fx_asset_store, fx_runtime).attach_scan(
+            fx_actor, book.project.id, placeholder.id, scan.id
+        )
+
+        expect((overview.page.origin, overview.page.scan_id) == (PageOrigin.SCAN, scan.id))
+        expect(overview.page.label == rival_label)
+        assert_expectations()
+
     async def test_keeps_the_label_the_placeholder_had(
         self,
         fx_service: Callable[[], PageService],
