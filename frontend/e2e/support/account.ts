@@ -109,5 +109,6 @@ export async function uploadFolder(page: Page, folder: string, files: number): P
   await expect(page.getByTestId('source-name')).toHaveCount(files, {
     timeout: IMPORT_TIMEOUT_MS,
   });
-  await expect(page.getByTestId('import-row')).toHaveCount(0);
+  // The job goes on after the last file is listed, so its row needs the same time as the import
+  await expect(page.getByTestId('import-row')).toHaveCount(0, { timeout: IMPORT_TIMEOUT_MS });
 }

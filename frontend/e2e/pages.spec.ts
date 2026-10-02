@@ -11,9 +11,9 @@ import {
 } from './support/account';
 
 /**
- * Arranging the pages of a book: open a page from the strip, move it from the viewer, move groups and a whole file
- * from the book page, edit and number pages, add a placeholder and bind a scan to it, delete a page and a file, read
- * a refusal of the server, and see a change made in another tab arrive without a reload.
+ * Arranging the pages of a book: open a page from the strip, and a scan and a file from the Import stage, move a page
+ * from the viewer, move groups and the page of a file, edit and number pages, add a placeholder and bind a scan to it,
+ * delete a page and a file, read a refusal of the server, and see a change made in another tab arrive without a reload.
  */
 
 const PAGES = 5;
@@ -28,6 +28,11 @@ async function stripOrder(page: Page): Promise<string[]> {
 
 function card(page: Page, id: string) {
   return page.locator(`[data-testid="page-card"][data-page-id="${id}"]`);
+}
+
+/** The row of a file on the Import stage, found by its name. */
+function sourceRow(page: Page, name: string) {
+  return page.getByTestId('source-row').filter({ hasText: name });
 }
 
 test('a reader arranges the pages of a book', async ({ page }) => {
@@ -58,17 +63,22 @@ test('a reader arranges the pages of a book', async ({ page }) => {
 
     await page.goBack();
     await expect(cards).toHaveCount(PAGES);
-    // The scans and the files are on the Import stage
+    // The scans and the files are on the Import stage, where a scan opens large in place
     await openImportStage(page);
-    await page.getByRole('link', { name: 'Scan 2', exact: true }).click();
-    await expect(page).toHaveURL(new RegExp(`viewer\\?page=${ids[1]}`));
-    await expect(caption).toContainText('2 of 5');
-
+    await sourceRow(page, 'book/page-02.png').click();
+    await page.getByTestId('scan-tile').first().click();
+    await expect(page).toHaveURL(/[?&]scan=/);
+    // The large scan takes the place of the list, and the address brings the list back
     await page.goBack();
-    await page
-      .getByRole('link', { name: 'View the pages of book/page-04.png in the viewer' })
-      .click();
-    await expect(page).toHaveURL(new RegExp(`viewer\\?page=${ids[3]}`));
+    await expect(sourceRow(page, 'book/page-04.png')).toBeVisible();
+
+    // A file leads to its pages on the Order stage
+    await sourceRow(page, 'book/page-04.png').click();
+    await page.getByRole('link', { name: 'Show its pages in Order' }).click();
+    await expect(page).toHaveURL(/stages\/page-order\?.*source=/);
+
+    const book = new URL(page.url()).pathname.replace(/\/stages\/.*$/, '');
+    await page.goto(`${book}/viewer?page=${ids[3]}`);
     await expect(caption).toContainText('4 of 5');
   });
 
@@ -181,19 +191,27 @@ test('a reader arranges the pages of a book', async ({ page }) => {
     await expect(page.getByTestId('page-name').last()).toHaveText('i');
   });
 
-  await test.step('move every page of a file to the start of the book', async () => {
+  await test.step('move the page of a file to the start of the book', async () => {
+    // The file's action leads to the Order stage, where its pages are moved like any other
     await openImportStage(page);
-    await page.getByRole('button', { name: 'Move the pages of book/page-02.png' }).click();
+    await sourceRow(page, 'book/page-02.png').click();
+    await page.getByRole('link', { name: 'Put its pages somewhere else…' }).click();
+    await expect(page).toHaveURL(/stages\/page-order\?.*source=/);
+    await card(page, ids[1] ?? '')
+      .getByRole('checkbox')
+      .click();
+    await page.getByRole('button', { name: 'Move selected' }).click();
     await page.getByLabel('Page to put them next to').selectOption({ index: 0 });
     await page.getByLabel('Place', { exact: true }).selectOption('before');
     await page.getByRole('button', { name: 'Move', exact: true }).click();
-    await openOrderStage(page);
     await expect.poll(async () => (await stripOrder(page))[0]).toBe(ids[1]);
+    await page.getByRole('button', { name: 'Clear the selection' }).click();
   });
 
   await test.step('delete a file after the confirmation, and keep its page', async () => {
     await openImportStage(page);
-    await page.getByRole('button', { name: 'Delete book/page-03.png' }).click();
+    await sourceRow(page, 'book/page-03.png').click();
+    await page.getByRole('button', { name: 'Delete this file…' }).click();
     await expect(page.getByText('Delete this file?')).toBeVisible();
     await page.getByRole('button', { name: 'Delete file' }).click();
     await expect(page.getByTestId('source-name')).toHaveCount(PAGES - 1);
