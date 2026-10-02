@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { PageTile } from '@/features/workspace/PageTile';
 import { PageFilter } from '@/features/workspace/params';
 import { StripToolbar } from '@/features/workspace/StripToolbar';
-import type { FilterCounts, StripItem, VariantView } from '@/features/workspace/strip';
+import type { FilterCounts, StopView, StripItem, VariantView } from '@/features/workspace/strip';
 import { useStripPlace } from '@/features/workspace/useStripPlace';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
@@ -50,6 +50,7 @@ export function StageGrid({
   reasonOf,
   withWide = false,
   variants,
+  stopped,
 }: {
   items: readonly StripItem[];
   total: number;
@@ -69,6 +70,8 @@ export function StageGrid({
   withWide?: boolean;
   /** The variants of the stage: a mark on each page, and the choice of one to list. Absent for none to choose from. */
   variants?: VariantView;
+  /** The steps a run stopped at, which narrow the pages to those stopped at one. Absent when no run stopped short. */
+  stopped?: StopView;
 }): React.JSX.Element {
   const scroller = useRef<HTMLDivElement>(null);
   const width = useElementWidth(scroller);
@@ -93,6 +96,7 @@ export function StageGrid({
         grid
         withWide={withWide}
         variants={variants}
+        stopped={stopped}
         onFilter={onFilter}
         onSwitchView={onList}
       />

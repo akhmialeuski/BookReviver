@@ -458,6 +458,34 @@ class Recipe:
         """The steps a run and a preview run, in order, which leaves out the ones switched off."""
         return tuple(step for step in self.steps if step.enabled)
 
+    def indexed_steps_through(self, through_step: int | None) -> tuple[tuple[int, Step], ...]:
+        """Give the steps that are on up to one of them, each with its index in the recipe.
+
+        :param through_step: Index of the last step to take, or None to take every step that is on.
+        :type through_step: int | None
+        :returns: The pairs of index and step in the order they run. Empty when every step up to the index is off.
+        :rtype: tuple[tuple[int, Step], ...]
+        """
+        return tuple(
+            (index, step)
+            for index, step in enumerate(self.steps)
+            if step.enabled and (through_step is None or index <= through_step)
+        )
+
+    def stopped_at(self, through_step: int | None) -> int | None:
+        """Tell where a run through one step stops when that is short of the last step that is on.
+
+        :param through_step: Index of the last step to run, or None for every step that is on.
+        :type through_step: int | None
+        :returns: The index of the last step that run makes, or None when it makes the last step that is on, or none.
+        :rtype: int | None
+        """
+        reached = self.indexed_steps_through(through_step)
+        every = self.indexed_steps_through(None)
+        if not reached or reached[-1] == every[-1]:
+            return None
+        return reached[-1][0]
+
 
 @frozen(kw_only=True)
 class RecipeProfile:
@@ -502,6 +530,9 @@ class PageStage:
     :ivar state: Whether the current version matches the inputs of the stage.
     :ivar pinned: Whether the user pinned ``recipe_id`` to the page, so that a run without a recipe processes the page
                   by it and not by a rule or the active recipe. A pin without a recipe holds nothing.
+    :ivar through_step: Index in the recipe of the last step the page was run through, when that is before the last
+                        step that is on, so the page is not ready for the next stage. None for a page run through every
+                        step that is on, and for a record no recipe made.
     :ivar updated_at: When the record last changed.
     """
 
@@ -511,6 +542,7 @@ class PageStage:
     head_version_id: PageVersionId | None = None
     state: StageState = StageState.FRESH
     pinned: bool = False
+    through_step: int | None = field(default=None, validator=validators.optional(validators.ge(0)))
     updated_at: datetime
 
     @property

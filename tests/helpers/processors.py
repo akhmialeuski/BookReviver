@@ -16,7 +16,8 @@ if TYPE_CHECKING:
 # The marker a fake processor writes into the data of its output, so a test can tell which step ran
 RAN_KEY: str = 'ran'
 FAILING_PARAMETER: str = 'fail'
-KNOWN_PARAMETERS: frozenset[str] = frozenset({'strength', FAILING_PARAMETER})
+STRENGTH_PARAMETER: str = 'strength'
+KNOWN_PARAMETERS: frozenset[str] = frozenset({STRENGTH_PARAMETER, FAILING_PARAMETER})
 
 
 class FakeProcessor(Processor):
@@ -58,7 +59,7 @@ class FakeProcessor(Processor):
         if unknown := set(raw) - KNOWN_PARAMETERS:
             err_msg = f'Unknown parameters {sorted(unknown)}.'
             raise InvalidParametersError(err_msg)
-        return {'strength': 1, FAILING_PARAMETER: False, **raw}
+        return {STRENGTH_PARAMETER: 1, FAILING_PARAMETER: False, **raw}
 
     @override
     def run(self, step_input: StepInput) -> StepResult:
@@ -101,7 +102,11 @@ class FakeProcessor(Processor):
             raise ConflictError(err_msg)
         image: Path | None = step_input.image
         return StepResult(
-            outputs=[StepOutput(image=image, color_mode=ColorMode.GRAY, data={RAN_KEY: step_input.params['strength']})]
+            outputs=[
+                StepOutput(
+                    image=image, color_mode=ColorMode.GRAY, data={RAN_KEY: step_input.params[STRENGTH_PARAMETER]}
+                )
+            ]
         )
 
 

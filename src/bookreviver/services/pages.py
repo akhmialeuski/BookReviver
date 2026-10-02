@@ -58,7 +58,7 @@ from bookreviver.domain.errors import (
 from bookreviver.domain.events import JobChanged, PagesChanged, PageVersionReady
 from bookreviver.domain.ids import JobId, PageId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import NumberedPage, PageSize, Progress, Slice
+from bookreviver.domain.values import NumberedPage, PageSize, PageStageKey, Progress, Slice
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from bookreviver.services.projects import owned_project
 from bookreviver.services.stage_records import StageRecords
@@ -1045,7 +1045,9 @@ class PageService:
             reason = UNEXPECTED_FAILURE
         else:
             if await self._store(page, made):
-                changed = await self._records.set_head(page.id, made.stage, head_version_id=made.id, recipe_id=None)
+                changed = await self._records.set_head(
+                    PageStageKey(page.id, made.stage), head_version_id=made.id, recipe_id=None
+                )
                 await self._uow.commit()
                 await self._publisher.publish(PageVersionReady(project_id=page.project_id, version=made))
                 await self._records.announce(page.project_id, changed)

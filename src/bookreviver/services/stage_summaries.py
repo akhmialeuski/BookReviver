@@ -21,11 +21,11 @@ from bookreviver.domain.stage_summaries import BookProgress, StageRow, StageSumm
 from bookreviver.domain.values import Slice
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
-    from bookreviver.domain.entities import Project, ProjectOverview
-    from bookreviver.domain.ids import ProjectId, RecipeId
-    from bookreviver.domain.stage_summaries import StageTally, VariantTally
+    from bookreviver.domain.entities import PageVersion, Project, ProjectOverview
+    from bookreviver.domain.ids import PageVersionId, ProjectId, RecipeId
+    from bookreviver.domain.stage_summaries import StageTally, StepTally, VariantTally
     from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
@@ -59,7 +59,10 @@ class StageSummaries:
         variants: defaultdict[Stage, list[VariantTally]] = defaultdict(list)
         for tally in await self._uow.page_stages.variant_tally(project_id):
             variants[tally.stage].append(tally)
-        return self._summarize(overview, tallies, recipes, variants)
+        stopped: defaultdict[Stage, list[StepTally]] = defaultdict(list)
+        for step_tally in await self._uow.page_stages.step_tally(project_id):
+            stopped[step_tally.stage].append(step_tally)
+        return self._summarize(overview, tallies, recipes, variants, stopped)
 
     async def rows(self, project: Project, stage: Stage, request: SliceRequest) -> Slice[StageRow]:
         """Give a window of the pages of a book, in book order, with where each stands in a stage.
@@ -82,6 +85,7 @@ class StageSummaries:
         }
         head_ids = {record.head_version_id for record in records.values() if record.head_version_id is not None}
         heads = {version.id: version for version in await self._uow.page_versions.list_by_ids(head_ids)}
+        markers = await self._markers(heads.values())
         rows: list[StageRow] = []
         for page in pages.items:
             if (record := records.get(page.id)) is None:
@@ -95,9 +99,44 @@ class StageSummaries:
                     recipe_id=record.recipe_id,
                     pinned=record.pinned,
                     head_version=head,
+                    through_step=record.through_step,
+                    review_processor=None if head is None else markers.get(head.id),
                 )
             )
         return Slice(items=rows, total=pages.total)
+
+    async def _markers(self, heads: Collection[PageVersion]) -> dict[PageVersionId, str]:
+        """Find the processor of the first step of a stage that marked each page that carries a review mark.
+
+        A step keeps the mark of the step before it, so the mark of a current version is walked back through the
+        versions it was read from, a level at a time for all the pages together, to the first that has it. A mark that
+        an earlier stage made leads out of the stage and names no step.
+
+        :param heads: The current versions of the stage over a window of pages.
+        :type heads: Collection[PageVersion]
+        :returns: The key of the processor of the marking step, by the identifier of the current version. A version
+                  without a mark, or whose mark an earlier stage made, has no entry.
+        :rtype: dict[PageVersionId, str]
+        """
+        walking = {head.id: head for head in heads if head.review is not None}
+        markers: dict[PageVersionId, str] = {}
+        while walking:
+            inputs = {
+                version.id: version
+                for version in await self._uow.page_versions.list_by_ids(
+                    {origin.input_id for origin in walking.values() if origin.input_id is not None}
+                )
+                if version.review is not None
+            }
+            ahead: dict[PageVersionId, PageVersion] = {}
+            for head_id, origin in walking.items():
+                earlier = None if origin.input_id is None else inputs.get(origin.input_id)
+                if earlier is None:
+                    markers[head_id] = origin.processor.key
+                elif earlier.stage is origin.stage:
+                    ahead[head_id] = earlier
+            walking = ahead
+        return markers
 
     async def with_progress(self, overviews: Sequence[ProjectOverview]) -> list[ProjectOverview]:
         """Add the progress of each book to its overview, with the same number of queries for any number of books.
@@ -121,7 +160,7 @@ class StageSummaries:
             evolve(
                 overview,
                 progress=BookProgress.of(
-                    self._summarize(overview, tallies[overview.project.id], {}, {}), running[overview.project.id]
+                    self._summarize(overview, tallies[overview.project.id], {}, {}, {}), running[overview.project.id]
                 ),
             )
             for overview in overviews
@@ -133,6 +172,7 @@ class StageSummaries:
         tallies: Mapping[Stage, StageTally],
         recipes: Mapping[Stage, RecipeId],
         variants: Mapping[Stage, Sequence[VariantTally]],
+        stopped: Mapping[Stage, Sequence[StepTally]],
     ) -> list[StageSummary]:
         """Sum every stage of a book from the counts already read.
 
@@ -145,6 +185,8 @@ class StageSummaries:
         :param variants: How many pages each recipe processed, for each stage that has any, or none for a list of
                          books, which does not show them.
         :type variants: Mapping[Stage, Sequence[VariantTally]]
+        :param stopped: How many pages stopped at each step, for each stage that has any, or none for a list of books.
+        :type stopped: Mapping[Stage, Sequence[StepTally]]
         :returns: One summary for each stage, in the order of the pipeline.
         :rtype: list[StageSummary]
         """
@@ -156,6 +198,8 @@ class StageSummaries:
                 pages=overview.image_page_count,
                 tally=tallies.get(stage),
                 active_recipe_id=recipes.get(stage),
-            ).with_variants(variants.get(stage, ()))
+            )
+            .with_variants(variants.get(stage, ()))
+            .with_stopped(stopped.get(stage, ()))
             for stage in Stage
         ]

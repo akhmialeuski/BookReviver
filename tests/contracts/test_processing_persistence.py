@@ -16,6 +16,7 @@ from bookreviver.domain.enums import PageOrigin, ReviewReason, Stage, StageState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.geometry import Line, Point
 from bookreviver.domain.ids import PageId, PageVersionId, ProjectId
+from bookreviver.domain.stage_summaries import StepTally
 from bookreviver.domain.values import PageEditKey, PageStageKey, SliceRequest, Step
 from tests.helpers.builders import (
     EPOCH,
@@ -503,6 +504,43 @@ class TestPageStageRepository:
         await uow.commit()
         [tally] = await (await fx_uow_factory()).page_stages.tally({project.id})
         assert (tally.fresh, tally.stale, tally.review, tally.check) == (1, 1, 1, 1)
+
+    async def test_step_tally_counts_the_pages_stopped_at_each_step(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the pages a run stopped at a step are counted by step, and partial in the tally of the stage.
+
+        A page run through every step, a failed record, a placeholder and the pages of another project are left out.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        uow = await fx_uow_factory()
+        for owned in (project, other):
+            await uow.projects.add(owned)
+        first, second, whole, failed = (_blank_page(project.id, f'a{number}') for number in range(4))
+        placeholder = make_page(project_id=project.id, order_key='b1')
+        elsewhere = _blank_page(other.id, 'a1')
+        await uow.pages.add_many([first, second, whole, failed, placeholder, elsewhere])
+        for page, through_step, state in (
+            (first, 0, StageState.FRESH),
+            (second, 0, StageState.STALE),
+            (whole, None, StageState.FRESH),
+            (failed, 1, StageState.FAILED),
+            (placeholder, 0, StageState.FRESH),
+            (elsewhere, 0, StageState.FRESH),
+        ):
+            record = make_page_stage(page_id=page.id, state=state)
+            await uow.page_stages.save(evolve(record, through_step=through_step))
+        await uow.commit()
+        repository = (await fx_uow_factory()).page_stages
+        [tally] = await repository.tally({project.id})
+        assert await repository.step_tally(project.id) == [StepTally(stage=Stage.GEOMETRY, through_step=0, pages=2)]
+        assert tally.partial == 2
 
     async def test_deleting_the_head_version_leaves_the_record_without_it(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory

@@ -9,9 +9,12 @@ import {
   useSaveRecipe,
 } from '@/features/processing/queries';
 import { bodyOf, pagesToGoStale } from '@/features/processing/recipe';
-import { StepList } from '@/features/processing/StepList';
+import { StepList, type StepRunControl } from '@/features/processing/StepList';
+import { RunScope } from '@/features/processing/scope';
+import { passedPages } from '@/features/processing/stepRuns';
 import { UsedFor } from '@/features/processing/UsedFor';
 import type { Processing } from '@/features/processing/useProcessing';
+import type { StageRun } from '@/features/processing/useStageRun';
 import { countsOf } from '@/features/processing/variants';
 import { ProfileActions } from '@/features/profiles/ProfileActions';
 import { roadmapOf } from '@/features/stages/roadmap';
@@ -41,9 +44,12 @@ const labels = MESSAGES.processing;
 export function RecipeSection({
   processing,
   rows,
+  run,
 }: {
   processing: Processing;
   rows: readonly StagePageSchema[];
+  /** The run of the stage, which the steps use to run the recipe up to one of them. Absent for steps that only edit. */
+  run?: StageRun;
 }): React.JSX.Element | null {
   const { projectId, stage, recipe, steps, catalogue } = processing;
   const save = useSaveRecipe(projectId, stage);
@@ -64,6 +70,17 @@ export function RecipeSection({
   const installed = new Set(catalogue.map((processor) => processor.key));
   const coming = roadmapOf(stage, installed);
   const error = save.error ?? create.error ?? activate.error;
+  const stepRun: StepRunControl | undefined =
+    run === undefined
+      ? undefined
+      : {
+          choices: run.choices,
+          describe: run.describe,
+          disabled: run.disabled,
+          passed: (index) => passedPages(rows, recipe.id, index),
+          total: run.choices.find(({ scope }) => scope === RunScope.All)?.count ?? 0,
+          onRun: (index, scope) => run.start(scope, index),
+        };
 
   return (
     <section className="grid gap-3" aria-label={labels.recipe.label}>
@@ -158,6 +175,7 @@ export function RecipeSection({
             <MeasureBook processing={processing} step={step} />
           ) : null
         }
+        run={stepRun}
         onOpen={processing.open}
         onMove={processing.move}
         onToggle={processing.toggle}

@@ -13,14 +13,16 @@ import {
   type ImageSource,
   SourceKind,
   sourceOfPreview,
+  sourceOfResult,
 } from '@/features/processing/compare';
 import { ProcessingPanel } from '@/features/processing/ProcessingPanel';
 import { useAllScans } from '@/features/processing/queries';
-import { reasonOf } from '@/features/processing/reasons';
+import { reasonWithStep } from '@/features/processing/reasons';
 import { StageBanners } from '@/features/processing/StageBanners';
 import { wideScanIds } from '@/features/processing/split';
 import { useEarlierRows } from '@/features/processing/useEarlierRows';
 import { useProcessing } from '@/features/processing/useProcessing';
+import { useShownStep } from '@/features/processing/useShownStep';
 import { applyVariant, markOf, optionsOf } from '@/features/processing/variants';
 import { stageBefore } from '@/features/stages/stages';
 import { PageCanvas, type PageCanvasHandle } from '@/features/viewer/PageCanvas';
@@ -47,11 +49,14 @@ import {
 } from '@/features/workspace/selection';
 import {
   applyFilter,
+  applyStopped,
   canvasSourceOf,
   countFilters,
   joinRows,
   needsCheck,
+  type StopView,
   type StripItem,
+  stopOptions,
   type VariantView,
 } from '@/features/workspace/strip';
 import { describeError } from '@/shared/http/problem';
@@ -187,7 +192,33 @@ export function StageScreen({
           selected: variantId,
           onSelect: (id) => setVariantPick({ stage, id }),
         };
-  const filtered = useMemo(() => applyVariant(listed, variantId), [listed, variantId]);
+  // The steps a run stopped at narrow the list too; the choice belongs to one stage, like the variant
+  const [stopPick, setStopPick] = useState<{ stage: Stage; step: number | null }>({
+    stage,
+    step: null,
+  });
+  const stopOptionList = useMemo(() => stopOptions(items), [items]);
+  const stopStep =
+    stopPick.stage === stage && stopOptionList.some((option) => option.step === stopPick.step)
+      ? stopPick.step
+      : null;
+  const stopped: StopView | undefined =
+    stopOptionList.length === 0
+      ? undefined
+      : {
+          options: stopOptionList,
+          selected: stopStep,
+          onSelect: (step) => setStopPick({ stage, step }),
+        };
+  const filtered = useMemo(
+    () => applyStopped(applyVariant(listed, variantId), stopStep),
+    [listed, variantId, stopStep],
+  );
+  const reasons = useMemo(
+    () => reasonWithStep(processing.recipes, processing.catalogue),
+    [processing.recipes, processing.catalogue],
+  );
+  const shownStep = useShownStep(processing, currentItem);
   const earlierRows = useEarlierRows(projectId, stage, processing.available);
   const beforeSource =
     currentItem === undefined
@@ -289,8 +320,11 @@ export function StageScreen({
       ? processing.preview.shown
       : null;
   const resultUrl = currentItem === undefined ? null : canvasSourceOf(currentItem);
+  // A step the reader chose is drawn from its own version, which has a pyramid only when it is the current one
+  const stepSource = sourceOfResult(shownStep.version);
   const afterSource: ImageSource | null =
     sourceOfPreview(previewShown) ??
+    stepSource ??
     (resultUrl === null ? null : { kind: SourceKind.Iiif, url: resultUrl });
   const compareBlocked = spread
     ? MESSAGES.processing.compare.spreadOnly
@@ -336,9 +370,11 @@ export function StageScreen({
               stageBeforeThis === null ? '' : MESSAGES.stages.names[stageBeforeThis],
             )}
             afterLabel={
-              previewShown === null
-                ? MESSAGES.processing.compare.after(stageName)
-                : MESSAGES.processing.preview.after(stageName)
+              previewShown !== null
+                ? MESSAGES.processing.preview.after(stageName)
+                : stepSource !== null && shownStep.index !== null
+                  ? MESSAGES.processing.compare.afterStep(stageName, shownStep.index + 1)
+                  : MESSAGES.processing.compare.after(stageName)
             }
             notice={previewNotice}
             pageIds={shown.map((item) => item.page.id)}
@@ -399,9 +435,10 @@ export function StageScreen({
                 onFilter={(value) => onSearchChange({ filter: value })}
                 onOpen={openPage}
                 onGrid={() => switchView(ViewMode.Grid)}
-                reasonOf={processed ? reasonOf : undefined}
+                reasonOf={processed ? reasons : undefined}
                 withWide={stage === 'page-split'}
                 variants={variants}
+                stopped={stopped}
               />
             )
           }
@@ -419,9 +456,10 @@ export function StageScreen({
                 onClearSelection={() => setPicked({ stage, state: NOTHING_SELECTED })}
                 onOpen={(pageId) => onSearchChange({ view: undefined, page: pageId })}
                 onList={() => switchView(ViewMode.Page)}
-                reasonOf={processed ? reasonOf : undefined}
+                reasonOf={processed ? reasons : undefined}
                 withWide={stage === 'page-split'}
                 variants={variants}
+                stopped={stopped}
               />
             ) : processed ? (
               <div className="flex size-full flex-col">

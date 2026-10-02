@@ -31,6 +31,17 @@ class VariantPagesSchema(ResponseModel):
     pages: int
 
 
+class StepPagesSchema(ResponseModel):
+    """How many pages of a stage a run stopped at one step.
+
+    :ivar through_step: Index in the recipe of the last step the pages were run through, from zero.
+    :ivar pages: Pages with an image, not failed, that stopped at the step.
+    """
+
+    through_step: int
+    pages: int
+
+
 class StageSummarySchema(ResponseModel):
     """One stage of a book summed over its pages.
 
@@ -45,8 +56,10 @@ class StageSummarySchema(ResponseModel):
     :ivar not_run: Pages the stage has not run on.
     :ivar review: Pages, not failed, whose result asks for a second look.
     :ivar check: Pages the strip lists under Check: stale, failed or marked, each counted once.
+    :ivar partial: Pages, not failed, that were run through some of the steps of their recipe only.
     :ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used.
     :ivar variants: How many pages each recipe of the stage processed, the recipe with the most pages first.
+    :ivar stopped: How many pages stopped at each step, the first step first.
     """
 
     stage: Stage
@@ -59,8 +72,10 @@ class StageSummarySchema(ResponseModel):
     not_run: int
     review: int
     check: int
+    partial: int
     active_recipe_id: RecipeId | None
     variants: list[VariantPagesSchema]
+    stopped: list[StepPagesSchema]
 
 
 class StagePageSchema(ResponseModel):
@@ -72,6 +87,9 @@ class StagePageSchema(ResponseModel):
     :ivar recipe_id: Recipe the page was processed by, or None.
     :ivar pinned: Whether the recipe is pinned to the page.
     :ivar version: The current version of the stage on the page with its data and images, or None.
+    :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
+                        that is on, so the page is not ready for the next stage, or None.
+    :ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.
     """
 
     page_id: PageId
@@ -80,6 +98,8 @@ class StagePageSchema(ResponseModel):
     recipe_id: RecipeId | None
     pinned: bool
     version: PageVersionSchema | None
+    through_step: int | None
+    review_processor: str | None
 
     @classmethod
     def of(cls, row: StageRow, project_id: ProjectId, request: Request) -> Self:
@@ -102,6 +122,8 @@ class StagePageSchema(ResponseModel):
             recipe_id=row.recipe_id,
             pinned=row.pinned,
             version=version,
+            through_step=row.through_step,
+            review_processor=row.review_processor,
         )
 
 

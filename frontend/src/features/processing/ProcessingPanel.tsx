@@ -4,6 +4,7 @@ import { RunControls } from '@/features/processing/RunControls';
 import { SplitSection } from '@/features/processing/SplitSection';
 import { ThisPageSection } from '@/features/processing/ThisPageSection';
 import type { Processing } from '@/features/processing/useProcessing';
+import { useStageRun } from '@/features/processing/useStageRun';
 import { StagePanel } from '@/features/workspace/StagePanel';
 import type { StripItem } from '@/features/workspace/strip';
 import { MESSAGES } from '@/shared/messages';
@@ -32,6 +33,7 @@ export function ProcessingPanel({
   editor: EditorSession | null;
 }): React.JSX.Element {
   const rows = items.flatMap((item) => (item.row === undefined ? [] : [item.row]));
+  const run = useStageRun(processing, items, current, selected);
   if (processing.failed) {
     return (
       <StagePanel stage={processing.stage} available>
@@ -50,15 +52,13 @@ export function ProcessingPanel({
     <StagePanel
       stage={processing.stage}
       available
-      footer={
-        <RunControls processing={processing} items={items} current={current} selected={selected} />
-      }
+      footer={<RunControls processing={processing} items={items} run={run} />}
     >
       <div className="grid gap-6">
         {processing.stage === 'page-split' && current !== undefined ? (
           <SplitSection processing={processing} items={items} current={current} />
         ) : null}
-        <RecipeSection processing={processing} rows={rows} />
+        <RecipeSection processing={processing} rows={rows} run={run} />
         {current === undefined ? null : (
           <ThisPageSection
             processing={processing}

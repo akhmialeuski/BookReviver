@@ -3,11 +3,12 @@
 import hashlib
 import json
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import pytest
 from attrs import evolve
+from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import VERSION_ID_PATTERN, PageEdit, VersionInputs
 from bookreviver.domain.enums import JobKind, PageOrigin, PageSide, Rendition, Stage, StepField, VersionScale
@@ -23,6 +24,9 @@ from tests.helpers.builders import (
     make_recipe,
     new_account_id,
 )
+
+if TYPE_CHECKING:
+    from bookreviver.domain.entities import Recipe
 
 PAGE_ID: PageId = PageId(uuid4())
 DESKEW_KEY: str = 'geometry.deskew'
@@ -125,12 +129,39 @@ class TestStep:
 class TestRecipe:
     """Tests for Recipe."""
 
+    ON: Step = Step(processor_key='geometry.on')
+    OFF: Step = Step(processor_key='geometry.off', enabled=False)
+
+    @staticmethod
+    def recipe_of(*steps: Step) -> Recipe:
+        """Build a recipe of the given steps.
+
+        :param steps: The steps in the order they run.
+        :type steps: Step
+        :returns: The recipe.
+        :rtype: Recipe
+        """
+        return evolve(make_recipe(project_id=make_project(owner_id=new_account_id()).id), steps=steps)
+
     def test_enabled_steps_are_the_steps_that_are_on_in_their_order(self) -> None:
         """Verify the steps a run takes are the ones switched on, in the order of the recipe."""
-        recipe = make_recipe(project_id=make_project(owner_id=new_account_id()).id)
-        first, third = Step(processor_key='geometry.first'), Step(processor_key='geometry.third')
-        second = Step(processor_key='geometry.second', enabled=False)
-        assert evolve(recipe, steps=(first, second, third)).enabled_steps == (first, third)
+        later = Step(processor_key='geometry.later')
+        assert self.recipe_of(self.ON, self.OFF, later).enabled_steps == (self.ON, later)
+
+    def test_steps_through_one_keep_their_index_in_the_recipe_and_leave_out_the_ones_that_are_off(self) -> None:
+        """Verify the pairs of a run through a step skip a step that is off, and name the index of each in the recipe."""
+        recipe = self.recipe_of(self.ON, self.OFF, self.ON)
+        expect(recipe.indexed_steps_through(None) == ((0, self.ON), (2, self.ON)))
+        expect(recipe.indexed_steps_through(1) == ((0, self.ON),))
+        expect(recipe.indexed_steps_through(9) == ((0, self.ON), (2, self.ON)))
+        expect(self.recipe_of(self.OFF, self.ON).indexed_steps_through(0) == ())
+        assert_expectations()
+
+    def test_a_run_stops_short_only_when_a_step_that_is_on_is_left(self) -> None:
+        """Verify a run through the last step that is on, or past it, stops nowhere, and one making no step too."""
+        recipe = self.recipe_of(self.OFF, self.ON, self.OFF, self.ON, self.OFF)
+        expect([recipe.stopped_at(through) for through in (None, 0, 1, 2, 3, 4)] == [None, None, 1, 1, None, None])
+        assert_expectations()
 
 
 class TestVersionInputsIdentify:

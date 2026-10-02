@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EditorSession } from '@/features/editors/session';
 import { SourceKind } from '@/features/processing/compare';
-import { processing, version } from '@/features/processing/fixtures';
+import { processing, recipe, step, version } from '@/features/processing/fixtures';
 import { ThisPageSection } from '@/features/processing/ThisPageSection';
 import { page, row } from '@/features/workspace/fixtures';
 import type { StripItem } from '@/features/workspace/strip';
@@ -57,12 +57,16 @@ describe('ThisPageSection', () => {
     };
   }
 
-  async function render(item: StripItem, editor: EditorSession | null = null): Promise<void> {
+  async function render(
+    item: StripItem,
+    editor: EditorSession | null = null,
+    state = processing(),
+  ): Promise<void> {
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
           <ThisPageSection
-            processing={processing()}
+            processing={state}
             items={[item]}
             item={item}
             selected={new Set()}
@@ -241,6 +245,94 @@ describe('ThisPageSection', () => {
     const current = container.querySelector('[data-testid="history-entry"][data-current="true"]');
     expect(current?.querySelector('button')).toBeNull();
     expect(current?.textContent).toContain('Current');
+  });
+
+  describe('a recipe of two steps', () => {
+    const first = version('first', {
+      created_at: '2026-10-01T10:00:00Z',
+      data: { angle: 0.5, confidence: 0.8 },
+    });
+    const second = version('second', {
+      created_at: '2026-10-01T10:01:00Z',
+      input_id: 'first',
+      processor: { key: 'geometry.crop', version: '1' },
+      data: { angle: 2, confidence: 0.9 },
+    });
+    const two = recipe('r1', { steps: [step('geometry.deskew'), step('geometry.crop')] });
+    const state = (
+      overrides: Parameters<typeof processing>[0] = {},
+    ): ReturnType<typeof processing> => processing({ recipe: two, recipes: [two], ...overrides });
+
+    beforeEach(() => {
+      sdk.versions.mockResolvedValue({
+        data: { items: [first, second], total: 2, page: 1, size: 100, pages: 1 },
+      });
+    });
+
+    it('lets the reader choose the step whose result is shown, and names the steps that are on', async () => {
+      const showStep = vi.fn();
+      await render(
+        { page: page('page'), row: row('page', { version: second, recipe_id: 'r1' }) },
+        null,
+        state({ showStep }),
+      );
+      const select = container.querySelector<HTMLSelectElement>('[data-testid="this-page-step"]');
+
+      expect([...(select?.options ?? [])].map((option) => option.textContent)).toEqual([
+        'Last step',
+        '1 · Deskew',
+        '2 · geometry.crop',
+      ]);
+      await act(async () => {
+        if (select !== null) {
+          select.value = '0';
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+      expect(showStep).toHaveBeenCalledWith(0);
+    });
+
+    it('reads what the first step found when it is the step chosen', async () => {
+      await render(
+        { page: page('page'), row: row('page', { version: second, recipe_id: 'r1' }) },
+        null,
+        state({ shownStep: 0 }),
+      );
+
+      expect(text('this-page-facts')).toContain('Turned by0.5°');
+    });
+
+    it('says a page stopped at a step is not read by the next stage until the rest is run', async () => {
+      await render(
+        {
+          page: page('page'),
+          row: row('page', { version: first, recipe_id: 'r1', through_step: 0 }),
+        },
+        null,
+        state(),
+      );
+
+      expect(text('this-page-stopped')).toContain('Run through step 1 of 2 only.');
+    });
+
+    it('says when the page has not reached the step chosen', async () => {
+      await render(
+        {
+          page: page('page'),
+          row: row('page', { version: first, recipe_id: 'r1', through_step: 0 }),
+        },
+        null,
+        state({ shownStep: 1 }),
+      );
+
+      expect(text('this-page-not-reached')).toContain('has not reached step 2');
+    });
+
+    it('offers no choice of step for a recipe of one', async () => {
+      await render({ page: page('page'), row: row('page', { version: NEW }) });
+
+      expect(container.querySelector('[data-testid="this-page-step"]')).toBeNull();
+    });
   });
 
   it('shows the answer of the server when the choice is refused', async () => {

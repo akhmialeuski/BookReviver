@@ -507,8 +507,9 @@ flowchart TD
 ```
 
 The current version of a stage is kept in a separate `PageStage` record per page and stage: a reference to the
-latest version of the recipe the page was processed by, a state, `fresh`, `stale` or `failed`, and `pinned`, whether
-the user pinned that recipe to the page. A change of an earlier version
+latest version of the recipe the page was processed by, a state, `fresh`, `stale` or `failed`, `pinned`, whether
+the user pinned that recipe to the page, and `through_step`, the index in the recipe of the last step the page was run
+through when that is before the last step that is on (null otherwise). A change of an earlier version
 marks the later stages of that page stale without deleting them, so the interface can show the old result until it
 is recomputed. Recipes, variants and manual edits (`PageEdit`) are described under the processing plugins, and the
 choice of the recipe for each page under [Recipes for groups of pages](#recipes-for-groups-of-pages).
@@ -1272,6 +1273,43 @@ flowchart LR
   another account exactly like a missing one, so the identifiers of other accounts' profiles cannot be probed. The
   list holds the profiles of the signed-in account only.
 
+### Running a stage step by step
+
+A stage of several steps need not be run whole. `StageRun.through_step` (and `through_step` of the body of
+`POST .../stages/{stage}/run`) is the index in the recipe, from zero, of the last step to run, so the user can run the
+first step on every page, check the pages, and only then run the next one.
+
+```mermaid
+flowchart LR
+    A["run through step 1<br/>all pages"] --> B{check the pages}
+    B -- fix by hand --> A
+    B -- good --> C["run through the last step<br/>step 1 from the cache"]
+    style B stroke:#5b3fd1,stroke-width:2px
+```
+
+- **The cache.** `RecipeRun` makes the versions of the steps that are on up to the index with the same
+  `StageWork._make_version` a whole run uses, so the identifier of each version, from its input version, its parameters
+  and the hash of its manual edit, finds the version an earlier run made. A run through step 3 after a run through
+  step 2 computes step 3 alone, which `tests/services/test_processing_runs.py` proves by counting the calls of the
+  processor. A manual edit saved while the page stands at step 1 changes the identifier of that step and of every step
+  after it, so the next run that goes further makes them again on the edited input.
+- **The head.** `StageRecords.set_head` makes the version of the last step run the current one of the stage and records
+  `through_step`. `Recipe.stopped_at` gives the index when the run stops short of the last step that is on, and None
+  when it reaches it, so a run through the last step, with or without an index, leaves a page whole. The version of a
+  step before the last gets its tile pyramid like any current version.
+- **Not ready for the next stage.** The next stage reads a page with a `through_step` as it reads a stale one.
+  `StageWork._source` first runs the recipe of the earlier stage through its last step, which finds the steps already
+  made in the cache, and a failure of that run fails the later stage with the reason. A preview reads the page as it is.
+- **Request.** `start_run` refuses an index that names no step of the recipe, or one with every step up to it switched
+  off, with 409 before it queues a job. A recipe chosen per page by the rules that has fewer steps than the index runs
+  through its last step.
+- **Summary.** `StageSummary.partial` counts the pages, not failed, that stopped short and `StageSummary.stopped` how many
+  stopped at each step, from `PageStageRepository.tally` and `step_tally`, each one grouped statement. A stage with a
+  partial page is `waiting` and not `done`. The row of a page in `GET .../stages/{stage}/pages` carries `through_step` and
+  `review_processor`, the key of the processor of the first step of the stage that carries the review mark, which
+  `StageSummaries` finds by following the input versions of the marked pages one level at a time for the whole window.
+  The migration `38db886cbb30` adds the nullable column `page_stages.through_step`.
+
 ## AI engines and models
 
 - `TextRecognizer`, `LayoutAnalyzer` and `LanguageModel` are ports. Each engine adapter describes itself in a
@@ -1657,8 +1695,9 @@ cut, and none before, for a placeholder too.
 
 The stage workspace draws from three reads that each answer for the whole book, so it never asks page by page.
 `GET /projects/{id}/stages` gives the ten stages in pipeline order, each with `available`, `manual`, `pages` (the pages
-with an image, which a run goes over), `fresh`, `stale`, `failed`, `not_run`, `review`, `check`, `active_recipe_id` and
-`variants`, the pages each recipe processed, the largest first. `check` is the number of pages the
+with an image, which a run goes over), `fresh`, `stale`, `failed`, `not_run`, `review`, `check`, `partial`,
+`active_recipe_id`, `variants`, the pages each recipe processed, the largest first, and `stopped`, how many pages a run
+stopped at each step, the first step first. `check` is the number of pages the
 strip lists under Check: stale, failed or marked for review, each counted once, so a page that is stale and marked is
 one. A stage
 done by hand, the import and the page order, is always available and has no counts. Any other stage is available when
@@ -1675,7 +1714,7 @@ that parses them, and None for any other kind, so the chip and the list say "Geo
 A project in `ProjectSchema` carries `progress`, one `StageStatus` per stage, and `next_stage`, the first available
 stage with work to do. The status follows one rule: a stage that is not available is `unavailable`, a stage a queued
 or running `run-stage` job works in is `running`, a stage with a stale, failed or marked page is `attention`, a stage
-every page of which is up to date is `done`, and any other `waiting`. The book list reads the progress of a whole
+every page of which is up to date and run through every step is `done`, and any other `waiting`. The book list reads the progress of a whole
 window with the same number of queries for any number of books.
 
 A page version carries `review`, a `ReviewReason` its processor gave when it finished but was not sure:
@@ -1941,6 +1980,18 @@ The project list counts in `page_count` the included pages of the book, and show
     why a page asks for a look under it (`reasons.ts`), and the page panel shows the facts of the current version, an
     amber plate for a result the step was unsure of, and the history of the full results of the page
     (`GET .../versions?scale=full`), from which `PUT .../pages/{page_id}/stages/{stage}` makes an earlier one current.
+  - A recipe of several steps is run step by step (`useStageRun.ts`, `stepRuns.ts`, `StepList.tsx`). One `useStageRun`
+    in `ProcessingPanel` serves the foot and the steps, so they share what is pending, the error and the question of the
+    run that would undo a split. Each step offers "Run up to here" over the same scopes, which sends the index of the
+    step as `through_step`, and says how many pages passed it (`passedPages`: the pages with a result by this recipe
+    that were run through this step or a later one, counted from the rows of the stage). The foot lists the pages that
+    stopped short from `StageSummary.stopped`, such as "Done through step 2 of 4: 76 pages", and the stage bar marks them.
+    The strip offers a select "Stopped at step N" next to the variants, kept per stage in the state of the screen. The
+    Check filter names the step that marked a page, "Step 2 · Crop: Text may be cut by the edge of the scan"
+    (`reasonWithStep`, from `review_processor`), when the recipe has several steps. "This page" says that a page stopped
+    short, and a select "Result shown" (`useShownStep.ts`) picks the step whose version the facts are read from and the
+    compare draws as the picture after, found in the chain of versions that made the current one by counting the steps
+    that are on.
   - The Split stage adds the Wide filter (`filter=wide`, pages cut from a scan whose `ScanFacts` are wider than tall),
     a banner that cuts every wide scan still whole in one run of the recipe that starts with `split.auto`, or else
     `split.spread`, and the choice of one page or two for the scan of the open page. The choice saves a `SplitChoice`

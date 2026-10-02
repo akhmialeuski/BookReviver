@@ -7,7 +7,7 @@ from attrs import evolve
 
 from bookreviver.domain.enums import PageKind, RuleCondition, Stage
 from bookreviver.domain.ids import RecipeId
-from bookreviver.domain.values import StageRun
+from bookreviver.domain.values import THROUGH_STEP_KEY, StageRun
 from tests.helpers.builders import (
     make_page,
     make_page_stage,
@@ -177,3 +177,20 @@ class TestPageStagePin:
         """Verify a run read back from the parameters of its job still pins."""
         run = StageRun(stage=Stage.GEOMETRY, recipe_id=RECIPE.id, pin=True)
         assert StageRun.from_map(run.to_map()) == run
+
+    def test_the_last_step_of_a_run_survives_the_job_parameters(self) -> None:
+        """Verify a run through a step read back from the parameters of its job still stops there."""
+        run = StageRun(stage=Stage.GEOMETRY, through_step=2)
+        assert StageRun.from_map(run.to_map()).through_step == run.through_step
+
+    def test_a_job_stored_without_the_last_step_is_a_run_through_every_step(self) -> None:
+        """Verify the parameters of a job queued before the field existed are read as a run through every step."""
+        stored = {
+            key: value for key, value in StageRun(stage=Stage.GEOMETRY).to_map().items() if key != THROUGH_STEP_KEY
+        }
+        assert StageRun.from_map(stored).through_step is None
+
+    def test_a_run_through_a_step_before_the_first_is_rejected(self) -> None:
+        """Reject a negative index of the last step."""
+        with pytest.raises(ValueError, match=THROUGH_STEP_KEY):
+            StageRun(stage=Stage.GEOMETRY, through_step=-1)

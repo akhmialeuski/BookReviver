@@ -14,8 +14,10 @@ function summary(counts: Partial<StageSummarySchema>): StageSummarySchema {
     not_run: 0,
     review: 0,
     check: 0,
+    partial: 0,
     active_recipe_id: null,
     variants: [],
+    stopped: [],
     ...counts,
   };
 }

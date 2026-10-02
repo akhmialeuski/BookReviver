@@ -1,6 +1,6 @@
 import { LayoutGridIcon, ListIcon, TriangleAlertIcon } from 'lucide-react';
 import { PageFilter } from '@/features/workspace/params';
-import type { FilterCounts, VariantView } from '@/features/workspace/strip';
+import type { FilterCounts, StopView, VariantView } from '@/features/workspace/strip';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 
@@ -17,6 +17,7 @@ export function StripToolbar({
   grid,
   withWide = false,
   variants,
+  stopped,
   onFilter,
   onSwitchView,
 }: {
@@ -32,6 +33,8 @@ export function StripToolbar({
   withWide?: boolean;
   /** The variants of the stage, which narrow the pages to those one variant processed. Absent for none to choose from. */
   variants?: VariantView;
+  /** The steps a run stopped at, which narrow the pages to those stopped at one. Absent when no run stopped short. */
+  stopped?: StopView;
   onFilter: (filter: PageFilter) => void;
   onSwitchView: () => void;
 }): React.JSX.Element {
@@ -78,6 +81,24 @@ export function StripToolbar({
             {variants.options.map((option) => (
               <option key={option.id} value={option.id}>
                 {labels.variant.option(option.name, option.pages)}
+              </option>
+            ))}
+          </select>
+        )}
+        {stopped === undefined || stopped.options.length === 0 ? null : (
+          <select
+            aria-label={labels.stopped.label}
+            data-testid="strip-stopped-filter"
+            className="h-8 max-w-44 min-w-0 rounded-md border border-input bg-background px-2 text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            value={stopped.selected === null ? '' : String(stopped.selected)}
+            onChange={(event) =>
+              stopped.onSelect(event.target.value === '' ? null : Number(event.target.value))
+            }
+          >
+            <option value="">{labels.stopped.all}</option>
+            {stopped.options.map((option) => (
+              <option key={option.step} value={option.step}>
+                {labels.stopped.option(option.step + 1, option.pages)}
               </option>
             ))}
           </select>

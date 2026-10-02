@@ -146,6 +146,100 @@ describe('StepList', () => {
     expect(names).toEqual(['Move the Deskew step', 'Move the x.gone step']);
   });
 
+  describe('with a way to run the recipe up to a step', () => {
+    const run = {
+      choices: [
+        { scope: 'page', count: 1 },
+        { scope: 'all', count: 8 },
+      ] as const,
+      describe: (scope: string, count: number) => `${scope} ${count}`,
+      disabled: false,
+      passed: (index: number) => 8 - index * 3,
+      total: 8,
+      onRun: vi.fn(),
+    };
+
+    function renderRunnable(steps = STEPS, control = run): void {
+      act(() =>
+        root.render(
+          <StepList
+            steps={steps}
+            catalogue={[deskew(), whole()]}
+            openId={undefined}
+            run={control}
+            {...handlers}
+          />,
+        ),
+      );
+    }
+
+    async function chooseOn(stepIndex: number, scope: string): Promise<void> {
+      const trigger = steps()[stepIndex]?.querySelector<HTMLElement>('[data-testid="step-run"]');
+      await act(async () => {
+        trigger?.focus();
+        trigger?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      });
+      await act(async () => {
+        document.body.querySelector<HTMLElement>(`[data-testid="step-run-${scope}"]`)?.click();
+      });
+    }
+
+    afterEach(() => {
+      document.body.querySelectorAll('[role="menu"]').forEach((node) => {
+        node.remove();
+      });
+    });
+
+    it('says how many pages passed each step that is on', () => {
+      renderRunnable();
+
+      expect(
+        steps().map((item) => item.querySelector('[data-testid="step-passed"]')?.textContent),
+      ).toEqual(['8 of 8 pages passed', '5 of 8 pages passed']);
+    });
+
+    it('says nothing of the pages for a step that is off', () => {
+      renderRunnable(STEPS.map((entry, index) => ({ ...entry, enabled: index === 0 })));
+
+      expect(steps()[1]?.querySelector('[data-testid="step-passed"]')).toBeNull();
+    });
+
+    it('runs up to the step over the scope chosen, counting the steps from zero', async () => {
+      run.onRun.mockReset();
+      renderRunnable();
+
+      await chooseOn(1, 'all');
+
+      expect(run.onRun).toHaveBeenCalledWith(1, 'all');
+    });
+
+    it('keeps the run off for a step when every step up to it is off', () => {
+      renderRunnable(STEPS.map((entry, index) => ({ ...entry, enabled: index === 1 })));
+
+      const triggers = steps().map((item) =>
+        item.querySelector<HTMLButtonElement>('[data-testid="step-run"]'),
+      );
+      expect(triggers.map((trigger) => trigger?.disabled)).toEqual([true, false]);
+    });
+
+    it('keeps the run off while the whole run is', () => {
+      renderRunnable(STEPS, { ...run, disabled: true });
+
+      expect(
+        steps().every(
+          (item) => item.querySelector<HTMLButtonElement>('[data-testid="step-run"]')?.disabled,
+        ),
+      ).toBe(true);
+    });
+
+    it('offers nothing for a recipe of a single step, which runs through it anyway', () => {
+      renderRunnable(STEPS.slice(0, 1));
+
+      expect(container.querySelector('[data-testid="step-run"]')).toBeNull();
+      expect(container.querySelector('[data-testid="step-passed"]')).toBeNull();
+    });
+  });
+
   it('marks a step whose values are outside their limits', () => {
     render(
       STEPS.map((entry, index) => (index === 0 ? { ...entry, params: { max_angle: 99 } } : entry)),

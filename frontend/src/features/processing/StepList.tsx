@@ -13,14 +13,29 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { ChevronDownIcon, ChevronRightIcon, GripVerticalIcon, Trash2Icon } from 'lucide-react';
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  GripVerticalIcon,
+  StepForwardIcon,
+  Trash2Icon,
+} from 'lucide-react';
 import type { ProcessorSchema } from '@/api';
 import { ParamsForm } from '@/features/processing/ParamsForm';
 import type { StepDraft } from '@/features/processing/recipe';
 import { fitsSchema, formSchemaOf } from '@/features/processing/schema';
+import type { RunScope, ScopeChoice } from '@/features/processing/scope';
+import { canRunThrough } from '@/features/processing/stepRuns';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/shared/ui/dropdown-menu';
 import { Switch } from '@/shared/ui/switch';
 
 /**
@@ -29,9 +44,27 @@ import { Switch } from '@/shared/ui/switch';
  *
  * A step shows the title of its processor from the catalogue. A step whose processor is not installed on this machine
  * still shows, with a note, so a recipe is never edited blind and the step can still be removed.
+ *
+ * When the list is given a way to run, each step of a recipe of several offers "Run up to here" over the scopes of a run,
+ * and says how many pages already passed it.
  */
 
 const labels = MESSAGES.processing.steps;
+
+/** What the steps need to run the recipe up to one of them and to show how far the pages have come. */
+export interface StepRunControl {
+  /** The scopes of the menu with the number of pages each covers now. */
+  choices: readonly ScopeChoice[];
+  describe: (scope: RunScope, count: number) => string;
+  /** Whether a run cannot be asked for now. */
+  disabled: boolean;
+  /** How many pages passed the step with this index. */
+  passed: (index: number) => number;
+  /** The pages a step can be passed by. */
+  total: number;
+  /** Run the recipe up to the step with this index, over a scope. */
+  onRun: (index: number, scope: RunScope) => void;
+}
 
 function StepCard({
   step,
@@ -39,6 +72,8 @@ function StepCard({
   processor,
   open,
   extra,
+  runnable,
+  run,
   onOpen,
   onToggle,
   onRemove,
@@ -51,6 +86,9 @@ function StepCard({
   open: boolean;
   /** What the step shows under its settings when it is open, such as the button that measures the book. */
   extra: React.ReactNode;
+  /** Whether a step or one before it is on, so the recipe can be run up to this one. */
+  runnable: boolean;
+  run: StepRunControl | undefined;
   onOpen: (open: boolean) => void;
   onToggle: () => void;
   onRemove: () => void;
@@ -102,6 +140,35 @@ function StepCard({
           {open ? <ChevronDownIcon className="size-4" /> : <ChevronRightIcon className="size-4" />}
           <span className="truncate">{labels.step(number, title)}</span>
         </button>
+        {run === undefined ? null : (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`${labels.runThrough}: ${title}`}
+                title={runnable ? labels.runThroughHint(title) : labels.runThroughOff}
+                disabled={!runnable || run.disabled}
+                data-testid="step-run"
+              >
+                <StepForwardIcon />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>{labels.runThrough}</DropdownMenuLabel>
+              {run.choices.map(({ scope, count }) => (
+                <DropdownMenuItem
+                  key={scope}
+                  disabled={count === 0}
+                  data-testid={`step-run-${scope}`}
+                  onSelect={() => run.onRun(number - 1, scope)}
+                >
+                  {run.describe(scope, count)}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         <Switch
           checked={step.enabled}
           aria-label={labels.switchLabel(title)}
@@ -119,6 +186,15 @@ function StepCard({
           <Trash2Icon />
         </Button>
       </div>
+      {run === undefined || !step.enabled ? null : (
+        <p
+          className="px-3 pb-1.5 text-xs text-muted-foreground"
+          title={labels.passedHint}
+          data-testid="step-passed"
+        >
+          {labels.passed(run.passed(number - 1), run.total)}
+        </p>
+      )}
       {open ? (
         <div className="grid gap-2 border-t px-3 py-3">
           {step.enabled ? null : (
@@ -141,6 +217,7 @@ export function StepList({
   catalogue,
   openId,
   extraOf,
+  run,
   onOpen,
   onMove,
   onToggle,
@@ -152,6 +229,8 @@ export function StepList({
   openId: string | undefined;
   /** What a step shows under its settings when it is open, or nothing. */
   extraOf?: (step: StepDraft) => React.ReactNode;
+  /** How to run the recipe up to a step, or absent for a list that only edits. A recipe of one step has no such thing. */
+  run?: StepRunControl;
   onOpen: (id: string | undefined) => void;
   onMove: (activeId: string, overId: string) => void;
   onToggle: (id: string) => void;
@@ -201,6 +280,8 @@ export function StepList({
               processor={catalogue.find((entry) => entry.key === step.processorKey)}
               open={step.id === openId}
               extra={extraOf?.(step) ?? null}
+              runnable={canRunThrough(steps, index)}
+              run={steps.length > 1 ? run : undefined}
               onOpen={(open) => onOpen(open ? step.id : undefined)}
               onToggle={() => onToggle(step.id)}
               onRemove={() => onRemove(step.id)}

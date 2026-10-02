@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { processing, recipe, step } from '@/features/processing/fixtures';
 import { RunControls } from '@/features/processing/RunControls';
+import { useStageRun } from '@/features/processing/useStageRun';
 import { page, row } from '@/features/workspace/fixtures';
 import { joinRows } from '@/features/workspace/strip';
 
@@ -13,12 +14,13 @@ import { joinRows } from '@/features/workspace/strip';
  * The generated client is replaced by a function the test reads, so the body of every run is seen as the server gets it.
  */
 
-const sdk = vi.hoisted(() => ({ run: vi.fn(), jobs: vi.fn() }));
+const sdk = vi.hoisted(() => ({ run: vi.fn(), jobs: vi.fn(), stages: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
   runStageApiV1ProjectsProjectIdStagesStageRunPost: sdk.run,
   listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
+  listStagesApiV1ProjectsProjectIdStagesGet: sdk.stages,
 }));
 
 const ITEMS = joinRows(
@@ -36,6 +38,27 @@ const ITEMS = joinRows(
   ],
 );
 
+/** The foot of the panel with the run it shares with the steps, as the panel builds them. */
+function Foot({
+  state,
+  items,
+  selected,
+}: {
+  state: ReturnType<typeof processing>;
+  items: typeof ITEMS;
+  selected: ReadonlySet<string>;
+}): React.JSX.Element {
+  const run = useStageRun(state, items, items[1], selected);
+  return (
+    <>
+      <RunControls processing={state} items={items} run={run} />
+      <button type="button" data-testid="through" onClick={() => run.start('all', 1)}>
+        through
+      </button>
+    </>
+  );
+}
+
 describe('RunControls', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -49,7 +72,7 @@ describe('RunControls', () => {
     act(() =>
       root.render(
         <QueryClientProvider client={client}>
-          <RunControls processing={state} items={items} current={items[1]} selected={selected} />
+          <Foot state={state} items={items} selected={selected} />
         </QueryClientProvider>,
       ),
     );
@@ -76,6 +99,8 @@ describe('RunControls', () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     sdk.run.mockReset();
     sdk.jobs.mockReset();
+    sdk.stages.mockReset();
+    sdk.stages.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 20, pages: 1 } });
     sdk.run.mockResolvedValue({ data: { id: 'job' } });
     sdk.jobs.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 20, pages: 1 } });
     container = document.createElement('div');
@@ -168,6 +193,56 @@ describe('RunControls', () => {
     await choose('all');
 
     expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ recipe_id: 'r2' });
+  });
+
+  it('sends the index of the last step to run beside the pages, and names no recipe for the active one', async () => {
+    render();
+
+    await act(async () => {
+      container.querySelector<HTMLElement>('[data-testid="through"]')?.click();
+    });
+
+    expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ through_step: 1 });
+  });
+
+  it('says how many pages stopped at each step, out of the steps of the recipe', async () => {
+    const four = recipe('r1', { steps: [step('a'), step('b'), step('c'), step('d')] });
+    sdk.stages.mockResolvedValue({
+      data: {
+        items: [
+          {
+            stage: 'geometry',
+            available: true,
+            manual: false,
+            pages: 80,
+            fresh: 80,
+            stale: 0,
+            failed: 0,
+            not_run: 0,
+            review: 0,
+            check: 0,
+            partial: 77,
+            active_recipe_id: 'r1',
+            variants: [],
+            stopped: [
+              { through_step: 0, pages: 1 },
+              { through_step: 1, pages: 76 },
+            ],
+          },
+        ],
+        total: 1,
+        page: 1,
+        size: 20,
+        pages: 1,
+      },
+    });
+    render(processing({ recipe: four, recipes: [four] }));
+
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-testid="run-stopped"]')?.textContent).toBe(
+        'Done through step 1 of 4: 1 pageDone through step 2 of 4: 76 pages',
+      ),
+    );
   });
 
   it('keeps the run off while the draft has changes that are not saved', () => {

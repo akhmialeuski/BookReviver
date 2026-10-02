@@ -186,6 +186,7 @@ async def stream_project_events(
                         head_version_id=record.head_version_id,
                         state=record.state,
                         pinned=record.pinned,
+                        through_step=record.through_step,
                     ),
                 )
             case ProjectChanged(project_id=project_id):

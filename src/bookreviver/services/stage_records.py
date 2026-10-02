@@ -46,19 +46,17 @@ class StageRecords:
 
     async def set_head(
         self,
-        page_id: PageId,
-        stage: Stage,
+        key: PageStageKey,
         *,
         head_version_id: PageVersionId,
         recipe_id: RecipeId | None,
         pin: bool | None = None,
+        through_step: int | None = None,
     ) -> Sequence[PageStage]:
         """Make a version the current one of a stage, and mark the later stages of the page stale if it changed.
 
-        :param page_id: Page whose stage changes.
-        :type page_id: PageId
-        :param stage: The stage.
-        :type stage: Stage
+        :param key: Page and stage whose record changes.
+        :type key: PageStageKey
         :param head_version_id: Version that becomes the current one.
         :type head_version_id: PageVersionId
         :param recipe_id: Recipe the page was processed by, or None for a version no recipe made.
@@ -66,23 +64,27 @@ class StageRecords:
         :param pin: Whether the recipe is pinned to the page, or None to keep the pin the record has, which holds only
                     while the record names the same recipe.
         :type pin: bool | None
+        :param through_step: Index in the recipe of the step the version is the result of when the run stopped before
+                             the last step that is on, or None when it went through all of them.
+        :type through_step: int | None
         :returns: The records that changed, the stage first, then the later stages that became stale.
         :rtype: Sequence[PageStage]
         """
-        previous = await self._uow.page_stages.find(PageStageKey(page_id, stage))
+        previous = await self._uow.page_stages.find(key)
         record = PageStage(
-            page_id=page_id,
-            stage=stage,
+            page_id=key.page_id,
+            stage=key.stage,
             recipe_id=recipe_id,
             head_version_id=head_version_id,
             state=StageState.FRESH,
             pinned=self._pinned(previous, recipe_id, pin=pin),
+            through_step=through_step,
             updated_at=self._clock.now(),
         )
         await self._uow.page_stages.save(record)
         changed = [record]
         if previous is None or previous.head_version_id != head_version_id:
-            changed.extend(await self._mark_later_stale(page_id, stage))
+            changed.extend(await self._mark_later_stale(key.page_id, key.stage))
         return changed
 
     async def mark_stale(self, page_id: PageId, stage: Stage) -> list[PageStage]:
@@ -140,6 +142,7 @@ class StageRecords:
             head_version_id=None if previous is None else previous.head_version_id,
             state=StageState.FAILED,
             pinned=self._pinned(previous, recipe_id, pin=pin),
+            through_step=None if previous is None else previous.through_step,
             updated_at=self._clock.now(),
         )
         await self._uow.page_stages.save(record)

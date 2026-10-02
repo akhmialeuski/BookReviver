@@ -65,6 +65,8 @@ NAMELESS_SEGMENTS: frozenset[str] = frozenset({'', '.', '..'})
 DRIVE_LETTER: re.Pattern[str] = re.compile(r'[A-Za-z]:')
 CONTROL_CHARACTERS: re.Pattern[str] = re.compile(r'[\x00-\x1f\x7f]')
 PIN_NEEDS_RECIPE: str = 'A run pins a recipe to its pages only when it names the recipe.'
+# Key of the last step to run in the stored parameters of a ``run-stage`` job
+THROUGH_STEP_KEY: str = 'through_step'
 
 
 @frozen(kw_only=True)
@@ -934,6 +936,8 @@ class StageRun:
                            spread, which a run that would do so refuses without it.
     :ivar pin: Whether the recipe is pinned to the pages of the run, so that a later run without a recipe keeps it. A
                run without a recipe chooses the recipe of each page and pins nothing.
+    :ivar through_step: Index in the recipe of the last step to run, or None to run through the last step that is on.
+                        The steps before it are found in the cache of versions when their inputs did not change.
     """
 
     stage: Stage
@@ -941,6 +945,7 @@ class StageRun:
     page_ids: tuple[PageId, ...] | None = None
     confirm_unsplit: bool = False
     pin: bool = False
+    through_step: int | None = field(default=None, validator=validators.optional(validators.ge(0)))
 
     def __attrs_post_init__(self) -> None:
         """Check that only a run by a recipe pins.
@@ -953,7 +958,7 @@ class StageRun:
     def to_map(self) -> dict[str, Any]:
         """Return the value as the JSON object a job stores.
 
-        :returns: The stage, the recipe, the pages as text, the confirmation and the pin.
+        :returns: The stage, the recipe, the pages as text, the confirmation, the pin and the last step.
         :rtype: dict[str, Any]
         """
         return {
@@ -962,6 +967,7 @@ class StageRun:
             'page_ids': None if self.page_ids is None else [str(page_id) for page_id in self.page_ids],
             'confirm_unsplit': self.confirm_unsplit,
             'pin': self.pin,
+            THROUGH_STEP_KEY: self.through_step,
         }
 
     @classmethod
@@ -982,6 +988,7 @@ class StageRun:
                 page_ids=None if page_ids is None else tuple(PageId(UUID(page_id)) for page_id in page_ids),
                 confirm_unsplit=bool(stored.get('confirm_unsplit', False)),
                 pin=bool(stored.get('pin', False)),
+                through_step=stored.get(THROUGH_STEP_KEY),
             )
         except (KeyError, ValueError, TypeError) as error:
             raise _params_error(JobKind.RUN_STAGE, error) from error

@@ -81,7 +81,7 @@ from bookreviver.domain.ids import (
     ScanId,
     SourceId,
 )
-from bookreviver.domain.stage_summaries import StageTally, VariantTally
+from bookreviver.domain.stage_summaries import StageTally, StepTally, VariantTally
 from bookreviver.domain.values import BookPlaceKey, PageEditKey, PageSize, PageStageKey, Slice
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
@@ -1238,6 +1238,7 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
                 PageStageRow.state == StageState.FAILED,
                 marked,
                 or_(PageStageRow.state != StageState.FRESH, marked),
+                and_(PageStageRow.state != StageState.FAILED, PageStageRow.through_step.is_not(None)),
             )
         )
         statement = (
@@ -1257,8 +1258,36 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
                 failed=failed,
                 review=review,
                 check=check,
+                partial=partial,
             )
-            for project, stage, fresh, stale, failed, review, check in await self._rows.session.execute(statement)
+            for project, stage, fresh, stale, failed, review, check, partial in await self._rows.session.execute(
+                statement
+            )
+        ]
+
+    @override
+    async def step_tally(self, project_id: ProjectId) -> Sequence[StepTally]:
+        """Count the pages a run stopped at each step, for every stage of the project, with one grouped statement.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: One tally for each step of a stage that a page stopped at.
+        :rtype: Sequence[StepTally]
+        """
+        statement = (
+            select(PageStageRow.stage, PageStageRow.through_step, func.count())
+            .join(PageRow, PageStageRow.page_id == PageRow.id)
+            .where(
+                PageRow.project_id == project_id,
+                PageRow.origin != PageOrigin.PLACEHOLDER,
+                PageStageRow.state != StageState.FAILED,
+                PageStageRow.through_step.is_not(None),
+            )
+            .group_by(PageStageRow.stage, PageStageRow.through_step)
+        )
+        return [
+            StepTally(stage=stage, through_step=through_step, pages=pages)
+            for stage, through_step, pages in await self._rows.session.execute(statement)
         ]
 
 

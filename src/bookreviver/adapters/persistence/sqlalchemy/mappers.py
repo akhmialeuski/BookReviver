@@ -632,6 +632,7 @@ class PageStageMapper(RowMapper[PageStage, PageStageRow]):
             head_version_id=None if row.head_version_id is None else PageVersionId(row.head_version_id),
             state=row.state,
             pinned=row.pinned,
+            through_step=row.through_step,
             updated_at=row.updated_at,
         )
 
@@ -651,6 +652,7 @@ class PageStageMapper(RowMapper[PageStage, PageStageRow]):
             head_version_id=entity.head_version_id,
             state=entity.state,
             pinned=entity.pinned,
+            through_step=entity.through_step,
             updated_at=entity.updated_at,
         )
 

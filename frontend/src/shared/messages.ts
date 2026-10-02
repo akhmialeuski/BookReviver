@@ -540,6 +540,8 @@ export const MESSAGES = {
       done: (done: number, total: number) => `${done} of ${total}`,
       check: (count: number) => `${count} ${pluralize(count, 'page', 'pages')} to check`,
       failed: (count: number) => `${count} failed`,
+      stopped: (count: number) =>
+        `${count} ${pluralize(count, 'page', 'pages')} stopped before the last step`,
     },
     layout: {
       toggleStrip: 'Show or hide the pages',
@@ -554,6 +556,11 @@ export const MESSAGES = {
         check: (count: number) => `Check ${count}`,
         leftOut: (count: number) => `Left out ${count}`,
         wide: (count: number) => `Wide ${count}`,
+      },
+      stopped: {
+        label: 'Stopped at step',
+        all: 'Any step',
+        option: (number: number, pages: number) => `Stopped at step ${number} · ${pages}`,
       },
       variant: {
         label: 'Variant',
@@ -1068,6 +1075,12 @@ export const MESSAGES = {
       hideSettings: (title: string) => `Hide the settings of the ${title} step`,
       noSettings: 'This step has no settings.',
       switchedOff: 'Off: the step is kept, but a run and a preview skip it.',
+      runThrough: 'Run up to here',
+      runThroughHint: (title: string) =>
+        `Run the recipe up to the ${title} step, taking the steps before it from the earlier run when nothing changed`,
+      runThroughOff: 'Switch this step on, or a step before it, to run up to it.',
+      passed: (passed: number, total: number) => `${passed} of ${total} pages passed`,
+      passedHint: 'Pages whose result of this stage was made through this step or a later one',
       empty: 'This recipe has no steps. Add one from the list below.',
       add: 'Add a step',
       unknownProcessor: 'This step is not installed on this machine.',
@@ -1115,6 +1128,8 @@ export const MESSAGES = {
       allClear: 'Every page is up to date.',
       outOfDate: (pages: number) => `${pages} ${pluralize(pages, 'page', 'pages')} out of date`,
       failed: (pages: number) => `${pages} failed`,
+      stoppedAt: (step: number, total: number, pages: number) =>
+        `Done through step ${step} of ${total}: ${pages} ${pluralize(pages, 'page', 'pages')}`,
       preview: 'Preview this page',
       previewOn: 'Stop the preview',
       previewNoPage: 'Open a page to preview it.',
@@ -1140,6 +1155,7 @@ export const MESSAGES = {
     compare: {
       before: (stage: string) => (stage === '' ? 'Before' : `Before · result of ${stage}`),
       after: (stage: string) => `After · ${stage}`,
+      afterStep: (stage: string, step: number) => `After · ${stage}, step ${step}`,
       swipe: 'Swipe',
       side: 'Side by side',
       off: 'After only',
@@ -1184,6 +1200,15 @@ export const MESSAGES = {
           'The text of this page differs too much in size from the text of the book, so it was left at its own size.',
       },
       reviewHint: 'Set it by hand in the page editor, or change the settings and preview again.',
+      stoppedAt: (step: number, total: number) =>
+        `Run through step ${step} of ${total} only. The next stage reads this page after the rest is run.`,
+      result: {
+        label: 'Result shown',
+        last: 'Last step',
+        option: (number: number, title: string) => `${number} · ${title}`,
+        notReached: (number: number) =>
+          `This page has not reached step ${number}, so its latest result is shown.`,
+      },
       how: 'Method',
       automatic: 'Automatic',
       manual: 'By hand',
@@ -1223,6 +1248,8 @@ export const MESSAGES = {
       rerun: (pages: number) => `Run again on ${pages} ${pluralize(pages, 'page', 'pages')}`,
     },
     reasons: {
+      atStep: (number: number, title: string, reason: string) =>
+        `Step ${number} · ${title}: ${reason}`,
       failed: (error: string) => (error === '' ? 'Failed' : `Failed: ${error}`),
       stale: 'Out of date',
       notApplied: (confidence: number | null) =>
