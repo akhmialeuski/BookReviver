@@ -17,7 +17,8 @@ advanced-alchemy 1.11.0 does not hand those of ``AlembicAsyncConfig`` to Alembic
 
 SQLite ignores foreign keys unless each connection turns them on, so the engine does that on connect, and the
 ``ON DELETE CASCADE`` of pages and jobs works the same as on PostgreSQL. ``migrations/env.py`` turns them off again
-for the length of a migration.
+for the length of a migration. It also sets a busy timeout of thirty seconds on every connection, so that requests
+which meet the lock of a writer wait for it, and several clients can use one file at once.
 
 The schema is created and changed only by the revisions in ``migrations/``, applied by hand. The application reads
 :meth:`SqlDatabase.schema_revisions` at start and refuses to run against a schema it was not written for, which
@@ -42,6 +43,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 SQLITE_DIALECT: str = 'sqlite'
+# How long a statement waits for the lock of another connection before SQLite gives up on it
+SQLITE_BUSY_TIMEOUT_MS: int = 30_000
 # The revisions of the schema, shipped inside the package next to the tables they change
 MIGRATIONS_DIR: Path = Path(__file__).with_name('migrations')
 
@@ -93,13 +96,16 @@ class SqlDatabase:
         )
         self.engine: AsyncEngine = self.config.get_engine()
         if self.engine.dialect.name == SQLITE_DIALECT:
-            event.listen(self.engine.sync_engine, 'connect', self._enable_sqlite_foreign_keys)
+            event.listen(self.engine.sync_engine, 'connect', self._configure_sqlite)
         self.sessions: Callable[[], AsyncSession] = self.config.create_session_maker()
         self.migrations = AlembicCommands(self.config)
 
     @staticmethod
-    def _enable_sqlite_foreign_keys(dbapi_connection: Connection, _record: object) -> None:
-        """Make SQLite enforce foreign keys and their cascades, which it skips by default.
+    def _configure_sqlite(dbapi_connection: Connection, _record: object) -> None:
+        """Make SQLite enforce foreign keys and their cascades, which it skips by default, and wait for a lock.
+
+        A request that meets the lock of a writer, such as an import committing its pages, waits for it up to
+        ``SQLITE_BUSY_TIMEOUT_MS`` instead of failing with "database is locked" after the few seconds of the default.
 
         :param dbapi_connection: New SQLite connection, before any statement runs on it.
         :type dbapi_connection: Connection
@@ -107,6 +113,7 @@ class SqlDatabase:
         :type _record: object
         """
         dbapi_connection.execute('PRAGMA foreign_keys=ON')
+        dbapi_connection.execute(f'PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}')
 
     async def schema_revisions(self) -> SchemaRevisions:
         """Read the revisions the database records and the head revisions of the migrations directory.

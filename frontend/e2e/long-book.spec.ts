@@ -6,6 +6,7 @@ import {
   createBook,
   openImportStage,
   registerAndSignIn,
+  snap,
   writePagesFolder,
 } from './support/account';
 
@@ -40,6 +41,7 @@ test('the strip of a book of a thousand pages keeps only the pages in sight', as
     await expect(page.getByTestId('stage-screen')).toHaveAttribute('data-stage', 'geometry');
     await expect(tiles.first()).toContainText('1');
     expect(await tiles.count()).toBeLessThanOrEqual(MOST_TILES_IN_DOCUMENT);
+    await snap(page, 'strip-first-page');
   });
 
   await test.step('scrolling to the last page keeps the document as small as at the start', async () => {
@@ -51,6 +53,7 @@ test('the strip of a book of a thousand pages keeps only the pages in sight', as
       expect(await tiles.count()).toBeLessThanOrEqual(MOST_TILES_IN_DOCUMENT);
     }
     await expect(tiles.last()).toContainText(String(LONG_BOOK_PAGES));
+    await snap(page, 'strip-last-page');
   });
 });
 

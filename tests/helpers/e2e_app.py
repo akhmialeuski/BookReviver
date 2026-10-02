@@ -12,13 +12,21 @@ import logging
 from starlette.routing import Route
 
 import bookreviver
+from bookreviver.app import security
 from bookreviver.app.main import create_app
 from bookreviver.app.settings import Settings
 from tests.helpers.fake_oauth import CONSENT_PATH, FakeOAuth2, consent_route
 
+E2E_SIGN_IN_ATTEMPTS: str = '1000/minute'
+
 # As in bookreviver.app.asgi: the mail the log mailer writes is the way the scenarios read their links
 logging.basicConfig()
 logging.getLogger(bookreviver.__name__).setLevel(logging.INFO)
+
+# Parallel scenarios register, confirm and sign in from one address far faster than the production limit of ten a minute
+# allows. The limit itself is tested in tests/accounts/test_security.py, and it is read when the application is built,
+# so it is raised here, before that, for this server alone
+security.SIGN_IN_ATTEMPTS = E2E_SIGN_IN_ATTEMPTS
 
 settings = Settings()
 app = create_app(

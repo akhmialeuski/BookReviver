@@ -127,6 +127,15 @@ on port 8765 with an empty database in `frontend/.e2e-data`, which is also where
 It needs Playwright's Chromium (`npx --prefix frontend playwright install --with-deps chromium`), or another one named
 in `BOOKREVIVER_E2E_CHROMIUM`.
 
+The scenario files run side by side on the one server and its database, three at a time. `BOOKREVIVER_E2E_WORKERS`
+sets how many, and `1` runs them one after the other. Every scenario registers an account of its own and finds its
+confirmation link in the log by the address it registered, so the scenarios do not depend on each other. The server of
+the end-to-end run lifts the limit on sign-in attempts, which production keeps at ten a minute for each address.
+
+A scenario that fails keeps a screenshot and a trace, and a scenario can capture a key state with `snap` from
+`frontend/e2e/support/account.ts`. All of them land in the folder of the scenario under `frontend/test-results/`.
+A trace opens with `npx --prefix frontend playwright show-trace frontend/test-results/<scenario>/trace.zip`.
+
 ## Mail
 
 The application mails a link to confirm an address, to reset a password, and a notice to an address that someone

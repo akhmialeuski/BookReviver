@@ -19,6 +19,7 @@ from bookreviver.api.schemas.pages import (
     LabelRange,
     NumberedPageSchema,
     PageCreate,
+    PageCreateList,
     PageMove,
     PageQuery,
     PageSchema,
@@ -300,6 +301,40 @@ async def create_page(
     :rtype: PageSchema
     """
     return links.created(await pages.add(actor, project_id, body.to_new_page()))
+
+
+@router.post('/{project_id}/pages/batch', status_code=status.HTTP_201_CREATED)
+async def create_pages(
+    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    body: Annotated[PageCreateList, Body()],
+    actor: ActorDep,
+    request: Request,
+    pages: FromDishka[PageService],
+) -> list[PageSchema]:
+    """Add several placeholders or blank leaves in one transaction, up to a thousand at once.
+
+    Each page is placed as in ``POST /pages``. A page without a place stands after the page before it in the list, and
+    the first one at the end of the book. All pages are added or none is, and one ``pages-changed`` event follows. The
+    answer is 422 for a page whose body is invalid, with its index in the list in the location of the error, and 409
+    for a page whose place is no page of the book or a blank leaf without a size in a book with no page to take the
+    median of, with its index in the detail.
+
+    \N{FORM FEED}
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :param body: The pages to add, in the order they stand in where they share a place.
+    :type body: PageCreateList
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param request: The request, whose application knows the route that serves the images.
+    :type request: Request
+    :param pages: Page service of the request.
+    :type pages: PageService
+    :returns: The new pages, in the order of the request.
+    :rtype: list[PageSchema]
+    """
+    added = await pages.add_many(actor, project_id, [page.to_new_page() for page in body])
+    return [PageSchema.from_overview(overview, request) for overview in added]
 
 
 @router.delete('/{project_id}/pages/{page_id}', status_code=status.HTTP_204_NO_CONTENT)

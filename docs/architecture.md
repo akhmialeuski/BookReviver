@@ -542,7 +542,17 @@ grows by a character or two for a book arranged by hand, which a book of a few h
 A page the scans lack is added in a place of the book with `POST /projects/{id}/pages`, a `PageCreate` that names an
 origin, `blank` or `placeholder`, the kind, an optional label and notes, and an optional place, which is the end of the
 book when no anchor is given. The origin `scan` is refused, since only the split and the binding of a scan make such a
-page. The key is made the way a move makes it, between the anchor and its neighbour or after the last page. Two kinds of page follow different rules:
+page. The key is made the way a move makes it, between the anchor and its neighbour or after the last page.
+
+`POST /projects/{id}/pages/batch` takes a list of `PageCreate` bodies, at most `PageService.MAX_PAGES_PER_BATCH` (1000),
+and `PageService.add_many` adds them all in one transaction or none, then publishes one `PagesChanged`. A page with an
+anchor goes to that place, and a page without one goes after the page before it in the list, the first one at the end
+of the book. The pages that stand in one place are given their keys by one call of `OrderKeys.spread`, in the order
+listed, so the book is read once for each distinct anchor and never for each page. The median size of a blank leaf is
+read once for the list. An invalid body is a 422 whose location holds the index of the page. An anchor that is no page of
+the book, and a blank leaf without a size in a book with no page to take the median of, are a 409 whose detail names the
+index. Two anchors that lie in the same gap between two neighbours are not told apart, so the second is refused by the
+unique key of the order. Two kinds of page follow different rules:
 
 - **A placeholder** is a missing page, a cover or a title page for which a scan is still to come. It has no image and no
   version, and the stages skip it.
@@ -919,7 +929,8 @@ flowchart TD
   pragma inside one. Python's `sqlite3` begins a transaction only before a row change, so `env.py` issues `BEGIN`
   itself and every `CREATE`, `DROP` and `ALTER` joins it. `PRAGMA foreign_key_check` runs inside the transaction,
   and a key that points nowhere rolls the whole migration back and fails the command. PostgreSQL has transactional
-  DDL and needs neither pragma.
+  DDL and needs neither pragma. The engine also gives every SQLite connection a busy timeout of thirty seconds, so a
+  request that meets the lock of a writer, such as an import committing its pages, waits instead of failing.
 - **Tests.** `test_migrations.py` upgrades an empty database, runs `alembic check`, downgrades to base and upgrades
   again. With revisions rendered from the shipped template in a copy of the directory, it rebuilds `projects` in
   batch mode with a book stored, rolls back a revision that orphans the book, and fails `check` on a changed column
@@ -1328,6 +1339,7 @@ the frontend client is generated from it. These endpoints of books, jobs and ima
 | `GET /projects/{id}/pages`                  | `list_pages`            | `PageService.manifest`       | 200 `ManifestPage[PageSchema]`                  |
 | `GET /projects/{id}/pages/{page_id}`        | `get_page`              | `PageService.get`            | 200 `PageSchema`                                |
 | `POST /projects/{id}/pages`                 | `create_page`           | `PageService.add`            | 201 `PageSchema`, `Location`                    |
+| `POST /projects/{id}/pages/batch`           | `create_pages`          | `PageService.add_many`       | 201 `list[PageSchema]`, 409 names the index of a page it refuses |
 | `DELETE /projects/{id}/pages/{page_id}`     | `delete_page`           | `PageService.delete`         | 204                                             |
 | `PUT /projects/{id}/pages/{page_id}/scan`   | `attach_scan`           | `PageService.attach_scan`    | 200 `PageSchema`, 409 for a scan another page shows |
 | `PATCH /projects/{id}/pages/{page_id}`      | `update_page`           | `PageService.update`         | 200 `PageSchema`, JSON Merge Patch              |

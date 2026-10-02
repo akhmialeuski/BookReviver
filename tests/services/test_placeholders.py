@@ -10,6 +10,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
+from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.enums import (
     JobKind,
@@ -1589,3 +1590,283 @@ class TestAddBlankWithoutSizedPages:
             PageSize.from_data(_stored_versions(fx_database, made.page)[0].data) == PageSize(width_px=8, height_px=9)
         )
         assert_expectations()
+
+
+class CountingOrderKeys(FractionalOrderKeys):
+    """The fractional order keys, which count how many times keys were asked for.
+
+    :ivar calls: Number of calls of ``spread``.
+    """
+
+    def __init__(self) -> None:
+        """Start counting from zero."""
+        self.calls = 0
+
+    @override
+    def spread(self, *, lower: str | None, upper: str | None, count: int) -> Sequence[str]:
+        """Count the call and make the keys as the fractional builder does.
+
+        :param lower: Key before the new positions, or None at the start of the book.
+        :type lower: str | None
+        :param upper: Key after the new positions, or None at the end of the book.
+        :type upper: str | None
+        :param count: Number of keys.
+        :type count: int
+        :returns: The keys in ascending order.
+        :rtype: Sequence[str]
+        """
+        self.calls += 1
+        return super().spread(lower=lower, upper=upper, count=count)
+
+
+def _labels_in_book_order(database: InMemoryDatabase) -> list[str]:
+    """Read the labels of the committed pages in the order of the book.
+
+    :param database: In-memory database to read.
+    :type database: InMemoryDatabase
+    :returns: The label of each page, in order key order.
+    :rtype: list[str]
+    """
+    return [page.label for page in sorted(database.tables.pages.values(), key=lambda page: page.order_key)]
+
+
+def _placeholder(label: str, anchor: PageAnchor | None = None) -> NewPage:
+    """Build a placeholder for a batch.
+
+    :param label: Printed number of the page.
+    :type label: str
+    :param anchor: Place of the page, or None for the place after the page before it in the list.
+    :type anchor: PageAnchor | None
+    :returns: The new page.
+    :rtype: NewPage
+    """
+    return NewPage(origin=NewPageOrigin.PLACEHOLDER, kind=PageKind.TEXT, label=label, anchor=anchor)
+
+
+class TestAddMany:
+    """Tests for PageService.add_many()."""
+
+    async def test_adds_the_whole_list_at_the_end_in_order_with_one_event_and_one_key_call(
+        self,
+        fx_database: InMemoryDatabase,
+        fx_asset_store: LocalAssetStore,
+        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        fx_actor: Actor,
+        fx_events: RecordingEventBus,
+    ) -> None:
+        """Verify pages without a place stand at the end in the order listed, announced once, with one key call.
+
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_asset_store: Local asset store of the test.
+        :type fx_asset_store: LocalAssetStore
+        :param fx_runtime: The recording bus, the stopped clock and the recording queue.
+        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        :param fx_events: Recording event bus of the test.
+        :type fx_events: RecordingEventBus
+        """
+        book = await _commit_book(fx_database, fx_asset_store, fx_actor)
+        keys = CountingOrderKeys()
+        service = make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime, order_keys=keys)
+
+        added = await service.add_many(fx_actor, book.project.id, [_placeholder(str(n)) for n in range(1, 6)])
+
+        expect([overview.position for overview in added] == [1, 2, 3, 4, 5])
+        expect(_labels_in_book_order(fx_database) == ['', '1', '2', '3', '4', '5'])
+        expect(keys.calls == 1)
+        expect(
+            fx_events.published
+            == [
+                PagesChanged(
+                    project_id=book.project.id,
+                    page_ids=[overview.page.id for overview in added],
+                    change=PageChange.ADDED,
+                )
+            ]
+        )
+        assert_expectations()
+
+    async def test_pages_without_a_place_follow_the_page_before_them_and_each_anchor_is_one_place(
+        self,
+        fx_database: InMemoryDatabase,
+        fx_asset_store: LocalAssetStore,
+        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        fx_actor: Actor,
+    ) -> None:
+        """Verify a run starts at its anchor, continues after the page before it, and keeps the order listed.
+
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_asset_store: Local asset store of the test.
+        :type fx_asset_store: LocalAssetStore
+        :param fx_runtime: The recording bus, the stopped clock and the recording queue.
+        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        book = await _commit_book(fx_database, fx_asset_store, fx_actor, [FIRST_SCAN_SIZE] * 3)
+        first, _, last = book.pages
+        keys = CountingOrderKeys()
+        service = make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime, order_keys=keys)
+        before_last = PageAnchor(page_id=last.id, side=Side.BEFORE)
+        after_first = PageAnchor(page_id=first.id, side=Side.AFTER)
+        # The labels of the scan pages are empty, so the new ones tell the places apart
+        new = [
+            _placeholder('a', before_last),
+            _placeholder('b'),
+            _placeholder('c', after_first),
+            _placeholder('d'),
+            _placeholder('e', before_last),
+        ]
+
+        added = await service.add_many(fx_actor, book.project.id, new)
+
+        expect(_labels_in_book_order(fx_database) == ['', 'c', 'd', '', 'a', 'b', 'e', ''])
+        expect([overview.page.label for overview in added] == ['a', 'b', 'c', 'd', 'e'])
+        expect([overview.position for overview in added] == [4, 5, 1, 2, 6])
+        expect(keys.calls == 2)
+        assert_expectations()
+
+    async def test_blank_leaves_get_one_pending_version_each_and_one_job(
+        self,
+        fx_service: Callable[[], PageService],
+        fx_database: InMemoryDatabase,
+        fx_asset_store: LocalAssetStore,
+        fx_actor: Actor,
+        fx_queue: RecordingJobQueue,
+    ) -> None:
+        """Verify blank leaves take the median size once, a given size is kept, and one job is queued for all.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_asset_store: Local asset store of the test.
+        :type fx_asset_store: LocalAssetStore
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        :param fx_queue: Recording job queue.
+        :type fx_queue: RecordingJobQueue
+        """
+        book = await _commit_book(fx_database, fx_asset_store, fx_actor, SIZES)
+        sized = PageSize(width_px=8, height_px=9)
+        new = [
+            NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK),
+            _placeholder('p'),
+            NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=sized),
+        ]
+
+        added = await fx_service().add_many(fx_actor, book.project.id, new)
+
+        sizes = [PageSize.from_data(_stored_versions(fx_database, added[i].page)[0].data) for i in (0, 2)]
+        expect(sizes == [PageSize(width_px=200, height_px=300, dpi=200.0), sized])
+        expect(_stored_versions(fx_database, added[1].page) == [])
+        expect([job.kind for job in fx_queue.enqueued] == [JobKind.PREPARE_PAGES])
+        assert_expectations()
+
+    async def test_a_bad_anchor_in_the_middle_names_its_index_and_stores_nothing(
+        self,
+        fx_service: Callable[[], PageService],
+        fx_database: InMemoryDatabase,
+        fx_asset_store: LocalAssetStore,
+        fx_actor: Actor,
+        fx_events: RecordingEventBus,
+    ) -> None:
+        """Verify an anchor that is no page of the book refuses the whole list, and no page or event is left.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_asset_store: Local asset store of the test.
+        :type fx_asset_store: LocalAssetStore
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        :param fx_events: Recording event bus of the test.
+        :type fx_events: RecordingEventBus
+        """
+        book = await _commit_book(fx_database, fx_asset_store, fx_actor)
+        lost = PageAnchor(page_id=PageId(UUID(int=7)), side=Side.AFTER)
+        new = [_placeholder('1'), _placeholder('2'), _placeholder('3', lost)]
+
+        with pytest.raises(ConflictError, match='index 2 of the list'):
+            await fx_service().add_many(fx_actor, book.project.id, new)
+
+        expect(len(fx_database.tables.pages) == len(book.pages))
+        expect(fx_events.published == [])
+        assert_expectations()
+
+    async def test_a_blank_leaf_without_a_size_in_a_book_without_images_names_its_index(
+        self, fx_service: Callable[[], PageService], fx_database: InMemoryDatabase, fx_actor: Actor
+    ) -> None:
+        """Verify the first leaf that lacks a size is named, and the placeholders before it are not stored.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        await commit_project(fx_database, project)
+        new = [_placeholder('1'), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)]
+
+        with pytest.raises(ConflictError, match='index 1 of the list'):
+            await fx_service().add_many(fx_actor, project.id, new)
+
+        assert fx_database.tables.pages == {}
+
+    async def test_refuses_more_pages_than_the_limit_and_a_project_of_another_account(
+        self,
+        fx_service: Callable[[], PageService],
+        fx_database: InMemoryDatabase,
+        fx_asset_store: LocalAssetStore,
+        fx_actor: Actor,
+    ) -> None:
+        """Verify a list over ``MAX_PAGES_PER_BATCH`` is a conflict and a stranger's project is not found.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_asset_store: Local asset store of the test.
+        :type fx_asset_store: LocalAssetStore
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        book = await _commit_book(fx_database, fx_asset_store, fx_actor)
+        stranger = await _commit_book(fx_database, fx_asset_store, evolve(fx_actor, account_id=new_account_id()))
+        too_many = [_placeholder('x')] * (fx_service().MAX_PAGES_PER_BATCH + 1)
+
+        with pytest.raises(ConflictError):
+            await fx_service().add_many(fx_actor, book.project.id, too_many)
+        with pytest.raises(NotFoundError):
+            await fx_service().add_many(fx_actor, stranger.project.id, [_placeholder('1')])
+
+        assert len(fx_database.tables.pages) == len(book.pages) + len(stranger.pages)
+
+    async def test_a_thousand_pages_are_one_transaction(
+        self,
+        fx_service: Callable[[], PageService],
+        fx_database: InMemoryDatabase,
+        fx_actor: Actor,
+    ) -> None:
+        """Verify the largest list is added whole and in order.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        await commit_project(fx_database, project)
+        labels = [str(number) for number in range(fx_service().MAX_PAGES_PER_BATCH)]
+
+        await fx_service().add_many(fx_actor, project.id, [_placeholder(label) for label in labels])
+
+        assert _labels_in_book_order(fx_database) == labels

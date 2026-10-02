@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { expect, type Page } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../../src/shared/http/csrf';
 import { SERVER_LOG } from './env';
 import { solidPng } from './png';
@@ -17,18 +17,38 @@ import { solidPng } from './png';
 export const PASSWORD = 'correct horse battery staple';
 const PAGE_SIZE = 40;
 const IMPORT_TIMEOUT_MS = 60_000;
+// The most pages one batch request adds, which is the limit of the server
+const PAGES_PER_BATCH = 1000;
 
-/** Wait for the mail of the registration and return the confirmation link it holds. */
-export async function confirmationLink(): Promise<string> {
+/**
+ * Wait for a mail to the given address in the server log and return the link of the given page that it holds.
+ *
+ * The log mailer writes one record for each mail, which begins with `Mail to <address>:` and holds the whole body, so
+ * the link is read from the record of that address and never from whatever mail was written last. The scenarios share
+ * one server, and two of them register at the same time.
+ *
+ * @param email The address the mail was sent to.
+ * @param route The page the link opens, such as `verify-email` or `reset-password`.
+ */
+export async function mailedLink(email: string, route: string): Promise<string> {
+  const linkPattern = new RegExp(`https?://\\S+/${route}\\?token=\\S+`);
+  const recordStart = `Mail to ${email}:`;
   let link = '';
   await expect
     .poll(async () => {
       const log = await readFile(SERVER_LOG, 'utf8').catch(() => '');
-      link = log.match(/https?:\/\/\S+\/verify-email\?token=\S+/g)?.at(-1) ?? '';
+      // Each record starts at its own "Mail to", so a chunk of the log never holds the link of another record
+      const records = log.split(/(?=Mail to )/).filter((record) => record.startsWith(recordStart));
+      link = records.map((record) => record.match(linkPattern)?.[0] ?? '').findLast(Boolean) ?? '';
       return link;
     })
     .not.toBe('');
   return link;
+}
+
+/** Wait for the mail of the registration of the given address and return the confirmation link it holds. */
+export function confirmationLink(email: string): Promise<string> {
+  return mailedLink(email, 'verify-email');
 }
 
 /** Register a new reader, confirm the address from the mailed link and sign in. */
@@ -40,7 +60,7 @@ export async function registerAndSignIn(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Create account' }).click();
   await expect(page.getByText('Check your mail')).toBeVisible();
 
-  const link = await confirmationLink();
+  const link = await confirmationLink(email);
   await page.goto(new URL(link).pathname + new URL(link).search);
   await expect(page.getByText('Your address is confirmed')).toBeVisible();
 
@@ -113,11 +133,11 @@ export function openProjectId(page: Page): string {
 }
 
 /**
- * Append placeholder pages labelled with their numbers to the open book, one request each, as the Order stage does,
- * and come back to the book on the given stage. A long book is made this way, since importing hundreds of scans would
- * spend the run on the import.
+ * Append placeholder pages labelled with their numbers to the open book, a thousand to a request, as the Order stage
+ * does, and come back to the book on the given stage. A long book is made this way, since importing hundreds of scans
+ * would spend the run on the import.
  *
- * The browser leaves the book meanwhile, because the open book would read its pages again on every page added.
+ * The browser leaves the book meanwhile, because the open book would read its pages again after the pages are added.
  *
  * @param stage The stage the book opens on afterwards, such as `geometry` or `page-order`.
  */
@@ -126,14 +146,30 @@ export async function addPlaceholderPages(page: Page, count: number, stage: stri
   await page.goto('about:blank');
   const cookies = await page.context().cookies();
   const token = cookies.find((cookie) => cookie.name === CSRF_COOKIE_NAME)?.value ?? '';
-  for (let number = 1; number <= count; number += 1) {
-    const response = await page.request.post(`/api/v1/projects/${projectId}/pages`, {
+  for (let first = 1; first <= count; first += PAGES_PER_BATCH) {
+    const last = Math.min(first + PAGES_PER_BATCH - 1, count);
+    const data = Array.from({ length: last - first + 1 }, (_, offset) => ({
+      origin: 'placeholder',
+      kind: 'text',
+      label: String(first + offset),
+    }));
+    const response = await page.request.post(`/api/v1/projects/${projectId}/pages/batch`, {
       headers: { [CSRF_HEADER_NAME]: token },
-      data: { origin: 'placeholder', kind: 'text', label: String(number) },
+      data,
     });
     expect(response.ok()).toBe(true);
   }
   await page.goto(`/projects/${projectId}/stages/${stage}`);
+}
+
+/**
+ * Capture a key state of a scenario for the task report: the visible part of the page, saved as `<name>.png` in the
+ * output folder of the running test, under `frontend/test-results/`.
+ *
+ * @param name What the picture shows, in kebab-case, such as `strip-first-page`.
+ */
+export async function snap(page: Page, name: string): Promise<void> {
+  await page.screenshot({ path: test.info().outputPath(`${name}.png`), fullPage: false });
 }
 
 /** Open the Import stage of the open book, which shows its files and their scans, or the drop area of an empty book. */

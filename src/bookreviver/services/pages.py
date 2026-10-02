@@ -66,6 +66,7 @@ from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Collection, Mapping, Sequence
+    from datetime import datetime
     from pathlib import Path
 
     from bookreviver.domain.changes import PageChanges
@@ -90,6 +91,9 @@ SCAN_NOT_CUT: str = 'The scan has no image yet. Bind it after its import has cut
 SCAN_DELETED: str = 'The scan of the page was deleted, so its image cannot be copied.'
 PAGES_FAILED: str = '{count} of the page images could not be made. They are tried again by the next job.'
 NOT_QUEUED: str = 'The images of the pages could not be queued. They are made by the next job.'
+BATCH_TOO_LONG: str = 'A request adds at most {limit} pages. Send the rest in another request.'
+PAGE_OF_BATCH: str = 'The page at index {index} of the list cannot be added: {reason}'
+ANCHOR_NOT_IN_BOOK: str = 'the page it is put next to is not a page of the book.'
 UNEXPECTED_FAILURE: str = (
     'The images of the pages could not be made because of an unexpected error. It has been logged.'
 )
@@ -130,9 +134,11 @@ class PageService:
 
     :cvar PAGE_WRITE_ATTEMPTS: How many times a change of one page is read, applied and written when another request
                                keeps changing the page in between.
+    :cvar MAX_PAGES_PER_BATCH: Most pages one call of ``add_many`` adds, which bounds the rows of one transaction.
     """
 
     PAGE_WRITE_ATTEMPTS: ClassVar[int] = 3
+    MAX_PAGES_PER_BATCH: ClassVar[int] = 1000
 
     def __init__(self, *, uow: UnitOfWork, assets: AssetStore, runtime: PageRuntime, imaging: PageImaging) -> None:
         """Work over the ports of one request or job.
@@ -348,17 +354,7 @@ class PageService:
         size = (new_page.size or await self._median_size(project_id)) if blank else None
         [key] = await self._keys_at(project_id, new_page.anchor, count=1)
         moment = self._clock.now()
-        page = Page(
-            id=PageId(uuid4()),
-            project_id=project_id,
-            order_key=key,
-            label=new_page.label,
-            kind=new_page.kind,
-            origin=new_page.origin.page_origin,
-            notes=new_page.notes,
-            created_at=moment,
-            updated_at=moment,
-        )
+        page = self._new_page(project_id, new_page, key, moment)
         await self._uow.pages.add(page)
         if size is not None:
             full = project.image_policy.full_format(ColorMode.BILEVEL)
@@ -368,6 +364,81 @@ class PageService:
         if blank:
             await self._enqueue_prepare(project_id)
         return overview
+
+    async def add_many(self, actor: Actor, project_id: ProjectId, new_pages: Sequence[NewPage]) -> list[PageOverview]:
+        """Add placeholders and blank leaves in one transaction, announced by one event, or add none of them.
+
+        A page with an anchor goes to that place, and a page without one goes after the page before it in the list, or
+        at the end of the book when it is the first. The pages that stand in one place are given their keys by one
+        call of the key builder, in the order listed, so the book is read once for each place and never for each page.
+        Two places that lie in the same gap between neighbours are not told apart, and the second is refused by the
+        unique key of the order. The median size of the book is read once, for all the blank leaves without a size.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param new_pages: The pages to add, in the order they are to stand in where they share a place.
+        :type new_pages: Sequence[NewPage]
+        :returns: The new pages with their positions, in the order listed.
+        :rtype: list[PageOverview]
+        :raises NotFoundError: If the actor has no such project.
+        :raises ConflictError: If there are more pages than ``MAX_PAGES_PER_BATCH``, if the anchor of a page is not a
+                               page of the project, or if a blank leaf has no size and no page of the book has one to
+                               take the median of. The message of the last two names the index of the page.
+        """
+        if len(new_pages) > self.MAX_PAGES_PER_BATCH:
+            raise ConflictError(BATCH_TOO_LONG.format(limit=self.MAX_PAGES_PER_BATCH))
+        project = await owned_project(self._uow.projects, actor, project_id)
+        if not new_pages:
+            return []
+
+        median = None
+        sizeless = (i for i, page in enumerate(new_pages) if page.origin is NewPageOrigin.BLANK and page.size is None)
+        if (lacking := next(sizeless, None)) is not None:
+            try:
+                median = await self._median_size(project_id)
+            except ConflictError as error:
+                raise ConflictError(PAGE_OF_BATCH.format(index=lacking, reason=error)) from error
+
+        # A page without an anchor stands after the page before it, so it joins that page's place
+        places: dict[PageAnchor | None, list[int]] = {}
+        place = None
+        for index, new_page in enumerate(new_pages):
+            place = new_page.anchor or place
+            places.setdefault(place, []).append(index)
+
+        moment = self._clock.now()
+        pages: dict[int, Page] = {}
+        for anchor, indexes in places.items():
+            try:
+                keys = await self._keys_at(project_id, anchor, count=len(indexes))
+            except NotFoundError as error:
+                raise ConflictError(PAGE_OF_BATCH.format(index=indexes[0], reason=ANCHOR_NOT_IN_BOOK)) from error
+            pages.update(
+                (i, self._new_page(project_id, new_pages[i], key, moment)) for i, key in zip(indexes, keys, strict=True)
+            )
+        added = [pages[index] for index in range(len(new_pages))]
+        await self._uow.pages.add_many(added)
+
+        full = project.image_policy.full_format(ColorMode.BILEVEL)
+        leaves = []
+        for page, new_page in zip(added, new_pages, strict=True):
+            # The median was read above for every blank leaf without a size, so a leaf always has one
+            if new_page.origin is NewPageOrigin.BLANK and (size := new_page.size or median) is not None:
+                leaves.append(BaseVersions.blank(page=page, size=size, full=full, moment=moment))
+        await self._uow.page_versions.add_many(leaves)
+
+        overviews: dict[PageId, PageOverview] = {}
+        for indexes in places.values():
+            run = [pages[index] for index in indexes]
+            overviews.update(
+                (o.page.id, o) for o in await self._overviews(run, await self._uow.pages.count_before(run[0]))
+            )
+        await self._finish(project_id, added, PageChange.ADDED)
+        if leaves:
+            await self._enqueue_prepare(project_id)
+        return [overviews[page.id] for page in added]
 
     async def delete(self, actor: Actor, project_id: ProjectId, page_id: PageId) -> None:
         """Delete a page with its versions, and then its files, leaving its scan and the scan's source.
@@ -708,6 +779,32 @@ class PageService:
         if page.project_id != project_id:
             raise NotFoundError(page_id)
         return page
+
+    def _new_page(self, project_id: ProjectId, new_page: NewPage, key: str, moment: datetime) -> Page:
+        """Build the stored form of a page the user adds, with its order key.
+
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param new_page: The page to add.
+        :type new_page: NewPage
+        :param key: Order key that puts the page in its place.
+        :type key: str
+        :param moment: Time of the request, which creates and last changes the page.
+        :type moment: datetime
+        :returns: The page, not yet stored.
+        :rtype: Page
+        """
+        return Page(
+            id=PageId(uuid4()),
+            project_id=project_id,
+            order_key=key,
+            label=new_page.label,
+            kind=new_page.kind,
+            origin=new_page.origin.page_origin,
+            notes=new_page.notes,
+            created_at=moment,
+            updated_at=moment,
+        )
 
     async def _place(self, project_id: ProjectId, pages: Sequence[Page], anchor: PageAnchor) -> list[Page]:
         """Give pages new order keys that put them in a run next to the anchor page, in the order given.

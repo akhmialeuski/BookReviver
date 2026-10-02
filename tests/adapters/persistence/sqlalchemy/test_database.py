@@ -4,7 +4,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 from attrs import evolve
+from sqlalchemy import text
 
+from bookreviver.adapters.persistence.sqlalchemy.database import SQLITE_BUSY_TIMEOUT_MS
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from tests.helpers.builders import make_project
 
@@ -44,3 +46,15 @@ class TestSqlDatabase:
         async with fx_database.sessions() as session:
             stored = await SqlAlchemyUnitOfWork(session).projects.get(project.id)
         assert stored.updated_at == renamed.updated_at
+
+    async def test_connections_wait_for_a_lock_and_enforce_foreign_keys(self, fx_database: SqlDatabase) -> None:
+        """Verify every SQLite connection waits the busy timeout for a lock and enforces foreign keys.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        """
+        async with fx_database.engine.connect() as connection:
+            timeout = (await connection.execute(text('PRAGMA busy_timeout'))).scalar_one()
+            foreign_keys = (await connection.execute(text('PRAGMA foreign_keys'))).scalar_one()
+
+        assert (timeout, foreign_keys) == (SQLITE_BUSY_TIMEOUT_MS, 1)
