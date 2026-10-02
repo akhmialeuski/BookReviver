@@ -58,3 +58,52 @@ export function layoutOf(
   }
   return items;
 }
+
+/**
+ * Count the columns of the grid that fit in a width, the way a grid of equal tracks with a gap between them does.
+ *
+ * @param width The width the grid may use, in pixels.
+ * @param cell The least width of a column, in pixels.
+ * @param gap The gap between two columns, in pixels.
+ * @returns The number of columns, never less than one, so a sheet narrower than a cell still shows its cells.
+ */
+export function columnsOf(width: number, cell: number, gap: number): number {
+  return Math.max(1, Math.floor((width + gap) / (cell + gap)));
+}
+
+/**
+ * Cut the items into the rows of a grid of the given number of columns.
+ *
+ * @param items The cards and groups in the order the grid draws them.
+ * @param columns The number of columns, at least one.
+ * @returns The rows from the top, each with `columns` items except perhaps the last; none for no items.
+ */
+export function rowsOf(items: readonly LayoutItem[], columns: number): LayoutItem[][] {
+  const rows: LayoutItem[][] = [];
+  for (let start = 0; start < items.length; start += columns) {
+    rows.push(items.slice(start, start + columns));
+  }
+  return rows;
+}
+
+/**
+ * Find the row of each cell, by the id a request to scroll names: the key of a card and the id of every page.
+ *
+ * @param rows The rows of the grid.
+ * @returns The index of the row of each cell.
+ */
+export function rowOfCells(rows: readonly (readonly LayoutItem[])[]): Map<string, number> {
+  const rowOf = new Map<string, number>();
+  rows.forEach((row, index) => {
+    for (const item of row) {
+      if (item.kind === 'gap') {
+        rowOf.set(item.key, index);
+      } else {
+        for (const entry of item.pages) {
+          rowOf.set(entry.id, index);
+        }
+      }
+    }
+  });
+  return rowOf;
+}
