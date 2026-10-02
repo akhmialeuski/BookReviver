@@ -3,6 +3,7 @@ import type {
   FileType,
   IdentifierScheme,
   ImagePolicy,
+  JobKind,
   JobState,
   LabelStyle,
   Orthography,
@@ -21,6 +22,7 @@ import type { Section } from '@/features/about/sections';
 import type { SuggestedField } from '@/features/about/suggestion';
 import type { OAuthFailure } from '@/features/auth/oauth';
 import type { Phase } from '@/features/stages/stages';
+import type { PageFilter } from '@/features/workspace/params';
 import { ProblemCode } from '@/shared/http/codes';
 import { pluralize } from '@/shared/lib/format';
 
@@ -600,6 +602,121 @@ export const MESSAGES = {
       page: (position: number, label: string) =>
         label === '' ? `Page at position ${position}` : `Page ${label}, position ${position}`,
     },
+  },
+  workspace: {
+    unknownStage: 'This book has no such stage.',
+    header: {
+      library: 'Library',
+      read: 'Read the book',
+      accountMenu: 'Account menu',
+    },
+    bar: {
+      label: 'Stages of the book',
+      about: 'About the book',
+      noFiles: 'No files yet',
+      waitsForPages: 'Waits for pages',
+      files: (files: number, scans: number) =>
+        `${files} ${pluralize(files, 'file', 'files')} · ${scans} ${pluralize(scans, 'scan', 'scans')}`,
+      pages: (count: number) => `${count} ${pluralize(count, 'page', 'pages')}`,
+      done: (done: number, total: number) => `${done} of ${total}`,
+      check: (count: number) => `${count} ${pluralize(count, 'page', 'pages')} to check`,
+      failed: (count: number) => `${count} failed`,
+    },
+    layout: {
+      toggleStrip: 'Show or hide the pages',
+      togglePanel: 'Show or hide the stage panel',
+    },
+    strip: {
+      title: 'Pages',
+      countOf: (shown: number, total: number) => `${shown} of ${total}`,
+      filters: {
+        all: 'All',
+        check: (count: number) => `Check ${count}`,
+        leftOut: (count: number) => `Left out ${count}`,
+      },
+      grid: 'Show the pages as a grid',
+      list: 'Show the pages as a strip',
+      leftOut: 'Left out',
+      empty: {
+        all: 'This book has no pages yet.',
+        check: 'No page needs a look in this stage.',
+        'left-out': 'No page is left out of the book.',
+      } satisfies Record<PageFilter, string>,
+    },
+    grid: {
+      selected: (count: number) =>
+        count === 0
+          ? 'No pages selected'
+          : `${count} ${pluralize(count, 'page', 'pages')} selected`,
+      clear: 'Clear the selection',
+    },
+    canvas: {
+      toolbar: 'Page controls',
+      compare: 'Before / after',
+      compareSoon: 'Comparing a page with the stage before it comes with processing',
+      empty: 'This book has no pages yet. Add files on the Import stage to see them here.',
+      chip: (label: string, kind: string) => (label === '' ? kind : `p. ${label} · ${kind}`),
+    },
+  },
+  activity: {
+    title: 'Activity',
+    thisBook: 'This book',
+    idle: 'Activity',
+    empty: 'Nothing has run in this book yet.',
+    stop: 'Stop',
+    kinds: {
+      'import-source': 'Import',
+      'prepare-pages': 'Preparing pages',
+      'run-stage': 'Stage run',
+      'preview-step': 'Preview',
+      'cut-tiles': 'Cutting tiles',
+      'collect-versions': 'Clearing old results',
+    } satisfies Record<JobKind, string>,
+    chip: (kind: string, progress: { done: number; total: number }) =>
+      progress.total > 0 ? `${kind} · ${progress.done} of ${progress.total}` : `${kind}…`,
+    detail: (state: JobState, time: string, progress: { done: number; total: number }) => {
+      const at = time === '' ? '' : ` ${time}`;
+      switch (state) {
+        case 'queued':
+          return 'Waiting to start';
+        case 'running':
+          return progress.total > 0
+            ? `Started${at} · ${progress.done} of ${progress.total} done`
+            : `Started${at}`;
+        case 'succeeded':
+          return `Finished${at}`;
+        case 'failed':
+          return `Failed${at}`;
+        case 'cancelled':
+          return `Stopped${at}`;
+      }
+    },
+  },
+  shortcuts: {
+    open: 'Keyboard shortcuts',
+    title: 'Keyboard shortcuts',
+    hint: 'Press ? anywhere in a book to see this.',
+    groups: [
+      {
+        title: 'Pages',
+        items: [
+          { label: 'Previous or next page', keys: ['←', '→'] },
+          { label: 'First or last page', keys: ['Home', 'End'] },
+        ],
+      },
+      {
+        title: 'Stages',
+        items: [
+          { label: 'Go to stage 1 to 9', keys: ['Alt', '1…9'] },
+          { label: 'Go to Typesetting', keys: ['Alt', '0'] },
+          { label: 'About the book', keys: ['Alt', 'I'] },
+        ],
+      },
+      {
+        title: 'Screen',
+        items: [{ label: 'Show these shortcuts', keys: ['?'] }],
+      },
+    ],
   },
   upload: {
     open: 'Upload files',
