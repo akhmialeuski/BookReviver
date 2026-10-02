@@ -42,7 +42,7 @@ from bookreviver.domain.entities import (
     Source,
 )
 from bookreviver.domain.enums import JobKind, JobState, PageOrigin, Side, Stage, StageState, VersionScale, VersionState
-from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
+from bookreviver.domain.errors import ConcurrentChangeError, ConflictError, DomainError, NotFoundError
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
 from bookreviver.domain.stage_summaries import StageTally
 from bookreviver.domain.values import PageEditKey, PageSize, PageStageKey, Slice, SliceRequest
@@ -511,13 +511,36 @@ class InMemoryScanRepository(InMemoryRepository[Scan, ScanId], ScanRepository):
 class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
     """Pages of the book, unique by project and order key and by scan and slot."""
 
-    def __init__(self, tables: InMemoryTables) -> None:
+    def __init__(self, tables: InMemoryTables, *, committed: InMemoryTables) -> None:
         """Work on the page table of the unit of work's copy, checking pages against projects and scans.
 
         :param tables: Every table of the working copy.
         :type tables: InMemoryTables
+        :param committed: The committed tables shared with every unit of work, whose page revisions another
+                          transaction may have raised since this one began.
+        :type committed: InMemoryTables
         """
         super().__init__(tables.pages, tables)
+        self._committed = committed
+
+    @override
+    async def update(self, entity: Page) -> Page:
+        """Replace the stored state of a page, raising its revision, as the version counter of the table does.
+
+        A database statement checks the revision against the committed row, so this does too, and not against the
+        working copy, which still holds the page as it was read.
+
+        :param entity: Page with its new state and the revision it was read at.
+        :type entity: Page
+        :returns: The page as stored, with its revision raised by one.
+        :rtype: Page
+        :raises NotFoundError: If the page, or a project or scan it refers to, is not stored.
+        :raises ConflictError: If its new state takes a unique value of another page.
+        :raises ConcurrentChangeError: If a transaction that committed after this one began changed the page.
+        """
+        if (current := self._committed.pages.get(entity.id)) is not None and current.revision != entity.revision:
+            raise ConcurrentChangeError
+        return await super().update(evolve(entity, revision=entity.revision + 1))
 
     @override
     def _check(self, entity: Page) -> None:
@@ -1444,7 +1467,7 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.projects = InMemoryProjectRepository(self._tables)
         self.sources = InMemorySourceRepository(self._tables)
         self.scans = InMemoryScanRepository(self._tables)
-        self.pages = InMemoryPageRepository(self._tables)
+        self.pages = InMemoryPageRepository(self._tables, committed=self._database.tables)
         self.page_versions = InMemoryPageVersionRepository(
             self._tables, snapshot=self._snapshot, committed=self._database.tables
         )

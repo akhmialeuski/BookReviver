@@ -10,18 +10,21 @@ from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.enums import LabelStyle, PageChange, PageKind
-from bookreviver.domain.errors import ConflictError, NotFoundError
+from bookreviver.domain.errors import ConcurrentChangeError, ConflictError, NotFoundError, ReversedRangeError
 from bookreviver.domain.events import PagesChanged
 from bookreviver.domain.values import PageNumbering, SliceRequest
 from tests.helpers.builders import EPOCH, make_page, make_project, new_account_id
+from tests.helpers.page_services import make_page_service
 from tests.helpers.seeding import commit_project
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
     from datetime import datetime
 
     from bookreviver.adapters.clock.system import FixedClock
+    from bookreviver.adapters.jobs.recording import RecordingJobQueue
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Page, Project
     from bookreviver.domain.ids import PageId
     from bookreviver.services.pages import PageService
@@ -31,6 +34,7 @@ pytestmark = pytest.mark.anyio
 
 LATER: datetime = EPOCH.replace(year=EPOCH.year + 1)
 STALE_LABEL: str = 'old'
+RIVAL_LABEL: str = 'rival'
 ROMAN_LIMIT: int = 3999
 # Kind and inclusion of the seven pages of the book, which the numbering has to tell apart
 LAYOUT: list[tuple[PageKind, bool]] = [
@@ -183,7 +187,7 @@ class TestUpdate:
         await fx_service().update(fx_actor, project.id, pages[3].id, PageChanges(label=''))
 
         stored = fx_database.tables.pages[pages[3].id]
-        assert evolve(stored, label=STALE_LABEL, updated_at=EPOCH) == pages[3]
+        assert evolve(stored, label=STALE_LABEL, updated_at=EPOCH, revision=0) == pages[3]
         assert stored.label == ''
 
     async def test_missing_page_page_of_another_project_and_foreign_project_are_not_found(
@@ -333,7 +337,7 @@ class TestNumber:
         """
         project, pages = await _commit_book(fx_database, fx_actor)
 
-        with pytest.raises(ConflictError):
+        with pytest.raises(ReversedRangeError, match='from a later page to an earlier one'):
             await fx_service().number(
                 fx_actor,
                 project.id,
@@ -396,3 +400,134 @@ class TestNumber:
 
         manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest())
         assert [overview.page.label for overview in manifest.items] == [STALE_LABEL] * len(pages)
+
+
+class TestConcurrentWrites:
+    """Tests for the use cases that write pages while another request commits a change to one of them."""
+
+    @staticmethod
+    def _racing_service(
+        database: InMemoryDatabase,
+        runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        assets: LocalAssetStore,
+        monkeypatch: pytest.MonkeyPatch,
+        rival: Callable[[], Awaitable[None]],
+    ) -> PageService:
+        """Build the page service over a unit of work whose page reads are followed by the rival's commit.
+
+        The unit of work builds new repositories when it rolls back, so the rival races the first attempt only.
+
+        :param database: In-memory database shared with the rival.
+        :type database: InMemoryDatabase
+        :param runtime: The recording bus, the clock and the queue the service reports through.
+        :type runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param assets: Asset store of the test.
+        :type assets: LocalAssetStore
+        :param monkeypatch: Fixture that restores the patched repository after the test.
+        :type monkeypatch: pytest.MonkeyPatch
+        :param rival: Request committing a change to a page, run after each read of one page.
+        :type rival: Callable[[], Awaitable[None]]
+        :returns: The service of one request.
+        :rtype: PageService
+        """
+        uow = InMemoryUnitOfWork(database)
+        read = uow.pages.get
+
+        async def get_then_race(page_id: PageId) -> Page:
+            """Read a page, then let the rival commit a change of it.
+
+            :param page_id: Identifier of the page.
+            :type page_id: PageId
+            :returns: The page as it was before the rival wrote.
+            :rtype: Page
+            """
+            page = await read(page_id)
+            await rival()
+            return page
+
+        monkeypatch.setattr(uow.pages, 'get', get_then_race)
+        return make_page_service(uow, assets, runtime)
+
+    async def test_an_edit_of_another_field_made_between_the_read_and_the_write_is_kept(
+        self,
+        fx_database: InMemoryDatabase,
+        fx_asset_store: LocalAssetStore,
+        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        fx_actor: Actor,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Verify the kind the service sets is applied to the page the rival has just labelled, so both edits stay.
+
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_asset_store: Local asset store of the test.
+        :type fx_asset_store: LocalAssetStore
+        :param fx_runtime: The recording bus, the clock and the queue the service reports through.
+        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        :param monkeypatch: Fixture that restores the patched repository after the test.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        project, pages = await _commit_book(fx_database, fx_actor)
+        writes = 0
+
+        async def rival() -> None:
+            """Commit a new label of the page the service reads, once."""
+            nonlocal writes
+            if writes:
+                return
+            writes += 1
+            uow = InMemoryUnitOfWork(fx_database)
+            await uow.pages.update(evolve(await uow.pages.get(pages[2].id), label=RIVAL_LABEL))
+            await uow.commit()
+
+        updated = await self._racing_service(fx_database, fx_runtime, fx_asset_store, monkeypatch, rival).update(
+            fx_actor, project.id, pages[2].id, PageChanges(kind=PageKind.OTHER)
+        )
+
+        stored = fx_database.tables.pages[pages[2].id]
+        expect((stored.label, stored.kind) == (RIVAL_LABEL, PageKind.OTHER))
+        expect(updated.page == stored)
+        expect(stored.revision == 2)
+        assert_expectations()
+
+    async def test_a_numbering_over_a_page_changed_meanwhile_conflicts_and_writes_nothing(
+        self,
+        fx_database: InMemoryDatabase,
+        fx_asset_store: LocalAssetStore,
+        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        fx_actor: Actor,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Verify the numbering is refused with the sentence for the person, and the page before the changed one is unwritten.
+
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_asset_store: Local asset store of the test.
+        :type fx_asset_store: LocalAssetStore
+        :param fx_runtime: The recording bus, the clock and the queue the service reports through.
+        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        :param monkeypatch: Fixture that restores the patched repository after the test.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        project, pages = await _commit_book(fx_database, fx_actor)
+        events, _, _ = fx_runtime
+
+        async def rival() -> None:
+            """Commit a new label of the last page of the range, after the service has read the range."""
+            uow = InMemoryUnitOfWork(fx_database)
+            await uow.pages.update(evolve(await uow.pages.get(pages[4].id), label=RIVAL_LABEL))
+            await uow.commit()
+
+        service = self._racing_service(fx_database, fx_runtime, fx_asset_store, monkeypatch, rival)
+        numbering = PageNumbering(first_page_id=pages[2].id, last_page_id=pages[4].id, style=LabelStyle.ARABIC)
+
+        with pytest.raises(ConcurrentChangeError, match='The pages changed while this ran'):
+            await service.number(fx_actor, project.id, numbering)
+
+        expect(_labels(fx_database, pages) == [*([STALE_LABEL] * 4), RIVAL_LABEL, STALE_LABEL, STALE_LABEL])
+        expect(events.published == [])
+        assert_expectations()

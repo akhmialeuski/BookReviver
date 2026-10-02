@@ -26,6 +26,7 @@ been deleted through ``ProjectService``, which removes their files too.
 
 import enum
 from datetime import datetime
+from types import MappingProxyType
 from typing import Any, Final
 from uuid import UUID
 
@@ -73,6 +74,8 @@ NO_IMPLICIT_LOAD: Final = 'raise'
 # Server defaults of the columns the description gained, which existing rows take when the columns are added
 EMPTY_TEXT: Final = ''
 EMPTY_LIST: Final = '[]'
+FIRST_REVISION_NUMBER: Final = 0
+FIRST_REVISION: Final = str(FIRST_REVISION_NUMBER)
 PAGES_TABLE: Final = 'pages'
 PAGE_VERSIONS_TABLE: Final = 'page_versions'
 RECIPES_TABLE: Final = 'recipes'
@@ -135,6 +138,20 @@ def enum_by_value[EnumT: enum.Enum](enum_type: type[EnumT]) -> Enum:
         values_callable=lambda members: [member.value for member in members],
         validate_strings=True,
     )
+
+
+def next_revision(current: int | None) -> int:
+    """Return the version a row takes when it is written, which is zero for a row that is inserted.
+
+    SQLAlchemy's own generator starts at one. Zero is what the ``server_default`` gives the rows that were stored
+    before the counter existed, and what the in-memory adapter and the domain's ``Page`` start from.
+
+    :param current: Version the row was read at, or None for a row about to be inserted.
+    :type current: int | None
+    :returns: The version of the row after this write.
+    :rtype: int
+    """
+    return FIRST_REVISION_NUMBER if current is None else current + 1
 
 
 class ProjectRow(DefaultBase):
@@ -427,6 +444,8 @@ class PageRow(DefaultBase):
     :ivar notes: Notes of the user.
     :ivar created_at: Time the page was created.
     :ivar updated_at: Time the page was last changed.
+    :ivar revision: Version counter, which SQLAlchemy raises by one on every update and checks in the ``WHERE`` of the
+                    update, so a write over a row another transaction changed after it was read updates no row.
     :ivar project: Project owning the page, never loaded implicitly.
     :ivar versions: Versions of the page, never loaded implicitly.
     :ivar stages: Stage records of the page, never loaded implicitly.
@@ -448,6 +467,9 @@ class PageRow(DefaultBase):
     notes: Mapped[str]
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
+    revision: Mapped[int] = mapped_column(server_default=FIRST_REVISION)
+
+    __mapper_args__ = MappingProxyType({'version_id_col': revision, 'version_id_generator': next_revision})
 
     project: Mapped[ProjectRow] = relationship(
         back_populates=Relation.PAGES, lazy=NO_IMPLICIT_LOAD, foreign_keys=lambda: [PageRow.project_id]

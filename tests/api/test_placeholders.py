@@ -37,6 +37,7 @@ pytestmark = pytest.mark.anyio
 PROJECTS_PATH: str = '/api/v1/projects'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
+DETAIL_FIELD: str = 'detail'
 LOCATION_HEADER: str = 'location'
 SCAN_SIZE_PX: tuple[int, int] = (120, 160)
 
@@ -404,15 +405,36 @@ class TestAttachScan:
         gone = await fx_client.get(f'{fx_book.pages_path}/{fx_book.shown.id}')
         expect(refused.status_code == status.HTTP_409_CONFLICT)
         expect(refused.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
-        expect(str(fx_book.shown.id) in refused.text)
+        expect(refused.json()[DETAIL_FIELD] == 'This scan is already a page of the book: position 1.')
         expect(taken.status_code == status.HTTP_200_OK)
         expect(gone.status_code == status.HTTP_404_NOT_FOUND)
+        assert_expectations()
+
+    async def test_scan_another_page_shows_is_named_by_the_printed_number_of_that_page(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify the 409 problem names the page that shows the scan by its printed number, and holds no identifier.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await fx_client.patch(f'{fx_book.pages_path}/{fx_book.shown.id}', json={'label': '12'})
+
+        response = await fx_client.put(
+            f'{fx_book.pages_path}/{fx_book.placeholder.id}/scan', json={'scan_id': str(fx_book.shown.scan_id)}
+        )
+
+        expect(response.status_code == status.HTTP_409_CONFLICT)
+        expect(response.json()[DETAIL_FIELD] == 'This scan is already a page of the book: p. 12.')
+        expect(str(fx_book.shown.id) not in response.text)
         assert_expectations()
 
     async def test_page_that_is_not_a_placeholder_is_a_conflict_problem(
         self, fx_client: httpx.AsyncClient, fx_book: Book
     ) -> None:
-        """Verify a page cut from a scan cannot be bound to another scan.
+        """Verify a page cut from a scan cannot be bound to another scan, and the problem says why without identifiers.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -423,7 +445,10 @@ class TestAttachScan:
             f'{fx_book.pages_path}/{fx_book.shown.id}/scan', json={'scan_id': str(fx_book.spare.id)}
         )
 
-        assert response.status_code == status.HTTP_409_CONFLICT
+        expect(response.status_code == status.HTTP_409_CONFLICT)
+        expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
+        expect(response.json()[DETAIL_FIELD] == 'Only a missing page can take a scan.')
+        assert_expectations()
 
     async def test_scan_of_another_project_and_unknown_scan_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase, fx_actor: Actor

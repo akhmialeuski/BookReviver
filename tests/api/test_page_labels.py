@@ -28,6 +28,7 @@ PROJECTS_PATH: str = '/api/v1/projects'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 MERGE_PATCH_TYPE: str = 'application/merge-patch+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
+DETAIL_FIELD: str = 'detail'
 STALE_LABEL: str = 'old'
 ROMAN_LIMIT: int = 3999
 LABEL_MAX_LENGTH: int = 50
@@ -347,6 +348,7 @@ class TestNumberPages:
 
         expect(response.status_code == status.HTTP_409_CONFLICT)
         expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
+        expect(response.json()[DETAIL_FIELD] == 'The numbering runs from a later page to an earlier one.')
         expect(await _labels(fx_client, fx_book) == [STALE_LABEL] * len(fx_book.pages))
         assert_expectations()
 

@@ -24,7 +24,7 @@ from bookreviver.domain.enums import (
     VersionData,
     VersionState,
 )
-from bookreviver.domain.errors import ConflictError, NotFoundError
+from bookreviver.domain.errors import ConflictError, NotAPlaceholderError, NotFoundError, ScanAlreadyInBookError
 from bookreviver.domain.events import JobChanged, PagesChanged, PageVersionReady
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.keys import ProjectKeys
@@ -690,10 +690,10 @@ class TestAttachScan:
             await uow.pages.add(page)
             await uow.commit()
 
-        with pytest.raises(ConflictError):
+        with pytest.raises(NotAPlaceholderError):
             await fx_service().attach_scan(fx_actor, book.project.id, page.id, scan.id)
 
-    async def test_scan_another_page_shows_conflicts_naming_that_page(
+    async def test_scan_another_page_shows_conflicts_naming_the_place_of_that_page(
         self,
         fx_service: Callable[[], PageService],
         fx_database: InMemoryDatabase,
@@ -714,7 +714,7 @@ class TestAttachScan:
         book, placeholder = await _placeholder_book(fx_database, fx_asset_store, fx_actor)
         before = dict(fx_database.tables.pages)
 
-        with pytest.raises(ConflictError, match=str(book.pages[0].id)):
+        with pytest.raises(ScanAlreadyInBookError, match='position 1'):
             await fx_service().attach_scan(fx_actor, book.project.id, placeholder.id, book.scans[0].id)
 
         assert fx_database.tables.pages == before
