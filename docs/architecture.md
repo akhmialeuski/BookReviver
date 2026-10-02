@@ -517,7 +517,9 @@ pages before or after an anchor page, a `PageAnchor`:
 - **A source.** The pages whose scans belong to the source are listed through `scans` and moved as a group, which puts
   a missing part of the book, such as a cover file or a quire from another copy, in its place with one request.
 
-The anchor may not be one of the moved pages, since the place is then not defined, and that is a `ConflictError`. The
+The anchor may not be one of the moved pages, since the place is then not defined, and that is an
+`AnchorInsideMovedPagesError`, a `ConflictError` with a fixed sentence for the person moving the pages, which the API
+sends as the detail of the 409 problem in place of an identifier. The
 unique key of `(project_id, order_key)` refuses a second move to a place another one took first, and the repository
 reports that as a `ConflictError` too, so the client answers it by reading the manifest again. A move writes the
 `updated_at` of the pages it moves, commits, and then publishes one `PagesChanged`. Keys are not rebalanced: a key
@@ -1410,8 +1412,9 @@ The project list counts in `page_count` the included pages of the book, and show
 ## Frontend
 
 - React 19, TypeScript, Vite, TanStack Router (file-based routes) and TanStack Query, shadcn/ui on Radix with
-  Tailwind CSS 4, lucide icons. Biome lints and formats, `tsc --noEmit` checks types, Vitest runs unit tests,
-  Playwright runs end-to-end tests. FastAPI serves the built application through `app.frontend()` from
+  Tailwind CSS 4, lucide icons, and `@dnd-kit/core` with `@dnd-kit/sortable` for dragging the pages of the Order
+  stage, since `@dnd-kit/react` is still at version 0.5. Biome lints and formats, `tsc --noEmit` checks types, Vitest
+  runs unit tests, Playwright runs end-to-end tests. FastAPI serves the built application through `app.frontend()` from
   `settings.frontend_dir` (`frontend/dist`) when that directory exists. The router of FastAPI tries the API routes
   first and answers an unknown path with `index.html` only to a request that accepts HTML, so a reload of a
   client-side route works and an unknown address of the API stays a 404 problem. Vite proxies `/api` to the backend
@@ -1466,9 +1469,6 @@ The project list counts in `page_count` the included pages of the book, and show
     or a spread, zoom and a disabled place for the before-and-after mode.
   - The panel is a frame (`StagePanel.tsx`) with the name of the stage, the sentence about it from
     `MESSAGES.stages.summaries`, a body and a footer. The stage tasks fill the body and the footer.
-  - The Order stage mounts a bridge (`StageBridges.tsx`) in place of the strip and the canvas: the page strip with its
-    page actions, as the former page of the book had it, so the pages can still be arranged until the Order workspace
-    replaces the bridge.
   - The Import stage has a screen of its own, `features/import/ImportScreen.tsx`, which the route picks for it in place
     of `StageScreen`, since the stage works on files and scans and needs no manifest and no strip. It uses the same
     three-part frame without the strip. A book with no file and no import under way shows the drop area
@@ -1488,6 +1488,37 @@ The project list counts in `page_count` the included pages of the book, and show
     same `PATCH /projects/{id}`), the two actions on its pages, which open the Order stage with `source=`, and at the
     foot the deletion of the file through `DeleteSourceDialog`. The stage bar shows the progress of a running import
     in place of the counts of files and scans.
+  - The Order stage is not a strip, a canvas and a recipe. The route hands it to `features/order/OrderScreen.tsx`, which
+    draws the whole workspace of two parts, a grid of the pages and the panel on the right.
+    - The grid (`OrderGrid.tsx`) shows every page of the manifest, with the size of its tiles on a slider, one by one or
+      as the spreads of `features/viewer/spread.ts`, so the cover stands alone on the right and the pairs after it are an
+      odd page with the even page that follows. A tile (`OrderTile.tsx`) shows the picture, the printed number or "no
+      number", the kind, the place `#n` in the book, a mark for a page left out and a dashed box for a missing page.
+      A click selects a page, `Shift` extends the selection and `Ctrl` or `Cmd` adds one, by `selectionAfterClick` of
+      `features/workspace/selection.ts`.
+    - Dragging is `@dnd-kit/core` with `@dnd-kit/sortable`. The tiles are sortable items that never shift, a bar on the
+      side of the tile under the pointer shows the place, and a drag carries the selected pages when the held one is
+      selected (`features/order/drag.ts`). A page dropped on a later page lands after it, and on an earlier page
+      before it, and the drop on a carried page names no place. The keyboard sensor lifts with `Space`, moves with the
+      arrows and drops with `Space`, while `Enter` keeps selecting, and the announcements are in `MESSAGES.order.drag`.
+      A drop calls `useMovePages`, which applies the move to the manifest at once and puts it back on an error, and the
+      screen says what the server refused above the grid.
+    - A gap in the printed numbers is found in the browser by `features/pages/gaps.ts` from the labels in book order,
+      Arabic and Roman, with or without brackets. A page without a number holds one number, as a plate does in a
+      printed book, so only the numbers it cannot hold are missing, and a page left out of the book is not read. The
+      grid draws a card before the page the numbers lead to, with "Add missing", which adds a missing page labelled
+      with each number before that page. The panel counts these places and the missing pages as places to check.
+    - The panel shows the selected pages with their kind, inclusion, notes and, for one page, its number, written to all
+      of them at once by `useUpdatePages`, and the actions on them: move, number, insert, attach a scan and delete.
+      "Number pages" replaces the body with the numbering form (`NumberingPanel.tsx`). Each change asks
+      `POST /projects/{id}/pages/labels/preview` for the labels, and the grid shows the new numbers in blue over the old
+      ones struck out, so the rule of numbering lives in the server only. "Apply numbers" sends the same body to
+      `POST /projects/{id}/pages/labels`. A numbering whose preview closes a gap the pages have now says so and offers
+      to add the missing pages first or to number in two runs.
+    - The move dialog (`features/pages/MovePagesDialog.tsx`) is shared with the reading mode. It chooses a page on a
+      strip of thumbnails or by its number, before or after it, writes how the book will read around the new place
+      (`readingWindow` of `features/pages/order.ts`) and names the move in its button. The pages that move are on the
+      strip and cannot be chosen.
 - Viewer state (page, spread, variant) lives in search params, so every view can be linked and reloaded. Server
   state lives in TanStack Query, and SSE events patch or invalidate the affected queries.
   - `features/projects/events.ts` maps the events to queries. `job-changed` writes the job into its own query and marks
@@ -1508,11 +1539,14 @@ The project list counts in `page_count` the included pages of the book, and show
     `preload` on, so a turn only swaps opacities. The tile route serves the stored files and no IIIF size keywords,
     and OpenSeadragon asks for a tile that is a whole image as `full/max/`, which `dzsave` stores as
     `full/<width>,<height>/`, so the stage rewrites that one address.
-- The page strip, which the Order stage shows until its workspace takes its place, and the viewer edit the pages
-  through `features/pages/actions.ts`: moves of pages, of a selected group and of all pages of a source, the label, kind, inclusion and notes, the numbering of a range,
-  placeholders and blank leaves, binding a scan, and deleting a page or a source. A move is applied to the cached
-  manifest at once by the same rule as the server's (`features/pages/order.ts`), put back if it fails, and the
-  manifest is read again afterwards. A 409 is shown with the server's reason and a note that the list is current.
+- The Order stage and the viewer edit the pages through `features/pages/actions.ts`: moves of pages, of a selected
+  group and of all pages of a source, the label, kind, inclusion and notes of one page or of several, the numbering of a
+  range, placeholders and blank leaves, binding a scan, and deleting a page, several pages or a source. A move and a
+  change of the fields of pages are applied to the cached manifest at once, by the same rule as the server's
+  (`features/pages/order.ts` and `features/pages/edits.ts`), put back if they fail, and the manifest is read again
+  afterwards. A 409 is shown with the server's reason and a note that the list is current. The changes that rewrite
+  existing pages share one mutation scope per book, so TanStack Query runs them one after the other: the server reads a
+  page and writes the whole row back, and two changes of one page in flight together would lose the first.
 - Editors are a react-konva layer kept in step with the OpenSeadragon viewport. An editor registry maps each
   `EditorKind` to a component: draggable frame, quad with corner handles, rotation handle, dewarp mesh, brush and
   eraser, region polygons labelled text or illustration.
@@ -1663,7 +1697,8 @@ The book model rests on these decisions, each with its reason.
     same size whatever the group.
 35. **An anchor inside the moved pages is a conflict.** The place is not defined then, so the service answers 409
     instead of choosing one, and the body schema leaves the check to the service so that a group and a source are
-    handled alike.
+    handled alike. The error has a class of its own, which carries the sentence the interface shows, because the
+    page identifier the first version put in the detail told the reader nothing.
 
 36. **Numbers are written into the rows.** The numbering of a range computes the labels and stores them in the pages,
     and the range, the style and the first number are forgotten, because the printed numbering of an old book has
