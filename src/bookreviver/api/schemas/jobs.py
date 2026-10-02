@@ -73,6 +73,7 @@ class JobSchema(ResponseModel):
     :ivar id: Identifier of the job.
     :ivar project_id: Project the job works on.
     :ivar kind: What the job does.
+    :ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.
     :ivar state: Where the job is in its life cycle.
     :ivar progress: How many of its steps are done.
     :ivar error: Why the job failed, shown to the user, or empty.
@@ -85,6 +86,7 @@ class JobSchema(ResponseModel):
     id: JobId
     project_id: ProjectId
     kind: JobKind
+    stage: Stage | None
     state: JobState
     progress: ProgressSchema
     error: str

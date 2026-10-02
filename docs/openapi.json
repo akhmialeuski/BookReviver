@@ -6318,6 +6318,16 @@
           "kind": {
             "$ref": "#/components/schemas/JobKind"
           },
+          "stage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Stage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "state": {
             "$ref": "#/components/schemas/JobState"
           },
@@ -6373,6 +6383,7 @@
           "id",
           "project_id",
           "kind",
+          "stage",
           "state",
           "progress",
           "error",
@@ -6382,7 +6393,7 @@
           "finished_at"
         ],
         "title": "JobSchema",
-        "description": "A background job, its state and its progress; also the data of a ``job-changed`` event.\n\n:ivar id: Identifier of the job.\n:ivar project_id: Project the job works on.\n:ivar kind: What the job does.\n:ivar state: Where the job is in its life cycle.\n:ivar progress: How many of its steps are done.\n:ivar error: Why the job failed, shown to the user, or empty.\n:ivar result: What an import job did with the files of its upload, or None until it has finished.\n:ivar created_at: When the job was recorded.\n:ivar started_at: When a worker started the job, or None while it is queued.\n:ivar finished_at: When the job reached a final state, or None before."
+        "description": "A background job, its state and its progress; also the data of a ``job-changed`` event.\n\n:ivar id: Identifier of the job.\n:ivar project_id: Project the job works on.\n:ivar kind: What the job does.\n:ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.\n:ivar state: Where the job is in its life cycle.\n:ivar progress: How many of its steps are done.\n:ivar error: Why the job failed, shown to the user, or empty.\n:ivar result: What an import job did with the files of its upload, or None until it has finished.\n:ivar created_at: When the job was recorded.\n:ivar started_at: When a worker started the job, or None while it is queued.\n:ivar finished_at: When the job reached a final state, or None before."
       },
       "JobState": {
         "type": "string",
@@ -9057,6 +9068,10 @@
             "type": "integer",
             "title": "Review"
           },
+          "check": {
+            "type": "integer",
+            "title": "Check"
+          },
           "active_recipe_id": {
             "anyOf": [
               {
@@ -9081,10 +9096,11 @@
           "failed",
           "not_run",
           "review",
+          "check",
           "active_recipe_id"
         ],
         "title": "StageSummarySchema",
-        "description": "One stage of a book summed over its pages.\n\n:ivar stage: The stage.\n:ivar available: Whether the stage can be worked in: a stage done by hand always can, and any other when a\n                 processor of the stage is installed.\n:ivar manual: Whether the user does the stage by hand, so it has no counts.\n:ivar pages: Number of pages of the book with an image, which a run of the stage goes over.\n:ivar fresh: Pages whose result of the stage is up to date.\n:ivar stale: Pages whose result is out of date.\n:ivar failed: Pages the stage failed on.\n:ivar not_run: Pages the stage has not run on.\n:ivar review: Pages, not failed, whose result asks for a second look.\n:ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used."
+        "description": "One stage of a book summed over its pages.\n\n:ivar stage: The stage.\n:ivar available: Whether the stage can be worked in: a stage done by hand always can, and any other when a\n                 processor of the stage is installed.\n:ivar manual: Whether the user does the stage by hand, so it has no counts.\n:ivar pages: Number of pages of the book with an image, which a run of the stage goes over.\n:ivar fresh: Pages whose result of the stage is up to date.\n:ivar stale: Pages whose result is out of date.\n:ivar failed: Pages the stage failed on.\n:ivar not_run: Pages the stage has not run on.\n:ivar review: Pages, not failed, whose result asks for a second look.\n:ivar check: Pages the strip lists under Check: stale, failed or marked, each counted once.\n:ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used."
       },
       "StepBody": {
         "properties": {

@@ -1133,6 +1133,7 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
                 stale=sum(record.state is StageState.STALE for record in records),
                 failed=sum(record.state is StageState.FAILED for record in records),
                 review=sum(marked(record) for record in records),
+                check=sum(record.state is not StageState.FRESH or marked(record) for record in records),
             )
             for (project_id, stage), records in groups.items()
         ]

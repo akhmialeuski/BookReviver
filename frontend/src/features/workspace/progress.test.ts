@@ -13,6 +13,7 @@ function summary(counts: Partial<StageSummarySchema>): StageSummarySchema {
     failed: 0,
     not_run: 0,
     review: 0,
+    check: 0,
     active_recipe_id: null,
     ...counts,
   };
@@ -49,14 +50,16 @@ describe('stageProgress', () => {
     expect(progress).toMatchObject({ done: 0, total: 0, check: 0, failed: 0 });
   });
 
-  it('asks to check the out-of-date pages and the marked ones', () => {
-    expect(stageProgress(summary({ pages: 126, fresh: 118, stale: 3, review: 5 })).check).toBe(8);
+  it('takes the pages to check from the server, as it counted them', () => {
+    expect(
+      stageProgress(summary({ pages: 126, fresh: 118, stale: 3, review: 5, check: 7 })).check,
+    ).toBe(7);
   });
 
-  it('never asks to check more pages than did not fail', () => {
+  it('does not add the out-of-date pages to the marked ones, since a page can be both', () => {
     const progress = stageProgress(
-      summary({ pages: 10, fresh: 2, stale: 6, failed: 3, review: 6 }),
+      summary({ pages: 10, fresh: 2, stale: 6, failed: 3, review: 6, check: 9 }),
     );
-    expect(progress.check).toBe(7);
+    expect(progress.check).toBe(9);
   });
 });

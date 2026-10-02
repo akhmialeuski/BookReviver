@@ -2,6 +2,7 @@
 
 import hashlib
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from bookreviver.domain.entities import Job, Page, PageEdit, PageStage, PageVersion, Project, Recipe, Scan, Source
@@ -22,6 +23,9 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import AccountId, JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
+
+if TYPE_CHECKING:
+    from bookreviver.domain.values import MetadataMap
 from bookreviver.domain.values import (
     BookDetails,
     BookIdentifier,
@@ -197,8 +201,15 @@ def make_page_version(*, page_id: PageId, minutes: int = 0) -> PageVersion:
     )
 
 
-def make_job(*, project_id: ProjectId, state: JobState = JobState.QUEUED, minutes: int = 0) -> Job:
-    """Build an import job created ``minutes`` after the epoch.
+def make_job(
+    *,
+    project_id: ProjectId,
+    state: JobState = JobState.QUEUED,
+    minutes: int = 0,
+    kind: JobKind = JobKind.IMPORT_SOURCE,
+    params: MetadataMap | None = None,
+) -> Job:
+    """Build a job created ``minutes`` after the epoch, an import job unless told otherwise.
 
     :param project_id: Project the job imports into.
     :type project_id: ProjectId
@@ -206,14 +217,19 @@ def make_job(*, project_id: ProjectId, state: JobState = JobState.QUEUED, minute
     :type state: JobState
     :param minutes: Minutes after ``EPOCH`` the job was created.
     :type minutes: int
-    :returns: An import job with a fresh identifier.
+    :param kind: What the job does.
+    :type kind: JobKind
+    :param params: What a processing job was asked to do, or None for a job without.
+    :type params: MetadataMap | None
+    :returns: A job with a fresh identifier.
     :rtype: Job
     """
     return Job(
         id=JobId(uuid4()),
         project_id=project_id,
-        kind=JobKind.IMPORT_SOURCE,
+        kind=kind,
         state=state,
+        params={} if params is None else params,
         created_at=EPOCH + timedelta(minutes=minutes),
     )
 

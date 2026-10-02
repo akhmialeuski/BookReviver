@@ -17,7 +17,7 @@ export interface StageProgress {
   done: number;
   /** Pages the stage goes over. */
   total: number;
-  /** Pages that ask for a look: out of date, or marked by the step as unsure. */
+  /** Pages that ask for a look: out of date, failed, or marked by the step as unsure, each counted once. */
   check: number;
   /** Pages the stage failed on. */
   failed: number;
@@ -30,14 +30,13 @@ const FULL = 100;
 /**
  * Work out the numbers of a stage for the bar.
  *
- * The summary counts the pages marked as unsure on their own, and a marked page can also be up to date or out of
- * date, so the pages to check are the out-of-date ones plus the marked ones, at most the pages that did not fail.
- * That is an upper bound, since a page both out of date and marked is counted twice.
+ * The pages to check come from the server, which counts each page that is out of date, failed or marked once. That is
+ * the number of pages the Check filter of the strip lists in the same stage.
  *
  * @param summary The summary of the stage.
  */
 export function stageProgress(summary: StageSummarySchema): StageProgress {
-  const { pages, fresh, stale, failed, not_run: notRun, review } = summary;
+  const { pages, fresh, stale, failed, not_run: notRun, check } = summary;
   const parts: ProgressSegment[] = [
     { status: 'fresh', percent: pages === 0 ? 0 : (fresh / pages) * FULL },
     { status: 'stale', percent: pages === 0 ? 0 : (stale / pages) * FULL },
@@ -47,7 +46,7 @@ export function stageProgress(summary: StageSummarySchema): StageProgress {
   return {
     done: fresh,
     total: pages,
-    check: Math.min(stale + review, Math.max(pages - failed, 0)),
+    check,
     failed,
     segments: parts.filter((part) => part.percent > 0),
   };

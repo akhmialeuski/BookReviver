@@ -9,6 +9,7 @@ from attrs import field, frozen, validators
 
 from bookreviver.domain.enums import (
     ImagePolicy,
+    JobKind,
     JobState,
     PageKind,
     PageOrigin,
@@ -16,6 +17,7 @@ from bookreviver.domain.enums import (
     VersionScale,
     VersionState,
 )
+from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.geometry import Transform
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.values import (
@@ -25,13 +27,14 @@ from bookreviver.domain.values import (
     PageStageKey,
     Progress,
     Renditions,
+    StageRun,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from bookreviver.domain.enums import EditorKind, FileType, JobKind, ReviewReason, SourceKind, Stage
+    from bookreviver.domain.enums import EditorKind, FileType, ReviewReason, SourceKind, Stage
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.ids import AccountId, JobId, PageId, ProjectId, RecipeId, ScanId, SourceId, StorageKey
     from bookreviver.domain.stage_summaries import BookProgress
@@ -382,6 +385,20 @@ class Job:
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+    @property
+    def stage(self) -> Stage | None:
+        """Name the stage the job runs, or None for a job that runs none or whose parameters cannot be read.
+
+        :returns: The stage of a ``run-stage`` job.
+        :rtype: Stage | None
+        """
+        if self.kind is not JobKind.RUN_STAGE:
+            return None
+        try:
+            return StageRun.from_map(self.params).stage
+        except InvalidParametersError:
+            return None
 
 
 @frozen(kw_only=True)

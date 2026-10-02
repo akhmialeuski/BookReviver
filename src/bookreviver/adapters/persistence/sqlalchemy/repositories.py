@@ -1155,7 +1155,8 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
         """Count the records of every stage of the given projects by state with one grouped statement.
 
         The counts are conditional sums, which every database computes alike, and the head version is joined outside
-        so a record without one still counts. Placeholders have no image, so their records are not counted.
+        so a record without one still counts. The check count is one more sum over the same rows, so a page that is
+        both stale and marked is counted once. Placeholders have no image, so their records are not counted.
 
         :param project_ids: Projects whose stages are counted.
         :type project_ids: Collection[ProjectId]
@@ -1172,6 +1173,7 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
                 PageStageRow.state == StageState.STALE,
                 PageStageRow.state == StageState.FAILED,
                 marked,
+                or_(PageStageRow.state != StageState.FRESH, marked),
             )
         )
         statement = (
@@ -1184,9 +1186,15 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
         )
         return [
             StageTally(
-                project_id=ProjectId(project), stage=stage, fresh=fresh, stale=stale, failed=failed, review=review
+                project_id=ProjectId(project),
+                stage=stage,
+                fresh=fresh,
+                stale=stale,
+                failed=failed,
+                review=review,
+                check=check,
             )
-            for project, stage, fresh, stale, failed, review in await self._rows.session.execute(statement)
+            for project, stage, fresh, stale, failed, review, check in await self._rows.session.execute(statement)
         ]
 
 

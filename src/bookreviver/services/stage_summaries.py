@@ -16,15 +16,14 @@ from typing import TYPE_CHECKING
 
 from attrs import evolve
 
-from bookreviver.domain.enums import JobKind, JobState, PageStageStatus, Stage
-from bookreviver.domain.errors import InvalidParametersError
+from bookreviver.domain.enums import JobState, PageStageStatus, Stage
 from bookreviver.domain.stage_summaries import BookProgress, StageRow, StageSummary
-from bookreviver.domain.values import Slice, StageRun
+from bookreviver.domain.values import Slice
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bookreviver.domain.entities import Job, Project, ProjectOverview
+    from bookreviver.domain.entities import Project, ProjectOverview
     from bookreviver.domain.ids import ProjectId, RecipeId
     from bookreviver.domain.stage_summaries import StageTally
     from bookreviver.domain.values import SliceRequest
@@ -112,8 +111,8 @@ class StageSummaries:
             tallies[tally.project_id][tally.stage] = tally
         running: defaultdict[ProjectId, set[Stage]] = defaultdict(set)
         for job in await self._uow.jobs.list_for_projects(project_ids, JobState.active()):
-            if (stage := self._stage_run_by(job)) is not None:
-                running[job.project_id].add(stage)
+            if job.stage is not None:
+                running[job.project_id].add(job.stage)
         return [
             evolve(
                 overview,
@@ -149,19 +148,3 @@ class StageSummaries:
             )
             for stage in Stage
         ]
-
-    @staticmethod
-    def _stage_run_by(job: Job) -> Stage | None:
-        """Name the stage a job runs, or None for a job that runs none or whose parameters cannot be read.
-
-        :param job: A job that has not finished.
-        :type job: Job
-        :returns: The stage of a ``run-stage`` job.
-        :rtype: Stage | None
-        """
-        if job.kind is not JobKind.RUN_STAGE:
-            return None
-        try:
-            return StageRun.from_map(job.params).stage
-        except InvalidParametersError:
-            return None

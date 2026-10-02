@@ -63,6 +63,7 @@ export function job(id: string, overrides: Partial<JobSchema> = {}): JobSchema {
     id,
     project_id: 'p-1',
     kind: 'import-source',
+    stage: null,
     state: 'running',
     progress: { done: 12, total: 18, fraction: 12 / 18 },
     error: '',

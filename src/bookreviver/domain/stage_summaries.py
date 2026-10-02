@@ -40,6 +40,7 @@ class StageTally:
     :ivar stale: Pages whose current version is out of date.
     :ivar failed: Pages the stage failed on.
     :ivar review: Pages, not failed, whose current version carries a review mark.
+    :ivar check: Pages that are stale, failed or marked for review, each counted once.
     """
 
     project_id: ProjectId
@@ -48,6 +49,7 @@ class StageTally:
     stale: int = field(default=0, validator=validators.ge(0))
     failed: int = field(default=0, validator=validators.ge(0))
     review: int = field(default=0, validator=validators.ge(0))
+    check: int = field(default=0, validator=validators.ge(0))
 
 
 @frozen(kw_only=True)
@@ -64,6 +66,7 @@ class StageSummary:
     :ivar failed: Pages the stage failed on.
     :ivar not_run: Pages the stage has not run on.
     :ivar review: Pages, not failed, whose result carries a review mark.
+    :ivar check: Pages the strip lists under Check: stale, failed or marked for review, each counted once.
     :ivar active_recipe_id: The recipe the stage runs by, or None when the stage has none yet, since the default recipes
                             are made the first time a stage is asked for.
     """
@@ -77,6 +80,7 @@ class StageSummary:
     failed: int = field(default=0, validator=validators.ge(0))
     not_run: int = field(default=0, validator=validators.ge(0))
     review: int = field(default=0, validator=validators.ge(0))
+    check: int = field(default=0, validator=validators.ge(0))
     active_recipe_id: RecipeId | None = None
 
     @classmethod
@@ -106,8 +110,8 @@ class StageSummary:
         """
         if stage.manual:
             return cls(stage=stage, available=available, manual=True, pages=pages, active_recipe_id=active_recipe_id)
-        fresh, stale, failed, review = (
-            (0, 0, 0, 0) if tally is None else (tally.fresh, tally.stale, tally.failed, tally.review)
+        fresh, stale, failed, review, check = (
+            (0, 0, 0, 0, 0) if tally is None else (tally.fresh, tally.stale, tally.failed, tally.review, tally.check)
         )
         return cls(
             stage=stage,
@@ -119,6 +123,7 @@ class StageSummary:
             failed=failed,
             not_run=max(0, pages - fresh - stale - failed),
             review=review,
+            check=check,
             active_recipe_id=active_recipe_id,
         )
 

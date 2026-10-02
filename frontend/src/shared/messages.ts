@@ -737,6 +737,7 @@ export const MESSAGES = {
       'cut-tiles': 'Cutting tiles',
       'collect-versions': 'Clearing old results',
     } satisfies Record<JobKind, string>,
+    stageRun: (stage: string) => `${stage} run`,
     chip: (kind: string, progress: { done: number; total: number }) =>
       progress.total > 0 ? `${kind} · ${progress.done} of ${progress.total}` : `${kind}…`,
     detail: (state: JobState, time: string, progress: { done: number; total: number }) => {

@@ -122,6 +122,19 @@ class TestOfBook:
         expect(geometry.status(running=False) is StageStatus.ATTENTION)
         assert_expectations()
 
+    async def test_a_page_that_is_stale_and_marked_is_checked_once(self, fx_kit: ProcessingKit) -> None:
+        """Verify the check count takes a page both out of date and marked once, and leaves a clean page out.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, project, pages = await seed_book(fx_kit)
+        await seed_geometry(fx_kit, pages[0], StageState.STALE, ReviewReason.LOW_CONFIDENCE)
+        await seed_geometry(fx_kit, pages[1], StageState.FRESH)
+        geometry = (await summaries_of(fx_kit, project))[Stage.GEOMETRY]
+        expect((geometry.stale, geometry.review, geometry.check) == (1, 1, 1))
+        assert_expectations()
+
     async def test_a_stage_that_ran_on_every_page_is_done(self, fx_kit: ProcessingKit) -> None:
         """Verify the page split the base versions were recorded by is counted as fresh on every page.
 

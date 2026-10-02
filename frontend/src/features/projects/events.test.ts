@@ -20,6 +20,7 @@ function job(state: JobSchema['state'], done = 1, total = 4): JobSchema {
     id: 'j-1',
     project_id: PROJECT_ID,
     kind: 'import-source',
+    stage: null,
     state,
     progress: { done, total, fraction: total === 0 ? 0 : done / total },
     error: '',
