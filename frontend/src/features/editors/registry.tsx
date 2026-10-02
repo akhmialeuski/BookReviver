@@ -1,7 +1,8 @@
-import type { EditorKind } from '@/api';
+import type { EditorKind, ProcessorSchema, RecipeSchema } from '@/api';
 import { lineEditor } from '@/features/editors/lineEditor';
 import { rotationEditor } from '@/features/editors/rotationEditor';
 import type { EditableKind, EditorShapes } from '@/features/editors/shapes';
+import { splitEditor } from '@/features/editors/splitEditor';
 import type {
   EditorDefinition,
   GeometryCanvasProps,
@@ -60,11 +61,38 @@ function register<K extends EditableKind>(
 const EDITORS: Readonly<Record<EditableKind, RegisteredEditor>> = {
   line: register<'line'>(lineEditor),
   rotation: register<'rotation'>(rotationEditor),
+  split: register<'split'>(splitEditor),
 };
 
 /** Tell whether the kind of editor of a processor has a component. */
 export function hasEditor(kind: EditorKind): kind is EditableKind {
   return Object.hasOwn(EDITORS, kind);
+}
+
+/**
+ * Find the processor whose editor a stage shows: the first enabled step of the recipe whose processor offers an editor
+ * that has a component.
+ *
+ * The recipe decides, and not the catalogue, since the catalogue lists the processors a stage could use, such as the
+ * cutting of a spread by a line and the automatic split, which read different edits and are not both in the recipe.
+ *
+ * @param recipe The recipe the stage runs by, or undefined while the recipes are being read.
+ * @param catalogue The processors of the stage.
+ * @returns The processor, or undefined when the recipe has no step with an editor.
+ */
+export function editedProcessorOf(
+  recipe: Pick<RecipeSchema, 'steps'> | undefined,
+  catalogue: readonly ProcessorSchema[],
+): ProcessorSchema | undefined {
+  for (const step of recipe?.steps ?? []) {
+    const entry = step.enabled
+      ? catalogue.find((candidate) => candidate.key === step.processor_key)
+      : undefined;
+    if (entry !== undefined && hasEditor(entry.editor)) {
+      return entry;
+    }
+  }
+  return undefined;
 }
 
 /** Give the editor of a kind that has a component. */

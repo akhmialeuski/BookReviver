@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   crossingX,
+  cutLine,
   LineEnd,
   MIN_SPAN_PX,
   moveEnd,
@@ -14,6 +15,33 @@ import {
 /** The arithmetic of the split line, in the pixels of the scan. */
 
 const SCAN = { width: 1000, height: 600 };
+
+describe('cutLine', () => {
+  const found = {
+    angle: null,
+    confidence: null,
+    skipped: false,
+    cutX: null,
+    cutTopX: null,
+    cutBottomX: null,
+    overlapPx: null,
+    pages: null,
+    slantDeg: null,
+  };
+
+  it('follows the slanted cut a step reported by its two ends', () => {
+    expect(cutLine({ ...found, cutX: 500, cutTopX: 460, cutBottomX: 540 }, SCAN)).toEqual({
+      start: { x: 460, y: 0 },
+      end: { x: 540, y: 600 },
+    });
+  });
+
+  it('falls back to the vertical cut, and then to the middle of the scan', () => {
+    expect(cutLine({ ...found, cutX: 420 }, SCAN)).toEqual(verticalLine(420, SCAN));
+    expect(cutLine({ ...found, cutTopX: 460 }, SCAN)).toEqual(verticalLine(500, SCAN));
+    expect(cutLine(null, SCAN)).toEqual(verticalLine(500, SCAN));
+  });
+});
 
 describe('verticalLine', () => {
   it('runs from the top of the scan to its bottom', () => {

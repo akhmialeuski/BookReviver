@@ -1671,8 +1671,8 @@ The project list counts in `page_count` the included pages of the book, and show
   page and writes the whole row back, and two changes of one page in flight together would lose the first.
 - Editors are a react-konva layer kept in step with the OpenSeadragon viewport. An editor registry maps each
   `EditorKind` to a component: draggable frame, quad with corner handles, rotation handle, dewarp mesh, brush and
-  eraser, region polygons labelled text or illustration. The split line and the rotation exist so far
-  (`features/editors/`), and the others come with their plugins.
+  eraser, region polygons labelled text or illustration. The split line, the choice of pages with its line and the
+  rotation exist so far (`features/editors/`), and the others come with their plugins.
   - The layer (`EditorLayer.tsx`) is a Konva `Stage` laid over the canvas of the compare. It follows the viewer through
     `viewport-change`, `resize` and `animation-finish` (`scene.ts`) and turns the pixels of an edit into pixels of the
     screen and back with `imageToViewerElementCoordinates` and `viewerElementToImageCoordinates` of the picture
@@ -1683,19 +1683,26 @@ The project list counts in `page_count` the included pages of the book, and show
   - An editor is written against its typed shape (`EditorDefinition<S>` in `types.ts`, shapes in `shapes.ts`) and
     registered in `registry.tsx`, which wraps it so that the rest of the screen handles only the JSON of an edit.
     `EditorShapes` lists the shapes, `EDITORS` must have an entry for each, and the entry of a kind must draw that
-    kind's shape, so a new editor is a shape, a definition and one line. The editor of a stage is the first processor of
-    its catalogue whose `editor` has an entry (`useEditorSession.tsx`).
+    kind's shape, so a new editor is a shape, a definition and one line. The editor of a stage is chosen by the recipe
+    on screen, which is the active one unless the reader opened a variant: it is the editor of the first enabled step
+    whose processor has an entry (`editedProcessorOf` in `registry.tsx`), and never the first processor of the
+    catalogue, since the catalogue lists processors that read different edits. A book on `split.auto` gets the `split`
+    editor and a book on the older `split.spread` recipe gets `line`.
   - The `line` editor (`LineCanvas.tsx`) draws the cut over the whole scan in the pixels of the scan, with an end to
     drag at the top and the bottom, arrow keys that move the line by 1 pixel or 10 with Shift, and above the scan the
     labels of the halves with the pages they become. Its edit belongs to the left page of the scan and it is always
-    open on the Split stage. The `rotation` editor (`RotationCanvas.tsx`) opens with "Set by hand", turns the picture the
+    open on the Split stage. The `split` editor (`SplitCanvas.tsx`, `splitEditor.ts`) is the same line saved as a
+    `SplitChoice` of two pages through `PUT .../edits/page-split/split.auto`, starting from the slanted cut the step
+    found (`cut_top_x` and `cut_bottom_x` of the version, else `cut_x`). Moving the line is a choice of two pages, so the
+    stage is run on the page after it also for a scan that was kept whole, which `line` never does. The `rotation` editor (`RotationCanvas.tsx`) opens with "Set by hand", turns the picture the
     step reads by the angle as it is set, draws level guides over it, and takes the angle from a handle round the page,
     the field in the panel or `Alt` and the wheel, a tenth of a degree a notch. While an editor is open the canvas shows
     the one picture it lies on and the compare is off.
   - An edit is saved with `PUT .../pages/{page_id}/edits/{stage}/{processor_key}` when the handle is let go, the field is
-    left or a pause follows the keys or the wheel, and then the stage is run on that one page with the recipe that uses
-    the processor, which waits while another job of the book is going and is asked once for any number of saves. A scan
-    kept whole is not cut by moving its line. "Auto" deletes the edit and runs again, and Ctrl+Z restores the edit the
+    left or a pause follows the keys or the wheel, and then the stage is run on that one page with the recipe on screen, whose
+    processor reads the edit. The run waits while another job of the book is going, or while a run sent from any control
+    of the screen has not yet put its job on the list (`useRunInFlight`), and is asked once for any number of saves. A
+    scan kept whole is not cut by moving the line of `split.spread`. "Auto" deletes the edit and runs again, and Ctrl+Z restores the edit the
     page had before the last change, or deletes the edit when it had none (`history.ts`). The panel shows the method of
     the result, `Automatic` or `By hand`, read from the `edit_hash` of the current version.
 

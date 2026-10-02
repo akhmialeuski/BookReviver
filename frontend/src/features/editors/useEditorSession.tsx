@@ -4,13 +4,13 @@ import type { ScanSchema } from '@/api';
 import { popUndo, pushUndo, type UndoEntry } from '@/features/editors/history';
 import { pictureOf } from '@/features/editors/picture';
 import { editsKey, useEditChanges, useEdits } from '@/features/editors/queries';
-import { editorOf, hasEditor } from '@/features/editors/registry';
+import { editedProcessorOf, editorOf, hasEditor } from '@/features/editors/registry';
 import type { EditorScene } from '@/features/editors/scene';
 import type { EditorSession } from '@/features/editors/session';
 import type { Geometry } from '@/features/editors/shapes';
 import type { PageContext } from '@/features/editors/types';
 import type { ImageSource } from '@/features/processing/compare';
-import { useRunStage } from '@/features/processing/queries';
+import { useRunInFlight, useRunStage } from '@/features/processing/queries';
 import { readResult } from '@/features/processing/results';
 import type { Processing } from '@/features/processing/useProcessing';
 import { invalidateStageRows, invalidateStageSummary } from '@/features/projects/queries';
@@ -65,7 +65,9 @@ export function useEditorSession({
   const { mutate: startRun } = run;
   const activeJobs = useActiveJobs(projectId);
 
-  const processor = catalogue.find((entry) => hasEditor(entry.editor));
+  // The processor is the one the recipe runs by, since only its run reads the edit
+  const recipe = processing.recipe;
+  const processor = editedProcessorOf(recipe, catalogue);
   const kind = processor?.editor;
   const editor = kind !== undefined && hasEditor(kind) ? editorOf(kind) : undefined;
   const scan =
@@ -100,9 +102,10 @@ export function useEditorSession({
     editor !== undefined && picture !== null && (editor.alwaysOn || opened === openKey);
 
   // The run waits for the book to be free, and is asked for once whatever the number of saves before it
-  const idle = activeJobs.data !== undefined && activeJobs.data.length === 0;
+  const runInFlight = useRunInFlight(projectId);
+  const idle = activeJobs.data !== undefined && activeJobs.data.length === 0 && !runInFlight;
   useEffect(() => {
-    if (wanted === null || !idle || run.isPending) {
+    if (wanted === null || !idle) {
       return;
     }
     setWanted(null);
@@ -113,7 +116,7 @@ export function useEditorSession({
       },
       { onError: (failure) => setError(describeError(failure)) },
     );
-  }, [wanted, idle, run.isPending, startRun, projectId, stage]);
+  }, [wanted, idle, startRun, projectId, stage]);
 
   const write = async (next: Geometry | null, remember: boolean): Promise<void> => {
     if (
@@ -149,9 +152,8 @@ export function useEditorSession({
         });
       }
       setError(null);
-      const target = runRecipeFor(processing, processor.key);
-      if (editor.runsAfterEdit(context) && target !== undefined) {
-        setWanted({ recipeId: target, pageId: owner.id });
+      if (editor.runsAfterEdit(context) && recipe !== undefined) {
+        setWanted({ recipeId: recipe.id, pageId: owner.id });
       }
     } catch (failure) {
       written.current = null;
@@ -255,18 +257,4 @@ export function useEditorSession({
     ),
     renderPanel: () => <editor.Panel geometry={geometry} disabled={saving} onCommit={commit} />,
   };
-}
-
-/**
- * Pick the recipe to run after an edit: the recipe on screen when it uses the processor of the edit, else another recipe
- * of the stage that does.
- */
-function runRecipeFor(processing: Processing, processorKey: string): string | undefined {
-  const uses = (candidate: { steps: readonly { processor_key: string; enabled: boolean }[] }) =>
-    candidate.steps.some((step) => step.enabled && step.processor_key === processorKey);
-  const shown = processing.recipe;
-  if (shown !== undefined && uses(shown)) {
-    return shown.id;
-  }
-  return processing.recipes.find(uses)?.id;
 }

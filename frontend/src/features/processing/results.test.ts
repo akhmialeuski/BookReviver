@@ -30,6 +30,13 @@ describe('readResult', () => {
     expect(result.slantDeg).toBeCloseTo((0.05 * 180) / Math.PI, 6);
   });
 
+  it('reads where the cut crosses the top and the bottom row of the scan', () => {
+    expect(readResult({ data: { cut_top_x: 480, cut_bottom_x: 520 } })).toMatchObject({
+      cutTopX: 480,
+      cutBottomX: 520,
+    });
+  });
+
   it('gives no slant for a cut whose ends or whose height are not reported', () => {
     expect(readResult({ data: { cut_top_x: 100, height_px: 1000 } }).slantDeg).toBeNull();
     expect(readResult({ data: { cut_top_x: 100, cut_bottom_x: 90 } }).slantDeg).toBeNull();
@@ -43,6 +50,8 @@ describe('readResult', () => {
       confidence: null,
       skipped: false,
       cutX: null,
+      cutTopX: null,
+      cutBottomX: null,
       overlapPx: null,
       pages: null,
       slantDeg: null,

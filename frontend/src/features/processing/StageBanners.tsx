@@ -1,7 +1,7 @@
 import { LightbulbIcon, RefreshCwIcon, ScissorsIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { Stage } from '@/api';
-import { useAllScans, useRunStage } from '@/features/processing/queries';
+import { useAllScans, useRunInFlight, useRunStage } from '@/features/processing/queries';
 import { cutterOf, offerFor, wideScanIds } from '@/features/processing/split';
 import type { Processing } from '@/features/processing/useProcessing';
 import { stageBefore } from '@/features/stages/stages';
@@ -38,7 +38,8 @@ export function StageBanners({
   const scans = useAllScans(projectId, stage === 'page-split');
   const [dismissed, setDismissed] = useState(false);
   const before = stageBefore(stage);
-  const idle = (activeJobs.data?.length ?? 0) === 0 && !run.isPending && !processing.dirty;
+  const runInFlight = useRunInFlight(projectId);
+  const idle = (activeJobs.data?.length ?? 0) === 0 && !runInFlight && !processing.dirty;
 
   const staleIds = items
     .filter((item) => item.row?.status === 'stale' && item.page.origin !== 'placeholder')

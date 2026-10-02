@@ -18,6 +18,10 @@ export interface PageResult {
   skipped: boolean;
   /** The distance in pixels of the cut from the left edge of the scan. */
   cutX: number | null;
+  /** The distance in pixels of the cut from the left edge at the top row, which is not the bottom one for a slanted cut. */
+  cutTopX: number | null;
+  /** The distance in pixels of the cut from the left edge at the bottom row of the scan. */
+  cutBottomX: number | null;
   /** The pixels each half reaches over the cut. */
   overlapPx: number | null;
   /** How many pages the scan was split into, one or two. */
@@ -46,6 +50,8 @@ export function readResult(version: Pick<PageVersionSchema, 'data'>): PageResult
     confidence: numberOf(data.confidence),
     skipped: data.skipped === true,
     cutX: numberOf(data.cut_x),
+    cutTopX: numberOf(data.cut_top_x),
+    cutBottomX: numberOf(data.cut_bottom_x),
     overlapPx: numberOf(data.overlap_px),
     pages: numberOf(data.pages),
     slantDeg: slantOf(

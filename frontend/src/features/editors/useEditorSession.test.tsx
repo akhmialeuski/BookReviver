@@ -8,6 +8,7 @@ import type { EditorSession } from '@/features/editors/session';
 import { useEditorSession } from '@/features/editors/useEditorSession';
 import { SourceKind } from '@/features/processing/compare';
 import {
+  autoSplit,
   deskew,
   processing,
   processor,
@@ -302,24 +303,41 @@ describe('useEditorSession', () => {
     expect(sdk.run).toHaveBeenCalledTimes(1);
   });
 
-  it('runs the recipe that uses the processor when the one on screen does not', async () => {
+  it('follows the recipe on screen, and runs that recipe, not another one that also has the processor', async () => {
     const other = recipe('r2', { steps: [step('geometry.deskew')] });
-    const shown = recipe('r1', { steps: [step('geometry.crop')] });
-    await render({ state: processing({ recipe: shown, recipes: [shown, other] }) });
+    const shown = recipe('r1', { steps: [step('geometry.crop'), step('geometry.deskew')] });
+    await render({
+      state: processing({
+        catalogue: [processor('geometry.crop'), deskew()],
+        recipe: shown,
+        recipes: [other, shown],
+      }),
+    });
 
     await typeAngle('3');
 
-    expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({ body: { recipe_id: 'r2' } });
+    expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({ body: { recipe_id: 'r1' } });
   });
 
-  it('does not run the stage when no recipe uses the processor', async () => {
+  it('has no editor when the recipe on screen does not use a processor that offers one', async () => {
     const shown = recipe('r1', { steps: [step('geometry.crop')] });
+    const other = recipe('r2', { steps: [step('geometry.deskew')] });
+    await render({
+      state: processing({
+        catalogue: [processor('geometry.crop'), deskew()],
+        recipe: shown,
+        recipes: [shown, other],
+      }),
+    });
+
+    expect(state()).toBe('none');
+  });
+
+  it('has no editor for a step of the recipe that is switched off', async () => {
+    const shown = recipe('r1', { steps: [step('geometry.deskew', { enabled: false })] });
     await render({ state: processing({ recipe: shown, recipes: [shown] }) });
 
-    await typeAngle('3');
-
-    expect(sdk.put).toHaveBeenCalledTimes(1);
-    expect(sdk.run).not.toHaveBeenCalled();
+    expect(state()).toBe('none');
   });
 
   it('says why a save failed and goes on', async () => {
@@ -511,6 +529,158 @@ describe('useEditorSession', () => {
       expect(
         container.querySelector('[data-testid="commit-line"]')?.getAttribute('data-shape'),
       ).toBe('{"start":{"x":420,"y":0},"end":{"x":420,"y":600}}');
+    });
+  });
+
+  describe('the split on a book cut by the automatic split', () => {
+    const SCAN = scan('s1', 1000, 600);
+    // The cutting of a spread comes first in the catalogue, which must not make it the editor of a book on split.auto
+    const catalogue = [spread(), autoSplit()];
+    const auto = recipe('auto', { stage: 'page-split', steps: [step('split.auto')] });
+    const state = processing({ stage: 'page-split', catalogue, recipes: [auto], recipe: auto });
+
+    function pages(slots: readonly number[], data: Record<string, unknown> = {}): StripItem[] {
+      return joinRows(
+        slots.map((slot, index) =>
+          page(`p${index}`, { scan_id: 's1', slot, position: index, images: images(`p${index}`) }),
+        ),
+        slots.map((_, index) => row(`p${index}`, { version: version(`v${index}`, { data }) })),
+      );
+    }
+
+    const shapeShown = (): string | null | undefined =>
+      container.querySelector('[data-testid="commit-line"]')?.getAttribute('data-shape');
+
+    const commitLine = async (): Promise<void> => {
+      await act(async () => {
+        container.querySelector<HTMLElement>('[data-testid="commit-line"]')?.click();
+      });
+      await settle();
+      await settle();
+    };
+
+    it('saves the moved line as two pages cut along it, and runs the automatic split on the left page', async () => {
+      const items = pages([1, 2]);
+      await render({ state, items, current: items[1], scans: [SCAN], before: null, canvas: true });
+
+      await commitLine();
+
+      expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({
+        path: { page_id: 'p0', stage: 'page-split', processor_key: 'split.auto' },
+        body: {
+          kind: 'split',
+          geometry: '{"pages":2,"line":{"start":{"x":10,"y":0},"end":{"x":12,"y":600}}}',
+        },
+      });
+      expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
+        body: { recipe_id: 'auto', page_ids: ['p0'] },
+      });
+    });
+
+    it('cuts a scan that was kept whole when its line is moved, since the line is a choice of two pages', async () => {
+      const items = pages([0]);
+      await render({ state, items, current: items[0], scans: [SCAN], before: null, canvas: true });
+
+      await commitLine();
+
+      expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({ body: { kind: 'split' } });
+      expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
+        body: { recipe_id: 'auto', page_ids: ['p0'] },
+      });
+    });
+
+    it('starts the line where the step cut, slanted as it was found, when the page has no edit', async () => {
+      const items = pages([1, 2], { cut_x: 500, cut_top_x: 460, cut_bottom_x: 540 });
+
+      await render({ state, items, current: items[0], scans: [SCAN], before: null, canvas: true });
+
+      expect(shapeShown()).toBe('{"start":{"x":460,"y":0},"end":{"x":540,"y":600}}');
+      expect(session?.hasEdit).toBe(false);
+    });
+
+    it('shows the cut the step found for a choice that has no line of its own', async () => {
+      const items = pages([1, 2], { cut_x: 420 });
+      sdk.edits.mockResolvedValue(
+        listOf(
+          edit({
+            page_id: 'p0',
+            stage: 'page-split',
+            processor_key: 'split.auto',
+            kind: 'split',
+            geometry: { pages: 2, line: null },
+          }),
+        ),
+      );
+
+      await render({ state, items, current: items[0], scans: [SCAN], before: null, canvas: true });
+
+      expect(session?.hasEdit).toBe(true);
+      expect(shapeShown()).toBe('{"start":{"x":420,"y":0},"end":{"x":420,"y":600}}');
+    });
+
+    it('shows the line a reader drew', async () => {
+      const items = pages([1, 2], { cut_x: 420 });
+      sdk.edits.mockResolvedValue(
+        listOf(
+          edit({
+            page_id: 'p0',
+            stage: 'page-split',
+            processor_key: 'split.auto',
+            kind: 'split',
+            geometry: { pages: 2, line: { start: { x: 300, y: 0 }, end: { x: 310, y: 600 } } },
+          }),
+        ),
+      );
+
+      await render({ state, items, current: items[0], scans: [SCAN], before: null, canvas: true });
+
+      expect(shapeShown()).toBe('{"start":{"x":300,"y":0},"end":{"x":310,"y":600}}');
+    });
+
+    it('keeps the line editor for a book on the older cutting of a spread, with the same catalogue', async () => {
+      const cut = recipe('cut', { stage: 'page-split', steps: [step('split.spread')] });
+      const items = pages([1, 2]);
+      await render({
+        state: processing({ stage: 'page-split', catalogue, recipes: [cut], recipe: cut }),
+        items,
+        current: items[1],
+        scans: [SCAN],
+        before: null,
+        canvas: true,
+      });
+
+      await commitLine();
+
+      expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({
+        path: { page_id: 'p0', processor_key: 'split.spread' },
+        body: { kind: 'line' },
+      });
+      expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({ body: { recipe_id: 'cut' } });
+    });
+
+    it('deletes the choice and runs the automatic split again on "Auto"', async () => {
+      const items = pages([1, 2]);
+      sdk.edits.mockResolvedValue(
+        listOf(
+          edit({
+            page_id: 'p0',
+            stage: 'page-split',
+            processor_key: 'split.auto',
+            kind: 'split',
+            geometry: { pages: 2, line: { start: { x: 300, y: 0 }, end: { x: 310, y: 600 } } },
+          }),
+        ),
+      );
+      await render({ state, items, current: items[0], scans: [SCAN], before: null, canvas: true });
+
+      await act(async () => session?.auto());
+      await settle();
+      await settle();
+
+      expect(sdk.remove.mock.calls[0]?.[0]).toMatchObject({
+        path: { page_id: 'p0', processor_key: 'split.auto' },
+      });
+      expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({ body: { recipe_id: 'auto' } });
     });
   });
 

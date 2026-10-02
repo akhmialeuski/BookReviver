@@ -1,7 +1,13 @@
 import { WandSparklesIcon } from 'lucide-react';
 import { useState } from 'react';
 import { SegmentedRadio } from '@/features/pages/SegmentedRadio';
-import { useDeleteEdit, useEdits, useRunStage, useSaveEdit } from '@/features/processing/queries';
+import {
+  useDeleteEdit,
+  useEdits,
+  useRunInFlight,
+  useRunStage,
+  useSaveEdit,
+} from '@/features/processing/queries';
 import {
   autoRecipeOf,
   choiceForm,
@@ -48,6 +54,7 @@ export function SplitSection({
   const saveEdit = useSaveEdit(projectId, stage);
   const deleteEdit = useDeleteEdit(projectId, stage);
   const activeJobs = useActiveJobs(projectId);
+  const runInFlight = useRunInFlight(projectId);
   const [asking, setAsking] = useState<UnsplitQuestion | null>(null);
   const scanId = current.page.scan_id;
   const scanPages =
@@ -66,7 +73,8 @@ export function SplitSection({
   const recipe = autoRecipeOf(processing.recipes);
   const choice = choiceOf(scanPages);
   const chosen = chosenIn(edits.data ?? []);
-  const busy = run.isPending || saveEdit.isPending || deleteEdit.isPending;
+  // A run sent from another control of the screen counts too, since its job is not on the list for a moment
+  const busy = runInFlight || saveEdit.isPending || deleteEdit.isPending;
   const idle = (activeJobs.data?.length ?? 0) === 0 && !busy && !processing.dirty;
   const path = {
     project_id: projectId,
