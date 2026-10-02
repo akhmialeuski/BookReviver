@@ -1,6 +1,8 @@
 import { LoaderCircleIcon } from 'lucide-react';
 import { type ReactNode, type Ref, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { EditorScene } from '@/features/editors/scene';
+import { usePlaceWriter } from '@/features/place/PlaceWriterContext';
+import { Restore } from '@/features/place/writer';
 import type { ComparePair } from '@/features/processing/compare';
 import { clampDivider, DIVIDER_CENTRE } from '@/features/processing/compare';
 import { CompareStage } from '@/features/processing/compareStage';
@@ -71,18 +73,24 @@ export function CompareCanvas({
   const afterUrl = pairs.after?.url ?? null;
 
   useHoldKey(hasBefore, setHolding);
+  const place = usePlaceWriter();
 
   useEffect(() => {
     if (first === null || aside === null) {
       return;
     }
-    const created = new CompareStage(first, aside);
+    const created = new CompareStage(first, aside, {
+      restore: () => place?.takeRestore(Restore.Canvas) ?? null,
+      onViewChange: () => place?.touch(),
+    });
+    const detach = place?.attachCanvas(() => created.readView());
     setStage(created);
     return () => {
+      detach?.();
       created.destroy();
       setStage(null);
     };
-  }, [first, aside]);
+  }, [first, aside, place]);
 
   // A picture is loaded once for the page, whatever the mode is, so the mode is set apart from the pictures
   useEffect(() => {

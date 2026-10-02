@@ -1,4 +1,6 @@
 import OpenSeadragon from 'openseadragon';
+import type { CanvasPositionSchema } from '@/api';
+import { fittedWidth, positionOf, viewportZoom } from '@/features/place/canvas';
 import {
   layoutView,
   PAGE_HEIGHT,
@@ -32,6 +34,14 @@ export interface StagePage {
   id: string;
   /** Path of the `info.json` of the page's IIIF pyramid, or null for a page without an image. */
   infoUrl: string | null;
+}
+
+/** What the screen lets the stage ask for and tell, so the place of the reader can be kept and restored. */
+export interface StageHooks {
+  /** Asked once, when the first view is placed: where the canvas looked when the book was left, or null for fitted. */
+  restore?: () => CanvasPositionSchema | null;
+  /** Called when the canvas has stopped moving. */
+  onViewChange?: () => void;
 }
 
 /** What `show` found out about the view it put on the stage. */
@@ -82,19 +92,26 @@ function toRect(rect: WorldRect): OpenSeadragon.Rect {
 
 export class ViewerStage {
   private readonly viewer: OpenSeadragon.Viewer;
+  private readonly element: HTMLElement;
+  private readonly hooks: StageHooks;
   /** Image of each page that is loading or loaded, by the path of its `info.json`. */
   private readonly pending = new Map<string, Promise<OpenSeadragon.TiledImage | null>>();
   private readonly loaded = new Map<string, OpenSeadragon.TiledImage>();
   private layout: ViewLayout | null = null;
   private generation = 0;
   private hasFitted = false;
+  /** Whether the latest view is on the stage, so the position of the canvas belongs to it. */
+  private settled = false;
 
   /**
    * Create the viewer inside an element.
    *
    * @param element The element OpenSeadragon fills; it needs a size of its own.
+   * @param hooks What the screen asks of the stage and is told by it about the position of the canvas.
    */
-  constructor(element: HTMLElement) {
+  constructor(element: HTMLElement, hooks: StageHooks = {}) {
+    this.element = element;
+    this.hooks = hooks;
     this.viewer = OpenSeadragon({
       element,
       // The screen has its own buttons and its own keys, so a page turn is not an arrow key panning the image
@@ -107,6 +124,10 @@ export class ViewerStage {
       maxZoomPixelRatio: 3,
       gestureSettingsMouse: { scrollToZoom: true, clickToZoom: false, dblClickToZoom: true },
       gestureSettingsTouch: { pinchToZoom: true, clickToZoom: false, dblClickToZoom: true },
+    });
+    this.viewer.addHandler('animation-finish', () => {
+      this.publishZoom();
+      this.hooks.onViewChange?.();
     });
   }
 
@@ -125,6 +146,7 @@ export class ViewerStage {
     fit: FitMode,
   ): Promise<ShownView | null> {
     const token = ++this.generation;
+    this.settled = false;
     const wanted = new Set<string>();
     for (const page of [...view, ...around.flat()]) {
       if (page.infoUrl !== null) {
@@ -142,11 +164,36 @@ export class ViewerStage {
     for (const [url, item] of this.loaded) {
       item.setOpacity(current.has(url) ? VISIBLE : HIDDEN);
     }
-    this.fit(fit, !this.hasFitted);
+    // The first view of a screen goes back to where the reader left the canvas, and every later one is fitted
+    const restored = this.hasFitted ? null : (this.hooks.restore?.() ?? null);
+    if (restored === null) {
+      this.fit(fit, !this.hasFitted);
+    } else {
+      this.look(restored);
+    }
     this.hasFitted = true;
+    this.settled = true;
 
     void this.preload(around, token);
     return { layout, failed };
+  }
+
+  /**
+   * Tell where the canvas looks, in terms that do not depend on the size of the window.
+   *
+   * @returns The position, or null while a view is still being put on the stage, so a position never pairs the
+   * zoom of the page that is leaving with the page that is arriving.
+   */
+  readView(): CanvasPositionSchema | null {
+    if (!this.settled || this.layout === null) {
+      return null;
+    }
+    const { viewport } = this.viewer;
+    return positionOf(
+      viewport.getZoom(),
+      viewport.getCenter(),
+      fittedWidth(this.layout, viewport.getAspectRatio()),
+    );
   }
 
   /** Fit the current view to the viewport. */
@@ -160,6 +207,29 @@ export class ViewerStage {
         ? pageRect(this.layout)
         : widthRect(this.layout, viewport.getAspectRatio());
     viewport.fitBounds(toRect(rect), immediately);
+  }
+
+  /** Put the canvas at a position that `readView` gave, at once. */
+  private look(position: CanvasPositionSchema): void {
+    if (this.layout === null) {
+      return;
+    }
+    const { viewport } = this.viewer;
+    viewport.zoomTo(
+      viewportZoom(position, fittedWidth(this.layout, viewport.getAspectRatio())),
+      undefined,
+      true,
+    );
+    viewport.panTo(new OpenSeadragon.Point(position.centre_x, position.centre_y), true);
+    viewport.applyConstraints(true);
+  }
+
+  /** Show the zoom in the document, where the end-to-end scenarios read it. */
+  private publishZoom(): void {
+    const view = this.readView();
+    if (view !== null) {
+      this.element.dataset.zoom = String(view.zoom);
+    }
   }
 
   /** Zoom in by one step around the centre of the viewport. */

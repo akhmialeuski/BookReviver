@@ -26,6 +26,7 @@ from sqlalchemy import Table, UniqueConstraint, and_, case, delete, exists, func
 from sqlalchemy.orm.exc import StaleDataError
 
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
+    BookPlaceMapper,
     JobMapper,
     PageEditMapper,
     PageMapper,
@@ -37,6 +38,7 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     SourceMapper,
 )
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
+    BookPlaceRow,
     JobRow,
     PageEditRow,
     PageRow,
@@ -48,6 +50,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     SourceRow,
 )
 from bookreviver.domain.entities import (
+    BookPlace,
     Job,
     Page,
     PageEdit,
@@ -63,9 +66,10 @@ from bookreviver.domain.enums import PageOrigin, Side, Stage, StageState, Versio
 from bookreviver.domain.errors import ConcurrentChangeError, ConflictError, NotFoundError
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
 from bookreviver.domain.stage_summaries import StageTally
-from bookreviver.domain.values import PageEditKey, PageSize, PageStageKey, Slice
+from bookreviver.domain.values import BookPlaceKey, PageEditKey, PageSize, PageStageKey, Slice
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
+    BookPlaceRepository,
     JobRepository,
     PageEditRepository,
     PageRepository,
@@ -258,6 +262,12 @@ class PageEditRows(RowRepository[PageEditRow]):
     """Rows of the ``page_edits`` table."""
 
     model_type = PageEditRow
+
+
+class BookPlaceRows(RowRepository[BookPlaceRow]):
+    """Rows of the ``book_places`` table."""
+
+    model_type = BookPlaceRow
 
 
 class RecipeRows(RowRepository[RecipeRow]):
@@ -1275,6 +1285,68 @@ class SqlAlchemyPageEditRepository(SqlAlchemyRepository[PageEdit, PageEditKey, P
         order = list(Stage)
         edits = [self._mapper.to_entity(row) for row in await self._rows.get_many(**filters)]
         return sorted(edits, key=lambda edit: (order.index(edit.stage), edit.processor_key))
+
+
+class SqlAlchemyBookPlaceRepository(SqlAlchemyRepository[BookPlace, BookPlaceKey, BookPlaceRow], BookPlaceRepository):
+    """The places accounts left books at, addressed by the account and the book."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Create the repository over the ``book_places`` table.
+
+        :param session: Session of the unit of work.
+        :type session: AsyncSession
+        """
+        super().__init__(rows=BookPlaceRows(session=session), mapper=BookPlaceMapper())
+
+    @override
+    async def get(self, entity_id: BookPlaceKey) -> BookPlace:
+        """Return the place of an account in a book.
+
+        :param entity_id: Account and book.
+        :type entity_id: BookPlaceKey
+        :returns: The stored place.
+        :rtype: BookPlace
+        :raises NotFoundError: If the account has no place in the book.
+        """
+        row = await self._rows.get((entity_id.account_id, entity_id.project_id))
+        return self._mapper.to_entity(row)
+
+    @override
+    async def delete(self, entity_id: BookPlaceKey) -> None:
+        """Remove the place of an account in a book.
+
+        :param entity_id: Account and book.
+        :type entity_id: BookPlaceKey
+        :raises NotFoundError: If the account has no place in the book.
+        """
+        await self._rows.delete((entity_id.account_id, entity_id.project_id))
+
+    @override
+    async def save(self, place: BookPlace) -> BookPlace:
+        """Store the place, replacing the one of the same account and book.
+
+        :param place: Place to store.
+        :type place: BookPlace
+        :returns: The place as stored.
+        :rtype: BookPlace
+        :raises NotFoundError: If the book is not stored.
+        :raises ConflictError: If another transaction stored the first place of the account in the book meanwhile.
+        """
+        if await self.find(place.key) is None:
+            return await self.add(place)
+        return await self.update(place)
+
+    @override
+    async def find(self, key: BookPlaceKey) -> BookPlace | None:
+        """Return the place of an account in a book.
+
+        :param key: Account and book.
+        :type key: BookPlaceKey
+        :returns: The place, or None.
+        :rtype: BookPlace | None
+        """
+        row = await self._rows.get_one_or_none(account_id=key.account_id, project_id=key.project_id)
+        return None if row is None else self._mapper.to_entity(row)
 
 
 class SqlAlchemyRecipeRepository(SqlAlchemyRepository[Recipe, RecipeId, RecipeRow], RecipeRepository):

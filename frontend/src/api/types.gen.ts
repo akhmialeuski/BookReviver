@@ -303,11 +303,153 @@ export type BookDetailsSchema = {
 };
 
 /**
+ * BookPlaceBody
+ *
+ * Where the reader is in the book, which replaces the place stored.
+ *
+ * :ivar mode: Whether the reader is working on a stage or reading.
+ * :ivar stage: Stage the reader is on, or last was on before reading.
+ * :ivar page_id: Page that is open, or omitted for the first page.
+ * :ivar scan_id: Scan that is open on the stages that work on scans, or omitted.
+ * :ivar source_id: File that is chosen on the stages that work on files, or omitted.
+ * :ivar view: How the canvas lays the pages out; the spread is the two-page spread of the reading mode as well.
+ * :ivar compare: How the result of the stage is compared with the one before it.
+ * :ivar filter: Which pages the strip or the grid lists.
+ * :ivar canvas: Zoom and centre of the canvas, or omitted for the fitted view.
+ * :ivar strip_page_id: First page in sight in the strip or the grid, or omitted for the top.
+ */
+export type BookPlaceBody = {
+    mode: PlaceMode;
+    stage: Stage;
+    /**
+     * Page Id
+     */
+    page_id?: string | null;
+    /**
+     * Scan Id
+     */
+    scan_id?: string | null;
+    /**
+     * Source Id
+     */
+    source_id?: string | null;
+    view?: ViewMode;
+    compare?: CompareMode;
+    filter?: PageFilter;
+    canvas?: CanvasPositionBody | null;
+    /**
+     * Strip Page Id
+     */
+    strip_page_id?: string | null;
+};
+
+/**
+ * BookPlaceSchema
+ *
+ * Where the account left the book.
+ *
+ * :ivar mode: Whether the reader was working on a stage or reading.
+ * :ivar stage: Stage the reader was on, or last was on before reading.
+ * :ivar page_id: Page that was open, or None for the first page.
+ * :ivar scan_id: Scan that was open, or None.
+ * :ivar source_id: File that was chosen, or None.
+ * :ivar view: How the canvas laid the pages out.
+ * :ivar compare: How the result of the stage was compared with the one before it.
+ * :ivar filter: Which pages the strip or the grid listed.
+ * :ivar canvas: Zoom and centre of the canvas, or None for the fitted view.
+ * :ivar strip_page_id: First page in sight in the strip or the grid, or None for the top.
+ * :ivar updated_at: When the place was written.
+ */
+export type BookPlaceSchema = {
+    mode: PlaceMode;
+    stage: Stage;
+    /**
+     * Page Id
+     */
+    page_id: string | null;
+    /**
+     * Scan Id
+     */
+    scan_id: string | null;
+    /**
+     * Source Id
+     */
+    source_id: string | null;
+    view: ViewMode;
+    compare: CompareMode;
+    filter: PageFilter;
+    canvas: CanvasPositionSchema | null;
+    /**
+     * Strip Page Id
+     */
+    strip_page_id: string | null;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+};
+
+/**
+ * CanvasPositionBody
+ *
+ * Where the canvas looks, as the client reports it.
+ *
+ * :ivar zoom: Multiple of the zoom that fits the whole view into the canvas, so 1 is the fitted view.
+ * :ivar centre_x: Horizontal coordinate of the centre in page heights, from the left edge of the view.
+ * :ivar centre_y: Vertical coordinate of the centre in page heights, from the top edge of the view.
+ */
+export type CanvasPositionBody = {
+    /**
+     * Zoom
+     */
+    zoom: number;
+    /**
+     * Centre X
+     */
+    centre_x: number;
+    /**
+     * Centre Y
+     */
+    centre_y: number;
+};
+
+/**
+ * CanvasPositionSchema
+ *
+ * Where the canvas looked.
+ *
+ * :ivar zoom: Multiple of the zoom that fits the whole view into the canvas.
+ * :ivar centre_x: Horizontal coordinate of the centre in page heights, from the left edge of the view.
+ * :ivar centre_y: Vertical coordinate of the centre in page heights, from the top edge of the view.
+ */
+export type CanvasPositionSchema = {
+    /**
+     * Zoom
+     */
+    zoom: number;
+    /**
+     * Centre X
+     */
+    centre_x: number;
+    /**
+     * Centre Y
+     */
+    centre_y: number;
+};
+
+/**
  * ColorMode
  *
  * Colour depth of a page image as stored in the source.
  */
 export type ColorMode = 'bilevel' | 'gray' | 'color' | 'unknown';
+
+/**
+ * CompareMode
+ *
+ * How the result of a stage is compared with the result before it.
+ */
+export type CompareMode = 'off' | 'swipe' | 'side';
 
 /**
  * ContributorRole
@@ -854,6 +996,13 @@ export type PageEditSchema = {
 };
 
 /**
+ * PageFilter
+ *
+ * Which pages the strip and the grid of a stage list.
+ */
+export type PageFilter = 'all' | 'check' | 'left-out' | 'wide';
+
+/**
  * PageKind
  *
  * Role of a page in the printed book.
@@ -1379,6 +1528,13 @@ export type PagesMove = {
      */
     page_ids: Array<string>;
 };
+
+/**
+ * PlaceMode
+ *
+ * Where in the interface a reader left a book.
+ */
+export type PlaceMode = 'workspace' | 'reading';
 
 /**
  * PointSchema
@@ -2491,6 +2647,13 @@ export type VersionScale = 'full' | 'preview';
 export type VersionState = 'pending' | 'running' | 'ready' | 'failed';
 
 /**
+ * ViewMode
+ *
+ * How the canvas lays the pages of a book out.
+ */
+export type ViewMode = 'page' | 'spread' | 'grid';
+
+/**
  * WorkerPool
  *
  * Class of worker a job needs, which routes it to the right queue.
@@ -3599,6 +3762,90 @@ export type ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponses = {
 };
 
 export type ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponse = ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponses[keyof ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponses];
+
+export type GetPlaceApiV1ProjectsProjectIdPlaceGetData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/place';
+};
+
+export type GetPlaceApiV1ProjectsProjectIdPlaceGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type GetPlaceApiV1ProjectsProjectIdPlaceGetError = GetPlaceApiV1ProjectsProjectIdPlaceGetErrors[keyof GetPlaceApiV1ProjectsProjectIdPlaceGetErrors];
+
+export type GetPlaceApiV1ProjectsProjectIdPlaceGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: BookPlaceSchema;
+    /**
+     * The account has not worked on the book yet
+     */
+    204: void;
+};
+
+export type GetPlaceApiV1ProjectsProjectIdPlaceGetResponse = GetPlaceApiV1ProjectsProjectIdPlaceGetResponses[keyof GetPlaceApiV1ProjectsProjectIdPlaceGetResponses];
+
+export type PutPlaceApiV1ProjectsProjectIdPlacePutData = {
+    body: BookPlaceBody;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/place';
+};
+
+export type PutPlaceApiV1ProjectsProjectIdPlacePutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type PutPlaceApiV1ProjectsProjectIdPlacePutError = PutPlaceApiV1ProjectsProjectIdPlacePutErrors[keyof PutPlaceApiV1ProjectsProjectIdPlacePutErrors];
+
+export type PutPlaceApiV1ProjectsProjectIdPlacePutResponses = {
+    /**
+     * Successful Response
+     */
+    200: BookPlaceSchema;
+};
+
+export type PutPlaceApiV1ProjectsProjectIdPlacePutResponse = PutPlaceApiV1ProjectsProjectIdPlacePutResponses[keyof PutPlaceApiV1ProjectsProjectIdPlacePutResponses];
 
 export type GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetData = {
     body?: never;

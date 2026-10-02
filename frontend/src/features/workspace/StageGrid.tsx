@@ -1,10 +1,11 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { XIcon } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { PageTile } from '@/features/workspace/PageTile';
 import { PageFilter } from '@/features/workspace/params';
 import { StripToolbar } from '@/features/workspace/StripToolbar';
 import type { FilterCounts, StripItem } from '@/features/workspace/strip';
+import { useStripPlace } from '@/features/workspace/useStripPlace';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 
@@ -76,6 +77,8 @@ export function StageGrid({
     estimateSize: () => ROW_ESTIMATE_PX,
     overscan: OVERSCAN_ROWS,
   });
+  const pageIds = useMemo(() => items.map((item) => item.page.id), [items]);
+  useStripPlace(scroller, virtualizer, pageIds, columns, width > 0 && items.length > 0);
 
   return (
     <div className="flex size-full flex-col" data-testid="grid">

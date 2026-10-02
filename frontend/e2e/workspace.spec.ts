@@ -1,7 +1,14 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { createBook, registerAndSignIn, uploadFolder, writePagesFolder } from './support/account';
+import {
+  createBook,
+  openProjectId,
+  readPlace,
+  registerAndSignIn,
+  uploadFolder,
+  writePagesFolder,
+} from './support/account';
 
 /**
  * The stage workspace of a book: it opens on a stage, the stage bar shows the ten stages with their state, moving
@@ -76,10 +83,20 @@ test('a reader works through the stages of a book', async ({ page }) => {
     await expect(page).toHaveURL(/\/stages\/typesetting$/);
   });
 
-  await test.step('the book opens on the stage it was left on', async () => {
+  await test.step('the book opens on the stage it was left on, unless the stage cannot be worked on', async () => {
+    const projectId = openProjectId(page);
+    // The place is written a second after the last move, and a stage without a processor is not worked on
+    await expect
+      .poll(async () => (await readPlace(page, projectId)).place?.stage)
+      .toBe('typesetting');
     await page.goto(bookPath);
-    await expect(page).toHaveURL(/\/stages\/typesetting$/);
+    await expect(page.getByTestId('stage-screen')).toBeVisible();
+    await expect(page).not.toHaveURL(/\/stages\/typesetting/);
+
     await page.getByTestId('stage-geometry').click();
+    await expect(page).toHaveURL(/\/stages\/geometry$/);
+    await expect.poll(async () => (await readPlace(page, projectId)).place?.stage).toBe('geometry');
+    await page.goto(bookPath);
     await expect(page).toHaveURL(/\/stages\/geometry$/);
   });
 

@@ -5,21 +5,36 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from bookreviver.domain.entities import Job, Page, PageEdit, PageStage, PageVersion, Project, Recipe, Scan, Source
+from bookreviver.domain.entities import (
+    BookPlace,
+    Job,
+    Page,
+    PageEdit,
+    PageStage,
+    PageVersion,
+    Project,
+    Recipe,
+    Scan,
+    Source,
+)
 from bookreviver.domain.enums import (
     ColorMode,
+    CompareMode,
     ContributorRole,
     FileType,
     IdentifierScheme,
     JobKind,
     JobState,
     Orthography,
+    PageFilter,
     PageOrigin,
+    PlaceMode,
     RightsStatus,
     Script,
     SourceKind,
     Stage,
     StageState,
+    ViewMode,
 )
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import AccountId, JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
@@ -29,6 +44,7 @@ if TYPE_CHECKING:
 from bookreviver.domain.values import (
     BookDetails,
     BookIdentifier,
+    CanvasPosition,
     Contributor,
     ProcessorRef,
     ScanFacts,
@@ -299,6 +315,37 @@ def make_page_stage(
         recipe_id=recipe_id,
         head_version_id=head_version_id,
         state=state,
+        updated_at=EPOCH,
+    )
+
+
+def make_book_place(
+    *, account_id: AccountId, project_id: ProjectId, stage: Stage = Stage.GEOMETRY, page_id: PageId | None = None
+) -> BookPlace:
+    """Build the place of a reader who zoomed into a page of a stage in the spread layout.
+
+    :param account_id: Account the place belongs to.
+    :type account_id: AccountId
+    :param project_id: Book the place is in.
+    :type project_id: ProjectId
+    :param stage: Stage the reader was on.
+    :type stage: Stage
+    :param page_id: Page that was open, or None for the first page.
+    :type page_id: PageId | None
+    :returns: A workspace place written at the epoch, with a canvas position and a filter.
+    :rtype: BookPlace
+    """
+    return BookPlace(
+        account_id=account_id,
+        project_id=project_id,
+        mode=PlaceMode.WORKSPACE,
+        stage=stage,
+        page_id=page_id,
+        view=ViewMode.SPREAD,
+        compare=CompareMode.SWIPE,
+        filter=PageFilter.CHECK,
+        canvas=CanvasPosition(zoom=2.5, centre_x=0.4, centre_y=0.6),
+        strip_page_id=page_id,
         updated_at=EPOCH,
     )
 

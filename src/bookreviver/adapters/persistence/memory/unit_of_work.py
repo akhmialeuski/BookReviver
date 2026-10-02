@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, override
 from attrs import define, evolve, field, fields
 
 from bookreviver.domain.entities import (
+    BookPlace,
     Job,
     Page,
     PageEdit,
@@ -45,9 +46,10 @@ from bookreviver.domain.enums import JobKind, JobState, PageOrigin, Side, Stage,
 from bookreviver.domain.errors import ConcurrentChangeError, ConflictError, DomainError, NotFoundError
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
 from bookreviver.domain.stage_summaries import StageTally
-from bookreviver.domain.values import PageEditKey, PageSize, PageStageKey, Slice, SliceRequest
+from bookreviver.domain.values import BookPlaceKey, PageEditKey, PageSize, PageStageKey, Slice, SliceRequest
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
+    BookPlaceRepository,
     JobRepository,
     PageEditRepository,
     PageRepository,
@@ -69,6 +71,8 @@ if TYPE_CHECKING:
 
 # Attribute holding the identifier of every entity addressed by one
 ID_ATTRIBUTE: str = 'id'
+# Property holding the composite key of an entity that is addressed by one
+KEY_ATTRIBUTE: str = 'key'
 # The groups of kinds of job of which a project runs one at a time, each the rows of a partial unique index of the
 # ``jobs`` table: the imports, the writing of page images, and the jobs that process the versions of pages
 ONE_ACTIVE_AT_A_TIME: tuple[frozenset[JobKind], ...] = (
@@ -91,6 +95,7 @@ class InMemoryTables:
     :ivar page_edits: Page edits by page, stage and processor.
     :ivar recipes: Recipes by identifier.
     :ivar jobs: Jobs by identifier.
+    :ivar book_places: Places of books by account and book.
     """
 
     projects: dict[ProjectId, Project] = field(factory=dict)
@@ -102,6 +107,7 @@ class InMemoryTables:
     page_edits: dict[PageEditKey, PageEdit] = field(factory=dict)
     recipes: dict[RecipeId, Recipe] = field(factory=dict)
     jobs: dict[JobId, Job] = field(factory=dict)
+    book_places: dict[BookPlaceKey, BookPlace] = field(factory=dict)
 
     def forget_scans(self, scan_ids: Collection[ScanId]) -> None:
         """Leave the pages cut from these scans without their scan, as the database's ``SET NULL`` does.
@@ -309,6 +315,7 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
         remove_where(self._tables.sources, lambda source: source.project_id == entity.id)
         remove_where(self._tables.scans, lambda scan: scan.project_id == entity.id)
         remove_where(self._tables.jobs, lambda job: job.project_id == entity.id)
+        remove_where(self._tables.book_places, lambda place: place.project_id == entity.id)
 
     @override
     async def overview(self, project: Project) -> ProjectOverview:
@@ -984,7 +991,7 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         :type tables: InMemoryTables
         """
         super().__init__(tables.page_stages, tables)
-        self._identify = attrgetter('key')
+        self._identify = attrgetter(KEY_ATTRIBUTE)
 
     @override
     def _check(self, entity: PageStage) -> None:
@@ -1149,7 +1156,7 @@ class InMemoryPageEditRepository(InMemoryRepository[PageEdit, PageEditKey], Page
         :type tables: InMemoryTables
         """
         super().__init__(tables.page_edits, tables)
-        self._identify = attrgetter('key')
+        self._identify = attrgetter(KEY_ATTRIBUTE)
 
     @override
     def _check(self, entity: PageEdit) -> None:
@@ -1206,6 +1213,56 @@ class InMemoryPageEditRepository(InMemoryRepository[PageEdit, PageEditKey], Page
             ),
             key=lambda edit: (order.index(edit.stage), edit.processor_key),
         )
+
+
+class InMemoryBookPlaceRepository(InMemoryRepository[BookPlace, BookPlaceKey], BookPlaceRepository):
+    """The places accounts left books at."""
+
+    def __init__(self, tables: InMemoryTables) -> None:
+        """Work on the book place table of the unit of work's copy, checking places against projects.
+
+        :param tables: Every table of the working copy.
+        :type tables: InMemoryTables
+        """
+        super().__init__(tables.book_places, tables)
+        self._identify = attrgetter(KEY_ATTRIBUTE)
+
+    @override
+    def _check(self, entity: BookPlace) -> None:
+        """Require the book of the place.
+
+        The account is not checked, because accounts belong to fastapi-users and have no port.
+
+        :param entity: Place about to be stored.
+        :type entity: BookPlace
+        :raises NotFoundError: If the book is not stored.
+        """
+        require(self._tables.projects, entity.project_id)
+
+    @override
+    async def save(self, place: BookPlace) -> BookPlace:
+        """Store the place, replacing the one of the same account and book.
+
+        :param place: Place to store.
+        :type place: BookPlace
+        :returns: The place as stored.
+        :rtype: BookPlace
+        :raises NotFoundError: If the book is not stored.
+        """
+        self._check(place)
+        self._rows[place.key] = place
+        return place
+
+    @override
+    async def find(self, key: BookPlaceKey) -> BookPlace | None:
+        """Return the place of an account in a book.
+
+        :param key: Account and book.
+        :type key: BookPlaceKey
+        :returns: The place, or None.
+        :rtype: BookPlace | None
+        """
+        return self._rows.get(key)
 
 
 class InMemoryRecipeRepository(InMemoryRepository[Recipe, RecipeId], RecipeRepository):
@@ -1438,6 +1495,7 @@ class InMemoryUnitOfWork(UnitOfWork):
     :ivar page_edits: Page edit repository over the working copy.
     :ivar recipes: Recipe repository over the working copy.
     :ivar jobs: Job repository over the working copy.
+    :ivar book_places: Book place repository over the working copy.
     """
 
     def __init__(self, database: InMemoryDatabase) -> None:
@@ -1478,6 +1536,7 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.jobs = InMemoryJobRepository(
             self._tables, snapshot=self._snapshot, committed=self._database.tables, guards=self._guards
         )
+        self.book_places = InMemoryBookPlaceRepository(self._tables)
 
     @override
     async def commit(self) -> None:

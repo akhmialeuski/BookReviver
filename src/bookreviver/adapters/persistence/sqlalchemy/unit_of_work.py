@@ -8,6 +8,7 @@ change they make part of one transaction, visible to others only after :meth:`Sq
 from typing import TYPE_CHECKING, override
 
 from bookreviver.adapters.persistence.sqlalchemy.repositories import (
+    SqlAlchemyBookPlaceRepository,
     SqlAlchemyJobRepository,
     SqlAlchemyPageEditRepository,
     SqlAlchemyPageRepository,
@@ -36,6 +37,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     :ivar page_edits: Page edit repository bound to the session.
     :ivar recipes: Recipe repository bound to the session.
     :ivar jobs: Job repository bound to the session.
+    :ivar book_places: Book place repository bound to the session.
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -54,6 +56,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.page_edits = SqlAlchemyPageEditRepository(session)
         self.recipes = SqlAlchemyRecipeRepository(session)
         self.jobs = SqlAlchemyJobRepository(session)
+        self.book_places = SqlAlchemyBookPlaceRepository(session)
 
     @override
     async def commit(self) -> None:

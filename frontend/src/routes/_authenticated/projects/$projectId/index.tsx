@@ -1,34 +1,31 @@
 import { createFileRoute, redirect } from '@tanstack/react-router';
-import type { Stage } from '@/api';
-import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-query.gen';
-import { startStage } from '@/features/stages/parse';
-import { recallStage } from '@/features/workspace/storage';
+import { openBook } from '@/features/place/open';
 
 /**
- * The address of one book, `/projects/<id>`, which shows nothing of its own and sends the reader to the stage the
- * book was left on.
+ * The address of one book, `/projects/<id>`, which shows nothing of its own and sends the reader to where the book was
+ * left.
  *
- * The stage last opened for the book in this browser wins. Without such a record the book opens on the `next_stage`
- * of its summary, and a book with neither opens on the first stage.
+ * The server keeps the place of the account in the book, so the book opens on the same stage, page, layout and filter,
+ * or in the reading mode, on any device. A book the account has not worked on opens on the `next_stage` of its summary,
+ * and a book with neither opens on the first stage. A page that was deleted or a stage that cannot be worked on is
+ * replaced by the nearest view that exists.
  */
 
 export const Route = createFileRoute('/_authenticated/projects/$projectId/')({
   beforeLoad: async ({ context, params }) => {
-    const remembered = recallStage(params.projectId);
-    let next: Stage | null = null;
-    if (remembered === null) {
-      try {
-        const project = await context.queryClient.fetchQuery(
-          projectApiV1ProjectsProjectIdGetOptions({ path: { project_id: params.projectId } }),
-        );
-        next = project.next_stage;
-      } catch {
-        // A missing book or a failed request shows its error on the stage screen, which asks for the book again
-      }
+    const target = await openBook(context.queryClient, params.projectId);
+    if (target.mode === 'reading') {
+      throw redirect({
+        to: '/projects/$projectId/viewer',
+        params: { projectId: params.projectId },
+        search: target.search,
+        replace: true,
+      });
     }
     throw redirect({
       to: '/projects/$projectId/stages/$stage',
-      params: { projectId: params.projectId, stage: startStage(remembered, next) },
+      params: { projectId: params.projectId, stage: target.stage },
+      search: target.search,
       replace: true,
     });
   },

@@ -51,8 +51,12 @@ export function confirmationLink(email: string): Promise<string> {
   return mailedLink(email, 'verify-email');
 }
 
-/** Register a new reader, confirm the address from the mailed link and sign in. */
-export async function registerAndSignIn(page: Page): Promise<void> {
+/**
+ * Register a new reader, confirm the address from the mailed link and sign in.
+ *
+ * @returns The address the reader registered with, so another browser can sign in as the same account.
+ */
+export async function registerAndSignIn(page: Page): Promise<string> {
   const email = `reader-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
   await page.goto('/register');
   await page.getByLabel('Email address').fill(email);
@@ -65,6 +69,16 @@ export async function registerAndSignIn(page: Page): Promise<void> {
   await expect(page.getByText('Your address is confirmed')).toBeVisible();
 
   await page.getByRole('link', { name: 'Go to sign in' }).click();
+  await page.getByLabel('Email address').fill(email);
+  await page.getByLabel('Password').fill(PASSWORD);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByRole('heading', { name: 'Your books' })).toBeVisible();
+  return email;
+}
+
+/** Sign in with an address that was registered earlier, such as from a second browser of the same reader. */
+export async function signIn(page: Page, email: string): Promise<void> {
+  await page.goto('/sign-in');
   await page.getByLabel('Email address').fill(email);
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign in' }).click();
@@ -130,6 +144,43 @@ export function openProjectId(page: Page): string {
     throw new Error(`No book is open at ${page.url()}.`);
   }
   return id;
+}
+
+/** The place a reader left a book at, as the server holds it. */
+export interface StoredPlace {
+  mode: string;
+  stage: string;
+  page_id: string | null;
+  scan_id: string | null;
+  source_id: string | null;
+  view: string;
+  compare: string;
+  filter: string;
+  canvas: { zoom: number; centre_x: number; centre_y: number } | null;
+  strip_page_id: string | null;
+}
+
+/**
+ * Read the place the signed-in reader left a book at straight from the server.
+ *
+ * @returns The status of the answer, and the place when there is one: none for a book the reader has not worked on
+ * (204) and for a book that is not theirs (404).
+ */
+export async function readPlace(
+  page: Page,
+  projectId: string,
+): Promise<{ status: number; place: StoredPlace | null }> {
+  const response = await page.request.get(`/api/v1/projects/${projectId}/place`);
+  const status = response.status();
+  return { status, place: status === 200 ? ((await response.json()) as StoredPlace) : null };
+}
+
+/** Send a mutating request to the API as the signed-in reader, with the CSRF header the browser would add. */
+export async function deleteAsReader(page: Page, apiPath: string): Promise<number> {
+  const cookies = await page.context().cookies();
+  const token = cookies.find((cookie) => cookie.name === CSRF_COOKIE_NAME)?.value ?? '';
+  const response = await page.request.delete(apiPath, { headers: { [CSRF_HEADER_NAME]: token } });
+  return response.status();
 }
 
 /**

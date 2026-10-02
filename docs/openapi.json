@@ -2216,6 +2216,173 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/place": {
+      "get": {
+        "tags": [
+          "places"
+        ],
+        "summary": "Get Place",
+        "description": "Return the place the signed-in account left the book at, or 204 when it has not worked on the book yet.",
+        "operationId": "get_place_api_v1_projects__project_id__place_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookPlaceSchema"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "The account has not worked on the book yet"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "places"
+        ],
+        "summary": "Put Place",
+        "description": "Replace the place the signed-in account left the book at.",
+        "operationId": "put_place_api_v1_projects__project_id__place_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookPlaceBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookPlaceSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project_id}/stages/{stage}/recipe": {
       "get": {
         "tags": [
@@ -6090,6 +6257,247 @@
         "title": "BookDetailsSchema",
         "description": "Bibliographic description of a book.\n\n:ivar title: Title of the book.\n:ivar subtitle: Words of the title page that explain the title.\n:ivar parallel_titles: Titles in other languages that the title page prints beside the title.\n:ivar original_title: Title of the original work, for a translation.\n:ivar contributors: People who made the book, each with a role, in the order of the title page.\n:ivar primary_author: The first author, else the first contributor of any role, else an empty string.\n:ivar publisher: Publisher of the book.\n:ivar printer: Printing house.\n:ivar publication_place: City of publication.\n:ivar publication_year: Year of publication as printed.\n:ivar edition: Edition statement.\n:ivar censorship: Censor's permit printed in the book.\n:ivar series: Series the book belongs to.\n:ivar series_number: Number of the book in its series.\n:ivar volume: Volume or part within a multi-volume work.\n:ivar languages: ISO 639-3 codes of the languages of the text.\n:ivar orthography: Spelling system of the print.\n:ivar script: Writing system of the print.\n:ivar printed_pagination: Pagination as a catalogue states it.\n:ivar height_cm: Height of the book in centimetres, or None when unknown.\n:ivar illustrations: Illustrations as a catalogue states them.\n:ivar binding: Binding or cover of the copy.\n:ivar identifiers: Numbers and addresses that identify the book or the copy, in normalized form.\n:ivar subjects: Topics of the book.\n:ivar rights: Whether the result of the work may be published.\n:ivar copy_holder: Owner of the copy that was scanned.\n:ivar copy_notes: Marks of the copy that was scanned.\n:ivar notes: Free-form notes of the owner."
       },
+      "BookPlaceBody": {
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/PlaceMode"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "page_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Id"
+          },
+          "scan_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scan Id"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "view": {
+            "$ref": "#/components/schemas/ViewMode",
+            "default": "page"
+          },
+          "compare": {
+            "$ref": "#/components/schemas/CompareMode",
+            "default": "off"
+          },
+          "filter": {
+            "$ref": "#/components/schemas/PageFilter",
+            "default": "all"
+          },
+          "canvas": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanvasPositionBody"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "strip_page_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strip Page Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "mode",
+          "stage"
+        ],
+        "title": "BookPlaceBody",
+        "description": "Where the reader is in the book, which replaces the place stored.\n\n:ivar mode: Whether the reader is working on a stage or reading.\n:ivar stage: Stage the reader is on, or last was on before reading.\n:ivar page_id: Page that is open, or omitted for the first page.\n:ivar scan_id: Scan that is open on the stages that work on scans, or omitted.\n:ivar source_id: File that is chosen on the stages that work on files, or omitted.\n:ivar view: How the canvas lays the pages out; the spread is the two-page spread of the reading mode as well.\n:ivar compare: How the result of the stage is compared with the one before it.\n:ivar filter: Which pages the strip or the grid lists.\n:ivar canvas: Zoom and centre of the canvas, or omitted for the fitted view.\n:ivar strip_page_id: First page in sight in the strip or the grid, or omitted for the top."
+      },
+      "BookPlaceSchema": {
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/PlaceMode"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "page_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Id"
+          },
+          "scan_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scan Id"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "view": {
+            "$ref": "#/components/schemas/ViewMode"
+          },
+          "compare": {
+            "$ref": "#/components/schemas/CompareMode"
+          },
+          "filter": {
+            "$ref": "#/components/schemas/PageFilter"
+          },
+          "canvas": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanvasPositionSchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "strip_page_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strip Page Id"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode",
+          "stage",
+          "page_id",
+          "scan_id",
+          "source_id",
+          "view",
+          "compare",
+          "filter",
+          "canvas",
+          "strip_page_id",
+          "updated_at"
+        ],
+        "title": "BookPlaceSchema",
+        "description": "Where the account left the book.\n\n:ivar mode: Whether the reader was working on a stage or reading.\n:ivar stage: Stage the reader was on, or last was on before reading.\n:ivar page_id: Page that was open, or None for the first page.\n:ivar scan_id: Scan that was open, or None.\n:ivar source_id: File that was chosen, or None.\n:ivar view: How the canvas laid the pages out.\n:ivar compare: How the result of the stage was compared with the one before it.\n:ivar filter: Which pages the strip or the grid listed.\n:ivar canvas: Zoom and centre of the canvas, or None for the fitted view.\n:ivar strip_page_id: First page in sight in the strip or the grid, or None for the top.\n:ivar updated_at: When the place was written."
+      },
+      "CanvasPositionBody": {
+        "properties": {
+          "zoom": {
+            "type": "number",
+            "maximum": 1000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Zoom"
+          },
+          "centre_x": {
+            "type": "number",
+            "maximum": 1000.0,
+            "minimum": -1000.0,
+            "title": "Centre X"
+          },
+          "centre_y": {
+            "type": "number",
+            "maximum": 1000.0,
+            "minimum": -1000.0,
+            "title": "Centre Y"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "zoom",
+          "centre_x",
+          "centre_y"
+        ],
+        "title": "CanvasPositionBody",
+        "description": "Where the canvas looks, as the client reports it.\n\n:ivar zoom: Multiple of the zoom that fits the whole view into the canvas, so 1 is the fitted view.\n:ivar centre_x: Horizontal coordinate of the centre in page heights, from the left edge of the view.\n:ivar centre_y: Vertical coordinate of the centre in page heights, from the top edge of the view."
+      },
+      "CanvasPositionSchema": {
+        "properties": {
+          "zoom": {
+            "type": "number",
+            "title": "Zoom"
+          },
+          "centre_x": {
+            "type": "number",
+            "title": "Centre X"
+          },
+          "centre_y": {
+            "type": "number",
+            "title": "Centre Y"
+          }
+        },
+        "type": "object",
+        "required": [
+          "zoom",
+          "centre_x",
+          "centre_y"
+        ],
+        "title": "CanvasPositionSchema",
+        "description": "Where the canvas looked.\n\n:ivar zoom: Multiple of the zoom that fits the whole view into the canvas.\n:ivar centre_x: Horizontal coordinate of the centre in page heights, from the left edge of the view.\n:ivar centre_y: Vertical coordinate of the centre in page heights, from the top edge of the view."
+      },
       "ColorMode": {
         "type": "string",
         "enum": [
@@ -6100,6 +6508,16 @@
         ],
         "title": "ColorMode",
         "description": "Colour depth of a page image as stored in the source."
+      },
+      "CompareMode": {
+        "type": "string",
+        "enum": [
+          "off",
+          "swipe",
+          "side"
+        ],
+        "title": "CompareMode",
+        "description": "How the result of a stage is compared with the result before it."
       },
       "ContributorRole": {
         "type": "string",
@@ -6925,6 +7343,17 @@
         "title": "PageEditSchema",
         "description": "A manual edit of a page.\n\n:ivar page_id: Page the edit belongs to.\n:ivar stage: Stage of the processor that reads the edit.\n:ivar processor_key: Key of that processor.\n:ivar kind: Editor that drew the edit.\n:ivar geometry: The shape as JSON, or None for an edit that is only a mask.\n:ivar mask: Path of the mask on the IIIF route, or None.\n:ivar edit_hash: Hash of the shape and the mask.\n:ivar updated_at: When the edit was last saved."
       },
+      "PageFilter": {
+        "type": "string",
+        "enum": [
+          "all",
+          "check",
+          "left-out",
+          "wide"
+        ],
+        "title": "PageFilter",
+        "description": "Which pages the strip and the grid of a stage list."
+      },
       "PageKind": {
         "type": "string",
         "enum": [
@@ -7748,6 +8177,15 @@
         ],
         "title": "PagesMove",
         "description": "Where to put a group of pages, which keep their order in the book.\n\n:ivar page_ids: The pages to move, each at most once."
+      },
+      "PlaceMode": {
+        "type": "string",
+        "enum": [
+          "workspace",
+          "reading"
+        ],
+        "title": "PlaceMode",
+        "description": "Where in the interface a reader left a book."
       },
       "PointSchema": {
         "properties": {
@@ -9432,6 +9870,16 @@
         ],
         "title": "VersionState",
         "description": "Lifecycle of a page version, from its creation to its result."
+      },
+      "ViewMode": {
+        "type": "string",
+        "enum": [
+          "page",
+          "spread",
+          "grid"
+        ],
+        "title": "ViewMode",
+        "description": "How the canvas lays the pages of a book out."
       },
       "WorkerPool": {
         "type": "string",
