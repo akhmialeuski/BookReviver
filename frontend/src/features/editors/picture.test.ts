@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { pictureOf } from '@/features/editors/picture';
 import { Picture } from '@/features/editors/types';
 import { SourceKind } from '@/features/processing/compare';
-import { scan } from '@/features/processing/fixtures';
-import { page } from '@/features/workspace/fixtures';
+import { scan, version } from '@/features/processing/fixtures';
+import { images, page } from '@/features/workspace/fixtures';
 
 /** The picture an editor lies on: the scan for the split line, the picture the step reads for the rotation. */
 
@@ -33,6 +33,18 @@ describe('pictureOf', () => {
       kind: SourceKind.Iiif,
       url: '/page-p/info.json',
     });
+  });
+
+  it('gives what the step before made for a step that is not the first of the stage', () => {
+    const made = version('v1', { tiles_ready: false, images: images('made') });
+
+    expect(pictureOf(Picture.Input, null, page('p'), BEFORE, made)).toEqual({
+      kind: SourceKind.Image,
+      url: '/made/preview',
+    });
+    expect(
+      pictureOf(Picture.Input, null, page('p'), BEFORE, { ...made, tiles_ready: true }),
+    ).toEqual({ kind: SourceKind.Iiif, url: '/made/info.json' });
   });
 
   it('gives nothing for a page without an image', () => {

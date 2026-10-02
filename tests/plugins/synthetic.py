@@ -1,8 +1,11 @@
-"""Synthetic scans for the tests of the gutter search, drawn with Pillow and NumPy alone.
+"""Synthetic scans for the tests of the gutter search and of the search of the sheet, drawn with Pillow and NumPy alone.
 
 A spread is two columns of lines of words on paper, with or without the shadow the binding casts, laid on the glass at an
 angle. The truth the search is measured against is the line the middle of the book takes once the scan is turned, which
 is known exactly because the scan is made by turning a flat spread.
+
+A sheet is one page of lines of words on paper laid on a dark binding, turned and seen from a slant. The truth is the
+four corners of the paper, which are known exactly because the scan is made by moving the corners of a flat page.
 """
 
 import math
@@ -10,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from attrs import frozen
-from PIL import Image
+from PIL import Image, ImageOps
 
 from tests.helpers.samples import PAPER, text_page
 
@@ -117,3 +120,101 @@ def draw_single_page() -> Image.Image:
     :rtype: Image.Image
     """
     return text_page(*SINGLE_PAGE_SIZE_PX, seed=3)
+
+
+# Tones of the sheet of paper laid on a dark binding: the ink, the paper and the background, as colours
+SHEET_INK: tuple[int, int, int] = (35, 30, 28)
+SHEET_PAPER: tuple[int, int, int] = (228, 208, 164)
+SHEET_BACKGROUND: tuple[int, int, int] = (46, 42, 40)
+# Grain of the background, as the standard deviation of its samples
+BACKGROUND_NOISE: float = 9.0
+# How much larger than the sheet the scan is, so the background shows on every side
+SCAN_ROOM: float = 1.2
+SHEET_SIZE_PX: tuple[int, int] = (800, 1_100)
+BACKGROUND_SEED: int = 5
+# The corners of the sheet that are at its top, which come in when it is seen from a slant
+TOP_CORNERS: int = 2
+
+
+@frozen(kw_only=True)
+class SyntheticSheet:
+    """A drawn scan of a sheet of paper on a dark background, and where the corners of the sheet are.
+
+    :ivar image: The scan, in colour.
+    :ivar corners: Top left, top right, bottom right and bottom left corner of the sheet in the pixels of the scan.
+    """
+
+    image: Image.Image
+    corners: tuple[tuple[float, float], ...]
+
+    @property
+    def diagonal(self) -> float:
+        """Give the length of the diagonal of the scan.
+
+        :returns: The diagonal in pixels.
+        :rtype: float
+        """
+        return math.hypot(*self.image.size)
+
+
+def perspective_coefficients(
+    scan_corners: tuple[tuple[float, float], ...], page_corners: tuple[tuple[float, float], ...]
+) -> tuple[float, ...]:
+    """Work out the eight numbers Pillow takes for a perspective transform, which map the scan back to the page.
+
+    :param scan_corners: Corners of the sheet in the scan.
+    :type scan_corners: tuple[tuple[float, float], ...]
+    :param page_corners: The same corners in the flat page.
+    :type page_corners: tuple[tuple[float, float], ...]
+    :returns: The coefficients of the transform from the pixels of the scan to those of the page.
+    :rtype: tuple[float, ...]
+    """
+    rows: list[list[float]] = []
+    targets: list[float] = []
+    for (x_scan, y_scan), (x_page, y_page) in zip(scan_corners, page_corners, strict=True):
+        rows.extend(
+            [
+                [x_scan, y_scan, 1, 0, 0, 0, -x_scan * x_page, -y_scan * x_page],
+                [0, 0, 0, x_scan, y_scan, 1, -x_scan * y_page, -y_scan * y_page],
+            ]
+        )
+        targets.extend([x_page, y_page])
+    return tuple(float(value) for value in np.linalg.solve(np.array(rows), np.array(targets)))
+
+
+def draw_sheet(*, rotation_deg: float = 0.0, perspective: float = 0.0, seed: int = 7) -> SyntheticSheet:
+    """Draw a page of text on paper laid on a dark background, turned and seen from a slant.
+
+    :param rotation_deg: Angle the sheet is turned by in degrees, counter-clockwise.
+    :type rotation_deg: float
+    :param perspective: How much narrower the top of the sheet is than its bottom, as a share of the width.
+    :type perspective: float
+    :param seed: Seed of the words of the page.
+    :type seed: int
+    :returns: The scan and the corners of the sheet.
+    :rtype: SyntheticSheet
+    """
+    width, height = SHEET_SIZE_PX
+    page = ImageOps.colorize(text_page(width, height, seed=seed), black=SHEET_INK, white=SHEET_PAPER)
+    scan_size = (round(width * SCAN_ROOM), round(height * SCAN_ROOM))
+    flat = ((0.0, 0.0), (width, 0.0), (width, height), (0.0, height))
+    angle = math.radians(rotation_deg)
+    corners = tuple(
+        (
+            scan_size[0] / 2 + x_in * math.cos(angle) + y_in * math.sin(angle),
+            scan_size[1] / 2 - x_in * math.sin(angle) + y_in * math.cos(angle),
+        )
+        # The top corners come towards the middle, then the sheet is turned counter-clockwise about its centre
+        for x_in, y_in in (
+            ((x - width / 2) * (1 - perspective if index < TOP_CORNERS else 1), y - height / 2)
+            for index, (x, y) in enumerate(flat)
+        )
+    )
+    transform = perspective_coefficients(corners, flat)
+    sheet = page.transform(scan_size, Image.Transform.PERSPECTIVE, transform, Image.Resampling.BICUBIC)
+    mask = Image.new('L', (width, height), 255).transform(
+        scan_size, Image.Transform.PERSPECTIVE, transform, Image.Resampling.BILINEAR
+    )
+    grain = np.random.default_rng(BACKGROUND_SEED).normal(0, BACKGROUND_NOISE, (scan_size[1], scan_size[0], 1))
+    background = Image.fromarray((np.array(SHEET_BACKGROUND) + grain).clip(0, 255).astype(np.uint8))
+    return SyntheticSheet(image=Image.composite(sheet, background, mask), corners=corners)

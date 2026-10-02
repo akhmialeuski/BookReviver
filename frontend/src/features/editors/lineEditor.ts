@@ -25,6 +25,7 @@ export function scanPagesOf({ current, items }: PageContext) {
 export const lineEditor: EditorDefinition<LineShape> = {
   picture: Picture.Scan,
   alwaysOn: true,
+  needsResult: false,
   owner: (context) => scanPagesOf(context)[0] ?? context.current.page,
   size: ({ scan }) =>
     scan === null ? null : { width: scan.facts.width_px, height: scan.facts.height_px },

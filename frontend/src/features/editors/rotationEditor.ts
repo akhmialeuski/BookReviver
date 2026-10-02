@@ -13,6 +13,7 @@ import { type EditorDefinition, Picture } from '@/features/editors/types';
 export const rotationEditor: EditorDefinition<RotationShape> = {
   picture: Picture.Input,
   alwaysOn: false,
+  needsResult: false,
   owner: ({ current }) => current.page,
   size: () => null,
   runsAfterEdit: () => true,

@@ -1,16 +1,17 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import type { ScanSchema } from '@/api';
+import { stepChain, stepVersions } from '@/features/editors/chain';
 import { popUndo, pushUndo, type UndoEntry } from '@/features/editors/history';
 import { pictureOf } from '@/features/editors/picture';
 import { editsKey, useEditChanges, useEdits } from '@/features/editors/queries';
-import { editedProcessorOf, editorOf, hasEditor } from '@/features/editors/registry';
+import { editableProcessorsOf, editorOf, hasEditor } from '@/features/editors/registry';
 import type { EditorScene } from '@/features/editors/scene';
-import type { EditorSession } from '@/features/editors/session';
+import type { EditorSession, StepChoice } from '@/features/editors/session';
 import type { Geometry } from '@/features/editors/shapes';
 import type { PageContext } from '@/features/editors/types';
 import type { ImageSource } from '@/features/processing/compare';
-import { useRunInFlight, useRunStage } from '@/features/processing/queries';
+import { useRunInFlight, useRunStage, useVersions } from '@/features/processing/queries';
 import { readResult } from '@/features/processing/results';
 import type { Processing } from '@/features/processing/useProcessing';
 import { invalidateStageRows, invalidateStageSummary } from '@/features/projects/queries';
@@ -18,6 +19,7 @@ import { isTypingTarget } from '@/features/viewer/keys';
 import { useActiveJobs } from '@/features/workspace/queries';
 import type { StripItem } from '@/features/workspace/strip';
 import { describeError } from '@/shared/http/problem';
+import { MESSAGES } from '@/shared/messages';
 
 /**
  * The page editor of a stage: which processor offers one, whether it is open on the open page, the shape it shows, and
@@ -65,23 +67,38 @@ export function useEditorSession({
   const { mutate: startRun } = run;
   const activeJobs = useActiveJobs(projectId);
 
-  // The processor is the one the recipe runs by, since only its run reads the edit
+  // The processors are the ones the recipe runs by, since only its run reads an edit, and the reader works on one at a time
   const recipe = processing.recipe;
-  const processor = editedProcessorOf(recipe, catalogue);
+  const editable = editableProcessorsOf(recipe, catalogue);
+  const [chosen, setChosen] = useState<string | null>(null);
+  const processor = editable.find((entry) => entry.key === chosen) ?? editable[0];
   const kind = processor?.editor;
   const editor = kind !== undefined && hasEditor(kind) ? editorOf(kind) : undefined;
   const scan =
     current === undefined
       ? null
       : (scans.find((entry) => entry.id === current.page.scan_id) ?? null);
+
+  // Each step of the recipe made a version, and a step reads the one before: an editor lies on what its step read and
+  // starts from what its step found
+  const head = current?.row?.version ?? null;
+  const versions = useVersions(projectId, current?.page.id, stage);
+  const chain = stepChain(versions.data ?? [], head);
+  const found =
+    processor === undefined ? { made: null, read: null } : stepVersions(chain, processor.key);
+  const made = found.made ?? (editable.length === 1 ? head : null);
+  const result = made === null ? null : readResult(made);
   const context: PageContext | undefined =
-    current === undefined ? undefined : { current, items, scan };
+    current === undefined ? undefined : { current, items, scan, stepInput: found.read, result };
   const owner = editor === undefined || context === undefined ? undefined : editor.owner(context);
   const picture =
     editor === undefined || current === undefined
       ? null
-      : pictureOf(editor.picture, scan, current.page, before);
-  const available = processor !== undefined && picture !== null;
+      : pictureOf(editor.picture, scan, current.page, before, found.read);
+  const available =
+    processor !== undefined &&
+    picture !== null &&
+    (editor?.needsResult !== true || result !== null);
 
   const edits = useEdits(projectId, owner?.id, stage, available);
   const saved = edits?.find((entry) => entry.processor_key === processor?.key);
@@ -208,17 +225,13 @@ export function useEditorSession({
     editor === undefined ||
     context === undefined ||
     processor === undefined ||
-    picture === null
+    picture === null ||
+    !available
   ) {
     return null;
   }
 
-  const version = current?.row?.version;
-  const fallback = editor.fallback({
-    ...context,
-    size: editor.size(context),
-    result: version === undefined || version === null ? null : readResult(version),
-  });
+  const fallback = editor.fallback({ ...context, size: editor.size(context) });
   const geometry =
     draft !== null && draft.key === key && draft.base === savedText
       ? draft.geometry
@@ -229,11 +242,36 @@ export function useEditorSession({
     void write(next, true);
   };
   const saving = save.isPending || remove.isPending;
+  const steps = editable.flatMap((entry): StepChoice[] => {
+    if (!hasEditor(entry.editor)) {
+      return [];
+    }
+    const stepVersion = stepVersions(chain, entry.key).made;
+    const angle = stepVersion === null ? null : readResult(stepVersion).angle;
+    return [
+      {
+        key: entry.key,
+        title: MESSAGES.editors.steps.kinds[entry.editor],
+        manual: edits?.some((candidate) => candidate.processor_key === entry.key) ?? false,
+        detail:
+          entry.editor === 'rotation' && angle !== null
+            ? MESSAGES.processing.thisPage.degrees(angle)
+            : null,
+        chosen: entry.key === processor.key,
+      },
+    ];
+  });
 
   return {
     picture,
     alwaysOn: editor.alwaysOn,
     active,
+    steps,
+    choose: (stepKey: string) => {
+      setChosen(stepKey);
+      setDraft(null);
+      setOpened(openKey);
+    },
     hasEdit: savedGeometry !== null,
     busy: saving || wanted !== null || run.isPending,
     error,

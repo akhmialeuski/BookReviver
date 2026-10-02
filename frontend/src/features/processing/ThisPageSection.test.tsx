@@ -43,6 +43,8 @@ describe('ThisPageSection', () => {
       picture: { kind: SourceKind.Iiif, url: '/info.json' },
       alwaysOn: false,
       active: false,
+      steps: [],
+      choose: vi.fn(),
       hasEdit: false,
       busy: false,
       error: null,

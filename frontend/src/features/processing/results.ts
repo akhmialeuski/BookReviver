@@ -1,4 +1,11 @@
 import type { PageVersionSchema } from '@/api';
+import {
+  type QuadShape,
+  type RectShape,
+  readQuad,
+  readRect,
+  type Size,
+} from '@/features/editors/shapes';
 
 /**
  * What a step did to a page, read from the data of its version, and the history of the results a stage has made on a
@@ -28,10 +35,22 @@ export interface PageResult {
   pages: number | null;
   /** The angle of the cut from the vertical in degrees, positive when it leans right going down. */
   slantDeg: number | null;
+  /** The corners of the sheet the step found, in the pixels of the full image it read. */
+  quad: QuadShape | null;
+  /** The frame of the content the step found, in the pixels of the full image it read. */
+  frame: RectShape | null;
+  /** The width in pixels of the full image the step read, which its edit is drawn on. */
+  sourceWidthPx: number | null;
+  /** The height in pixels of the full image the step read. */
+  sourceHeightPx: number | null;
 }
 
 function numberOf(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
 }
 
 /** The slant of a cut that runs from the top to the bottom row of an image, or null when a number is missing. */
@@ -59,6 +78,55 @@ export function readResult(version: Pick<PageVersionSchema, 'data'>): PageResult
       numberOf(data.cut_bottom_x),
       numberOf(data.height_px),
     ),
+    quad: readQuad(recordOf(data.quad)),
+    frame: readRect(recordOf(data.frame)),
+    sourceWidthPx: numberOf(data.source_width_px),
+    sourceHeightPx: numberOf(data.source_height_px),
+  };
+}
+
+/** Give the size of the full image a step read, or null when the step did not say. */
+export function sourceSize(result: PageResult | null): Size | null {
+  return result === null || result.sourceWidthPx === null || result.sourceHeightPx === null
+    ? null
+    : { width: result.sourceWidthPx, height: result.sourceHeightPx };
+}
+
+/**
+ * Read what the steps of a stage found on a page, put together: each fact is the one the last step that reports it found.
+ *
+ * A stage of several steps keeps the version of each, and the version the stage stands on is the last. What the first
+ * steps found, such as the angle the deskew turned the page by, is not in it, so the facts a step does not report are
+ * taken from the nearest step before it that does. The confidence is the last step's, and the page is left as it was only
+ * when every step left it.
+ *
+ * @param chain The versions that made the current one, the first step first.
+ * @returns What the steps found, or null for no versions.
+ */
+export function readChainResult(
+  chain: readonly Pick<PageVersionSchema, 'data'>[],
+): PageResult | null {
+  const results = chain.map(readResult);
+  const last = results.at(-1);
+  if (last === undefined) {
+    return null;
+  }
+  const nearest = <K extends keyof PageResult>(key: K): PageResult[K] =>
+    results.findLast((result) => result[key] !== null)?.[key] ?? last[key];
+  return {
+    angle: nearest('angle'),
+    confidence: last.confidence,
+    skipped: results.every((result) => result.skipped),
+    cutX: nearest('cutX'),
+    cutTopX: nearest('cutTopX'),
+    cutBottomX: nearest('cutBottomX'),
+    overlapPx: nearest('overlapPx'),
+    pages: nearest('pages'),
+    slantDeg: nearest('slantDeg'),
+    quad: nearest('quad'),
+    frame: nearest('frame'),
+    sourceWidthPx: last.sourceWidthPx,
+    sourceHeightPx: last.sourceHeightPx,
   };
 }
 
@@ -81,8 +149,12 @@ export function historyOf(
   versions: readonly PageVersionSchema[],
   currentId: string | undefined,
 ): HistoryEntry[] {
+  // A step of a recipe that reads the one before leaves a version of its own, and only the last step makes a result
+  const read = new Set(versions.map((version) => version.input_id));
   return versions
-    .filter((version) => version.state === 'ready' && version.scale === 'full')
+    .filter(
+      (version) => version.state === 'ready' && version.scale === 'full' && !read.has(version.id),
+    )
     .toSorted((a, b) => b.created_at.localeCompare(a.created_at))
     .map((version) => ({ version, current: version.id === currentId }));
 }

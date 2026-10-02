@@ -1,6 +1,6 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Locator, type Page, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import {
   createBook,
   registerAndSignIn,
@@ -8,6 +8,7 @@ import {
   writePagesFolder,
   writeScansFolder,
 } from './support/account';
+import { dragFrom, pairOf } from './support/layer';
 
 /**
  * The page editors on the canvas: the rotation handle of the Geometry stage with its field, its wheel, its undo and its
@@ -25,36 +26,8 @@ const PAGES = 2;
 const WIDE_SCANS = 2;
 const NUDGES = 3;
 const NUDGE_SHIFT_PX = 10;
-const DRAG_STEPS = 8;
 const DRAG_PX = 40;
 const WHEEL_NOTCH = 100;
-
-/** Read a pair of numbers an editor writes into the attribute of its layer, such as the place of a handle. */
-async function pairOf(layer: Locator, attribute: string): Promise<{ x: number; y: number }> {
-  const text = (await layer.getAttribute(attribute)) ?? '';
-  const [x, y] = text.split(',').map(Number);
-  if (x === undefined || y === undefined || Number.isNaN(x) || Number.isNaN(y)) {
-    throw new Error(`The attribute ${attribute} holds "${text}", which is not a pair of numbers.`);
-  }
-  return { x, y };
-}
-
-/** Drag from a place of the layer by an offset, in small steps so that the shape follows. */
-async function dragFrom(
-  page: Page,
-  layer: Locator,
-  from: { x: number; y: number },
-  by: { x: number; y: number },
-): Promise<void> {
-  const box = await layer.boundingBox();
-  if (box === null) {
-    throw new Error('The editor layer has no box.');
-  }
-  await page.mouse.move(box.x + from.x, box.y + from.y);
-  await page.mouse.down();
-  await page.mouse.move(box.x + from.x + by.x, box.y + from.y + by.y, { steps: DRAG_STEPS });
-  await page.mouse.up();
-}
 
 test('a reader turns a page by hand with the handle, the field and the wheel, takes it back and goes to Auto', async ({
   page,
@@ -81,11 +54,20 @@ test('a reader turns a page by hand with the handle, the field and the wheel, ta
     await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
     await expect(canvas).toHaveAttribute('data-state', 'ready');
     await expect(layer).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Auto' })).toBeDisabled();
   });
 
-  await test.step('Set by hand opens the editor on the page, with the handle, and compare gives way to it', async () => {
-    await page.getByRole('button', { name: 'Set by hand' }).click();
+  await test.step('the editors of the sheet and the frame start from what their step found, so the stage runs first', async () => {
+    await page.getByTestId('run-menu').click();
+    await page.getByTestId('run-all').click();
+    await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
+      timeout: RUN_TIMEOUT_MS,
+    });
+    await expect(page.getByTestId('editor-step')).toHaveCount(3);
+    await expect(page.getByTestId('editor-auto')).toBeDisabled();
+  });
+
+  await test.step('picking the angle opens its editor on the page, with the handle, and compare gives way to it', async () => {
+    await page.getByTestId('editor-step').filter({ hasText: 'Angle' }).click();
     await expect(page.getByRole('button', { name: 'Set by hand' })).toHaveAttribute(
       'aria-pressed',
       'true',
@@ -103,7 +85,7 @@ test('a reader turns a page by hand with the handle, the field and the wheel, ta
     await expect(facts).toContainText('2.5°', { timeout: RUN_TIMEOUT_MS });
     await expect(facts).toContainText('By hand');
     expect(saves).toHaveLength(1);
-    await expect(page.getByRole('button', { name: 'Auto' })).toBeEnabled();
+    await expect(page.getByTestId('editor-auto')).toBeEnabled();
   });
 
   await test.step('Alt and the wheel change the angle by a tenth, and a run of notches is saved once', async () => {
@@ -133,10 +115,10 @@ test('a reader turns a page by hand with the handle, the field and the wheel, ta
   });
 
   await test.step('Auto deletes the edit and the step finds the result by itself again', async () => {
-    await page.getByRole('button', { name: 'Auto' }).click();
+    await page.getByTestId('editor-auto').click();
     await expect(facts).toContainText('Automatic', { timeout: RUN_TIMEOUT_MS });
     await expect(facts).not.toContainText('By hand');
-    await expect(page.getByRole('button', { name: 'Auto' })).toBeDisabled();
+    await expect(page.getByTestId('editor-auto')).toBeDisabled();
   });
 
   await test.step('Ctrl+Z after Auto brings the angle back', async () => {

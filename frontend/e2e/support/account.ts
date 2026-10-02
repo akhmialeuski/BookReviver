@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../../src/shared/http/csrf';
 import { SERVER_LOG } from './env';
-import { solidPng } from './png';
+import { sheetPng, solidPng } from './png';
 
 /**
  * The steps every scenario starts with: a confirmed account that is signed in, a book, and a folder of page images
@@ -17,6 +17,7 @@ import { solidPng } from './png';
 export const PASSWORD = 'correct horse battery staple';
 const PAGE_SIZE = 40;
 const IMPORT_TIMEOUT_MS = 60_000;
+const JOBS_TIMEOUT_MS = 90_000;
 // The most pages one batch request adds, which is the limit of the server
 const PAGES_PER_BATCH = 1000;
 
@@ -112,6 +113,26 @@ export async function writePagesFolder(count: number): Promise<string> {
   return root;
 }
 
+const SHEET_SCAN_SIZE = { width: 420, height: 580 };
+
+/**
+ * Write a folder of scans of a sheet of paper with lines of words on a dark binding, which the Geometry stage can find,
+ * straighten and cut to the frame of its words, and return its path.
+ *
+ * @param count Number of scans.
+ */
+export async function writeSheetsFolder(count: number): Promise<string> {
+  const root = path.join(await mkdtemp(path.join(tmpdir(), 'bookreviver-')), 'sheets');
+  await mkdir(root, { recursive: true });
+  for (let number = 1; number <= count; number += 1) {
+    await writeFile(
+      path.join(root, `sheet-${String(number).padStart(2, '0')}.png`),
+      sheetPng(SHEET_SCAN_SIZE.width, SHEET_SCAN_SIZE.height, number * 7919),
+    );
+  }
+  return root;
+}
+
 const SCAN_SIZE = { width: 160, height: 90 };
 const TALL_SCAN_SIZE = { width: 60, height: 90 };
 
@@ -173,6 +194,27 @@ export async function readPlace(
   const response = await page.request.get(`/api/v1/projects/${projectId}/place`);
   const status = response.status();
   return { status, place: status === 200 ? ((await response.json()) as StoredPlace) : null };
+}
+
+/**
+ * Wait until the book has no job queued or running, as the server counts them.
+ *
+ * A scenario that changes something a run reads, one change after another, waits with this between them, since the server
+ * refuses a run while another is going and the screen cannot know of a job before it is told.
+ */
+export async function waitForIdleJobs(page: Page, projectId: string): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `/api/v1/projects/${projectId}/jobs?active=true&size=20`,
+        );
+        const body = (await response.json()) as { items: unknown[] };
+        return body.items.length;
+      },
+      { timeout: JOBS_TIMEOUT_MS },
+    )
+    .toBe(0);
 }
 
 /** Send a mutating request to the API as the signed-in reader, with the CSRF header the browser would add. */

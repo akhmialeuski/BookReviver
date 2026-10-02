@@ -473,24 +473,25 @@ colour scan instead of the binarised page.
 | `page-split`  | `split.spread`         | `crop(quad)` of a half     | position of the cut, overlap in pixels, size of the half    |
 | `page-split`  | `split.auto`           | `identity` or `crop(quad)` | `pages`, `cut_top_x`, `cut_bottom_x`, `confidence`, size    |
 | `page-order`  | `pages.blank`          | `identity`                 | size of the generated blank leaf                            |
+| `geometry`    | `geometry.perspective` | `perspective(quad)`        | `quad` of the sheet, `cut_edges`, confidence, size read     |
 | `geometry`    | `geometry.deskew`      | `rotate(angle)`            | angle in degrees, confidence, whether it was skipped        |
-| `geometry`    | `geometry.perspective` | `perspective(quad)`        | four corners of the page                                    |
 | `geometry`    | `geometry.dewarp`      | `mesh(key)`                | key of the mesh, root mean square error                     |
-| `geometry`    | `geometry.crop`        | `crop(quad)`               | content frame, margins                                      |
+| `geometry`    | `geometry.crop`        | `crop(quad)`               | `frame` of the content, confidence, size read               |
 | `cleanup`     | `cleanup.despeckle`    | `identity`                 | number of removed specks, key of the mask `mask.png`        |
 | `cleanup`     | `cleanup.binarize`     | `identity`                 | method (Otsu, Sauvola), threshold or window                 |
 | `cleanup`     | `cleanup.eraser`       | `identity`                 | key of the mask from the manual edit                        |
 | `layout`      | `layout.regions`       | `identity`, no image       | text and illustration regions as polygons                   |
 | `recognition` | `recognition.ocr`      | `identity`, no image       | engine, model, confidence, key of the hOCR or ALTO text     |
 
-The chain of versions of one page looks like this. The left half of a spread passes the split, deskewing, cropping
-and cleanup, and each step refers to the one before. Recognition continues the same chain with a version without an
+The chain of versions of one page looks like this. The left half of a spread passes the split, the straightening of the
+sheet, deskewing, cropping and cleanup, and each step refers to the one before. Recognition continues the same chain with a version without an
 image.
 
 ```mermaid
 flowchart TD
     C["Scan 12 of kniga-ch1.pdf<br/>full, preview, thumb, iiif"] --> A["page-split: split.spread<br/>slot 1, quad of the left half"]
-    A --> B["geometry: geometry.deskew<br/>rotate 0.8°"]
+    A --> P["geometry: geometry.perspective<br/>quad of the sheet"]
+    P --> B["geometry: geometry.deskew<br/>rotate 0.8°"]
     B --> D["geometry: geometry.crop<br/>content frame"]
     D --> E["cleanup: cleanup.despeckle<br/>mask.png of removed specks"]
     E --> F["cleanup: cleanup.binarize<br/>Sauvola, window 31"]
@@ -1064,11 +1065,39 @@ indistinguishable to the application.
   over SSE.
 - The base steps `split.none` and `pages.blank` are ordinary processors, and the import and the page order stage run
   them through the same `StepRunner` as a recipe.
-- `split.auto`, `split.spread` and `geometry.deskew` need OpenCV, so they live in the optional group
-  `bookreviver[cv]`. A machine that lacks it starts without them, the catalogue leaves them out, and a default recipe
-  that names them is not made, so the Split stage then starts with `split.none`. `geometry.deskew` takes the angle at
-  which the ink of the page lies in the fewest rows, or the `rotation` the user gave, and leaves a page whose lines it
-  is not sure of as it is.
+- `split.auto`, `split.spread`, `geometry.perspective`, `geometry.deskew` and `geometry.crop` need OpenCV, so they
+  live in the optional group `bookreviver[cv]`. A machine that lacks it starts without them, the catalogue leaves them
+  out, and a default recipe that names them is not made, so the Split stage then starts with `split.none`.
+  `geometry.deskew` takes the angle at which the ink of the page lies in the fewest rows, or the `rotation` the user
+  gave, and leaves a page whose lines it is not sure of, or whose tones do not part into ink and paper, as it is.
+- The default Geometry recipe of a new book is `geometry.perspective`, `geometry.deskew`, `geometry.crop`: the sheet is
+  straightened first because the lines are levelled better on a page with no background, and the frame of the content
+  is searched last, on the level page. Every step of a recipe stores a version that reads the one before, and the
+  version the stage stands on is the last.
+- `geometry.perspective` (`plugins/perspective.py`) finds the sheet by the colour of the paper. The scan is shrunk to
+  600 pixels, the brightness (the HSV value) is split in two by Otsu, the holes of the lines of text are closed and the
+  specks opened, and the convex hull of the largest region is thinned by `cv2.approxPolyDP`, with a tolerance that
+  grows until four corners are left, else replaced by `cv2.minAreaRect`. A sheet smaller than `min_sheet_fraction`
+  (0.25) of the scan, or a split whose two classes differ by less than 40 samples (a cover, a blank leaf), leaves the
+  page as it is with the review reason `not-applied`. The confidence is the share of the variance between the classes
+  times how well the hull fills its quadrilateral. The sheet is warped by `cv2.warpPerspective` into a rectangle with
+  the longer of each pair of opposite sides, and the transform is `perspective(quad)` with the matrix. A side of the
+  sheet within 1 % of the edge of the scan is written to `cut_edges`, which `geometry.crop` reads. A `quad` edit
+  replaces the search and has the confidence 1.
+- `geometry.crop` (`plugins/crop.py`) shrinks the page to 1000 pixels and makes it black and white (`binarization`:
+  `otsu` or `adaptive`), cleans the ink components smaller than `noise_min_area` and those that touch a side of the page
+  that is not in `cut_edges`, smears the ink with a rectangle of 1.5 % by 0.6 % of the page (twice), keeps the blocks
+  by their ink and fill and unions them into the frame. `margin_percent` (8) of the width of the frame is added on each
+  side, and what lies beyond the page is filled with the median colour of the paper. The transform is `crop(quad)`
+  with a translation. A page with no ink that parts from its paper is left as it is with `not-applied`. A frame that
+  comes within 1 % of a side in `cut_edges` gets the review reason `cut-by-edge`. A `rect` edit is the frame, to which
+  the margin is still added. The idea comes from the `_clean_binary` and `detect_text_block` of an earlier script, and
+  the code is the project's own.
+- The data of both steps give the shape they found (`quad`, `frame`) and the size of the full image they read
+  (`source_width_px`, `source_height_px`) in the pixels of the full image, whatever the scale of a preview, which is
+  what an editor draws on. `image_data` carries `cut_edges` and `review` through the steps after, and `settle_review`
+  gives a step its own reason or else the one an earlier step recorded, so the last version of a stage, the one that
+  `PageStage` and the Check filter read, is marked by any step of the recipe.
 - The gutter is searched by `GutterSearch` in `plugins/gutter.py`, which `split.auto` and `split.spread` (version 2)
   share. It cuts the central band (`search_band`, 30 % of the width) into `strips` horizontal strips (12). A strip
   gives one point: the middle of the darkest columns when the dip of the brightness of the paper, taken as the 75th
@@ -1184,6 +1213,8 @@ data/storage/
             │       │           ├── thumb.jpg
             │       │           └── iiif/…
             │       ├── geometry/
+            │       │   ├── geometry.perspective/
+            │       │   │   └── 5d08a7e3c1b94f26/  quad of the sheet
             │       │   ├── geometry.deskew/
             │       │   │   ├── 71c2d09e5b44a0f3/  angle 0.8°
             │       │   │   └── 0b93a1f7c2e85d19/  angle 1.1° after a manual edit
@@ -1495,7 +1526,9 @@ every page of which is up to date is `done`, and any other `waiting`. The book l
 window with the same number of queries for any number of books.
 
 A page version carries `review`, a `ReviewReason` its processor gave when it finished but was not sure:
-`not-applied` from `geometry.deskew` for a page it left unturned, `low-confidence` from `split.spread` for a cut whose
+`not-applied` from `geometry.deskew`, `geometry.perspective` and `geometry.crop` for a page they left as it was,
+`cut-by-edge` from `geometry.crop` for a frame that comes to a side the scanner cut, `low-confidence` from
+`geometry.perspective` for a sheet it is not sure of and from `split.spread` for a cut whose
 gutter confidence is below its `min_confidence`, and from `split.auto` `unsure-gutter` for the same and `narrow-gutter`
 for a scan narrower than a spread that has a strong gutter in its middle. A step of a recipe carries `enabled`. A step that is off keeps
 its parameters, a run and a preview skip it, and a recipe with every step off is refused.
@@ -1761,8 +1794,9 @@ The project list counts in `page_count` the included pages of the book, and show
   page and writes the whole row back, and two changes of one page in flight together would lose the first.
 - Editors are a react-konva layer kept in step with the OpenSeadragon viewport. An editor registry maps each
   `EditorKind` to a component: draggable frame, quad with corner handles, rotation handle, dewarp mesh, brush and
-  eraser, region polygons labelled text or illustration. The split line, the choice of pages with its line and the
-  rotation exist so far (`features/editors/`), and the others come with their plugins.
+  eraser, region polygons labelled text or illustration. The split line, the choice of pages with its line, the
+  rotation, the quad of the sheet and the frame of the content exist so far (`features/editors/`), and the others come
+  with their plugins.
   - The layer (`EditorLayer.tsx`) is a Konva `Stage` laid over the canvas of the compare. It follows the viewer through
     `viewport-change`, `resize` and `animation-finish` (`scene.ts`) and turns the pixels of an edit into pixels of the
     screen and back with `imageToViewerElementCoordinates` and `viewerElementToImageCoordinates` of the picture
@@ -1773,11 +1807,19 @@ The project list counts in `page_count` the included pages of the book, and show
   - An editor is written against its typed shape (`EditorDefinition<S>` in `types.ts`, shapes in `shapes.ts`) and
     registered in `registry.tsx`, which wraps it so that the rest of the screen handles only the JSON of an edit.
     `EditorShapes` lists the shapes, `EDITORS` must have an entry for each, and the entry of a kind must draw that
-    kind's shape, so a new editor is a shape, a definition and one line. The editor of a stage is chosen by the recipe
-    on screen, which is the active one unless the reader opened a variant: it is the editor of the first enabled step
-    whose processor has an entry (`editedProcessorOf` in `registry.tsx`), and never the first processor of the
-    catalogue, since the catalogue lists processors that read different edits. A book on `split.auto` gets the `split`
-    editor and a book on the older `split.spread` recipe gets `line`.
+    kind's shape, so a new editor is a shape, a definition and one line. The editors of a stage are chosen by the recipe
+    on screen, which is the active one unless the reader opened a variant: they are the editors of the enabled steps
+    whose processors have an entry (`editableProcessorsOf` in `registry.tsx`), and never those of the catalogue, since
+    the catalogue lists processors that read different edits. A book on `split.auto` gets the `split` editor and a book
+    on the older `split.spread` recipe gets `line`. The default Geometry recipe has three, `quad`, `rotation` and
+    `rect`, and the panel lists them as the steps of the stage with the word `auto` or `by hand` after each. Picking a
+    step opens its editor, and the one that is shown is the one "Auto", Ctrl+Z and the field of the panel act on.
+  - Every step of a recipe stores a version that reads the one before, so an editor lies on the picture its own step
+    read and starts from what its own step found. `stepChain` (`chain.ts`) follows `input_id` back from the current
+    version of the stage, `pictureOf` takes the version before the step as the picture (the picture before the stage
+    for the first step), and `PageContext` hands the editor the data of its own version. The history of the results of a
+    page lists only the versions that no other version reads, which are the last steps, and the panel reads the angle
+    from the nearest step that reports one (`readChainResult`).
   - The `line` editor (`LineCanvas.tsx`) draws the cut over the whole scan in the pixels of the scan, with an end to
     drag at the top and the bottom, arrow keys that move the line by 1 pixel or 10 with Shift, and above the scan the
     labels of the halves with the pages they become. Its edit belongs to the left page of the scan and it is always
@@ -1788,13 +1830,20 @@ The project list counts in `page_count` the included pages of the book, and show
     step reads by the angle as it is set, draws level guides over it, and takes the angle from a handle round the page,
     the field in the panel or `Alt` and the wheel, a tenth of a degree a notch. While an editor is open the canvas shows
     the one picture it lies on and the compare is off.
+  - The `quad` editor (`QuadCanvas.tsx`) draws the four corners of the sheet as a green outline with a handle on each
+    corner, in the pixels of the full image the step read, which the version reports as `source_width_px` and
+    `source_height_px`. It starts from the `quad` the step found, or from the whole image when it found none. A corner
+    stays on the image and cannot be dragged where the sheet would fold, and the arrow keys move the corner grabbed
+    last. The `rect` editor (`RectCanvas.tsx`) draws the frame of the content as a blue rectangle with eight handles,
+    on the page after the steps before the crop, starting from the `frame` the step found. Both are offered once their
+    step has run on the page (`needsResult`), and a save runs the stage on the page like any other editor.
   - An edit is saved with `PUT .../pages/{page_id}/edits/{stage}/{processor_key}` when the handle is let go, the field is
     left or a pause follows the keys or the wheel, and then the stage is run on that one page with the recipe on screen, whose
     processor reads the edit. The run waits while another job of the book is going, or while a run sent from any control
     of the screen has not yet put its job on the list (`useRunInFlight`), and is asked once for any number of saves. A
     scan kept whole is not cut by moving the line of `split.spread`. "Auto" deletes the edit and runs again, and Ctrl+Z restores the edit the
     page had before the last change, or deletes the edit when it had none (`history.ts`). The panel shows the method of
-    the result, `Automatic` or `By hand`, read from the `edit_hash` of the current version.
+    the result, `Automatic` or `By hand`, read from the `edit_hash` of the versions of the steps of the stage.
 
 ## Testing
 

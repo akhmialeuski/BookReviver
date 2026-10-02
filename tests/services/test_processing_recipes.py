@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 FAKE_KEY: str = FakeProcessor.spec.key
+GEOMETRY_STEPS: tuple[str, ...] = ('geometry.perspective', 'geometry.deskew', 'geometry.crop')
 EVERYTHING: SliceRequest = SliceRequest(limit=100)
 
 
@@ -41,6 +42,21 @@ class TestRecipe:
             [(step.processor_key, dict(step.params)) for step in recipe.steps]
             == [(FAKE_KEY, {'strength': 1, 'fail': False})]
         )
+        assert_expectations()
+
+    async def test_default_geometry_recipe_finds_the_sheet_then_levels_the_lines_then_cuts_the_frame(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify a new book is straightened in three steps, the sheet first and the frame of the content last.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        expect(recipe.active)
+        expect([step.processor_key for step in recipe.steps] == list(GEOMETRY_STEPS))
+        expect(all(step.enabled for step in recipe.steps))
         assert_expectations()
 
     async def test_asking_again_returns_the_recipe_that_was_created(self, fx_kit: ProcessingKit) -> None:

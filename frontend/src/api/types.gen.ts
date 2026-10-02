@@ -2096,7 +2096,7 @@ export type RejectionReason = 'duplicate' | 'unreadable' | 'unsupported-type' | 
  *
  * Why a processed page is marked for a second look, though its step finished without an error.
  */
-export type ReviewReason = 'low-confidence' | 'not-applied' | 'unsure-gutter' | 'narrow-gutter';
+export type ReviewReason = 'low-confidence' | 'not-applied' | 'unsure-gutter' | 'narrow-gutter' | 'cut-by-edge';
 
 /**
  * RightsStatus

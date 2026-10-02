@@ -31,6 +31,8 @@ export function reasonOf(item: StripItem): string | null {
       return words.unsureGutter(confidence);
     case 'narrow-gutter':
       return words.narrowGutter;
+    case 'cut-by-edge':
+      return words.cutByEdge;
     default:
       return words.lowConfidence(confidence);
   }

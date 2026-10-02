@@ -41,11 +41,29 @@ export interface SplitShape {
   line: LineShape | null;
 }
 
+/** The four corners of a sheet of paper, as the server stores a quadrilateral. */
+export interface QuadShape {
+  topLeft: Point;
+  topRight: Point;
+  bottomRight: Point;
+  bottomLeft: Point;
+}
+
+/** An axis-aligned frame, such as the frame of the content of a page. */
+export interface RectShape {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 /** The shape of each editor that has a component, by the name of its kind. */
 export interface EditorShapes {
   line: LineShape;
   rotation: RotationShape;
   split: SplitShape;
+  quad: QuadShape;
+  rect: RectShape;
 }
 
 /** The kinds of editor that have a component. */
@@ -117,4 +135,51 @@ export function readRotation(geometry: Geometry | null): RotationShape | null {
 /** Write a rotation the way the server reads it. */
 export function writeRotation(rotation: RotationShape): Geometry {
   return { degrees: rotation.degrees };
+}
+
+/** Read a quadrilateral from the geometry of an edit, or null when the geometry is not one. */
+export function readQuad(geometry: Geometry | null): QuadShape | null {
+  const topLeft = pointOf(geometry?.top_left);
+  const topRight = pointOf(geometry?.top_right);
+  const bottomRight = pointOf(geometry?.bottom_right);
+  const bottomLeft = pointOf(geometry?.bottom_left);
+  return topLeft === null || topRight === null || bottomRight === null || bottomLeft === null
+    ? null
+    : { topLeft, topRight, bottomRight, bottomLeft };
+}
+
+/** Write a quadrilateral the way the server reads it. */
+export function writeQuad(quad: QuadShape): Geometry {
+  return {
+    top_left: { x: quad.topLeft.x, y: quad.topLeft.y },
+    top_right: { x: quad.topRight.x, y: quad.topRight.y },
+    bottom_right: { x: quad.bottomRight.x, y: quad.bottomRight.y },
+    bottom_left: { x: quad.bottomLeft.x, y: quad.bottomLeft.y },
+  };
+}
+
+/** Read a frame from the geometry of an edit, or null when the geometry is not one or has no area. */
+export function readRect(geometry: Geometry | null): RectShape | null {
+  const left = numberOf(geometry?.left);
+  const top = numberOf(geometry?.top);
+  const width = numberOf(geometry?.width);
+  const height = numberOf(geometry?.height);
+  return left === null ||
+    top === null ||
+    width === null ||
+    height === null ||
+    width <= 0 ||
+    height <= 0
+    ? null
+    : { left, top, width, height };
+}
+
+/** Write a frame the way the server reads it. */
+export function writeRect(rect: RectShape): Geometry {
+  return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+}
+
+/** Write the name of a shape's part in the words of an attribute: `topLeft` as `top-left`. */
+export function dashed(name: string): string {
+  return name.replaceAll(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 }
