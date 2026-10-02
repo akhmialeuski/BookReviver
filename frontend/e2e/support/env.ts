@@ -10,5 +10,10 @@ import path from 'node:path';
 // Two runs at once, such as in two worktrees, each take a port of their own through the environment
 export const SERVER_PORT = Number(process.env.BOOKREVIVER_E2E_PORT ?? 8765);
 export const BASE_URL = `http://127.0.0.1:${SERVER_PORT}`;
-export const RUN_DIR = path.resolve(import.meta.dirname, '..', '..', '.e2e-data');
+// BOOKREVIVER_E2E_DATA_DIR moves the run elsewhere, one folder per port so that parallel runs keep apart
+const DATA_ROOT = process.env.BOOKREVIVER_E2E_DATA_DIR;
+export const RUN_DIR =
+  DATA_ROOT === undefined
+    ? path.resolve(import.meta.dirname, '..', '..', '.e2e-data')
+    : path.join(DATA_ROOT, String(SERVER_PORT));
 export const SERVER_LOG = path.join(RUN_DIR, 'server.log');
