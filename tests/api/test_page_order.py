@@ -12,6 +12,7 @@ from fastapi_pagination import Page
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.api.schemas.pages import PageSchema
+from bookreviver.domain.errors import AnchorInsideMovedPagesError
 from tests.helpers.builders import make_page, make_project, make_scan, make_source, new_account_id
 from tests.helpers.seeding import commit_project
 
@@ -30,6 +31,7 @@ pytestmark = pytest.mark.anyio
 PROJECTS_PATH: str = '/api/v1/projects'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
+DETAIL_FIELD: str = 'detail'
 FIRST_SOURCE_PAGES: int = 3
 SECOND_SOURCE_PAGES: int = 2
 
@@ -193,6 +195,7 @@ class TestMovePage:
 
         expect(response.status_code == status.HTTP_409_CONFLICT)
         expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
+        expect(response.json()[DETAIL_FIELD] == str(AnchorInsideMovedPagesError()))
         assert_expectations()
 
     @pytest.mark.parametrize(
@@ -284,6 +287,7 @@ class TestMovePages:
 
         expect(response.status_code == status.HTTP_409_CONFLICT)
         expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
+        expect(response.json()[DETAIL_FIELD] == str(AnchorInsideMovedPagesError()))
         expect(_order(await _manifest(fx_client, fx_book), fx_book) == [0, 1, 2, 3, 4])
         assert_expectations()
 
@@ -377,6 +381,7 @@ class TestMoveSourcePages:
 
         expect(response.status_code == status.HTTP_409_CONFLICT)
         expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
+        expect(response.json()[DETAIL_FIELD] == str(AnchorInsideMovedPagesError()))
         assert_expectations()
 
     async def test_unknown_source_is_not_found(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:

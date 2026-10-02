@@ -45,7 +45,7 @@ from bookreviver.domain.enums import (
     VersionData,
     VersionState,
 )
-from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
+from bookreviver.domain.errors import AnchorInsideMovedPagesError, ConflictError, DomainError, NotFoundError
 from bookreviver.domain.events import JobChanged, PagesChanged, PageVersionReady
 from bookreviver.domain.ids import JobId, PageId
 from bookreviver.domain.keys import ProjectKeys
@@ -700,7 +700,7 @@ class PageService:
             lower, upper = await self._uow.pages.last_order_key(project_id), None
         else:
             if anchor.page_id in moving:
-                raise ConflictError(anchor.page_id)
+                raise AnchorInsideMovedPagesError
             target = await self._page(project_id, anchor.page_id)
             neighbour = await self._uow.pages.neighbour_key(project_id, target.order_key, anchor.side, excluding=moving)
             lower, upper = (
