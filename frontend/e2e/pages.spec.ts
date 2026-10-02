@@ -166,7 +166,14 @@ test('a reader arranges the pages of a book', async ({ page }) => {
     await page.getByLabel('Part of the book').uncheck();
     await expect(edited).toContainText('Left out of the book');
     await page.getByLabel('Notes').fill('A colour plate');
+    // The save waits its turn behind the changes before it, so the reload below waits for its answer
+    const saved = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'PATCH' &&
+        (response.request().postData() ?? '').includes('A colour plate'),
+    );
     await page.getByLabel('Notes').blur();
+    await saved;
 
     // The notes are saved with the other fields
     await page.reload();
