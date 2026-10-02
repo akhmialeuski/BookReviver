@@ -1,4 +1,6 @@
 import OpenSeadragon from 'openseadragon';
+import type { CanvasPositionSchema } from '@/api';
+import { fittedWidth, positionOf, viewportZoom } from '@/features/place/canvas';
 import {
   type ComparePair,
   clipWidth,
@@ -6,7 +8,7 @@ import {
   SourceKind,
 } from '@/features/processing/compare';
 import { PAGE_HEIGHT } from '@/features/viewer/layout';
-import { addedItem, nameWholeImageTile } from '@/features/viewer/stage';
+import { addedItem, nameWholeImageTile, type StageHooks } from '@/features/viewer/stage';
 import { CompareMode } from '@/features/workspace/params';
 
 /**
@@ -68,7 +70,11 @@ export class CompareStage {
   private generation = 0;
   private syncing = false;
   private hasFitted = false;
+  /** Whether the pictures of the latest `show` are on the stage, so the position of the canvas belongs to them. */
+  private settled = false;
   private padding = 0;
+  private readonly element: HTMLElement;
+  private readonly hooks: StageHooks;
 
   /**
    * Create the viewers inside two elements.
@@ -76,11 +82,17 @@ export class CompareStage {
    * @param element The element the first viewer fills, where the picture before and the swipe are drawn.
    * @param aside The element the second viewer fills, which holds the picture after in the side by side mode.
    */
-  constructor(element: HTMLElement, aside: HTMLElement) {
+  constructor(element: HTMLElement, aside: HTMLElement, hooks: StageHooks = {}) {
+    this.element = element;
     this.secondElement = aside;
+    this.hooks = hooks;
     this.first = OpenSeadragon({ element, ...VIEWER_OPTIONS });
     this.first.addHandler('animation', () => this.follow(this.first, this.second));
     this.first.addHandler('resize', () => this.follow(this.first, this.second));
+    this.first.addHandler('animation-finish', () => {
+      this.publishZoom();
+      this.hooks.onViewChange?.();
+    });
   }
 
   /** The first viewer, which a layer drawn over the canvas follows. */
@@ -114,6 +126,7 @@ export class CompareStage {
    */
   async show(before: ImageSource | null, after: ImageSource | null): Promise<ShownCompare | null> {
     const token = ++this.generation;
+    this.settled = false;
     if (!sameSource(this.shown.before, before)) {
       this.drop(this.first, this.before);
       this.before = null;
@@ -145,8 +158,15 @@ export class CompareStage {
     }
     await this.placeAside(after, token);
     this.arrange();
-    this.fit(!this.hasFitted);
+    // The first pictures of a screen go back to where the reader left the canvas, and later ones are fitted
+    const restored = this.hasFitted ? null : (this.hooks.restore?.() ?? null);
+    if (restored === null) {
+      this.fit(!this.hasFitted);
+    } else {
+      this.look(restored);
+    }
     this.hasFitted = true;
+    this.settled = true;
     return {
       failed: [
         ...(before !== null && this.before === null ? ['before'] : []),
@@ -186,19 +206,60 @@ export class CompareStage {
     this.arrange();
   }
 
-  /** Fit the picture to the viewport. */
-  fit(immediately = false): void {
+  /** The rectangle of the world that fits the picture, with the room round it. */
+  private fitRect(): OpenSeadragon.Rect {
     const size = (this.after ?? this.before)?.getContentSize();
     const aspect = size === undefined ? 0.7 : size.x / size.y;
     const room = this.padding * PAGE_HEIGHT;
-    const rect = new OpenSeadragon.Rect(
+    return new OpenSeadragon.Rect(
       -room,
       -room,
       aspect * PAGE_HEIGHT + 2 * room,
       PAGE_HEIGHT + 2 * room,
     );
+  }
+
+  /** Fit the picture to the viewport. */
+  fit(immediately = false): void {
+    const rect = this.fitRect();
     this.first.viewport.fitBounds(rect, immediately);
     this.second?.viewport.fitBounds(rect, immediately);
+  }
+
+  /**
+   * Tell where the canvas looks, in terms that do not depend on the size of the window.
+   *
+   * @returns The position, or null while the pictures are being put on the stage.
+   */
+  readView(): CanvasPositionSchema | null {
+    if (!this.settled) {
+      return null;
+    }
+    const { viewport } = this.first;
+    const rect = this.fitRect();
+    return positionOf(
+      viewport.getZoom(),
+      viewport.getCenter(),
+      fittedWidth(rect, viewport.getAspectRatio()),
+    );
+  }
+
+  /** Put the canvas at a position that `readView` gave, at once; the layers over it follow the viewport events. */
+  private look(position: CanvasPositionSchema): void {
+    const { viewport } = this.first;
+    const fitted = fittedWidth(this.fitRect(), viewport.getAspectRatio());
+    viewport.zoomTo(viewportZoom(position, fitted), undefined, true);
+    viewport.panTo(new OpenSeadragon.Point(position.centre_x, position.centre_y), true);
+    viewport.applyConstraints(true);
+    this.second?.viewport.fitBounds(viewport.getBounds(true), true);
+  }
+
+  /** Show the zoom in the document, where the end-to-end scenarios read it. */
+  private publishZoom(): void {
+    const view = this.readView();
+    if (view !== null) {
+      this.element.dataset.zoom = String(view.zoom);
+    }
   }
 
   /** Zoom in by one step around the centre of the viewport. */

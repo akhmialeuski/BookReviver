@@ -245,3 +245,36 @@ test('the strip of a long book returns to the page that was first in sight', asy
       .toBe(true);
   });
 });
+
+test('the zoom of the canvas of a processing stage comes back with the book', async ({ page }) => {
+  const folder = await writePagesFolder(PAGES);
+  const canvas = page.getByTestId('viewer-canvas');
+  let projectId = '';
+  let zoom = 0;
+
+  await test.step('a page of the Geometry stage is zoomed out', async () => {
+    await registerAndSignIn(page);
+    await createBook(page, 'A book with a zoom');
+    await uploadFolder(page, folder, PAGES);
+    projectId = openProjectId(page);
+    await page.goto(`/projects/${projectId}/stages/geometry`);
+    await expect(canvas).toHaveAttribute('data-state', 'ready');
+    await expect.poll(() => zoomOf(page)).toBeGreaterThan(0);
+    const fitted = await zoomOf(page);
+    await page.getByRole('button', { name: 'Zoom out' }).click();
+    await expect.poll(() => zoomOf(page)).toBeLessThan(fitted * MOST_ZOOM_OUT);
+    zoom = await zoomOf(page);
+    await expect
+      .poll(async () => (await readPlace(page, projectId)).place?.canvas?.zoom ?? fitted)
+      .toBeCloseTo(zoom, 1);
+  });
+
+  await test.step('the stage opens from the library at the same zoom', async () => {
+    await openFromLibrary(page);
+    await expect(page).toHaveURL(/\/stages\/geometry/);
+    await expect(canvas).toHaveAttribute('data-state', 'ready');
+    await expect.poll(() => zoomOf(page)).toBeCloseTo(zoom, 1);
+  });
+
+  await rm(path.dirname(folder), { recursive: true, force: true });
+});
