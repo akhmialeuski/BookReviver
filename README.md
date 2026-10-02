@@ -65,12 +65,9 @@ Run these once on a new machine, in this order, from the root of the repository.
 5. **Interface.**
 
    ```bash
-   scripts/frontend-deps.sh
+   npm --prefix frontend ci
    npm --prefix frontend run build
    ```
-
-   The script runs `npm ci` and puts `node_modules` on the Linux filesystem, linked into `frontend/`, which matters
-   when the repository lives on a Windows drive under WSL. See [Frontend](#frontend).
 
 6. **Start.**
 
@@ -89,7 +86,7 @@ Run these once on a new machine, in this order, from the root of the repository.
   server refuses to start and names this command.
 - A change of `pyproject.toml` or `uv.lock` needs `uv sync --extra cv`. Plain `uv sync` removes OpenCV, and the server
   then starts without the steps that split a spread and straighten a page.
-- A change under `frontend/` needs `scripts/frontend-deps.sh` and `npm --prefix frontend run build`.
+- A change under `frontend/` needs `npm --prefix frontend ci` and `npm --prefix frontend run build`.
 - A new route or schema of the API needs `uv run bookreviver-openapi`, then `npm --prefix frontend run generate`, and
   both results are committed.
 - A change of the system packages, see the list above, needs `sudo scripts/install-system-deps.sh`, and then the server
@@ -117,14 +114,7 @@ The interface is a React application in `frontend/`. The server serves the build
 otherwise. A confirmation mail that has no SMTP server to go through is written to the server log, and its link opens
 `/verify-email` of the application.
 
-The dependencies are installed with `scripts/frontend-deps.sh`, never with `npm ci` in `frontend/`. Under WSL with the
-repository on a Windows drive every file read crosses to NTFS, and the unit tests spent 865 s loading jsdom and its
-modules, one file at a time, because parallel Vitest workers failed to start. The script keeps the sources where they
-are and installs `node_modules` into `~/.cache/bookreviver/frontend-<checkout>/` on the Linux filesystem, with
-`frontend/node_modules` a link to it, and the same tests then take about 13 s in parallel. `npm ci` would replace the
-link with a directory, so the script runs it in that directory on copies of `package.json`, `package-lock.json` and
-`.npmrc`. Each checkout and worktree gets a directory of its own, and `BOOKREVIVER_FRONTEND_DEPS` names another one.
-To add a package, run `npm install --package-lock-only <package>` in `frontend/` and then the script.
+The dependencies are installed with `npm --prefix frontend ci`.
 
 ```bash
 npm --prefix frontend run dev     # the Vite server on http://127.0.0.1:5173, proxying /api to port 8000

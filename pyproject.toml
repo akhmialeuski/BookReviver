@@ -69,9 +69,6 @@ cv = [
 [tool.fastapi]
 entrypoint = "bookreviver.app.asgi:app"
 
-[tool.uv]
-link-mode = "copy"
-
 [build-system]
 requires = ["uv_build>=0.12,<0.13.0"]
 build-backend = "uv_build"
@@ -132,6 +129,8 @@ forbidden_modules = [
 ignore_missing_imports = true
 # Understands BaseSettings reading the environment and the coercion of field inputs
 plugins = ["pydantic.mypy"]
+# `mypy .` would otherwise walk the uploaded books in data/ and the frontend dependencies looking for Python files
+exclude = ['^data/', '^frontend/', '^\.e2e-data/']
 
 [tool.pyrefly]
 project-excludes = [

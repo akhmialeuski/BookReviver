@@ -19,7 +19,7 @@ uv run pytest tests/contracts            # port contracts, run against every ada
 uv run lint-imports                      # the layer contracts on their own
 uv run bookreviver-openapi               # write docs/openapi.json again after a route or a schema changes
 uv run pre-commit run --all-files        # the gate: ruff, ty, mypy, pyrefly, import-linter, file fixers
-scripts/frontend-deps.sh                 # frontend dependencies on the Linux filesystem, Node 22.18+ (even releases)
+npm --prefix frontend ci                 # frontend dependencies, Node 22.18 or newer (even-numbered releases only)
 npm --prefix frontend run dev            # frontend on http://127.0.0.1:5173, proxies /api to the backend
 npm --prefix frontend run build          # frontend/dist, which the backend serves at / when the directory exists
 npm --prefix frontend run generate       # frontend/src/api again, after docs/openapi.json changes
@@ -86,4 +86,3 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 - The frontend client in `frontend/src/api/` is generated from the committed OpenAPI schema and never edited by hand.
   Every text the interface shows is in `frontend/src/shared/messages.ts`, and TypeScript runs without `any` or
   suppressions.
-- The repository runs from a Windows drive under WSL, which is why `[tool.uv] link-mode = "copy"` is set.
