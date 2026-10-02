@@ -477,10 +477,32 @@ class TestPageStageRepository:
         await uow.commit()
         repository = (await fx_uow_factory()).page_stages
         tallies = await repository.tally({project.id})
-        counts = {(tally.stage, tally.fresh, tally.stale, tally.failed, tally.review) for tally in tallies}
-        assert counts == {(Stage.GEOMETRY, 1, 1, 1, 1), (Stage.CLEANUP, 1, 0, 0, 0)}
+        counts = {(tally.stage, tally.fresh, tally.stale, tally.failed, tally.review, tally.check) for tally in tallies}
+        assert counts == {(Stage.GEOMETRY, 1, 1, 1, 1, 3), (Stage.CLEANUP, 1, 0, 0, 0, 0)}
         assert {tally.project_id for tally in tallies} == {project.id}
         assert await repository.tally(set()) == []
+
+    async def test_tally_counts_a_page_both_stale_and_marked_once_in_check(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a page that is stale and marked adds to check once, and a fresh page with no mark adds nothing.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        both, clean = (_blank_page(project.id, f'a{number}') for number in range(2))
+        await uow.pages.add_many([both, clean])
+        head_id = await _add_marked_head(uow, both)
+        await uow.page_stages.save(make_page_stage(page_id=both.id, head_version_id=head_id, state=StageState.STALE))
+        await uow.page_stages.save(make_page_stage(page_id=clean.id))
+        await uow.commit()
+        [tally] = await (await fx_uow_factory()).page_stages.tally({project.id})
+        assert (tally.fresh, tally.stale, tally.review, tally.check) == (1, 1, 1, 1)
 
     async def test_deleting_the_head_version_leaves_the_record_without_it(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory

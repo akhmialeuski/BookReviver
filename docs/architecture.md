@@ -1356,14 +1356,18 @@ cut, and none before, for a placeholder too.
 
 The stage workspace draws from three reads that each answer for the whole book, so it never asks page by page.
 `GET /projects/{id}/stages` gives the ten stages in pipeline order, each with `available`, `manual`, `pages` (the pages
-with an image, which a run goes over), `fresh`, `stale`, `failed`, `not_run`, `review` and `active_recipe_id`. A stage
+with an image, which a run goes over), `fresh`, `stale`, `failed`, `not_run`, `review`, `check` and `active_recipe_id`. `check` is the number of pages the
+strip lists under Check: stale, failed or marked for review, each counted once, so a page that is stale and marked is
+one. A stage
 done by hand, the import and the page order, is always available and has no counts. Any other stage is available when
 a processor of it is in the catalogue, so a stage stops being "soon" the day its first plugin is installed.
 `GET /projects/{id}/stages/{stage}/pages` gives each page of the book in book order with its `status` in the stage
 (`not-run` when the stage has no record of it), its `review` mark and its current version whole, so the strip shows
 the result of that very stage. Both come from `StageSummaries`, which counts the `page_stages` records with one
-`GROUP BY` and conditional sums in `PageStageRepository.tally`. `GET /projects/{id}/jobs?active=true` lists the
-queued and running jobs of the book for the activity chip.
+`GROUP BY` and conditional sums in `PageStageRepository.tally`, `check` being one more sum in the same statement.
+`GET /projects/{id}/jobs?active=true` lists the queued and running jobs of the book for the activity chip. A job in
+`JobSchema` carries `stage`, the stage of a `run-stage` job read from its parameters by `Job.stage`, the one place
+that parses them, and None for any other kind, so the chip and the list say "Geometry run".
 
 A project in `ProjectSchema` carries `progress`, one `StageStatus` per stage, and `next_stage`, the first available
 stage with work to do. The status follows one rule: a stage that is not available is `unavailable`, a stage a queued
@@ -1471,8 +1475,8 @@ The project list counts in `page_count` the included pages of the book, and show
 - The stage bar (`features/workspace/StageBar.tsx`) draws four phases and ten stages from the summary of the stages
   (`GET /projects/{id}/stages`) and the status of each stage in the book (`ProjectSchema.progress`): the number or the
   mark of the state, the name, the bar of up-to-date, out-of-date, failed and not-run pages, and the counts of pages to
-  check and failed. A stage the book cannot work in yet says "Soon" and still opens. The count to check is an upper
-  bound, because the summary counts out-of-date pages and marked pages apart and a page can be both.
+  check and failed. A stage the book cannot work in yet says "Soon" and still opens. The count to check is
+  `StageSummarySchema.check`, equal to the number of pages in the Check filter of the strip of the same stage.
 - A stage screen is a workspace of three parts on shadcn/ui Resizable (`react-resizable-panels`), made by
   `features/workspace/StageWorkspace.tsx`: the strip of pages on the left, the canvas in the middle and the panel of
   the stage on the right. A stage passes the content of each part, and a stage that lays pages out differently passes

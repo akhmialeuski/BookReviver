@@ -542,8 +542,9 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """Count the records of every stage of the given projects by state, in one grouped query for all of them.
 
         Only pages with an image are counted, so a placeholder never is. A page counts as marked for review when the
-        current version of its record carries a review mark and the record is not failed. A stage that no page has a
-        record of has no tally.
+        current version of its record carries a review mark and the record is not failed. A page counts toward check
+        when its record is stale or failed or the page is marked, once however many of these hold. A stage that no page
+        has a record of has no tally.
 
         :param project_ids: Projects whose stages are counted.
         :type project_ids: Collection[ProjectId]

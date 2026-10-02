@@ -1,12 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { JobSchema } from '@/api';
-import { formatTime, isStoppable, jobMoment, latestActiveJob } from '@/features/workspace/jobs';
+import {
+  formatTime,
+  isStoppable,
+  jobLabel,
+  jobMoment,
+  latestActiveJob,
+} from '@/features/workspace/jobs';
 
 function job(id: string, state: JobSchema['state'], startedAt: string | null): JobSchema {
   return {
     id,
     project_id: 'p-1',
     kind: 'run-stage',
+    stage: 'geometry',
     state,
     progress: { done: 1, total: 4, fraction: 0.25 },
     error: '',
@@ -97,5 +104,19 @@ describe('formatTime', () => {
   it('is empty for no timestamp and for text that is no date', () => {
     expect(formatTime(null)).toBe('');
     expect(formatTime('yesterday')).toBe('');
+  });
+});
+
+describe('jobLabel', () => {
+  it('names a stage run by its stage', () => {
+    expect(jobLabel({ kind: 'run-stage', stage: 'geometry' })).toBe('Geometry run');
+  });
+
+  it('names any other job by its kind', () => {
+    expect(jobLabel({ kind: 'import-source', stage: null })).toBe('Import');
+  });
+
+  it('names a stage run whose stage is unknown by the kind', () => {
+    expect(jobLabel({ kind: 'run-stage', stage: null })).toBe('Stage run');
   });
 });

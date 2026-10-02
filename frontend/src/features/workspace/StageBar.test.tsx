@@ -38,6 +38,7 @@ const IMPORT_SUMMARY: StageSummarySchema = {
   failed: 0,
   not_run: 0,
   review: 0,
+  check: 0,
   active_recipe_id: null,
 };
 

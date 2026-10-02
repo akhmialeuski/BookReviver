@@ -10,7 +10,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import EventName
-from bookreviver.domain.enums import JobState, PageChange, Stage, StageState
+from bookreviver.domain.enums import JobKind, JobState, PageChange, Stage, StageState
 from bookreviver.domain.events import (
     PagesChanged,
     PageStageChanged,
@@ -20,6 +20,7 @@ from bookreviver.domain.events import (
     SourceImported,
 )
 from bookreviver.domain.ids import PageId
+from bookreviver.domain.values import StageRun
 from tests.helpers.builders import (
     make_job,
     make_page_stage,
@@ -95,6 +96,29 @@ class TestReadJob:
         body = response.json()
         expect((body[JOB_ID_FIELD], body[JOB_STATE_FIELD]) == (str(fx_queued_job.id), JobState.QUEUED))
         expect(body['progress'] == {'done': 0, 'total': 0, 'fraction': 0.0})
+        assert_expectations()
+
+    async def test_run_stage_job_names_its_stage_and_an_import_job_does_not(
+        self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_actor: Actor, fx_queued_job: Job
+    ) -> None:
+        """Verify the job of a stage run carries its stage and the import job carries none.
+
+        :param fx_client: Client of the signed-in account.
+        :type fx_client: httpx.AsyncClient
+        :param fx_fakes: Adapters the application runs on.
+        :type fx_fakes: JobFakes
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param fx_queued_job: Queued import job of the signed-in account.
+        :type fx_queued_job: Job
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        run = make_job(project_id=project.id, kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.GEOMETRY).to_map())
+        await fx_fakes.store(project, run)
+        run_body = (await fx_client.get(JOB_PATH.format(job_id=run.id))).json()
+        import_body = (await fx_client.get(JOB_PATH.format(job_id=fx_queued_job.id))).json()
+        expect((run_body['kind'], run_body['stage']) == (JobKind.RUN_STAGE, Stage.GEOMETRY))
+        expect((import_body['kind'], import_body['stage']) == (JobKind.IMPORT_SOURCE, None))
         assert_expectations()
 
     async def test_job_of_another_account_is_not_found(

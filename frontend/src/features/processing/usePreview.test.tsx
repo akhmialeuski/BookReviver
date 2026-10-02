@@ -60,6 +60,7 @@ function jobOf(id: string, state: JobSchema['state'] = 'running'): JobSchema {
     id,
     project_id: PROJECT,
     kind: 'preview-step',
+    stage: null,
     state,
     progress: { done: 0, total: 1, fraction: 0 },
     error: '',

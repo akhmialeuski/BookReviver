@@ -10,14 +10,47 @@ import pytest
 from attrs import evolve
 
 from bookreviver.domain.entities import VERSION_ID_PATTERN, PageEdit, VersionInputs
-from bookreviver.domain.enums import PageOrigin, Rendition, StepField, VersionScale
+from bookreviver.domain.enums import JobKind, PageOrigin, Rendition, Stage, StepField, VersionScale
 from bookreviver.domain.geometry import Line, Point, Rotation
 from bookreviver.domain.ids import PageId, PageVersionId, ScanId
-from bookreviver.domain.values import BookDetails, ProcessorRef, Progress, Renditions, Step
-from tests.helpers.builders import SPLIT_NONE, make_page, make_page_version, make_project, make_recipe, new_account_id
+from bookreviver.domain.values import BookDetails, ProcessorRef, Progress, Renditions, StageRun, Step
+from tests.helpers.builders import (
+    SPLIT_NONE,
+    make_job,
+    make_page,
+    make_page_version,
+    make_project,
+    make_recipe,
+    new_account_id,
+)
 
 PAGE_ID: PageId = PageId(uuid4())
 DESKEW_KEY: str = 'geometry.deskew'
+
+
+class TestJobStage:
+    """Tests for Job.stage."""
+
+    def test_a_run_stage_job_names_the_stage_of_its_parameters(self) -> None:
+        """Verify the stage comes out of the parameters the job stores."""
+        job = make_job(
+            project_id=make_project(owner_id=new_account_id()).id,
+            kind=JobKind.RUN_STAGE,
+            params=StageRun(stage=Stage.CLEANUP).to_map(),
+        )
+        assert job.stage is Stage.CLEANUP
+
+    def test_a_job_of_another_kind_has_no_stage(self) -> None:
+        """Verify an import job has no stage, whatever its parameters hold."""
+        job = make_job(
+            project_id=make_project(owner_id=new_account_id()).id, params=StageRun(stage=Stage.CLEANUP).to_map()
+        )
+        assert job.stage is None
+
+    def test_a_run_stage_job_with_unreadable_parameters_has_no_stage(self) -> None:
+        """Verify parameters that are not those of a stage run give no stage and no error."""
+        job = make_job(project_id=make_project(owner_id=new_account_id()).id, kind=JobKind.RUN_STAGE)
+        assert job.stage is None
 
 
 class TestPage:

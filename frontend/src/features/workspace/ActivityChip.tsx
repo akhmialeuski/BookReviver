@@ -4,7 +4,13 @@ import { useState } from 'react';
 import type { JobSchema } from '@/api';
 import { cancelJobApiV1JobsJobIdDeleteMutation } from '@/api/@tanstack/react-query.gen';
 import { invalidateJobs } from '@/features/projects/queries';
-import { formatTime, isStoppable, jobMoment, latestActiveJob } from '@/features/workspace/jobs';
+import {
+  formatTime,
+  isStoppable,
+  jobLabel,
+  jobMoment,
+  latestActiveJob,
+} from '@/features/workspace/jobs';
 import { useActiveJobs, useRecentJobs } from '@/features/workspace/queries';
 import { describeError } from '@/shared/http/problem';
 import { cn } from '@/shared/lib/utils';
@@ -50,7 +56,7 @@ function JobRow({ job, projectId }: { job: JobSchema; projectId: string }): Reac
           )}
         </span>
         <div className="grid min-w-0 flex-1 gap-0.5">
-          <p className="truncate text-sm font-medium">{labels.kinds[job.kind]}</p>
+          <p className="truncate text-sm font-medium">{jobLabel(job)}</p>
           <p className="text-xs text-muted-foreground">
             {labels.detail(job.state, time, job.progress)}
           </p>
@@ -71,7 +77,7 @@ function JobRow({ job, projectId }: { job: JobSchema; projectId: string }): Reac
         ) : null}
       </div>
       {isStoppable(job) && job.progress.total > 0 ? (
-        <Progress value={percent} aria-label={labels.kinds[job.kind]} className="ml-7 w-auto" />
+        <Progress value={percent} aria-label={jobLabel(job)} className="ml-7 w-auto" />
       ) : null}
       {stop.isError ? <ErrorAlert message={describeError(stop.error)} /> : null}
     </li>
@@ -100,9 +106,7 @@ export function ActivityChip({ projectId }: { projectId: string }): React.JSX.El
           ) : (
             <Loader2Icon className="motion-safe:animate-spin" />
           )}
-          {current === undefined
-            ? labels.idle
-            : labels.chip(labels.kinds[current.kind], current.progress)}
+          {current === undefined ? labels.idle : labels.chip(jobLabel(current), current.progress)}
         </Button>
       </PopoverTrigger>
       <PopoverContent>

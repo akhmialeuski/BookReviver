@@ -1,4 +1,5 @@
 import type { JobSchema, JobState } from '@/api';
+import { MESSAGES } from '@/shared/messages';
 
 /**
  * Picking and describing the jobs of a book for the activity chip and its list.
@@ -12,6 +13,18 @@ const TIME_FORMAT = new Intl.DateTimeFormat('en', { timeStyle: 'short' });
 /** Tell whether a job is queued or running, which is when it can still be stopped. */
 export function isStoppable(job: Pick<JobSchema, 'state'>): boolean {
   return ACTIVE_STATES.has(job.state);
+}
+
+/**
+ * Name a job for its row and for the chip: a stage run by its stage, such as `Geometry run`, any other job by its kind.
+ *
+ * @param job The job.
+ */
+export function jobLabel(job: Pick<JobSchema, 'kind' | 'stage'>): string {
+  const labels = MESSAGES.activity;
+  return job.stage === null
+    ? labels.kinds[job.kind]
+    : labels.stageRun(MESSAGES.stages.names[job.stage]);
 }
 
 function startedAt(job: JobSchema): number {

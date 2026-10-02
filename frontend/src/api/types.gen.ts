@@ -516,6 +516,7 @@ export type JobKind = 'import-source' | 'prepare-pages' | 'run-stage' | 'preview
  * :ivar id: Identifier of the job.
  * :ivar project_id: Project the job works on.
  * :ivar kind: What the job does.
+ * :ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.
  * :ivar state: Where the job is in its life cycle.
  * :ivar progress: How many of its steps are done.
  * :ivar error: Why the job failed, shown to the user, or empty.
@@ -534,6 +535,7 @@ export type JobSchema = {
      */
     project_id: string;
     kind: JobKind;
+    stage: Stage | null;
     state: JobState;
     progress: ProgressSchema;
     /**
@@ -2281,6 +2283,7 @@ export type StageStatus = 'done' | 'attention' | 'running' | 'waiting' | 'unavai
  * :ivar failed: Pages the stage failed on.
  * :ivar not_run: Pages the stage has not run on.
  * :ivar review: Pages, not failed, whose result asks for a second look.
+ * :ivar check: Pages the strip lists under Check: stale, failed or marked, each counted once.
  * :ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used.
  */
 export type StageSummarySchema = {
@@ -2317,6 +2320,10 @@ export type StageSummarySchema = {
      * Review
      */
     review: number;
+    /**
+     * Check
+     */
+    check: number;
     /**
      * Active Recipe Id
      */

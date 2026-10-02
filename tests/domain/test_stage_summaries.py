@@ -23,12 +23,14 @@ class Counts(NamedTuple):
     :ivar stale: Pages that are out of date.
     :ivar failed: Pages the stage failed on.
     :ivar review: Pages marked for review.
+    :ivar check: Pages that are stale, failed or marked, each once.
     """
 
     fresh: int = 0
     stale: int = 0
     failed: int = 0
     review: int = 0
+    check: int = 0
 
 
 class StatusCase(NamedTuple):
@@ -205,10 +207,15 @@ class TestStageSummary:
         expect(summary.manual is False)
         assert_expectations()
 
+    def test_the_check_count_is_the_tally_and_not_the_sum_of_stale_and_review(self) -> None:
+        """Verify a page both stale and marked is counted once, since the count comes from the tally as it is."""
+        summary = summary_of(Stage.GEOMETRY, counts=Counts(fresh=2, stale=2, review=2, check=3))
+        assert summary.check == 3
+
     def test_a_stage_that_never_ran_has_every_page_not_run(self) -> None:
         """Verify a stage no page has a record of counts all its pages as not run."""
         summary = summary_of(Stage.GEOMETRY)
-        assert (summary.fresh, summary.not_run, summary.review) == (0, PAGES, 0)
+        assert (summary.fresh, summary.not_run, summary.review, summary.check) == (0, PAGES, 0, 0)
 
     def test_more_records_than_pages_never_make_a_negative_count(self) -> None:
         """Verify a page that turned into a placeholder after a run cannot take the count of the others below zero."""
@@ -216,9 +223,9 @@ class TestStageSummary:
 
     def test_a_stage_done_by_hand_has_no_counts_whatever_the_tally_says(self) -> None:
         """Verify the import and the page order are summed by their pages alone."""
-        summary = summary_of(Stage.PAGE_ORDER, counts=Counts(fresh=PAGES, review=2))
+        summary = summary_of(Stage.PAGE_ORDER, counts=Counts(fresh=PAGES, review=2, check=2))
         expect(summary.manual is True)
-        expect((summary.fresh, summary.not_run, summary.review, summary.pages) == (0, 0, 0, PAGES))
+        expect((summary.fresh, summary.not_run, summary.review, summary.check, summary.pages) == (0, 0, 0, 0, PAGES))
         assert_expectations()
 
 

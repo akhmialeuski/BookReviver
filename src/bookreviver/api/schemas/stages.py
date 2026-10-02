@@ -33,6 +33,7 @@ class StageSummarySchema(ResponseModel):
     :ivar failed: Pages the stage failed on.
     :ivar not_run: Pages the stage has not run on.
     :ivar review: Pages, not failed, whose result asks for a second look.
+    :ivar check: Pages the strip lists under Check: stale, failed or marked, each counted once.
     :ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used.
     """
 
@@ -45,6 +46,7 @@ class StageSummarySchema(ResponseModel):
     failed: int
     not_run: int
     review: int
+    check: int
     active_recipe_id: RecipeId | None
 
 
