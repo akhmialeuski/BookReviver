@@ -12,9 +12,12 @@ text that the scanner cut, so the lines that touch it are kept, and a frame that
 review, because the margin on that side is not known. A page with no ink to speak of is left as it is and marked for
 review. A frame the user gave as a ``rect`` edit replaces the search.
 
-The margin is a share of the width of the frame on each side. What it reaches beyond the page is filled with the median
-colour of the paper. The transform is a translation by the corner of the cropped area, which maps a point of the input
-to the output.
+By default the page is cut to the frame alone, since the margins of the book page are set by ``geometry.normalize``. A
+recipe may still ask for a margin, a share of the width of the frame on each side, and what it reaches beyond the page
+is filled with the median colour of the paper. The step also measures the distance between the lines of text of the
+frame, from the profile of its ink along the rows, and records it as the line height of the page for
+``geometry.normalize`` and for the measuring of the book. The transform is a translation by the corner of the cropped
+area, which maps a point of the input to the output.
 """
 
 import math
@@ -48,6 +51,7 @@ from bookreviver.plugins.cv_image import (
     OtsuSplit,
     color_mode_of,
     image_data,
+    line_pitch,
     odd_size,
     read_samples,
     settle_review,
@@ -88,17 +92,17 @@ PERCENT: float = 100.0
 class CropParams(Params):
     """How the content is found and how much margin is left round it.
 
-    :ivar margin_percent: Margin on each side as a percent of the width of the frame.
+    :ivar margin_percent: Margin on each side as a percent of the width of the frame, 0 to cut to the frame alone.
     :ivar binarization: How the page is made black and white to find its ink.
     :ivar noise_min_area: Ink smaller than this many pixels of the shrunk page is dust and is cleaned away.
     """
 
     margin_percent: float = Field(
-        default=8.0,
+        default=0.0,
         ge=0,
         le=50,
         title='Margin',
-        description='Margin on each side, in percent of the width of the content',
+        description='Margin on each side, in percent of the width of the content; 0 cuts to the content alone',
     )
     binarization: Binarization = Field(
         default=Binarization.OTSU,
@@ -301,6 +305,12 @@ class Crop(ModelProcessor):
             VersionData.CONFIDENCE: frame.confidence,
             VersionData.SKIPPED: False,
         }
+        block = image[
+            max(0, math.floor(frame.rect.top)) : math.ceil(frame.rect.top + frame.rect.height),
+            max(0, math.floor(frame.rect.left)) : math.ceil(frame.rect.left + frame.rect.width),
+        ]
+        if (pitch := line_pitch(block)) is not None:
+            data[VersionData.LINE_HEIGHT_PX] = pitch / step_input.scale
         own = ReviewReason.CUT_BY_EDGE if self._reaches_cut_edge(frame.rect, image, cut_edges) else None
         review = settle_review(data, own, step_input.input_data)
         return StepResult(

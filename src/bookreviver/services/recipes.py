@@ -59,7 +59,8 @@ class DefaultRecipes:
         ),
         Stage.GEOMETRY: (
             RecipeTemplate(
-                name='Automatic', processor_keys=('geometry.perspective', 'geometry.deskew', 'geometry.crop')
+                name='Automatic',
+                processor_keys=('geometry.perspective', 'geometry.deskew', 'geometry.crop', 'geometry.normalize'),
             ),
         ),
     }

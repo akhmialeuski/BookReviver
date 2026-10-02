@@ -35,6 +35,7 @@ from bookreviver.domain.values import RecipeKey
 from bookreviver.services.processing import ProcessingService
 
 PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
+PAGE_ID_DESCRIPTION: str = 'Identifier of the page'
 STAGE_DESCRIPTION: str = 'Stage of the pipeline'
 RECIPE_ID_DESCRIPTION: str = 'Identifier of the recipe'
 VERSION_ID_DESCRIPTION: str = 'Identifier of the page version'
@@ -78,7 +79,7 @@ class PageStagePath:
     """
 
     project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)]
-    page_id: Annotated[PageId, Path(description='Identifier of the page')]
+    page_id: Annotated[PageId, Path(description=PAGE_ID_DESCRIPTION)]
     stage: Annotated[Stage, Path(description=STAGE_DESCRIPTION)]
 
 
@@ -92,7 +93,7 @@ class VersionPath:
     """
 
     project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)]
-    page_id: Annotated[PageId, Path(description='Identifier of the page')]
+    page_id: Annotated[PageId, Path(description=PAGE_ID_DESCRIPTION)]
     version_id: Annotated[PageVersionId, Path(description=VERSION_ID_DESCRIPTION, pattern=r'^[0-9a-f]{16}$')]
 
 
@@ -294,6 +295,32 @@ async def preview_step(
     """
     job = await processing.start_preview(actor, address.project_id, body.to_preview(address.stage))
     return JobSchema.model_validate(job)
+
+
+@router.post('/{project_id}/stages/geometry/measure', status_code=status.HTTP_202_ACCEPTED)
+async def measure_book(
+    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    actor: ActorDep,
+    processing: FromDishka[ProcessingService],
+) -> JobSchema:
+    """Measure the book in the background, and answer with the queued job.
+
+    The job reads the line height and the frame of the block of text that ``geometry.crop`` recorded on every page, and
+    writes the median line height and a page size of the median block with its margins into the parameters of the
+    ``geometry.normalize`` step of the active Geometry recipe, which marks the pages of that recipe stale. A run, a
+    preview, a tile cutting or a collection of the project that is queued or running answers 409.
+
+    \N{FORM FEED}
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param processing: Processing service of the request.
+    :type processing: ProcessingService
+    :returns: The queued job.
+    :rtype: JobSchema
+    """
+    return JobSchema.model_validate(await processing.start_measure(actor, project_id))
 
 
 @router.get('/{project_id}/pages/{page_id}/stages')

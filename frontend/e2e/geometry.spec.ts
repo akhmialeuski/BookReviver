@@ -13,8 +13,9 @@ import {
 import { dragFrom, numbersOf, pairOf } from './support/layer';
 
 /**
- * The Geometry stage on scans of a sheet of paper laid on a dark binding: the three steps of the default recipe find the
- * sheet, level the lines and cut the page to the frame of its words, and the reader corrects each of the three on the
+ * The Geometry stage on scans of a sheet of paper laid on a dark binding: the first three steps of the default recipe find
+ * the sheet, level the lines and cut the page to the frame of its words, the fourth puts the block on a page of the book
+ * (its editor is tested in `normalize.spec.ts`), and the reader corrects each of the first three on the
  * canvas of one page.
  *
  * Each correction is saved when a handle is let go, the stage runs again on that page, and the panel names the step as set
@@ -24,6 +25,8 @@ import { dragFrom, numbersOf, pairOf } from './support/layer';
 const SCENARIO_TIMEOUT_MS = 240_000;
 const RUN_TIMEOUT_MS = 90_000;
 const PAGES = 2;
+// The steps of the default recipe: the sheet, the angle, the frame and the block on the page
+const STEPS = 4;
 const SHEET_DRAG = { x: 24, y: 18 };
 const FRAME_DRAG_PX = 30;
 const ANGLE_DEG = '1.5';
@@ -71,12 +74,12 @@ test('a reader corrects the sheet, the angle and the frame of a page, and the co
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
-    await expect(page.getByTestId('recipe-step')).toHaveCount(3);
+    await expect(page.getByTestId('recipe-step')).toHaveCount(STEPS);
     await runAll(page);
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
     await expect(facts).toContainText('Confidence', { timeout: RUN_TIMEOUT_MS });
     await expect(facts).toContainText('Automatic');
-    await expect(steps).toHaveCount(3);
+    await expect(steps).toHaveCount(STEPS);
     await expect(layer).toHaveCount(0);
   });
 
@@ -159,7 +162,7 @@ test('a reader corrects the sheet, the angle and the frame of a page, and the co
     await settled();
 
     await runAll(page);
-    await expect(steps).toHaveCount(3, { timeout: RUN_TIMEOUT_MS });
+    await expect(steps).toHaveCount(STEPS, { timeout: RUN_TIMEOUT_MS });
     for (const title of [SHEET, ANGLE, FRAME]) {
       await expect(stepOf(title)).toHaveAttribute('data-manual', 'true');
     }
@@ -186,11 +189,11 @@ test('a reader corrects the sheet, the angle and the frame of a page, and the co
     expect(saves).toHaveLength(4);
   });
 
-  await test.step('the page after the three steps is shown with the editor shut', async () => {
+  await test.step('the page after the four steps is shown with the editor shut', async () => {
     await page.getByRole('button', { name: 'Set by hand' }).click();
     await expect(layer).toHaveCount(0);
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
-    await snap(page, 'geometry-after-three-steps');
+    await snap(page, 'geometry-after-four-steps');
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

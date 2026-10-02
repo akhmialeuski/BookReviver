@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from bookreviver.domain.enums import EditorKind, FileType, PlaceMode, ReviewReason, SourceKind, Stage
+    from bookreviver.domain.enums import EditorKind, FileType, PageSide, PlaceMode, ReviewReason, SourceKind, Stage
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.ids import (
         AccountId,
@@ -272,6 +272,7 @@ class VersionInputs:
     :ivar input_id: Version the step reads, or None for a base version.
     :ivar edit_hash: Hash of the manual edit the step reads, or empty for none.
     :ivar scale: Whether the step runs on the full image or on the preview.
+    :ivar side: Side of the book the page lies on, for a step that reads it, or None for a step that does not.
     """
 
     page_id: PageId
@@ -280,13 +281,14 @@ class VersionInputs:
     input_id: PageVersionId | None = None
     edit_hash: str = ''
     scale: VersionScale = VersionScale.FULL
+    side: PageSide | None = None
 
     def identify(self) -> PageVersionId:
         """Return the identifier of the version these inputs produce, a hash of all of them.
 
-        The edit and the scale join the hash only when they are not the empty edit and the full scale, so a full run
-        without an edit hashes what it hashed before they existed, and the identifiers already stored stay the ones a
-        repeated run finds.
+        The edit, the scale and the side join the hash only when they are not the empty edit, the full scale and no
+        side, so a full run without an edit hashes what it hashed before they existed, and the identifiers already
+        stored stay the ones a repeated run finds.
 
         :returns: The SHA-256 of the inputs in canonical JSON, cut to 16 lower-case hexadecimal digits.
         :rtype: PageVersionId
@@ -296,6 +298,8 @@ class VersionInputs:
             produced_by.append({'edit': self.edit_hash})
         if self.scale is not VersionScale.FULL:
             produced_by.append({'scale': self.scale.value})
+        if self.side is not None:
+            produced_by.append({'side': self.side.value})
         digest = hashlib.sha256(json.dumps(produced_by, sort_keys=True, separators=(',', ':')).encode())
         return PageVersionId(digest.hexdigest()[:VERSION_ID_LENGTH])
 

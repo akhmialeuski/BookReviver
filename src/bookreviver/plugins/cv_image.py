@@ -51,6 +51,14 @@ MIN_TONE_CONTRAST: float = 40.0
 # the scan, and the reason an earlier step wants the page looked at, so that the last step of a recipe, whose version is
 # the one the stage stands on, carries the reasons of all of them
 CARRIED_DATA: tuple[VersionData, ...] = (VersionData.CUT_EDGES, VersionData.REVIEW)
+# The fewest rows a block has to be measured for the distance between its lines, which is about three lines of a page
+MIN_PITCH_ROWS: int = 60
+# A peak of the autocorrelation of the rows counts as the first line when it reaches this share of the strongest peak,
+# which leaves out the small ripples between the lines, and must correlate at least this much to be a line at all
+PEAK_SHARE: float = 0.5
+MIN_PEAK_CORRELATION: float = 0.1
+# How many lines apart the farthest peak is that the distance between two lines is fitted to
+MAX_PITCH_MULTIPLE: int = 8
 
 
 @frozen(kw_only=True)
@@ -221,3 +229,96 @@ def settle_review(data: dict[str, object], own: ReviewReason | None, facts: Meta
     if reason is not None:
         data[VersionData.REVIEW] = reason.value
     return reason
+
+
+def paper_colour(image: Samples) -> Samples:
+    """Give the median colour of the paper of a page, which is every pixel on the bright side of the split of Otsu.
+
+    :param image: The samples of the page.
+    :type image: Samples
+    :returns: One sample for a gray page and three for a colour one, and white where the page has no paper to part from
+              its ink.
+    :rtype: Samples
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == COLOR_PLANES else image
+    split = OtsuSplit.of(np.asarray(gray, dtype=np.uint8))
+    paper = image[gray > split.threshold] if split.contrast >= MIN_TONE_CONTRAST else image[:0]
+    if paper.size == 0:
+        return np.full(image.shape[2:], WHITE, dtype=np.uint8)
+    return np.asarray(np.median(paper, axis=0), dtype=np.uint8)
+
+
+def line_pitch(image: Samples) -> float | None:
+    """Measure the distance between the lines of text of a block, from the profile of its ink along the rows.
+
+    The ink of each row is summed, and the lines of text show as a ripple of that profile. The autocorrelation of the
+    profile has its first peak at the distance between two lines, and the peaks of its multiples give the distance more
+    exactly than the first alone, which a whole pixel would round: the distance is the slope of the peaks against how
+    many lines apart they are.
+
+    :param image: The samples of a block of text, of which every row is a row of the block.
+    :type image: Samples
+    :returns: The distance between the lines in pixels, or None when the block holds fewer than three lines or none can
+              be told from the paper.
+    :rtype: float | None
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == COLOR_PLANES else image
+    profile = np.asarray(gray, dtype=np.float64).mean(axis=1)
+    centred = profile - profile.mean()
+    size = centred.size
+    if size < MIN_PITCH_ROWS or not centred.any():
+        return None
+    spectrum = np.fft.rfft(centred, 2 * size)
+    correlation = np.fft.irfft(spectrum * np.conj(spectrum))[: size // 2]
+    correlation /= correlation[0]
+    first = _first_line_lag(correlation)
+    return None if first is None else _fit_line_pitch(correlation, first)
+
+
+def _first_line_lag(correlation: Floats) -> int | None:
+    """Find the first peak of the autocorrelation of the rows that is the distance between two lines.
+
+    :param correlation: The autocorrelation of the profile of the rows, 1 at lag 0.
+    :type correlation: Floats
+    :returns: The lag in whole rows, or None when no peak stands out of the ripple between the lines.
+    :rtype: int | None
+    """
+    # The ripple of the lines begins where the profile first parts from itself
+    below = np.flatnonzero(correlation < 0)
+    if below.size == 0:
+        return None
+    inner = correlation[1:-1]
+    peaks = np.flatnonzero((inner > correlation[:-2]) & (inner >= correlation[2:])) + 1
+    peaks = peaks[peaks > below[0]]
+    if peaks.size == 0:
+        return None
+    first = int(peaks[correlation[peaks] >= PEAK_SHARE * correlation[peaks].max()][0])
+    return first if correlation[first] >= MIN_PEAK_CORRELATION else None
+
+
+def _fit_line_pitch(correlation: Floats, first: int) -> float:
+    """Fit the distance between two lines to the peaks of the autocorrelation at its multiples.
+
+    :param correlation: The autocorrelation of the profile of the rows, 1 at lag 0.
+    :type correlation: Floats
+    :param first: The lag of the first peak in whole rows.
+    :type first: int
+    :returns: The slope of the lags of the peaks, fitted to the parabola of each, against how many lines apart they are.
+    :rtype: float
+    """
+    multiples: list[int] = []
+    lags: list[float] = []
+    reach = first // 2
+    for multiple in range(1, MAX_PITCH_MULTIPLE + 1):
+        low, high = multiple * first - reach // 2, multiple * first + reach // 2
+        if high >= correlation.size - 1:
+            break
+        best = low + int(np.argmax(correlation[low : high + 1]))
+        before, here, after = correlation[best - 1], correlation[best], correlation[best + 1]
+        curve = before - 2 * here + after
+        multiples.append(multiple)
+        lags.append(best + (0.5 * (before - after) / curve if curve < 0 else 0.0))
+    if not multiples:
+        return float(first)
+    counted = np.array(multiples, dtype=np.float64)
+    return float((counted * np.array(lags)).sum() / (counted**2).sum())

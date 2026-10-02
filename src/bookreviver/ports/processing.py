@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.entities import PageEdit
-    from bookreviver.domain.enums import ColorMode, ReviewReason
+    from bookreviver.domain.enums import ColorMode, PageSide, ReviewReason
     from bookreviver.domain.values import MetadataMap, ProcessorSpec
 
 
@@ -39,6 +39,7 @@ class StepInput:
     :ivar edit: Manual edit of the step, or None.
     :ivar edit_mask: Path of the mask of the edit, or None.
     :ivar input_data: ``data`` of the input version, or the facts of the scan for a step that splits one.
+    :ivar side: Side of the book the page lies on, given only to a step whose spec says ``by_page_side``.
     :ivar workdir: Empty directory the step writes its output files into.
     """
 
@@ -48,6 +49,7 @@ class StepInput:
     edit: PageEdit | None = None
     edit_mask: Path | None = None
     input_data: MetadataMap = field(factory=dict)
+    side: PageSide | None = None
     workdir: Path
 
 

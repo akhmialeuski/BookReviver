@@ -855,6 +855,8 @@ class ProcessorSpec:
     :ivar parameters: JSON Schema of the parameters, from which the interface builds the settings form.
     :ivar editor: Editor of the manual edit the step reads.
     :ivar pool: Class of worker the step runs on.
+    :ivar by_page_side: Whether the step reads the side of the book its page lies on, so a page that moves to the other
+                        side is made again.
     """
 
     key: str = field(validator=validators.min_len(1))
@@ -866,6 +868,7 @@ class ProcessorSpec:
     parameters: MetadataMap = field(factory=dict)
     editor: EditorKind = EditorKind.NONE
     pool: WorkerPool = WorkerPool.CPU
+    by_page_side: bool = False
 
     @property
     def ref(self) -> ProcessorRef:

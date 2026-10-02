@@ -57,6 +57,7 @@ describe('editorOf', () => {
       scan: scan('s', 100, 50),
       stepInput: null,
       result: null,
+      processorKey: 'geometry.deskew',
     };
 
     expect(editorOf('rotation').fallback({ ...context, size: null })).toEqual({
@@ -76,6 +77,7 @@ describe('editorOf', () => {
       scan: scan('s', 100, 50),
       stepInput: null,
       result: null,
+      processorKey: 'split.auto',
     };
 
     expect(editorOf('split').fallback({ ...context, size: { width: 100, height: 50 } })).toEqual({
@@ -92,6 +94,7 @@ describe('editorOf', () => {
       scan: scan('s', 100, 50),
       stepInput: null,
       result: null,
+      processorKey: 'split.auto',
     };
 
     expect(editorOf('split').runsAfterEdit(context)).toBe(true);
@@ -127,6 +130,7 @@ describe('editorOf', () => {
       scan: null,
       stepInput: null,
       result,
+      processorKey: 'geometry.crop',
       size: sourceSize(result),
     };
 

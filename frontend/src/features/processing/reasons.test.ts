@@ -60,6 +60,12 @@ describe('reasonOf', () => {
     );
   });
 
+  it('says the text of the page differs too much in size from the text of the book', () => {
+    expect(reasonOf(item({ review: 'size-differs' }))).toBe(
+      'The text of this page differs too much in size',
+    );
+  });
+
   it('puts a failure before a mark of review, since a failed page has no result to doubt', () => {
     expect(reasonOf(item({ status: 'failed', review: 'low-confidence' }))).toBe('Failed');
   });

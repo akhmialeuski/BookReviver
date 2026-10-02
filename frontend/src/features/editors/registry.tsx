@@ -43,6 +43,7 @@ function register<K extends EditableKind>(
     return shape === null ? null : (
       <definition.Panel
         shape={shape}
+        processorKey={props.processorKey}
         disabled={props.disabled}
         onCommit={(next) => props.onCommit(definition.write(next))}
       />

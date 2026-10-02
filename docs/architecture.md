@@ -132,7 +132,7 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Geometry     | `Point`, `Size`, `Rect`, `Quad`, `Line`, `Rotation` and `Transform` in `domain/geometry.py`   |
 | Edits        | `PageEdit` with its `EditorKind` and a shape (`Rect`, `Quad`, `Line`, `Rotation`) or a mask   |
 | Events       | `JobChanged`, `SourceImported`, `ScanReady`, `PagesChanged`, `PageVersionReady`, and others   |
-| Jobs         | `Job`, `JobKind` (the import, the preparing of pages and the four processing jobs), `JobState` |
+| Jobs         | `Job`, `JobKind` (the import, the preparing of pages, the four processing jobs and the measure of the book), `JobState` |
 |              | `Progress`, `WorkerPool`                                                                      |
 | Imports      | `ImportRequest`, `ImportResult`, `RejectedFile`, `RejectionReason`, `UploadProblem`           |
 |              | `UploadPath` (a checked relative path), `SystemFile` (names an operating system adds)         |
@@ -458,8 +458,10 @@ version, and the old one stays cached and returns at once when the user restores
 | `created_at` | `datetime`              | When the version was created                                                     |
 
 The identifier hashes the page, the processor key and version, the parameters, the input version and the manual
-edit, cut to 16 hexadecimal digits. A `Transform` is `identity`, `crop(quad)`, `rotate(angle)`, `perspective(quad)`
-or `mesh(key)`.
+edit, cut to 16 hexadecimal digits, and for a step whose spec says `by_page_side` also the side of the book the page
+lies on (`PageSide`: an odd place counted from 1 is a right page, as in the viewer), so a page that moves to the other
+side is made again. A `Transform` is `identity`, `crop(quad)`, `rotate(angle)`, `perspective(quad)`, `place` (a scaling
+and a shift, which only a matrix describes) or `mesh(key)`.
 
 The first version of every page is its base version. For a page cut from a scan the `page-split` stage creates it,
 with the step `split.auto` or `split.spread` for a half of a spread, or `split.none` (or `split.auto` on a single
@@ -480,7 +482,8 @@ colour scan instead of the binarised page.
 | `geometry`    | `geometry.perspective` | `perspective(quad)`        | `quad` of the sheet, `cut_edges`, confidence, size read     |
 | `geometry`    | `geometry.deskew`      | `rotate(angle)`            | angle in degrees, confidence, whether it was skipped        |
 | `geometry`    | `geometry.dewarp`      | `mesh(key)`                | key of the mesh, root mean square error                     |
-| `geometry`    | `geometry.crop`        | `crop(quad)`               | `frame` of the content, confidence, size read               |
+| `geometry`    | `geometry.crop`        | `crop(quad)`               | `frame` of the content, `line_height_px`, confidence, size  |
+| `geometry`    | `geometry.normalize`   | `place`                    | `frame` of the block on the page, `line_height_px`, size    |
 | `cleanup`     | `cleanup.despeckle`    | `identity`                 | number of removed specks, key of the mask `mask.png`        |
 | `cleanup`     | `cleanup.binarize`     | `identity`                 | method (Otsu, Sauvola), threshold or window                 |
 | `cleanup`     | `cleanup.eraser`       | `identity`                 | key of the mask from the manual edit                        |
@@ -1085,10 +1088,10 @@ indistinguishable to the application.
   out, and a default recipe that names them is not made, so the Split stage then starts with `split.none`.
   `geometry.deskew` takes the angle at which the ink of the page lies in the fewest rows, or the `rotation` the user
   gave, and leaves a page whose lines it is not sure of, or whose tones do not part into ink and paper, as it is.
-- The default Geometry recipe of a new book is `geometry.perspective`, `geometry.deskew`, `geometry.crop`: the sheet is
-  straightened first because the lines are levelled better on a page with no background, and the frame of the content
-  is searched last, on the level page. Every step of a recipe stores a version that reads the one before, and the
-  version the stage stands on is the last.
+- The default Geometry recipe of a new book is `geometry.perspective`, `geometry.deskew`, `geometry.crop`,
+  `geometry.normalize`: the sheet is straightened first because the lines are levelled better on a page with no
+  background, the frame of the content is searched on the level page, and the block is put on a page of the book last.
+  Every step of a recipe stores a version that reads the one before, and the version the stage stands on is the last.
 - `geometry.perspective` (`plugins/perspective.py`) finds the sheet by the colour of the paper. The scan is shrunk to
   600 pixels, the brightness (the HSV value) is split in two by Otsu, the holes of the lines of text are closed and the
   specks opened, and the convex hull of the largest region is thinned by `cv2.approxPolyDP`, with a tolerance that
@@ -1102,12 +1105,45 @@ indistinguishable to the application.
 - `geometry.crop` (`plugins/crop.py`) shrinks the page to 1000 pixels and makes it black and white (`binarization`:
   `otsu` or `adaptive`), cleans the ink components smaller than `noise_min_area` and those that touch a side of the page
   that is not in `cut_edges`, smears the ink with a rectangle of 1.5 % by 0.6 % of the page (twice), keeps the blocks
-  by their ink and fill and unions them into the frame. `margin_percent` (8) of the width of the frame is added on each
-  side, and what lies beyond the page is filled with the median colour of the paper. The transform is `crop(quad)`
-  with a translation. A page with no ink that parts from its paper is left as it is with `not-applied`. A frame that
-  comes within 1 % of a side in `cut_edges` gets the review reason `cut-by-edge`. A `rect` edit is the frame, to which
-  the margin is still added. The idea comes from the `_clean_binary` and `detect_text_block` of an earlier script, and
-  the code is the project's own.
+  by their ink and fill and unions them into the frame. `margin_percent` (default 0, so the page is cut to the block of
+  text alone) of the width of the frame is added on each side when a recipe asks for it, and what lies beyond the page
+  is filled with the median colour of the paper. The transform is `crop(quad)` with a translation. A page with no ink
+  that parts from its paper is left as it is with `not-applied`. A frame that comes within 1 % of a side in `cut_edges`
+  gets the review reason `cut-by-edge`. A `rect` edit is the frame, to which the margin is still added. The step also
+  records `line_height_px`, the distance between the lines of the frame, in the pixels of the full image: `line_pitch`
+  in `plugins/cv_image.py` sums the ink along the rows, takes the autocorrelation of that profile, finds the first
+  strong peak, and fits the distance to the peaks at its multiples (up to 8 lines apart) with a parabola at each, which
+  gives the pitch to a few hundredths of a pixel where the first peak alone would round to a whole one. A frame of fewer
+  than 60 rows, or with no peak, leaves `line_height_px` out. The idea comes from the `_clean_binary` and
+  `detect_text_block` of an earlier script, and the code is the project's own.
+- `geometry.normalize` (`plugins/normalize.py`) reads the block `geometry.crop` cut and puts it on a blank page of
+  `page_width` by `page_height` pixels, so every page of a book has one size, one size of text and one layout. The block
+  is scaled by `line_height` over its own line height, which comes from the data of the crop or else is measured here
+  with `line_pitch`. A page whose line height is farther from the target than `max_scale_change` (25) percent of it is
+  placed unscaled with the review reason `size-differs`, and a `line_height` of 0 keeps the size of every page. `PagePlan` works out the
+  work area inside the four margins: with `margins_by` `inner-outer` the inner margin is the one at the gutter (the left
+  of a right page, the right of a left page), so the two pages of a spread mirror, and with `left-right` the inner
+  parameter is the left margin and the outer the right one on every page. A block smaller than the work area stands
+  where `align_vertical` (`top`, `center`, `bottom`) and `align_horizontal` (`inner`, `outer`, `left`, `right`,
+  `center`) say. The rest of the page is the median colour of the paper of the block, or white (`fill`). The step's spec
+  sets `by_page_side`, so the service gives it the side of the page in `StepInput.side`, which is the one place the step
+  protocol grew for it, and the side joins the identifier of its versions. A `rect` edit is in the pixels of the page the
+  step makes: the block is fitted to that rectangle, which sets its place and its scale at once and needs no review
+  mark. The data carry the placed block as `frame`, the size of the page as `source_width_px` and `source_height_px`,
+  which is what its editor draws on, and the line height the page has after scaling. The transform is `place`, the
+  scaling and the shift of the block. The parameter model refuses margins that leave no room for text.
+- Measuring the book is the `measure-book` job, `POST /projects/{id}/stages/geometry/measure`, answered 202 with the
+  job. It is not one of the jobs of the partial unique index of the processing jobs, since it writes a recipe and no
+  version, but the request is refused with 409 while one of those is queued or running, because it reads the versions
+  they write. The entry point `measure_book` in `app/worker.py` calls `ProcessingJobs.measure_book`, which calls
+  `BookMeasure.run` (`services/book_measure.py`). That follows the chain of the current version of the Geometry stage of
+  each page back to its `geometry.crop` version, reads `frame` and `line_height_px`, brings each block to the median
+  line height as `geometry.normalize` will, and writes into the normalize step of the active Geometry recipe the median
+  `line_height`, the margins (8 % of the median block height at the top, 10 % at the bottom, 10 % of its width at the
+  gutter, 8 % outside, in pixels) and a page of the median block plus the margins. The recipe is stored through
+  `RecipeBook.rewrite`, so the bounds of the parameters are checked, and `StageRecords.mark_recipe_stale` marks the pages
+  the recipe processed stale, which is what any change of a recipe does. A measure that finds the numbers the step has
+  changes nothing. The job fails with the reason when the recipe has no normalize step or no page was cut yet.
 - The data of both steps give the shape they found (`quad`, `frame`) and the size of the full image they read
   (`source_width_px`, `source_height_px`) in the pixels of the full image, whatever the scale of a preview, which is
   what an editor draws on. `image_data` carries `cut_edges` and `review` through the steps after, and `settle_review`
@@ -1527,7 +1563,7 @@ The rest of the design is not served yet, apart from the fastapi-users routers:
 | Account    | `GET /users/me`, `GET, PATCH /me/settings`, `GET, PUT, DELETE /me/credentials/{provider}`                 |
 | Catalogue  | `GET /engines`, `GET /processors`                                                                         |
 | Edits      | `GET, PUT /projects/{id}/pages/{page_id}/edits/{stage}`                                                   |
-| Processing | `GET, PUT /projects/{id}/stages/{stage}/recipe`, `POST .../preview`, `POST .../run`, `GET .../variants`   |
+| Processing | `GET, PUT /projects/{id}/stages/{stage}/recipe`, `POST .../preview`, `POST .../run`, `GET .../variants`, `POST /projects/{id}/stages/geometry/measure`   |
 | Rules      | `GET, POST /projects/{id}/stages/{stage}/rules`, `PUT, DELETE .../rules/{rule_id}`                        |
 | Pin        | `DELETE /projects/{id}/pages/{page_id}/stages/{stage}/pin`                                                |
 
@@ -1587,7 +1623,8 @@ window with the same number of queries for any number of books.
 
 A page version carries `review`, a `ReviewReason` its processor gave when it finished but was not sure:
 `not-applied` from `geometry.deskew`, `geometry.perspective` and `geometry.crop` for a page they left as it was,
-`cut-by-edge` from `geometry.crop` for a frame that comes to a side the scanner cut, `low-confidence` from
+`cut-by-edge` from `geometry.crop` for a frame that comes to a side the scanner cut, `size-differs` from
+`geometry.normalize` for a page whose text is too far in size from the target, `low-confidence` from
 `geometry.perspective` for a sheet it is not sure of and from `split.spread` for a cut whose
 gutter confidence is below its `min_confidence`, and from `split.auto` `unsure-gutter` for the same and `narrow-gutter`
 for a scan narrower than a spread that has a strong gutter in its middle. A step of a recipe carries `enabled`. A step that is off keeps
@@ -1919,7 +1956,17 @@ The project list counts in `page_count` the included pages of the book, and show
     stays on the image and cannot be dragged where the sheet would fold, and the arrow keys move the corner grabbed
     last. The `rect` editor (`RectCanvas.tsx`) draws the frame of the content as a blue rectangle with eight handles,
     on the page after the steps before the crop, starting from the `frame` the step found. Both are offered once their
-    step has run on the page (`needsResult`), and a save runs the stage on the page like any other editor.
+    step has run on the page (`needsResult`), and a save runs the stage on the page like any other editor. The same
+    `rect` editor serves `geometry.normalize`, but there it lies on the page the step made (`Picture.Output`, chosen by
+    `pictureFor` in `placement.ts`) in the pixels of that page, and its frame is the place and the size of the block of
+    text on it, so moving or resizing the frame sets where this page puts its block, and "Auto" returns to the
+    parameters of the step. The panel names that step "Block on the page", and its editor labels come from the processor
+    key the context carries (`PageContext.processorKey`).
+  - In the panel of the `geometry.normalize` step the button "Measure the book" (`MeasureBook.tsx`) asks for
+    `POST .../stages/geometry/measure`. It waits while the draft is not saved, since the job writes the saved recipe,
+    and while a job of the book is going. When the job ends the event of the job (`kind` `measure-book`) makes the
+    recipes of the stage be read again (`invalidateRecipes`), the step stays open, and the form shows the new line
+    height, page size and margins. The pages the recipe made go out of date and the stage bar says so.
   - An edit is saved with `PUT .../pages/{page_id}/edits/{stage}/{processor_key}` when the handle is let go, the field is
     left or a pause follows the keys or the wheel, and then the stage is run on that one page with the recipe on screen, whose
     processor reads the edit. The run waits while another job of the book is going, or while a run sent from any control

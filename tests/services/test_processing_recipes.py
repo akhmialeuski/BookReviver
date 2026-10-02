@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 FAKE_KEY: str = FakeProcessor.spec.key
-GEOMETRY_STEPS: tuple[str, ...] = ('geometry.perspective', 'geometry.deskew', 'geometry.crop')
+GEOMETRY_STEPS: tuple[str, ...] = ('geometry.perspective', 'geometry.deskew', 'geometry.crop', 'geometry.normalize')
 EVERYTHING: SliceRequest = SliceRequest(limit=100)
 
 
@@ -44,10 +44,10 @@ class TestRecipe:
         )
         assert_expectations()
 
-    async def test_default_geometry_recipe_finds_the_sheet_then_levels_the_lines_then_cuts_the_frame(
+    async def test_default_geometry_recipe_finds_the_sheet_levels_the_lines_cuts_the_frame_and_normalizes(
         self, fx_cv_kit: ProcessingKit
     ) -> None:
-        """Verify a new book is straightened in three steps, the sheet first and the frame of the content last.
+        """Verify a new book is straightened in four steps, the sheet first and the page of the book last.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit

@@ -19,6 +19,8 @@ export const Picture = {
   Scan: 'scan',
   /** The picture the step reads, which is the result of the stage before. */
   Input: 'input',
+  /** The picture the step itself made, which is the page of the book for the step that places a block on it. */
+  Output: 'output',
 } as const;
 
 /** One kind of picture (derived from {@link Picture}). */
@@ -34,6 +36,8 @@ export interface PageContext {
   stepInput: PageVersionSchema | null;
   /** What the step of the editor found on the open page, or null when it has not run. */
   result: PageResult | null;
+  /** The key of the processor of the step the editor sets. */
+  processorKey: string;
 }
 
 /** What an editor needs to start from when the page has no edit. */
@@ -58,6 +62,8 @@ export interface CanvasProps<S> {
 /** What the part of an editor in the panel gets. */
 export interface PanelProps<S> {
   shape: S;
+  /** The key of the processor of the step the editor sets. */
+  processorKey: string;
   /** Whether a change cannot be made now, such as while the last one is being saved. */
   disabled: boolean;
   onCommit: (shape: S) => void;
@@ -97,6 +103,7 @@ export interface GeometryCanvasProps {
 /** What the part of a registered editor in the panel gets. */
 export interface GeometryPanelProps {
   geometry: Geometry;
+  processorKey: string;
   disabled: boolean;
   onCommit: (geometry: Geometry) => void;
 }

@@ -50,11 +50,12 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
   await test.step('the recipe is drawn from the processor and its schema', async () => {
     await expect(page.getByTestId('recipe-select')).toContainText('Automatic');
     await expect(page.getByTestId('recipe-active')).toBeVisible();
-    // A new book is straightened in three steps, the sheet first and the frame of the content last
-    await expect(page.getByTestId('recipe-step')).toHaveCount(3);
+    // A new book is straightened in four steps, the sheet first and the page of the book last
+    await expect(page.getByTestId('recipe-step')).toHaveCount(4);
     await expect(page.getByTestId('recipe-step').nth(0)).toContainText('1 · Perspective');
     await expect(page.getByTestId('recipe-step').nth(1)).toContainText('2 · Deskew');
     await expect(page.getByTestId('recipe-step').nth(2)).toContainText('3 · Crop');
+    await expect(page.getByTestId('recipe-step').nth(3)).toContainText('4 · Normalize');
     // The settings of the first step are open, with the titles of the schema and no name of the code
     await expect(page.getByRole('slider', { name: 'Smallest sheet' })).toBeVisible();
     await expect(page.getByTestId('stage-panel')).not.toContainText('min_sheet_fraction');
@@ -66,13 +67,14 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
   await test.step('the settings of the last step are opened, and a value outside its limits cannot be saved', async () => {
     await page.getByRole('button', { name: 'Show the settings of the Crop step' }).click();
     const margin = page.getByRole('spinbutton', { name: 'Margin' });
-    await expect(margin).toHaveValue('8');
+    // The crop cuts to the block of text alone by default, since the normalize step sets the margins of the page
+    await expect(margin).toHaveValue('0');
     await expect(page.getByTestId('stage-panel')).not.toContainText('margin_percent');
     await margin.fill('99');
     await expect(margin).toHaveAttribute('aria-invalid', 'true');
     await expect(page.getByTestId('recipe-save')).toBeDisabled();
     await expect(page.getByTestId('preview-toggle')).toBeDisabled();
-    await margin.fill('8');
+    await margin.fill('0');
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
   });
 
@@ -93,7 +95,7 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     expect(previews).toHaveLength(2);
 
     // Back to the settings that were shown first: the preview made for them is shown again
-    await margin.fill('8');
+    await margin.fill('0');
     await expect(page.getByTestId('preview-working')).toBeHidden();
     await page.waitForTimeout(1_000);
     expect(previews).toHaveLength(2);
@@ -145,7 +147,9 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
   });
 
   await test.step('a changed recipe says how many pages it makes out of date and is saved by the button', async () => {
-    await page.getByRole('spinbutton', { name: 'Margin' }).fill('10');
+    // The result of the stage is the page the last step made, so its settings are the ones the history tells apart
+    await page.getByRole('button', { name: 'Show the settings of the Normalize step' }).click();
+    await page.getByRole('spinbutton', { name: 'Top margin', exact: true }).fill('160');
     await expect(page.getByTestId('recipe-stale-warning')).toContainText(
       `${PAGES} pages out of date`,
     );
@@ -172,7 +176,7 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
       timeout: RUN_TIMEOUT_MS,
     });
     await expect(entries.first()).toHaveAttribute('data-current', 'false');
-    await expect(entries.nth(1)).toContainText('Margin 8');
+    await expect(entries.nth(1)).toContainText('Top margin 150');
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

@@ -477,6 +477,7 @@ export const MESSAGES = {
       'unsure-gutter': 'Check: the gutter of the spread was not found for certain',
       'narrow-gutter': 'Check: narrow scan with a gutter in the middle',
       'cut-by-edge': 'Check: text may be cut by the edge of the scan',
+      'size-differs': 'Check: the text of this page differs too much in size',
     } satisfies Record<ReviewReason, string>,
   },
   viewer: {
@@ -752,6 +753,7 @@ export const MESSAGES = {
       'preview-step': 'Preview',
       'cut-tiles': 'Cutting tiles',
       'collect-versions': 'Clearing old results',
+      'measure-book': 'Measuring the book',
     } satisfies Record<JobKind, string>,
     stageRun: (stage: string) => `${stage} run`,
     chip: (kind: string, progress: { done: number; total: number }) =>
@@ -1005,6 +1007,12 @@ export const MESSAGES = {
       add: 'Add a step',
       unknownProcessor: 'This step is not installed on this machine.',
       outOfLimits: 'A value is outside its limits, so the recipe cannot be saved.',
+      measure: {
+        button: 'Measure the book',
+        hint: 'Read the text block and the line height the crop found on every page, and fill in the line height, the page size and the margins from their medians. The pages of this recipe go out of date.',
+        working: 'Measuring…',
+        saveFirst: 'Save the recipe before measuring the book.',
+      },
       drag: {
         instructions:
           'To pick up a step, press Space. Move it with the arrow keys, drop it with Space, and cancel with Escape.',
@@ -1102,6 +1110,8 @@ export const MESSAGES = {
           'This scan is narrower than a spread, yet a gutter runs through its middle. It was kept as one page.',
         'cut-by-edge':
           'The frame of the text comes to a side where the scanner cut the paper, so the margin on that side is not known and the text may be cut.',
+        'size-differs':
+          'The text of this page differs too much in size from the text of the book, so it was left at its own size.',
       },
       reviewHint: 'Set it by hand in the page editor, or change the settings and preview again.',
       how: 'Method',
@@ -1155,6 +1165,7 @@ export const MESSAGES = {
           : `Gutter not found for certain · ${confidence.toFixed(2)}`,
       narrowGutter: 'Narrow scan with a gutter in the middle',
       cutByEdge: 'Text may be cut by the edge of the scan',
+      sizeDiffers: 'The text of this page differs too much in size',
     },
     split: {
       banner: (wide: number, split: number, toCut: number) => {
@@ -1225,6 +1236,10 @@ export const MESSAGES = {
       name: 'Frame of the content',
       handle: (handle: string) => `Handle of the frame: ${handle}`,
       hint: 'Drag the handles of the blue frame until it holds all the text and the pictures of the page, or nudge it with the arrow keys. The margin is added round it and the page is cut again at once.',
+      placement: {
+        name: 'Block of text on the page',
+        hint: 'Drag the blue frame to where the block of text stands on the page, and its handles to change how large it is, or nudge it with the arrow keys. This page is placed again at once, and Auto goes back to the settings of the step.',
+      },
     },
     steps: {
       title: 'Steps of this stage',
@@ -1235,6 +1250,7 @@ export const MESSAGES = {
         quad: 'Sheet corners',
         rect: 'Content frame',
       },
+      placement: 'Block on the page',
       auto: 'auto',
       manual: 'by hand',
     },
