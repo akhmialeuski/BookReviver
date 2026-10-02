@@ -1,12 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { ProjectPage } from '@/features/projects/ProjectPage';
-import { PageContainer } from '@/shared/ui/page-container';
+import { AboutPage } from '@/features/about/AboutPage';
 
 /**
  * The description of one book, `/projects/<id>/about`, which the stage bar links to as "About the book".
  *
- * For now it shows the page of the book as it was; the task "Book workspace shell" replaces it with the sections of
- * the description, the cover and the deletion of the book.
+ * It fills the width under the stage bar, so it does not sit in the centred column of the other screens.
  */
 
 export const Route = createFileRoute('/_authenticated/projects/$projectId/about')({
@@ -15,9 +13,5 @@ export const Route = createFileRoute('/_authenticated/projects/$projectId/about'
 
 function AboutRoute(): React.JSX.Element {
   const { projectId } = Route.useParams();
-  return (
-    <PageContainer>
-      <ProjectPage projectId={projectId} />
-    </PageContainer>
-  );
+  return <AboutPage projectId={projectId} />;
 }

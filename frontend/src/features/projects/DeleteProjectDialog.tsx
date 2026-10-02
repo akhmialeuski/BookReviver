@@ -1,5 +1,4 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
 import type { ProjectSchema } from '@/api';
 import { deleteProjectApiV1ProjectsProjectIdDeleteMutation } from '@/api/@tanstack/react-query.gen';
@@ -20,10 +19,22 @@ import {
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
- * A delete button that asks before it removes a book with all its files, scans and pages, which cannot be undone.
+ * A dialog that asks before it removes a book with all its files, scans and pages, which cannot be undone.
+ *
+ * The button that opens it is the child, so the screen decides how deleting is offered.
  */
 
-export function DeleteProjectDialog({ project }: { project: ProjectSchema }): React.JSX.Element {
+export function DeleteProjectDialog({
+  project,
+  children,
+  onDeleted,
+}: {
+  project: ProjectSchema;
+  /** The button that opens the dialog. */
+  children: React.ReactNode;
+  /** Called once the book is gone, for a screen that shows it and must leave. */
+  onDeleted?: () => void;
+}): React.JSX.Element {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const remove = useMutation({
@@ -31,21 +42,14 @@ export function DeleteProjectDialog({ project }: { project: ProjectSchema }): Re
     onSuccess: async () => {
       await invalidateProjectList(queryClient);
       setOpen(false);
+      onDeleted?.();
     },
   });
   const title = project.details.title || MESSAGES.projects.untitled;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={`${MESSAGES.projects.delete.open} ${title}`}
-        >
-          <Trash2Icon />
-        </Button>
-      </DialogTrigger>
+      <DialogTrigger asChild>{children}</DialogTrigger>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{MESSAGES.projects.delete.title}</DialogTitle>
