@@ -2,6 +2,7 @@ import { createFileRoute, notFound } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { parseStage } from '@/features/stages/parse';
 import { parseStageSearch } from '@/features/workspace/params';
+import { StageScreen } from '@/features/workspace/StageScreen';
 import { rememberStage } from '@/features/workspace/storage';
 import { MESSAGES } from '@/shared/messages';
 
@@ -30,6 +31,8 @@ function StageNotFound(): React.JSX.Element {
 
 function StageRoute(): React.JSX.Element {
   const { projectId, stage } = Route.useParams();
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
   const known = parseStage(stage);
 
   useEffect(() => {
@@ -38,5 +41,17 @@ function StageRoute(): React.JSX.Element {
     }
   }, [projectId, known]);
 
-  return <h1>{stage}</h1>;
+  if (known === null) {
+    return <StageNotFound />;
+  }
+  return (
+    <StageScreen
+      projectId={projectId}
+      stage={known}
+      search={search}
+      onSearchChange={(changes) =>
+        void navigate({ search: (previous) => ({ ...previous, ...changes }) })
+      }
+    />
+  );
 }

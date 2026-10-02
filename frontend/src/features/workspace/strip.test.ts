@@ -1,0 +1,111 @@
+import { describe, expect, it } from 'vitest';
+import type { StagePageSchema } from '@/api';
+import { images, page, row } from '@/features/workspace/fixtures';
+import { PageFilter } from '@/features/workspace/params';
+import {
+  applyFilter,
+  canvasSourceOf,
+  countFilters,
+  isLeftOut,
+  joinRows,
+  needsCheck,
+  type StripItem,
+  thumbnailOf,
+} from '@/features/workspace/strip';
+
+describe('joinRows', () => {
+  it('keeps the order of the book and pairs each page with its row', () => {
+    const items = joinRows(
+      [page('a'), page('b'), page('c')],
+      [row('c'), row('a', { status: 'stale' })],
+    );
+    expect(items.map((item) => item.page.id)).toEqual(['a', 'b', 'c']);
+    expect(items.map((item) => item.row?.status)).toEqual(['stale', undefined, 'fresh']);
+  });
+
+  it('is empty for a book without pages, whatever rows it is given', () => {
+    expect(joinRows([], [row('a')])).toEqual([]);
+  });
+});
+
+describe('needsCheck', () => {
+  it('asks for a look at a page that is out of date, failed or marked', () => {
+    expect(needsCheck({ page: page('a'), row: row('a', { status: 'stale' }) })).toBe(true);
+    expect(needsCheck({ page: page('a'), row: row('a', { status: 'failed' }) })).toBe(true);
+    expect(needsCheck({ page: page('a'), row: row('a', { review: 'low-confidence' }) })).toBe(true);
+  });
+
+  it('does not ask for a look at a page that is up to date or was never processed', () => {
+    expect(needsCheck({ page: page('a'), row: row('a') })).toBe(false);
+    expect(needsCheck({ page: page('a'), row: row('a', { status: 'not-run' }) })).toBe(false);
+  });
+
+  it('does not ask for a look while the rows are loading', () => {
+    expect(needsCheck({ page: page('a'), row: undefined })).toBe(false);
+  });
+});
+
+describe('filters', () => {
+  const items = joinRows(
+    [page('a'), page('b'), page('c', { included: false }), page('d')],
+    [
+      row('a'),
+      row('b', { status: 'failed' }),
+      row('c', { status: 'stale' }),
+      row('d', { review: 'not-applied' }),
+    ],
+  );
+
+  it('lists every page for All', () => {
+    expect(applyFilter(items, PageFilter.All)).toHaveLength(4);
+  });
+
+  it('lists the pages to check for Check, a page left out of the book included', () => {
+    expect(applyFilter(items, PageFilter.Check).map((item) => item.page.id)).toEqual([
+      'b',
+      'c',
+      'd',
+    ]);
+  });
+
+  it('lists the pages kept out of the book for Left out', () => {
+    expect(applyFilter(items, PageFilter.LeftOut).map((item) => item.page.id)).toEqual(['c']);
+    expect(items.filter(isLeftOut).map((item) => item.page.id)).toEqual(['c']);
+  });
+
+  it('counts what each filter lists', () => {
+    expect(countFilters(items)).toEqual({ all: 4, check: 3, 'left-out': 1 });
+  });
+});
+
+describe('the picture of a page in a stage', () => {
+  function result(tilesReady: boolean): StripItem {
+    const version = {
+      images: images('result'),
+      tiles_ready: tilesReady,
+    } as StagePageSchema['version'];
+    return { page: page('a'), row: row('a', { version }) };
+  }
+
+  it('is the result of the stage when it has one', () => {
+    expect(thumbnailOf(result(true))).toBe('/result/thumb');
+    expect(canvasSourceOf(result(true))).toBe('/result/info.json');
+  });
+
+  it('draws the page itself on the canvas until the tiles of the result are cut', () => {
+    expect(thumbnailOf(result(false))).toBe('/result/thumb');
+    expect(canvasSourceOf(result(false))).toBe('/page-a/info.json');
+  });
+
+  it('is the page itself when the stage has made no image', () => {
+    const item = { page: page('a'), row: row('a') };
+    expect(thumbnailOf(item)).toBe('/page-a/thumb');
+    expect(canvasSourceOf(item)).toBe('/page-a/info.json');
+  });
+
+  it('is nothing for a page without any image', () => {
+    const item = { page: page('a', { images: null }), row: row('a') };
+    expect(thumbnailOf(item)).toBeNull();
+    expect(canvasSourceOf(item)).toBeNull();
+  });
+});
