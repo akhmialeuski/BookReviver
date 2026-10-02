@@ -1430,11 +1430,13 @@ The project list counts in `page_count` the included pages of the book, and show
   - `/projects/<id>` shows nothing of its own. It redirects to the stage last opened for the book, which the browser
     keeps in `localStorage` under `bookreviver.lastStage.<id>`, else to the `next_stage` of the book, else to `import`.
     Every read and write of `localStorage` is guarded, since a browser may forbid it.
-  - `/projects/<id>/stages/<stage>?page=&scan=&view=&compare=&filter=` is a stage. `stage` is a value of `Stage`, and a
-    value that is none of them answers with a not-found screen inside the layout, so the header and the bar stay.
-    `page` is a `PageId` and `scan` a scan id, `view` is `page`, `spread` or `grid`, `compare` is `off`, `swipe` or
-    `side`, and `filter` is `all`, `check` or `left-out`. A parameter left out means its default, and one of the wrong
-    shape is dropped by `parseStageSearch` (`features/workspace/params.ts`), which has unit tests.
+  - `/projects/<id>/stages/<stage>?page=&scan=&source=&view=&compare=&filter=` is a stage. `stage` is a value of
+    `Stage`, and a value that is none of them answers with a not-found screen inside the layout, so the header and the
+    bar stay. `page` is a `PageId`, `scan` a scan id and `source` a source id, which is a file of the book: the Import
+    stage selects that file, and the Order stage selects the pages cut from it. `view` is `page`, `spread` or `grid`,
+    `compare` is `off`, `swipe` or `side`, and `filter` is `all`, `check` or `left-out`. A parameter left out means
+    its default, and one of the wrong shape is dropped by `parseStageSearch` (`features/workspace/params.ts`), which
+    has unit tests.
   - `/projects/<id>/about` is the description of the book and the tab at the end of the stage bar, and
     `/projects/<id>/viewer` is the reading mode that "Read the book" in the header opens.
 - The stage language is written once in `features/stages/stages.ts`: the ten stages in pipeline order with their phase,
@@ -1464,10 +1466,28 @@ The project list counts in `page_count` the included pages of the book, and show
     or a spread, zoom and a disabled place for the before-and-after mode.
   - The panel is a frame (`StagePanel.tsx`) with the name of the stage, the sentence about it from
     `MESSAGES.stages.summaries`, a body and a footer. The stage tasks fill the body and the footer.
-  - Two stages mount a bridge (`StageBridges.tsx`) in place of the strip and the canvas: Import shows the upload with
-    its import status, the files of the book and its scans, and Order shows the page strip with its page actions.
-    They are the components of the former page of the book, unchanged, so a book can still get pages and have them
-    arranged until the Import and Order workspaces replace the bridges.
+  - The Order stage mounts a bridge (`StageBridges.tsx`) in place of the strip and the canvas: the page strip with its
+    page actions, as the former page of the book had it, so the pages can still be arranged until the Order workspace
+    replaces the bridge.
+  - The Import stage has a screen of its own, `features/import/ImportScreen.tsx`, which the route picks for it in place
+    of `StageScreen`, since the stage works on files and scans and needs no manifest and no strip. It uses the same
+    three-part frame without the strip. A book with no file and no import under way shows the drop area
+    (`EmptyImport.tsx`) with the road from files to scans to pages, and in the panel what is good to know. The drop area
+    is the `DropZone` of the upload dialog, and files picked or dropped on it are sent at once, in natural order, with
+    no list to check first (`useUpload`, shared with `UploadDialog`, which stays for adding files to a book that has
+    some). Otherwise the canvas lists the files (`FileList.tsx`) and under them the scans of the chosen file as a grid
+    (`ScanGrid.tsx`), 60 to a page. The files are read as one list, a request of 100 at a time, under a key that extends
+    the generated key of the sources, so the `source-imported` event reaches it. A running import is a row after the
+    files with its progress bar and a Stop button, read from the jobs of the book, which the `job-changed` events keep
+    current and which are read again every 5 s while one runs. The latest ended import that failed, rejected files or
+    skipped files is reported under the list (`ImportStatus`) until it is dismissed. A click on a scan opens it large
+    on the `PageCanvas` (`ScanViewer.tsx`) with `scan=` in the address, and the arrows turn to the scans of the loaded
+    page of the grid. The panel of the chosen file (`FilePanel.tsx`) gives its type, size, scans, resolution (read from
+    the loaded scans) and import time, where its pages stand in the book (from the manifest), what the file says about
+    the book where that differs from the description (`SuggestionBox`, the box of the About tab, used through the
+    same `PATCH /projects/{id}`), the two actions on its pages, which open the Order stage with `source=`, and at the
+    foot the deletion of the file through `DeleteSourceDialog`. The stage bar shows the progress of a running import
+    in place of the counts of files and scans.
 - Viewer state (page, spread, variant) lives in search params, so every view can be linked and reloaded. Server
   state lives in TanStack Query, and SSE events patch or invalidate the affected queries.
   - `features/projects/events.ts` maps the events to queries. `job-changed` writes the job into its own query and marks

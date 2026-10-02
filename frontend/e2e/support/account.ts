@@ -77,14 +77,12 @@ export async function writePagesFolder(count: number): Promise<string> {
   return root;
 }
 
-/**
- * Open the Import stage of the open book, which shows the upload, the files and the scans until the Import workspace
- * replaces them.
- */
+/** Open the Import stage of the open book, which shows its files and their scans, or the drop area of an empty book. */
 export async function openImportStage(page: Page): Promise<void> {
   await page.getByTestId('stage-import').click();
   await expect(page).toHaveURL(/\/projects\/[^/]+\/stages\/import(\?|$)/);
-  await expect(page.getByTestId('import-bridge')).toBeVisible();
+  await expect(page.getByTestId('stage-screen')).toHaveAttribute('data-stage', 'import');
+  await expect(page.getByTestId('stage-title')).toHaveText('Import');
 }
 
 /**
@@ -97,13 +95,20 @@ export async function openOrderStage(page: Page): Promise<void> {
   await expect(page.getByTestId('order-bridge')).toBeVisible();
 }
 
-/** Upload a folder into the open book and wait until its import has finished. */
+/**
+ * Upload a folder into the open book, which has no files yet, and wait until its import has finished.
+ *
+ * The drop area of the empty book starts the import as soon as the folder is chosen, so there is no dialog to answer.
+ * The wait ends when the book lists every file and no import row is left.
+ *
+ * @param files Number of files in the folder, each of which becomes a file of the book.
+ */
 export async function uploadFolder(page: Page, folder: string, files: number): Promise<void> {
   await openImportStage(page);
-  await page.getByRole('button', { name: 'Upload files' }).click();
   await page.getByTestId('folder-input').setInputFiles(folder);
-  await page.getByRole('button', { name: `Upload ${files} files` }).click();
-  await expect(page.getByTestId('job-state')).toHaveText('Finished', {
+  await expect(page.getByTestId('source-name')).toHaveCount(files, {
     timeout: IMPORT_TIMEOUT_MS,
   });
+  // The job goes on after the last file is listed, so its row needs the same time as the import
+  await expect(page.getByTestId('import-row')).toHaveCount(0, { timeout: IMPORT_TIMEOUT_MS });
 }

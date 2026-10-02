@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatBytes, formatDate, pluralize } from './format';
+import { formatBytes, formatDate, formatDateTime, pluralize } from './format';
 
 /**
  * The text helpers: sizes in the largest fitting unit, dates in a short form, and the word for a count.
@@ -46,6 +46,17 @@ describe('formatDate', () => {
   it('writes a text that is no date as an empty string', () => {
     expect(formatDate('yesterday')).toBe('');
     expect(formatDate('')).toBe('');
+  });
+});
+
+describe('formatDateTime', () => {
+  it('writes the date and the time of a timestamp', () => {
+    // No offset in the text, so the moment is read in the local zone and cannot move to another day
+    expect(formatDateTime('2026-10-01T12:05:00')).toMatch(/^Oct 1, 2026,? 12:05\sPM$/);
+  });
+
+  it('writes a text that is no date as an empty string', () => {
+    expect(formatDateTime('yesterday')).toBe('');
   });
 });
 

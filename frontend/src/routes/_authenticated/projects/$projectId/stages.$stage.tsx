@@ -1,13 +1,14 @@
 import { createFileRoute, notFound } from '@tanstack/react-router';
 import { useEffect } from 'react';
+import { ImportScreen } from '@/features/import/ImportScreen';
 import { parseStage } from '@/features/stages/parse';
-import { parseStageSearch } from '@/features/workspace/params';
+import { parseStageSearch, type StageSearch } from '@/features/workspace/params';
 import { StageScreen } from '@/features/workspace/StageScreen';
 import { rememberStage } from '@/features/workspace/storage';
 import { MESSAGES } from '@/shared/messages';
 
 /**
- * One stage of one book, `/projects/<id>/stages/<stage>?page=&scan=&view=&compare=&filter=`.
+ * One stage of one book, `/projects/<id>/stages/<stage>?page=&scan=&source=&view=&compare=&filter=`.
  *
  * The stage is a segment of the path and the rest of the view is in the search params, so any view can be linked and
  * reloaded. A segment that names no stage answers with the not-found screen inside the layout of the book, which
@@ -44,14 +45,18 @@ function StageRoute(): React.JSX.Element {
   if (known === null) {
     return <StageNotFound />;
   }
+  const onSearchChange = (changes: Partial<StageSearch>): void =>
+    void navigate({ search: (previous) => ({ ...previous, ...changes }) });
+  // Import works on files and scans, not on pages, so it has a screen of its own
+  if (known === 'import') {
+    return <ImportScreen projectId={projectId} search={search} onSearchChange={onSearchChange} />;
+  }
   return (
     <StageScreen
       projectId={projectId}
       stage={known}
       search={search}
-      onSearchChange={(changes) =>
-        void navigate({ search: (previous) => ({ ...previous, ...changes }) })
-      }
+      onSearchChange={onSearchChange}
     />
   );
 }

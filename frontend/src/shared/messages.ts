@@ -183,16 +183,9 @@ export const MESSAGES = {
       mixed: 'Mixed',
     } satisfies Record<Script, string>,
     sources: {
-      title: 'Sources',
-      empty: 'No files have been uploaded to this book yet.',
       scans: (count: number) => `${count} ${pluralize(count, 'scan', 'scans')}`,
       imported: (date: string) => `Imported ${date}`,
-      showScans: 'Show scans',
-      viewPages: (name: string) => `View the pages of ${name} in the viewer`,
-      viewPagesShort: 'View pages',
-      movePages: (name: string) => `Move the pages of ${name}`,
-      movePagesShort: 'Move pages',
-      remove: (name: string) => `Delete ${name}`,
+      remove: 'Delete this file…',
       removeTitle: 'Delete this file?',
       removeDescription: (name: string, scans: number) =>
         `${name} is deleted with its ${scans} ${pluralize(scans, 'scan', 'scans')}. The pages cut from it stay in the book with their images, but cannot be cut from the scan again.`,
@@ -200,10 +193,7 @@ export const MESSAGES = {
       removing: 'Deleting…',
     },
     scans: {
-      title: 'Scans',
       empty: 'The scans appear here as the uploaded files are imported.',
-      showAll: 'Show all scans',
-      viewPage: (label: string) => `Open ${label} in the viewer`,
       label: (position: number) => `Scan ${position}`,
       pending: 'Preparing images…',
       size: (width: number, height: number) => `${width} × ${height} px`,
@@ -701,7 +691,7 @@ export const MESSAGES = {
     ],
   },
   upload: {
-    open: 'Upload files',
+    open: 'Add files',
     title: 'Upload files',
     description:
       'Choose a folder of page images, or PDF and DjVu files. The files are imported in the order shown below.',
@@ -755,13 +745,9 @@ export const MESSAGES = {
       failed: 'Failed',
       cancelled: 'Cancelled',
     } satisfies Record<JobState, string>,
-    progress: (done: number, total: number) =>
-      total > 0 ? `${done} of ${total} steps done` : 'Starting…',
-    cancel: 'Cancel import',
-    cancelling: 'Cancelling…',
     dismiss: 'Dismiss',
     imported: (count: number) =>
-      `${count} ${pluralize(count, 'source', 'sources')} imported into the book.`,
+      `${count} ${pluralize(count, 'file', 'files')} imported into the book.`,
     nothingImported: 'No file was imported.',
     rejectedTitle: (count: number) => `${count} ${pluralize(count, 'file', 'files')} not imported`,
     skippedTitle: (count: number) =>
@@ -773,5 +759,76 @@ export const MESSAGES = {
       'unsupported-type': 'Type not accepted',
       'system-file': 'System file',
     } satisfies Record<RejectionReason, string>,
+  },
+  import: {
+    empty: {
+      hint: 'PDF, DjVu, TIFF, JPEG or PNG files, or a whole folder of images',
+      path: 'The road of the files to the pages',
+      steps: {
+        files: { name: 'Files', text: 'What you uploaded: a PDF, a DjVu or a folder of images' },
+        scans: { name: 'Scans', text: 'Every image inside the files, as the scanner made it' },
+        pages: { name: 'Pages', text: 'The pages of the book, which every later stage works on' },
+      },
+      tipsTitle: 'Good to know',
+      tips: [
+        'Scans at 300–600 dpi give the best recognition later on.',
+        'A scan of an open book with two pages is fine: the next stage, Split, cuts it in two.',
+        'Files of the same book in several parts can be added together. Their pages are put in the order of the files, and Order fixes the rest.',
+        'The original files are kept untouched. Every stage can be run again later.',
+      ],
+    },
+    files: {
+      title: 'Files of this book',
+      summary: (files: number, scans: number, size: string) =>
+        `${files} ${pluralize(files, 'file', 'files')} · ${scans} ${pluralize(scans, 'scan', 'scans')} · ${size}`,
+      kinds: {
+        pdf: 'PDF document',
+        djvu: 'DjVu document',
+        tiff: 'TIFF image',
+        jpeg: 'JPEG image',
+        'jpeg-2000': 'JPEG 2000 image',
+        png: 'PNG image',
+      } satisfies Record<FileType, string>,
+      done: 'Imported',
+      importing: 'Importing files',
+      waiting: 'Waiting to start',
+      progress: (done: number, total: number) =>
+        total > 0 ? `Importing ${done} of ${total}` : 'Starting…',
+      stop: 'Stop',
+      stopping: 'Stopping…',
+    },
+    scans: {
+      title: (file: string) => `Scans of ${file}`,
+      hint: 'Click a scan to see it large',
+    },
+    viewer: {
+      back: 'Back to the files',
+      toolbar: 'Scan controls',
+      caption: (position: number, total: number) => `Scan ${position} of ${total}`,
+      chip: (position: number, file: string) => `Scan ${position} · ${file}`,
+    },
+    panel: {
+      becamePages: (scans: number, pages: number, places: string) =>
+        `A file you uploaded. Its ${scans} ${pluralize(scans, 'scan', 'scans')} became ${pluralize(pages, 'page', 'pages')} ${places} of the book.`,
+      noPages: 'A file you uploaded. No page of the book comes from it.',
+      file: 'File',
+      type: 'Type',
+      size: 'Size',
+      scans: 'Scans',
+      resolution: 'Resolution',
+      resolutionValue: (lowest: number, highest: number) =>
+        lowest === highest ? `${lowest} dpi` : `${lowest}–${highest} dpi`,
+      imported: 'Imported',
+      found: 'Found inside the file',
+      pages: 'Its pages',
+      showInOrder: 'Show its pages in Order',
+      moveElsewhere: 'Put its pages somewhere else…',
+      deleteNote:
+        'Its pages stay in the book with their images, but can no longer be cut from the file again.',
+    },
+    bar: {
+      progress: (done: number, total: number) =>
+        total > 0 ? `Importing ${done} of ${total}` : 'Importing…',
+    },
   },
 } as const;

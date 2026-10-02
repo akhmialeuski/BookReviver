@@ -7,13 +7,14 @@ import {
   Loader2Icon,
   TriangleAlertIcon,
 } from 'lucide-react';
-import type { ProjectSchema, Stage, StageStatus, StageSummarySchema } from '@/api';
+import type { JobSchema, ProjectSchema, Stage, StageStatus, StageSummarySchema } from '@/api';
 import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-query.gen';
 import { parseStage } from '@/features/stages/parse';
 import { PAGE_STATUS_TONE, STAGES, type StageEntry } from '@/features/stages/stages';
 import { parseIdentifier } from '@/features/viewer/params';
+import { latestActiveJob } from '@/features/workspace/jobs';
 import { stageProgress } from '@/features/workspace/progress';
-import { useStageSummaries } from '@/features/workspace/queries';
+import { useActiveJobs, useStageSummaries } from '@/features/workspace/queries';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 
@@ -58,10 +59,13 @@ function StageNote({
   entry,
   summary,
   project,
+  importing,
 }: {
   entry: StageEntry;
   summary: StageSummarySchema | undefined;
   project: ProjectSchema | undefined;
+  /** The import that runs in the book, which the Import stage shows in place of its counts. */
+  importing: JobSchema | undefined;
 }): React.JSX.Element | null {
   const labels = MESSAGES.workspace.bar;
   if (summary === undefined || project === undefined) {
@@ -73,6 +77,17 @@ function StageNote({
     );
   }
   if (entry.stage === 'import') {
+    if (importing !== undefined) {
+      return (
+        <span
+          className="flex items-center gap-1 text-xs text-status-running"
+          data-testid="import-progress"
+        >
+          <Loader2Icon className="size-3 motion-safe:animate-spin" aria-hidden="true" />
+          {MESSAGES.import.bar.progress(importing.progress.done, importing.progress.total)}
+        </span>
+      );
+    }
     return (
       <span className="text-xs text-muted-foreground">
         {project.source_count === 0
@@ -135,6 +150,10 @@ export function StageBar({ projectId }: { projectId: string }): React.JSX.Elemen
     projectApiV1ProjectsProjectIdGetOptions({ path: { project_id: projectId } }),
   );
   const summaries = useStageSummaries(projectId);
+  const activeJobs = useActiveJobs(projectId);
+  const importing = latestActiveJob(
+    (activeJobs.data ?? []).filter((job) => job.kind === 'import-source'),
+  );
   const { stage } = useParams({ strict: false });
   const page = parseIdentifier(useSearch({ strict: false }).page);
   const current = parseStage(stage);
@@ -191,6 +210,7 @@ export function StageBar({ projectId }: { projectId: string }): React.JSX.Elemen
                       entry={entry}
                       summary={summaryOf(entry.stage)}
                       project={project.data}
+                      importing={importing}
                     />
                   </span>
                 </Link>
