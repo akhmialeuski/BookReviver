@@ -78,17 +78,28 @@ export async function writePagesFolder(count: number): Promise<string> {
 }
 
 /**
- * Open the "About the book" tab of the open book, where the files, the page strip and the scans still are until the
- * stage workspaces take them over.
+ * Open the Import stage of the open book, which shows the upload, the files and the scans until the Import workspace
+ * replaces them.
  */
-export async function openBookPage(page: Page): Promise<void> {
-  await page.getByTestId('stage-about').click();
-  await expect(page).toHaveURL(/\/projects\/[^/]+\/about$/);
+export async function openImportStage(page: Page): Promise<void> {
+  await page.getByTestId('stage-import').click();
+  await expect(page).toHaveURL(/\/projects\/[^/]+\/stages\/import(\?|$)/);
+  await expect(page.getByTestId('import-bridge')).toBeVisible();
+}
+
+/**
+ * Open the Order stage of the open book, which shows the page strip and its actions until the Order workspace
+ * replaces it.
+ */
+export async function openOrderStage(page: Page): Promise<void> {
+  await page.getByTestId('stage-page-order').click();
+  await expect(page).toHaveURL(/\/projects\/[^/]+\/stages\/page-order(\?|$)/);
+  await expect(page.getByTestId('order-bridge')).toBeVisible();
 }
 
 /** Upload a folder into the open book and wait until its import has finished. */
 export async function uploadFolder(page: Page, folder: string, files: number): Promise<void> {
-  await openBookPage(page);
+  await openImportStage(page);
   await page.getByRole('button', { name: 'Upload files' }).click();
   await page.getByTestId('folder-input').setInputFiles(folder);
   await page.getByRole('button', { name: `Upload ${files} files` }).click();

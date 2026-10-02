@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { confirmationLink, openBookPage, PASSWORD } from './support/account';
+import { confirmationLink, PASSWORD } from './support/account';
 import { solidPng } from './support/png';
 
 /**
@@ -77,9 +77,9 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
     await expect(page).toHaveURL(/\/projects\/[^/]+\/stages\/import$/);
   });
 
-  await test.step('open the page of the book, which has no pages yet', async () => {
-    await openBookPage(page);
-    await expect(page.getByRole('main').getByText('0 pages')).toBeVisible();
+  await test.step('the Import stage has no files yet and the book waits for pages', async () => {
+    await expect(page.getByText('No files have been uploaded to this book yet.')).toBeVisible();
+    await expect(page.getByTestId('stage-page-order')).toContainText('Waits for pages');
   });
 
   await test.step('choose the folder and check the list before sending', async () => {
@@ -134,7 +134,7 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
   });
 
   await test.step('the book shows its pages, sources in the order that was chosen, and scans', async () => {
-    await expect(page.getByRole('main').getByText('4 pages')).toBeVisible();
+    await expect(page.getByTestId('stage-page-order')).toContainText('4 pages');
     await expect(page.getByTestId('source-name')).toHaveText([
       'book/vol2/a-1.png',
       'book/vol1/1.png',

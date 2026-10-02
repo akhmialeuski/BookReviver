@@ -1464,6 +1464,10 @@ The project list counts in `page_count` the included pages of the book, and show
     or a spread, zoom and a disabled place for the before-and-after mode.
   - The panel is a frame (`StagePanel.tsx`) with the name of the stage, the sentence about it from
     `MESSAGES.stages.summaries`, a body and a footer. The stage tasks fill the body and the footer.
+  - Two stages mount a bridge (`StageBridges.tsx`) in place of the strip and the canvas: Import shows the upload with
+    its import status, the files of the book and its scans, and Order shows the page strip with its page actions.
+    They are the components of the former page of the book, unchanged, so a book can still get pages and have them
+    arranged until the Import and Order workspaces replace the bridges.
 - Viewer state (page, spread, variant) lives in search params, so every view can be linked and reloaded. Server
   state lives in TanStack Query, and SSE events patch or invalidate the affected queries.
   - `features/projects/events.ts` maps the events to queries. `job-changed` writes the job into its own query and marks
@@ -1484,9 +1488,8 @@ The project list counts in `page_count` the included pages of the book, and show
     `preload` on, so a turn only swaps opacities. The tile route serves the stored files and no IIIF size keywords,
     and OpenSeadragon asks for a tile that is a whole image as `full/max/`, which `dzsave` stores as
     `full/<width>,<height>/`, so the stage rewrites that one address.
-- The page strip of the book page, which stays on the About tab until the Import and Order workspaces take its place,
-  and the viewer edit the pages through `features/pages/actions.ts`: moves of pages,
-  of a selected group and of all pages of a source, the label, kind, inclusion and notes, the numbering of a range,
+- The page strip, which the Order stage shows until its workspace takes its place, and the viewer edit the pages
+  through `features/pages/actions.ts`: moves of pages, of a selected group and of all pages of a source, the label, kind, inclusion and notes, the numbering of a range,
   placeholders and blank leaves, binding a scan, and deleting a page or a source. A move is applied to the cached
   manifest at once by the same rule as the server's (`features/pages/order.ts`), put back if it fails, and the
   manifest is read again afterwards. A 409 is shown with the server's reason and a note that the list is current.

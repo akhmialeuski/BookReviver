@@ -167,28 +167,10 @@ export const MESSAGES = {
     },
     counts: {
       pages: (count: number) => `${count} ${pluralize(count, 'page', 'pages')}`,
-      sources: (count: number) => `${count} ${pluralize(count, 'source', 'sources')}`,
-      scans: (count: number) => `${count} ${pluralize(count, 'scan', 'scans')}`,
     },
     untitled: 'Untitled book',
-    back: 'All books',
   },
   book: {
-    viewPages: 'View pages',
-    details: 'Description',
-    noDetails: 'The description of this book is empty.',
-    fields: {
-      subtitle: 'Subtitle',
-      author: 'Author',
-      publisher: 'Publisher',
-      place: 'Place of publication',
-      year: 'Year',
-      edition: 'Edition',
-      languages: 'Languages',
-      orthography: 'Orthography',
-      script: 'Script',
-      notes: 'Notes',
-    },
     orthography: {
       unknown: 'Unknown',
       'pre-reform': 'Pre-reform',
