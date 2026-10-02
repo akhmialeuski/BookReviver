@@ -2,6 +2,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { EditorSession } from '@/features/editors/session';
+import { SourceKind } from '@/features/processing/compare';
 import { processing, version } from '@/features/processing/fixtures';
 import { ThisPageSection } from '@/features/processing/ThisPageSection';
 import { page, row } from '@/features/workspace/fixtures';
@@ -36,11 +38,28 @@ describe('ThisPageSection', () => {
   let root: Root;
   let client: QueryClient;
 
-  async function render(item: StripItem): Promise<void> {
+  function editorStub(overrides: Partial<EditorSession> = {}): EditorSession {
+    return {
+      picture: { kind: SourceKind.Iiif, url: '/info.json' },
+      alwaysOn: false,
+      active: false,
+      hasEdit: false,
+      busy: false,
+      error: null,
+      open: vi.fn(),
+      close: vi.fn(),
+      auto: vi.fn(),
+      renderCanvas: () => null,
+      renderPanel: () => <span data-testid="editor-own-part" />,
+      ...overrides,
+    };
+  }
+
+  async function render(item: StripItem, editor: EditorSession | null = null): Promise<void> {
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
-          <ThisPageSection processing={processing()} item={item} />
+          <ThisPageSection processing={processing()} item={item} editor={editor} />
         </QueryClientProvider>,
       );
     });
@@ -96,10 +115,44 @@ describe('ThisPageSection', () => {
     expect(text('this-page-review')).toContain('Set it by hand');
     expect(text('this-page-facts')).toContain('Left as it was');
     expect(text('this-page-facts')).toContain('0.18 · unsure');
-    expect(
-      container.querySelector<HTMLButtonElement>('[data-testid="this-page-review"] button')
-        ?.disabled,
-    ).toBe(true);
+  });
+
+  it('names the method of the result when the stage has an editor, and not when it has none', async () => {
+    const found = { page: page('page'), row: row('page', { version: NEW }) };
+    await render(found);
+    expect(text('this-page-facts')).not.toContain('Method');
+
+    await render(found, editorStub());
+    expect(text('this-page-facts')).toContain('MethodAutomatic');
+
+    const byHand = version('hand', { edit_hash: 'abc', data: { angle: 2.5, confidence: 1 } });
+    await render({ page: page('page'), row: row('page', { version: byHand }) }, editorStub());
+    expect(text('this-page-facts')).toContain('MethodBy hand');
+    expect(text('this-page-facts')).toContain('Turned by2.5°');
+  });
+
+  it('draws the controls of the editor under the facts, with the button of the plate gone', async () => {
+    const unsure = version('unsure', {
+      data: { skipped: true, confidence: 0.18 },
+      review: 'not-applied',
+    });
+    const open = vi.fn();
+    await render(
+      { page: page('page'), row: row('page', { version: unsure, review: 'not-applied' }) },
+      editorStub({ open }),
+    );
+
+    expect(container.querySelector('[data-testid="this-page-review"] button')).toBeNull();
+    expect(text('editor-controls')).toContain('Set by hand');
+    expect(container.querySelector('[data-testid="editor-own-part"]')).not.toBeNull();
+    act(() => container.querySelector<HTMLElement>('[data-testid="editor-open"]')?.click());
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the controls of the editor on a page the stage has not run on yet', async () => {
+    await render({ page: page('page'), row: row('page', { status: 'not-run' }) }, editorStub());
+
+    expect(container.querySelector('[data-testid="editor-controls"]')).not.toBeNull();
   });
 
   it('says the stage has not run on a page that has no result', async () => {

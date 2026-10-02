@@ -1,0 +1,242 @@
+import { rm } from 'node:fs/promises';
+import path from 'node:path';
+import { expect, type Locator, type Page, test } from '@playwright/test';
+import {
+  createBook,
+  registerAndSignIn,
+  uploadFolder,
+  writePagesFolder,
+  writeScansFolder,
+} from './support/account';
+
+/**
+ * The page editors on the canvas: the rotation handle of the Geometry stage with its field, its wheel, its undo and its
+ * "Auto", and the split line of the Split stage with its arrow keys, its handles and the same undo and "Auto".
+ *
+ * A save is followed by a run of the stage on the one page, so each step waits for the panel to show the result of that
+ * run: the method `By hand` and the number the edit gave. The pages are solid colours, so the step finds nothing on its
+ * own, and anything it reports after a save comes from the edit.
+ */
+
+const SCENARIO_TIMEOUT_MS = 240_000;
+const RUN_TIMEOUT_MS = 90_000;
+const PAGES = 2;
+const WIDE_SCANS = 2;
+const NUDGES = 3;
+const NUDGE_SHIFT_PX = 10;
+const DRAG_STEPS = 8;
+const DRAG_PX = 40;
+const WHEEL_NOTCH = 100;
+
+/** Read a pair of numbers an editor writes into the attribute of its layer, such as the place of a handle. */
+async function pairOf(layer: Locator, attribute: string): Promise<{ x: number; y: number }> {
+  const text = (await layer.getAttribute(attribute)) ?? '';
+  const [x, y] = text.split(',').map(Number);
+  if (x === undefined || y === undefined || Number.isNaN(x) || Number.isNaN(y)) {
+    throw new Error(`The attribute ${attribute} holds "${text}", which is not a pair of numbers.`);
+  }
+  return { x, y };
+}
+
+/** Drag from a place of the layer by an offset, in small steps so that the shape follows. */
+async function dragFrom(
+  page: Page,
+  layer: Locator,
+  from: { x: number; y: number },
+  by: { x: number; y: number },
+): Promise<void> {
+  const box = await layer.boundingBox();
+  if (box === null) {
+    throw new Error('The editor layer has no box.');
+  }
+  await page.mouse.move(box.x + from.x, box.y + from.y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + from.x + by.x, box.y + from.y + by.y, { steps: DRAG_STEPS });
+  await page.mouse.up();
+}
+
+test('a reader turns a page by hand with the handle, the field and the wheel, takes it back and goes to Auto', async ({
+  page,
+}) => {
+  test.setTimeout(SCENARIO_TIMEOUT_MS);
+  const folder = await writePagesFolder(PAGES);
+  const canvas = page.getByTestId('viewer-canvas');
+  const layer = page.getByTestId('editor-layer');
+  const facts = page.getByTestId('this-page-facts');
+  const angle = page.getByRole('textbox', { name: 'Angle in degrees' });
+  const saves: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'PUT' && request.url().includes('/edits/geometry/')) {
+      saves.push(request.url());
+    }
+  });
+
+  await test.step('a page opens on the Geometry stage with the editor shut', async () => {
+    await registerAndSignIn(page);
+    await createBook(page, 'A book to turn');
+    await uploadFolder(page, folder, PAGES);
+    const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
+    await page.goto(`${bookPath}/stages/geometry`);
+    await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
+    await expect(canvas).toHaveAttribute('data-state', 'ready');
+    await expect(layer).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Auto' })).toBeDisabled();
+  });
+
+  await test.step('Set by hand opens the editor on the page, with the handle, and compare gives way to it', async () => {
+    await page.getByRole('button', { name: 'Set by hand' }).click();
+    await expect(page.getByRole('button', { name: 'Set by hand' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await expect(layer).toBeVisible();
+    await expect(canvas).toHaveAttribute('data-state', 'ready');
+    await expect(layer).toHaveAttribute('data-degrees', '0');
+    await expect(page.getByTestId('compare-menu')).toBeDisabled();
+  });
+
+  await test.step('an angle typed in the field is saved and the page is turned by it, with the method By hand', async () => {
+    await angle.fill('2.5');
+    await angle.press('Enter');
+    await expect(layer).toHaveAttribute('data-degrees', '2.5');
+    await expect(facts).toContainText('2.5°', { timeout: RUN_TIMEOUT_MS });
+    await expect(facts).toContainText('By hand');
+    expect(saves).toHaveLength(1);
+    await expect(page.getByRole('button', { name: 'Auto' })).toBeEnabled();
+  });
+
+  await test.step('Alt and the wheel change the angle by a tenth, and a run of notches is saved once', async () => {
+    await layer.hover();
+    await page.keyboard.down('Alt');
+    await page.mouse.wheel(0, -WHEEL_NOTCH);
+    await page.mouse.wheel(0, -WHEEL_NOTCH);
+    await page.keyboard.up('Alt');
+    await expect(layer).toHaveAttribute('data-degrees', '2.7');
+    await expect(facts).toContainText('2.7°', { timeout: RUN_TIMEOUT_MS });
+    expect(saves).toHaveLength(2);
+  });
+
+  await test.step('dragging the handle turns the page and saves when it is let go', async () => {
+    const handle = await pairOf(layer, 'data-handle-rotation');
+    await dragFrom(page, layer, handle, { x: -DRAG_PX, y: DRAG_PX });
+    const turned = Number(await layer.getAttribute('data-degrees'));
+    expect(turned).toBeGreaterThan(2.7);
+    await expect(facts).toContainText(`${turned.toFixed(1)}°`, { timeout: RUN_TIMEOUT_MS });
+  });
+
+  await test.step('Ctrl+Z puts back the angle before the drag', async () => {
+    await layer.focus();
+    await page.keyboard.press('Control+z');
+    await expect(layer).toHaveAttribute('data-degrees', '2.7');
+    await expect(facts).toContainText('2.7°', { timeout: RUN_TIMEOUT_MS });
+  });
+
+  await test.step('Auto deletes the edit and the step finds the result by itself again', async () => {
+    await page.getByRole('button', { name: 'Auto' }).click();
+    await expect(facts).toContainText('Automatic', { timeout: RUN_TIMEOUT_MS });
+    await expect(facts).not.toContainText('By hand');
+    await expect(page.getByRole('button', { name: 'Auto' })).toBeDisabled();
+  });
+
+  await test.step('Ctrl+Z after Auto brings the angle back', async () => {
+    await layer.focus();
+    await page.keyboard.press('Control+z');
+    await expect(facts).toContainText('By hand', { timeout: RUN_TIMEOUT_MS });
+    await expect(facts).toContainText('2.7°');
+  });
+
+  await rm(path.dirname(folder), { recursive: true, force: true });
+});
+
+test('a reader moves the split line with the keys and the handles, and the halves are cut by it', async ({
+  page,
+}) => {
+  test.setTimeout(SCENARIO_TIMEOUT_MS);
+  const folder = await writeScansFolder(WIDE_SCANS);
+  const total = WIDE_SCANS + 1;
+  const strip = page.getByTestId('strip-page');
+  const layer = page.getByTestId('editor-layer');
+  const facts = page.getByTestId('this-page-facts');
+  const saves: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'PUT' && request.url().includes('/edits/page-split/')) {
+      saves.push(request.url());
+    }
+  });
+  let found = 0;
+
+  await test.step('the wide scans are cut, and the first one opens with its line over the scan', async () => {
+    await registerAndSignIn(page);
+    await createBook(page, 'A book of spreads');
+    await uploadFolder(page, folder, total);
+    const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
+    await page.goto(`${bookPath}/stages/page-split`);
+    await expect(strip).toHaveCount(total);
+    await page.getByTestId('split-banner-cut').click();
+    await expect(strip).toHaveCount(WIDE_SCANS * 2 + 1, { timeout: RUN_TIMEOUT_MS });
+    await page.getByTestId('strip-filter-wide').click();
+    await strip.first().click();
+    await expect(layer).toBeVisible();
+    await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
+    await expect(facts).toContainText('Automatic');
+    found = (await pairOf(layer, 'data-line-start')).x;
+  });
+
+  await test.step('the halves are labelled above the scan with the pages they become', async () => {
+    await expect(page.getByTestId('line-label-left')).toContainText('Left · becomes');
+    await expect(page.getByTestId('line-label-right')).toContainText('Right · becomes');
+    const label = await page.getByTestId('line-label-left').boundingBox();
+    const area = await layer.boundingBox();
+    const scanTop = Number(await layer.getAttribute('data-scan-top'));
+    expect(label).not.toBeNull();
+    expect(area).not.toBeNull();
+    // The label ends where the scan begins, and does not lie on it
+    expect((label?.y ?? 0) + (label?.height ?? 0)).toBeLessThanOrEqual((area?.y ?? 0) + scanTop);
+  });
+
+  await test.step('Shift and an arrow move the line by ten pixels of the scan, and a run of keys is saved once', async () => {
+    await layer.focus();
+    for (let press = 0; press < NUDGES; press += 1) {
+      await page.keyboard.press('Shift+ArrowRight');
+    }
+    const moved = found + NUDGES * NUDGE_SHIFT_PX;
+    await expect(layer).toHaveAttribute('data-line-start', new RegExp(`^${moved},`));
+    await expect(facts).toContainText(`${moved} px`, { timeout: RUN_TIMEOUT_MS });
+    await expect(facts).toContainText('By hand');
+    expect(saves).toHaveLength(1);
+  });
+
+  await test.step('a plain arrow moves the line by one pixel', async () => {
+    await page.keyboard.press('ArrowLeft');
+    const moved = found + NUDGES * NUDGE_SHIFT_PX - 1;
+    await expect(layer).toHaveAttribute('data-line-start', new RegExp(`^${moved},`));
+    await expect(facts).toContainText(`${moved} px`, { timeout: RUN_TIMEOUT_MS });
+  });
+
+  await test.step('dragging the top end moves the cut and saves when it is let go', async () => {
+    const before = await layer.getAttribute('data-line-start');
+    const end = await pairOf(layer, 'data-handle-start');
+    await dragFrom(page, layer, end, { x: DRAG_PX, y: 0 });
+    await expect(layer).not.toHaveAttribute('data-line-start', before ?? '');
+    const dragged = (await pairOf(layer, 'data-line-start')).x;
+    expect(dragged).toBeGreaterThan(found + NUDGES * NUDGE_SHIFT_PX - 1);
+    expect(saves.length).toBeGreaterThanOrEqual(3);
+  });
+
+  await test.step('Ctrl+Z puts back the line before the drag', async () => {
+    await layer.focus();
+    await page.keyboard.press('Control+z');
+    const back = found + NUDGES * NUDGE_SHIFT_PX - 1;
+    await expect(layer).toHaveAttribute('data-line-start', new RegExp(`^${back},`));
+    await expect(facts).toContainText(`${back} px`, { timeout: RUN_TIMEOUT_MS });
+  });
+
+  await test.step('Auto deletes the line and the cut goes back to the one the step found', async () => {
+    await page.getByRole('button', { name: 'Auto' }).click();
+    await expect(facts).toContainText('Automatic', { timeout: RUN_TIMEOUT_MS });
+    await expect(facts).toContainText(`${found} px`);
+    await expect(page.getByRole('button', { name: 'Auto' })).toBeDisabled();
+  });
+
+  await rm(path.dirname(folder), { recursive: true, force: true });
+});

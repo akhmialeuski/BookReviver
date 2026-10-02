@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { TriangleAlertIcon } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
-import type { PageSchema, Stage, StagePageSchema } from '@/api';
+import type { PageSchema, ScanSchema, Stage, StagePageSchema } from '@/api';
 import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-query.gen';
+import { EDITOR_ROOM_SHARE } from '@/features/editors/scene';
+import { useEditorSession } from '@/features/editors/useEditorSession';
 import { useManifest } from '@/features/pages/manifest';
 import { pruneSelection } from '@/features/pages/selection';
 import { CompareCanvas } from '@/features/processing/CompareCanvas';
@@ -68,6 +70,7 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 const NO_PAGES: readonly PageSchema[] = [];
 const NO_ROWS: readonly StagePageSchema[] = [];
 const NOTHING_SELECTED: SelectionState = { selected: new Set(), anchorId: null };
+const NO_SCANS: readonly ScanSchema[] = [];
 
 /** The place of the open page in the book as the toolbar writes it, such as `p. 14 · 18 of 126`. */
 function captionOf(shown: readonly StripItem[], count: number): string {
@@ -161,6 +164,18 @@ export function StageScreen({
     }
   });
   const earlierRows = useEarlierRows(projectId, stage, processing.available);
+  const beforeSource =
+    currentItem === undefined
+      ? null
+      : beforeSourceOf(currentItem.page, currentItem.row, earlierRows);
+  // The page editor of the stage, when a processor of it has one, draws over the canvas and in the panel
+  const editor = useEditorSession({
+    processing,
+    current: currentItem,
+    items,
+    scans: scans.data ?? NO_SCANS,
+    before: beforeSource,
+  });
 
   // The grid shows no open page, so the page keys and the strip have nothing to turn there
   const openPage = (pageId: string | undefined): void => {
@@ -242,10 +257,8 @@ export function StageScreen({
 
   // The compare draws the picture before beside the picture after, which is the preview while one is on
   const processed = processing.available;
-  const beforeSource =
-    currentItem === undefined
-      ? null
-      : beforeSourceOf(currentItem.page, currentItem.row, earlierRows);
+  // While the editor is open the canvas shows the one picture it lies on, so nothing is compared
+  const editing = editor?.active ? editor : null;
   const previewShown =
     processing.preview.on && processing.preview.shown?.page_id === currentItem?.page.id
       ? processing.preview.shown
@@ -256,9 +269,11 @@ export function StageScreen({
     (resultUrl === null ? null : { kind: SourceKind.Iiif, url: resultUrl });
   const compareBlocked = spread
     ? MESSAGES.processing.compare.spreadOnly
-    : beforeSource === null
-      ? MESSAGES.processing.compare.none
-      : null;
+    : editing !== null
+      ? MESSAGES.editors.compareOff
+      : beforeSource === null
+        ? MESSAGES.processing.compare.none
+        : null;
   const compareMode = compareBlocked === null ? compareChoice : CompareMode.Off;
   const stageName = MESSAGES.stages.names[stage];
   const stageBeforeThis = stageBefore(stage);
@@ -286,7 +301,11 @@ export function StageScreen({
       <div className="relative size-full">
         {processed && !spread ? (
           <CompareCanvas
-            pairs={{ before: beforeSource, after: afterSource }}
+            pairs={
+              editing === null
+                ? { before: beforeSource, after: afterSource }
+                : { before: null, after: editing.picture }
+            }
             mode={compareMode}
             beforeLabel={MESSAGES.processing.compare.before(
               stageBeforeThis === null ? '' : MESSAGES.stages.names[stageBeforeThis],
@@ -299,6 +318,8 @@ export function StageScreen({
             notice={previewNotice}
             pageIds={shown.map((item) => item.page.id)}
             handle={canvas}
+            overlay={editing === null ? undefined : (scene) => editing.renderCanvas(scene)}
+            roomShare={editing === null ? 0 : EDITOR_ROOM_SHARE}
           />
         ) : (
           <PageCanvas view={view} around={around} fitMode={FitMode.Page} handle={canvas} />
@@ -391,6 +412,7 @@ export function StageScreen({
                 items={items}
                 current={currentItem}
                 selected={selection.selected}
+                editor={editor}
               />
             ) : (
               <StagePanel stage={stage} available={available} />

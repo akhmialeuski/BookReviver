@@ -1,3 +1,4 @@
+import type { EditorSession } from '@/features/editors/session';
 import { RecipeSection } from '@/features/processing/RecipeSection';
 import { RunControls } from '@/features/processing/RunControls';
 import { SplitSection } from '@/features/processing/SplitSection';
@@ -21,11 +22,14 @@ export function ProcessingPanel({
   items,
   current,
   selected,
+  editor,
 }: {
   processing: Processing;
   items: readonly StripItem[];
   current: StripItem | undefined;
   selected: ReadonlySet<string>;
+  /** The page editor of the stage on the open page, or null when the stage has none. */
+  editor: EditorSession | null;
 }): React.JSX.Element {
   const rows = items.flatMap((item) => (item.row === undefined ? [] : [item.row]));
   if (processing.failed) {
@@ -55,7 +59,9 @@ export function ProcessingPanel({
           <SplitSection processing={processing} items={items} current={current} />
         ) : null}
         <RecipeSection processing={processing} rows={rows} />
-        {current === undefined ? null : <ThisPageSection processing={processing} item={current} />}
+        {current === undefined ? null : (
+          <ThisPageSection processing={processing} item={current} editor={editor} />
+        )}
       </div>
     </StagePanel>
   );

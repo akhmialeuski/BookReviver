@@ -1,4 +1,6 @@
-import { HandIcon, TriangleAlertIcon } from 'lucide-react';
+import { TriangleAlertIcon } from 'lucide-react';
+import { EditorControls } from '@/features/editors/EditorControls';
+import type { EditorSession } from '@/features/editors/session';
 import { useChooseVersion, useVersions } from '@/features/processing/queries';
 import { describeParams, historyOf, readResult } from '@/features/processing/results';
 import type { Processing } from '@/features/processing/useProcessing';
@@ -14,8 +16,9 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * What the stage did to the open page, and the results it made on it before.
  *
  * The facts are read from the data of the current version, so the section shows what the step found on this page and
- * not what it was asked to do. A page the step was unsure of gets an amber plate with the way out, and under it stands
- * the history of the results, from which an earlier one is made the current one.
+ * not what it was asked to do. A page the step was unsure of gets an amber plate with the way out, then come the controls
+ * of the page editor of the stage when it has one, and under them stands the history of the results, from which an earlier
+ * one is made the current one.
  */
 
 const labels = MESSAGES.processing;
@@ -23,9 +26,12 @@ const labels = MESSAGES.processing;
 export function ThisPageSection({
   processing,
   item,
+  editor = null,
 }: {
   processing: Processing;
   item: StripItem;
+  /** The page editor of the stage on this page, or null when the stage has none. */
+  editor?: EditorSession | null;
 }): React.JSX.Element {
   const { projectId, stage, catalogue } = processing;
   const { page, row } = item;
@@ -36,6 +42,12 @@ export function ThisPageSection({
   const result = version === null ? null : readResult(version);
   const review = row?.review ?? null;
   const facts: { label: string; value: string }[] = [];
+  if (editor !== null && version !== null) {
+    facts.push({
+      label: labels.thisPage.how,
+      value: version.edit_hash === '' ? labels.thisPage.automatic : labels.thisPage.manual,
+    });
+  }
   if (result !== null) {
     if (result.skipped) {
       facts.push({ label: labels.thisPage.method, value: labels.thisPage.left });
@@ -108,18 +120,9 @@ export function ThisPageSection({
             {labels.thisPage.reviewTitle[review]}
           </p>
           <p className="text-muted-foreground">{labels.thisPage.reviewHint}</p>
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-fit"
-            disabled
-            title={labels.thisPage.byHandSoon}
-          >
-            <HandIcon />
-            {labels.thisPage.byHand}
-          </Button>
         </div>
       )}
+      {editor === null ? null : <EditorControls session={editor} />}
 
       <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         {labels.history.title}

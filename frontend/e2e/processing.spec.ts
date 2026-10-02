@@ -1,9 +1,13 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { createBook, registerAndSignIn, uploadFolder, writePagesFolder } from './support/account';
-import { solidPng } from './support/png';
+import {
+  createBook,
+  registerAndSignIn,
+  uploadFolder,
+  writePagesFolder,
+  writeScansFolder,
+} from './support/account';
 
 /**
  * The processing workspace on the Geometry stage: the recipe drawn from the schema of its processor, a preview of the
@@ -131,7 +135,7 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     await expect(page.getByTestId('strip-reason')).toHaveCount(PAGES);
     await page.getByTestId('strip-page').first().click();
     await expect(page.getByTestId('this-page-review')).toContainText('Left as it was');
-    await expect(page.getByRole('button', { name: 'Set by hand' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Set by hand' })).toBeEnabled();
     await expect(page.getByTestId('this-page-facts')).toContainText('Confidence');
   });
 
@@ -170,28 +174,12 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
 });
 
 const WIDE_SCANS = 3;
-const SCAN_SIZE = { width: 160, height: 90 };
-
-/** Write a folder of wide solid-colour scans and one tall page, and return its path. */
-async function writeScansFolder(): Promise<string> {
-  const root = path.join(await mkdtemp(path.join(tmpdir(), 'bookreviver-')), 'scans');
-  await mkdir(root, { recursive: true });
-  for (let number = 1; number <= WIDE_SCANS; number += 1) {
-    const color = [(number * 61) % 256, (number * 17) % 256, 200] as const;
-    await writeFile(
-      path.join(root, `scan-${number}.png`),
-      solidPng(SCAN_SIZE.width, SCAN_SIZE.height, color),
-    );
-  }
-  await writeFile(path.join(root, 'tall.png'), solidPng(60, 90, [10, 200, 30]));
-  return root;
-}
 
 test('a reader cuts the wide scans on the Split stage and goes back to one page after a confirmation', async ({
   page,
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
-  const folder = await writeScansFolder();
+  const folder = await writeScansFolder(WIDE_SCANS);
   const total = WIDE_SCANS + 1;
   const strip = page.getByTestId('strip-page');
 

@@ -779,6 +779,14 @@ export const MESSAGES = {
         ],
       },
       {
+        title: 'Page editors',
+        items: [
+          { label: 'Move the split line by 1 px or by 10 px', keys: ['←', '→', 'Shift'] },
+          { label: 'Turn the page by 0.1°', keys: ['Alt', 'Wheel'] },
+          { label: 'Take back the last change', keys: ['Ctrl', 'Z'] },
+        ],
+      },
+      {
         title: 'Screen',
         items: [{ label: 'Show these shortcuts', keys: ['?'] }],
       },
@@ -1045,8 +1053,9 @@ export const MESSAGES = {
         'low-confidence': 'The step was not sure of this result.',
       },
       reviewHint: 'Set it by hand in the page editor, or change the settings and preview again.',
-      byHand: 'Set by hand',
-      byHandSoon: 'The page editor comes soon',
+      how: 'Method',
+      automatic: 'Automatic',
+      manual: 'By hand',
     },
     history: {
       title: 'Results on this page',
@@ -1097,6 +1106,31 @@ export const MESSAGES = {
         'The right page of this scan is deleted together with its work, including its number, its kind and the notes written on it. The left page becomes the whole scan again.',
       confirm: 'Go back to one page',
       cancel: 'Keep two pages',
+    },
+  },
+  editors: {
+    setByHand: 'Set by hand',
+    auto: 'Auto',
+    autoTitle: 'Go back to what the step finds by itself',
+    saving: 'Saving…',
+    compareOff: 'Finish setting by hand to compare the page before and after.',
+    line: {
+      name: 'Split line',
+      start: 'Top end of the split line',
+      end: 'Bottom end of the split line',
+      hint: 'Drag the ends of the dashed line to move the cut, or nudge it with the arrow keys. The new cut is saved at once and the two pages are cut again.',
+      noPicture: 'This scan has no picture to draw the cut on yet.',
+      // A page without a number is named by its place in the book
+      pageName: (label: string, position: number) =>
+        label === '' ? `page ${position + 1}` : `p. ${label}`,
+      left: (name: string | null) => (name === null ? 'Left half' : `Left · becomes ${name}`),
+      right: (name: string | null) => (name === null ? 'Right half' : `Right · becomes ${name}`),
+    },
+    rotation: {
+      name: 'Page rotation',
+      handle: 'Rotation handle',
+      angle: 'Angle in degrees',
+      hint: 'Drag the handle, type the angle, or hold Alt and turn the wheel until the lines of text lie along the guides.',
     },
   },
 } as const;
