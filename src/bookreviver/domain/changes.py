@@ -162,12 +162,14 @@ class PageChanges:
     :ivar kind: New role of the page in the book.
     :ivar included: New decision whether the page is part of the book.
     :ivar notes: New notes of the user, or an empty string for none.
+    :ivar group_label: New label of the group of the page, or an empty string for no group.
     """
 
     label: str | None = None
     kind: PageKind | None = None
     included: bool | None = None
     notes: str | None = None
+    group_label: str | None = None
 
     def apply_to(self, page: Page) -> Page:
         """Return ``page`` with every given field replaced.

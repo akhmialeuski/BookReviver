@@ -15,6 +15,7 @@ from bookreviver.domain.enums import (
     PageFilter,
     PageKind,
     PageOrigin,
+    RuleCondition,
     StageState,
     VersionScale,
     VersionState,
@@ -40,7 +41,17 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.enums import EditorKind, FileType, PlaceMode, ReviewReason, SourceKind, Stage
     from bookreviver.domain.geometry import EditGeometry
-    from bookreviver.domain.ids import AccountId, JobId, PageId, ProjectId, RecipeId, ScanId, SourceId, StorageKey
+    from bookreviver.domain.ids import (
+        AccountId,
+        JobId,
+        PageId,
+        ProjectId,
+        RecipeId,
+        RecipeRuleId,
+        ScanId,
+        SourceId,
+        StorageKey,
+    )
     from bookreviver.domain.stage_summaries import BookProgress
     from bookreviver.domain.values import (
         BookDetails,
@@ -57,6 +68,8 @@ if TYPE_CHECKING:
 # The length of a page version identifier: a hash cut to 16 hexadecimal digits
 VERSION_ID_LENGTH: int = 16
 VERSION_ID_PATTERN: str = rf'[0-9a-f]{{{VERSION_ID_LENGTH}}}'
+GROUP_LABEL_MISSING: str = 'A rule on a manual group needs the label of the group.'
+GROUP_LABEL_UNEXPECTED: str = 'The condition {condition} takes no group label.'
 
 
 @frozen(kw_only=True)
@@ -206,6 +219,8 @@ class Page:
                 for a fold-out.
     :ivar included: Whether the page is part of the book; off for a colour chart or a duplicate.
     :ivar notes: Notes of the user.
+    :ivar group_label: Label of the group the user put the page in by hand, or empty for no group, which a rule of a
+                       stage may send to a variant of its recipe.
     :ivar created_at: When the page was created.
     :ivar updated_at: When the page was last changed.
     :ivar revision: How many times the stored page has been written since it was added, which a write has to match so
@@ -226,6 +241,7 @@ class Page:
     slot: int = field(default=WHOLE_SCAN, validator=validators.ge(WHOLE_SCAN))
     included: bool = True
     notes: str = ''
+    group_label: str = ''
     created_at: datetime
     updated_at: datetime
     revision: int = field(default=0, validator=validators.ge(0))
@@ -451,6 +467,8 @@ class PageStage:
     :ivar recipe_id: Recipe the page was processed by, or None when the recipe was deleted or none ran yet.
     :ivar head_version_id: Last version of the recipe's steps, which is the current version of the stage, or None.
     :ivar state: Whether the current version matches the inputs of the stage.
+    :ivar pinned: Whether the user pinned ``recipe_id`` to the page, so that a run without a recipe processes the page
+                  by it and not by a rule or the active recipe. A pin without a recipe holds nothing.
     :ivar updated_at: When the record last changed.
     """
 
@@ -459,12 +477,77 @@ class PageStage:
     recipe_id: RecipeId | None = None
     head_version_id: PageVersionId | None = None
     state: StageState = StageState.FRESH
+    pinned: bool = False
     updated_at: datetime
 
     @property
     def key(self) -> PageStageKey:
         """The key the record is stored under."""
         return PageStageKey(self.page_id, self.stage)
+
+    @property
+    def pinned_recipe_id(self) -> RecipeId | None:
+        """The recipe pinned to the page, or None when the page is not pinned or the pinned recipe was deleted."""
+        return self.recipe_id if self.pinned else None
+
+
+@frozen(kw_only=True)
+class RecipeRule:
+    """A rule of a stage that sends the pages meeting a condition to a variant of its recipe.
+
+    The rules of a stage are tried in the order of ``order``, and the first that matches a page wins, so a page that
+    meets no rule is processed by the active recipe. A page that has a recipe pinned to it skips the rules.
+
+    :ivar id: Identifier of the rule.
+    :ivar project_id: Project owning the rule.
+    :ivar stage: Stage whose pages the rule sends to a variant.
+    :ivar condition: What a page must be for the rule to match it.
+    :ivar group_label: The group the page must be in, for the condition ``group``, and empty for any other.
+    :ivar recipe_id: Recipe of the stage that processes the pages the rule matches.
+    :ivar order: Place of the rule among the rules of the stage, from zero, the lowest being tried first.
+    """
+
+    id: RecipeRuleId
+    project_id: ProjectId
+    stage: Stage
+    condition: RuleCondition
+    group_label: str = ''
+    recipe_id: RecipeId
+    order: int = field(validator=validators.ge(0))
+
+    def __attrs_post_init__(self) -> None:
+        """Check that a group label is given exactly for the condition on the group.
+
+        :raises ValueError: If the condition on the group has no label, or another condition has one.
+        """
+        if self.condition is RuleCondition.GROUP and not self.group_label:
+            raise ValueError(GROUP_LABEL_MISSING)
+        if self.condition is not RuleCondition.GROUP and self.group_label:
+            raise ValueError(GROUP_LABEL_UNEXPECTED.format(condition=self.condition.label.lower()))
+
+    def matches(self, page: Page, position: int) -> bool:
+        """Tell whether the page meets the condition of the rule.
+
+        The condition on illustrations matches no page, since the Layout stage that finds them does not exist yet.
+
+        :param page: The page.
+        :type page: Page
+        :param position: Place of the page in the book counted from 1, which the parity of the page is read from.
+        :type position: int
+        :returns: Whether the rule applies to the page.
+        :rtype: bool
+        """
+        match self.condition:
+            case RuleCondition.ODD:
+                return position % 2 == 1
+            case RuleCondition.EVEN:
+                return position % 2 == 0
+            case RuleCondition.GROUP:
+                return page.group_label == self.group_label
+            case RuleCondition.ILLUSTRATED:
+                return False
+            case _:
+                return page.kind in self.condition.kinds
 
 
 @frozen(kw_only=True)

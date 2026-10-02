@@ -20,6 +20,17 @@ if TYPE_CHECKING:
     from bookreviver.domain.stage_summaries import StageRow
 
 
+class VariantPagesSchema(ResponseModel):
+    """How many pages of a stage one recipe processed.
+
+    :ivar recipe_id: The recipe.
+    :ivar pages: Pages with an image whose result of the stage the recipe made.
+    """
+
+    recipe_id: RecipeId
+    pages: int
+
+
 class StageSummarySchema(ResponseModel):
     """One stage of a book summed over its pages.
 
@@ -35,6 +46,7 @@ class StageSummarySchema(ResponseModel):
     :ivar review: Pages, not failed, whose result asks for a second look.
     :ivar check: Pages the strip lists under Check: stale, failed or marked, each counted once.
     :ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used.
+    :ivar variants: How many pages each recipe of the stage processed, the recipe with the most pages first.
     """
 
     stage: Stage
@@ -48,6 +60,7 @@ class StageSummarySchema(ResponseModel):
     review: int
     check: int
     active_recipe_id: RecipeId | None
+    variants: list[VariantPagesSchema]
 
 
 class StagePageSchema(ResponseModel):
@@ -57,6 +70,7 @@ class StagePageSchema(ResponseModel):
     :ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.
     :ivar review: Why the result asks for a second look, or None.
     :ivar recipe_id: Recipe the page was processed by, or None.
+    :ivar pinned: Whether the recipe is pinned to the page.
     :ivar version: The current version of the stage on the page with its data and images, or None.
     """
 
@@ -64,6 +78,7 @@ class StagePageSchema(ResponseModel):
     status: PageStageStatus
     review: ReviewReason | None
     recipe_id: RecipeId | None
+    pinned: bool
     version: PageVersionSchema | None
 
     @classmethod
@@ -85,6 +100,7 @@ class StagePageSchema(ResponseModel):
             status=row.status,
             review=row.review,
             recipe_id=row.recipe_id,
+            pinned=row.pinned,
             version=version,
         )
 

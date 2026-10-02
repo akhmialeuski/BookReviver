@@ -296,6 +296,37 @@ class PageKind(LabeledStrEnum):
     OTHER = 'other', 'Other'
 
 
+class RuleCondition(LabeledStrEnum):
+    """What a rule of a stage asks of a page, to give the page the variant of the rule.
+
+    The set is closed: a rule never carries a free-form test. ``GROUP`` is the one condition with an argument, the
+    label of the group that the user wrote on the pages. ``ILLUSTRATED`` is declared so that rules and clients can name
+    it, but it matches no page yet: the Layout stage, which finds the illustrations of a page, does not exist, and a
+    rule on it takes effect the day that stage records them.
+    """
+
+    PLATES = 'plates', 'Plates and frontispieces'
+    COVERS = 'covers', 'Covers'
+    BLANKS = 'blanks', 'Blank pages'
+    ILLUSTRATED = 'illustrated', 'Pages with illustrations'
+    ODD = 'odd', 'Odd pages'
+    EVEN = 'even', 'Even pages'
+    GROUP = 'group', 'Manual group'
+
+    @property
+    def kinds(self) -> frozenset[PageKind]:
+        """The kinds of page the condition matches, or none for a condition that does not test the kind."""
+        return _KINDS_OF_CONDITION.get(self, frozenset[PageKind]())
+
+
+# The kinds of page each condition on the kind matches
+_KINDS_OF_CONDITION: Final[dict[RuleCondition, frozenset[PageKind]]] = {
+    RuleCondition.PLATES: frozenset({PageKind.PLATE, PageKind.FRONTISPIECE}),
+    RuleCondition.COVERS: frozenset({PageKind.COVER, PageKind.BACK_COVER}),
+    RuleCondition.BLANKS: frozenset({PageKind.BLANK}),
+}
+
+
 class PageOrigin(LabeledStrEnum):
     """Where the image of a page comes from."""
 

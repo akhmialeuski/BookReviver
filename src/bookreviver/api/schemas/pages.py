@@ -17,7 +17,7 @@ from pydantic.json_schema import SkipJsonSchema
 from bookreviver.api.pagination import ManifestParams
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.api.schemas.images import ImagePathsSchema
-from bookreviver.api.schemas.types import Dpi, LongText, PageIdList, PageLabel, PagePixels
+from bookreviver.api.schemas.types import Dpi, GroupLabel, LongText, PageIdList, PageLabel, PagePixels
 from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.enums import LabelStyle, NewPageOrigin, PageKind, PageOrigin, Side
 from bookreviver.domain.ids import PageId, ScanId, SourceId
@@ -204,12 +204,14 @@ class PageUpdate(RequestModel):
     :ivar kind: New role of the page in the book.
     :ivar included: New decision whether the page is part of the book.
     :ivar notes: New notes, or None to clear them.
+    :ivar group_label: New label of the group of the page, or None to take the page out of its group.
     """
 
     label: PageLabel | None = None
     kind: PageKind | SkipJsonSchema[None] = None
     included: bool | SkipJsonSchema[None] = None
     notes: LongText | None = None
+    group_label: GroupLabel | None = None
 
     @model_validator(mode='after')
     def _kind_and_inclusion_are_not_cleared(self) -> Self:
@@ -238,6 +240,7 @@ class PageUpdate(RequestModel):
             kind=self.kind,
             included=self.included,
             notes=(self.notes or '') if 'notes' in sent else None,
+            group_label=(self.group_label or '') if 'group_label' in sent else None,
         )
 
 
@@ -313,6 +316,7 @@ class PageSchema(ResponseModel):
     :ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.
     :ivar included: Whether the page is part of the book.
     :ivar notes: Notes of the user.
+    :ivar group_label: Label of the group the user put the page in, or empty for no group.
     :ivar images: Paths of the images of the page's current version, or None while it has none.
     :ivar created_at: When the page was created.
     :ivar updated_at: When the page was last changed.
@@ -328,6 +332,7 @@ class PageSchema(ResponseModel):
     slot: int
     included: bool
     notes: str
+    group_label: str
     images: ImagePathsSchema | None
     created_at: datetime
     updated_at: datetime
@@ -361,6 +366,7 @@ class PageSchema(ResponseModel):
             slot=page.slot,
             included=page.included,
             notes=page.notes,
+            group_label=page.group_label,
             images=images,
             created_at=page.created_at,
             updated_at=page.updated_at,

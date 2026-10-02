@@ -17,10 +17,11 @@ from bookreviver.domain.entities import (
     PageVersion,
     Project,
     Recipe,
+    RecipeRule,
     Scan,
     Source,
 )
-from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
+from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, RecipeRuleId, ScanId, SourceId
 from bookreviver.domain.values import BookPlaceKey, PageEditKey, PageStageKey
 
 if TYPE_CHECKING:
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import ProjectOverview
     from bookreviver.domain.enums import JobState, Side, Stage, VersionScale
     from bookreviver.domain.ids import AccountId
-    from bookreviver.domain.stage_summaries import StageTally
+    from bookreviver.domain.stage_summaries import StageTally, VariantTally
     from bookreviver.domain.values import PageSize, Slice, SliceRequest
 
 
@@ -539,6 +540,19 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
+    async def variant_tally(self, project_id: ProjectId) -> Sequence[VariantTally]:
+        """Count the pages each recipe processed, for every stage of a project, in one grouped query.
+
+        Only pages with an image are counted, so a placeholder never is, and a record whose recipe was deleted names no
+        recipe and is left out.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: One tally for each recipe that processed a page, in no particular order.
+        :rtype: Sequence[VariantTally]
+        """
+
+    @abstractmethod
     async def head_ids(self, project_id: ProjectId) -> Collection[PageVersionId]:
         """Return the identifiers of the versions that are the current version of a stage of a page of the project.
 
@@ -639,6 +653,22 @@ class RecipeRepository(Repository[Recipe, RecipeId]):
         :type project_id: ProjectId
         :returns: The active recipes, one for each stage that has been used.
         :rtype: Sequence[Recipe]
+        """
+
+
+class RecipeRuleRepository(Repository[RecipeRule, RecipeRuleId]):
+    """The rules that send pages to recipes of a stage; deleting a recipe or a project removes its rules."""
+
+    @abstractmethod
+    async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[RecipeRule]:
+        """Return the rules of one stage of a project in the order they are tried, ties by identifier.
+
+        :param project_id: Project owning the rules.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The rules of the stage, the first to try first.
+        :rtype: Sequence[RecipeRule]
         """
 
 
@@ -743,6 +773,7 @@ class UnitOfWork(ABC):
     :ivar page_stages: Page stage repository of this transaction.
     :ivar page_edits: Page edit repository of this transaction.
     :ivar recipes: Recipe repository of this transaction.
+    :ivar recipe_rules: Repository of the rules that send pages to recipes, of this transaction.
     :ivar jobs: Job repository of this transaction.
     :ivar book_places: Repository of the places accounts left books at, of this transaction.
     """
@@ -755,6 +786,7 @@ class UnitOfWork(ABC):
     page_stages: PageStageRepository
     page_edits: PageEditRepository
     recipes: RecipeRepository
+    recipe_rules: RecipeRuleRepository
     jobs: JobRepository
     book_places: BookPlaceRepository
 

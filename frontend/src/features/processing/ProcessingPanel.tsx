@@ -60,7 +60,13 @@ export function ProcessingPanel({
         ) : null}
         <RecipeSection processing={processing} rows={rows} />
         {current === undefined ? null : (
-          <ThisPageSection processing={processing} item={current} editor={editor} />
+          <ThisPageSection
+            processing={processing}
+            items={items}
+            item={current}
+            selected={selected}
+            editor={editor}
+          />
         )}
       </div>
     </StagePanel>

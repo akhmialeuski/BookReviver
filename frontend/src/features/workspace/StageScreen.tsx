@@ -21,6 +21,7 @@ import { StageBanners } from '@/features/processing/StageBanners';
 import { wideScanIds } from '@/features/processing/split';
 import { useEarlierRows } from '@/features/processing/useEarlierRows';
 import { useProcessing } from '@/features/processing/useProcessing';
+import { applyVariant, markOf, optionsOf } from '@/features/processing/variants';
 import { stageBefore } from '@/features/stages/stages';
 import { PageCanvas, type PageCanvasHandle } from '@/features/viewer/PageCanvas';
 import {
@@ -51,6 +52,7 @@ import {
   joinRows,
   needsCheck,
   type StripItem,
+  type VariantView,
 } from '@/features/workspace/strip';
 import { describeError } from '@/shared/http/problem';
 import { cn } from '@/shared/lib/utils';
@@ -129,7 +131,7 @@ export function StageScreen({
   );
   const counts = useMemo(() => countFilters(items), [items]);
   const filter = search.filter ?? PageFilter.All;
-  const filtered = useMemo(() => applyFilter(items, filter), [items, filter]);
+  const listed = useMemo(() => applyFilter(items, filter), [items, filter]);
   const mode = search.view ?? ViewMode.Page;
   const spread = mode === ViewMode.Spread;
   const grid = mode === ViewMode.Grid;
@@ -163,6 +165,29 @@ export function StageScreen({
       onSearchChange({ compare: CompareMode.Swipe });
     }
   });
+  // The variants of the stage mark its pages and narrow the list to one of them; the choice belongs to one stage
+  const [variantPick, setVariantPick] = useState<{ stage: Stage; id: string | null }>({
+    stage,
+    id: null,
+  });
+  const variantOptions = useMemo(
+    () => optionsOf(processing.recipes, items),
+    [processing.recipes, items],
+  );
+  const variantId =
+    variantPick.stage === stage && variantOptions.some((option) => option.id === variantPick.id)
+      ? variantPick.id
+      : null;
+  const variants: VariantView | undefined =
+    variantOptions.length === 0
+      ? undefined
+      : {
+          markOf: (item) => markOf(processing.recipes, item),
+          options: variantOptions,
+          selected: variantId,
+          onSelect: (id) => setVariantPick({ stage, id }),
+        };
+  const filtered = useMemo(() => applyVariant(listed, variantId), [listed, variantId]);
   const earlierRows = useEarlierRows(projectId, stage, processing.available);
   const beforeSource =
     currentItem === undefined
@@ -376,6 +401,7 @@ export function StageScreen({
                 onGrid={() => switchView(ViewMode.Grid)}
                 reasonOf={processed ? reasonOf : undefined}
                 withWide={stage === 'page-split'}
+                variants={variants}
               />
             )
           }
@@ -395,6 +421,7 @@ export function StageScreen({
                 onList={() => switchView(ViewMode.Page)}
                 reasonOf={processed ? reasonOf : undefined}
                 withWide={stage === 'page-split'}
+                variants={variants}
               />
             ) : processed ? (
               <div className="flex size-full flex-col">

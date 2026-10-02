@@ -63,6 +63,7 @@ export function pageOf(id: string, kind: PageSchema['kind'] = 'text'): PageSchem
     slot: 0,
     included: true,
     notes: '',
+    group_label: '',
     images: null,
     created_at: '2026-10-01T10:00:00Z',
     updated_at: '2026-10-01T10:00:00Z',

@@ -23,6 +23,7 @@ function page(id: string, position: number, extra: Partial<PageSchema> = {}): Pa
     slot: 0,
     included: true,
     notes: '',
+    group_label: '',
     images: null,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',

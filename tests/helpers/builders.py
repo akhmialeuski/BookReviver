@@ -5,6 +5,8 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from attrs import evolve
+
 from bookreviver.domain.entities import (
     BookPlace,
     Job,
@@ -14,6 +16,7 @@ from bookreviver.domain.entities import (
     PageVersion,
     Project,
     Recipe,
+    RecipeRule,
     Scan,
     Source,
 )
@@ -27,9 +30,11 @@ from bookreviver.domain.enums import (
     JobState,
     Orthography,
     PageFilter,
+    PageKind,
     PageOrigin,
     PlaceMode,
     RightsStatus,
+    RuleCondition,
     Script,
     SourceKind,
     Stage,
@@ -37,7 +42,17 @@ from bookreviver.domain.enums import (
     ViewMode,
 )
 from bookreviver.domain.geometry import Rotation
-from bookreviver.domain.ids import AccountId, JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
+from bookreviver.domain.ids import (
+    AccountId,
+    JobId,
+    PageId,
+    PageVersionId,
+    ProjectId,
+    RecipeId,
+    RecipeRuleId,
+    ScanId,
+    SourceId,
+)
 
 if TYPE_CHECKING:
     from bookreviver.domain.geometry import EditGeometry
@@ -135,8 +150,15 @@ def make_project(*, owner_id: AccountId, title: str = 'Book', minutes: int = 0) 
     )
 
 
-def make_page(*, project_id: ProjectId, order_key: str = 'a0', scan: Scan | None = None) -> Page:
-    """Build an included text page of the given project, cut from the whole of a scan or a placeholder without one.
+def make_page(
+    *,
+    project_id: ProjectId,
+    order_key: str = 'a0',
+    scan: Scan | None = None,
+    kind: PageKind = PageKind.TEXT,
+    group_label: str = '',
+) -> Page:
+    """Build an included page of the given project, cut from the whole of a scan or a placeholder without one.
 
     :param project_id: Project owning the page.
     :type project_id: ProjectId
@@ -144,6 +166,10 @@ def make_page(*, project_id: ProjectId, order_key: str = 'a0', scan: Scan | None
     :type order_key: str
     :param scan: Scan the page shows whole, or None for a placeholder.
     :type scan: Scan | None
+    :param kind: Role of the page in the book, a text page unless given.
+    :type kind: PageKind
+    :param group_label: Label of the group the user put the page in, or empty.
+    :type group_label: str
     :returns: A page with a fresh identifier, created and updated at the epoch.
     :rtype: Page
     """
@@ -151,8 +177,10 @@ def make_page(*, project_id: ProjectId, order_key: str = 'a0', scan: Scan | None
         id=PageId(uuid4()),
         project_id=project_id,
         order_key=order_key,
+        kind=kind,
         origin=PageOrigin.PLACEHOLDER if scan is None else PageOrigin.SCAN,
         scan_id=None if scan is None else scan.id,
+        group_label=group_label,
         created_at=EPOCH,
         updated_at=EPOCH,
     )
@@ -317,6 +345,52 @@ def make_page_stage(
         head_version_id=head_version_id,
         state=state,
         updated_at=EPOCH,
+    )
+
+
+def make_pinned_stage(*, page_id: PageId, recipe_id: RecipeId | None, stage: Stage = Stage.GEOMETRY) -> PageStage:
+    """Build the record of a stage of a page whose recipe the user pinned to it.
+
+    :param page_id: Page the record belongs to.
+    :type page_id: PageId
+    :param recipe_id: Recipe pinned to the page.
+    :type recipe_id: RecipeId | None
+    :param stage: The stage.
+    :type stage: Stage
+    :returns: A pinned record changed at the epoch.
+    :rtype: PageStage
+    """
+    return evolve(make_page_stage(page_id=page_id, stage=stage, recipe_id=recipe_id), pinned=True)
+
+
+def make_recipe_rule(
+    *,
+    recipe: Recipe,
+    condition: RuleCondition = RuleCondition.PLATES,
+    group_label: str = '',
+    order: int = 0,
+) -> RecipeRule:
+    """Build a rule that sends the pages meeting a condition to a recipe, of the stage and the project of the recipe.
+
+    :param recipe: Recipe the rule names, whose project and stage the rule takes.
+    :type recipe: Recipe
+    :param condition: What a page must be for the rule to match it.
+    :type condition: RuleCondition
+    :param group_label: The group a page must be in, for the condition on a manual group.
+    :type group_label: str
+    :param order: Place of the rule among the rules of the stage.
+    :type order: int
+    :returns: A rule with a fresh identifier.
+    :rtype: RecipeRule
+    """
+    return RecipeRule(
+        id=RecipeRuleId(uuid4()),
+        project_id=recipe.project_id,
+        stage=recipe.stage,
+        condition=condition,
+        group_label=group_label,
+        recipe_id=recipe.id,
+        order=order,
     )
 
 

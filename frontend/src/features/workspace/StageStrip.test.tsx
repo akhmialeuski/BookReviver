@@ -4,7 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { page, row } from '@/features/workspace/fixtures';
 import { PageFilter } from '@/features/workspace/params';
 import { StageStrip } from '@/features/workspace/StageStrip';
-import { countFilters, joinRows, type StripItem } from '@/features/workspace/strip';
+import {
+  countFilters,
+  joinRows,
+  type StripItem,
+  type VariantView,
+} from '@/features/workspace/strip';
 
 /**
  * The strip of a long book keeps only the rows in sight in the document.
@@ -43,6 +48,7 @@ describe('StageStrip', () => {
       filter?: PageFilter;
       reasonOf?: (item: StripItem) => string | null;
       withWide?: boolean;
+      variants?: VariantView;
     } = {},
   ): void {
     const pages = Array.from({ length }, (_, index) => page(`p-${index}`, { position: index }));
@@ -63,6 +69,7 @@ describe('StageStrip', () => {
           onGrid={vi.fn()}
           reasonOf={extra.reasonOf}
           withWide={extra.withWide}
+          variants={extra.variants}
         />,
       ),
     );
@@ -109,6 +116,78 @@ describe('StageStrip', () => {
     render(2, { filter: PageFilter.Check, reasonOf: () => null });
 
     expect(container.querySelector('[data-testid="strip-reason"]')).toBeNull();
+  });
+
+  describe('the variants of the stage', () => {
+    const PLATES_MARK = { name: 'Plates', tone: 'bg-variant-2', pinned: true };
+
+    function variantView(overrides: Partial<VariantView> = {}): VariantView {
+      return {
+        markOf: (item) => (item.page.id === 'p-0' ? PLATES_MARK : null),
+        options: [
+          { id: 'text', name: 'Text', pages: 1 },
+          { id: 'plates', name: 'Plates', pages: 1 },
+        ],
+        selected: null,
+        onSelect: vi.fn(),
+        ...overrides,
+      };
+    }
+
+    it('marks the page with its variant, and says in words that it is pinned', () => {
+      render(2, { variants: variantView() });
+
+      const marks = container.querySelectorAll('[data-testid="strip-variant"]');
+      expect(marks).toHaveLength(1);
+      expect(marks[0]?.getAttribute('data-variant')).toBe('Plates');
+      expect(marks[0]?.getAttribute('data-pinned')).toBe('true');
+      expect(container.querySelector('[data-testid="strip-page"]')?.textContent).toContain(
+        'Plates · pinned',
+      );
+    });
+
+    it('offers the variants to narrow the pages to, with the pages each made', () => {
+      render(2, { variants: variantView() });
+
+      const select = container.querySelector<HTMLSelectElement>(
+        '[data-testid="strip-variant-filter"]',
+      );
+      expect([...(select?.options ?? [])].map((option) => option.textContent)).toEqual([
+        'All variants',
+        'Text · 1',
+        'Plates · 1',
+      ]);
+    });
+
+    it('tells the screen which variant was chosen, and that all of them were', () => {
+      const onSelect = vi.fn();
+      render(2, { variants: variantView({ onSelect }) });
+      const select = container.querySelector<HTMLSelectElement>(
+        '[data-testid="strip-variant-filter"]',
+      );
+
+      act(() => {
+        if (select !== null) {
+          select.value = 'plates';
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+      act(() => {
+        if (select !== null) {
+          select.value = '';
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+
+      expect(onSelect.mock.calls).toEqual([['plates'], [null]]);
+    });
+
+    it('shows no mark and no choice for a stage with a single recipe', () => {
+      render(2);
+
+      expect(container.querySelector('[data-testid="strip-variant"]')).toBeNull();
+      expect(container.querySelector('[data-testid="strip-variant-filter"]')).toBeNull();
+    });
   });
 
   it('offers the Wide filter only when it is asked for', () => {

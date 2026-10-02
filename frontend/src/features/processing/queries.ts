@@ -17,20 +17,26 @@ import {
 import {
   activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostMutation,
   chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutMutation,
+  createRuleApiV1ProjectsProjectIdStagesStageRulesPostMutation,
   createVariantApiV1ProjectsProjectIdStagesStageVariantsPostMutation,
   deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteMutation,
+  deleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteMutation,
   getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey,
   listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetOptions,
   listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetQueryKey,
   listProcessorsApiV1ProcessorsGetOptions,
+  listRulesApiV1ProjectsProjectIdStagesStageRulesGetOptions,
+  listRulesApiV1ProjectsProjectIdStagesStageRulesGetQueryKey,
   listScansApiV1ProjectsProjectIdScansGetQueryKey,
   listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetOptions,
   listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey,
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey,
   previewStepApiV1ProjectsProjectIdStagesStagePreviewPostMutation,
   putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutMutation,
+  putRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutMutation,
   putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation,
   runStageApiV1ProjectsProjectIdStagesStageRunPostMutation,
+  unpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteMutation,
 } from '@/api/@tanstack/react-query.gen';
 import {
   invalidateJobs,
@@ -111,6 +117,54 @@ export function useVersions(
   return useQuery({
     ...versionsOptions(projectId, pageId ?? '', stage),
     enabled: pageId !== undefined,
+  });
+}
+
+/** Read the rules of a stage in the order they are tried, which send pages to its variants. */
+export function useRules(projectId: string, stage: Stage, enabled: boolean) {
+  return useQuery({
+    ...listRulesApiV1ProjectsProjectIdStagesStageRulesGetOptions({
+      path: { project_id: projectId, stage },
+      query: { size: LIST_SIZE },
+    }),
+    select: (page) => page.items,
+    enabled,
+  });
+}
+
+/** Read the rules of a stage again, after one was added, moved to another variant or removed. */
+function refreshRules(queryClient: QueryClient, projectId: string, stage: Stage): Promise<void> {
+  return queryClient.invalidateQueries({
+    queryKey: listRulesApiV1ProjectsProjectIdStagesStageRulesGetQueryKey({
+      path: { project_id: projectId, stage },
+    }),
+  });
+}
+
+/** Add a rule that sends the pages meeting a condition to a variant. */
+export function useCreateRule(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...createRuleApiV1ProjectsProjectIdStagesStageRulesPostMutation(),
+    onSettled: () => refreshRules(queryClient, projectId, stage),
+  });
+}
+
+/** Send the pages a rule matches to another variant. */
+export function useRetargetRule(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...putRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutMutation(),
+    onSettled: () => refreshRules(queryClient, projectId, stage),
+  });
+}
+
+/** Remove a rule, so the pages it matched fall to the rules after it or to the active recipe. */
+export function useDeleteRule(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...deleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteMutation(),
+    onSettled: () => refreshRules(queryClient, projectId, stage),
   });
 }
 
@@ -254,6 +308,15 @@ export function useDeleteEdit(projectId: string, stage: Stage) {
     ...deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteMutation(),
     onSettled: (_data, _error, variables) =>
       refreshEdits(queryClient, projectId, stage, variables.path.page_id),
+  });
+}
+
+/** Take the pinned variant off a page, so a run of the stage chooses its variant by the rules again. */
+export function useUnpin(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...unpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteMutation(),
+    onSettled: () => refreshStage(queryClient, projectId, stage),
   });
 }
 

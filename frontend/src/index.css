@@ -31,6 +31,13 @@
   --status-failed: oklch(0.577 0.245 27.325);
   --status-running: oklch(0.55 0.2 285);
   --status-idle: oklch(0.87 0 0);
+  /* The colour of a variant of a recipe, by the order the variants were made in, wherever a page shows its variant */
+  --variant-1: oklch(0.62 0.16 250);
+  --variant-2: oklch(0.6 0.18 330);
+  --variant-3: oklch(0.65 0.14 190);
+  --variant-4: oklch(0.6 0.17 35);
+  --variant-5: oklch(0.55 0.16 295);
+  --variant-6: oklch(0.58 0.12 120);
 }
 
 @theme inline {
@@ -57,6 +64,12 @@
   --color-status-failed: var(--status-failed);
   --color-status-running: var(--status-running);
   --color-status-idle: var(--status-idle);
+  --color-variant-1: var(--variant-1);
+  --color-variant-2: var(--variant-2);
+  --color-variant-3: var(--variant-3);
+  --color-variant-4: var(--variant-4);
+  --color-variant-5: var(--variant-5);
+  --color-variant-6: var(--variant-6);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

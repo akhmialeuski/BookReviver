@@ -14,13 +14,21 @@ import { row } from '@/features/workspace/fixtures';
  * Radix measures the thumb of a slider, which jsdom cannot, so the observer it asks for is given a stand-in.
  */
 
-const sdk = vi.hoisted(() => ({ save: vi.fn(), create: vi.fn(), activate: vi.fn() }));
+const sdk = vi.hoisted(() => ({
+  save: vi.fn(),
+  create: vi.fn(),
+  activate: vi.fn(),
+  rules: vi.fn(),
+  stages: vi.fn(),
+}));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
   putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPut: sdk.save,
   createVariantApiV1ProjectsProjectIdStagesStageVariantsPost: sdk.create,
   activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePost: sdk.activate,
+  listRulesApiV1ProjectsProjectIdStagesStageRulesGet: sdk.rules,
+  listStagesApiV1ProjectsProjectIdStagesGet: sdk.stages,
 }));
 
 class SizeObserverStandIn {
@@ -62,6 +70,52 @@ describe('RecipeSection', () => {
       fake.mockReset();
       fake.mockResolvedValue({ data: recipe('made') });
     }
+    sdk.rules.mockResolvedValue({
+      data: {
+        items: [
+          {
+            id: 'rule',
+            project_id: 'project',
+            stage: 'geometry',
+            condition: 'plates',
+            group_label: '',
+            recipe_id: 'r2',
+            order: 0,
+          },
+        ],
+        total: 1,
+        page: 1,
+        size: 100,
+        pages: 1,
+      },
+    });
+    sdk.stages.mockResolvedValue({
+      data: {
+        items: [
+          {
+            stage: 'geometry',
+            available: true,
+            manual: false,
+            pages: 426,
+            fresh: 426,
+            stale: 0,
+            failed: 0,
+            not_run: 0,
+            review: 0,
+            check: 0,
+            active_recipe_id: 'r1',
+            variants: [
+              { recipe_id: 'r1', pages: 412 },
+              { recipe_id: 'r2', pages: 14 },
+            ],
+          },
+        ],
+        total: 1,
+        page: 1,
+        size: 50,
+        pages: 1,
+      },
+    });
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -108,6 +162,33 @@ describe('RecipeSection', () => {
 
     expect(container.querySelector('form')?.textContent).toContain('Largest slant');
     expect(container.querySelector('form')?.textContent).toContain('Least confidence');
+  });
+
+  it('counts the pages of each variant in a line of the names, and shows what the variant is used for', async () => {
+    const plates = recipe('r2', { name: 'Plates', active: false });
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <RecipeSection
+            processing={processing({ recipe: plates, recipes: [SAVED, plates] })}
+            rows={[row('a', { recipe_id: 'r1' }), row('b', { recipe_id: 'r2' })]}
+          />
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(byId('variant-counts')?.textContent).toBe('Deskew 412 · Plates 14');
+    expect(byId('used-for')?.textContent).toContain('Plates and frontispieces');
+    expect(byId('used-for-pages')?.textContent).toBe('Made 1 page');
+  });
+
+  it('draws no line of counts for a stage with a single variant', () => {
+    render(processing());
+
+    expect(byId('variant-counts')).toBeNull();
   });
 
   it('has no bar to save while the draft is the saved recipe', () => {

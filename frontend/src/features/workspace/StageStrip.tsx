@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { PageTile } from '@/features/workspace/PageTile';
 import { PageFilter } from '@/features/workspace/params';
 import { StripToolbar } from '@/features/workspace/StripToolbar';
-import type { FilterCounts, StripItem } from '@/features/workspace/strip';
+import type { FilterCounts, StripItem, VariantView } from '@/features/workspace/strip';
 import { useAfterPick } from '@/features/workspace/stripSheet';
 import { useStripPlace } from '@/features/workspace/useStripPlace';
 import { MESSAGES } from '@/shared/messages';
@@ -30,6 +30,7 @@ export function StageStrip({
   onGrid,
   reasonOf,
   withWide = false,
+  variants,
 }: {
   /** The pages the filter lists, in book order. */
   items: readonly StripItem[];
@@ -45,6 +46,8 @@ export function StageStrip({
   reasonOf?: (item: StripItem) => string | null;
   /** Whether the filter of wide scans is offered, which only the Split stage has. */
   withWide?: boolean;
+  /** The variants of the stage: a mark on each page, and the choice of one to list. Absent for none to choose from. */
+  variants?: VariantView;
 }): React.JSX.Element {
   const scroller = useRef<HTMLDivElement>(null);
   const afterPick = useAfterPick();
@@ -76,6 +79,7 @@ export function StageStrip({
         filter={filter}
         grid={false}
         withWide={withWide}
+        variants={variants}
         onFilter={onFilter}
         onSwitchView={onGrid}
       />
@@ -104,6 +108,7 @@ export function StageStrip({
                     item={item}
                     highlighted={item.page.id === currentId}
                     caption={filter === PageFilter.Check ? (reasonOf?.(item) ?? null) : null}
+                    variant={variants?.markOf(item) ?? null}
                     onClick={() => {
                       onOpen(item.page.id);
                       afterPick();

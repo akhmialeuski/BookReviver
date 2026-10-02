@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Project, ProjectOverview
     from bookreviver.domain.ids import ProjectId, RecipeId
-    from bookreviver.domain.stage_summaries import StageTally
+    from bookreviver.domain.stage_summaries import StageTally, VariantTally
     from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
@@ -56,7 +56,10 @@ class StageSummaries:
         project_id = overview.project.id
         tallies = {tally.stage: tally for tally in await self._uow.page_stages.tally({project_id})}
         recipes = {recipe.stage: recipe.id for recipe in await self._uow.recipes.list_active(project_id)}
-        return self._summarize(overview, tallies, recipes)
+        variants: defaultdict[Stage, list[VariantTally]] = defaultdict(list)
+        for tally in await self._uow.page_stages.variant_tally(project_id):
+            variants[tally.stage].append(tally)
+        return self._summarize(overview, tallies, recipes, variants)
 
     async def rows(self, project: Project, stage: Stage, request: SliceRequest) -> Slice[StageRow]:
         """Give a window of the pages of a book, in book order, with where each stands in a stage.
@@ -90,6 +93,7 @@ class StageSummaries:
                     page_id=page.id,
                     status=PageStageStatus.of(record.state),
                     recipe_id=record.recipe_id,
+                    pinned=record.pinned,
                     head_version=head,
                 )
             )
@@ -117,14 +121,18 @@ class StageSummaries:
             evolve(
                 overview,
                 progress=BookProgress.of(
-                    self._summarize(overview, tallies[overview.project.id], {}), running[overview.project.id]
+                    self._summarize(overview, tallies[overview.project.id], {}, {}), running[overview.project.id]
                 ),
             )
             for overview in overviews
         ]
 
     def _summarize(
-        self, overview: ProjectOverview, tallies: Mapping[Stage, StageTally], recipes: Mapping[Stage, RecipeId]
+        self,
+        overview: ProjectOverview,
+        tallies: Mapping[Stage, StageTally],
+        recipes: Mapping[Stage, RecipeId],
+        variants: Mapping[Stage, Sequence[VariantTally]],
     ) -> list[StageSummary]:
         """Sum every stage of a book from the counts already read.
 
@@ -134,6 +142,9 @@ class StageSummaries:
         :type tallies: Mapping[Stage, StageTally]
         :param recipes: The active recipe of each stage that has one.
         :type recipes: Mapping[Stage, RecipeId]
+        :param variants: How many pages each recipe processed, for each stage that has any, or none for a list of
+                         books, which does not show them.
+        :type variants: Mapping[Stage, Sequence[VariantTally]]
         :returns: One summary for each stage, in the order of the pipeline.
         :rtype: list[StageSummary]
         """
@@ -145,6 +156,6 @@ class StageSummaries:
                 pages=overview.image_page_count,
                 tally=tallies.get(stage),
                 active_recipe_id=recipes.get(stage),
-            )
+            ).with_variants(variants.get(stage, ()))
             for stage in Stage
         ]

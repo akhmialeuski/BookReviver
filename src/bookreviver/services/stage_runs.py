@@ -357,7 +357,7 @@ class RecipeRun(StageWork):
         self._records = records
         self._splits = SpreadSplit(project=project, uow=uow, runtime=runtime, records=records)
 
-    async def run(self, page: Page, recipe: Recipe, *, confirmed: bool = False) -> RunOutcome:
+    async def run(self, page: Page, recipe: Recipe, *, confirmed: bool = False, pin: bool | None = None) -> RunOutcome:
         """Run the steps of the recipe on the page, and make the version of the last one current.
 
         The right half of a split spread is made by the run of its left half, so a run of the page split leaves it out.
@@ -368,6 +368,8 @@ class RecipeRun(StageWork):
         :type recipe: Recipe
         :param confirmed: Whether the user confirmed that undoing a split deletes the right half of a spread.
         :type confirmed: bool
+        :param pin: Whether the recipe is pinned to the page, or None to keep the pin the page has.
+        :type pin: bool | None
         :returns: Whether the page was processed, skipped for lack of an image, or failed.
         :rtype: RunOutcome
         """
@@ -381,16 +383,16 @@ class RecipeRun(StageWork):
                 return (
                     RunOutcome.DONE
                     if await self._splits.split(page, recipe, source, confirmed=confirmed)
-                    else await self._fail(page, recipe)
+                    else await self._fail(page, recipe, pin=pin)
                 )
             undoing = await self._splits.undoing(page, recipe, confirmed=confirmed)
             version = await self._run_steps(page, recipe, source)
         except DomainError:
             await self._uow.rollback()
-            return await self._fail(page, recipe)
+            return await self._fail(page, recipe, pin=pin)
         if version is None:
-            return await self._fail(page, recipe)
-        changed = await self._records.set_head(page.id, stage, head_version_id=version.id, recipe_id=recipe.id)
+            return await self._fail(page, recipe, pin=pin)
+        changed = await self._records.set_head(page.id, stage, head_version_id=version.id, recipe_id=recipe.id, pin=pin)
         if undoing is not None:
             await self._splits.unsplit(undoing)
         await self._uow.commit()
@@ -444,17 +446,19 @@ class RecipeRun(StageWork):
             return
         await self.run(page, recipe)
 
-    async def _fail(self, page: Page, recipe: Recipe) -> RunOutcome:
+    async def _fail(self, page: Page, recipe: Recipe, *, pin: bool | None) -> RunOutcome:
         """Record that the stage failed on the page.
 
         :param page: Page whose stage failed.
         :type page: Page
         :param recipe: Recipe that failed.
         :type recipe: Recipe
+        :param pin: Whether the recipe is pinned to the page, or None to keep the pin the page has.
+        :type pin: bool | None
         :returns: The outcome failed.
         :rtype: RunOutcome
         """
-        record = await self._records.mark_failed(page.id, recipe.stage, recipe_id=recipe.id)
+        record = await self._records.mark_failed(page.id, recipe.stage, recipe_id=recipe.id, pin=pin)
         await self._uow.commit()
         await self._records.announce(page.project_id, [record])
         return RunOutcome.FAILED

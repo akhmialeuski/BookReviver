@@ -1,10 +1,18 @@
 import { CopyPlusIcon, PlusIcon } from 'lucide-react';
 import type { StagePageSchema } from '@/api';
-import { useActivateRecipe, useCreateVariant, useSaveRecipe } from '@/features/processing/queries';
+import {
+  useActivateRecipe,
+  useCreateVariant,
+  useRules,
+  useSaveRecipe,
+} from '@/features/processing/queries';
 import { bodyOf, pagesToGoStale } from '@/features/processing/recipe';
 import { StepList } from '@/features/processing/StepList';
+import { UsedFor } from '@/features/processing/UsedFor';
 import type { Processing } from '@/features/processing/useProcessing';
+import { countsOf } from '@/features/processing/variants';
 import { roadmapOf } from '@/features/stages/roadmap';
+import { useStageSummaries } from '@/features/workspace/queries';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
 import { Badge } from '@/shared/ui/badge';
@@ -38,11 +46,18 @@ export function RecipeSection({
   const save = useSaveRecipe(projectId, stage);
   const create = useCreateVariant(projectId, stage);
   const activate = useActivateRecipe(projectId, stage);
+  const rules = useRules(projectId, stage, recipe !== undefined);
+  const summaries = useStageSummaries(projectId);
   if (recipe === undefined) {
     return null;
   }
 
   const processedBy = (id: string): number => rows.filter((row) => row.recipe_id === id).length;
+  const counts = countsOf(
+    summaries.data?.find((entry) => entry.stage === stage),
+    processing.recipes,
+    labels.recipe.countOf,
+  );
   const installed = new Set(catalogue.map((processor) => processor.key));
   const coming = roadmapOf(stage, installed);
   const error = save.error ?? create.error ?? activate.error;
@@ -59,6 +74,15 @@ export function RecipeSection({
           </Badge>
         ) : null}
       </div>
+      {counts.length < 2 ? null : (
+        <p
+          className="text-xs text-muted-foreground"
+          title={labels.recipe.counts}
+          data-testid="variant-counts"
+        >
+          {counts.join(' · ')}
+        </p>
+      )}
       <select
         aria-label={labels.recipe.choose}
         data-testid="recipe-select"
@@ -109,6 +133,14 @@ export function RecipeSection({
           </Button>
         )}
       </div>
+
+      <UsedFor
+        projectId={projectId}
+        recipe={recipe}
+        recipes={processing.recipes}
+        rules={rules.data ?? []}
+        pages={processedBy(recipe.id)}
+      />
 
       <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         {labels.steps.title}

@@ -1,7 +1,12 @@
-import { CircleXIcon, EyeOffIcon, TriangleAlertIcon } from 'lucide-react';
+import { CircleXIcon, EyeOffIcon, PinIcon, TriangleAlertIcon } from 'lucide-react';
 import { PageThumbnail } from '@/features/pages/PageThumbnail';
 import { PAGE_STATUS_TONE } from '@/features/stages/stages';
-import { isLeftOut, type StripItem, thumbnailOf } from '@/features/workspace/strip';
+import {
+  isLeftOut,
+  type StripItem,
+  thumbnailOf,
+  type VariantMark,
+} from '@/features/workspace/strip';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 
@@ -18,6 +23,7 @@ export function PageTile({
   item,
   highlighted,
   caption = null,
+  variant = null,
   onClick,
   onDoubleClick,
 }: {
@@ -26,6 +32,8 @@ export function PageTile({
   highlighted: boolean;
   /** Why the page asks for a look, written under its label, or null for no line. */
   caption?: string | null;
+  /** The variant of the recipe the page was processed by, marked in the corner of the picture, or null for no mark. */
+  variant?: VariantMark | null;
   onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
   onDoubleClick?: () => void;
 }): React.JSX.Element {
@@ -50,6 +58,19 @@ export function PageTile({
     >
       <span className="relative block">
         <PageThumbnail page={page} src={thumbnailOf(item)} alt="" />
+        {variant === null ? null : (
+          <span
+            className="absolute top-1 left-1 flex max-w-[70%] items-center gap-1 rounded-full bg-background/90 px-1.5 py-0.5 text-[10px] leading-none shadow-xs"
+            data-testid="strip-variant"
+            data-variant={variant.name}
+            data-pinned={variant.pinned}
+            title={MESSAGES.workspace.strip.variant.mark(variant.name, variant.pinned)}
+          >
+            <span className={cn('size-2 shrink-0 rounded-full', variant.tone)} aria-hidden="true" />
+            <span className="truncate">{variant.name}</span>
+            {variant.pinned ? <PinIcon className="size-2.5 shrink-0" aria-hidden="true" /> : null}
+          </span>
+        )}
         {row?.status === 'failed' ? (
           <CircleXIcon
             className="absolute top-1 right-1 size-4 rounded-full bg-background text-status-failed"
@@ -80,6 +101,11 @@ export function PageTile({
         {isLeftOut(item) ? (
           <span className="sr-only">{MESSAGES.workspace.strip.leftOut}</span>
         ) : null}
+        {variant === null ? null : (
+          <span className="sr-only">
+            {MESSAGES.workspace.strip.variant.mark(variant.name, variant.pinned)}
+          </span>
+        )}
       </span>
       {caption === null ? null : (
         <span

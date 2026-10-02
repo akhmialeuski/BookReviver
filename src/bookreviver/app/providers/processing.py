@@ -24,6 +24,7 @@ from bookreviver.services.edits import EditService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
+from bookreviver.services.recipe_rules import RecipeRules
 from bookreviver.services.recipes import DefaultRecipes
 from bookreviver.services.stage_runs import StageRuntime
 from bookreviver.services.steps import StepRunner
@@ -143,6 +144,19 @@ class ProcessingProvider(Provider):
         :rtype: ProcessingService
         """
         return ProcessingService(uow=uow, catalogue=catalogue, parts=parts)
+
+    @provide(scope=Scope.REQUEST)
+    def recipe_rules(self, uow: UnitOfWork, parts: ProcessingParts) -> RecipeRules:
+        """Build the service of the rules of the stages of a request.
+
+        :param uow: Unit of work of the current request.
+        :type uow: UnitOfWork
+        :param parts: The parts the processing use cases share, of which the recipes are used.
+        :type parts: ProcessingParts
+        :returns: The rules service.
+        :rtype: RecipeRules
+        """
+        return RecipeRules(uow=uow, recipes=parts.recipes)
 
     @provide(scope=Scope.APP)
     def stage_runtime(

@@ -173,6 +173,7 @@ class PageStageChangedSchema(ResponseModel):
     :ivar recipe_id: Recipe the page was processed by, or None.
     :ivar head_version_id: The current version of the stage, or None.
     :ivar state: Whether the current version matches the inputs of the stage.
+    :ivar pinned: Whether the recipe is pinned to the page.
     """
 
     project_id: ProjectId
@@ -181,3 +182,4 @@ class PageStageChangedSchema(ResponseModel):
     recipe_id: RecipeId | None
     head_version_id: PageVersionId | None
     state: StageState
+    pinned: bool

@@ -3403,6 +3403,106 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/pages/{page_id}/stages/{stage}/pin": {
+      "delete": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Unpin Stage",
+        "description": "Take the recipe pinned to a stage of a page off it, so a run without a recipe chooses by the rules again.\n\nThe current version stays and the stage is marked stale, since the rules may choose another recipe. The answer is\n409 while the project is processing something, and 404 for a stage that has not run on the page.",
+        "operationId": "unpin_stage_api_v1_projects__project_id__pages__page_id__stages__stage__pin_delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageStageSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project_id}/pages/{page_id}/versions": {
       "get": {
         "tags": [
@@ -3784,6 +3884,414 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/stages/{stage}/rules": {
+      "get": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "List Rules",
+        "description": "List the rules of a stage in the order they are tried, which is the order they were added in.",
+        "operationId": "list_rules_api_v1_projects__project_id__stages__stage__rules_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_RecipeRuleSchema_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Create Rule",
+        "description": "Add a rule after the others of the stage.\n\nA stage has one rule for each condition, and one for each label of a manual group, so a second rule for the same\ncondition answers 409. A recipe that is not a recipe of the stage answers 404.",
+        "operationId": "create_rule_api_v1_projects__project_id__stages__stage__rules_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecipeRuleBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeRuleSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/stages/{stage}/rules/{rule_id}": {
+      "put": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Put Rule",
+        "description": "Send the pages a rule matches to another recipe of the stage, keeping the place of the rule.",
+        "operationId": "put_rule_api_v1_projects__project_id__stages__stage__rules__rule_id__put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          },
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the rule",
+              "title": "Rule Id"
+            },
+            "description": "Identifier of the rule"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecipeRuleTarget"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeRuleSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "rules"
+        ],
+        "summary": "Delete Rule",
+        "description": "Remove a rule, so the pages it matched fall to the rules after it, or to the active recipe.",
+        "operationId": "delete_rule_api_v1_projects__project_id__stages__stage__rules__rule_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          },
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the rule",
+              "title": "Rule Id"
+            },
+            "description": "Identifier of the rule"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -7469,6 +7977,10 @@
             "type": "string",
             "title": "Notes"
           },
+          "group_label": {
+            "type": "string",
+            "title": "Group Label"
+          },
           "images": {
             "anyOf": [
               {
@@ -7502,12 +8014,13 @@
           "slot",
           "included",
           "notes",
+          "group_label",
           "images",
           "created_at",
           "updated_at"
         ],
         "title": "PageSchema",
-        "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except\n                in a manifest listing only the included pages, which numbers those.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar kind: Role of the page in the book.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar images: Paths of the images of the page's current version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
+        "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except\n                in a manifest listing only the included pages, which numbers those.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar kind: Role of the page in the book.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar group_label: Label of the group the user put the page in, or empty for no group.\n:ivar images: Paths of the images of the page's current version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
       },
       "PageStageSchema": {
         "properties": {
@@ -7545,6 +8058,10 @@
           "state": {
             "$ref": "#/components/schemas/StageState"
           },
+          "pinned": {
+            "type": "boolean",
+            "title": "Pinned"
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time",
@@ -7558,10 +8075,11 @@
           "recipe_id",
           "head_version_id",
           "state",
+          "pinned",
           "updated_at"
         ],
         "title": "PageStageSchema",
-        "description": "The current version of a stage of a page and whether it is up to date; the data of a stage event too.\n\n:ivar page_id: Page the record belongs to.\n:ivar stage: The stage.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar head_version_id: The current version of the stage, or None.\n:ivar state: Whether the current version matches the inputs of the stage.\n:ivar updated_at: When the record last changed."
+        "description": "The current version of a stage of a page and whether it is up to date; the data of a stage event too.\n\n:ivar page_id: Page the record belongs to.\n:ivar stage: The stage.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar head_version_id: The current version of the stage, or None.\n:ivar state: Whether the current version matches the inputs of the stage.\n:ivar pinned: Whether the recipe is pinned to the page, so a run without a recipe keeps it.\n:ivar updated_at: When the record last changed."
       },
       "PageStageStatus": {
         "type": "string",
@@ -7607,12 +8125,24 @@
               }
             ],
             "title": "Notes"
+          },
+          "group_label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Label"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "PageUpdate",
-        "description": "A JSON Merge Patch of a page: an omitted field is kept, and a null label or note is cleared.\n\nThe kind and the inclusion of a page have no empty value, so they may be omitted but not null.\n\n:ivar label: New printed number, or None to clear it.\n:ivar kind: New role of the page in the book.\n:ivar included: New decision whether the page is part of the book.\n:ivar notes: New notes, or None to clear them."
+        "description": "A JSON Merge Patch of a page: an omitted field is kept, and a null label or note is cleared.\n\nThe kind and the inclusion of a page have no empty value, so they may be omitted but not null.\n\n:ivar label: New printed number, or None to clear it.\n:ivar kind: New role of the page in the book.\n:ivar included: New decision whether the page is part of the book.\n:ivar notes: New notes, or None to clear them.\n:ivar group_label: New label of the group of the page, or None to take the page out of its group."
       },
       "PageVersionSchema": {
         "properties": {
@@ -7972,6 +8502,46 @@
           "pages"
         ],
         "title": "Page[ProjectSchema]"
+      },
+      "Page_RecipeRuleSchema_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecipeRuleSchema"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[RecipeRuleSchema]"
       },
       "Page_RecipeSchema_": {
         "properties": {
@@ -8998,6 +9568,93 @@
         "title": "RecipeBody",
         "description": "The name and the steps of a recipe, for the active recipe and for a variant alike.\n\n:ivar name: Name of the recipe.\n:ivar steps: Its steps in the order they run, each checked against its processor."
       },
+      "RecipeRuleBody": {
+        "properties": {
+          "condition": {
+            "$ref": "#/components/schemas/RuleCondition"
+          },
+          "group_label": {
+            "type": "string",
+            "maxLength": 50,
+            "title": "Group Label",
+            "default": ""
+          },
+          "recipe_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Recipe Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "condition",
+          "recipe_id"
+        ],
+        "title": "RecipeRuleBody",
+        "description": "A rule to add after the others of the stage; the stage is in the address.\n\n:ivar condition: What a page must be for the rule to match it.\n:ivar group_label: The group a page must be in, given for the condition on a manual group and for no other.\n:ivar recipe_id: Recipe of the stage that processes the pages the rule matches."
+      },
+      "RecipeRuleSchema": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "condition": {
+            "$ref": "#/components/schemas/RuleCondition"
+          },
+          "group_label": {
+            "type": "string",
+            "title": "Group Label"
+          },
+          "recipe_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Recipe Id"
+          },
+          "order": {
+            "type": "integer",
+            "title": "Order"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "stage",
+          "condition",
+          "group_label",
+          "recipe_id",
+          "order"
+        ],
+        "title": "RecipeRuleSchema",
+        "description": "A rule of a stage.\n\n:ivar id: Identifier of the rule.\n:ivar project_id: Project owning the rule.\n:ivar stage: Stage whose pages the rule sends to a recipe.\n:ivar condition: What a page must be for the rule to match it.\n:ivar group_label: The group a page must be in, for the condition on a manual group, and empty for any other.\n:ivar recipe_id: Recipe of the stage that processes the pages the rule matches.\n:ivar order: Place of the rule among the rules of the stage from zero, the lowest being tried first."
+      },
+      "RecipeRuleTarget": {
+        "properties": {
+          "recipe_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Recipe Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "recipe_id"
+        ],
+        "title": "RecipeRuleTarget",
+        "description": "The recipe a rule sends its pages to from now on.\n\n:ivar recipe_id: Recipe of the stage that processes the pages the rule matches."
+      },
       "RecipeSchema": {
         "properties": {
           "id": {
@@ -9108,6 +9765,20 @@
         ],
         "title": "RightsStatus",
         "description": "Whether the result of the work on a book may be published."
+      },
+      "RuleCondition": {
+        "type": "string",
+        "enum": [
+          "plates",
+          "covers",
+          "blanks",
+          "illustrated",
+          "odd",
+          "even",
+          "group"
+        ],
+        "title": "RuleCondition",
+        "description": "What a rule of a stage asks of a page, to give the page the variant of the rule.\n\nThe set is closed: a rule never carries a free-form test. ``GROUP`` is the one condition with an argument, the\nlabel of the group that the user wrote on the pages. ``ILLUSTRATED`` is declared so that rules and clients can name\nit, but it matches no page yet: the Layout stage, which finds the illustrations of a page, does not exist, and a\nrule on it takes effect the day that stage records them."
       },
       "ScanAttach": {
         "properties": {
@@ -9468,6 +10139,10 @@
             ],
             "title": "Recipe Id"
           },
+          "pinned": {
+            "type": "boolean",
+            "title": "Pinned"
+          },
           "version": {
             "anyOf": [
               {
@@ -9485,10 +10160,11 @@
           "status",
           "review",
           "recipe_id",
+          "pinned",
           "version"
         ],
         "title": "StagePageSchema",
-        "description": "One page of a book in one stage: where it stands there and the version that is its result.\n\n:ivar page_id: The page.\n:ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.\n:ivar review: Why the result asks for a second look, or None.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar version: The current version of the stage on the page with its data and images, or None."
+        "description": "One page of a book in one stage: where it stands there and the version that is its result.\n\n:ivar page_id: The page.\n:ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.\n:ivar review: Why the result asks for a second look, or None.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar pinned: Whether the recipe is pinned to the page.\n:ivar version: The current version of the stage on the page with its data and images, or None."
       },
       "StageProgressSchema": {
         "properties": {
@@ -9542,12 +10218,17 @@
             "type": "boolean",
             "title": "Confirm Unsplit",
             "default": false
+          },
+          "pin": {
+            "type": "boolean",
+            "title": "Pin",
+            "default": false
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "StageRunBody",
-        "description": "What a run of a stage is asked to do; the stage is in the address.\n\n:ivar recipe_id: Recipe to run it by, or omitted for the active recipe.\n:ivar page_ids: Pages to run it on, or omitted for every page with an image.\n:ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a\n                       run that would do so leaves that page failed."
+        "description": "What a run of a stage is asked to do; the stage is in the address.\n\n:ivar recipe_id: Recipe to run it by, or omitted for the active recipe.\n:ivar page_ids: Pages to run it on, or omitted for every page with an image.\n:ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a\n                       run that would do so leaves that page failed.\n:ivar pin: Whether to pin the recipe to the pages of the run, so a later run without a recipe keeps it there. It is\n           given with a recipe, since a run that chooses the recipes pins nothing."
       },
       "StageState": {
         "type": "string",
@@ -9623,6 +10304,13 @@
               }
             ],
             "title": "Active Recipe Id"
+          },
+          "variants": {
+            "items": {
+              "$ref": "#/components/schemas/VariantPagesSchema"
+            },
+            "type": "array",
+            "title": "Variants"
           }
         },
         "type": "object",
@@ -9637,10 +10325,11 @@
           "not_run",
           "review",
           "check",
-          "active_recipe_id"
+          "active_recipe_id",
+          "variants"
         ],
         "title": "StageSummarySchema",
-        "description": "One stage of a book summed over its pages.\n\n:ivar stage: The stage.\n:ivar available: Whether the stage can be worked in: a stage done by hand always can, and any other when a\n                 processor of the stage is installed.\n:ivar manual: Whether the user does the stage by hand, so it has no counts.\n:ivar pages: Number of pages of the book with an image, which a run of the stage goes over.\n:ivar fresh: Pages whose result of the stage is up to date.\n:ivar stale: Pages whose result is out of date.\n:ivar failed: Pages the stage failed on.\n:ivar not_run: Pages the stage has not run on.\n:ivar review: Pages, not failed, whose result asks for a second look.\n:ivar check: Pages the strip lists under Check: stale, failed or marked, each counted once.\n:ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used."
+        "description": "One stage of a book summed over its pages.\n\n:ivar stage: The stage.\n:ivar available: Whether the stage can be worked in: a stage done by hand always can, and any other when a\n                 processor of the stage is installed.\n:ivar manual: Whether the user does the stage by hand, so it has no counts.\n:ivar pages: Number of pages of the book with an image, which a run of the stage goes over.\n:ivar fresh: Pages whose result of the stage is up to date.\n:ivar stale: Pages whose result is out of date.\n:ivar failed: Pages the stage failed on.\n:ivar not_run: Pages the stage has not run on.\n:ivar review: Pages, not failed, whose result asks for a second look.\n:ivar check: Pages the strip lists under Check: stale, failed or marked, each counted once.\n:ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used.\n:ivar variants: How many pages each recipe of the stage processed, the recipe with the most pages first."
       },
       "StepBody": {
         "properties": {
@@ -9840,6 +10529,26 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VariantPagesSchema": {
+        "properties": {
+          "recipe_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Recipe Id"
+          },
+          "pages": {
+            "type": "integer",
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "recipe_id",
+          "pages"
+        ],
+        "title": "VariantPagesSchema",
+        "description": "How many pages of a stage one recipe processed.\n\n:ivar recipe_id: The recipe.\n:ivar pages: Pages with an image whose result of the stage the recipe made."
       },
       "VersionOutput": {
         "type": "string",

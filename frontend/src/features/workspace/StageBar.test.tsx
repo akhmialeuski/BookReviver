@@ -41,6 +41,7 @@ const IMPORT_SUMMARY: StageSummarySchema = {
   review: 0,
   check: 0,
   active_recipe_id: null,
+  variants: [],
 };
 
 describe('StageBar, the Import stage', () => {
