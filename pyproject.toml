@@ -61,7 +61,9 @@ bookreviver-openapi = "bookreviver.app.openapi:main"
 "pages.blank" = "bookreviver.plugins.blank:BlankPage"
 "split.spread" = "bookreviver.plugins.split_spread:SplitSpread"
 "split.auto" = "bookreviver.plugins.split_auto:SplitAuto"
+"geometry.perspective" = "bookreviver.plugins.perspective:Perspective"
 "geometry.deskew" = "bookreviver.plugins.deskew:Deskew"
+"geometry.crop" = "bookreviver.plugins.crop:Crop"
 
 [project.optional-dependencies]
 cv = [

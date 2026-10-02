@@ -4,7 +4,9 @@ import {
   describeParams,
   historyOf,
   parameterLabel,
+  readChainResult,
   readResult,
+  sourceSize,
 } from '@/features/processing/results';
 
 describe('readResult', () => {
@@ -55,7 +57,62 @@ describe('readResult', () => {
       overlapPx: null,
       pages: null,
       slantDeg: null,
+      quad: null,
+      frame: null,
+      sourceWidthPx: null,
+      sourceHeightPx: null,
     });
+  });
+
+  it('reads the sheet and the frame a step found, and the size of the image it read', () => {
+    const result = readResult({
+      data: {
+        quad: {
+          top_left: { x: 1, y: 2 },
+          top_right: { x: 101, y: 3 },
+          bottom_right: { x: 99, y: 203 },
+          bottom_left: { x: 0, y: 200 },
+        },
+        frame: { left: 10, top: 20, width: 80, height: 160 },
+        source_width_px: 120,
+        source_height_px: 240,
+      },
+    });
+
+    expect(result.quad?.topRight).toEqual({ x: 101, y: 3 });
+    expect(result.frame).toEqual({ left: 10, top: 20, width: 80, height: 160 });
+    expect(sourceSize(result)).toEqual({ width: 120, height: 240 });
+  });
+
+  it('gives no size for a step that did not report one', () => {
+    expect(sourceSize(readResult({ data: {} }))).toBeNull();
+    expect(sourceSize(null)).toBeNull();
+  });
+});
+
+describe('readChainResult', () => {
+  it('takes what a step does not report from the nearest step before it that does', () => {
+    const result = readChainResult([
+      { data: { angle: 0.4, confidence: 0.9, skipped: false } },
+      { data: { confidence: 0.7, skipped: true, frame: { left: 1, top: 2, width: 3, height: 4 } } },
+    ]);
+
+    expect(result?.angle).toBe(0.4);
+    expect(result?.confidence).toBe(0.7);
+    expect(result?.frame).toEqual({ left: 1, top: 2, width: 3, height: 4 });
+  });
+
+  it('leaves the page as it was only when every step left it', () => {
+    expect(
+      readChainResult([{ data: { skipped: true } }, { data: { skipped: true } }])?.skipped,
+    ).toBe(true);
+    expect(
+      readChainResult([{ data: { skipped: false } }, { data: { skipped: true } }])?.skipped,
+    ).toBe(false);
+  });
+
+  it('gives nothing for no versions', () => {
+    expect(readChainResult([])).toBeNull();
   });
 });
 
@@ -82,6 +139,17 @@ describe('historyOf', () => {
     );
 
     expect(entries.map((entry) => entry.version.id)).toEqual(['new']);
+  });
+
+  it('lists only the last step of a recipe, since the versions of the steps before it are not results', () => {
+    const first = version('first', { created_at: '2026-10-01T10:00:00Z' });
+    const last = version('last', { created_at: '2026-10-01T10:01:00Z', input_id: 'first' });
+    const redone = version('redone', { created_at: '2026-10-01T12:00:00Z', input_id: 'first' });
+
+    const entries = historyOf([first, last, redone], 'redone');
+
+    expect(entries.map((entry) => entry.version.id)).toEqual(['redone', 'last']);
+    expect(entries.map((entry) => entry.current)).toEqual([true, false]);
   });
 
   it('is empty for a page with no results', () => {

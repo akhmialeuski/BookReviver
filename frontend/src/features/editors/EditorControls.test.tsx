@@ -12,6 +12,8 @@ function session(overrides: Partial<EditorSession> = {}): EditorSession {
     picture: { kind: SourceKind.Iiif, url: '/info.json' },
     alwaysOn: false,
     active: false,
+    steps: [],
+    choose: vi.fn(),
     hasEdit: false,
     busy: false,
     error: null,
@@ -92,6 +94,46 @@ describe('EditorControls', () => {
     expect(button('Auto')?.disabled).toBe(false);
     act(() => button('Auto')?.click());
     expect(ready.auto).toHaveBeenCalledTimes(1);
+  });
+
+  it('lists the steps of a stage that have an editor and shows the one that is chosen', () => {
+    const picking = session({
+      steps: [
+        { key: 'a', title: 'Sheet corners', manual: true, detail: null, chosen: false },
+        { key: 'b', title: 'Angle', manual: false, detail: '0.3°', chosen: true },
+        { key: 'c', title: 'Content frame', manual: false, detail: null, chosen: false },
+      ],
+    });
+    render(picking);
+
+    const items = [...container.querySelectorAll('[data-testid="editor-step"]')];
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Sheet cornersby hand',
+      'Angle0.3° · auto',
+      'Content frameauto',
+    ]);
+    expect(items.map((item) => item.getAttribute('data-manual'))).toEqual([
+      'true',
+      'false',
+      'false',
+    ]);
+    expect(items.map((item) => item.getAttribute('aria-pressed'))).toEqual([
+      'false',
+      'true',
+      'false',
+    ]);
+    act(() => button('Content frame')?.click());
+    expect(picking.choose).toHaveBeenCalledWith('c');
+  });
+
+  it('draws no list for a stage with one editor', () => {
+    render(
+      session({
+        steps: [{ key: 'a', title: 'Split line', manual: false, detail: null, chosen: true }],
+      }),
+    );
+
+    expect(container.querySelector('[data-testid="editor-steps"]')).toBeNull();
   });
 
   it('says why a change could not be saved', () => {

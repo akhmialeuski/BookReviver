@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  dashed,
   readLine,
+  readQuad,
+  readRect,
   readRotation,
   readSplit,
   writeLine,
+  writeQuad,
+  writeRect,
   writeRotation,
   writeSplit,
 } from '@/features/editors/shapes';
@@ -83,3 +88,70 @@ describe('readSplit', () => {
     expect(writeSplit({ pages: 2, line: null })).toEqual({ pages: 2, line: null });
   });
 });
+
+describe('readQuad', () => {
+  const stored = {
+    top_left: { x: 1, y: 2 },
+    top_right: { x: 101, y: 3 },
+    bottom_right: { x: 99, y: 203 },
+    bottom_left: { x: 0, y: 200 },
+  };
+
+  it('reads the four corners of a stored quadrilateral', () => {
+    expect(readQuad(stored)).toEqual({
+      topLeft: { x: 1, y: 2 },
+      topRight: { x: 101, y: 3 },
+      bottomRight: { x: 99, y: 203 },
+      bottomLeft: { x: 0, y: 200 },
+    });
+  });
+
+  it.each([
+    ['no geometry', null],
+    ['a frame', { left: 1, top: 2, width: 3, height: 4 }],
+    ['a corner that is missing', { ...stored, bottom_left: undefined }],
+  ])('refuses %s', (_name, geometry) => {
+    expect(readQuad(geometry)).toBeNull();
+  });
+
+  it('is undone by writeQuad, which writes the names the server reads', () => {
+    expect(writeQuad(readQuad(stored) ?? emptyQuad())).toEqual(stored);
+  });
+});
+
+describe('readRect', () => {
+  it('reads a stored frame', () => {
+    expect(readRect({ left: 10, top: 20, width: 30, height: 40 })).toEqual({
+      left: 10,
+      top: 20,
+      width: 30,
+      height: 40,
+    });
+  });
+
+  it.each([
+    ['no geometry', null],
+    ['a rotation', { degrees: 1 }],
+    ['a frame with no area', { left: 10, top: 20, width: 0, height: 40 }],
+  ])('refuses %s', (_name, geometry) => {
+    expect(readRect(geometry)).toBeNull();
+  });
+
+  it('is undone by writeRect', () => {
+    const frame = { left: 1, top: 2, width: 3, height: 4 };
+
+    expect(readRect(writeRect(frame))).toEqual(frame);
+  });
+});
+
+describe('dashed', () => {
+  it('writes the name of a part in the words of an attribute', () => {
+    expect(dashed('topLeft')).toBe('top-left');
+    expect(dashed('right')).toBe('right');
+  });
+});
+
+function emptyQuad() {
+  const origin = { x: 0, y: 0 };
+  return { topLeft: origin, topRight: origin, bottomRight: origin, bottomLeft: origin };
+}

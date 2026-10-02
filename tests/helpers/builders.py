@@ -40,6 +40,7 @@ from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import AccountId, JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
 
 if TYPE_CHECKING:
+    from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.values import MetadataMap
 from bookreviver.domain.values import (
     BookDetails,
@@ -362,11 +363,31 @@ def make_page_edit(*, page_id: PageId, stage: Stage = Stage.GEOMETRY, degrees: f
     :returns: An edit saved at the epoch.
     :rtype: PageEdit
     """
-    geometry = Rotation(degrees=degrees)
+    return make_geometry_edit(
+        page_id=page_id, processor_key=DESKEW.key, geometry=Rotation(degrees=degrees), stage=stage
+    )
+
+
+def make_geometry_edit(
+    *, page_id: PageId, processor_key: str, geometry: EditGeometry, stage: Stage = Stage.GEOMETRY
+) -> PageEdit:
+    """Build the manual edit of a page that a geometry processor reads.
+
+    :param page_id: Page the edit belongs to.
+    :type page_id: PageId
+    :param processor_key: Key of the processor the edit is for.
+    :type processor_key: str
+    :param geometry: Shape the user drew.
+    :type geometry: EditGeometry
+    :param stage: Stage of the processor.
+    :type stage: Stage
+    :returns: An edit saved at the epoch.
+    :rtype: PageEdit
+    """
     return PageEdit(
         page_id=page_id,
         stage=stage,
-        processor_key=DESKEW.key,
+        processor_key=processor_key,
         kind=geometry.editor,
         geometry=geometry,
         edit_hash=PageEdit.hash_of(geometry, None),

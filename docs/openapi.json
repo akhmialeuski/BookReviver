@@ -9093,7 +9093,8 @@
           "low-confidence",
           "not-applied",
           "unsure-gutter",
-          "narrow-gutter"
+          "narrow-gutter",
+          "cut-by-edge"
         ],
         "title": "ReviewReason",
         "description": "Why a processed page is marked for a second look, though its step finished without an error."

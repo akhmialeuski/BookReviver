@@ -27,6 +27,10 @@ describe('cutLine', () => {
     overlapPx: null,
     pages: null,
     slantDeg: null,
+    quad: null,
+    frame: null,
+    sourceWidthPx: null,
+    sourceHeightPx: null,
   };
 
   it('follows the slanted cut a step reported by its two ends', () => {

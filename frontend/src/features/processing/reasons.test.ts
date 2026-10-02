@@ -54,6 +54,12 @@ describe('reasonOf', () => {
     );
   });
 
+  it('says the text may be cut by the edge of the scan', () => {
+    expect(reasonOf(item({ review: 'cut-by-edge' }))).toBe(
+      'Text may be cut by the edge of the scan',
+    );
+  });
+
   it('puts a failure before a mark of review, since a failed page has no result to doubt', () => {
     expect(reasonOf(item({ status: 'failed', review: 'low-confidence' }))).toBe('Failed');
   });

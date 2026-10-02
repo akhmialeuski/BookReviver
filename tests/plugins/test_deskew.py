@@ -7,6 +7,7 @@ import time
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+import numpy as np
 import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image
@@ -39,6 +40,10 @@ ANGLE_TOLERANCE: float = 0.2
 EDIT_DEGREES: float = 2.5
 PREVIEW_WIDTH_PX: int = 1_400
 PREVIEW_HEIGHT_PX: int = 2_048
+# The grain of a cover or a blank leaf: its seed, mean tone and spread
+GRAIN_SEED: int = 4
+GRAIN_TONE: int = 90
+GRAIN_SPREAD: float = 9.0
 # What a preview of the step may take, which is the budget of the visible page
 PREVIEW_BUDGET_SECONDS: float = 1.0
 
@@ -122,6 +127,24 @@ class TestDeskew:
         expect(output.image == image)
         expect(output.transform.kind is TransformKind.IDENTITY)
         expect((output.data[VersionData.ANGLE], output.data[VersionData.SKIPPED]) == (0.0, True))
+        expect(output.review is ReviewReason.NOT_APPLIED)
+        assert_expectations()
+
+    def test_grain_with_no_ink_in_it_is_left_as_it_is(self, fx_deskew: Processor, tmp_path: Path) -> None:
+        """Verify the grain of a cover is not taken for lines of text: the step gives the confidence 0 and skips the page.
+
+        :param fx_deskew: The processor under test.
+        :type fx_deskew: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        grain = np.random.default_rng(GRAIN_SEED).normal(GRAIN_TONE, GRAIN_SPREAD, (900, 700))
+        image = save(Image.fromarray(grain.clip(0, 255).astype(np.uint8)), tmp_path / 'grain.png')
+        params = fx_deskew.validate_params({})
+        [output] = fx_deskew.run(StepInput(image=image, params=params, workdir=tmp_path)).outputs
+        expect(output.data[VersionData.CONFIDENCE] == pytest.approx(0.0))
+        expect(output.data[VersionData.SKIPPED] is True)
+        expect(output.image == image)
         expect(output.review is ReviewReason.NOT_APPLIED)
         assert_expectations()
 

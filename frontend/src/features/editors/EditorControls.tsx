@@ -15,6 +15,30 @@ const labels = MESSAGES.editors;
 export function EditorControls({ session }: { session: EditorSession }): React.JSX.Element {
   return (
     <div className="grid gap-2" data-testid="editor-controls">
+      {session.steps.length > 1 ? (
+        <ul className="grid gap-1" aria-label={labels.steps.title} data-testid="editor-steps">
+          {session.steps.map((step) => (
+            <li key={step.key}>
+              <Button
+                variant={step.chosen ? 'secondary' : 'ghost'}
+                size="sm"
+                className="w-full justify-between"
+                aria-pressed={step.chosen}
+                data-testid="editor-step"
+                data-manual={step.manual}
+                onClick={() => session.choose(step.key)}
+              >
+                <span>{step.title}</span>
+                <span className="font-normal text-muted-foreground">
+                  {[step.detail, step.manual ? labels.steps.manual : labels.steps.auto]
+                    .filter((part) => part !== null)
+                    .join(' · ')}
+                </span>
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         {session.renderPanel()}
         {session.alwaysOn ? null : (

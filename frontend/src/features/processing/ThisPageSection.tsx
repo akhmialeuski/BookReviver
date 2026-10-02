@@ -1,8 +1,9 @@
 import { TriangleAlertIcon } from 'lucide-react';
+import { stepChain } from '@/features/editors/chain';
 import { EditorControls } from '@/features/editors/EditorControls';
 import type { EditorSession } from '@/features/editors/session';
 import { useChooseVersion, useVersions } from '@/features/processing/queries';
-import { describeParams, historyOf, readResult } from '@/features/processing/results';
+import { describeParams, historyOf, readChainResult } from '@/features/processing/results';
 import type { Processing } from '@/features/processing/useProcessing';
 import type { StripItem } from '@/features/workspace/strip';
 import { describeError } from '@/shared/http/problem';
@@ -39,13 +40,17 @@ export function ThisPageSection({
   const versions = useVersions(projectId, page.id, stage);
   const choose = useChooseVersion(projectId, stage);
   const entries = historyOf(versions.data ?? [], version?.id);
-  const result = version === null ? null : readResult(version);
+  // A stage of several steps stands on the version of the last, so what the first ones found is read down the chain
+  const chain = stepChain(versions.data ?? [], version);
+  const result = readChainResult(chain);
   const review = row?.review ?? null;
   const facts: { label: string; value: string }[] = [];
   if (editor !== null && version !== null) {
     facts.push({
       label: labels.thisPage.how,
-      value: version.edit_hash === '' ? labels.thisPage.automatic : labels.thisPage.manual,
+      value: chain.some((step) => step.edit_hash !== '')
+        ? labels.thisPage.manual
+        : labels.thisPage.automatic,
     });
   }
   if (result !== null) {

@@ -57,7 +57,11 @@ class DefaultRecipes:
             RecipeTemplate(name='Whole scan', processor_keys=('split.none',)),
             RecipeTemplate(name='Spread', processor_keys=('split.spread',)),
         ),
-        Stage.GEOMETRY: (RecipeTemplate(name='Deskew', processor_keys=('geometry.deskew',)),),
+        Stage.GEOMETRY: (
+            RecipeTemplate(
+                name='Automatic', processor_keys=('geometry.perspective', 'geometry.deskew', 'geometry.crop')
+            ),
+        ),
     }
 
     def __init__(self, templates: Mapping[Stage, tuple[RecipeTemplate, ...]] | None = None) -> None:

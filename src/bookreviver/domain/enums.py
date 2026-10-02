@@ -348,6 +348,22 @@ class Side(LabeledStrEnum):
     AFTER = 'after', 'After the page'
 
 
+class SheetEdge(LabeledStrEnum):
+    """A side of a sheet of paper, named as the reader sees the upright page."""
+
+    TOP = 'top', 'Top'
+    RIGHT = 'right', 'Right'
+    BOTTOM = 'bottom', 'Bottom'
+    LEFT = 'left', 'Left'
+
+
+class Binarization(LabeledStrEnum):
+    """How a page is made black and white to find its ink."""
+
+    OTSU = 'otsu', 'One threshold for the page, found by the method of Otsu'
+    ADAPTIVE = 'adaptive', 'A threshold for each neighbourhood, for a page lit unevenly'
+
+
 class PlaceMode(LabeledStrEnum):
     """Where in the interface a reader left a book."""
 
@@ -420,6 +436,15 @@ class VersionData(LabeledStrEnum):
     CUT_TOP_X = 'cut_top_x', 'Place of the cut at the top row of the scan, in pixels from its left edge'
     CUT_BOTTOM_X = 'cut_bottom_x', 'Place of the cut at the bottom row of the scan, in pixels from its left edge'
     PAGES = 'pages', 'Number of pages the scan was split into, one or two'
+    SOURCE_WIDTH_PX = 'source_width_px', 'Width in pixels of the full image the step read, which its edit is drawn on'
+    SOURCE_HEIGHT_PX = (
+        'source_height_px',
+        'Height in pixels of the full image the step read, which its edit is drawn on',
+    )
+    QUAD = 'quad', 'Corners of the sheet the step found in its input, in the pixels of the full image'
+    FRAME = 'frame', 'Frame of the content the step found in its input, in the pixels of the full image'
+    CUT_EDGES = 'cut_edges', 'Sides of the sheet that lie on the edge of the scan, where the paper was cut'
+    REVIEW = 'review', 'Reason an earlier step of the recipe marked the page for a second look'
 
 
 class VersionState(LabeledStrEnum):
@@ -476,6 +501,7 @@ class ReviewReason(LabeledStrEnum):
     NOT_APPLIED = 'not-applied', 'The step left the page as it was, because it was not sure'
     UNSURE_GUTTER = 'unsure-gutter', 'The gutter of the spread was not found for certain'
     NARROW_GUTTER = 'narrow-gutter', 'Narrow scan with a gutter in the middle'
+    CUT_BY_EDGE = 'cut-by-edge', 'Text may be cut by the edge of the scan'
 
 
 class RunOutcome(LabeledStrEnum):

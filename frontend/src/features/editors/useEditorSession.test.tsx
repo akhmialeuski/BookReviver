@@ -35,10 +35,12 @@ const sdk = vi.hoisted(() => ({
   remove: vi.fn(),
   run: vi.fn(),
   jobs: vi.fn(),
+  versions: vi.fn(),
 }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
+  listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet: sdk.versions,
   listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGet: sdk.edits,
   putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPut: sdk.put,
   deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDelete: sdk.remove,
@@ -63,6 +65,31 @@ vi.mock('@/features/editors/LineCanvas', () => ({
       onClick={() => onCommit({ start: { x: 10, y: 0 }, end: { x: 12, y: 600 } })}
     >
       line
+    </button>
+  ),
+}));
+
+// The canvas of the sheet needs a real viewer too, and the steps of the stage are shown one at a time
+vi.mock('@/features/editors/QuadCanvas', () => ({
+  QuadCanvas: () => <span data-testid="quad-canvas" />,
+}));
+
+// A stand-in for the canvas of the frame, in the same way
+vi.mock('@/features/editors/RectCanvas', () => ({
+  RectCanvas: ({
+    shape,
+    onCommit,
+  }: {
+    shape: unknown;
+    onCommit: (frame: { left: number; top: number; width: number; height: number }) => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="commit-rect"
+      data-shape={JSON.stringify(shape)}
+      onClick={() => onCommit({ left: 50, top: 60, width: 700, height: 900 })}
+    >
+      frame
     </button>
   ),
 }));
@@ -202,6 +229,7 @@ describe('useEditorSession', () => {
     sdk.remove.mockResolvedValue({ data: undefined });
     sdk.run.mockResolvedValue({ data: JOB });
     sdk.jobs.mockResolvedValue(jobsOf());
+    sdk.versions.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 50, pages: 1 } });
     session = null;
     container = document.createElement('div');
     document.body.append(container);
@@ -690,5 +718,144 @@ describe('useEditorSession', () => {
     await render({ state });
 
     expect(session).not.toBeNull();
+  });
+
+  describe('on a stage of three steps that each have an editor', () => {
+    const SHEET = {
+      top_left: { x: 20, y: 30 },
+      top_right: { x: 980, y: 20 },
+      bottom_right: { x: 990, y: 1380 },
+      bottom_left: { x: 10, y: 1390 },
+    };
+    const PERSPECTIVE = version('v1', {
+      processor: { key: 'geometry.perspective', version: '1' },
+      input_id: 'scan-version',
+      data: { quad: SHEET, source_width_px: 1000, source_height_px: 1400, confidence: 0.9 },
+    });
+    const DESKEW = version('v2', {
+      input_id: 'v1',
+      tiles_ready: false,
+      data: { angle: 0.3, confidence: 0.8 },
+    });
+    const CROP = version('v3', {
+      processor: { key: 'geometry.crop', version: '1' },
+      input_id: 'v2',
+      tiles_ready: false,
+      data: {
+        frame: { left: 60, top: 70, width: 800, height: 1200 },
+        source_width_px: 970,
+        source_height_px: 1360,
+      },
+    });
+    const STATE = processing({
+      catalogue: [
+        processor('geometry.perspective', { editor: 'quad' }),
+        deskew(),
+        processor('geometry.crop', { editor: 'rect' }),
+      ],
+      recipe: recipe('r1', {
+        steps: [step('geometry.perspective'), step('geometry.deskew'), step('geometry.crop')],
+      }),
+    });
+    const ITEMS = joinRows([page('page')], [row('page', { version: CROP })]);
+
+    beforeEach(() => {
+      sdk.versions.mockResolvedValue({
+        data: { items: [PERSPECTIVE, DESKEW, CROP], total: 3, page: 1, size: 50, pages: 1 },
+      });
+    });
+
+    it('lists the steps in the order of the recipe, with the first one shown', async () => {
+      await render({ state: STATE, items: ITEMS });
+
+      expect(session?.steps.map((entry) => [entry.title, entry.chosen, entry.manual])).toEqual([
+        ['Sheet corners', true, false],
+        ['Angle', false, false],
+        ['Content frame', false, false],
+      ]);
+      expect(session?.steps[1]?.detail).toBe('0.3°');
+    });
+
+    it('lays the sheet on the picture before the stage, and the frame on what the step before it made', async () => {
+      await render({ state: STATE, items: ITEMS });
+      expect(session?.picture).toEqual(BEFORE);
+
+      await act(async () => session?.choose('geometry.deskew'));
+      expect(session?.picture).toEqual({ kind: SourceKind.Iiif, url: '/version-v1/info.json' });
+
+      await act(async () => session?.choose('geometry.crop'));
+      expect(session?.picture).toEqual({ kind: SourceKind.Image, url: '/version-v2/preview' });
+    });
+
+    it('opens the editor of the step that is picked', async () => {
+      await render({ state: STATE, items: ITEMS });
+      expect(session?.active).toBe(false);
+
+      await act(async () => session?.choose('geometry.crop'));
+
+      expect(session?.active).toBe(true);
+      expect(session?.steps.map((entry) => entry.chosen)).toEqual([false, false, true]);
+    });
+
+    it('has no editor for the sheet or the frame before their step has run on the page', async () => {
+      sdk.versions.mockResolvedValue({
+        data: { items: [], total: 0, page: 1, size: 50, pages: 1 },
+      });
+      const unfinished = joinRows(
+        [page('page')],
+        [row('page', { version: version('v0', { data: {} }) })],
+      );
+
+      await render({ state: STATE, items: unfinished });
+
+      expect(state()).toBe('none');
+    });
+
+    it('saves the frame as a rect of the crop step and runs the stage on the one page', async () => {
+      await render({ state: STATE, items: ITEMS, canvas: true });
+      await act(async () => session?.choose('geometry.crop'));
+
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="commit-rect"]')?.click();
+      });
+      await settle();
+      await settle();
+
+      expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({
+        path: { page_id: 'page', stage: 'geometry', processor_key: 'geometry.crop' },
+        body: { kind: 'rect', geometry: '{"left":50,"top":60,"width":700,"height":900}' },
+      });
+      expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
+        body: { recipe_id: 'r1', page_ids: ['page'] },
+      });
+    });
+
+    it('starts the frame from the one the step found', async () => {
+      await render({ state: STATE, items: ITEMS, canvas: true });
+      await act(async () => session?.choose('geometry.crop'));
+
+      const shape = container
+        .querySelector('[data-testid="commit-rect"]')
+        ?.getAttribute('data-shape');
+      expect(JSON.parse(shape ?? 'null')).toEqual({ left: 60, top: 70, width: 800, height: 1200 });
+    });
+
+    it('says which steps the reader gave an edit of their own', async () => {
+      sdk.edits.mockResolvedValue(
+        listOf(
+          edit({
+            processor_key: 'geometry.perspective',
+            kind: 'quad',
+            geometry: SHEET,
+          }),
+        ),
+      );
+
+      await render({ state: STATE, items: ITEMS });
+      // The edits are read once the versions have told that the step has run
+      await settle();
+
+      expect(session?.steps.map((entry) => entry.manual)).toEqual([true, false, false]);
+    });
   });
 });

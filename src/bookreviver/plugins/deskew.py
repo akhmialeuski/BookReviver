@@ -6,10 +6,11 @@ text turned level pile their ink into few rows, so the angle with the most uneve
 coarse set of angles over the whole range finds the neighbourhood of it, and a fine set around that finds the angle.
 
 The confidence is how far the best angle stands out of the rest of the coarse set, from 0 for a page whose rows sum the
-same at every angle, such as a blank one, to nearly 1 for a page of clear lines. A page whose confidence is below the
-parameter ``min_confidence`` is left as it is. The version says it was skipped and is marked for review, so a picture or
-a blank leaf is not turned by a guess and is easy to find. An angle the user gave as a rotation edit replaces the search
-and has the confidence 1.
+same at every angle, such as a blank one, to nearly 1 for a page of clear lines. A page whose tones do not part into ink
+and paper, such as the grain of a cover or of a blank leaf, has no lines to follow and the confidence 0. A page whose
+confidence is below the parameter ``min_confidence`` is left as it is. The version says it was skipped and is marked
+for review, so a picture or a blank leaf is not turned by a guess and is easy to find. An angle the user gave as a
+rotation edit replaces the search and has the confidence 1.
 
 The page keeps its size. What the turn leaves uncovered at the corners is white, and a bilevel page stays bilevel. The
 transform is the rotation matrix OpenCV turned the page by, which maps a point of the input to the output, so the chain
@@ -38,11 +39,14 @@ from bookreviver.plugins.base import ModelProcessor, Params
 from bookreviver.plugins.cv_image import (
     COLOR_PLANES,
     MANUAL_CONFIDENCE,
+    MIN_TONE_CONTRAST,
     NO_IMAGE,
     WHITE,
+    OtsuSplit,
     color_mode_of,
     image_data,
     read_samples,
+    settle_review,
     to_bilevel,
     write_png,
 )
@@ -116,16 +120,19 @@ class Deskew(ModelProcessor):
         angle, confidence = self._angle(image, params, step_input)
         if confidence < params.min_confidence:
             data |= {VersionData.ANGLE: 0.0, VersionData.CONFIDENCE: confidence, VersionData.SKIPPED: True}
-            skipped = StepOutput(
-                image=step_input.image, color_mode=color_mode, data=data, review=ReviewReason.NOT_APPLIED
+            review = settle_review(data, ReviewReason.NOT_APPLIED, step_input.input_data)
+            return StepResult(
+                outputs=[StepOutput(image=step_input.image, color_mode=color_mode, data=data, review=review)]
             )
-            return StepResult(outputs=[skipped])
         turned, matrix = self._turn(image, angle, color_mode)
         target = step_input.workdir / DESKEWED_IMAGE_NAME
         write_png(turned, target)
         transform = Transform(kind=TransformKind.ROTATE, angle=angle, matrix=matrix)
         data |= {VersionData.ANGLE: angle, VersionData.CONFIDENCE: confidence, VersionData.SKIPPED: False}
-        return StepResult(outputs=[StepOutput(image=target, color_mode=color_mode, transform=transform, data=data)])
+        review = settle_review(data, None, step_input.input_data)
+        return StepResult(
+            outputs=[StepOutput(image=target, color_mode=color_mode, transform=transform, data=data, review=review)]
+        )
 
     @staticmethod
     def _angle(image: Samples, params: DeskewParams, step_input: StepInput) -> tuple[float, float]:
@@ -159,7 +166,10 @@ class Deskew(ModelProcessor):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == COLOR_PLANES else image
         height, width = gray.shape
         shrink = min(1.0, SEARCH_LONG_SIDE_PX / max(height, width))
-        small = cv2.resize(gray, None, fx=shrink, fy=shrink, interpolation=cv2.INTER_AREA)
+        small = np.asarray(cv2.resize(gray, None, fx=shrink, fy=shrink, interpolation=cv2.INTER_AREA), dtype=np.uint8)
+        if OtsuSplit.of(small).contrast < MIN_TONE_CONTRAST:
+            # The page has no ink to part from its paper, only grain, which has no lines to follow
+            return 0.0, 0.0
         _, thresholded = cv2.threshold(small, 0, WHITE, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
         ink = np.asarray(thresholded, dtype=np.uint8)
         coarse = np.linspace(-max_angle, max_angle, ANGLES_PER_SET)

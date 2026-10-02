@@ -69,3 +69,27 @@ def fx_split_auto() -> Processor:
     processor = pytest.importorskip('bookreviver.plugins.split_auto', reason=CV_MISSING).SplitAuto()
     assert isinstance(processor, Processor)
     return processor
+
+
+@pytest.fixture
+def fx_perspective() -> Processor:
+    """Build the perspective processor, or skip the test where OpenCV is not installed.
+
+    :returns: The processor ``geometry.perspective``.
+    :rtype: Processor
+    """
+    processor = pytest.importorskip('bookreviver.plugins.perspective', reason=CV_MISSING).Perspective()
+    assert isinstance(processor, Processor)
+    return processor
+
+
+@pytest.fixture
+def fx_crop() -> Processor:
+    """Build the crop processor, or skip the test where OpenCV is not installed.
+
+    :returns: The processor ``geometry.crop``.
+    :rtype: Processor
+    """
+    processor = pytest.importorskip('bookreviver.plugins.crop', reason=CV_MISSING).Crop()
+    assert isinstance(processor, Processor)
+    return processor

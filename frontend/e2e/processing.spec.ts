@@ -48,26 +48,31 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
   });
 
   await test.step('the recipe is drawn from the processor and its schema', async () => {
-    await expect(page.getByTestId('recipe-select')).toContainText('Deskew');
+    await expect(page.getByTestId('recipe-select')).toContainText('Automatic');
     await expect(page.getByTestId('recipe-active')).toBeVisible();
-    await expect(page.getByTestId('recipe-step')).toHaveCount(1);
-    await expect(page.getByTestId('recipe-step')).toContainText('1 · Deskew');
-    // The fields carry the titles of the schema, and no name of the code
-    await expect(page.getByRole('spinbutton', { name: 'Largest slant' })).toHaveValue('5');
-    await expect(page.getByRole('slider', { name: 'Least confidence' })).toBeVisible();
-    await expect(page.getByTestId('stage-panel')).not.toContainText('max_angle');
+    // A new book is straightened in three steps, the sheet first and the frame of the content last
+    await expect(page.getByTestId('recipe-step')).toHaveCount(3);
+    await expect(page.getByTestId('recipe-step').nth(0)).toContainText('1 · Perspective');
+    await expect(page.getByTestId('recipe-step').nth(1)).toContainText('2 · Deskew');
+    await expect(page.getByTestId('recipe-step').nth(2)).toContainText('3 · Crop');
+    // The settings of the first step are open, with the titles of the schema and no name of the code
+    await expect(page.getByRole('slider', { name: 'Smallest sheet' })).toBeVisible();
+    await expect(page.getByTestId('stage-panel')).not.toContainText('min_sheet_fraction');
     // The steps that are planned stand under the real ones
-    await expect(page.getByTestId('coming-steps')).toContainText('Perspective crop');
+    await expect(page.getByTestId('coming-steps')).toContainText('Dewarp by mesh');
     await expect(page.getByTestId('coming-steps')).toContainText('Soon');
   });
 
-  await test.step('a value outside its limits cannot be saved', async () => {
-    const slant = page.getByRole('spinbutton', { name: 'Largest slant' });
-    await slant.fill('99');
-    await expect(slant).toHaveAttribute('aria-invalid', 'true');
+  await test.step('the settings of the last step are opened, and a value outside its limits cannot be saved', async () => {
+    await page.getByRole('button', { name: 'Show the settings of the Crop step' }).click();
+    const margin = page.getByRole('spinbutton', { name: 'Margin' });
+    await expect(margin).toHaveValue('8');
+    await expect(page.getByTestId('stage-panel')).not.toContainText('margin_percent');
+    await margin.fill('99');
+    await expect(margin).toHaveAttribute('aria-invalid', 'true');
     await expect(page.getByTestId('recipe-save')).toBeDisabled();
     await expect(page.getByTestId('preview-toggle')).toBeDisabled();
-    await slant.fill('5');
+    await margin.fill('8');
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
   });
 
@@ -81,14 +86,14 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     });
     expect(previews).toHaveLength(1);
 
-    const slant = page.getByRole('spinbutton', { name: 'Largest slant' });
-    await slant.fill('7');
+    const margin = page.getByRole('spinbutton', { name: 'Margin' });
+    await margin.fill('12');
     await expect(page.getByTestId('preview-working')).toBeVisible();
     await expect(page.getByTestId('preview-working')).toBeHidden({ timeout: RUN_TIMEOUT_MS });
     expect(previews).toHaveLength(2);
 
     // Back to the settings that were shown first: the preview made for them is shown again
-    await slant.fill('5');
+    await margin.fill('8');
     await expect(page.getByTestId('preview-working')).toBeHidden();
     await page.waitForTimeout(1_000);
     expect(previews).toHaveLength(2);
@@ -140,7 +145,7 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
   });
 
   await test.step('a changed recipe says how many pages it makes out of date and is saved by the button', async () => {
-    await page.getByRole('spinbutton', { name: 'Largest slant' }).fill('9');
+    await page.getByRole('spinbutton', { name: 'Margin' }).fill('10');
     await expect(page.getByTestId('recipe-stale-warning')).toContainText(
       `${PAGES} pages out of date`,
     );
@@ -167,7 +172,7 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
       timeout: RUN_TIMEOUT_MS,
     });
     await expect(entries.first()).toHaveAttribute('data-current', 'false');
-    await expect(entries.nth(1)).toContainText('Largest slant 5');
+    await expect(entries.nth(1)).toContainText('Margin 8');
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

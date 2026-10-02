@@ -472,6 +472,7 @@ export const MESSAGES = {
       'not-applied': 'Check: the step left the page as it was',
       'unsure-gutter': 'Check: the gutter of the spread was not found for certain',
       'narrow-gutter': 'Check: narrow scan with a gutter in the middle',
+      'cut-by-edge': 'Check: text may be cut by the edge of the scan',
     } satisfies Record<ReviewReason, string>,
   },
   viewer: {
@@ -1062,6 +1063,8 @@ export const MESSAGES = {
           'The gutter of this spread was not found for certain, so the cut may be off.',
         'narrow-gutter':
           'This scan is narrower than a spread, yet a gutter runs through its middle. It was kept as one page.',
+        'cut-by-edge':
+          'The frame of the text comes to a side where the scanner cut the paper, so the margin on that side is not known and the text may be cut.',
       },
       reviewHint: 'Set it by hand in the page editor, or change the settings and preview again.',
       how: 'Method',
@@ -1097,6 +1100,7 @@ export const MESSAGES = {
           ? 'Gutter not found for certain'
           : `Gutter not found for certain · ${confidence.toFixed(2)}`,
       narrowGutter: 'Narrow scan with a gutter in the middle',
+      cutByEdge: 'Text may be cut by the edge of the scan',
     },
     split: {
       banner: (wide: number, split: number, toCut: number) => {
@@ -1157,6 +1161,28 @@ export const MESSAGES = {
       handle: 'Rotation handle',
       angle: 'Angle in degrees',
       hint: 'Drag the handle, type the angle, or hold Alt and turn the wheel until the lines of text lie along the guides.',
+    },
+    quad: {
+      name: 'Corners of the sheet',
+      corner: (corner: string) => `Corner of the sheet: ${corner}`,
+      hint: 'Drag the corners of the green outline to the corners of the paper, or nudge the last one you grabbed with the arrow keys. The page is straightened again at once.',
+    },
+    rect: {
+      name: 'Frame of the content',
+      handle: (handle: string) => `Handle of the frame: ${handle}`,
+      hint: 'Drag the handles of the blue frame until it holds all the text and the pictures of the page, or nudge it with the arrow keys. The margin is added round it and the page is cut again at once.',
+    },
+    steps: {
+      title: 'Steps of this stage',
+      kinds: {
+        line: 'Split line',
+        rotation: 'Angle',
+        split: 'Pages',
+        quad: 'Sheet corners',
+        rect: 'Content frame',
+      },
+      auto: 'auto',
+      manual: 'by hand',
     },
   },
 } as const;

@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import type { PageSchema, ScanSchema } from '@/api';
+import type { PageSchema, PageVersionSchema, ScanSchema } from '@/api';
 import type { EditorScene } from '@/features/editors/scene';
 import type { Geometry, Size } from '@/features/editors/shapes';
 import type { PageResult } from '@/features/processing/results';
@@ -30,14 +30,16 @@ export interface PageContext {
   items: readonly StripItem[];
   /** The scan the open page was cut from, or null for a page without one. */
   scan: ScanSchema | null;
+  /** The version the step of the editor read, or null when the step reads the picture before the stage. */
+  stepInput: PageVersionSchema | null;
+  /** What the step of the editor found on the open page, or null when it has not run. */
+  result: PageResult | null;
 }
 
 /** What an editor needs to start from when the page has no edit. */
 export interface FallbackContext extends PageContext {
   /** The size of the picture in the pixels of the edit, or null when the editor counts in the picture's own. */
   size: Size | null;
-  /** What the step found on the open page, or null when it has not run. */
-  result: PageResult | null;
 }
 
 /** What the canvas part of an editor gets. */
@@ -66,6 +68,8 @@ export interface EditorDefinition<S> {
   picture: Picture;
   /** Whether the editor is open whenever its stage is, and not only after "Set by hand". */
   alwaysOn: boolean;
+  /** Whether the editor is offered only once its step has run on the page, since it starts from what the step found. */
+  needsResult: boolean;
   /** The page the edit belongs to, which is not always the open one. */
   owner: (context: PageContext) => PageSchema;
   /** The size of the picture in the pixels of the edit, or null for the picture's own. */
@@ -101,6 +105,7 @@ export interface GeometryPanelProps {
 export interface RegisteredEditor {
   picture: Picture;
   alwaysOn: boolean;
+  needsResult: boolean;
   owner: (context: PageContext) => PageSchema;
   size: (context: PageContext) => Size | null;
   runsAfterEdit: (context: PageContext) => boolean;

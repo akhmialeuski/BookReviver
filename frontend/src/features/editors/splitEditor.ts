@@ -17,6 +17,7 @@ import { PAGES_OF, SplitChoice } from '@/features/processing/split';
 export const splitEditor: EditorDefinition<SplitShape> = {
   picture: lineEditor.picture,
   alwaysOn: lineEditor.alwaysOn,
+  needsResult: lineEditor.needsResult,
   owner: lineEditor.owner,
   size: lineEditor.size,
   runsAfterEdit: () => true,

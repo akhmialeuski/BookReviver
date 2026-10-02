@@ -19,7 +19,7 @@ from bookreviver.domain.enums import EditorKind, TransformKind
 from bookreviver.domain.errors import UnsupportedTransformError
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from bookreviver.domain.ids import StorageKey
 
@@ -78,6 +78,18 @@ class Rect:
     width: float = field(validator=validators.gt(0))
     height: float = field(validator=validators.gt(0))
 
+    def scaled(self, factor: float) -> Self:
+        """Return the rectangle in the pixels of an image resized by a factor.
+
+        :param factor: Size of the new image over the size of the old one.
+        :type factor: float
+        :returns: The rectangle with every number multiplied by the factor.
+        :rtype: Self
+        """
+        return type(self)(
+            left=self.left * factor, top=self.top * factor, width=self.width * factor, height=self.height * factor
+        )
+
     def to_data(self) -> dict[str, float]:
         """Return the rectangle as JSON data.
 
@@ -115,6 +127,25 @@ class Quad:
     top_right: Point
     bottom_right: Point
     bottom_left: Point
+
+    @classmethod
+    def from_points(cls, points: Sequence[Point]) -> Self:
+        """Build a quadrilateral from four points in the order of ``CORNERS``.
+
+        :param points: Top left, top right, bottom right and bottom left corner.
+        :type points: Sequence[Point]
+        :returns: The quadrilateral.
+        :rtype: Self
+        """
+        return cls(**dict(zip(cls.CORNERS, points, strict=True)))
+
+    def points(self) -> tuple[Point, ...]:
+        """Return the corners in the order of ``CORNERS``.
+
+        :returns: Top left, top right, bottom right and bottom left corner.
+        :rtype: tuple[Point, ...]
+        """
+        return (self.top_left, self.top_right, self.bottom_right, self.bottom_left)
 
     def to_data(self) -> dict[str, dict[str, float]]:
         """Return the quadrilateral as JSON data.
