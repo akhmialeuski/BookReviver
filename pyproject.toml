@@ -38,6 +38,7 @@ dependencies = [
     "import-linter==2.15",
     "pre-commit==4.6.2",
     "pytest==9.1.1",
+    "pytest-xdist==3.8.0",
     # UV build backend
     "uv_build==0.12.19",
     # Linters and type checkers
@@ -77,7 +78,8 @@ build-backend = "uv_build"
 packages = ["src/bookreviver"]
 
 [tool.pytest.ini_options]
-addopts = "--strict-markers --strict-config"
+# Tests run in parallel, one worker per CPU; `-n 0` runs them in one process, as a debugger needs
+addopts = "--strict-markers --strict-config -n auto"
 testpaths = ["tests"]
 
 [tool.importlinter]
