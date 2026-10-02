@@ -4,11 +4,12 @@ Each entry point reads its job back, moves it to running, does its work and leav
 that reports its progress does, through ``JobTracker``. The parameters of a job are read into the value of its kind, and
 a job whose parameters are not valid fails with the reason.
 
-A run goes by the pages of the stage and the steps of the recipe. It reads the current version of the nearest earlier
-stage of a page, finds the versions it made before by their identifier, makes only what is new, and makes the last
-version the current one of the stage. A page that fails is recorded as failed and the job goes on to the next, and the
-job succeeds when it processed at least one page. When it ends it queues a collection of the project's old versions, so
-old versions go by their age without the user asking.
+A run goes by the pages of the stage and the steps of the recipe. A run that names no recipe gives each page its own,
+the pinned one, else the one of the first matching rule, else the active one (``RecipePicker``). It reads the current
+version of the nearest earlier stage of a page, finds the versions it made before by their identifier, makes only what
+is new, and makes the last version the current one of the stage. A page that fails is recorded as failed and the job
+goes on to the next, and the job succeeds when it processed at least one page. When it ends it queues a collection of
+the project's old versions, so old versions go by their age without the user asking.
 
 A project processes one thing at a time, so a collection never overlaps a run that may be reusing the versions it
 deletes. A collection chooses the versions, marks them failed so that none can be chosen or reused any more, removes
@@ -27,6 +28,7 @@ from bookreviver.domain.errors import DomainError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import SliceRequest, StageRun, StepPreview, TileCut, VersionCollection
+from bookreviver.services.recipe_picks import PAGE_WINDOW, RecipePicker
 from bookreviver.services.stage_runs import PreviewRun, RecipeRun
 
 if TYPE_CHECKING:
@@ -42,8 +44,6 @@ if TYPE_CHECKING:
 NO_PAGE_PROCESSED: str = 'No page could be processed. The state of the stage of each page says why.'
 UNEXPECTED_FAILURE: str = 'The job stopped because of an unexpected error. It has been logged.'
 BEING_COLLECTED: str = 'The version is being deleted.'
-# How many pages a run reads from the book at a time
-PAGE_WINDOW: int = 1_000
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,7 @@ class ProcessingJobs:
         self._runtime = runtime
         self._recipes = parts.recipes
         self._records = parts.records
+        self._picker = RecipePicker(uow=uow, recipes=parts.recipes)
         self._tracker = parts.tracker
         self._starter = parts.starter
 
@@ -172,24 +173,30 @@ class ProcessingJobs:
         """
         run = StageRun.from_map(job.params)
         project = await self._uow.projects.get(job.project_id)
-        recipe = (
-            await self._recipes.active(project.id, run.stage)
-            if run.recipe_id is None
-            else await self._recipes.get(project.id, run.recipe_id, stage=run.stage)
-        )
         pages = await self._pages_to_run(project.id, run)
+        if run.recipe_id is None:
+            recipes = await self._picker.pick(project.id, run.stage, pages)
+        else:
+            named = await self._recipes.get(project.id, run.recipe_id, stage=run.stage)
+            recipes = dict.fromkeys((page.id for page in pages), named)
         executor = RecipeRun(
             project=project, uow=self._uow, runtime=self._runtime, recipes=self._recipes, records=self._records
         )
+        # A run by a named recipe pins it only when asked to, and a run that chooses the recipes keeps the pins it finds
+        pin = True if run.pin else None
         outcomes: list[RunOutcome] = []
         for page in pages:
             if (saved := await self._tracker.advance(job, done=len(outcomes), total=len(pages))) is None:
                 return None
             job = saved
-            outcomes.append(await self._run_page(executor, page, recipe, confirmed=run.confirm_unsplit))
+            outcomes.append(
+                await self._run_page(executor, page, recipes[page.id], confirmed=run.confirm_unsplit, pin=pin)
+            )
         return outcomes.count(RunOutcome.DONE), outcomes.count(RunOutcome.FAILED), len(pages)
 
-    async def _run_page(self, executor: RecipeRun, page: Page, recipe: Recipe, *, confirmed: bool) -> RunOutcome:
+    async def _run_page(
+        self, executor: RecipeRun, page: Page, recipe: Recipe, *, confirmed: bool, pin: bool | None
+    ) -> RunOutcome:
         """Run the recipe on one page, so that whatever goes wrong on it fails the page and not the job.
 
         :param executor: Runner of recipes of the project.
@@ -200,15 +207,17 @@ class ProcessingJobs:
         :type recipe: Recipe
         :param confirmed: Whether the user confirmed that undoing a split deletes the right half of a spread.
         :type confirmed: bool
+        :param pin: Whether the recipe is pinned to the page, or None to keep the pin the page has.
+        :type pin: bool | None
         :returns: What the run came to.
         :rtype: RunOutcome
         """
         try:
-            return await executor.run(page, recipe, confirmed=confirmed)
+            return await executor.run(page, recipe, confirmed=confirmed, pin=pin)
         except Exception:
             logger.exception('The stage %s failed on page %s', recipe.stage, page.id)
             await self._uow.rollback()
-            record = await self._records.mark_failed(page.id, recipe.stage, recipe_id=recipe.id)
+            record = await self._records.mark_failed(page.id, recipe.stage, recipe_id=recipe.id, pin=pin)
             await self._uow.commit()
             await self._records.announce(page.project_id, [record])
             return RunOutcome.FAILED

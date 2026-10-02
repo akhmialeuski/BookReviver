@@ -21,6 +21,35 @@ export interface StripItem {
 /** How many pages each filter of the strip would list. */
 export type FilterCounts = Record<PageFilter, number>;
 
+/** What a page shows of the variant of the recipe it was processed by. */
+export interface VariantMark {
+  name: string;
+  /** The class that paints the dot of the variant. */
+  tone: string;
+  /** Whether the variant is pinned to the page. */
+  pinned: boolean;
+}
+
+/** A variant the strip can be narrowed to, with the pages it processed. */
+export interface VariantOption {
+  id: string;
+  name: string;
+  pages: number;
+}
+
+/**
+ * The variants of a stage as the strip and the grid draw them: a mark on each page, and the choice of one variant to
+ * list the pages of. A stage with a single recipe has no such view, since every mark would be the same.
+ */
+export interface VariantView {
+  /** The mark of a page, or null for a page no recipe processed. */
+  markOf: (item: StripItem) => VariantMark | null;
+  options: readonly VariantOption[];
+  /** The variant whose pages are listed, or null for every page. */
+  selected: string | null;
+  onSelect: (id: string | null) => void;
+}
+
 /**
  * Join the pages of the book with the rows of a stage.
  *

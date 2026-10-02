@@ -26,6 +26,8 @@ TITLES_MAX_LENGTH: int = 10
 REPEATED_ITEMS: str = 'The list may not repeat an item.'
 # Longest printed number of a page, such as ``[xii]`` or ``12a``
 PAGE_LABEL_MAX_LENGTH: int = 50
+# Longest label of a group of pages
+GROUP_LABEL_MAX_LENGTH: int = 50
 # Largest side of a generated blank leaf in pixels and largest resolution to record in it, which bound the image a
 # request can make the worker write
 PAGE_SIDE_MAX_PX: int = 30_000
@@ -79,6 +81,12 @@ LanguageList = Annotated[list[LanguageCode], Field(max_length=LANGUAGES_MAX_LENG
 SubjectList = Annotated[list[ListedText], Field(max_length=SUBJECTS_MAX_LENGTH)]
 # The printed number of a page, which is empty for a page that has none
 PageLabel = Annotated[str, StringConstraints(strip_whitespace=True, max_length=PAGE_LABEL_MAX_LENGTH)]
+# The label of a group of pages the user made by hand, which is empty for a page in no group
+GroupLabel = Annotated[str, StringConstraints(strip_whitespace=True, max_length=GROUP_LABEL_MAX_LENGTH)]
+# The label of a group a rule names, which is never empty
+RuleGroupLabel = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=GROUP_LABEL_MAX_LENGTH)
+]
 # One side of a generated blank leaf in pixels, and its resolution in dots per inch
 PagePixels = Annotated[int, Field(gt=0, le=PAGE_SIDE_MAX_PX)]
 Dpi = Annotated[float, Field(gt=0, le=DPI_MAX)]

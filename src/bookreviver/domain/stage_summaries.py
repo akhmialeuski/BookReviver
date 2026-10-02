@@ -13,7 +13,7 @@ in the pipeline that has work to do.
 
 from typing import TYPE_CHECKING, Self
 
-from attrs import field, frozen, validators
+from attrs import evolve, field, frozen, validators
 
 from bookreviver.domain.enums import PageStageStatus, StageStatus
 
@@ -53,6 +53,20 @@ class StageTally:
 
 
 @frozen(kw_only=True)
+class VariantTally:
+    """The pages of one stage of one book that a recipe processed, as a repository counts them.
+
+    :ivar stage: The stage.
+    :ivar recipe_id: Recipe that processed the pages.
+    :ivar pages: Pages with an image whose record of the stage names the recipe.
+    """
+
+    stage: Stage
+    recipe_id: RecipeId
+    pages: int = field(validator=validators.ge(1))
+
+
+@frozen(kw_only=True)
 class StageSummary:
     """One stage of a book summed over its pages.
 
@@ -69,6 +83,8 @@ class StageSummary:
     :ivar check: Pages the strip lists under Check: stale, failed or marked for review, each counted once.
     :ivar active_recipe_id: The recipe the stage runs by, or None when the stage has none yet, since the default recipes
                             are made the first time a stage is asked for.
+    :ivar variants: How many pages each recipe of the stage processed, the recipe with the most pages first. A recipe
+                    that processed none is left out, and so is the list of a book list, which does not read it.
     """
 
     stage: Stage
@@ -82,6 +98,7 @@ class StageSummary:
     review: int = field(default=0, validator=validators.ge(0))
     check: int = field(default=0, validator=validators.ge(0))
     active_recipe_id: RecipeId | None = None
+    variants: tuple[VariantTally, ...] = ()
 
     @classmethod
     def of(
@@ -126,6 +143,18 @@ class StageSummary:
             check=check,
             active_recipe_id=active_recipe_id,
         )
+
+    def with_variants(self, variants: Sequence[VariantTally]) -> Self:
+        """Add how many pages each recipe of the stage processed, the recipe with the most pages first.
+
+        :param variants: The counts of the recipes of this stage.
+        :type variants: Sequence[VariantTally]
+        :returns: The summary with its variants. A stage done by hand has none, whatever the counts say.
+        :rtype: Self
+        """
+        if self.manual:
+            return self
+        return evolve(self, variants=tuple(sorted(variants, key=lambda one: (-one.pages, str(one.recipe_id)))))
 
     def status(self, *, running: bool) -> StageStatus:
         """Give the status of the stage in the book.
@@ -197,12 +226,14 @@ class StageRow:
     :ivar page_id: The page.
     :ivar status: The state of the stage on the page, or that the stage has not run on it.
     :ivar recipe_id: Recipe the page was processed by, or None.
+    :ivar pinned: Whether the recipe is pinned to the page.
     :ivar head_version: The current version of the stage on the page, or None when there is none.
     """
 
     page_id: PageId
     status: PageStageStatus = PageStageStatus.NOT_RUN
     recipe_id: RecipeId | None = None
+    pinned: bool = False
     head_version: PageVersion | None = None
 
     @property

@@ -319,6 +319,37 @@ class ProcessingService:
             await self._queue_tiles_of_choice(project_id, version_id)
         return changed[0]
 
+    async def unpin(self, actor: Actor, project_id: ProjectId, page_id: PageId, stage: Stage) -> PageStage:
+        """Take the recipe pinned to a stage of a page off it, so a run without a recipe chooses by the rules again.
+
+        The result of the stage stays and is marked stale, since the rules may choose another recipe. A stage that is
+        not pinned is returned as it is.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param page_id: Identifier of the page.
+        :type page_id: PageId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The record of the stage in its new state.
+        :rtype: PageStage
+        :raises NotFoundError: If the actor has no such project, the project has no such page, or the stage has not run
+                               on the page.
+        :raises ConflictError: If a run, a preview, a tile cutting or a collection of the project is queued or running,
+                               which may be writing the record.
+        """
+        await owned_project(self._uow.projects, actor, project_id)
+        await self._page(project_id, page_id)
+        if await self._starter.busy(project_id) is not None:
+            raise ConflictError(PROJECT_BUSY)
+        key = PageStageKey(page_id, stage)
+        changed = await self._records.unpin(page_id, stage)
+        await self._uow.commit()
+        await self._records.announce(project_id, changed)
+        return changed[0] if changed else await self._uow.page_stages.get(key)
+
     async def _queue_tiles_of_choice(self, project_id: ProjectId, version_id: PageVersionId) -> None:
         """Queue the cutting of the pyramid of a version that was just made current.
 

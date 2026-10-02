@@ -16,6 +16,7 @@ function pages(...ids: string[]): PageSchema[] {
         slot: 0,
         included: true,
         notes: '',
+        group_label: '',
         images: null,
         created_at: '',
         updated_at: '',

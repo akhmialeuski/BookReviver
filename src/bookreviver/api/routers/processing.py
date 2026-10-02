@@ -348,6 +348,29 @@ async def choose_version(
     return PageStageSchema.of(chosen)
 
 
+@router.delete('/{project_id}/pages/{page_id}/stages/{stage}/pin')
+async def unpin_stage(
+    address: Annotated[PageStagePath, Depends()], actor: ActorDep, processing: FromDishka[ProcessingService]
+) -> PageStageSchema:
+    """Take the recipe pinned to a stage of a page off it, so a run without a recipe chooses by the rules again.
+
+    The current version stays and the stage is marked stale, since the rules may choose another recipe. The answer is
+    409 while the project is processing something, and 404 for a stage that has not run on the page.
+
+    \N{FORM FEED}
+    :param address: Identifiers of the project, the page and the stage.
+    :type address: PageStagePath
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param processing: Processing service of the request.
+    :type processing: ProcessingService
+    :returns: The record of the stage in its new state.
+    :rtype: PageStageSchema
+    """
+    unpinned = await processing.unpin(actor, address.project_id, address.page_id, address.stage)
+    return PageStageSchema.of(unpinned)
+
+
 @router.get('/{project_id}/pages/{page_id}/versions')
 async def list_versions(
     address: Annotated[PagePath, Depends()],

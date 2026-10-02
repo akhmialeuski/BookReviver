@@ -1,8 +1,8 @@
 """Tables of the books feature, private to the SQLAlchemy persistence adapter.
 
 The module declares the ``projects``, ``jobs``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
-``page_edits``, ``book_places`` and ``recipes`` tables in the SQLAlchemy 2.0 declarative style: ``Mapped`` annotations,
-``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from
+``page_edits``, ``book_places``, ``recipes`` and ``recipe_rules`` tables in the SQLAlchemy 2.0 declarative style:
+``Mapped`` annotations, ``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from
 advanced-alchemy's :class:`~advanced_alchemy.base.DefaultBase`, which is a ``DeclarativeBase`` carrying the metadata
 shared with the account tables, the portable ``GUID``, ``DateTimeUTC`` and ``JsonB`` column types for ``UUID``,
 ``datetime`` and ``dict`` annotations, and the naming convention of keys and constraints.
@@ -52,6 +52,7 @@ from bookreviver.domain.enums import (
     Rendition,
     ReviewReason,
     RightsStatus,
+    RuleCondition,
     Script,
     SourceKind,
     Stage,
@@ -83,6 +84,7 @@ FIRST_REVISION: Final = str(FIRST_REVISION_NUMBER)
 PAGES_TABLE: Final = 'pages'
 PAGE_VERSIONS_TABLE: Final = 'page_versions'
 RECIPES_TABLE: Final = 'recipes'
+RECIPE_RULES_TABLE: Final = 'recipe_rules'
 # Length of a page version identifier, a hash cut to 16 hexadecimal digits
 VERSION_ID_LENGTH: Final = 16
 POSTGRESQL_DIALECT: Final = 'postgresql'
@@ -446,6 +448,7 @@ class PageRow(DefaultBase):
     :ivar slot: Part of the scan the page shows.
     :ivar included: Whether the page is part of the book.
     :ivar notes: Notes of the user.
+    :ivar group_label: Label of the group the user put the page in, or empty.
     :ivar created_at: Time the page was created.
     :ivar updated_at: Time the page was last changed.
     :ivar revision: Version counter, which SQLAlchemy raises by one on every update and checks in the ``WHERE`` of the
@@ -469,6 +472,7 @@ class PageRow(DefaultBase):
     slot: Mapped[int]
     included: Mapped[bool]
     notes: Mapped[str]
+    group_label: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
     revision: Mapped[int] = mapped_column(server_default=FIRST_REVISION)
@@ -552,6 +556,7 @@ class PageStageRow(DefaultBase):
     :ivar recipe_id: Recipe the page was processed by, or null.
     :ivar head_version_id: Current version of the stage, or null.
     :ivar state: Whether the current version matches the inputs of the stage, stored by value.
+    :ivar pinned: Whether the recipe of the record is pinned to the page, so a run without a recipe keeps it.
     :ivar updated_at: Time the record last changed.
     :ivar page: Page owning the record, never loaded implicitly.
     """
@@ -564,6 +569,7 @@ class PageStageRow(DefaultBase):
     recipe_id: Mapped[UUID | None] = mapped_column(ForeignKey(f'{RECIPES_TABLE}.id', ondelete=SET_NULL), index=True)
     head_version_id: Mapped[str | None] = mapped_column(ForeignKey(PageVersionRow.id, ondelete=SET_NULL), index=True)
     state: Mapped[StageState] = mapped_column(enum_by_value(StageState))
+    pinned: Mapped[bool] = mapped_column(server_default=false())
     updated_at: Mapped[datetime]
 
     page: Mapped[PageRow] = relationship(back_populates=Relation.STAGES, lazy=NO_IMPLICIT_LOAD)
@@ -681,3 +687,30 @@ class RecipeRow(DefaultBase):
     updated_at: Mapped[datetime]
 
     project: Mapped[ProjectRow] = relationship(back_populates=Relation.RECIPES, lazy=NO_IMPLICIT_LOAD)
+
+
+class RecipeRuleRow(DefaultBase):
+    """Row of one rule of a stage of a project, which sends the pages meeting a condition to a recipe of the stage.
+
+    A project owns its rules and a recipe owns the rules that name it, so the database removes both with their owner.
+    A condition is given once per stage, and a manual group once per label, which the unique key keeps.
+
+    :ivar id: Rule identifier, assigned by the domain.
+    :ivar project_id: Project owning the rule.
+    :ivar stage: Stage whose pages the rule sends to a recipe, stored by value.
+    :ivar condition: What a page must be for the rule to match it, stored by value.
+    :ivar group_label: The group a page must be in, for the condition on the group, and empty for any other.
+    :ivar recipe_id: Recipe that processes the pages the rule matches.
+    :ivar order: Place of the rule among the rules of the stage, the lowest being tried first.
+    """
+
+    __tablename__ = RECIPE_RULES_TABLE
+    __table_args__ = (UniqueConstraint('project_id', 'stage', 'condition', 'group_label'),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), index=True)
+    stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
+    condition: Mapped[RuleCondition] = mapped_column(enum_by_value(RuleCondition))
+    group_label: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
+    recipe_id: Mapped[UUID] = mapped_column(ForeignKey(RecipeRow.id, ondelete=CASCADE), index=True)
+    order: Mapped[int]

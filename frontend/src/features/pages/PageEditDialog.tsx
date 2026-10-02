@@ -22,7 +22,7 @@ import { TextField } from '@/shared/ui/text-field';
 import { TextareaField } from '@/shared/ui/textarea-field';
 
 /**
- * The dialog that edits one page: its printed number, kind, inclusion in the book and notes, and for a placeholder
+ * The dialog that edits one page: its printed number, kind, inclusion in the book, group and notes, and for a placeholder
  * the binding of a scan, and for any page its deletion after a confirmation.
  *
  * The three steps are one dialog that swaps its content, so the reader stays on one page throughout and the keyboard
@@ -56,6 +56,7 @@ function EditForm({
   const [kind, setKind] = useState<PageKind>(page.kind);
   const [included, setIncluded] = useState(page.included);
   const [notes, setNotes] = useState(page.notes);
+  const [group, setGroup] = useState(page.group_label);
 
   return (
     <form
@@ -71,6 +72,7 @@ function EditForm({
               kind,
               included,
               notes: notes.trim() === '' ? null : notes,
+              group_label: group.trim() === '' ? null : group.trim(),
             },
           },
           { onSuccess: onDone },
@@ -100,6 +102,12 @@ function EditForm({
         label={MESSAGES.pages.edit.included}
         checked={included}
         onChange={(event) => setIncluded(event.target.checked)}
+      />
+      <TextField
+        label={MESSAGES.pages.edit.group}
+        hint={MESSAGES.pages.edit.groupHint}
+        value={group}
+        onChange={(event) => setGroup(event.target.value)}
       />
       <TextareaField
         label={MESSAGES.pages.edit.notes}

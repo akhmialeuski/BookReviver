@@ -40,7 +40,7 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import StageRun, Step, StepPreview, VersionFilter
+from bookreviver.domain.values import PIN_NEEDS_RECIPE, StageRun, Step, StepPreview, VersionFilter
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -158,11 +158,26 @@ class StageRunBody(RequestModel):
     :ivar page_ids: Pages to run it on, or omitted for every page with an image.
     :ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a
                            run that would do so leaves that page failed.
+    :ivar pin: Whether to pin the recipe to the pages of the run, so a later run without a recipe keeps it there. It is
+               given with a recipe, since a run that chooses the recipes pins nothing.
     """
 
     recipe_id: RecipeId | None = None
     page_ids: PageIdList | None = None
     confirm_unsplit: bool = False
+    pin: bool = False
+
+    @model_validator(mode='after')
+    def _pin_names_a_recipe(self) -> Self:
+        """Check that a run that pins also names the recipe to pin.
+
+        :returns: The body unchanged.
+        :rtype: Self
+        :raises ValueError: If the run pins and names no recipe.
+        """
+        if self.pin and self.recipe_id is None:
+            raise ValueError(PIN_NEEDS_RECIPE)
+        return self
 
     def to_run(self, stage: Stage) -> StageRun:
         """Return the run as the domain states it.
@@ -177,6 +192,7 @@ class StageRunBody(RequestModel):
             recipe_id=self.recipe_id,
             page_ids=None if self.page_ids is None else tuple(self.page_ids),
             confirm_unsplit=self.confirm_unsplit,
+            pin=self.pin,
         )
 
 
@@ -228,6 +244,7 @@ class PageStageSchema(ResponseModel):
     :ivar recipe_id: Recipe the page was processed by, or None.
     :ivar head_version_id: The current version of the stage, or None.
     :ivar state: Whether the current version matches the inputs of the stage.
+    :ivar pinned: Whether the recipe is pinned to the page, so a run without a recipe keeps it.
     :ivar updated_at: When the record last changed.
     """
 
@@ -236,6 +253,7 @@ class PageStageSchema(ResponseModel):
     recipe_id: RecipeId | None
     head_version_id: PageVersionId | None
     state: StageState
+    pinned: bool
     updated_at: datetime
 
     @classmethod

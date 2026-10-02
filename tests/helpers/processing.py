@@ -27,13 +27,14 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import Renditions
+from bookreviver.domain.values import RecipeKey, Renditions
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.services.edits import EditService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
+from bookreviver.services.recipe_rules import RecipeRules
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from bookreviver.services.stage_runs import StageRuntime
 from bookreviver.services.stage_summaries import StageSummaries
@@ -60,7 +61,8 @@ from tests.helpers.processors import CleanupProcessor, FakeProcessor
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Page, PageVersion, Project, Scan
+    from bookreviver.domain.entities import Page, PageVersion, Project, Recipe, RecipeRule, Scan
+    from bookreviver.domain.enums import RuleCondition
     from bookreviver.domain.ids import PageVersionId
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.processing import Processor
@@ -157,6 +159,39 @@ class ProcessingKit:
         """
         uow = InMemoryUnitOfWork(self.database)
         return ProcessingService(uow=uow, catalogue=self.catalogue, parts=self.parts(uow))
+
+    def rules(self) -> RecipeRules:
+        """Build the service of the rules of the stages over a new unit of work.
+
+        :returns: The service.
+        :rtype: RecipeRules
+        """
+        uow = InMemoryUnitOfWork(self.database)
+        return RecipeRules(uow=uow, recipes=self.parts(uow).recipes)
+
+    async def add_rule(
+        self, actor: Actor, recipe: Recipe, condition: RuleCondition, group_label: str = ''
+    ) -> RecipeRule:
+        """Add a rule that sends the pages meeting a condition to a recipe, after the rules the stage has.
+
+        :param actor: Account owning the project of the recipe.
+        :type actor: Actor
+        :param recipe: Recipe the rule names, whose project and stage the rule takes.
+        :type recipe: Recipe
+        :param condition: What a page must be for the rule to match it.
+        :type condition: RuleCondition
+        :param group_label: The group a page must be in, for the condition on a manual group.
+        :type group_label: str
+        :returns: The rule as stored.
+        :rtype: RecipeRule
+        """
+        return await self.rules().add(
+            actor,
+            recipe.project_id,
+            RecipeKey(recipe.stage, recipe.id),
+            condition=condition,
+            group_label=group_label,
+        )
 
     def stages(self) -> StageSummaries:
         """Build the sums of the stages of books over a new unit of work.

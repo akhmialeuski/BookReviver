@@ -34,6 +34,7 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     PageVersionMapper,
     ProjectMapper,
     RecipeMapper,
+    RecipeRuleMapper,
     ScanMapper,
     SourceMapper,
 )
@@ -46,6 +47,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     PageVersionRow,
     ProjectRow,
     RecipeRow,
+    RecipeRuleRow,
     ScanRow,
     SourceRow,
 )
@@ -59,13 +61,14 @@ from bookreviver.domain.entities import (
     Project,
     ProjectOverview,
     Recipe,
+    RecipeRule,
     Scan,
     Source,
 )
 from bookreviver.domain.enums import PageOrigin, Side, Stage, StageState, VersionScale, VersionState
 from bookreviver.domain.errors import ConcurrentChangeError, ConflictError, NotFoundError
-from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
-from bookreviver.domain.stage_summaries import StageTally
+from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, RecipeRuleId, ScanId, SourceId
+from bookreviver.domain.stage_summaries import StageTally, VariantTally
 from bookreviver.domain.values import BookPlaceKey, PageEditKey, PageSize, PageStageKey, Slice
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
@@ -77,6 +80,7 @@ from bookreviver.ports.persistence import (
     PageVersionRepository,
     ProjectRepository,
     RecipeRepository,
+    RecipeRuleRepository,
     Repository,
     ScanRepository,
     SourceRepository,
@@ -274,6 +278,12 @@ class RecipeRows(RowRepository[RecipeRow]):
     """Rows of the ``recipes`` table."""
 
     model_type = RecipeRow
+
+
+class RecipeRuleRows(RowRepository[RecipeRuleRow]):
+    """Rows of the ``recipe_rules`` table."""
+
+    model_type = RecipeRuleRow
 
 
 class JobRows(RowRepository[JobRow]):
@@ -1161,6 +1171,30 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
         }
 
     @override
+    async def variant_tally(self, project_id: ProjectId) -> Sequence[VariantTally]:
+        """Count the pages each recipe processed, for every stage of the project, with one grouped statement.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: One tally for each recipe that processed a page.
+        :rtype: Sequence[VariantTally]
+        """
+        statement = (
+            select(PageStageRow.stage, PageStageRow.recipe_id, func.count())
+            .join(PageRow, PageStageRow.page_id == PageRow.id)
+            .where(
+                PageRow.project_id == project_id,
+                PageRow.origin != PageOrigin.PLACEHOLDER,
+                PageStageRow.recipe_id.is_not(None),
+            )
+            .group_by(PageStageRow.stage, PageStageRow.recipe_id)
+        )
+        return [
+            VariantTally(stage=stage, recipe_id=RecipeId(recipe_id), pages=pages)
+            for stage, recipe_id, pages in await self._rows.session.execute(statement)
+        ]
+
+    @override
     async def tally(self, project_ids: Collection[ProjectId]) -> Sequence[StageTally]:
         """Count the records of every stage of the given projects by state with one grouped statement.
 
@@ -1403,6 +1437,36 @@ class SqlAlchemyRecipeRepository(SqlAlchemyRepository[Recipe, RecipeId, RecipeRo
         """
         rows = await self._rows.get_many(project_id=project_id, active=True)
         return sorted((self._mapper.to_entity(row) for row in rows), key=lambda recipe: recipe.stage.position)
+
+
+class SqlAlchemyRecipeRuleRepository(
+    SqlAlchemyRepository[RecipeRule, RecipeRuleId, RecipeRuleRow], RecipeRuleRepository
+):
+    """The rules that send pages to recipes of a stage."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Create the repository over the ``recipe_rules`` table.
+
+        :param session: Session of the unit of work.
+        :type session: AsyncSession
+        """
+        super().__init__(rows=RecipeRuleRows(session=session), mapper=RecipeRuleMapper())
+
+    @override
+    async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[RecipeRule]:
+        """Return the rules of one stage in the order they are tried, ties by identifier.
+
+        :param project_id: Project owning the rules.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The rules of the stage, the first to try first.
+        :rtype: Sequence[RecipeRule]
+        """
+        rows = await self._rows.get_many(
+            order_by=[RecipeRuleRow.order.asc(), RecipeRuleRow.id.asc()], project_id=project_id, stage=stage
+        )
+        return [self._mapper.to_entity(row) for row in rows]
 
 
 class SqlAlchemyJobRepository(SqlAlchemyRepository[Job, JobId, JobRow], JobRepository):

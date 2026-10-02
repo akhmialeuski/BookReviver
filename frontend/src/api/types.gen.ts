@@ -1049,6 +1049,7 @@ export type PageOrigin = 'scan' | 'blank' | 'placeholder';
  * :ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.
  * :ivar included: Whether the page is part of the book.
  * :ivar notes: Notes of the user.
+ * :ivar group_label: Label of the group the user put the page in, or empty for no group.
  * :ivar images: Paths of the images of the page's current version, or None while it has none.
  * :ivar created_at: When the page was created.
  * :ivar updated_at: When the page was last changed.
@@ -1088,6 +1089,10 @@ export type PageSchema = {
      * Notes
      */
     notes: string;
+    /**
+     * Group Label
+     */
+    group_label: string;
     images: ImagePathsSchema | null;
     /**
      * Created At
@@ -1109,6 +1114,7 @@ export type PageSchema = {
  * :ivar recipe_id: Recipe the page was processed by, or None.
  * :ivar head_version_id: The current version of the stage, or None.
  * :ivar state: Whether the current version matches the inputs of the stage.
+ * :ivar pinned: Whether the recipe is pinned to the page, so a run without a recipe keeps it.
  * :ivar updated_at: When the record last changed.
  */
 export type PageStageSchema = {
@@ -1126,6 +1132,10 @@ export type PageStageSchema = {
      */
     head_version_id: string | null;
     state: StageState;
+    /**
+     * Pinned
+     */
+    pinned: boolean;
     /**
      * Updated At
      */
@@ -1150,6 +1160,7 @@ export type PageStageStatus = 'not-run' | 'fresh' | 'stale' | 'failed';
  * :ivar kind: New role of the page in the book.
  * :ivar included: New decision whether the page is part of the book.
  * :ivar notes: New notes, or None to clear them.
+ * :ivar group_label: New label of the group of the page, or None to take the page out of its group.
  */
 export type PageUpdate = {
     /**
@@ -1168,6 +1179,10 @@ export type PageUpdate = {
      * Notes
      */
     notes?: string | null;
+    /**
+     * Group Label
+     */
+    group_label?: string | null;
 };
 
 /**
@@ -1385,6 +1400,32 @@ export type PageProjectSchema = {
      * Items
      */
     items: Array<ProjectSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
+};
+
+/**
+ * Page[RecipeRuleSchema]
+ */
+export type PageRecipeRuleSchema = {
+    /**
+     * Items
+     */
+    items: Array<RecipeRuleSchema>;
     /**
      * Total
      */
@@ -2018,6 +2059,79 @@ export type RecipeBody = {
 };
 
 /**
+ * RecipeRuleBody
+ *
+ * A rule to add after the others of the stage; the stage is in the address.
+ *
+ * :ivar condition: What a page must be for the rule to match it.
+ * :ivar group_label: The group a page must be in, given for the condition on a manual group and for no other.
+ * :ivar recipe_id: Recipe of the stage that processes the pages the rule matches.
+ */
+export type RecipeRuleBody = {
+    condition: RuleCondition;
+    /**
+     * Group Label
+     */
+    group_label?: string;
+    /**
+     * Recipe Id
+     */
+    recipe_id: string;
+};
+
+/**
+ * RecipeRuleSchema
+ *
+ * A rule of a stage.
+ *
+ * :ivar id: Identifier of the rule.
+ * :ivar project_id: Project owning the rule.
+ * :ivar stage: Stage whose pages the rule sends to a recipe.
+ * :ivar condition: What a page must be for the rule to match it.
+ * :ivar group_label: The group a page must be in, for the condition on a manual group, and empty for any other.
+ * :ivar recipe_id: Recipe of the stage that processes the pages the rule matches.
+ * :ivar order: Place of the rule among the rules of the stage from zero, the lowest being tried first.
+ */
+export type RecipeRuleSchema = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Project Id
+     */
+    project_id: string;
+    stage: Stage;
+    condition: RuleCondition;
+    /**
+     * Group Label
+     */
+    group_label: string;
+    /**
+     * Recipe Id
+     */
+    recipe_id: string;
+    /**
+     * Order
+     */
+    order: number;
+};
+
+/**
+ * RecipeRuleTarget
+ *
+ * The recipe a rule sends its pages to from now on.
+ *
+ * :ivar recipe_id: Recipe of the stage that processes the pages the rule matches.
+ */
+export type RecipeRuleTarget = {
+    /**
+     * Recipe Id
+     */
+    recipe_id: string;
+};
+
+/**
  * RecipeSchema
  *
  * A recipe: the ordered steps of one stage, active or a variant.
@@ -2104,6 +2218,18 @@ export type ReviewReason = 'low-confidence' | 'not-applied' | 'unsure-gutter' | 
  * Whether the result of the work on a book may be published.
  */
 export type RightsStatus = 'unknown' | 'public-domain' | 'in-copyright';
+
+/**
+ * RuleCondition
+ *
+ * What a rule of a stage asks of a page, to give the page the variant of the rule.
+ *
+ * The set is closed: a rule never carries a free-form test. ``GROUP`` is the one condition with an argument, the
+ * label of the group that the user wrote on the pages. ``ILLUSTRATED`` is declared so that rules and clients can name
+ * it, but it matches no page yet: the Layout stage, which finds the illustrations of a page, does not exist, and a
+ * rule on it takes effect the day that stage records them.
+ */
+export type RuleCondition = 'plates' | 'covers' | 'blanks' | 'illustrated' | 'odd' | 'even' | 'group';
 
 /**
  * ScanAttach
@@ -2356,6 +2482,7 @@ export type Stage = 'import' | 'page-split' | 'page-order' | 'geometry' | 'clean
  * :ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.
  * :ivar review: Why the result asks for a second look, or None.
  * :ivar recipe_id: Recipe the page was processed by, or None.
+ * :ivar pinned: Whether the recipe is pinned to the page.
  * :ivar version: The current version of the stage on the page with its data and images, or None.
  */
 export type StagePageSchema = {
@@ -2369,6 +2496,10 @@ export type StagePageSchema = {
      * Recipe Id
      */
     recipe_id: string | null;
+    /**
+     * Pinned
+     */
+    pinned: boolean;
     version: PageVersionSchema | null;
 };
 
@@ -2394,6 +2525,8 @@ export type StageProgressSchema = {
  * :ivar page_ids: Pages to run it on, or omitted for every page with an image.
  * :ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a
  * run that would do so leaves that page failed.
+ * :ivar pin: Whether to pin the recipe to the pages of the run, so a later run without a recipe keeps it there. It is
+ * given with a recipe, since a run that chooses the recipes pins nothing.
  */
 export type StageRunBody = {
     /**
@@ -2408,6 +2541,10 @@ export type StageRunBody = {
      * Confirm Unsplit
      */
     confirm_unsplit?: boolean;
+    /**
+     * Pin
+     */
+    pin?: boolean;
 };
 
 /**
@@ -2441,6 +2578,7 @@ export type StageStatus = 'done' | 'attention' | 'running' | 'waiting' | 'unavai
  * :ivar review: Pages, not failed, whose result asks for a second look.
  * :ivar check: Pages the strip lists under Check: stale, failed or marked, each counted once.
  * :ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used.
+ * :ivar variants: How many pages each recipe of the stage processed, the recipe with the most pages first.
  */
 export type StageSummarySchema = {
     stage: Stage;
@@ -2484,6 +2622,10 @@ export type StageSummarySchema = {
      * Active Recipe Id
      */
     active_recipe_id: string | null;
+    /**
+     * Variants
+     */
+    variants: Array<VariantPagesSchema>;
 };
 
 /**
@@ -2623,6 +2765,25 @@ export type ValidationError = {
     ctx?: {
         [key: string]: unknown;
     };
+};
+
+/**
+ * VariantPagesSchema
+ *
+ * How many pages of a stage one recipe processed.
+ *
+ * :ivar recipe_id: The recipe.
+ * :ivar pages: Pages with an image whose result of the stage the recipe made.
+ */
+export type VariantPagesSchema = {
+    /**
+     * Recipe Id
+     */
+    recipe_id: string;
+    /**
+     * Pages
+     */
+    pages: number;
 };
 
 /**
@@ -4325,6 +4486,56 @@ export type ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponse
 
 export type ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponse = ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponses[keyof ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponses];
 
+export type UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/stages/{stage}/pin';
+};
+
+export type UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteError = UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteErrors[keyof UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteErrors];
+
+export type UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageStageSchema;
+};
+
+export type UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteResponse = UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteResponses[keyof UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteResponses];
+
 export type ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData = {
     body?: never;
     path: {
@@ -4531,6 +4742,203 @@ export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponses = 
 };
 
 export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponse = CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponses[keyof CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponses];
+
+export type ListRulesApiV1ProjectsProjectIdStagesStageRulesGetData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+    };
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Size
+         */
+        size?: number;
+    };
+    url: '/api/v1/projects/{project_id}/stages/{stage}/rules';
+};
+
+export type ListRulesApiV1ProjectsProjectIdStagesStageRulesGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ListRulesApiV1ProjectsProjectIdStagesStageRulesGetError = ListRulesApiV1ProjectsProjectIdStagesStageRulesGetErrors[keyof ListRulesApiV1ProjectsProjectIdStagesStageRulesGetErrors];
+
+export type ListRulesApiV1ProjectsProjectIdStagesStageRulesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageRecipeRuleSchema;
+};
+
+export type ListRulesApiV1ProjectsProjectIdStagesStageRulesGetResponse = ListRulesApiV1ProjectsProjectIdStagesStageRulesGetResponses[keyof ListRulesApiV1ProjectsProjectIdStagesStageRulesGetResponses];
+
+export type CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostData = {
+    body: RecipeRuleBody;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/{stage}/rules';
+};
+
+export type CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostError = CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostErrors[keyof CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostErrors];
+
+export type CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostResponses = {
+    /**
+     * Successful Response
+     */
+    201: RecipeRuleSchema;
+};
+
+export type CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostResponse = CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostResponses[keyof CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostResponses];
+
+export type DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+        /**
+         * Rule Id
+         *
+         * Identifier of the rule
+         */
+        rule_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/{stage}/rules/{rule_id}';
+};
+
+export type DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteError = DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteErrors[keyof DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteErrors];
+
+export type DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteResponse = DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteResponses[keyof DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteResponses];
+
+export type PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutData = {
+    body: RecipeRuleTarget;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+        /**
+         * Rule Id
+         *
+         * Identifier of the rule
+         */
+        rule_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/{stage}/rules/{rule_id}';
+};
+
+export type PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutError = PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutErrors[keyof PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutErrors];
+
+export type PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: RecipeRuleSchema;
+};
+
+export type PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutResponse = PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutResponses[keyof PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutResponses];
 
 export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData = {
     body?: never;

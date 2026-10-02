@@ -128,6 +128,7 @@ every closed set of values is a `StrEnum` carrying its own label.
 | New pages    | `NewPage`, `NewPageOrigin` (blank or placeholder), `PageSize`, `VersionData` (data keys)      |
 | Storage keys | `StorageKey`, and `ProjectKeys` in `domain/keys.py`, the one builder of every key             |
 | Processing   | `Stage`, `ProcessorRef`, `Recipe` (a variant is a recipe that is not active), `Step`          |
+| Rules        | `RecipeRule` (a stage, a `RuleCondition` and a recipe, in order), `RecipeRuleId`               |
 | Geometry     | `Point`, `Size`, `Rect`, `Quad`, `Line`, `Rotation` and `Transform` in `domain/geometry.py`   |
 | Edits        | `PageEdit` with its `EditorKind` and a shape (`Rect`, `Quad`, `Line`, `Rotation`) or a mask   |
 | Events       | `JobChanged`, `SourceImported`, `ScanReady`, `PagesChanged`, `PageVersionReady`, and others   |
@@ -385,10 +386,13 @@ split the scan again. The identity of a page is stable: reordering, splitting ag
 | `slot`                     | `int`            | Part of the scan the page shows                                               |
 | `included`                 | `bool`           | Whether the page is part of the book                                          |
 | `notes`                    | `str`            | Notes of the user                                                             |
+| `group_label`              | `str`            | Group the user put the page in, or empty, which a rule can name               |
 | `created_at`, `updated_at` | `datetime`       | When the page was created and last changed                                    |
 | `revision`                 | `int`            | Writes of the stored page since it was added, which the next write must match |
 
-`PageKind` is `cover`, `back-cover`, `endpaper`, `frontispiece`, `title`, `text`, `plate`, `blank` or `other`. A
+`PageKind` is `cover`, `back-cover`, `endpaper`, `frontispiece`, `title`, `text`, `plate`, `blank` or `other`. The
+`group_label` is a name of the user's own, set in the dialog that edits a page, for pages that a stage should treat
+alike. See [Recipes for groups of pages](#recipes-for-groups-of-pages). A
 `scan` page holds a copy of a part of a scan, a `blank` page holds a generated blank leaf, and a `placeholder` holds
 no image and waits for a scan. `scan_id` is empty for the last two, and for a `scan` page whose source was deleted.
 `slot` is `0` for the whole scan, `1` and `2` for the left and right halves of a spread, and higher for fold-outs.
@@ -499,9 +503,11 @@ flowchart TD
 ```
 
 The current version of a stage is kept in a separate `PageStage` record per page and stage: a reference to the
-latest version of the stage's active recipe and a state, `fresh`, `stale` or `failed`. A change of an earlier version
+latest version of the recipe the page was processed by, a state, `fresh`, `stale` or `failed`, and `pinned`, whether
+the user pinned that recipe to the page. A change of an earlier version
 marks the later stages of that page stale without deleting them, so the interface can show the old result until it
-is recomputed. Recipes, variants and manual edits (`PageEdit`) are described under the processing plugins.
+is recomputed. Recipes, variants and manual edits (`PageEdit`) are described under the processing plugins, and the
+choice of the recipe for each page under [Recipes for groups of pages](#recipes-for-groups-of-pages).
 
 The format of `full` is set by the project setting `image_policy`, chosen when the project is created or in the stage
 that creates pages:
@@ -679,7 +685,9 @@ the latest stage that has an image, found by the `PageStage` records, and by its
 one yet. `PageStageRepository.list_for_pages`, `PageVersionRepository.list_by_ids` and `list_base_versions` read those
 for a whole window in one call each, so the manifest costs no query per page, and the shape of its answer is the same.
 `ProjectRepository.overview` counts the book of one
-project, and the project listing counts every project of a window in the same query.
+project, and the project listing counts every project of a window in the same query. `RecipeRuleRepository` lists the
+rules of a stage in the order they are tried, and `PageStageRepository.variant_tally` counts the pages each recipe
+processed in one grouped query.
 `OrderKeys` is a port with an adapter on fractional-indexing, because the domain imports only the standard library
 and attrs. Like `Clock.now`, its methods are synchronous, because they compute a string and wait on nothing.
 
@@ -841,7 +849,7 @@ erDiagram
   `full.jpg` is what every scan stored before the format was recorded reads as.
 - `pages` has the primary key `id`, `project_id` with `ON DELETE CASCADE`, `scan_id` with `ON DELETE SET NULL`, and
   the unique pairs `(project_id, order_key)` and `(scan_id, slot)`. Its columns are `order_key`, `label`, `kind`,
-  `origin`, `slot`, `included`, `notes`, `created_at` and `updated_at`.
+  `origin`, `slot`, `included`, `notes`, `group_label`, `created_at` and `updated_at`.
 - `jobs` has the primary key `id` and `project_id` with `ON DELETE CASCADE`. Its columns are `kind`, `state`,
   `progress_done`, `progress_total`, `error`, `request`, `params` and `result`, the last two as JSON, `request` and `result` empty for a job that has none and `params` an empty object,
   `created_at`, `started_at` and `finished_at`. The partial unique index `ix_jobs_one_active_import` on `project_id`
@@ -858,7 +866,8 @@ erDiagram
   `edit_hash`, `tiles_ready` and `created_at`. Both renditions columns are null for a step without an image, and
   `tiles_ready` says whether the IIIF pyramid is cut, which a run does only for a current version.
 - `page_stages` has the primary key `(page_id, stage)`, `page_id` with `ON DELETE CASCADE`, and `head_version_id` and
-  `recipe_id` with `ON DELETE SET NULL`. Its columns are `state` and `updated_at`.
+  `recipe_id` with `ON DELETE SET NULL`. Its columns are `state`, `pinned` and `updated_at`. Deleting a recipe leaves
+  a pinned record with no recipe, and a pin without a recipe holds nothing.
 - `page_edits` has the primary key `(page_id, stage, processor_key)` and `page_id` with `ON DELETE CASCADE`. Its
   columns are `kind`, `geometry` as JSON, `mask_key`, `edit_hash` and `updated_at`.
 - `book_places` has the primary key `(account_id, project_id)`, `account_id` referencing `user.id` and `project_id`
@@ -869,6 +878,10 @@ erDiagram
 - `recipes` has the primary key `id`, `project_id` with `ON DELETE CASCADE`, an index on `(project_id, stage)`, and the
   partial unique index `ix_recipes_one_active` on `(project_id, stage)` `WHERE active`, which keeps one active recipe
   per stage. Its columns are `stage`, `name`, `steps` as JSON, `active`, `created_at` and `updated_at`.
+- `recipe_rules` has the primary key `id`, `project_id` and `recipe_id` with `ON DELETE CASCADE`, an index on each of
+  them, and the unique key `(project_id, stage, condition, group_label)`, so a stage has one rule for each condition
+  and one for each label of a manual group. Its columns are `stage`, `condition`, `group_label`, `recipe_id` and
+  `order`, the place of the rule among the rules of its stage.
 
 `order_key` holds a fractional index string from the fractional-indexing package, such as `a0`, `a0V` or `a1`, so
 inserting a page between two neighbours writes one row instead of renumbering the book. Keys compare byte by byte,
@@ -886,7 +899,8 @@ behind. An account is deleted only after its projects, and that deletion already
 The tables `sources`, `scans`, `pages` and `page_versions` come with the book model, because a page gets its base
 version with its own copy of the image when it is created, and the baseline migration creates them. `page_stages`,
 `page_edits` and `recipes`, the columns `scale`, `edit_hash` and `tiles_ready` of `page_versions` and the column `params`
-of `jobs` come with the processing framework, in one revision. The `request` and
+of `jobs` come with the processing framework, in one revision. The table `recipe_rules`, the column `pinned` of
+`page_stages` and the column `group_label` of `pages` come with the recipes for groups of pages, in another. The `request` and
 `result` columns and the partial unique index of `jobs` came with the import job, in their own revision, and the
 `renditions_full` columns of `scans` and `page_versions` came with the choice of the format of `full`, in another.
 The columns of the extended description came in a revision of their own, which turns a non-empty `authors` string into one
@@ -962,7 +976,8 @@ flowchart TD
 | `ImportService`     | Accept an upload and enqueue the import, run the import job step by step            |
 | `SourceService`     | List and read the sources and scans of a book, delete a source with its files       |
 | `PageService`       | Page manifest, one page, order, labels, placeholders, blank leaves, binding scans   |
-| `ProcessingService` | Recipes, previews, runs, variants, invalidation of later stages                     |
+| `ProcessingService` | Recipes, previews, runs, variants, invalidation of later stages, unpinning a page   |
+| `RecipeRules`       | List, add, retarget and remove the rules that send pages to the variants of a stage |
 | `EditService`       | Save and load manual page edits (frames, meshes, masks, regions)                    |
 | `JobService`        | Job state, cancellation, the event stream of a project                              |
 
@@ -1125,6 +1140,47 @@ indistinguishable to the application.
   texture, custom colour, consistent across the book), recognition, proofreading.
 - Heavy plugins declare optional dependency groups (`bookreviver[cv]`, `[gpu]`, `[llm]`) installed only on the
   workers of their pool, and a worker loads only the plugins of its pool.
+
+### Recipes for groups of pages
+
+A stage runs by one recipe for the whole book, by a variant for a group of pages, or by a variant for one page. The
+choice lives in two places, the rules of the stage and the pin on a page, and a run that names no recipe works out the
+recipe of each page from them.
+
+```mermaid
+flowchart TD
+    P[Page in a run that names no recipe] --> A{Recipe pinned to the page?}
+    A -- yes --> R1[Run the pinned variant]
+    A -- no --> B{First rule of the stage that matches the page?}
+    B -- yes --> R2[Run the variant of that rule]
+    B -- no --> R3[Run the active recipe]
+    style A stroke:#5b3fd1,stroke-width:2px
+    style B stroke:#5b3fd1,stroke-width:2px
+```
+
+- **Rules.** A `RecipeRule` belongs to a stage and names a `RuleCondition` and a recipe of that stage. The rules of a
+  stage are tried in the order they were added (`order`, from zero) and the first that matches wins. The condition is a
+  closed `StrEnum` with labels: `plates` (the kinds plate and frontispiece), `covers` (cover and back cover), `blanks`,
+  `odd` and `even` (the place of the page in the book, counted from 1 over every page, placeholders included), `group`
+  (the `group_label` of the page, which the rule carries as its argument) and `illustrated`. The last is declared and
+  matches no page until the Layout stage exists to find the illustrations of a page. A stage has one rule for each
+  condition and one for each group label, because a second rule for the same condition could never be reached, and
+  a rule whose recipe is deleted goes with it.
+- **The pin.** `PageStage.pinned` says that the recipe of the record was pinned to the page by the user. A run that
+  names a recipe pins it to its pages only when its request says `pin`, and keeps the pin on a page it runs by the very
+  recipe the page is pinned to. Any other run by a named recipe leaves the page unpinned, since the record now names
+  another recipe. A run that names none keeps every pin it finds. A pin whose recipe was deleted holds nothing. The
+  route `DELETE .../pages/{page_id}/stages/{stage}/pin` takes a pin off, marks the stage stale, and refuses while the
+  project is processing, like the choice of a version. The page split makes its pages itself, so a pin on that stage
+  is not recorded.
+- **Choosing.** `RecipePicker` makes the choice for all the pages of a run from four reads that do not depend on the
+  number of pages: the active recipe, the recipes of the stage, the rules of the stage and the records of the stage
+  over the book. The place of a page in the book is read, window by window, only when a rule of the stage tests
+  parity. `tests/adapters/persistence/sqlalchemy/test_recipe_picks.py` counts the statements of the choice for three
+  pages and for thirty and requires them to be equal.
+- **Summary.** `StageSummary.variants` lists how many pages with an image each recipe of the stage processed, from
+  `PageStageRepository.variant_tally`, one grouped statement for the whole book. The list of books leaves it out.
+- **Changing a rule** runs nothing and marks no page stale. The pages follow it at the next run of the stage.
 
 ## AI engines and models
 
@@ -1472,6 +1528,8 @@ The rest of the design is not served yet, apart from the fastapi-users routers:
 | Catalogue  | `GET /engines`, `GET /processors`                                                                         |
 | Edits      | `GET, PUT /projects/{id}/pages/{page_id}/edits/{stage}`                                                   |
 | Processing | `GET, PUT /projects/{id}/stages/{stage}/recipe`, `POST .../preview`, `POST .../run`, `GET .../variants`   |
+| Rules      | `GET, POST /projects/{id}/stages/{stage}/rules`, `PUT, DELETE .../rules/{rule_id}`                        |
+| Pin        | `DELETE /projects/{id}/pages/{page_id}/stages/{stage}/pin`                                                |
 
 Every image address in a response is a path of `/iiif/{key}` without scheme or host. On a server, a reverse proxy
 serves `/iiif` straight from disk or object storage, after an access check by the API. The path of `full` ends in
@@ -1506,13 +1564,15 @@ cut, and none before, for a placeholder too.
 
 The stage workspace draws from three reads that each answer for the whole book, so it never asks page by page.
 `GET /projects/{id}/stages` gives the ten stages in pipeline order, each with `available`, `manual`, `pages` (the pages
-with an image, which a run goes over), `fresh`, `stale`, `failed`, `not_run`, `review`, `check` and `active_recipe_id`. `check` is the number of pages the
+with an image, which a run goes over), `fresh`, `stale`, `failed`, `not_run`, `review`, `check`, `active_recipe_id` and
+`variants`, the pages each recipe processed, the largest first. `check` is the number of pages the
 strip lists under Check: stale, failed or marked for review, each counted once, so a page that is stale and marked is
 one. A stage
 done by hand, the import and the page order, is always available and has no counts. Any other stage is available when
 a processor of it is in the catalogue, so a stage stops being "soon" the day its first plugin is installed.
 `GET /projects/{id}/stages/{stage}/pages` gives each page of the book in book order with its `status` in the stage
-(`not-run` when the stage has no record of it), its `review` mark and its current version whole, so the strip shows
+(`not-run` when the stage has no record of it), its `review` mark, the `recipe_id` it was processed by, whether that
+recipe is `pinned` and its current version whole, so the strip shows
 the result of that very stage. Both come from `StageSummaries`, which counts the `page_stages` records with one
 `GROUP BY` and conditional sums in `PageStageRepository.tally`, `check` being one more sum in the same statement.
 `GET /projects/{id}/jobs?active=true` lists the queued and running jobs of the book for the activity chip. A job in
@@ -1739,6 +1799,18 @@ The project list counts in `page_count` the included pages of the book, and show
     is saved until the button, which says first how many pages the save makes out of date, and a recipe is saved
     through `PUT .../variants/{recipe_id}`, which serves the active recipe too. "New recipe" copies the draft as a
     variant, and "Use this recipe" activates a variant.
+  - The variants of a stage show in four places. Under the recipe stands a line of the pages each variant made, such as
+    "Text 412 · Plates 14", from `StageSummary.variants`, and the section "Used for" (`UsedFor.tsx`) of the variant
+    shown, with the pages it made, the rules that send pages to it and "Add a rule". A condition that has a rule moves
+    the rule to the variant and never adds a second one. Each page of the strip and of the grid carries a coloured mark
+    with the name of its variant and a pin when it is pinned (`PageTile.tsx`, `variants.ts`), and a stage with more than
+    one recipe offers a select that narrows the list to the pages of one variant, which is kept per stage in the state
+    of the screen and not in the address. The colour of a variant goes by the order the variants were made in, so
+    activating another one repaints nothing. In "This page", `ApplyTo.tsx` shows the variant of the page and where it
+    came from, and "Apply ... to" gives the variant shown to this page, to the selected pages or to all pages, as a run
+    by that variant with `pin`, or to every page of the kind of this one, as a rule followed by a run that names no
+    recipe on the pages of that kind. "Use the book's rules" takes a pin off. The dialog that edits a page has the field
+    Group, the `group_label` the condition on a group reads.
   - The settings of a step are a react-jsonschema-form (`@rjsf/core`, `@rjsf/shadcn`, `@rjsf/validator-ajv8`) over the
     JSON Schema of its processor (`ParamsForm.tsx`, `schema.ts`). The label of a field is its `title`, the hint its
     `description`, and the title and the docstring of the model are left out. A number with both bounds is a slider
@@ -1759,8 +1831,10 @@ The project list counts in `page_count` the included pages of the book, and show
     bounds, and Space held shows the picture before in every mode (`useHoldKey.ts`). The picture before is the result of
     the nearest earlier stage that has processors (`useEarlierRows.ts`, `compare.ts`), and the Split stage, which has
     none before it, has no compare. `compare=` of the address holds `off`, `swipe` or `side`, and a preview turns it on.
-  - A run goes by the recipe shown over the pages of a scope (`scope.ts`): this page, the selected pages, the pages out
-    of date or failed, or all pages, which names no page and so means every page with an image. It waits for a draft to
+  - A run goes over the pages of a scope (`scope.ts`): this page, the selected pages, the pages out
+    of date or failed, or all pages, which names no page and so means every page with an image. With the active recipe
+    shown it names no recipe, so each page gets the variant pinned to it or the one its rule chooses. With another variant
+    shown it is a trial of that variant on the scope and pins nothing. It waits for a draft to
     be saved. A stage with pages out of date shows a banner that runs it again on exactly them. The Check filter writes
     why a page asks for a look under it (`reasons.ts`), and the page panel shows the facts of the current version, an
     amber plate for a result the step was unsure of, and the history of the full results of the page

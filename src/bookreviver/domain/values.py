@@ -64,6 +64,7 @@ NAMELESS_SEGMENTS: frozenset[str] = frozenset({'', '.', '..'})
 # A Windows drive letter opening a path, as in ``C:\scans`` or ``C:scans``
 DRIVE_LETTER: re.Pattern[str] = re.compile(r'[A-Za-z]:')
 CONTROL_CHARACTERS: re.Pattern[str] = re.compile(r'[\x00-\x1f\x7f]')
+PIN_NEEDS_RECIPE: str = 'A run pins a recipe to its pages only when it names the recipe.'
 
 
 @frozen(kw_only=True)
@@ -928,17 +929,28 @@ class StageRun:
     :ivar page_ids: Pages to run it on, or None for every page with an image.
     :ivar confirm_unsplit: Whether the user confirmed that a page split that is undone deletes the right half of a
                            spread, which a run that would do so refuses without it.
+    :ivar pin: Whether the recipe is pinned to the pages of the run, so that a later run without a recipe keeps it. A
+               run without a recipe chooses the recipe of each page and pins nothing.
     """
 
     stage: Stage
     recipe_id: RecipeId | None = None
     page_ids: tuple[PageId, ...] | None = None
     confirm_unsplit: bool = False
+    pin: bool = False
+
+    def __attrs_post_init__(self) -> None:
+        """Check that only a run by a recipe pins.
+
+        :raises ValueError: If a run without a recipe asks to pin.
+        """
+        if self.pin and self.recipe_id is None:
+            raise ValueError(PIN_NEEDS_RECIPE)
 
     def to_map(self) -> dict[str, Any]:
         """Return the value as the JSON object a job stores.
 
-        :returns: The stage, the recipe, the pages as text, and the confirmation.
+        :returns: The stage, the recipe, the pages as text, the confirmation and the pin.
         :rtype: dict[str, Any]
         """
         return {
@@ -946,6 +958,7 @@ class StageRun:
             'recipe_id': None if self.recipe_id is None else str(self.recipe_id),
             'page_ids': None if self.page_ids is None else [str(page_id) for page_id in self.page_ids],
             'confirm_unsplit': self.confirm_unsplit,
+            'pin': self.pin,
         }
 
     @classmethod
@@ -965,6 +978,7 @@ class StageRun:
                 recipe_id=None if stored['recipe_id'] is None else RecipeId(UUID(stored['recipe_id'])),
                 page_ids=None if page_ids is None else tuple(PageId(UUID(page_id)) for page_id in page_ids),
                 confirm_unsplit=bool(stored.get('confirm_unsplit', False)),
+                pin=bool(stored.get('pin', False)),
             )
         except (KeyError, ValueError, TypeError) as error:
             raise _params_error(JobKind.RUN_STAGE, error) from error

@@ -61,7 +61,13 @@ describe('ThisPageSection', () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
-          <ThisPageSection processing={processing()} item={item} editor={editor} />
+          <ThisPageSection
+            processing={processing()}
+            items={[item]}
+            item={item}
+            selected={new Set()}
+            editor={editor}
+          />
         </QueryClientProvider>,
       );
     });

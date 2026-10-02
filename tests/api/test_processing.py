@@ -25,7 +25,17 @@ from bookreviver.api.schemas.processing import (
     RecipeSchema,
     StageRunBody,
 )
-from bookreviver.domain.enums import EditorKind, JobKind, JobState, Rendition, Stage, StageState, VersionScale
+from bookreviver.api.schemas.rules import RecipeRuleSchema
+from bookreviver.domain.enums import (
+    EditorKind,
+    JobKind,
+    JobState,
+    Rendition,
+    RuleCondition,
+    Stage,
+    StageState,
+    VersionScale,
+)
 from bookreviver.domain.geometry import Line, SplitChoice
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import Renditions, StageRun
@@ -571,3 +581,198 @@ class TestStageRunBody:
         """
         run = StageRunBody(confirm_unsplit=confirmed).to_run(Stage.PAGE_SPLIT)
         assert (run.confirm_unsplit, StageRun.from_map(run.to_map()).confirm_unsplit) == (confirmed, confirmed)
+
+
+async def create_variant(client: httpx.AsyncClient, book: Book, name: str) -> RecipeSchema:
+    """Add a variant of the geometry stage through the API.
+
+    :param client: Client of the running application.
+    :type client: httpx.AsyncClient
+    :param book: Book of the signed-in account.
+    :type book: Book
+    :param name: Name of the variant.
+    :type name: str
+    :returns: The variant as the request answered with it.
+    :rtype: RecipeSchema
+    """
+    created = await client.post(
+        f'{book.path}/stages/geometry/variants', json={'name': name, 'steps': [{'processor_key': FAKE_KEY}]}
+    )
+    return RecipeSchema.model_validate_json(created.content)
+
+
+class TestRules:
+    """Tests for the rules that send the pages of a stage to its variants."""
+
+    async def test_rule_is_created_listed_retargeted_and_deleted(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a rule is answered 201, listed with its place, sent to another recipe by PUT, and deleted with 204.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        plates = await create_variant(fx_client, fx_book, 'Plates')
+        soft = await create_variant(fx_client, fx_book, 'Soft')
+        rules_path = f'{fx_book.path}/stages/geometry/rules'
+        created = await fx_client.post(rules_path, json={'condition': 'plates', 'recipe_id': str(plates.id)})
+        rule = RecipeRuleSchema.model_validate_json(created.content)
+        retargeted = await fx_client.put(f'{rules_path}/{rule.id}', json={'recipe_id': str(soft.id)})
+        listed = await fx_client.get(rules_path)
+        deleted = await fx_client.delete(f'{rules_path}/{rule.id}')
+        after = await fx_client.get(rules_path)
+        expect(created.status_code == status.HTTP_201_CREATED)
+        expect((rule.condition, rule.order, rule.group_label) == (RuleCondition.PLATES, 0, ''))
+        expect(RecipeRuleSchema.model_validate_json(retargeted.content).recipe_id == soft.id)
+        expect([item['recipe_id'] for item in listed.json()[ITEMS]] == [str(soft.id)])
+        expect(deleted.status_code == status.HTTP_204_NO_CONTENT)
+        expect(after.json()['total'] == 0)
+        assert_expectations()
+
+    async def test_a_second_rule_for_a_condition_is_a_409_problem(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify the stage keeps one rule for each condition.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        plates = await create_variant(fx_client, fx_book, 'Plates')
+        body = {'condition': 'plates', 'recipe_id': str(plates.id)}
+        await fx_client.post(f'{fx_book.path}/stages/geometry/rules', json=body)
+        second = await fx_client.post(f'{fx_book.path}/stages/geometry/rules', json=body)
+        expect(second.status_code == status.HTTP_409_CONFLICT)
+        expect(second.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
+        assert_expectations()
+
+    async def test_a_recipe_of_another_stage_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify a rule of the cleanup stage cannot name a recipe of the geometry stage.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        plates = await create_variant(fx_client, fx_book, 'Plates')
+        response = await fx_client.post(
+            f'{fx_book.path}/stages/cleanup/rules', json={'condition': 'plates', 'recipe_id': str(plates.id)}
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    @pytest.mark.parametrize(
+        'body',
+        [
+            {'condition': 'group'},
+            {'condition': 'plates', 'group_label': 'Engravings'},
+            {'condition': 'by-colour'},
+            {'condition': 'plates', 'recipe_id': 'not-an-id'},
+        ],
+        ids=['group-without-label', 'label-without-group', 'unknown-condition', 'malformed-recipe'],
+    )
+    async def test_a_rule_that_does_not_validate_is_a_422(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, body: dict[str, str]
+    ) -> None:
+        """Verify the body is checked before any rule is made.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param body: A body that is not valid.
+        :type body: dict[str, str]
+        """
+        plates = await create_variant(fx_client, fx_book, 'Plates')
+        response = await fx_client.post(
+            f'{fx_book.path}/stages/geometry/rules', json={'recipe_id': str(plates.id), **body}
+        )
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    async def test_project_of_another_account_is_not_found(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify the rules of a project the account does not own are answered 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        response = await fx_client.get(f'{PROJECTS_PATH}/{new_account_id()}/stages/geometry/rules')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+class TestPinAndGroups:
+    """Tests for the pin of a variant on a page, the counts of the variants and the group of a page."""
+
+    async def test_a_run_by_a_variant_pins_it_when_asked_and_unpin_takes_it_off(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify the pin is in the stage records and in the summary, and DELETE on the pin hands the page back.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the job.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        plates = await create_variant(fx_client, fx_book, 'Plates')
+        run = await fx_client.post(
+            f'{fx_book.path}/stages/geometry/run',
+            json={'recipe_id': str(plates.id), 'page_ids': [str(fx_book.page.id)], 'pin': True},
+        )
+        await fx_broker.wait_all()
+        stages = await fx_client.get(f'{fx_book.page_path}/stages')
+        pinned = {item['stage']: item for item in stages.json()[ITEMS]}['geometry']
+        summary = await fx_client.get(f'{fx_book.path}/stages')
+        geometry = {item['stage']: item for item in summary.json()[ITEMS]}['geometry']
+        rows = await fx_client.get(f'{fx_book.path}/stages/geometry/pages')
+        unpinned = await fx_client.delete(f'{fx_book.page_path}/stages/geometry/pin')
+        expect(run.status_code == status.HTTP_202_ACCEPTED)
+        expect((pinned['pinned'], pinned['recipe_id']) == (True, str(plates.id)))
+        expect(geometry['variants'] == [{'recipe_id': str(plates.id), 'pages': 1}])
+        expect([row['pinned'] for row in rows.json()[ITEMS]] == [True])
+        expect(unpinned.status_code == status.HTTP_200_OK)
+        expect(PageStageSchema.model_validate_json(unpinned.content).pinned is False)
+        assert_expectations()
+
+    async def test_unpinning_a_stage_that_has_not_run_is_a_404(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify there is no pin to take off a stage the page has not been through.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.delete(f'{fx_book.page_path}/stages/geometry/pin')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_a_run_pins_only_with_a_recipe(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify a run that pins and names no recipe is refused by the body.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.post(f'{fx_book.path}/stages/geometry/run', json={'pin': True})
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    async def test_the_group_label_of_a_page_is_set_and_cleared(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a patch sets the label of the group, and a null clears it.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        grouped = await fx_client.patch(fx_book.page_path, json={'group_label': 'Engravings'})
+        cleared = await fx_client.patch(fx_book.page_path, json={'group_label': None})
+        expect(grouped.json()['group_label'] == 'Engravings')
+        expect(cleared.json()['group_label'] == '')
+        assert_expectations()

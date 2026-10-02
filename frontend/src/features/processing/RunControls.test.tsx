@@ -125,7 +125,7 @@ describe('RunControls', () => {
     expect(sdk.run).toHaveBeenCalledTimes(1);
     expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
       path: { project_id: 'project', stage: 'geometry' },
-      body: { recipe_id: 'r1', page_ids: ['b'] },
+      body: { page_ids: ['b'] },
     });
   });
 
@@ -134,7 +134,7 @@ describe('RunControls', () => {
 
     await choose('selected');
 
-    expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ recipe_id: 'r1', page_ids: ['c', 'd'] });
+    expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ page_ids: ['c', 'd'] });
   });
 
   it('runs the pages out of date and the pages that failed, and no others', async () => {
@@ -142,7 +142,7 @@ describe('RunControls', () => {
 
     await choose('attention');
 
-    expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ recipe_id: 'r1', page_ids: ['b', 'c'] });
+    expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ page_ids: ['b', 'c'] });
   });
 
   it('runs every page by naming none, which the server reads as every page with an image', async () => {
@@ -150,10 +150,18 @@ describe('RunControls', () => {
 
     await choose('all');
 
-    expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ recipe_id: 'r1' });
+    expect(sdk.run.mock.calls[0]?.[0].body).toEqual({});
   });
 
-  it('runs the recipe the panel shows and not the active one', async () => {
+  it('names no recipe for the active one, so each page gets the variant pinned to it or its rule', async () => {
+    render();
+
+    await choose('page');
+
+    expect(sdk.run.mock.calls[0]?.[0].body).not.toHaveProperty('recipe_id');
+  });
+
+  it('runs the variant the panel shows on every page of the scope, as a trial that pins nothing', async () => {
     const variant = recipe('r2', { name: 'Gentle', active: false });
     render(processing({ recipe: variant, recipes: [recipe('r1'), variant] }));
 
@@ -231,10 +239,7 @@ describe('RunControls', () => {
         document.body.querySelector<HTMLElement>('[data-testid="unsplit-confirm"]')?.click();
       });
 
-      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({
-        recipe_id: 'whole',
-        confirm_unsplit: true,
-      });
+      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ confirm_unsplit: true });
     });
 
     it('sends nothing when the answer is no', async () => {
@@ -264,7 +269,7 @@ describe('RunControls', () => {
       await choose('all');
 
       expect(document.body.querySelector('[role="dialog"]')).toBeNull();
-      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ recipe_id: 'spread' });
+      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({});
     });
   });
 });

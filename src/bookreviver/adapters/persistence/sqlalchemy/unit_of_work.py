@@ -16,6 +16,7 @@ from bookreviver.adapters.persistence.sqlalchemy.repositories import (
     SqlAlchemyPageVersionRepository,
     SqlAlchemyProjectRepository,
     SqlAlchemyRecipeRepository,
+    SqlAlchemyRecipeRuleRepository,
     SqlAlchemyScanRepository,
     SqlAlchemySourceRepository,
 )
@@ -36,6 +37,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     :ivar page_stages: Page stage repository bound to the session.
     :ivar page_edits: Page edit repository bound to the session.
     :ivar recipes: Recipe repository bound to the session.
+    :ivar recipe_rules: Recipe rule repository bound to the session.
     :ivar jobs: Job repository bound to the session.
     :ivar book_places: Book place repository bound to the session.
     """
@@ -55,6 +57,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.page_stages = SqlAlchemyPageStageRepository(session)
         self.page_edits = SqlAlchemyPageEditRepository(session)
         self.recipes = SqlAlchemyRecipeRepository(session)
+        self.recipe_rules = SqlAlchemyRecipeRuleRepository(session)
         self.jobs = SqlAlchemyJobRepository(session)
         self.book_places = SqlAlchemyBookPlaceRepository(session)
 

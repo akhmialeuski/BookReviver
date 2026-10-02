@@ -27,6 +27,7 @@ export function page(id: string, overrides: Partial<PageSchema> = {}): PageSchem
     slot: 0,
     included: true,
     notes: '',
+    group_label: '',
     images: images(`page-${id}`),
     created_at: '2026-10-01T00:00:00Z',
     updated_at: '2026-10-01T00:00:00Z',
@@ -41,6 +42,7 @@ export function row(id: string, overrides: Partial<StagePageSchema> = {}): Stage
     status: 'fresh',
     review: null,
     recipe_id: null,
+    pinned: false,
     version: null,
     ...overrides,
   };

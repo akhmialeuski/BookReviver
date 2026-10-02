@@ -24,6 +24,9 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * The foot of the panel of a processing stage: how many pages are out of date or failed, the preview of the open page,
  * and the run with the pages it goes over.
  *
+ * With the active recipe shown the run names no recipe, so each page is processed by the variant pinned to it or the
+ * rule of the book that matches it. With another variant shown the run is a trial of that variant on the pages.
+ *
  * A run goes by the saved recipe, so while the draft has changes the run waits for them to be saved, and a preview, which
  * goes by the draft, is what to use to try them. A run that would send a scan back to one page asks first, and carries the
  * confirmation the server wants.
@@ -67,8 +70,12 @@ export function RunControls({
       return;
     }
     const ids = pageIdsFor(scope, items, current?.page.id, selected);
-    const body: StageRunBody =
-      ids === null ? { recipe_id: recipe.id } : { recipe_id: recipe.id, page_ids: ids };
+    // The active recipe is the book's own: each page then gets the variant it is pinned to or the rules choose. Any
+    // other variant is a trial, and goes to every page of the scope
+    const body: StageRunBody = {
+      ...(recipe.active ? {} : { recipe_id: recipe.id }),
+      ...(ids === null ? {} : { page_ids: ids }),
+    };
     const affected =
       ids === null
         ? items.map((item) => item.page)

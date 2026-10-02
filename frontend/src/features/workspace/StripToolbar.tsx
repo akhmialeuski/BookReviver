@@ -1,6 +1,6 @@
 import { LayoutGridIcon, ListIcon, TriangleAlertIcon } from 'lucide-react';
 import { PageFilter } from '@/features/workspace/params';
-import type { FilterCounts } from '@/features/workspace/strip';
+import type { FilterCounts, VariantView } from '@/features/workspace/strip';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 
@@ -16,6 +16,7 @@ export function StripToolbar({
   filter,
   grid,
   withWide = false,
+  variants,
   onFilter,
   onSwitchView,
 }: {
@@ -29,6 +30,8 @@ export function StripToolbar({
   grid: boolean;
   /** Whether the filter of the pages cut from wide scans is offered, which the Split stage has. */
   withWide?: boolean;
+  /** The variants of the stage, which narrow the pages to those one variant processed. Absent for none to choose from. */
+  variants?: VariantView;
   onFilter: (filter: PageFilter) => void;
   onSwitchView: () => void;
 }): React.JSX.Element {
@@ -61,6 +64,24 @@ export function StripToolbar({
         {withWide
           ? filterButton(PageFilter.Wide, labels.filters.wide(counts[PageFilter.Wide]))
           : null}
+        {variants === undefined || variants.options.length === 0 ? null : (
+          <select
+            aria-label={labels.variant.label}
+            data-testid="strip-variant-filter"
+            className="h-8 max-w-40 min-w-0 rounded-md border border-input bg-background px-2 text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            value={variants.selected ?? ''}
+            onChange={(event) =>
+              variants.onSelect(event.target.value === '' ? null : event.target.value)
+            }
+          >
+            <option value="">{labels.variant.all}</option>
+            {variants.options.map((option) => (
+              <option key={option.id} value={option.id}>
+                {labels.variant.option(option.name, option.pages)}
+              </option>
+            ))}
+          </select>
+        )}
         <Button
           variant="ghost"
           size="icon-sm"

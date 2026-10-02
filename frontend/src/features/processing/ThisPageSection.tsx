@@ -2,6 +2,7 @@ import { TriangleAlertIcon } from 'lucide-react';
 import { stepChain } from '@/features/editors/chain';
 import { EditorControls } from '@/features/editors/EditorControls';
 import type { EditorSession } from '@/features/editors/session';
+import { ApplyTo } from '@/features/processing/ApplyTo';
 import { useChooseVersion, useVersions } from '@/features/processing/queries';
 import { describeParams, historyOf, readChainResult } from '@/features/processing/results';
 import type { Processing } from '@/features/processing/useProcessing';
@@ -26,11 +27,17 @@ const labels = MESSAGES.processing;
 
 export function ThisPageSection({
   processing,
+  items,
   item,
+  selected,
   editor = null,
 }: {
   processing: Processing;
+  /** Every page of the book with where it stands in the stage, which "Apply to" counts the pages of. */
+  items: readonly StripItem[];
   item: StripItem;
+  /** The pages selected in the grid. */
+  selected: ReadonlySet<string>;
   /** The page editor of the stage on this page, or null when the stage has none. */
   editor?: EditorSession | null;
 }): React.JSX.Element {
@@ -134,6 +141,7 @@ export function ThisPageSection({
         </div>
       )}
       {editor === null ? null : <EditorControls session={editor} />}
+      <ApplyTo processing={processing} items={items} item={item} selected={selected} />
 
       <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         {labels.history.title}

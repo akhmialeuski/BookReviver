@@ -15,6 +15,7 @@ from bookreviver.services.projects import ProjectService
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import EPOCH, make_job, make_page, make_page_stage, make_project
 from tests.helpers.fake_processing import FakeCatalogue
+from tests.helpers.statements import STATEMENT_EVENT, StatementCounter
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -26,27 +27,6 @@ pytestmark = pytest.mark.anyio
 
 # A full window of the list, against the one book the statements are compared with
 WINDOW: int = 5
-# The engine event fired once for every statement sent to the database
-STATEMENT_EVENT: str = 'before_cursor_execute'
-
-
-class StatementCounter:
-    """Count the SQL statements an engine sends while the counter is attached.
-
-    :ivar count: Number of statements sent so far.
-    """
-
-    def __init__(self) -> None:
-        """Start at no statements."""
-        self.count = 0
-
-    def __call__(self, *_args: object) -> None:
-        """Count one statement, whatever the arguments of the ``before_cursor_execute`` event.
-
-        :param _args: Connection, cursor, statement, parameters, context and the executemany flag, all unused.
-        :type _args: object
-        """
-        self.count += 1
 
 
 async def _commit_books(database: SqlDatabase, owner_id: AccountId, count: int) -> None:
