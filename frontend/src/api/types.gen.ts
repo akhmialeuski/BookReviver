@@ -361,7 +361,7 @@ export type EditForm = {
  *
  * The editor a processor offers for the manual edit of its input.
  */
-export type EditorKind = 'none' | 'rect' | 'quad' | 'line' | 'rotation' | 'mesh' | 'brush-mask' | 'regions';
+export type EditorKind = 'none' | 'rect' | 'quad' | 'line' | 'rotation' | 'split' | 'mesh' | 'brush-mask' | 'regions';
 
 /**
  * ErrorModel
@@ -1940,7 +1940,7 @@ export type RejectionReason = 'duplicate' | 'unreadable' | 'unsupported-type' | 
  *
  * Why a processed page is marked for a second look, though its step finished without an error.
  */
-export type ReviewReason = 'low-confidence' | 'not-applied';
+export type ReviewReason = 'low-confidence' | 'not-applied' | 'unsure-gutter' | 'narrow-gutter';
 
 /**
  * RightsStatus

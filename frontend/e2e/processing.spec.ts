@@ -13,8 +13,8 @@ import {
  * The processing workspace on the Geometry stage: the recipe drawn from the schema of its processor, a preview of the
  * open page that is asked for once and not again, the compare of the page before and after, a run on all pages, the
  * Check filter with the reason under each page, and the choice of an earlier result of a page. Then the Split stage:
- * the filter and the banner of the scans wider than tall, one run that cuts them, and the question before a scan goes
- * back to one page.
+ * the book that is split by its import, the doubtful cuts under Check, and the choice of one page or two that a run on all
+ * pages keeps.
  *
  * The pages are solid colours, which have no lines of text to level, so the step leaves each one as it was and marks it
  * for a look, which is what the Check filter is for.
@@ -175,60 +175,104 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
 
 const WIDE_SCANS = 3;
 
-test('a reader cuts the wide scans on the Split stage and goes back to one page after a confirmation', async ({
+test('an imported folder of spreads and single pages is split by itself, and the doubtful cuts are listed to check', async ({
   page,
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writeScansFolder(WIDE_SCANS);
-  const total = WIDE_SCANS + 1;
   const strip = page.getByTestId('strip-page');
 
-  await test.step('the Split stage offers the scans wider than tall', async () => {
+  await test.step('the book has its pages as soon as the import is done, with no action of the reader', async () => {
     await registerAndSignIn(page);
     await createBook(page, 'A book of spreads');
-    await uploadFolder(page, folder, total);
+    await uploadFolder(page, folder, WIDE_SCANS + 1);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/page-split`);
     await expect(page.getByTestId('stage-title')).toHaveText('Split');
-    await expect(strip).toHaveCount(total);
-    await expect(page.getByTestId('strip-filter-wide')).toContainText(`Wide ${WIDE_SCANS}`);
-    await expect(page.getByTestId('split-banner')).toContainText(
-      `${WIDE_SCANS} scans are wider than tall`,
-    );
-
-    await page.getByTestId('strip-filter-wide').click();
-    await expect(page).toHaveURL(/filter=wide/);
-    await expect(strip).toHaveCount(WIDE_SCANS);
-    await page.getByTestId('strip-filter-all').click();
-  });
-
-  await test.step('one run of the banner cuts every wide scan in two', async () => {
-    await page.getByTestId('split-banner-cut').click();
-    // Each wide scan becomes a left page and a right page
+    // Each wide scan is a left page and a right page, and the tall scan stays one page
     await expect(strip).toHaveCount(WIDE_SCANS * 2 + 1, { timeout: RUN_TIMEOUT_MS });
     await expect(page.getByTestId('split-banner')).toHaveCount(0);
-    await expect(page.getByTestId('strip-filter-wide')).toContainText(`Wide ${WIDE_SCANS * 2}`);
   });
 
-  await test.step('going back to one page asks first, and a refusal changes nothing', async () => {
-    await page.getByTestId('strip-filter-wide').click();
+  await test.step('the cuts of the scans with no gutter in them are listed under Check, with the reason', async () => {
+    await page.getByTestId('strip-filter-check').click();
+    await expect(page).toHaveURL(/filter=check/);
+    await expect(strip).toHaveCount(WIDE_SCANS * 2);
+    await expect(page.getByTestId('strip-reason').first()).toContainText(
+      'Gutter not found for certain',
+    );
+    await strip.first().click();
+    await expect(page.getByTestId('this-page-review')).toContainText(
+      'The gutter of this spread was not found for certain',
+    );
+    await expect(page.getByTestId('this-page-facts')).toContainText('Split intoTwo pages');
+    await expect(page.getByTestId('this-page-facts')).toContainText('Slant of the cut');
+  });
+
+  await rm(path.dirname(folder), { recursive: true, force: true });
+});
+
+test('the choice of one page or two is kept through a run on all pages, and Auto gives the decision back', async ({
+  page,
+}) => {
+  test.setTimeout(SCENARIO_TIMEOUT_MS);
+  const folder = await writeScansFolder(WIDE_SCANS);
+  const total = WIDE_SCANS * 2 + 1;
+  const strip = page.getByTestId('strip-page');
+  const runAll = async (): Promise<void> => {
+    await page.getByTestId('run-menu').click();
+    await page.getByTestId('run-all').click();
+    await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
+      timeout: RUN_TIMEOUT_MS,
+    });
+  };
+
+  await test.step('the book is split by the import', async () => {
+    await registerAndSignIn(page);
+    await createBook(page, 'A book with choices');
+    await uploadFolder(page, folder, WIDE_SCANS + 1);
+    const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
+    await page.goto(`${bookPath}/stages/page-split`);
+    await expect(strip).toHaveCount(total, { timeout: RUN_TIMEOUT_MS });
+  });
+
+  await test.step('two pages for the tall scan cuts it at once, and a run on all pages keeps it cut', async () => {
+    await strip.last().click();
+    await expect(page.getByRole('radio', { name: 'One page' })).toBeChecked();
+    await expect(page.getByTestId('split-automatic')).toBeVisible();
+    await page.getByRole('radio', { name: 'Two pages' }).click();
+    await expect(strip).toHaveCount(total + 1, { timeout: RUN_TIMEOUT_MS });
+    await expect(page.getByTestId('split-chosen')).toHaveText('You chose: Two pages.');
+
+    await runAll();
+    await expect(strip).toHaveCount(total + 1);
+    await expect(page.getByRole('radio', { name: 'Two pages' })).toBeChecked();
+  });
+
+  await test.step('one page for a spread asks first, and a run on all pages keeps the scan whole', async () => {
     await strip.first().click();
     await expect(page.getByRole('radio', { name: 'Two pages' })).toBeChecked();
-
     await page.getByRole('radio', { name: 'One page' }).click();
     const dialog = page.getByRole('dialog', { name: 'Go back to one page?' });
     await expect(dialog).toBeVisible();
     await dialog.getByRole('button', { name: 'Keep two pages' }).click();
-    await expect(dialog).toHaveCount(0);
-    await expect(page.getByRole('radio', { name: 'Two pages' })).toBeChecked();
-    await expect(strip).toHaveCount(WIDE_SCANS * 2);
-  });
+    await expect(strip).toHaveCount(total + 1);
 
-  await test.step('a confirmation sends the run, and the scan is one page again', async () => {
     await page.getByRole('radio', { name: 'One page' }).click();
     await page.getByTestId('unsplit-confirm').click();
-    await expect(strip).toHaveCount(WIDE_SCANS * 2 - 1, { timeout: RUN_TIMEOUT_MS });
+    await expect(strip).toHaveCount(total, { timeout: RUN_TIMEOUT_MS });
+
+    await runAll();
+    await expect(strip).toHaveCount(total);
     await expect(page.getByRole('radio', { name: 'One page' })).toBeChecked();
+  });
+
+  await test.step('Auto deletes the choice, and the automatic split cuts the spread again', async () => {
+    await expect(page.getByTestId('split-chosen')).toHaveText('You chose: One page.');
+    await page.getByTestId('split-auto').click();
+    await expect(strip).toHaveCount(total + 1, { timeout: RUN_TIMEOUT_MS });
+    await expect(page.getByTestId('split-automatic')).toBeVisible();
+    await expect(page.getByRole('radio', { name: 'Two pages' })).toBeChecked();
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

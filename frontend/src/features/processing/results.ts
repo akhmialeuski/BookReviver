@@ -20,10 +20,22 @@ export interface PageResult {
   cutX: number | null;
   /** The pixels each half reaches over the cut. */
   overlapPx: number | null;
+  /** How many pages the scan was split into, one or two. */
+  pages: number | null;
+  /** The angle of the cut from the vertical in degrees, positive when it leans right going down. */
+  slantDeg: number | null;
 }
 
 function numberOf(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/** The slant of a cut that runs from the top to the bottom row of an image, or null when a number is missing. */
+function slantOf(top: number | null, bottom: number | null, height: number | null): number | null {
+  if (top === null || bottom === null || height === null) {
+    return null;
+  }
+  return (Math.atan2(bottom - top, Math.max(height - 1, 1)) * 180) / Math.PI;
 }
 
 /** Read what the step of a version found. */
@@ -35,6 +47,12 @@ export function readResult(version: Pick<PageVersionSchema, 'data'>): PageResult
     skipped: data.skipped === true,
     cutX: numberOf(data.cut_x),
     overlapPx: numberOf(data.overlap_px),
+    pages: numberOf(data.pages),
+    slantDeg: slantOf(
+      numberOf(data.cut_top_x),
+      numberOf(data.cut_bottom_x),
+      numberOf(data.height_px),
+    ),
   };
 }
 

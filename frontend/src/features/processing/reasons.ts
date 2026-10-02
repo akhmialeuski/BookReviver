@@ -24,7 +24,14 @@ export function reasonOf(item: StripItem): string | null {
     return words.stale;
   }
   const confidence = row.version === null ? null : readResult(row.version).confidence;
-  return row.review === 'not-applied'
-    ? words.notApplied(confidence)
-    : words.lowConfidence(confidence);
+  switch (row.review) {
+    case 'not-applied':
+      return words.notApplied(confidence);
+    case 'unsure-gutter':
+      return words.unsureGutter(confidence);
+    case 'narrow-gutter':
+      return words.narrowGutter;
+    default:
+      return words.lowConfidence(confidence);
+  }
 }

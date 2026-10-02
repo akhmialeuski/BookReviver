@@ -399,6 +399,16 @@ rules:
 - After an import the page split creates pages from the new scans. When the split is skipped, every scan gives one
   page with `slot = 0`, whose base version is a copy of the scan's `full` image. Pages of new scans are appended to
   the end of the book in upload order, and their printed number is the scan's `source_label`.
+- The default recipe of the Split stage is `split.auto`, which decides for each scan whether it is one page or a
+  spread (see the plugins below). When an import job succeeds, the import service queues a `run-stage` job of the
+  Split stage on the pages of the sources it imported, if the active Split recipe starts with `split.auto`, so the
+  book gets its pages with the tab closed. A book whose recipe was chosen by hand is not run, and a project that is
+  processing something already skips the queuing without failing the import.
+- The decision of the user is the `split.auto` edit of the page that shows the scan, whole or as its left half: a
+  `SplitChoice` with `pages` (1 or 2) and an optional `line`, drawn by the `split` editor. It joins the hash of the
+  versions, so a run on every page gives the same result as before, and deleting it returns the scan to the decision
+  of the automatic split. A step of the scope `split` may make one output when the scan stays whole, as well as two.
+  The page is then the whole scan again, and an earlier split is undone as above, with the same confirmation.
 - Splitting a spread keeps the existing page as the left half (`slot = 1`) and inserts the right half (`slot = 2`)
   right after it. Each half gets its own copy of its part of the scan. Moving the split line recreates the base
   versions of both pages and marks their later stages stale. Undoing the split, which is running a step that does not
@@ -448,8 +458,8 @@ edit, cut to 16 hexadecimal digits. A `Transform` is `identity`, `crop(quad)`, `
 or `mesh(key)`.
 
 The first version of every page is its base version. For a page cut from a scan the `page-split` stage creates it,
-with the step `split.spread` for a half of a spread or `split.none` when the split is skipped and the page is the
-whole scan. For a blank leaf the `page-order` stage creates it with the step `pages.blank`. The base version holds its
+with the step `split.auto` or `split.spread` for a half of a spread, or `split.none` (or `split.auto` on a single
+page) when the page is the whole scan. For a blank leaf the `page-order` stage creates it with the step `pages.blank`. The base version holds its
 own copy of the image, so the page does not depend on the files of the scan and survives the deletion of its source.
 
 Metadata of the whole page lives in `Page`, and data of one step lives in `PageVersion.data` and
@@ -461,6 +471,7 @@ colour scan instead of the binarised page.
 | ------------- | ---------------------- | -------------------------- | ----------------------------------------------------------- |
 | `page-split`  | `split.none`           | `identity`                 | copy of the whole scan, split skipped                       |
 | `page-split`  | `split.spread`         | `crop(quad)` of a half     | position of the cut, overlap in pixels, size of the half    |
+| `page-split`  | `split.auto`           | `identity` or `crop(quad)` | `pages`, `cut_top_x`, `cut_bottom_x`, `confidence`, size    |
 | `page-order`  | `pages.blank`          | `identity`                 | size of the generated blank leaf                            |
 | `geometry`    | `geometry.deskew`      | `rotate(angle)`            | angle in degrees, confidence, whether it was skipped        |
 | `geometry`    | `geometry.perspective` | `perspective(quad)`        | four corners of the page                                    |
@@ -1011,7 +1022,7 @@ indistinguishable to the application.
 | `spec`              | Key (`cleanup.despeckle`), version, title, `Stage`, scope (page or whole book)    |
 | inputs and outputs  | `ArtifactKind`s it reads and writes: page image, mask, regions, text              |
 | parameters          | A JSON Schema, from which the interface builds the settings form                  |
-| editor              | Its `EditorKind`: none, line, rect, quad, rotation, mesh, brush mask, regions     |
+| editor              | Its `EditorKind`: none, line, rect, quad, rotation, split, mesh, brush mask, regions |
 | worker pool         | cpu, gpu or llm, which routes its jobs to the right workers                       |
 | `run`, `preview`    | Full run, and a fast run on a downscaled page for interactive tuning              |
 
@@ -1028,11 +1039,32 @@ indistinguishable to the application.
   over SSE.
 - The base steps `split.none` and `pages.blank` are ordinary processors, and the import and the page order stage run
   them through the same `StepRunner` as a recipe.
-- `split.spread` and `geometry.deskew` need OpenCV, so they live in the optional group `bookreviver[cv]`. A machine
-  that lacks it starts without them, the catalogue leaves them out, and a default recipe that names them is not made.
-  `split.spread` takes the darkest column of the central band of the scan as the gutter, or the `line` the user drew,
-  and `geometry.deskew` takes the angle at which the ink of the page lies in the fewest rows, or the `rotation` the
-  user gave, and leaves a page whose lines it is not sure of as it is.
+- `split.auto`, `split.spread` and `geometry.deskew` need OpenCV, so they live in the optional group
+  `bookreviver[cv]`. A machine that lacks it starts without them, the catalogue leaves them out, and a default recipe
+  that names them is not made, so the Split stage then starts with `split.none`. `geometry.deskew` takes the angle at
+  which the ink of the page lies in the fewest rows, or the `rotation` the user gave, and leaves a page whose lines it
+  is not sure of as it is.
+- The gutter is searched by `GutterSearch` in `plugins/gutter.py`, which `split.auto` and `split.spread` (version 2)
+  share. It cuts the central band (`search_band`, 30 % of the width) into `strips` horizontal strips (12). A strip
+  gives one point: the middle of the darkest columns when the dip of the brightness of the paper, taken as the 75th
+  percentile of a column so that dense text is not read as a shadow, is deeper than `min_depth`, else the middle of the
+  widest run of columns without ink (Otsu threshold), unless that run is the whole band. A line is fitted through the
+  points with `cv2.fitLine` and the Huber loss, with its slant limited to `max_slant_deg` (5), so a heading or a
+  picture across the gutter does not pull it away. The confidence is the share of strips within `tolerance` (0.5 % of
+  the width) of the line times the median strength of those points: the depth of the shadow, or the width of the gap
+  over the width of the band. A scan with no gutter in it gets the vertical cut in the middle of the band with the
+  confidence 0.
+- `split.auto` takes a scan for a spread when its width over its height is at least `min_spread_ratio` (1.1), and
+  cuts it along the found line, with the halves written as `split.spread` writes them (`crop(quad)` of each half, the
+  other side of a slanting cut painted white). Any other scan is one page, written as `split.none` writes it, with the
+  `identity` transform. A cut below `min_confidence` is still made and both halves get the review reason
+  `unsure-gutter`. A narrow scan in which a gutter is found anyway stays one page with the reason `narrow-gutter`.
+  The `SplitChoice` edit outranks all of it: one page keeps the scan whole, two pages cut along the drawn `line` or,
+  with none, along the found gutter, and what the user decided has the confidence 1. `pages`, `cut_top_x`,
+  `cut_bottom_x` and `confidence` go into the data of the version, which the panel "This page" shows with the slant
+  worked out from the two ends of the cut.
+- `split.spread` takes the cut from the same search, or the `line` the user drew, and its version is 2 since the
+  search and the slanting cut changed. The versions made by version 1 stay in the history of a page.
 - First plugins, in delivery order: page split, deskew, perspective crop by quad, dewarp by mesh, despeckle,
   binarisation (a cleanup step of its own, so the despeckled and the binarised page are separate artifacts), eraser
   mask, layout regions (text versus illustration), background separation, background unification (white, aged paper
@@ -1188,7 +1220,7 @@ flowchart TD
     Ch -- no --> R["rejected file,<br/>reason kept in the job"]
     Ch -- yes --> S["Source, scans, pages<br/>committed, then<br/>promote → sources/id/"]
     S --> C["Scans without images:<br/>full, iiif, preview, thumb"]
-    C --> P["page-split skipped:<br/>split.none of each page"]
+    C --> P["page-split: split.none of each page,<br/>then a run of split.auto when it is the recipe"]
     style St stroke:#5b3fd1,stroke-width:2px
     style S stroke:#5b3fd1,stroke-width:2px
     style C stroke:#1e7a4d,stroke-width:2px
@@ -1376,8 +1408,9 @@ every page of which is up to date is `done`, and any other `waiting`. The book l
 window with the same number of queries for any number of books.
 
 A page version carries `review`, a `ReviewReason` its processor gave when it finished but was not sure:
-`not-applied` from `geometry.deskew` for a page it left unturned, and `low-confidence` from `split.spread` for a cut
-whose gutter confidence is below its `min_confidence`. A step of a recipe carries `enabled`. A step that is off keeps
+`not-applied` from `geometry.deskew` for a page it left unturned, `low-confidence` from `split.spread` for a cut whose
+gutter confidence is below its `min_confidence`, and from `split.auto` `unsure-gutter` for the same and `narrow-gutter`
+for a scan narrower than a spread that has a strong gutter in its middle. A step of a recipe carries `enabled`. A step that is off keeps
 its parameters, a run and a preview skip it, and a recipe with every step off is refused.
 `POST /projects/{id}/pages/labels/preview` takes the body of the numbering and answers the label each counted page
 would get, from the same rule `number` applies, and writes nothing.
@@ -1601,10 +1634,13 @@ The project list counts in `page_count` the included pages of the book, and show
     amber plate for a result the step was unsure of, and the history of the full results of the page
     (`GET .../versions?scale=full`), from which `PUT .../pages/{page_id}/stages/{stage}` makes an earlier one current.
   - The Split stage adds the Wide filter (`filter=wide`, pages cut from a scan whose `ScanFacts` are wider than tall),
-    a banner that cuts every wide scan still whole with the recipe that starts with `split.spread` in one run, and the
-    choice of one page or two for the scan of the open page, which runs `split.none` or `split.spread` on its pages
-    (`split.ts`, `SplitSection.tsx`). Going back to one page, from the choice or from a run that would do it, asks
-    first and sends the run with `confirm_unsplit = true` only after the answer.
+    a banner that cuts every wide scan still whole in one run of the recipe that starts with `split.auto`, or else
+    `split.spread`, and the choice of one page or two for the scan of the open page. The choice saves a `SplitChoice`
+    edit through `PUT .../edits/page-split/split.auto` on the page that shows the scan, whole or as its left half, and
+    runs the automatic recipe on that page alone, so it stays through every later run. The button "Auto" deletes the
+    edit and runs the page again (`split.ts`, `SplitSection.tsx`). Going back to one page, and returning a cut scan to
+    the automatic decision, which may keep it whole, ask first and send the run with `confirm_unsplit = true` only
+    after the answer. The panel "This page" shows the number of pages, the confidence and the slant of the cut.
 - Viewer state (page, spread, variant) lives in search params, so every view can be linked and reloaded. Server
   state lives in TanStack Query, and SSE events patch or invalidate the affected queries.
   - `features/projects/events.ts` maps the events to queries. `job-changed` writes the job into its own query and marks
@@ -1711,7 +1747,8 @@ The book model rests on these decisions, each with its reason.
 2. **A page stands on its own.** A page keeps its own copy of its base image in its own directory, so deleting a
    source does not break it. The price is about twice the space of the scans.
 3. **The page split creates pages.** The split is a step that creates pages from scans, and it can be skipped. The
-   split line lives in the `line` edit that `split.spread` reads and in the `transform` of its base versions, and the
+   split line lives in the `line` edit that `split.spread` reads, in the `SplitChoice` edit that `split.auto` reads,
+   and in the `transform` of its base versions, and the
    `scan_id` and `slot` of a page only record its origin, so moving the line changes versions and never the identity
    of a page.
 4. **Order by fractional index.** `order_key` is a fractional index string from the `fractional-indexing` package,

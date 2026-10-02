@@ -33,6 +33,7 @@ from bookreviver.services.imports import (
     ImportStorage,
 )
 from bookreviver.services.jobs import JobService
+from bookreviver.services.processing_parts import ProcessingParts, ProcessingRuntime
 from bookreviver.services.steps import StepRunner
 
 
@@ -136,14 +137,12 @@ class ImportsProvider(Provider):
 
     @provide(scope=Scope.APP)
     def import_runtime(
-        self, publisher: EventPublisher, clock: Clock, order_keys: OrderKeys, limits: ImportLimits
+        self, processing: ProcessingRuntime, order_keys: OrderKeys, limits: ImportLimits
     ) -> ImportRuntime:
         """Gather what an import reports through and is bounded by.
 
-        :param publisher: Publisher of the application's event bus.
-        :type publisher: EventPublisher
-        :param clock: Clock of the application.
-        :type clock: Clock
+        :param processing: The publisher, the clock and the queue of the application.
+        :type processing: ProcessingRuntime
         :param order_keys: Order keys of the application.
         :type order_keys: OrderKeys
         :param limits: Bounds of an upload and of an import.
@@ -151,7 +150,13 @@ class ImportsProvider(Provider):
         :returns: The runtime of an import.
         :rtype: ImportRuntime
         """
-        return ImportRuntime(publisher=publisher, clock=clock, order_keys=order_keys, limits=limits)
+        return ImportRuntime(
+            publisher=processing.publisher,
+            clock=processing.clock,
+            order_keys=order_keys,
+            limits=limits,
+            queue=processing.queue,
+        )
 
     @provide(scope=Scope.REQUEST)
     def import_service(
@@ -160,7 +165,7 @@ class ImportsProvider(Provider):
         storage: ImportStorage,
         imaging: ImportImaging,
         runtime: ImportRuntime,
-        queue: JobQueue,
+        parts: ProcessingParts,
     ) -> ImportService:
         """Build the import service over the unit of work of the request or job.
 
@@ -172,9 +177,9 @@ class ImportsProvider(Provider):
         :type imaging: ImportImaging
         :param runtime: The publisher, clock, order keys and limits of the application.
         :type runtime: ImportRuntime
-        :param queue: Queue handing jobs to the broker.
-        :type queue: JobQueue
+        :param parts: The recipes and the job starter, with which the split of the imported pages is queued.
+        :type parts: ProcessingParts
         :returns: The import service.
         :rtype: ImportService
         """
-        return ImportService(uow=uow, storage=storage, imaging=imaging, runtime=runtime, queue=queue)
+        return ImportService(uow=uow, storage=storage, imaging=imaging, runtime=runtime, parts=parts)

@@ -380,7 +380,7 @@ class RecipeRun(StageWork):
             if self._splits.splits(recipe):
                 return (
                     RunOutcome.DONE
-                    if await self._splits.split(page, recipe, source)
+                    if await self._splits.split(page, recipe, source, confirmed=confirmed)
                     else await self._fail(page, recipe)
                 )
             undoing = await self._splits.undoing(page, recipe, confirmed=confirmed)

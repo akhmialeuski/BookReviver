@@ -171,11 +171,9 @@ test('a reader works through the stages of a book', async ({ page }) => {
 
   await test.step('the activity of the book lists the import that ran', async () => {
     await page.getByTestId('activity-chip').click();
-    await expect(page.getByTestId('activity-job').first()).toHaveAttribute(
-      'data-state',
-      'succeeded',
-    );
-    await expect(page.getByTestId('activity-job').first()).toContainText('Import');
+    // The import queues a run of the Split stage and its collection after itself, so it is not the newest job
+    const imported = page.getByTestId('activity-job').filter({ hasText: 'Import' });
+    await expect(imported.first()).toHaveAttribute('data-state', 'succeeded');
     await page.keyboard.press('Escape');
   });
 

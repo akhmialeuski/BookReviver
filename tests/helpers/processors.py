@@ -134,3 +134,17 @@ class CleanupProcessor(FakeProcessor):
         outputs=frozenset({VersionOutput.IMAGE}),
         editor=EditorKind.BRUSH_MASK,
     )
+
+
+class AutoSplitProcessor(FakeProcessor):
+    """A stand-in for ``split.auto``, which a test of the recipes and the queues needs in the catalogue without OpenCV."""
+
+    spec = ProcessorSpec(
+        key='split.auto',
+        version='1',
+        title='Fake automatic split',
+        stage=Stage.PAGE_SPLIT,
+        scope=ProcessorScope.SPLIT,
+        outputs=frozenset({VersionOutput.IMAGE}),
+        editor=EditorKind.SPLIT,
+    )

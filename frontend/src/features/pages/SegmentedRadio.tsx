@@ -11,6 +11,7 @@ import { cn } from '@/shared/lib/utils';
 export function SegmentedRadio<T extends string>({
   legend,
   hideLegend = false,
+  disabled = false,
   value,
   options,
   onChange,
@@ -18,6 +19,8 @@ export function SegmentedRadio<T extends string>({
   legend: string;
   /** Whether the legend is left to screen readers because the choices explain themselves. */
   hideLegend?: boolean;
+  /** Whether the choice cannot be changed now, such as while a job of the book is running. */
+  disabled?: boolean;
   value: T;
   options: readonly { value: T; label: string }[];
   onChange: (value: T) => void;
@@ -30,14 +33,18 @@ export function SegmentedRadio<T extends string>({
       </legend>
       <div className="grid auto-cols-fr grid-flow-col gap-1 rounded-md bg-muted p-1">
         {options.map((option) => (
-          <label key={option.value} className="relative cursor-pointer">
+          <label
+            key={option.value}
+            className={cn('relative cursor-pointer', disabled ? 'opacity-60' : '')}
+          >
             <input
               type="radio"
               name={name}
               value={option.value}
               checked={option.value === value}
+              disabled={disabled}
               onChange={() => onChange(option.value)}
-              className="peer absolute inset-0 size-full cursor-pointer opacity-0"
+              className="peer absolute inset-0 size-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
             />
             <span className="block rounded-sm px-3 py-1 text-center text-sm text-muted-foreground peer-checked:bg-background peer-checked:font-medium peer-checked:text-foreground peer-checked:shadow-xs peer-focus-visible:ring-[3px] peer-focus-visible:ring-ring/50">
               {option.label}

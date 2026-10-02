@@ -200,14 +200,63 @@ class Rotation:
         return cls(degrees=data['degrees'])
 
 
-type EditGeometry = Rect | Quad | Line | Rotation
+@frozen(kw_only=True)
+class SplitChoice:
+    """The decision of the user on how a scan is split: into one page or two, and where the cut runs.
+
+    :ivar pages: 1 to keep the scan whole, 2 to cut it into the left page and the right page.
+    :ivar line: The cut the user drew, for a scan of two pages, or None to cut where the gutter is found.
+    """
+
+    ONE_PAGE: ClassVar[int] = 1
+    TWO_PAGES: ClassVar[int] = 2
+    PAGES_KEY: ClassVar[str] = 'pages'
+    LINE_KEY: ClassVar[str] = 'line'
+
+    editor: ClassVar[EditorKind] = EditorKind.SPLIT
+
+    pages: int = field(validator=validators.in_((ONE_PAGE, TWO_PAGES)))
+    line: Line | None = None
+
+    def __attrs_post_init__(self) -> None:
+        """Check that a cut is given only for a scan of two pages.
+
+        :raises ValueError: If a scan kept whole has a cut line.
+        """
+        if self.pages == self.ONE_PAGE and self.line is not None:
+            err_msg = 'A scan kept as one page has no cut line.'
+            raise ValueError(err_msg)
+
+    def to_data(self) -> dict[str, Any]:
+        """Return the choice as JSON data.
+
+        :returns: The number of pages and the line by name, the line being None when none was drawn.
+        :rtype: dict[str, Any]
+        """
+        return {self.PAGES_KEY: self.pages, self.LINE_KEY: None if self.line is None else self.line.to_data()}
+
+    @classmethod
+    def from_data(cls, data: Mapping[str, Any]) -> Self:
+        """Build a choice from the JSON data ``to_data`` wrote.
+
+        :param data: The number of pages and, if drawn, the line.
+        :type data: Mapping[str, Any]
+        :returns: The choice.
+        :rtype: Self
+        """
+        line = data.get(cls.LINE_KEY)
+        return cls(pages=data[cls.PAGES_KEY], line=None if line is None else Line.from_data(line))
+
+
+type EditGeometry = Rect | Quad | Line | Rotation | SplitChoice
 
 # The shape each editor draws, which a stored edit is rebuilt by
-EDIT_SHAPES: Mapping[EditorKind, type[Rect | Quad | Line | Rotation]] = {
+EDIT_SHAPES: Mapping[EditorKind, type[Rect | Quad | Line | Rotation | SplitChoice]] = {
     EditorKind.RECT: Rect,
     EditorKind.QUAD: Quad,
     EditorKind.LINE: Line,
     EditorKind.ROTATION: Rotation,
+    EditorKind.SPLIT: SplitChoice,
 }
 
 

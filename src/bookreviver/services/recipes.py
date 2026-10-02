@@ -53,6 +53,7 @@ class DefaultRecipes:
 
     TEMPLATES: ClassVar[Mapping[Stage, tuple[RecipeTemplate, ...]]] = {
         Stage.PAGE_SPLIT: (
+            RecipeTemplate(name='Automatic', processor_keys=('split.auto',)),
             RecipeTemplate(name='Whole scan', processor_keys=('split.none',)),
             RecipeTemplate(name='Spread', processor_keys=('split.spread',)),
         ),

@@ -41,6 +41,19 @@ describe('reasonOf', () => {
     expect(reasonOf(item({ review: 'low-confidence' }))).toBe('Unsure');
   });
 
+  it('says the gutter of a spread was not found for certain, and that a narrow scan has one', () => {
+    const unsure = item({
+      review: 'unsure-gutter',
+      version: version('v', { data: { confidence: 0.04 } }),
+    });
+
+    expect(reasonOf(unsure)).toBe('Gutter not found for certain · 0.04');
+    expect(reasonOf(item({ review: 'unsure-gutter' }))).toBe('Gutter not found for certain');
+    expect(reasonOf(item({ review: 'narrow-gutter' }))).toBe(
+      'Narrow scan with a gutter in the middle',
+    );
+  });
+
   it('puts a failure before a mark of review, since a failed page has no result to doubt', () => {
     expect(reasonOf(item({ status: 'failed', review: 'low-confidence' }))).toBe('Failed');
   });

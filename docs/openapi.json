@@ -6096,6 +6096,7 @@
           "quad",
           "line",
           "rotation",
+          "split",
           "mesh",
           "brush-mask",
           "regions"
@@ -8554,7 +8555,9 @@
         "type": "string",
         "enum": [
           "low-confidence",
-          "not-applied"
+          "not-applied",
+          "unsure-gutter",
+          "narrow-gutter"
         ],
         "title": "ReviewReason",
         "description": "Why a processed page is marked for a second look, though its step finished without an error."

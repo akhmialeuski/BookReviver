@@ -44,7 +44,7 @@ class TestEntryPointCatalog:
         """Verify the processors that need OpenCV are in the catalogue where the group ``cv`` is installed."""
         pytest.importorskip('cv2', reason=CV_MISSING)
         keys = [spec.key for spec in EntryPointCatalog(pools=set(WorkerPool)).specs()]
-        assert {'split.spread', 'geometry.deskew'} <= set(keys)
+        assert {'split.spread', 'split.auto', 'geometry.deskew'} <= set(keys)
 
     def test_every_parameter_of_a_built_in_processor_has_a_title_and_a_description_of_its_own(self) -> None:
         """Verify the form of a processor has a label and a hint for each field, not the name of the field.

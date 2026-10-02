@@ -1,4 +1,4 @@
-import type { PageSchema, RecipeSchema, ScanSchema } from '@/api';
+import type { PageEditSchema, PageSchema, RecipeSchema, ScanSchema } from '@/api';
 
 /**
  * What the Split stage knows about the scans of a book: which of them are wider than tall and so look like an open book,
@@ -8,8 +8,12 @@ import type { PageSchema, RecipeSchema, ScanSchema } from '@/api';
  * spread. A scan is split when its pages are halves.
  */
 
-/** The processor that cuts a scan in two, and the one that keeps it whole. */
-export const SPLIT_PROCESSOR = { spread: 'split.spread', whole: 'split.none' } as const;
+/** The processor that decides for each scan, the one that cuts a scan in two, and the one that keeps it whole. */
+export const SPLIT_PROCESSOR = {
+  auto: 'split.auto',
+  spread: 'split.spread',
+  whole: 'split.none',
+} as const;
 
 /** Whether a scan becomes one page or two. */
 export const SplitChoice = { One: 'one', Two: 'two' } as const;
@@ -103,4 +107,42 @@ export function undoesSplit(
   return (
     recipe.steps[0]?.processor_key === SPLIT_PROCESSOR.whole && pages.some((page) => page.slot > 0)
   );
+}
+
+/** The recipe whose first step is the automatic split, which reads the choice a reader made for a scan. */
+export function autoRecipeOf(recipes: readonly RecipeSchema[]): RecipeSchema | undefined {
+  return recipes.find((recipe) => recipe.steps[0]?.processor_key === SPLIT_PROCESSOR.auto);
+}
+
+/**
+ * Find the recipe that cuts a scan in two: the automatic one when the stage has it, since it keeps the choices readers
+ * made, and else the one that cuts every scan it is given.
+ */
+export function cutterOf(recipes: readonly RecipeSchema[]): RecipeSchema | undefined {
+  return autoRecipeOf(recipes) ?? recipeFor(recipes, SplitChoice.Two);
+}
+
+/** The number of pages a reader chose for a scan, as the edit stores it. */
+const PAGES_OF = { [SplitChoice.One]: 1, [SplitChoice.Two]: 2 } as const;
+
+/** Write the form of the edit that stores the choice of a reader: the editor that draws it and its shape as JSON. */
+export function choiceForm(choice: SplitChoice): { kind: 'split'; geometry: string } {
+  return { kind: 'split', geometry: JSON.stringify({ pages: PAGES_OF[choice] }) };
+}
+
+/**
+ * Read the choice a reader made for a scan from the edits of its page.
+ *
+ * @param edits The edits of the Split stage on the page.
+ * @returns The choice, or null when the reader left the scan to the automatic split.
+ */
+export function chosenIn(
+  edits: readonly Pick<PageEditSchema, 'processor_key' | 'geometry'>[],
+): SplitChoice | null {
+  const edit = edits.find((candidate) => candidate.processor_key === SPLIT_PROCESSOR.auto);
+  const pages = edit?.geometry?.pages;
+  if (pages === PAGES_OF[SplitChoice.One]) {
+    return SplitChoice.One;
+  }
+  return pages === PAGES_OF[SplitChoice.Two] ? SplitChoice.Two : null;
 }

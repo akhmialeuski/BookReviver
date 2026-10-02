@@ -385,6 +385,9 @@ class VersionData(LabeledStrEnum):
     SKIPPED = 'skipped', 'Whether the step left the image as it was'
     OVERLAP_PX = 'overlap_px', 'Width in pixels a half of a spread reaches over the cut'
     CUT_X = 'cut_x', 'Place of the cut in the scan, as the distance in pixels from its left edge'
+    CUT_TOP_X = 'cut_top_x', 'Place of the cut at the top row of the scan, in pixels from its left edge'
+    CUT_BOTTOM_X = 'cut_bottom_x', 'Place of the cut at the bottom row of the scan, in pixels from its left edge'
+    PAGES = 'pages', 'Number of pages the scan was split into, one or two'
 
 
 class VersionState(LabeledStrEnum):
@@ -439,6 +442,8 @@ class ReviewReason(LabeledStrEnum):
 
     LOW_CONFIDENCE = 'low-confidence', 'The step was not sure of its result'
     NOT_APPLIED = 'not-applied', 'The step left the page as it was, because it was not sure'
+    UNSURE_GUTTER = 'unsure-gutter', 'The gutter of the spread was not found for certain'
+    NARROW_GUTTER = 'narrow-gutter', 'Narrow scan with a gutter in the middle'
 
 
 class RunOutcome(LabeledStrEnum):
@@ -488,6 +493,7 @@ class EditorKind(LabeledStrEnum):
     QUAD = 'quad', 'Quadrilateral'
     LINE = 'line', 'Line'
     ROTATION = 'rotation', 'Rotation'
+    SPLIT = 'split', 'Page split'
     MESH = 'mesh', 'Mesh'
     BRUSH_MASK = 'brush-mask', 'Brush mask'
     REGIONS = 'regions', 'Regions'

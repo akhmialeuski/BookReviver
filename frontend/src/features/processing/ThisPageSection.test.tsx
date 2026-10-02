@@ -101,6 +101,41 @@ describe('ThisPageSection', () => {
     expect(text('this-page-facts')).toContain('Confidence0.91 · sure');
   });
 
+  it('writes the decision of the automatic split: the pages, the confidence and the slant of the cut', async () => {
+    const split = version('split', {
+      data: {
+        pages: 2,
+        confidence: 0.47,
+        cut_x: 806.5,
+        cut_top_x: 830,
+        cut_bottom_x: 783,
+        height_px: 1156,
+      },
+    });
+    await render({ page: page('page'), row: row('page', { version: split }) });
+
+    expect(text('this-page-facts')).toContain('Split intoTwo pages');
+    expect(text('this-page-facts')).toContain('Confidence0.47 · sure');
+    expect(text('this-page-facts')).toContain('Cut at807 px');
+    expect(text('this-page-facts')).toContain('Slant of the cut-2.3°');
+  });
+
+  it('says why a spread was cut along a gutter that was not found for certain', async () => {
+    const unsure = version('unsure', {
+      data: { pages: 2, confidence: 0.04 },
+      review: 'unsure-gutter',
+    });
+    await render({
+      page: page('page'),
+      row: row('page', { version: unsure, review: 'unsure-gutter' }),
+    });
+
+    expect(text('this-page-review')).toContain(
+      'The gutter of this spread was not found for certain',
+    );
+    expect(text('this-page-facts')).toContain('0.04 · unsure');
+  });
+
   it('puts an amber plate on a page the step was unsure of, with the way out', async () => {
     const unsure = version('unsure', {
       data: { skipped: true, confidence: 0.18 },

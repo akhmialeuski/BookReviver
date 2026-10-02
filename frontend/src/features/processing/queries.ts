@@ -17,13 +17,17 @@ import {
   activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostMutation,
   chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutMutation,
   createVariantApiV1ProjectsProjectIdStagesStageVariantsPostMutation,
+  deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteMutation,
   getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey,
+  listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetOptions,
+  listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetQueryKey,
   listProcessorsApiV1ProcessorsGetOptions,
   listScansApiV1ProjectsProjectIdScansGetQueryKey,
   listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetOptions,
   listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey,
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey,
   previewStepApiV1ProjectsProjectIdStagesStagePreviewPostMutation,
+  putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutMutation,
   putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation,
   runStageApiV1ProjectsProjectIdStagesStageRunPostMutation,
 } from '@/api/@tanstack/react-query.gen';
@@ -176,6 +180,56 @@ export function usePreviewStep(projectId: string) {
   return useMutation({
     ...previewStepApiV1ProjectsProjectIdStagesStagePreviewPostMutation(),
     onSettled: () => invalidateJobs(queryClient, projectId),
+  });
+}
+
+/** Read the manual edits one stage holds on a page, by processor. */
+export function useEdits(projectId: string, pageId: string | undefined, stage: Stage) {
+  return useQuery({
+    ...listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetOptions({
+      path: { project_id: projectId, page_id: pageId ?? '', stage },
+      query: { size: LIST_SIZE },
+    }),
+    select: (page) => page.items,
+    enabled: pageId !== undefined,
+  });
+}
+
+/** Mark stale what a change of an edit of a page changes: its edits, and the rows and the summary of the stage. */
+async function refreshEdits(
+  queryClient: QueryClient,
+  projectId: string,
+  stage: Stage,
+  pageId: string,
+): Promise<void> {
+  await Promise.all([
+    queryClient.invalidateQueries({
+      queryKey: listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetQueryKey({
+        path: { project_id: projectId, page_id: pageId, stage },
+      }),
+    }),
+    invalidateStageRows(queryClient, projectId, stage),
+    invalidateStageSummary(queryClient, projectId),
+  ]);
+}
+
+/** Save the edit a processor reads on a page, which marks the stage of the page out of date. */
+export function useSaveEdit(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutMutation(),
+    onSettled: (_data, _error, variables) =>
+      refreshEdits(queryClient, projectId, stage, variables.path.page_id),
+  });
+}
+
+/** Delete the edit a processor reads on a page, which marks the stage of the page out of date. */
+export function useDeleteEdit(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteMutation(),
+    onSettled: (_data, _error, variables) =>
+      refreshEdits(queryClient, projectId, stage, variables.path.page_id),
   });
 }
 

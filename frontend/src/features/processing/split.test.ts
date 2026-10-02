@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { recipe, scan, step } from '@/features/processing/fixtures';
 import {
+  autoRecipeOf,
+  choiceForm,
   choiceOf,
+  chosenIn,
+  cutterOf,
   isSplit,
   isWide,
   offerFor,
@@ -105,5 +109,42 @@ describe('undoesSplit', () => {
 
   it('is false for a recipe that cuts scans, whatever the pages are', () => {
     expect(undoesSplit(spread, [{ slot: 1 }, { slot: 2 }])).toBe(false);
+  });
+});
+
+describe('autoRecipeOf and cutterOf', () => {
+  const auto = recipe('r-auto', { steps: [step('split.auto')] });
+  const spread = recipe('r-spread', { active: false, steps: [step('split.spread')] });
+
+  it('finds the recipe whose first step is the automatic split', () => {
+    expect(autoRecipeOf([spread, auto])?.id).toBe('r-auto');
+    expect(autoRecipeOf([spread])).toBeUndefined();
+  });
+
+  it('cuts with the automatic recipe when the stage has it, else with the one that cuts every scan', () => {
+    expect(cutterOf([spread, auto])?.id).toBe('r-auto');
+    expect(cutterOf([spread])?.id).toBe('r-spread');
+    expect(cutterOf([])).toBeUndefined();
+  });
+});
+
+describe('choiceForm and chosenIn', () => {
+  it('writes the form of the edit that keeps a choice, with the pages as its shape', () => {
+    expect(choiceForm(SplitChoice.Two)).toEqual({ kind: 'split', geometry: '{"pages":2}' });
+    expect(choiceForm(SplitChoice.One)).toEqual({ kind: 'split', geometry: '{"pages":1}' });
+  });
+
+  it('reads the choice back from the edits of a page', () => {
+    const edit = (pages: unknown) => ({ processor_key: 'split.auto', geometry: { pages } });
+
+    expect(chosenIn([edit(1)])).toBe(SplitChoice.One);
+    expect(chosenIn([edit(2)])).toBe(SplitChoice.Two);
+  });
+
+  it('reads no choice from no edit, an edit of another processor, or a shape it does not know', () => {
+    expect(chosenIn([])).toBeNull();
+    expect(chosenIn([{ processor_key: 'split.spread', geometry: { pages: 2 } }])).toBeNull();
+    expect(chosenIn([{ processor_key: 'split.auto', geometry: { pages: 3 } }])).toBeNull();
+    expect(chosenIn([{ processor_key: 'split.auto', geometry: null }])).toBeNull();
   });
 });

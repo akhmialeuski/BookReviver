@@ -60,6 +60,7 @@ bookreviver-openapi = "bookreviver.app.openapi:main"
 "split.none" = "bookreviver.plugins.split_none:SplitNone"
 "pages.blank" = "bookreviver.plugins.blank:BlankPage"
 "split.spread" = "bookreviver.plugins.split_spread:SplitSpread"
+"split.auto" = "bookreviver.plugins.split_auto:SplitAuto"
 "geometry.deskew" = "bookreviver.plugins.deskew:Deskew"
 
 [project.optional-dependencies]

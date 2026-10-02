@@ -5,9 +5,19 @@ from typing import Any
 
 import pytest
 
+from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import EditorKind, TransformKind
 from bookreviver.domain.errors import UnsupportedTransformError
-from bookreviver.domain.geometry import Line, Point, Quad, Rect, Rotation, Transform, geometry_from_data
+from bookreviver.domain.geometry import (
+    Line,
+    Point,
+    Quad,
+    Rect,
+    Rotation,
+    SplitChoice,
+    Transform,
+    geometry_from_data,
+)
 from bookreviver.domain.ids import StorageKey
 
 # The left half of a spread 2200 px wide and 1561 px high
@@ -126,16 +136,49 @@ class TestGeometryFromData:
             QUAD,
             Line(start=Point(x=1100, y=0), end=Point(x=1104.5, y=1561)),
             Rotation(degrees=-0.7),
+            SplitChoice(pages=SplitChoice.ONE_PAGE),
+            SplitChoice(pages=SplitChoice.TWO_PAGES),
+            SplitChoice(pages=SplitChoice.TWO_PAGES, line=Line(start=Point(x=1100, y=0), end=Point(x=1090, y=1561))),
         ],
-        ids=['rect', 'quad', 'line', 'rotation'],
+        ids=['rect', 'quad', 'line', 'rotation', 'one-page', 'two-pages', 'two-pages-with-line'],
     )
-    def test_shape_survives_a_round_trip_through_its_data(self, shape: Rect | Quad | Line | Rotation) -> None:
+    def test_shape_survives_a_round_trip_through_its_data(
+        self, shape: Rect | Quad | Line | Rotation | SplitChoice
+    ) -> None:
         """Verify the data of a shape rebuilds an equal shape, which is what the database stores.
 
         :param shape: Shape under test.
-        :type shape: Rect | Quad | Line | Rotation
+        :type shape: Rect | Quad | Line | Rotation | SplitChoice
         """
         assert geometry_from_data(shape.editor, shape.to_data()) == shape
+
+
+class TestSplitChoice:
+    """Tests for the choice of one page or two."""
+
+    def test_the_choice_is_drawn_by_the_split_editor(self) -> None:
+        """Verify the choice names the editor that the processor ``split.auto`` offers."""
+        assert SplitChoice(pages=SplitChoice.ONE_PAGE).editor is EditorKind.SPLIT
+
+    @pytest.mark.parametrize('pages', [0, 3, -1])
+    def test_a_number_of_pages_other_than_one_or_two_is_rejected(self, pages: int) -> None:
+        """Reject a scan that is split into no page or into more than two.
+
+        :param pages: The number of pages under test.
+        :type pages: int
+        """
+        with pytest.raises(ValueError, match='must be in'):
+            SplitChoice(pages=pages)
+
+    def test_a_scan_kept_whole_has_no_cut_line(self) -> None:
+        """Reject a cut line given for a scan that stays one page."""
+        with pytest.raises(ValueError, match='no cut line'):
+            SplitChoice(pages=SplitChoice.ONE_PAGE, line=Line(start=Point(x=1, y=0), end=Point(x=1, y=9)))
+
+    def test_the_hash_of_the_edit_follows_the_choice(self) -> None:
+        """Verify one page and two pages are different edits, so the page versions that read them differ."""
+        one, two = (PageEdit.hash_of(SplitChoice(pages=pages), None) for pages in (1, 2))
+        assert one != two
 
     @pytest.mark.parametrize('kind', [EditorKind.NONE, EditorKind.BRUSH_MASK, EditorKind.MESH, EditorKind.REGIONS])
     def test_editor_that_draws_no_shape_is_rejected(self, kind: EditorKind) -> None:
