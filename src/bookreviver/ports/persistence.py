@@ -8,9 +8,20 @@ contract suite in ``tests/contracts``, which is what makes them interchangeable.
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, override
 
-from bookreviver.domain.entities import Job, Page, PageEdit, PageStage, PageVersion, Project, Recipe, Scan, Source
+from bookreviver.domain.entities import (
+    BookPlace,
+    Job,
+    Page,
+    PageEdit,
+    PageStage,
+    PageVersion,
+    Project,
+    Recipe,
+    Scan,
+    Source,
+)
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
-from bookreviver.domain.values import PageEditKey, PageStageKey
+from bookreviver.domain.values import BookPlaceKey, PageEditKey, PageStageKey
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
@@ -695,6 +706,32 @@ class JobRepository(Repository[Job, JobId]):
         """
 
 
+class BookPlaceRepository(Repository[BookPlace, BookPlaceKey]):
+    """The place each account left each book at; deleting a book or an account removes its places."""
+
+    @abstractmethod
+    async def save(self, place: BookPlace) -> BookPlace:
+        """Store the place of an account in a book, replacing the one stored.
+
+        :param place: Place to store.
+        :type place: BookPlace
+        :returns: The place as stored.
+        :rtype: BookPlace
+        :raises NotFoundError: If the book is not stored.
+        :raises ConflictError: If another transaction stored the first place of the account in the book meanwhile.
+        """
+
+    @abstractmethod
+    async def find(self, key: BookPlaceKey) -> BookPlace | None:
+        """Return the place of an account in a book.
+
+        :param key: Account and book.
+        :type key: BookPlaceKey
+        :returns: The place, or None when the account has not worked on the book yet.
+        :rtype: BookPlace | None
+        """
+
+
 class UnitOfWork(ABC):
     """One transaction over every repository; nothing is visible to others before ``commit``.
 
@@ -707,6 +744,7 @@ class UnitOfWork(ABC):
     :ivar page_edits: Page edit repository of this transaction.
     :ivar recipes: Recipe repository of this transaction.
     :ivar jobs: Job repository of this transaction.
+    :ivar book_places: Repository of the places accounts left books at, of this transaction.
     """
 
     projects: ProjectRepository
@@ -718,6 +756,7 @@ class UnitOfWork(ABC):
     page_edits: PageEditRepository
     recipes: RecipeRepository
     jobs: JobRepository
+    book_places: BookPlaceRepository
 
     @abstractmethod
     async def commit(self) -> None:

@@ -1,4 +1,4 @@
-"""Provider of the projects feature: the services of projects, pages, sources and scans, and what the pages share."""
+"""Provider of the projects feature: the services of projects, pages, places, sources and scans, and their runtime."""
 
 from dishka import Provider, Scope, provide
 
@@ -11,6 +11,7 @@ from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
 from bookreviver.ports.storage import AssetStore, SourceStore
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.pages import PageImaging, PageRuntime, PageService
+from bookreviver.services.places import PlaceService
 from bookreviver.services.projects import ProjectService
 from bookreviver.services.sources import SourceService
 from bookreviver.services.stage_summaries import StageSummaries
@@ -18,7 +19,7 @@ from bookreviver.services.steps import StepRunner
 
 
 class ProjectsProvider(Provider):
-    """Builds the project, page and source services, one per request."""
+    """Builds the project, page, place and source services, one per request."""
 
     scope = Scope.REQUEST
 
@@ -107,6 +108,19 @@ class ProjectsProvider(Provider):
         :rtype: PageService
         """
         return PageService(uow=uow, assets=assets, runtime=runtime, imaging=imaging)
+
+    @provide
+    def places(self, uow: UnitOfWork, clock: Clock) -> PlaceService:
+        """Build the place service over the request's unit of work.
+
+        :param uow: Unit of work of the current request.
+        :type uow: UnitOfWork
+        :param clock: Clock of the application.
+        :type clock: Clock
+        :returns: The place service of the request.
+        :rtype: PlaceService
+        """
+        return PlaceService(uow=uow, clock=clock)
 
     @provide
     def sources(self, uow: UnitOfWork, sources: SourceStore, assets: AssetStore) -> SourceService:

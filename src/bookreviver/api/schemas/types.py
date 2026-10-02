@@ -90,6 +90,15 @@ PageIdList = Annotated[
 ]
 TitleList = Annotated[list[ListedText], Field(max_length=TITLES_MAX_LENGTH)]
 
+# The largest zoom of a canvas as a multiple of the fitted view, and the farthest a centre lies from the view in page
+# heights, which bound what a place can hold
+CANVAS_ZOOM_MAX: float = 1_000.0
+CANVAS_CENTRE_MAX: float = 1_000.0
+# Zoom of a canvas, as a multiple of the zoom that fits the view
+CanvasZoom = Annotated[float, Field(gt=0, le=CANVAS_ZOOM_MAX, allow_inf_nan=False)]
+# A coordinate of the centre of a canvas, in page heights
+CanvasCentre = Annotated[float, Field(ge=-CANVAS_CENTRE_MAX, le=CANVAS_CENTRE_MAX, allow_inf_nan=False)]
+
 # The most steps a recipe holds, and the longest key of a processor, which bound what a request stores
 RECIPE_STEPS_MAX_LENGTH: int = 50
 PROCESSOR_KEY_MAX_LENGTH: int = 100

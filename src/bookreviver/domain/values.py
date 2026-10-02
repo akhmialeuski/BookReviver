@@ -9,11 +9,13 @@ from uuid import UUID
 from attrs import evolve, field, fields_dict, frozen, validators
 
 from bookreviver.domain.enums import (
+    CompareMode,
     ContributorRole,
     EditorKind,
     JobKind,
     NewPageOrigin,
     Orthography,
+    PageFilter,
     ProcessorScope,
     Rendition,
     RightsStatus,
@@ -23,6 +25,7 @@ from bookreviver.domain.enums import (
     UploadProblem,
     VersionData,
     VersionOutput,
+    ViewMode,
     WorkerPool,
 )
 from bookreviver.domain.errors import InvalidIdentifierError, InvalidParametersError, UploadRejectedError
@@ -39,13 +42,14 @@ if TYPE_CHECKING:
         IdentifierScheme,
         LabelStyle,
         PageKind,
+        PlaceMode,
         RejectionReason,
         Side,
         SourceKind,
         VersionScale,
     )
     from bookreviver.domain.geometry import EditGeometry
-    from bookreviver.domain.ids import SourceId
+    from bookreviver.domain.ids import AccountId, ProjectId, ScanId, SourceId
 
 # JSON-compatible metadata as read from a source file
 type MetadataMap = Mapping[str, Any]
@@ -485,6 +489,69 @@ class PageEditKey:
     page_id: PageId
     stage: Stage
     processor_key: str
+
+
+@frozen
+class BookPlaceKey:
+    """The key of the place of a book, which a repository takes as one value: the account that reads it and the book.
+
+    :ivar account_id: Account the place belongs to.
+    :ivar project_id: Book the place is in.
+    """
+
+    account_id: AccountId
+    project_id: ProjectId
+
+
+@frozen(kw_only=True)
+class CanvasPosition:
+    """Where the canvas looks at a view, in terms that do not depend on the size of the window.
+
+    The zoom is a multiple of the zoom that fits the whole view into the canvas, so 1 is the fitted view and 2 shows
+    half of it across. The centre is a point of the view in page heights, measured from its top left corner, so the
+    same point is the centre on a phone and on a wide screen.
+
+    :ivar zoom: Multiple of the zoom that fits the view, above zero.
+    :ivar centre_x: Horizontal coordinate of the centre in page heights.
+    :ivar centre_y: Vertical coordinate of the centre in page heights.
+    """
+
+    zoom: float = field(validator=validators.gt(0))
+    centre_x: float
+    centre_y: float
+
+
+@frozen(kw_only=True)
+class NewBookPlace:
+    """Where a reader left a book, as the reader reports it; the account, the book and the time are added on storing.
+
+    A workspace place names a stage and the page, or on the stages that work on files the file and the scan, the
+    reader had open. A reading place names the page of the viewer, and keeps the stage the reader was working on, so
+    the way back from reading is known. Pages, scans and files are kept by identifier and are not checked, since the
+    reader may delete one afterwards and the place then falls back to the nearest view that still exists.
+
+    :ivar mode: Whether the reader was working on a stage or reading.
+    :ivar stage: Stage the reader was on, or last was on before reading.
+    :ivar page_id: Page that was open, or None for the first page.
+    :ivar scan_id: Scan that was open on the stages that work on scans, or None.
+    :ivar source_id: File that was chosen on the stages that work on files, or None.
+    :ivar view: How the canvas laid the pages out; the spread is the viewer's two-page spread as well.
+    :ivar compare: How the result of the stage was compared with the one before it.
+    :ivar filter: Which pages the strip or the grid listed.
+    :ivar canvas: Zoom and centre of the canvas, or None for the fitted view.
+    :ivar strip_page_id: First page in sight in the strip or the grid, or None for the top.
+    """
+
+    mode: PlaceMode
+    stage: Stage
+    page_id: PageId | None = None
+    scan_id: ScanId | None = None
+    source_id: SourceId | None = None
+    view: ViewMode = ViewMode.PAGE
+    compare: CompareMode = CompareMode.OFF
+    filter: PageFilter = PageFilter.ALL
+    canvas: CanvasPosition | None = None
+    strip_page_id: PageId | None = None
 
 
 @frozen(kw_only=True)

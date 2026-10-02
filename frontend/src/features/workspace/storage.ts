@@ -1,11 +1,10 @@
-import type { Stage } from '@/api';
-import { parseStage } from '@/features/stages/parse';
-
 /**
- * What the workspace keeps in the browser: the stage a book was left on and the widths of its panels.
+ * What the workspace keeps in the browser: the widths of its panels.
  *
- * `localStorage` throws when the browser forbids it, such as in some private windows, and when its quota is full.
- * A remembered width is a convenience, so a failure is the same as having nothing remembered.
+ * The widths are a property of the screen and not of the book, so they stay in the browser, while the place of a book
+ * lives on the server (`features/place`). `localStorage` throws when the browser forbids it, such as in some private
+ * windows, and when its quota is full. A remembered width is a convenience, so a failure is the same as having nothing
+ * remembered.
  */
 
 /** The part of `Storage` the workspace uses, which `react-resizable-panels` accepts as its layout storage. */
@@ -29,24 +28,3 @@ export const browserStorage: WorkspaceStorage = {
     }
   },
 };
-
-function lastStageKey(projectId: string): string {
-  return `bookreviver.lastStage.${projectId}`;
-}
-
-/** Remember the stage a book was last opened on. */
-export function rememberStage(
-  projectId: string,
-  stage: Stage,
-  storage: WorkspaceStorage = browserStorage,
-): void {
-  storage.setItem(lastStageKey(projectId), stage);
-}
-
-/** Give the stage a book was last opened on, or null when none is remembered or the record is not a stage. */
-export function recallStage(
-  projectId: string,
-  storage: WorkspaceStorage = browserStorage,
-): Stage | null {
-  return parseStage(storage.getItem(lastStageKey(projectId)));
-}

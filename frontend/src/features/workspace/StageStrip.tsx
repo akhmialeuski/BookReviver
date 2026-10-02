@@ -1,9 +1,10 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { PageTile } from '@/features/workspace/PageTile';
 import { PageFilter } from '@/features/workspace/params';
 import { StripToolbar } from '@/features/workspace/StripToolbar';
 import type { FilterCounts, StripItem } from '@/features/workspace/strip';
+import { useStripPlace } from '@/features/workspace/useStripPlace';
 import { MESSAGES } from '@/shared/messages';
 
 /**
@@ -59,6 +60,10 @@ export function StageStrip({
       virtualizer.scrollToIndex(currentIndex, { align: 'auto' });
     }
   }, [currentIndex, virtualizer]);
+
+  // Declared after the scroll to the open page, so a strip that opens at its place ends where the reader left it
+  const pageIds = useMemo(() => items.map((item) => item.page.id), [items]);
+  useStripPlace(scroller, virtualizer, pageIds, 1, items.length > 0);
 
   return (
     <div className="flex h-full flex-col" data-testid="page-strip">

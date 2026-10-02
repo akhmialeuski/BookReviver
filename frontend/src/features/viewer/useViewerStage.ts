@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { usePlaceWriter } from '@/features/place/PlaceWriterContext';
+import { Restore } from '@/features/place/writer';
 import { type FitMode, type StagePage, ViewerStage } from '@/features/viewer/stage';
 
 /**
@@ -60,17 +62,23 @@ export function useViewerStage(
     failed: [],
   });
 
+  const place = usePlaceWriter();
   useEffect(() => {
     if (element === null) {
       return;
     }
-    const created = new ViewerStage(element);
+    const created = new ViewerStage(element, {
+      restore: () => place?.takeRestore(Restore.Canvas) ?? null,
+      onViewChange: () => place?.touch(),
+    });
+    const detach = place?.attachCanvas(() => created.readView());
     setStage(created);
     return () => {
+      detach?.();
       created.destroy();
       setStage(null);
     };
-  }, [element]);
+  }, [element, place]);
 
   // The arrays are rebuilt on every render, so the effect gets them by what they hold, not by their identity: an edit
   // of a label must not make the stage show the view again and fit it, which would undo the reader's zoom

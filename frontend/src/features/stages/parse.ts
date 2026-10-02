@@ -26,7 +26,7 @@ export function parseStage(value: unknown): Stage | null {
  * The stage the reader left the book on wins, then the first stage with work to do that the server names, and a book
  * with neither opens on the first stage.
  *
- * @param remembered The stage last opened for the book in this browser, or null.
+ * @param remembered The stage the account left the book on, from its place, or null.
  * @param next The `next_stage` of the book, or null when no stage has work to do.
  */
 export function startStage(remembered: Stage | null, next: Stage | null): Stage {

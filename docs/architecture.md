@@ -714,6 +714,10 @@ format. Nothing sorts the files, since the order of the upload is the order of t
 caller knows the project's `image_policy`. `Tiler` cuts the IIIF pyramid (`tile`), the preview
 (`preview`) and the thumbnail (`thumbnail`) of an image, each at the size the imaging settings give.
 
+`BookPlaceRepository` is keyed by the account and the book together (`BookPlaceKey`) and offers `save`, which replaces
+the place whole, and `find`, which gives none for a book the account has not worked on. It refuses a place in a book
+that is not stored, and a book deleted takes its places with it, in both adapters.
+
 The persistence ports answer the two questions an import retry asks. `ScanRepository.list_unready` returns the scans of
 a project whose renditions are not ready, source by source in import order, and `PageRepository.list_for_scan` returns
 the pages cut from one scan by their slot.
@@ -806,6 +810,8 @@ erDiagram
     sources ||--o{ scans : holds
     pages }o--o| scans : shows
     sources }o--o| jobs : "imported by"
+    projects ||--o{ book_places : "is left at"
+    user ||--o{ book_places : keeps
 ```
 
 ```mermaid
@@ -854,6 +860,11 @@ erDiagram
   `recipe_id` with `ON DELETE SET NULL`. Its columns are `state` and `updated_at`.
 - `page_edits` has the primary key `(page_id, stage, processor_key)` and `page_id` with `ON DELETE CASCADE`. Its
   columns are `kind`, `geometry` as JSON, `mask_key`, `edit_hash` and `updated_at`.
+- `book_places` has the primary key `(account_id, project_id)`, `account_id` referencing `user.id` and `project_id`
+  referencing `projects.id`, both with `ON DELETE CASCADE`, and an index on `project_id`. Its columns are `mode`,
+  `stage`, `view`, `compare` and `filter`, stored by value, the nullable identifiers `page_id`, `scan_id`, `source_id`
+  and `strip_page_id`, which have no foreign key because a reader may delete the page a place names, the nullable floats
+  `canvas_zoom`, `canvas_centre_x` and `canvas_centre_y`, and `updated_at`. See [The place of a book](#the-place-of-a-book).
 - `recipes` has the primary key `id`, `project_id` with `ON DELETE CASCADE`, an index on `(project_id, stage)`, and the
   partial unique index `ix_recipes_one_active` on `(project_id, stage)` `WHERE active`, which keeps one active recipe
   per stage. Its columns are `stage`, `name`, `steps` as JSON, `active`, `created_at` and `updated_at`.
@@ -867,6 +878,9 @@ The owner's foreign key uses `RESTRICT` because a cascade would delete the rows 
 so an account is deleted only after `ProjectService` has deleted its projects with their files. Only the SQLAlchemy
 adapter checks this key: its contract fixtures create `user` rows, and `test_tables.py` pins the `RESTRICT`, while
 the in-memory adapter has no accounts and there is no accounts port.
+
+Unlike `projects`, `book_places` cascades from `user.id`, because a place has no files that a cascade would leave
+behind. An account is deleted only after its projects, and that deletion already removes the places in them.
 
 The tables `sources`, `scans`, `pages` and `page_versions` come with the book model, because a page gets its base
 version with its own copy of the image when it is created, and the baseline migration creates them. `page_stages`,
@@ -1318,6 +1332,65 @@ check together. Deleting a source during an import gets a 409 as well. When the 
 application starts with a warning in its log, and every DjVu source is rejected with a message asking to install
 `djvulibre`.
 
+## The place of a book
+
+A book opens where its reader left it, on any device and in any browser of the account. The place is kept on the
+server for each pair of an account and a book, so a reader who works on the same book from two machines continues from
+the machine they used last, and two accounts never see each other's places. Only the owner of a book has a place in
+it, and the book of another account answers 404 like a missing one.
+
+`BookPlace` (`domain/entities.py`) holds the account and the book, the time of the last write, and these fields of
+`NewBookPlace`:
+
+| Field                             | Meaning                                                                                   |
+| --------------------------------- | ----------------------------------------------------------------------------------------- |
+| `mode`                            | `PlaceMode`: the workspace of a stage, or the reading mode                                |
+| `stage`                           | The stage of the workspace, and in the reading mode the stage the reader came from        |
+| `page_id`, `scan_id`, `source_id` | The open page, the open scan and the chosen file, none for the first of them              |
+| `view`, `compare`, `filter`       | `ViewMode`, `CompareMode` and `PageFilter`, with `spread` as the view of the reading mode |
+| `canvas`                          | `CanvasPosition`: the zoom and the centre of the canvas, none for the fitted view         |
+| `strip_page_id`                   | The first page in sight in the strip or the grid                                          |
+
+The zoom and the scroll are kept in terms that do not depend on the window. The zoom is a multiple of the zoom that
+fits the whole view into the canvas, so 1 is the fitted view, and the centre is a point of the view in page heights.
+The scroll of the strip is the first page in sight and not a number of pixels, because the width of the strip and the
+height of its rows differ on another device. Identifiers of pages, scans and files are not foreign keys, because the
+reader may delete a page that a place names.
+
+`PUT /projects/{id}/place` replaces the place whole and `GET` reads it, with 204 for a book the account has not worked
+on. The first place of a book may be stored by two requests at once, when the client writes after a pause and again as
+the page closes. The database lets one in and refuses the other with a `ConflictError`, and `PlaceService.save` stores
+that place again once, as a replacement.
+
+The client keeps the place with one `PlaceWriter` (`features/place/writer.ts`) for each open screen of a book, created
+by the route of the stage and by the route of the reading mode:
+
+- A screen tells the writer its address (stage, page, scan, file, layout, compare and filter), and the canvas and the
+  strip tell it when they have moved. The writer waits a second after the last move and writes once, so paging through
+  a book is not a stream of requests. It asks the canvas for its position and the strip for its first page at the
+  moment of the write, so it never holds a value that has gone stale.
+- It writes at once when the reader leaves the screen and when the page is hidden, on `pagehide` and when the tab goes
+  to the background, with `fetch` marked `keepalive` so that closing the tab does not cancel the request. A write that
+  is the same as the last one is skipped.
+- A write also puts the place into the query cache before the server has answered, and a read of the place waits for the
+  writes that are on their way, so a book opened a moment after it was closed opens where it was closed.
+
+`/projects/<id>` chooses the screen with `resumeTarget` (`features/place/resume.ts`), a pure function of the place and of
+what the book holds now. It opens the reading mode on the page of the place, or the stage workspace with the search
+params of the place, and it never fails:
+
+| The place names                                       | The book opens on                                      |
+| ----------------------------------------------------- | ------------------------------------------------------ |
+| nothing                                               | the `next_stage` of the book, else the first stage     |
+| a page that was deleted                               | the same stage, or the reading mode, on the first page |
+| a stage that cannot be worked on, or none that exists | the `next_stage` of the book                           |
+
+The screen then returns the canvas and the strip to the place. The writer hands the stored position back once, and only to
+a screen at the very address of the place, so a link to another page does not start from the zoom of an unrelated one.
+`ViewerStage` applies the zoom and the centre when it places the first view, through the viewport of OpenSeadragon, and
+`useStripPlace` scrolls the first page in sight of the strip or the grid to the top. The way back from the reading mode
+leads to the stage in the place, because `/projects/<id>` itself would open the reading mode again.
+
 ## HTTP API
 
 All endpoints live under `/api/v1`. The OpenAPI schema is generated from the routers and committed as
@@ -1347,6 +1420,8 @@ the frontend client is generated from it. These endpoints of books, jobs and ima
 | `POST /projects/{id}/pages/labels/preview`  | `preview_page_numbers`  | `PageService.preview_numbers` | 200 `list[NumberedPageSchema]`, writes nothing  |
 | `GET /projects/{id}/stages`                 | `list_stages`           | `ProjectService.stages`      | 200 `Page[StageSummarySchema]`                  |
 | `GET /projects/{id}/stages/{stage}/pages`   | `list_stage_pages`      | `ProjectService.stage_pages` | 200 `ManifestPage[StagePageSchema]`             |
+| `GET /projects/{id}/place`                  | `get_place`             | `PlaceService.find`          | 200 `BookPlaceSchema`, 204 before any work      |
+| `PUT /projects/{id}/place`                  | `put_place`             | `PlaceService.save`          | 200 `BookPlaceSchema`, replaces the place       |
 | `POST /projects/{id}/pages/{page_id}/move`  | `move_page`             | `PageService.move`           | 200 `PageSchema`, 409 for an anchor of its own  |
 | `POST /projects/{id}/pages/move`            | `move_pages`            | `PageService.move_group`     | 204, 409 for an anchor inside the group         |
 | `POST /projects/{id}/sources/{source_id}/pages/move` | `move_source_pages` | `PageService.move_source` | 204, 409 for an anchor inside the source        |
@@ -1501,9 +1576,12 @@ The project list counts in `page_count` the included pages of the book, and show
   draws the book header and the stage bar above every screen of the book, listens to the book's event stream through
   `useProjectEvents`, and owns the keys that leave a screen: `Alt` with a digit goes to a stage (`1` to `9` are the
   first nine stages and `0` is the last one), `Alt` and `I` opens the description, and `?` opens the shortcuts.
-  - `/projects/<id>` shows nothing of its own. It redirects to the stage last opened for the book, which the browser
-    keeps in `localStorage` under `bookreviver.lastStage.<id>`, else to the `next_stage` of the book, else to `import`.
-    Every read and write of `localStorage` is guarded, since a browser may forbid it.
+  - `/projects/<id>` shows nothing of its own. It reads the place the account left the book at (`GET
+    /projects/{id}/place`) and redirects to the stage workspace or to the reading mode with the search params of that
+    place, else to the `next_stage` of the book, else to `import`. A book that is opened again must open where it was
+    left, so [The place of a book](#the-place-of-a-book) says what is kept and how it is restored. The widths of the
+    panels of the workspace stay in `localStorage`, because they belong to the screen and not to the book, and every
+    read and write of `localStorage` is guarded, since a browser may forbid it.
   - `/projects/<id>/stages/<stage>?page=&scan=&source=&view=&compare=&filter=` is a stage. `stage` is a value of
     `Stage`, and a value that is none of them answers with a not-found screen inside the layout, so the header and the
     bar stay. `page` is a `PageId`, `scan` a scan id and `source` a source id, which is a file of the book: the Import

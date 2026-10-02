@@ -348,6 +348,38 @@ class Side(LabeledStrEnum):
     AFTER = 'after', 'After the page'
 
 
+class PlaceMode(LabeledStrEnum):
+    """Where in the interface a reader left a book."""
+
+    WORKSPACE = 'workspace', 'Workspace of a stage'
+    READING = 'reading', 'Reading mode'
+
+
+class ViewMode(LabeledStrEnum):
+    """How the canvas lays the pages of a book out."""
+
+    PAGE = 'page', 'One page'
+    SPREAD = 'spread', 'Two-page spread'
+    GRID = 'grid', 'Grid of many pages'
+
+
+class CompareMode(LabeledStrEnum):
+    """How the result of a stage is compared with the result before it."""
+
+    OFF = 'off', 'No comparison'
+    SWIPE = 'swipe', 'Swipe over the page'
+    SIDE = 'side', 'Side by side'
+
+
+class PageFilter(LabeledStrEnum):
+    """Which pages the strip and the grid of a stage list."""
+
+    ALL = 'all', 'All pages'
+    CHECK = 'check', 'Pages to check'
+    LEFT_OUT = 'left-out', 'Pages left out of the book'
+    WIDE = 'wide', 'Pages cut from a wide scan'
+
+
 class PageChange(LabeledStrEnum):
     """What a use case did to the pages of a book, which the ``PagesChanged`` event reports."""
 

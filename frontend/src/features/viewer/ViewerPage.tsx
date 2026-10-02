@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import { ArrowLeftIcon, MoveIcon, PencilIcon } from 'lucide-react';
 import { useRef, useState } from 'react';
-import type { PageSchema } from '@/api';
+import type { PageSchema, Stage } from '@/api';
 import { MovePagesDialog } from '@/features/pages/MovePagesDialog';
 import { useManifest } from '@/features/pages/manifest';
 import { PageEditDialog } from '@/features/pages/PageEditDialog';
@@ -41,10 +41,13 @@ function stagePage(page: PageSchema | undefined): StagePage[] {
 
 export function ViewerPage({
   projectId,
+  stage,
   search,
   onSearchChange,
 }: {
   projectId: string;
+  /** The stage the reader worked on before reading, which the way back leads to. */
+  stage: Stage;
   search: ViewerSearch;
   onSearchChange: (search: ViewerSearch) => void;
 }): React.JSX.Element {
@@ -106,8 +109,8 @@ export function ViewerPage({
     <div className="flex h-full min-h-96 flex-col">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 pt-2">
         <Link
-          to="/projects/$projectId"
-          params={{ projectId }}
+          to="/projects/$projectId/stages/$stage"
+          params={{ projectId, stage }}
           className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeftIcon className="size-4" />

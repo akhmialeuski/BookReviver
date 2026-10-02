@@ -21,6 +21,7 @@ from uuid import UUID
 from attrs import asdict
 
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
+    BookPlaceRow,
     JobRow,
     PageEditRow,
     PageRow,
@@ -31,7 +32,18 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     ScanRow,
     SourceRow,
 )
-from bookreviver.domain.entities import Job, Page, PageEdit, PageStage, PageVersion, Project, Recipe, Scan, Source
+from bookreviver.domain.entities import (
+    BookPlace,
+    Job,
+    Page,
+    PageEdit,
+    PageStage,
+    PageVersion,
+    Project,
+    Recipe,
+    Scan,
+    Source,
+)
 from bookreviver.domain.enums import ContributorRole, IdentifierScheme, RejectionReason, TransformKind
 from bookreviver.domain.geometry import Point, Quad, Transform, geometry_from_data
 from bookreviver.domain.ids import (
@@ -48,6 +60,7 @@ from bookreviver.domain.ids import (
 from bookreviver.domain.values import (
     BookDetails,
     BookIdentifier,
+    CanvasPosition,
     Contributor,
     ImportRequest,
     ImportResult,
@@ -672,6 +685,69 @@ class PageEditMapper(RowMapper[PageEdit, PageEditRow]):
             geometry=None if entity.geometry is None else entity.geometry.to_data(),
             mask_key=entity.mask_key,
             edit_hash=entity.edit_hash,
+            updated_at=entity.updated_at,
+        )
+
+
+class BookPlaceMapper(RowMapper[BookPlace, BookPlaceRow]):
+    """Translation of the place of a book, whose canvas position is spread over three columns."""
+
+    @override
+    def to_entity(self, row: BookPlaceRow) -> BookPlace:
+        """Build the place stored in ``row``.
+
+        :param row: Book place row loaded from the database.
+        :type row: BookPlaceRow
+        :returns: The place with its canvas position, if the row has one.
+        :rtype: BookPlace
+        """
+        zoom, centre_x, centre_y = row.canvas_zoom, row.canvas_centre_x, row.canvas_centre_y
+        canvas = (
+            None
+            if zoom is None or centre_x is None or centre_y is None
+            else CanvasPosition(zoom=zoom, centre_x=centre_x, centre_y=centre_y)
+        )
+        return BookPlace(
+            account_id=AccountId(row.account_id),
+            project_id=ProjectId(row.project_id),
+            mode=row.mode,
+            stage=row.stage,
+            page_id=None if row.page_id is None else PageId(row.page_id),
+            scan_id=None if row.scan_id is None else ScanId(row.scan_id),
+            source_id=None if row.source_id is None else SourceId(row.source_id),
+            view=row.view,
+            compare=row.compare,
+            filter=row.filter,
+            canvas=canvas,
+            strip_page_id=None if row.strip_page_id is None else PageId(row.strip_page_id),
+            updated_at=row.updated_at,
+        )
+
+    @override
+    def to_row(self, entity: BookPlace) -> BookPlaceRow:
+        """Build the row of ``entity``.
+
+        :param entity: Place to store.
+        :type entity: BookPlace
+        :returns: Transient book place row.
+        :rtype: BookPlaceRow
+        """
+        canvas = entity.canvas
+        return BookPlaceRow(
+            account_id=entity.account_id,
+            project_id=entity.project_id,
+            mode=entity.mode,
+            stage=entity.stage,
+            page_id=entity.page_id,
+            scan_id=entity.scan_id,
+            source_id=entity.source_id,
+            view=entity.view,
+            compare=entity.compare,
+            filter=entity.filter,
+            canvas_zoom=None if canvas is None else canvas.zoom,
+            canvas_centre_x=None if canvas is None else canvas.centre_x,
+            canvas_centre_y=None if canvas is None else canvas.centre_y,
+            strip_page_id=entity.strip_page_id,
             updated_at=entity.updated_at,
         )
 

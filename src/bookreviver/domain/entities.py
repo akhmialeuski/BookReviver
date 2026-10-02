@@ -8,20 +8,24 @@ from typing import TYPE_CHECKING, ClassVar
 from attrs import field, frozen, validators
 
 from bookreviver.domain.enums import (
+    CompareMode,
     ImagePolicy,
     JobKind,
     JobState,
+    PageFilter,
     PageKind,
     PageOrigin,
     StageState,
     VersionScale,
     VersionState,
+    ViewMode,
 )
 from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.geometry import Transform
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.values import (
     SHA256_PATTERN,
+    BookPlaceKey,
     MetadataSuggestion,
     PageEditKey,
     PageStageKey,
@@ -34,12 +38,13 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from bookreviver.domain.enums import EditorKind, FileType, ReviewReason, SourceKind, Stage
+    from bookreviver.domain.enums import EditorKind, FileType, PlaceMode, ReviewReason, SourceKind, Stage
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.ids import AccountId, JobId, PageId, ProjectId, RecipeId, ScanId, SourceId, StorageKey
     from bookreviver.domain.stage_summaries import BookProgress
     from bookreviver.domain.values import (
         BookDetails,
+        CanvasPosition,
         ImportRequest,
         ImportResult,
         MetadataMap,
@@ -460,6 +465,48 @@ class PageStage:
     def key(self) -> PageStageKey:
         """The key the record is stored under."""
         return PageStageKey(self.page_id, self.stage)
+
+
+@frozen(kw_only=True)
+class BookPlace:
+    """Where one account left one book: the stage, the page, the view and the position of the canvas.
+
+    The place is replaced whole each time the reader moves, and read when the book is opened again, on any device. It
+    holds the fields of ``NewBookPlace`` beside the account, the book and the time of the last write.
+
+    :ivar account_id: Account the place belongs to.
+    :ivar project_id: Book the place is in.
+    :ivar mode: Whether the reader was working on a stage or reading.
+    :ivar stage: Stage the reader was on, or last was on before reading.
+    :ivar page_id: Page that was open, or None for the first page.
+    :ivar scan_id: Scan that was open on the stages that work on scans, or None.
+    :ivar source_id: File that was chosen on the stages that work on files, or None.
+    :ivar view: How the canvas laid the pages out.
+    :ivar compare: How the result of the stage was compared with the one before it.
+    :ivar filter: Which pages the strip or the grid listed.
+    :ivar canvas: Zoom and centre of the canvas, or None for the fitted view.
+    :ivar strip_page_id: First page in sight in the strip or the grid, or None for the top.
+    :ivar updated_at: When the place was last written.
+    """
+
+    account_id: AccountId
+    project_id: ProjectId
+    mode: PlaceMode
+    stage: Stage
+    page_id: PageId | None = None
+    scan_id: ScanId | None = None
+    source_id: SourceId | None = None
+    view: ViewMode = ViewMode.PAGE
+    compare: CompareMode = CompareMode.OFF
+    filter: PageFilter = PageFilter.ALL
+    canvas: CanvasPosition | None = None
+    strip_page_id: PageId | None = None
+    updated_at: datetime
+
+    @property
+    def key(self) -> BookPlaceKey:
+        """The key the place is stored under."""
+        return BookPlaceKey(self.account_id, self.project_id)
 
 
 @frozen(kw_only=True)

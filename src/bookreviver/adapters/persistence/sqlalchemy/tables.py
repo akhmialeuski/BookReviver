@@ -1,7 +1,7 @@
 """Tables of the books feature, private to the SQLAlchemy persistence adapter.
 
 The module declares the ``projects``, ``jobs``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
-``page_edits`` and ``recipes`` tables in the SQLAlchemy 2.0 declarative style: ``Mapped`` annotations,
+``page_edits``, ``book_places`` and ``recipes`` tables in the SQLAlchemy 2.0 declarative style: ``Mapped`` annotations,
 ``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from
 advanced-alchemy's :class:`~advanced_alchemy.base.DefaultBase`, which is a ``DeclarativeBase`` carrying the metadata
 shared with the account tables, the portable ``GUID``, ``DateTimeUTC`` and ``JsonB`` column types for ``UUID``,
@@ -38,14 +38,17 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.domain.enums import (
     ColorMode,
+    CompareMode,
     EditorKind,
     FileType,
     ImagePolicy,
     JobKind,
     JobState,
     Orthography,
+    PageFilter,
     PageKind,
     PageOrigin,
+    PlaceMode,
     Rendition,
     ReviewReason,
     RightsStatus,
@@ -55,6 +58,7 @@ from bookreviver.domain.enums import (
     StageState,
     VersionScale,
     VersionState,
+    ViewMode,
 )
 
 # Format of the ``full`` image of the scans stored before the format was recorded, which were all JPEG
@@ -591,6 +595,50 @@ class PageEditRow(DefaultBase):
     updated_at: Mapped[datetime]
 
     page: Mapped[PageRow] = relationship(back_populates=Relation.EDITS, lazy=NO_IMPLICIT_LOAD)
+
+
+class BookPlaceRow(DefaultBase):
+    """Row of the place one account left one book at, keyed by the account and the book.
+
+    The page, scan, file and strip columns hold identifiers without a foreign key: the reader may delete the page the
+    place names, and the place then falls back to the nearest view that still exists, so the database keeps the row.
+
+    :ivar account_id: Account the place belongs to, whose deletion removes the place.
+    :ivar project_id: Book the place is in, whose deletion removes the place.
+    :ivar mode: Whether the reader was working on a stage or reading, stored by value.
+    :ivar stage: Stage the reader was on, stored by value.
+    :ivar page_id: Page that was open, or null.
+    :ivar scan_id: Scan that was open, or null.
+    :ivar source_id: File that was chosen, or null.
+    :ivar view: How the canvas laid the pages out, stored by value.
+    :ivar compare: How the stage was compared with the one before it, stored by value.
+    :ivar filter: Which pages the strip or the grid listed, stored by value.
+    :ivar canvas_zoom: Zoom of the canvas as a multiple of the fitted view, or null for the fitted view.
+    :ivar canvas_centre_x: Horizontal coordinate of the centre of the canvas in page heights, or null.
+    :ivar canvas_centre_y: Vertical coordinate of the centre of the canvas in page heights, or null.
+    :ivar strip_page_id: First page in sight in the strip or the grid, or null.
+    :ivar updated_at: Time the place was last written.
+    """
+
+    __tablename__ = 'book_places'
+
+    account_id: Mapped[UUID] = mapped_column(
+        ForeignKey(AccountTable.__table__.c.id, ondelete=CASCADE), primary_key=True
+    )
+    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), primary_key=True, index=True)
+    mode: Mapped[PlaceMode] = mapped_column(enum_by_value(PlaceMode))
+    stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
+    page_id: Mapped[UUID | None]
+    scan_id: Mapped[UUID | None]
+    source_id: Mapped[UUID | None]
+    view: Mapped[ViewMode] = mapped_column(enum_by_value(ViewMode))
+    compare: Mapped[CompareMode] = mapped_column(enum_by_value(CompareMode))
+    filter: Mapped[PageFilter] = mapped_column(enum_by_value(PageFilter))
+    canvas_zoom: Mapped[float | None]
+    canvas_centre_x: Mapped[float | None]
+    canvas_centre_y: Mapped[float | None]
+    strip_page_id: Mapped[UUID | None]
+    updated_at: Mapped[datetime]
 
 
 class RecipeRow(DefaultBase):
