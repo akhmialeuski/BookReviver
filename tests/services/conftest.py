@@ -154,9 +154,10 @@ def fx_cv_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
 
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
-    :returns: The kit whose catalogue has ``split.none``, ``split.spread`` and ``geometry.deskew``.
+    :returns: The kit whose catalogue has ``split.none``, ``split.spread``, ``split.auto`` and ``geometry.deskew``.
     :rtype: ProcessingKit
     """
     split = pytest.importorskip('bookreviver.plugins.split_spread', reason=CV_MISSING).SplitSpread()
+    auto = pytest.importorskip('bookreviver.plugins.split_auto', reason=CV_MISSING).SplitAuto()
     deskew = pytest.importorskip('bookreviver.plugins.deskew', reason=CV_MISSING).Deskew()
-    return ProcessingKit(fx_asset_store, processors=[SplitNone(), split, deskew], defaults=CV_DEFAULTS)
+    return ProcessingKit(fx_asset_store, processors=[SplitNone(), split, auto, deskew], defaults=CV_DEFAULTS)

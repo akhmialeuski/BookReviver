@@ -2,7 +2,7 @@ import { LightbulbIcon, RefreshCwIcon, ScissorsIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { Stage } from '@/api';
 import { useAllScans, useRunStage } from '@/features/processing/queries';
-import { offerFor, recipeFor, SplitChoice, wideScanIds } from '@/features/processing/split';
+import { cutterOf, offerFor, wideScanIds } from '@/features/processing/split';
 import type { Processing } from '@/features/processing/useProcessing';
 import { stageBefore } from '@/features/stages/stages';
 import { useActiveJobs } from '@/features/workspace/queries';
@@ -47,7 +47,7 @@ export function StageBanners({
     items.map((item) => item.page),
     wideScanIds(scans.data ?? []),
   );
-  const cutter = recipeFor(processing.recipes, SplitChoice.Two);
+  const cutter = cutterOf(processing.recipes);
   const showStale = recipe !== undefined && staleIds.length > 0;
   const showSplit = stage === 'page-split' && offer.toCut > 0 && cutter !== undefined && !dismissed;
   if (!showStale && !showSplit && run.error === null) {

@@ -12,7 +12,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, override
 
 import anyio
-from attrs import frozen
+from attrs import field, frozen
 
 from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.imaging import (
@@ -32,11 +32,13 @@ from bookreviver.app.settings import ImagingSettings
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.services.imports import ImportImaging, ImportLimits, ImportRuntime, ImportService, ImportStorage
+from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
 from bookreviver.services.steps import StepRunner
 from tests.adapters.imaging.samples import PdfPage, ScanImage, write_image, write_pdf
 from tests.helpers.builders import EPOCH
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.fakes_jobs import JobFakes, RecordingEventBus
+from tests.helpers.processing import DEFAULTS, PREVIEW_LONG_SIDE_PX, PREVIEW_RETENTION_HOURS, RETENTION_DAYS
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
@@ -53,7 +55,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import JobId, ProjectId, SourceId
     from bookreviver.domain.values import SourceAnalysis, UploadedSource
     from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.processing import Processor
     from bookreviver.ports.storage import SourceStore
+    from bookreviver.services.recipes import DefaultRecipes
 
 TICK: timedelta = timedelta(seconds=1)
 PAGE_WIDTH_PX: int = 200
@@ -380,6 +384,8 @@ class ImportRig:
     :ivar inspector: Real inspector, watched.
     :ivar rasterizer: Real rasterizer, watched.
     :ivar tiler: Real tiler, watched.
+    :ivar defaults: The recipes a stage starts with, which by default leave the page split to ``split.none``.
+    :ivar processors: The processors of the catalogue the recipes are checked against.
     """
 
     fakes: JobFakes
@@ -390,6 +396,8 @@ class ImportRig:
     inspector: WatchedInspector
     rasterizer: WatchedRasterizer
     tiler: WatchedTiler
+    defaults: DefaultRecipes = DEFAULTS
+    processors: Sequence[Processor] = field(factory=lambda: [SplitNone()])
 
     @classmethod
     def build(cls, root: Path) -> ImportRig:
@@ -485,8 +493,20 @@ class ImportRig:
         :returns: The service, sharing the database, the stores and the event bus of the rig.
         :rtype: ImportService
         """
+        uow = uow or self.open_uow()
+        parts = ProcessingParts.build(
+            uow,
+            FakeCatalogue(self.processors),
+            self.defaults,
+            ProcessingRuntime(publisher=self.fakes.events, clock=self.fakes.clock, queue=self.queue),
+            ProcessingConfig(
+                version_retention=timedelta(days=RETENTION_DAYS),
+                preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
+                preview_long_side_px=PREVIEW_LONG_SIDE_PX,
+            ),
+        )
         return ImportService(
-            uow=uow or self.open_uow(),
+            uow=uow,
             storage=ImportStorage(sources=sources or self.sources, assets=self.assets),
             imaging=ImportImaging(
                 inspector=self.inspector, rasterizer=self.rasterizer, tiler=self.tiler, runner=self.runner()
@@ -498,8 +518,9 @@ class ImportRig:
                 limits=ImportLimits(
                     max_files=max_files, max_bytes=max_bytes, parallel_scans=parallel_scans, iiif_root=IIIF_ROOT
                 ),
+                queue=self.queue,
             ),
-            queue=self.queue,
+            parts=parts,
         )
 
     async def stored_job(self, job: Job) -> Job:

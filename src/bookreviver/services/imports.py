@@ -43,6 +43,7 @@ from bookreviver.domain.enums import (
     PageChange,
     PageOrigin,
     RejectionReason,
+    Stage,
     SystemFile,
     UploadProblem,
     VersionState,
@@ -63,6 +64,7 @@ from bookreviver.domain.values import (
     Progress,
     RejectedFile,
     Renditions,
+    StageRun,
     UploadPath,
 )
 from bookreviver.services.base_versions import SPLIT_NONE, BaseVersions
@@ -81,12 +83,15 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
     from bookreviver.ports.storage import AssetStore, IncomingFile, SourceStore
+    from bookreviver.services.processing_parts import ProcessingParts
     from bookreviver.services.steps import StepRunner
 
 IMPORT_ACTIVE: str = 'This project is already importing files. Wait for the import to finish, or cancel it.'
 NO_SOURCE_IMPORTED: str = 'None of the uploaded files could be imported.'
 NOT_QUEUED: str = 'The import could not be queued. Upload the files again.'
 UNEXPECTED_FAILURE: str = 'The import stopped because of an unexpected error. It has been logged.'
+# The processor of the page split that decides for each scan, whose recipe an import runs on the new pages
+AUTOMATIC_SPLIT: str = 'split.auto'
 # Kinds of job that import files, of which a project runs one at a time
 IMPORT_JOBS: frozenset[JobKind] = frozenset({JobKind.IMPORT_SOURCE})
 
@@ -149,12 +154,14 @@ class ImportRuntime:
     :ivar clock: Clock stamping jobs and what they create.
     :ivar order_keys: Builder of the order keys of the new pages.
     :ivar limits: Bounds of an upload and of an import.
+    :ivar queue: Queue handing the import job to the workers.
     """
 
     publisher: EventPublisher
     clock: Clock
     order_keys: OrderKeys
     limits: ImportLimits
+    queue: JobQueue
 
 
 class ImportRun:
@@ -529,7 +536,7 @@ class ImportService:
         storage: ImportStorage,
         imaging: ImportImaging,
         runtime: ImportRuntime,
-        queue: JobQueue,
+        parts: ProcessingParts,
     ) -> None:
         """Build the service over the ports of one request or job.
 
@@ -541,14 +548,16 @@ class ImportService:
         :type imaging: ImportImaging
         :param runtime: The publisher, the clock, the order keys and the limits.
         :type runtime: ImportRuntime
-        :param queue: Queue handing the job to the workers.
-        :type queue: JobQueue
+        :param parts: The recipes and the job starter, with which the split of the new pages is queued.
+        :type parts: ProcessingParts
         """
         self._uow = uow
         self._storage = storage
         self._imaging = imaging
         self._runtime = runtime
-        self._queue = queue
+        self._queue = runtime.queue
+        self._recipes = parts.recipes
+        self._starter = parts.starter
         self._publisher = runtime.publisher
         self._clock = runtime.clock
         self._limits = runtime.limits
@@ -670,6 +679,7 @@ class ImportService:
         else:
             if run.result.imported:
                 await self._conclude(run, JobState.SUCCEEDED)
+                await self._queue_split(run)
             else:
                 await self._conclude(run, JobState.FAILED, error=NO_SOURCE_IMPORTED)
 
@@ -697,3 +707,30 @@ class ImportService:
         await self._storage.sources.discard(run.job.project_id, run.job.id)
         if stored is not None:
             await self._publisher.publish(JobChanged(project_id=stored.project_id, job=stored))
+
+    async def _queue_split(self, run: ImportRun) -> None:
+        """Queue a run of the page split on the pages an import made, when the active recipe of the stage decides it.
+
+        The book gets its pages with no action of the user, even with the tab closed. A book whose recipe was chosen by
+        hand is left as it is, and so is a book whose project is processing something already, since the user can run
+        the stage. Neither is an error of the import, which has succeeded.
+
+        :param run: The run that ended, whose result lists the sources it imported.
+        :type run: ImportRun
+        """
+        project_id = run.job.project_id
+        try:
+            steps = (await self._recipes.active(project_id, Stage.PAGE_SPLIT)).enabled_steps
+            if not steps or steps[0].processor_key != AUTOMATIC_SPLIT:
+                return
+            pages = [
+                page.id
+                for source_id in run.result.imported
+                for page in await self._uow.pages.list_for_source(project_id, source_id)
+            ]
+            if pages:
+                await self._starter.enqueue(
+                    project_id, JobKind.RUN_STAGE, StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(pages)).to_map()
+                )
+        except DomainError:
+            logger.warning('The split of the pages of import job %s was not queued', run.job.id, exc_info=True)

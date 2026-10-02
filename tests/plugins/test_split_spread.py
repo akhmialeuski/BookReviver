@@ -13,11 +13,12 @@ from PIL import Image, ImageDraw
 from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import EditorKind, ProcessorScope, ReviewReason, Stage, TransformKind, VersionData
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
-from bookreviver.domain.geometry import Line, Point
+from bookreviver.domain.geometry import Line, Point, SplitChoice
 from bookreviver.domain.ids import PageId
 from bookreviver.ports.processing import StepInput
 from tests.helpers.builders import EPOCH
 from tests.helpers.samples import GUTTER_SHADE, PAPER, find_mark, mark, save, spread
+from tests.plugins.synthetic import draw_spread
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -30,6 +31,9 @@ HEIGHT_PX: int = 1_200
 # How far the cut found may be from the middle of the generated gutter, in pixels
 CUT_TOLERANCE_PX: float = 3.0
 OVERLAP_PX: int = 25
+# The angle a spread is laid on the glass at, and how far the ends of the found cut may be from the true gutter
+SLANT_DEG: float = 3.0
+SLANT_TOLERANCE_PX: float = 16.0
 MARK_ON_LEFT: tuple[int, int] = (300, 500)
 MARK_ON_RIGHT: tuple[int, int] = (1_300, 700)
 
@@ -312,5 +316,34 @@ class TestSplitSpread:
         spec = fx_split_spread.spec
         expect((spec.key, spec.stage, spec.scope) == ('split.spread', Stage.PAGE_SPLIT, ProcessorScope.SPLIT))
         expect(spec.editor is EditorKind.LINE)
-        expect(fx_split_spread.validate_params({}) == {'search_band': 0.3, 'overlap_px': 0, 'min_confidence': 0.1})
+        expect(
+            fx_split_spread.validate_params({})
+            == {
+                'search_band': 0.3,
+                'strips': 12,
+                'min_depth': 0.15,
+                'max_slant_deg': 5.0,
+                'tolerance': 0.005,
+                'min_confidence': 0.1,
+                'overlap_px': 0,
+            }
+        )
+        expect(spec.version == '2')
+        assert_expectations()
+
+    def test_a_slanting_gutter_is_cut_along_its_slant(self, fx_split_spread: Processor, tmp_path: Path) -> None:
+        """Verify the halves of a spread laid on the glass at an angle meet along the slanting gutter.
+
+        :param fx_split_spread: The processor under test.
+        :type fx_split_spread: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        drawn = draw_spread(slant_deg=SLANT_DEG)
+        image = save(drawn.image, tmp_path / 'scan.png')
+        params = fx_split_spread.validate_params({})
+        left, _right = halves_of(fx_split_spread, StepInput(image=image, params=params, workdir=tmp_path))
+        expect(abs(left.data[VersionData.CUT_TOP_X] - drawn.top_x) < SLANT_TOLERANCE_PX)
+        expect(abs(left.data[VersionData.CUT_BOTTOM_X] - drawn.bottom_x) < SLANT_TOLERANCE_PX)
+        expect(left.data[VersionData.PAGES] == SplitChoice.TWO_PAGES)
         assert_expectations()

@@ -4,7 +4,7 @@ import type { StageRunBody } from '@/api';
 import { useRunStage } from '@/features/processing/queries';
 import { pageIdsFor, RunScope, scopeChoices, troubleOf } from '@/features/processing/scope';
 import { undoesSplit } from '@/features/processing/split';
-import { UnsplitDialog } from '@/features/processing/UnsplitDialog';
+import { UnsplitDialog, UnsplitQuestion } from '@/features/processing/UnsplitDialog';
 import { PreviewBlock, type Processing } from '@/features/processing/useProcessing';
 import { useActiveJobs } from '@/features/workspace/queries';
 import type { StripItem } from '@/features/workspace/strip';
@@ -165,7 +165,7 @@ export function RunControls({
       </div>
       {run.error === null ? null : <ErrorAlert message={describeError(run.error)} />}
       <UnsplitDialog
-        open={confirming !== null}
+        question={confirming === null ? null : UnsplitQuestion.One}
         onCancel={() => setConfirming(null)}
         onConfirm={() => {
           if (confirming !== null) {

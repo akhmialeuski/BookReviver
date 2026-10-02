@@ -5,6 +5,7 @@ written by libvips as they are for a user, and a test waits for the broker to fi
 """
 
 import io
+import json
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
@@ -12,8 +13,10 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from fastapi import status
 from PIL import Image
+from pydantic import ValidationError
 from taskiq import AsyncBroker, InMemoryBroker
 
+from bookreviver.api.schemas.edits import EditForm
 from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.processing import (
     PageStageSchema,
@@ -22,7 +25,8 @@ from bookreviver.api.schemas.processing import (
     RecipeSchema,
     StageRunBody,
 )
-from bookreviver.domain.enums import JobKind, JobState, Rendition, Stage, StageState, VersionScale
+from bookreviver.domain.enums import EditorKind, JobKind, JobState, Rendition, Stage, StageState, VersionScale
+from bookreviver.domain.geometry import Line, SplitChoice
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import Renditions, StageRun
 from tests.helpers.builders import make_page, make_project, make_scan, make_source, new_account_id
@@ -526,6 +530,31 @@ class TestEdits:
         expect(saved.status_code == status.HTTP_200_OK)
         expect((served.status_code, served.content) == (status.HTTP_200_OK, b'mask-bytes'))
         assert_expectations()
+
+
+class TestEditForm:
+    """Tests for the form of an edit, for the shapes the split editor draws."""
+
+    def test_a_choice_of_one_page_or_two_is_read_into_its_shape(self) -> None:
+        """Verify the form of the split editor gives the choice, with the line of a cut when there is one."""
+        line = {'start': {'x': 800.0, 'y': 0.0}, 'end': {'x': 790.0, 'y': 1200.0}}
+        plain = EditForm.model_validate({'kind': EditorKind.SPLIT, 'geometry': '{"pages": 2}'}).to_edit()
+        drawn = EditForm.model_validate(
+            {'kind': EditorKind.SPLIT, 'geometry': json.dumps({'pages': 2, 'line': line})}
+        ).to_edit()
+        expect(plain.geometry == SplitChoice(pages=SplitChoice.TWO_PAGES))
+        expect(isinstance(drawn.geometry, SplitChoice) and drawn.geometry.line == Line.from_data(line))
+        assert_expectations()
+
+    @pytest.mark.parametrize('geometry', ['{"pages": 3}', '{"line": null}', '{"pages": 1, "line": {"start": 1}}'])
+    def test_a_choice_that_does_not_fit_is_refused(self, geometry: str) -> None:
+        """Reject a number of pages other than one or two, a choice with no pages, and a line with no points.
+
+        :param geometry: The shape under test, as the form sends it.
+        :type geometry: str
+        """
+        with pytest.raises(ValidationError):
+            EditForm.model_validate({'kind': EditorKind.SPLIT, 'geometry': geometry})
 
 
 class TestStageRunBody:

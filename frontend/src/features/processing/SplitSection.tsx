@@ -1,21 +1,35 @@
+import { WandSparklesIcon } from 'lucide-react';
 import { useState } from 'react';
 import { SegmentedRadio } from '@/features/pages/SegmentedRadio';
-import { useRunStage } from '@/features/processing/queries';
-import { choiceOf, pagesOfScan, recipeFor, SplitChoice } from '@/features/processing/split';
-import { UnsplitDialog } from '@/features/processing/UnsplitDialog';
+import { useDeleteEdit, useEdits, useRunStage, useSaveEdit } from '@/features/processing/queries';
+import {
+  autoRecipeOf,
+  choiceForm,
+  choiceOf,
+  chosenIn,
+  pagesOfScan,
+  SPLIT_PROCESSOR,
+  SplitChoice,
+} from '@/features/processing/split';
+import { UnsplitDialog, UnsplitQuestion } from '@/features/processing/UnsplitDialog';
 import type { Processing } from '@/features/processing/useProcessing';
 import { useActiveJobs } from '@/features/workspace/queries';
 import type { StripItem } from '@/features/workspace/strip';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
+import { Button } from '@/shared/ui/button';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
- * The choice the Split stage offers for the scan of the open page: one page or two.
+ * The choice the Split stage offers for the scan of the open page: one page or two, or what the automatic split decides.
  *
- * "Two pages" runs the recipe that cuts on the page of the scan, and "One page" runs the recipe that keeps it whole on the
- * pages of the scan. Going back to one page deletes the right page of the spread with its work, so it asks first, and
- * only after the answer does the run go out with the confirmation the server wants.
+ * A choice is kept as an edit of the automatic split on the page that shows the scan, whole or as its left half, so it
+ * stays through every later run of the stage, and the page is made again at once by a run on that page alone. "Auto"
+ * deletes the edit and makes the page again, which returns the scan to what the automatic split decides.
+ *
+ * Going back to one page deletes the right page of the spread with its work, so it asks first, and only after the answer
+ * does the run go out with the confirmation the server wants. Returning to the automatic split of a scan that is cut
+ * asks the same, since the automatic split may keep that scan whole.
  */
 
 const labels = MESSAGES.processing.split;
@@ -31,44 +45,83 @@ export function SplitSection({
 }): React.JSX.Element | null {
   const { projectId, stage } = processing;
   const run = useRunStage(projectId, stage);
+  const saveEdit = useSaveEdit(projectId, stage);
+  const deleteEdit = useDeleteEdit(projectId, stage);
   const activeJobs = useActiveJobs(projectId);
-  const [asking, setAsking] = useState(false);
+  const [asking, setAsking] = useState<UnsplitQuestion | null>(null);
   const scanId = current.page.scan_id;
-  if (scanId === null) {
+  const scanPages =
+    scanId === null
+      ? []
+      : pagesOfScan(
+          items.map((item) => item.page),
+          scanId,
+        );
+  // The page that shows the scan whole, or its left half, is the one the stage runs on and the edit belongs to
+  const driver = scanPages[0];
+  const edits = useEdits(projectId, driver?.id, stage);
+  if (driver === undefined) {
     return null;
   }
-  const scanPages = pagesOfScan(
-    items.map((item) => item.page),
-    scanId,
-  );
+  const recipe = autoRecipeOf(processing.recipes);
   const choice = choiceOf(scanPages);
-  const pageIds = scanPages.map((page) => page.id);
-  const idle = (activeJobs.data?.length ?? 0) === 0 && !run.isPending && !processing.dirty;
-  const missing = (value: SplitChoice): boolean =>
-    recipeFor(processing.recipes, value) === undefined;
+  const chosen = chosenIn(edits.data ?? []);
+  const busy = run.isPending || saveEdit.isPending || deleteEdit.isPending;
+  const idle = (activeJobs.data?.length ?? 0) === 0 && !busy && !processing.dirty;
+  const path = {
+    project_id: projectId,
+    page_id: driver.id,
+    stage,
+    processor_key: SPLIT_PROCESSOR.auto,
+  };
 
-  const go = (value: SplitChoice, confirm: boolean): void => {
-    const recipe = recipeFor(processing.recipes, value);
+  const recompute = (confirm: boolean): void => {
     if (recipe === undefined) {
       return;
     }
     run.mutate({
       path: { project_id: projectId, stage },
       body: confirm
-        ? { recipe_id: recipe.id, page_ids: pageIds, confirm_unsplit: true }
-        : { recipe_id: recipe.id, page_ids: pageIds },
+        ? { recipe_id: recipe.id, page_ids: [driver.id], confirm_unsplit: true }
+        : { recipe_id: recipe.id, page_ids: [driver.id] },
     });
   };
+  const choose = async (value: SplitChoice, confirm: boolean): Promise<void> => {
+    await saveEdit.mutateAsync({ path, body: choiceForm(value) });
+    recompute(confirm);
+  };
+  const returnToAuto = async (confirm: boolean): Promise<void> => {
+    await deleteEdit.mutateAsync({ path });
+    recompute(confirm);
+  };
   const change = (value: SplitChoice): void => {
-    if (value === choice || !idle) {
+    if (value === choice || !idle || recipe === undefined) {
       return;
     }
-    if (value === SplitChoice.One) {
-      setAsking(true);
+    if (value === SplitChoice.One && choice === SplitChoice.Two) {
+      setAsking(UnsplitQuestion.One);
     } else {
-      go(value, false);
+      void choose(value, false).catch(() => undefined);
     }
   };
+  const auto = (): void => {
+    if (!idle) {
+      return;
+    }
+    if (choice === SplitChoice.Two) {
+      setAsking(UnsplitQuestion.Auto);
+    } else {
+      void returnToAuto(false).catch(() => undefined);
+    }
+  };
+  const answer = (): void => {
+    const question = asking;
+    setAsking(null);
+    const done =
+      question === UnsplitQuestion.Auto ? returnToAuto(true) : choose(SplitChoice.One, true);
+    void done.catch(() => undefined);
+  };
+  const error = saveEdit.error ?? deleteEdit.error ?? run.error;
 
   return (
     <section className="grid gap-3" aria-label={labels.scan} data-testid="split-section">
@@ -78,6 +131,7 @@ export function SplitSection({
       <SegmentedRadio
         legend={labels.choice}
         hideLegend
+        disabled={!idle || recipe === undefined}
         value={choice}
         options={[
           { value: SplitChoice.One, label: labels.onePage },
@@ -85,18 +139,31 @@ export function SplitSection({
         ]}
         onChange={change}
       />
-      {missing(SplitChoice.One) || missing(SplitChoice.Two) ? (
+      {recipe === undefined ? (
         <p className="text-sm text-muted-foreground">{labels.noRecipe}</p>
-      ) : null}
-      {run.error === null ? null : <ErrorAlert message={describeError(run.error)} />}
-      <UnsplitDialog
-        open={asking}
-        onCancel={() => setAsking(false)}
-        onConfirm={() => {
-          setAsking(false);
-          go(SplitChoice.One, true);
-        }}
-      />
+      ) : chosen === null ? (
+        <p className="text-sm text-muted-foreground" data-testid="split-automatic">
+          {labels.automatic}
+        </p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="min-w-0 flex-1 text-sm text-muted-foreground" data-testid="split-chosen">
+            {labels.chosen(chosen === SplitChoice.Two ? labels.twoPages : labels.onePage)}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!idle}
+            data-testid="split-auto"
+            onClick={auto}
+          >
+            <WandSparklesIcon />
+            {labels.auto}
+          </Button>
+        </div>
+      )}
+      {error === null ? null : <ErrorAlert message={describeError(error)} />}
+      <UnsplitDialog question={asking} onCancel={() => setAsking(null)} onConfirm={answer} />
     </section>
   );
 }

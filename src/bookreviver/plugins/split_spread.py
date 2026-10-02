@@ -1,27 +1,28 @@
 """The page split of a spread: one scan of two facing pages becomes the left page and the right page.
 
-``split.spread`` looks for the gutter, the dark strip where the book was bound, in the middle of the scan and cuts along
-it. The mean brightness of every column is taken over the central ``search_band`` of the width, smoothed, and the
-darkest column is the cut. A page whose columns are all of one brightness is cut at the middle of the band. The user may
-draw the cut instead, as a line that need not be vertical, which is the ``line`` edit and replaces the search.
+``split.spread`` looks for the gutter, the place where the book was bound, in the middle of the scan and cuts along it.
+``GutterSearch`` finds it in strips of the central ``search_band`` of the width and fits a line through them, so the cut
+follows a gutter that slants because the book lay crooked on the glass. A scan with no gutter to find is cut at the
+middle of the band. The user may draw the cut instead, as a line that need not be vertical, which is the ``line`` edit
+and replaces the search.
 
-The confidence of a found cut is how deep the gutter is under the paper beside it: the brightness of the darkest column
-below the median of the band, as a share of the median, from 0 for a band with no gutter in it to 1 for a black one.
-A cut below ``min_confidence`` is still made, since a spread has to be cut somewhere, but both halves are marked for
-review so the user checks it. A cut the user drew has the confidence 1.
+The confidence of a found cut is how many strips agree on the line times how strong the gutter is in them, as the module
+``gutter`` works it out. A cut below ``min_confidence`` is still made, since a spread has to be cut somewhere, but both
+halves are marked for review so the user checks it. A cut the user drew has the confidence 1.
 
 The step makes two outputs, the left half and then the right half. Each is the part of the scan on its side of the cut,
 cut to the rectangle that holds it, with what lies on the other side of a slanting cut painted white. ``overlap_px``
 lets each half reach that many pixels over the cut, so the margin of a page that was bound tight is not lost. The
 transform of each output is the crop of its rectangle, which maps a point of the scan to the half by moving it.
+
+Version 2 of the step searches in strips and cuts along a slanting line. The versions of version 1 stay in the history
+of a page and can be chosen as before.
 """
 
 import math
 from typing import TYPE_CHECKING, override
 
-import cv2
 import numpy as np
-from attrs import frozen
 from pydantic import Field
 
 from bookreviver.domain.enums import (
@@ -33,12 +34,11 @@ from bookreviver.domain.enums import (
     VersionOutput,
 )
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.geometry import Line, Point, Quad, Transform
+from bookreviver.domain.geometry import Line, Point, Quad, SplitChoice, Transform
 from bookreviver.domain.values import ProcessorSpec
-from bookreviver.plugins.base import ModelProcessor, Params
+from bookreviver.plugins.base import ModelProcessor
 from bookreviver.plugins.cv_image import (
     COLOR_PLANES,
-    MANUAL_CONFIDENCE,
     NO_IMAGE,
     WHITE,
     color_mode_of,
@@ -46,6 +46,7 @@ from bookreviver.plugins.cv_image import (
     read_samples,
     write_png,
 )
+from bookreviver.plugins.gutter import Cut, GutterParams, GutterSearch
 from bookreviver.ports.processing import StepOutput, StepResult
 
 if TYPE_CHECKING:
@@ -53,68 +54,22 @@ if TYPE_CHECKING:
     from bookreviver.ports.processing import StepInput
 
 HALF_IMAGE_NAMES: tuple[str, str] = ('left.png', 'right.png')
-# A smoothing window as a fraction of the width of the scan, which evens out the specks and the letters in a column
-SMOOTHING_FRACTION: float = 0.01
-# Columns whose brightness differs by less than this have no gutter to find
-MIN_CONTRAST: float = 2.0
-# How far above the darkest column, as a fraction of the range of the profile, a column is still part of the gutter
-PLATEAU_FRACTION: float = 0.1
 HORIZONTAL_CUT: str = 'The cut line is horizontal, so it has no left side and no right side.'
 CUT_OUTSIDE: str = 'The cut lies outside the scan, so a half of the spread would be empty.'
 
 
-class SpreadParams(Params):
+class SpreadParams(GutterParams):
     """Where the gutter is looked for, and how far each half reaches over the cut.
 
-    :ivar search_band: Fraction of the width, around the middle of the scan, in which the gutter is looked for.
     :ivar overlap_px: Pixels each half reaches over the cut into the other.
-    :ivar min_confidence: Confidence of the found cut below which both halves are marked for review.
     """
 
-    search_band: float = Field(
-        default=0.3,
-        gt=0,
-        le=1,
-        title='Search width',
-        description='Fraction of the width, in the middle, to search',
-    )
     overlap_px: int = Field(
         default=0,
         ge=0,
         title='Overlap',
         description='Pixels each half reaches over the cut',
     )
-    min_confidence: float = Field(
-        default=0.1,
-        ge=0,
-        le=1,
-        title='Least confidence',
-        description='Confidence of the found gutter below which the cut is marked for a check',
-    )
-
-
-@frozen(kw_only=True)
-class Cut:
-    """The cut of a spread, a straight line in the pixels of the scan.
-
-    :ivar top_x: Distance of the cut from the left edge at the top row.
-    :ivar bottom_x: Distance of the cut from the left edge at the bottom row.
-    :ivar confidence: How sure the cut is, from 0 to 1, which is 1 for a cut the user drew.
-    """
-
-    top_x: float
-    bottom_x: float
-    confidence: float = MANUAL_CONFIDENCE
-
-    def at_rows(self, height: int) -> Floats:
-        """Give the place of the cut on every row.
-
-        :param height: Height of the scan in rows.
-        :type height: int
-        :returns: The distance from the left edge of the cut, one number for each row.
-        :rtype: Floats
-        """
-        return np.linspace(self.top_x, self.bottom_x, height)
 
 
 class SplitSpread(ModelProcessor):
@@ -123,7 +78,7 @@ class SplitSpread(ModelProcessor):
     params_model = SpreadParams
     spec = ProcessorSpec(
         key='split.spread',
-        version='1',
+        version='2',
         title='Spread',
         stage=Stage.PAGE_SPLIT,
         scope=ProcessorScope.SPLIT,
@@ -146,53 +101,16 @@ class SplitSpread(ModelProcessor):
             raise ConflictError(NO_IMAGE.format(key=self.spec.key))
         params = SpreadParams.model_validate(step_input.params)
         scan = read_samples(step_input.image)
-        height, width = scan.shape[:2]
-        cut = self._cut(scan, params, step_input)
-        color_mode = color_mode_of(scan, step_input.input_data)
-        review = ReviewReason.LOW_CONFIDENCE if cut.confidence < params.min_confidence else None
-        columns = np.arange(width)[np.newaxis, :]
-        edge = cut.at_rows(height)[:, np.newaxis]
-        outputs = []
-        for name, side in zip(HALF_IMAGE_NAMES, (-1, 1), strict=True):
-            half, origin = self._half(scan, columns, edge, side * params.overlap_px, side)
-            target = step_input.workdir / name
-            write_png(half, target)
-            data = image_data(half, step_input.input_data, color_mode) | {
-                VersionData.OVERLAP_PX: params.overlap_px,
-                VersionData.CUT_X: float((cut.top_x + cut.bottom_x) / 2),
-                VersionData.CONFIDENCE: cut.confidence,
-            }
-            transform = Transform(
-                kind=TransformKind.CROP,
-                quad=self._rectangle(origin, half),
-                matrix=(1.0, 0.0, -float(origin), 0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
-            )
-            outputs.append(
-                StepOutput(image=target, color_mode=color_mode, transform=transform, data=data, review=review)
-            )
-        return StepResult(outputs=outputs)
-
-    @staticmethod
-    def _cut(scan: Samples, params: SpreadParams, step_input: StepInput) -> Cut:
-        """Choose the cut: the line the user drew, or the gutter the search finds.
-
-        :param scan: The samples of the scan.
-        :type scan: Samples
-        :param params: The parameters of the step.
-        :type params: SpreadParams
-        :param step_input: The input of the step, which may hold a line edit and the scale of the image.
-        :type step_input: StepInput
-        :returns: The cut in the pixels of the image the step reads.
-        :rtype: Cut
-        """
         edit = step_input.edit
         if edit is not None and isinstance(edit.geometry, Line):
-            line, scale = edit.geometry, step_input.scale
-            return SplitSpread._line_cut(line, scale, scan.shape[0])
-        return SplitSpread._search(scan, params.search_band)
+            cut = self.line_cut(edit.geometry, step_input.scale, scan.shape[0])
+        else:
+            cut = GutterSearch(params).search(scan)
+        review = ReviewReason.LOW_CONFIDENCE if cut.confidence < params.min_confidence else None
+        return self.halves(step_input, scan, cut, params.overlap_px, review)
 
     @staticmethod
-    def _line_cut(line: Line, scale: float, height: int) -> Cut:
+    def line_cut(line: Line, scale: float, height: int) -> Cut:
         """Turn the line of an edit into the cut at the top and the bottom row of the image.
 
         :param line: The line the user drew, in the pixels of the full image.
@@ -213,41 +131,52 @@ class SplitSpread(ModelProcessor):
         slope = (end_x - start_x) / (end_y - start_y)
         return Cut(top_x=start_x - slope * start_y, bottom_x=start_x + slope * (height - 1 - start_y))
 
-    @staticmethod
-    def _search(scan: Samples, band: float) -> Cut:
-        """Find the gutter as the darkest column in the central band of the scan.
+    @classmethod
+    def halves(
+        cls, step_input: StepInput, scan: Samples, cut: Cut, overlap_px: int, review: ReviewReason | None
+    ) -> StepResult:
+        """Write the left half and the right half of a scan cut along a line.
 
+        :param step_input: What the step reads, whose work directory the halves are written into.
+        :type step_input: StepInput
         :param scan: The samples of the scan.
         :type scan: Samples
-        :param band: Fraction of the width, around the middle, to search in.
-        :type band: float
-        :returns: A vertical cut through the middle of the gutter, or through the middle of the band with the
-                  confidence 0 when no column stands out. Otherwise the confidence is the depth of the darkest column
-                  under the median of the band, as a share of the median.
-        :rtype: Cut
+        :param cut: The cut.
+        :type cut: Cut
+        :param overlap_px: Pixels each half reaches over the cut into the other.
+        :type overlap_px: int
+        :param review: Why both halves are marked for a second look, or None.
+        :type review: ReviewReason | None
+        :returns: The left half and then the right half, each with the crop it was cut by.
+        :rtype: StepResult
+        :raises ConflictError: If the cut lies outside the scan, so a half would be empty.
         """
-        gray = cv2.cvtColor(scan, cv2.COLOR_BGR2GRAY) if scan.ndim == COLOR_PLANES else scan
-        width = gray.shape[1]
-        first = int(width * (1 - band) / 2)
-        last = max(first + 1, int(width * (1 + band) / 2))
-        profile = gray[:, first:last].mean(axis=0, dtype=np.float32)
-        window = max(1, int(width * SMOOTHING_FRACTION))
-        # The ends repeat their last column, since padding with zeros would make the edges of the band the darkest
-        smooth = cv2.blur(profile.reshape(1, -1), (window, 1), borderType=cv2.BORDER_REPLICATE).ravel()
-        if float(np.ptp(smooth)) < MIN_CONTRAST:
-            middle = (first + last) / 2
-            return Cut(top_x=middle, bottom_x=middle, confidence=0.0)
-        # The gutter is as wide as the shadow, so the cut goes through the middle of the run of columns around the
-        # darkest one that are as dark as it. A second dark region of the band is another run and does not count
-        as_dark = smooth <= smooth.min() + PLATEAU_FRACTION * float(np.ptp(smooth))
-        darkest = int(smooth.argmin())
-        lighter = np.flatnonzero(~as_dark)
-        start = int(lighter[lighter < darkest].max(initial=-1)) + 1
-        end = int(lighter[lighter > darkest].min(initial=len(smooth)))
-        median = float(np.median(smooth))
-        depth = (median - float(smooth.min())) / max(median, 1.0)
-        middle = first + (start + end) / 2
-        return Cut(top_x=middle, bottom_x=middle, confidence=min(1.0, depth))
+        height, width = scan.shape[:2]
+        color_mode = color_mode_of(scan, step_input.input_data)
+        columns = np.arange(width)[np.newaxis, :]
+        edge = cut.at_rows(height)[:, np.newaxis]
+        outputs = []
+        for name, side in zip(HALF_IMAGE_NAMES, (-1, 1), strict=True):
+            half, origin = cls._half(scan, columns, edge, side * overlap_px, side)
+            target = step_input.workdir / name
+            write_png(half, target)
+            data = image_data(half, step_input.input_data, color_mode) | {
+                VersionData.PAGES: SplitChoice.TWO_PAGES,
+                VersionData.OVERLAP_PX: overlap_px,
+                VersionData.CUT_X: float(cut.middle_x),
+                VersionData.CUT_TOP_X: cut.top_x,
+                VersionData.CUT_BOTTOM_X: cut.bottom_x,
+                VersionData.CONFIDENCE: cut.confidence,
+            }
+            transform = Transform(
+                kind=TransformKind.CROP,
+                quad=cls._rectangle(origin, half),
+                matrix=(1.0, 0.0, -float(origin), 0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
+            )
+            outputs.append(
+                StepOutput(image=target, color_mode=color_mode, transform=transform, data=data, review=review)
+            )
+        return StepResult(outputs=outputs)
 
     @staticmethod
     def _half(scan: Samples, columns: Indices, edge: Floats, reach: int, side: int) -> tuple[Samples, int]:

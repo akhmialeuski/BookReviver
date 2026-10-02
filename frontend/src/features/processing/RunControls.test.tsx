@@ -189,13 +189,11 @@ describe('RunControls', () => {
       },
     });
     render();
-    // The jobs of the book are read, which takes a few turns of the queue
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    expect(container.querySelector<HTMLButtonElement>('[data-testid="run-menu"]')?.disabled).toBe(
-      true,
+    // The jobs of the book are read, which takes a few turns of the queue, more of them on a busy machine
+    await vi.waitFor(() =>
+      expect(container.querySelector<HTMLButtonElement>('[data-testid="run-menu"]')?.disabled).toBe(
+        true,
+      ),
     );
   });
 

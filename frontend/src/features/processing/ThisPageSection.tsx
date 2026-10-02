@@ -54,8 +54,14 @@ export function ThisPageSection({
     } else if (result.angle !== null) {
       facts.push({ label: labels.thisPage.angle, value: labels.thisPage.degrees(result.angle) });
     }
+    if (result.pages !== null) {
+      facts.push({ label: labels.thisPage.pages, value: labels.thisPage.pagesValue(result.pages) });
+    }
     if (result.cutX !== null) {
       facts.push({ label: labels.thisPage.cut, value: labels.thisPage.pixels(result.cutX) });
+    }
+    if (result.slantDeg !== null) {
+      facts.push({ label: labels.thisPage.slant, value: labels.thisPage.degrees(result.slantDeg) });
     }
     if (result.overlapPx !== null) {
       facts.push({

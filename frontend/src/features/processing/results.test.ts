@@ -21,6 +21,20 @@ describe('readResult', () => {
     });
   });
 
+  it('reads the number of pages and works out the slant of a cut from its ends', () => {
+    const result = readResult({
+      data: { pages: 2, cut_top_x: 100, cut_bottom_x: 100 + Math.tan(0.05) * 999, height_px: 1000 },
+    });
+
+    expect(result.pages).toBe(2);
+    expect(result.slantDeg).toBeCloseTo((0.05 * 180) / Math.PI, 6);
+  });
+
+  it('gives no slant for a cut whose ends or whose height are not reported', () => {
+    expect(readResult({ data: { cut_top_x: 100, height_px: 1000 } }).slantDeg).toBeNull();
+    expect(readResult({ data: { cut_top_x: 100, cut_bottom_x: 90 } }).slantDeg).toBeNull();
+  });
+
   it('leaves out what the step did not report or reported as something else', () => {
     const result = readResult({ data: { angle: 'steep', confidence: null } });
 
@@ -30,6 +44,8 @@ describe('readResult', () => {
       skipped: false,
       cutX: null,
       overlapPx: null,
+      pages: null,
+      slantDeg: null,
     });
   });
 });

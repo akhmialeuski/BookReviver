@@ -470,6 +470,8 @@ export const MESSAGES = {
     review: {
       'low-confidence': 'Check: the step was not sure of its result',
       'not-applied': 'Check: the step left the page as it was',
+      'unsure-gutter': 'Check: the gutter of the spread was not found for certain',
+      'narrow-gutter': 'Check: narrow scan with a gutter in the middle',
     } satisfies Record<ReviewReason, string>,
   },
   viewer: {
@@ -1042,6 +1044,9 @@ export const MESSAGES = {
       confidence: 'Confidence',
       method: 'Found',
       cut: 'Cut at',
+      slant: 'Slant of the cut',
+      pages: 'Split into',
+      pagesValue: (count: number) => (count === 1 ? 'One page' : 'Two pages'),
       overlap: 'Overlap',
       degrees: (value: number) => `${value.toFixed(1)}°`,
       pixels: (value: number) => `${Math.round(value)} px`,
@@ -1051,6 +1056,10 @@ export const MESSAGES = {
       reviewTitle: {
         'not-applied': 'Left as it was: the step was unsure.',
         'low-confidence': 'The step was not sure of this result.',
+        'unsure-gutter':
+          'The gutter of this spread was not found for certain, so the cut may be off.',
+        'narrow-gutter':
+          'This scan is narrower than a spread, yet a gutter runs through its middle. It was kept as one page.',
       },
       reviewHint: 'Set it by hand in the page editor, or change the settings and preview again.',
       how: 'Method',
@@ -1081,6 +1090,11 @@ export const MESSAGES = {
         confidence === null ? 'Left as it was' : `Left as it was · ${confidence.toFixed(2)}`,
       lowConfidence: (confidence: number | null) =>
         confidence === null ? 'Unsure' : `Unsure · ${confidence.toFixed(2)}`,
+      unsureGutter: (confidence: number | null) =>
+        confidence === null
+          ? 'Gutter not found for certain'
+          : `Gutter not found for certain · ${confidence.toFixed(2)}`,
+      narrowGutter: 'Narrow scan with a gutter in the middle',
     },
     split: {
       banner: (wide: number, split: number, toCut: number) => {
@@ -1100,11 +1114,21 @@ export const MESSAGES = {
       choice: 'What this scan becomes',
       onePage: 'One page',
       twoPages: 'Two pages',
-      noRecipe: 'The stage has no recipe for this choice.',
-      confirmTitle: 'Go back to one page?',
-      confirmBody:
-        'The right page of this scan is deleted together with its work, including its number, its kind and the notes written on it. The left page becomes the whole scan again.',
-      confirm: 'Go back to one page',
+      noRecipe:
+        'The stage has no recipe with the automatic split, so the choice cannot be kept. Add one in the recipes of the stage.',
+      automatic: 'The automatic split decides.',
+      chosen: (choice: string) => `You chose: ${choice}.`,
+      auto: 'Auto',
+      confirmOne: {
+        title: 'Go back to one page?',
+        body: 'The right page of this scan is deleted together with its work, including its number, its kind and the notes written on it. The left page becomes the whole scan again.',
+        confirm: 'Go back to one page',
+      },
+      confirmAuto: {
+        title: 'Return to the automatic split?',
+        body: 'If the automatic split keeps this scan as one page, the right page is deleted together with its work, including its number, its kind and the notes written on it. The left page becomes the whole scan.',
+        confirm: 'Use the automatic split',
+      },
       cancel: 'Keep two pages',
     },
   },

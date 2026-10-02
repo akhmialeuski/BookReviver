@@ -20,6 +20,7 @@ from bookreviver.domain.enums import (
     ContributorRole,
     DjvuDocumentKind,
     ImagePolicy,
+    JobKind,
     JobState,
     PageChange,
     PageOrigin,
@@ -40,7 +41,8 @@ from bookreviver.domain.events import (
     SourceImported,
 )
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import Contributor, SliceRequest
+from bookreviver.domain.values import Contributor, SliceRequest, StageRun
+from bookreviver.plugins.split_none import SplitNone
 from bookreviver.services.base_versions import SPLIT_NONE
 from bookreviver.services.imports import (
     IMPORT_ACTIVE,
@@ -50,6 +52,7 @@ from bookreviver.services.imports import (
     ImportCancelledError,
     ImportRun,
 )
+from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from tests.adapters.imaging.samples import (
     ROMAN_THEN_ARABIC_LABELS,
     ROMAN_THEN_ARABIC_RULES,
@@ -77,6 +80,7 @@ from tests.helpers.fakes_imports import (
     image_upload,
     pdf_upload,
 )
+from tests.helpers.processors import AutoSplitProcessor
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
@@ -91,6 +95,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 FILES_ARG: str = 'files'
+AUTO_SPLIT: str = 'split.auto'
 CASE_ARG: str = 'case'
 # The renditions cut from the ``full`` image, whatever its format
 DERIVED: tuple[Rendition, ...] = (Rendition.PREVIEW, Rendition.THUMBNAIL, Rendition.TILES)
@@ -1877,4 +1882,147 @@ class TestRunImportFailures:
 
         expect((job.state, job.error) == (JobState.FAILED, UNEXPECTED_FAILURE))
         expect(SECRET_FAULT in caplog.text)
+        assert_expectations()
+
+
+class TestRunImportSplit:
+    """Tests for the run of the page split that an import queues on the pages it made."""
+
+    @staticmethod
+    def _recipes(processor_key: str) -> DefaultRecipes:
+        """Give the recipes a stage starts with, the page split being the given processor.
+
+        :param processor_key: Key of the processor of the one step of the page split recipe.
+        :type processor_key: str
+        :returns: The recipes.
+        :rtype: DefaultRecipes
+        """
+        return DefaultRecipes({Stage.PAGE_SPLIT: (RecipeTemplate(name='Split', processor_keys=(processor_key,)),)})
+
+    async def _run_import(
+        self, rig: ImportRig, actor: Actor, project_id: ProjectId, files: list[UploadFile], recipes: DefaultRecipes
+    ) -> Job:
+        """Upload the files and run the job in a service whose catalogue offers ``split.none`` and ``split.auto``.
+
+        :param rig: Adapters of the import.
+        :type rig: ImportRig
+        :param actor: Account acting in the request.
+        :type actor: Actor
+        :param project_id: Project to import into.
+        :type project_id: ProjectId
+        :param files: The uploaded files.
+        :type files: list[UploadFile]
+        :param recipes: The recipes the stages start with.
+        :type recipes: DefaultRecipes
+        :returns: The job as stored after the run.
+        :rtype: Job
+        """
+        offering = evolve(rig, defaults=recipes, processors=[SplitNone(), AutoSplitProcessor()])
+        job = await offering.service().start_import(actor, project_id, files)
+        await offering.service().run_import(job.id)
+        return await offering.stored_job(job)
+
+    async def test_queues_a_split_of_the_new_pages_when_the_recipe_is_automatic(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify the finished import queues one run of the page split naming the pages of the sources it imported.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        job = await self._run_import(
+            fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=2)], self._recipes(AUTO_SPLIT)
+        )
+
+        [queued] = [queued for queued in fx_rig.queue.enqueued if queued.kind is JobKind.RUN_STAGE]
+        pages = await _pages(fx_rig, fx_project.id)
+        expect(job.state is JobState.SUCCEEDED)
+        expect(
+            StageRun.from_map(queued.params) == StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(p.id for p in pages))
+        )
+        expect(queued.project_id == fx_project.id)
+        assert_expectations()
+
+    async def test_a_later_import_queues_only_its_own_pages(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify the pages of an earlier import, which the user may have changed, are left out of the next run.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        recipes = self._recipes(AUTO_SPLIT)
+        await self._run_import(fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=2)], recipes)
+        first_run = next(job for job in fx_rig.queue.enqueued if job.kind is JobKind.RUN_STAGE)
+        uow = fx_rig.open_uow()
+        await uow.jobs.update_if_state(evolve(first_run, state=JobState.SUCCEEDED), expected=(JobState.QUEUED,))
+        await uow.commit()
+        await self._run_import(
+            fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'b.pdf', pages=1, width_px=210)], recipes
+        )
+
+        runs = [StageRun.from_map(job.params) for job in fx_rig.queue.enqueued if job.kind is JobKind.RUN_STAGE]
+        pages = await _pages(fx_rig, fx_project.id)
+        assert [run.page_ids for run in runs][1] == (pages[-1].id,)
+
+    async def test_queues_nothing_when_the_recipe_was_chosen_by_hand(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify a book whose page split recipe is not the automatic one is not split by the import.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        job = await self._run_import(
+            fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=2)], self._recipes('split.none')
+        )
+
+        expect(job.state is JobState.SUCCEEDED)
+        expect([queued for queued in fx_rig.queue.enqueued if queued.kind is JobKind.RUN_STAGE] == [])
+        assert_expectations()
+
+    async def test_a_split_that_cannot_be_queued_does_not_fail_the_import(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify a project that is processing something already still ends its import as succeeded.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        uow = fx_rig.open_uow()
+        await uow.jobs.add(
+            evolve(make_job(project_id=fx_project.id, state=JobState.RUNNING), kind=JobKind.COLLECT_VERSIONS)
+        )
+        await uow.commit()
+
+        job = await self._run_import(
+            fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=1)], self._recipes(AUTO_SPLIT)
+        )
+
+        expect(job.state is JobState.SUCCEEDED)
+        expect([queued for queued in fx_rig.queue.enqueued if queued.kind is JobKind.RUN_STAGE] == [])
         assert_expectations()
