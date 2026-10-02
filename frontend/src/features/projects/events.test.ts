@@ -1,8 +1,12 @@
 import { QueryClient } from '@tanstack/react-query';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobSchema } from '@/api';
 import { readJobApiV1JobsJobIdGetQueryKey } from '@/api/@tanstack/react-query.gen';
-import { applyProjectEvent, EventName, isActiveJob, isJob } from './events';
+import { STAGES } from '@/features/stages/stages';
+import { applyProjectEvent, BURST_DELAY_MS, EventName, isActiveJob, isJob } from './events';
+
+/** The endpoint of the rows of a stage, once for each of the ten stages, as the invalidations list it. */
+const STAGE_ROWS = STAGES.map(() => 'listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet');
 
 /**
  * How events change the cache: a job event is stored as it is, the others mark the affected lists stale.
@@ -64,13 +68,18 @@ describe('applyProjectEvent', () => {
       data: job('succeeded', 4),
     });
 
-    expect(invalidated().sort()).toEqual([
-      'listPagesApiV1ProjectsProjectIdPagesGet',
-      'listProjectsApiV1ProjectsGet',
-      'listScansApiV1ProjectsProjectIdScansGet',
-      'listSourcesApiV1ProjectsProjectIdSourcesGet',
-      'projectApiV1ProjectsProjectIdGet',
-    ]);
+    expect(invalidated().sort()).toEqual(
+      [
+        'listPagesApiV1ProjectsProjectIdPagesGet',
+        'listProjectJobsApiV1ProjectsProjectIdJobsGet',
+        'listProjectsApiV1ProjectsGet',
+        'listScansApiV1ProjectsProjectIdScansGet',
+        'listSourcesApiV1ProjectsProjectIdSourcesGet',
+        'listStagesApiV1ProjectsProjectIdStagesGet',
+        ...STAGE_ROWS,
+        'projectApiV1ProjectsProjectIdGet',
+      ].sort(),
+    );
   });
 
   it('ignores a job-changed event whose data is not a job', () => {
@@ -99,8 +108,10 @@ describe('applyProjectEvent', () => {
       [
         'listPagesApiV1ProjectsProjectIdPagesGet',
         'listProjectsApiV1ProjectsGet',
+        'listStagesApiV1ProjectsProjectIdStagesGet',
+        ...STAGE_ROWS,
         'projectApiV1ProjectsProjectIdGet',
-      ],
+      ].sort(),
     ],
     [
       EventName.ProjectChanged,
@@ -111,6 +122,97 @@ describe('applyProjectEvent', () => {
     applyProjectEvent(queryClient, PROJECT_ID, { event: name, data: {} });
 
     expect(invalidated().sort()).toEqual(expected);
+  });
+});
+
+/** The bursts wait on timers and remember what is scheduled, so each test uses a book of its own. */
+describe('applyProjectEvent for the events of a burst', () => {
+  let queryClient: QueryClient;
+  let invalidated: () => string[];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    queryClient = new QueryClient();
+    invalidated = watchInvalidations(queryClient);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function stageChanged(book: string, stage: string, times = 1): void {
+    for (let event = 0; event < times; event += 1) {
+      applyProjectEvent(queryClient, book, {
+        event: EventName.PageStageChanged,
+        data: { project_id: book, page_id: `page-${event}`, stage },
+      });
+    }
+  }
+
+  it('marks the summary, the rows of that stage, the book and the list stale once for a burst of page events', () => {
+    stageChanged('burst-1', 'geometry', 50);
+    expect(invalidated()).toEqual([]);
+
+    vi.advanceTimersByTime(BURST_DELAY_MS);
+
+    expect(invalidated().sort()).toEqual([
+      'listProjectsApiV1ProjectsGet',
+      'listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet',
+      'listStagesApiV1ProjectsProjectIdStagesGet',
+      'projectApiV1ProjectsProjectIdGet',
+    ]);
+  });
+
+  it('reads only the rows of the stage that changed', () => {
+    stageChanged('burst-2', 'geometry');
+    vi.advanceTimersByTime(BURST_DELAY_MS);
+
+    const stages = vi.mocked(queryClient.invalidateQueries).mock.calls.flatMap(([filters]) => {
+      const head = filters?.queryKey?.[0];
+      return typeof head === 'object' &&
+        head !== null &&
+        'path' in head &&
+        typeof head.path === 'object' &&
+        head.path !== null &&
+        'stage' in head.path
+        ? [head.path.stage]
+        : [];
+    });
+    expect(stages).toEqual(['geometry']);
+  });
+
+  it('keeps the bursts of two stages apart', () => {
+    stageChanged('burst-3', 'geometry', 3);
+    stageChanged('burst-3', 'cleanup', 3);
+    vi.advanceTimersByTime(BURST_DELAY_MS);
+
+    expect(
+      invalidated().filter(
+        (id) => id === 'listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet',
+      ),
+    ).toHaveLength(2);
+  });
+
+  it('ignores a page-stage-changed event that names no stage', () => {
+    stageChanged('burst-4', 'ocr');
+    applyProjectEvent(queryClient, 'burst-4', { event: EventName.PageStageChanged, data: 'text' });
+    vi.advanceTimersByTime(BURST_DELAY_MS);
+
+    expect(invalidated()).toEqual([]);
+  });
+
+  it('marks the jobs stale once for a burst of progress events of a running job', () => {
+    for (let done = 1; done <= 20; done += 1) {
+      applyProjectEvent(queryClient, 'burst-5', {
+        event: EventName.JobChanged,
+        data: job('running', done, 20),
+      });
+    }
+    expect(invalidated()).toEqual([]);
+
+    vi.advanceTimersByTime(BURST_DELAY_MS);
+
+    expect(invalidated()).toEqual(['listProjectJobsApiV1ProjectsProjectIdJobsGet']);
   });
 });
 

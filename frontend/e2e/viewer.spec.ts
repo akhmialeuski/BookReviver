@@ -4,7 +4,7 @@ import { expect, test } from '@playwright/test';
 import { createBook, registerAndSignIn, uploadFolder, writePagesFolder } from './support/account';
 
 /**
- * Reading a book in the viewer: open it from the book page, turn pages with the buttons, the keys, the slider and
+ * Reading a book in the viewer: open it from the header of the book, turn pages with the buttons, the keys, the slider and
  * the go-to field, show a spread, and come back to the same view by reloading the address.
  */
 
@@ -19,11 +19,11 @@ test('a reader turns the pages of a book in the viewer', async ({ page }) => {
     await registerAndSignIn(page);
     await createBook(page, 'A book to read');
     await uploadFolder(page, folder, PAGES);
-    await expect(page.getByText('6 pages')).toBeVisible();
+    await expect(page.getByTestId('stage-page-order')).toContainText('6 pages');
   });
 
   await test.step('open the viewer on the first page', async () => {
-    await page.getByRole('link', { name: 'View pages' }).click();
+    await page.getByRole('link', { name: 'Read the book' }).click();
     await expect(page).toHaveURL(/\/projects\/[^/]+\/viewer$/);
     await expect(canvas).toHaveAttribute('data-state', 'ready');
     await expect(caption).toContainText('1 of 6');

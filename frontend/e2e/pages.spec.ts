@@ -1,7 +1,14 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
-import { createBook, registerAndSignIn, uploadFolder, writePagesFolder } from './support/account';
+import {
+  createBook,
+  openImportStage,
+  openOrderStage,
+  registerAndSignIn,
+  uploadFolder,
+  writePagesFolder,
+} from './support/account';
 
 /**
  * Arranging the pages of a book: open a page from the strip, move it from the viewer, move groups and a whole file
@@ -33,6 +40,7 @@ test('a reader arranges the pages of a book', async ({ page }) => {
     await registerAndSignIn(page);
     await createBook(page, 'A book to arrange');
     await uploadFolder(page, folder, PAGES);
+    await openOrderStage(page);
     await expect(cards).toHaveCount(PAGES);
     ids = await stripOrder(page);
     for (const id of ids) {
@@ -50,6 +58,8 @@ test('a reader arranges the pages of a book', async ({ page }) => {
 
     await page.goBack();
     await expect(cards).toHaveCount(PAGES);
+    // The scans and the files are on the Import stage
+    await openImportStage(page);
     await page.getByRole('link', { name: 'Scan 2', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`viewer\\?page=${ids[1]}`));
     await expect(caption).toContainText('2 of 5');
@@ -72,7 +82,9 @@ test('a reader arranges the pages of a book', async ({ page }) => {
     await expect(caption).toContainText('5 of 5');
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
 
+    // Back to the book opens its last stage, and the page strip is on the Order stage
     await page.getByRole('link', { name: 'Back to the book' }).click();
+    await openOrderStage(page);
     await expect.poll(() => stripOrder(page)).toEqual([ids[0], ids[1], ids[2], ids[4], ids[3]]);
   });
 
@@ -170,18 +182,22 @@ test('a reader arranges the pages of a book', async ({ page }) => {
   });
 
   await test.step('move every page of a file to the start of the book', async () => {
+    await openImportStage(page);
     await page.getByRole('button', { name: 'Move the pages of book/page-02.png' }).click();
     await page.getByLabel('Page to put them next to').selectOption({ index: 0 });
     await page.getByLabel('Place', { exact: true }).selectOption('before');
     await page.getByRole('button', { name: 'Move', exact: true }).click();
+    await openOrderStage(page);
     await expect.poll(async () => (await stripOrder(page))[0]).toBe(ids[1]);
   });
 
   await test.step('delete a file after the confirmation, and keep its page', async () => {
+    await openImportStage(page);
     await page.getByRole('button', { name: 'Delete book/page-03.png' }).click();
     await expect(page.getByText('Delete this file?')).toBeVisible();
     await page.getByRole('button', { name: 'Delete file' }).click();
     await expect(page.getByTestId('source-name')).toHaveCount(PAGES - 1);
+    await openOrderStage(page);
     await expect(cards).toHaveCount(PAGES);
   });
 

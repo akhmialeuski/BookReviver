@@ -74,7 +74,12 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
     await page.getByLabel('Title', { exact: true }).fill('An old primer');
     await page.getByRole('button', { name: 'Create book' }).click();
     await expect(page.getByRole('heading', { name: 'An old primer' })).toBeVisible();
-    await expect(page.getByText('0 pages')).toBeVisible();
+    await expect(page).toHaveURL(/\/projects\/[^/]+\/stages\/import$/);
+  });
+
+  await test.step('the Import stage has no files yet and the book waits for pages', async () => {
+    await expect(page.getByText('No files have been uploaded to this book yet.')).toBeVisible();
+    await expect(page.getByTestId('stage-page-order')).toContainText('Waits for pages');
   });
 
   await test.step('choose the folder and check the list before sending', async () => {
@@ -129,7 +134,7 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
   });
 
   await test.step('the book shows its pages, sources in the order that was chosen, and scans', async () => {
-    await expect(page.getByText('4 pages')).toBeVisible();
+    await expect(page.getByTestId('stage-page-order')).toContainText('4 pages');
     await expect(page.getByTestId('source-name')).toHaveText([
       'book/vol2/a-1.png',
       'book/vol1/1.png',
@@ -140,7 +145,8 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
   });
 
   await test.step('sign out closes the book again', async () => {
-    await page.getByRole('button', { name: 'Sign out' }).click();
+    await page.getByRole('button', { name: 'Account menu' }).click();
+    await page.getByRole('menuitem', { name: 'Sign out' }).click();
     await expect(page).toHaveURL(/\/sign-in/);
     await page.goBack();
     await expect(page).toHaveURL(/\/sign-in\?redirect=/);

@@ -1,0 +1,291 @@
+import { useQuery } from '@tanstack/react-query';
+import { TriangleAlertIcon } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import type { PageSchema, Stage, StagePageSchema } from '@/api';
+import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-query.gen';
+import { useManifest } from '@/features/pages/manifest';
+import { pruneSelection } from '@/features/pages/selection';
+import { PageCanvas, type PageCanvasHandle } from '@/features/viewer/PageCanvas';
+import {
+  lastViewStart,
+  nextViewStart,
+  previousViewStart,
+  viewIndexes,
+  viewStart,
+} from '@/features/viewer/spread';
+import { FitMode, type StagePage } from '@/features/viewer/stage';
+import { useViewerKeys } from '@/features/viewer/useViewerKeys';
+import { CanvasToolbar } from '@/features/workspace/CanvasToolbar';
+import { PageFilter, type StageSearch, ViewMode } from '@/features/workspace/params';
+import { useStageRows, useStageSummaries } from '@/features/workspace/queries';
+import { bridgeOf } from '@/features/workspace/StageBridges';
+import { StageGrid } from '@/features/workspace/StageGrid';
+import { StagePanel } from '@/features/workspace/StagePanel';
+import { StageStrip } from '@/features/workspace/StageStrip';
+import { StageWorkspace } from '@/features/workspace/StageWorkspace';
+import {
+  type ClickModifiers,
+  type SelectionState,
+  selectionAfterClick,
+} from '@/features/workspace/selection';
+import {
+  applyFilter,
+  canvasSourceOf,
+  countFilters,
+  joinRows,
+  needsCheck,
+  type StripItem,
+} from '@/features/workspace/strip';
+import { describeError } from '@/shared/http/problem';
+import { cn } from '@/shared/lib/utils';
+import { MESSAGES } from '@/shared/messages';
+import { Badge } from '@/shared/ui/badge';
+import { ErrorAlert } from '@/shared/ui/error-alert';
+
+/**
+ * One stage of a book as a workspace: the strip of pages, the open page on the canvas, and the panel of the stage.
+ *
+ * The open page, the layout, the filter and the stage are the search params and the path of the route, so every view
+ * is a link and survives a reload. The pages come from the manifest, which the viewer shares, and where each stands in
+ * the stage comes from the rows of the stage, which the events of the book keep current. A stage with nothing of its
+ * own yet shows the frame of the panel, and the pages as the last stage that has an image left them.
+ */
+
+const NO_PAGES: readonly PageSchema[] = [];
+const NO_ROWS: readonly StagePageSchema[] = [];
+const NOTHING_SELECTED: SelectionState = { selected: new Set(), anchorId: null };
+
+/** The place of the open page in the book as the toolbar writes it, such as `p. 14 · 18 of 126`. */
+function captionOf(shown: readonly StripItem[], count: number): string {
+  return shown
+    .map(({ page }) => MESSAGES.viewer.caption(page.label, page.position + 1, count))
+    .join('  |  ');
+}
+
+/** The sentence of a page that asks for a look, or null for a page that does not. */
+function plateOf(item: StripItem): string | null {
+  const { row } = item;
+  if (row === undefined || !needsCheck(item)) {
+    return null;
+  }
+  if (row.status === 'failed') {
+    return MESSAGES.stages.pageStatus.failed;
+  }
+  return row.review === null
+    ? MESSAGES.stages.pageStatus.stale
+    : MESSAGES.stages.review[row.review];
+}
+
+export function StageScreen({
+  projectId,
+  stage,
+  search,
+  onSearchChange,
+}: {
+  projectId: string;
+  stage: Stage;
+  search: StageSearch;
+  /** Merge changes into the search params of the route; an undefined value takes the param out. */
+  onSearchChange: (changes: Partial<StageSearch>) => void;
+}): React.JSX.Element {
+  const project = useQuery(
+    projectApiV1ProjectsProjectIdGetOptions({ path: { project_id: projectId } }),
+  );
+  const manifest = useManifest(projectId);
+  const rows = useStageRows(projectId, stage);
+  const summaries = useStageSummaries(projectId);
+  const [picked, setPicked] = useState({ stage, state: NOTHING_SELECTED });
+  const canvas = useRef<PageCanvasHandle>(null);
+
+  const pages = manifest.data ?? NO_PAGES;
+  // A selection belongs to one stage, and to pages that are still in the book
+  const stored = picked.stage === stage ? picked.state : NOTHING_SELECTED;
+  const selection = useMemo(
+    () => ({ ...stored, selected: pruneSelection(stored.selected, pages) }),
+    [stored, pages],
+  );
+  const items = useMemo(() => joinRows(pages, rows.data ?? NO_ROWS), [pages, rows.data]);
+  const counts = useMemo(() => countFilters(items), [items]);
+  const filter = search.filter ?? PageFilter.All;
+  const filtered = useMemo(() => applyFilter(items, filter), [items, filter]);
+  const mode = search.view ?? ViewMode.Page;
+  const spread = mode === ViewMode.Spread;
+  const grid = mode === ViewMode.Grid;
+
+  const count = items.length;
+  const foundIndex =
+    search.page === undefined ? -1 : items.findIndex((i) => i.page.id === search.page);
+  const currentIndex = Math.max(foundIndex, 0);
+  const unknownPage = manifest.data !== undefined && search.page !== undefined && foundIndex < 0;
+  const indexes = viewIndexes(currentIndex, count, spread);
+  const first = indexes[0] ?? 0;
+  const previous = previousViewStart(first, count, spread);
+  const next = nextViewStart(first, count, spread);
+  const shown = indexes.flatMap((index) => items[index] ?? []);
+
+  const stagePages = (list: readonly (StripItem | undefined)[]): StagePage[] =>
+    list.flatMap((item) =>
+      item === undefined ? [] : [{ id: item.page.id, infoUrl: canvasSourceOf(item) }],
+    );
+  const view = stagePages(shown);
+  const around = [next, previous].flatMap((start) =>
+    start === null ? [] : [stagePages(viewIndexes(start, count, spread).map((i) => items[i]))],
+  );
+
+  // The grid shows no open page, so the page keys and the strip have nothing to turn there
+  const openPage = (pageId: string | undefined): void => {
+    if (pageId !== undefined && !grid) {
+      onSearchChange({ page: pageId });
+    }
+  };
+  const openIndex = (index: number): void => {
+    const clamped = Math.min(Math.max(index, 0), Math.max(count - 1, 0));
+    openPage(items[viewStart(clamped, spread)]?.page.id);
+  };
+  const openStart = (start: number | null): void => {
+    if (start !== null) {
+      openIndex(start);
+    }
+  };
+
+  useViewerKeys({
+    previous: () => openStart(previous),
+    next: () => openStart(next),
+    first: () => openIndex(0),
+    last: () => openStart(lastViewStart(count, spread)),
+  });
+
+  const select = (pageId: string, modifiers: ClickModifiers): void =>
+    setPicked({
+      stage,
+      state: selectionAfterClick(
+        filtered.map((item) => item.page),
+        selection,
+        pageId,
+        modifiers,
+      ),
+    });
+
+  if (manifest.isError) {
+    return <ErrorAlert message={describeError(manifest.error)} />;
+  }
+  if (project.isError) {
+    return <ErrorAlert message={describeError(project.error)} />;
+  }
+  if (manifest.data === undefined) {
+    return <p className="p-4 text-sm text-muted-foreground">{MESSAGES.viewer.loading}</p>;
+  }
+
+  const available = summaries.data?.find((entry) => entry.stage === stage)?.available ?? true;
+  const switchView = (value: ViewMode): void =>
+    onSearchChange({
+      view: value === ViewMode.Page ? undefined : value,
+      page: items[currentIndex]?.page.id,
+    });
+
+  const header = shown.map((item) => {
+    const plate = plateOf(item);
+    return (
+      <div key={item.page.id} className="flex items-center gap-2">
+        <Badge variant="secondary">
+          {MESSAGES.workspace.canvas.chip(item.page.label, MESSAGES.pages.kinds[item.page.kind])}
+        </Badge>
+        {item.page.included ? null : (
+          <Badge variant="outline">{MESSAGES.workspace.strip.leftOut}</Badge>
+        )}
+        {plate === null ? null : (
+          <Badge
+            variant="outline"
+            className={cn(
+              item.row?.status === 'failed'
+                ? 'border-status-failed text-status-failed'
+                : 'border-status-attention text-status-attention',
+            )}
+          >
+            <TriangleAlertIcon />
+            {plate}
+          </Badge>
+        )}
+      </div>
+    );
+  });
+
+  const canvasArea =
+    count === 0 ? (
+      <p className="p-4 text-sm text-muted-foreground">{MESSAGES.workspace.canvas.empty}</p>
+    ) : (
+      <div className="relative size-full">
+        <PageCanvas view={view} around={around} fitMode={FitMode.Page} handle={canvas} />
+        {unknownPage ? (
+          <p className="absolute inset-x-0 top-3 mx-auto w-fit rounded-md bg-background/90 px-3 py-1 text-sm shadow">
+            {MESSAGES.viewer.unknownPage}
+          </p>
+        ) : null}
+        <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
+          <div className="pointer-events-auto">
+            <CanvasToolbar
+              caption={captionOf(shown, count)}
+              spread={spread}
+              hasPrevious={previous !== null}
+              hasNext={next !== null}
+              onPrevious={() => openStart(previous)}
+              onNext={() => openStart(next)}
+              onToggleSpread={() => switchView(spread ? ViewMode.Page : ViewMode.Spread)}
+              onFit={() => canvas.current?.fit(FitMode.Page)}
+              onZoomIn={() => canvas.current?.zoomIn()}
+              onZoomOut={() => canvas.current?.zoomOut()}
+            />
+          </div>
+        </div>
+      </div>
+    );
+
+  // Import and Order show the bridge of the old page of the book in place of the strip and the canvas
+  const bridge = bridgeOf(stage, projectId);
+
+  return (
+    <div className="flex size-full flex-col" data-testid="stage-screen" data-stage={stage}>
+      {rows.isError ? <ErrorAlert message={describeError(rows.error)} /> : null}
+      <div className="min-h-0 flex-1">
+        <StageWorkspace
+          strip={
+            bridge !== null || grid ? null : (
+              <StageStrip
+                items={filtered}
+                total={count}
+                counts={counts}
+                filter={filter}
+                currentId={items[currentIndex]?.page.id}
+                onFilter={(value) => onSearchChange({ filter: value })}
+                onOpen={openPage}
+                onGrid={() => switchView(ViewMode.Grid)}
+              />
+            )
+          }
+          canvasHeader={bridge !== null || grid ? null : header}
+          canvas={
+            bridge !== null ? (
+              bridge
+            ) : grid ? (
+              <StageGrid
+                items={filtered}
+                total={count}
+                counts={counts}
+                filter={filter}
+                selected={selection.selected}
+                onFilter={(value) => onSearchChange({ filter: value })}
+                onSelect={select}
+                onClearSelection={() => setPicked({ stage, state: NOTHING_SELECTED })}
+                onOpen={(pageId) => onSearchChange({ view: undefined, page: pageId })}
+                onList={() => switchView(ViewMode.Page)}
+              />
+            ) : (
+              canvasArea
+            )
+          }
+          panel={<StagePanel stage={stage} available={available} />}
+        />
+      </div>
+    </div>
+  );
+}

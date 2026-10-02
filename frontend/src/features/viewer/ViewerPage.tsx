@@ -1,10 +1,11 @@
 import { Link } from '@tanstack/react-router';
 import { ArrowLeftIcon, MoveIcon, PencilIcon } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { PageSchema } from '@/api';
 import { MovePagesDialog } from '@/features/pages/MovePagesDialog';
 import { useManifest } from '@/features/pages/manifest';
 import { PageEditDialog } from '@/features/pages/PageEditDialog';
+import { PageCanvas, type PageCanvasHandle } from '@/features/viewer/PageCanvas';
 import type { ViewerSearch } from '@/features/viewer/params';
 import {
   lastViewStart,
@@ -16,7 +17,6 @@ import {
 import { FitMode, type StagePage } from '@/features/viewer/stage';
 import { ThumbnailPanel } from '@/features/viewer/ThumbnailPanel';
 import { useViewerKeys } from '@/features/viewer/useViewerKeys';
-import { StageState, useViewerStage } from '@/features/viewer/useViewerStage';
 import { ViewerToolbar } from '@/features/viewer/ViewerToolbar';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
@@ -71,7 +71,7 @@ export function ViewerPage({
   const around = [next, previous].flatMap((start) =>
     start === null ? [] : [viewIndexes(start, count, spread).flatMap((i) => stagePage(pages[i]))],
   );
-  const stage = useViewerStage(view, around, fitMode);
+  const canvas = useRef<PageCanvasHandle>(null);
 
   const openIndex = (index: number): void => {
     const clamped = Math.min(Math.max(index, 0), Math.max(count - 1, 0));
@@ -101,10 +101,9 @@ export function ViewerPage({
   }
 
   const shownIds = new Set(shown.map((page) => page.id));
-  const missingImage = shown.some((page) => page.images === null);
 
   return (
-    <div className="flex h-[calc(100dvh-3.5rem)] min-h-96 flex-col">
+    <div className="flex h-full min-h-96 flex-col">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 pt-2">
         <Link
           to="/projects/$projectId"
@@ -166,10 +165,10 @@ export function ViewerPage({
             onNext={() => openStart(next)}
             onFitMode={(mode) => {
               setFitMode(mode);
-              stage.fit(mode);
+              canvas.current?.fit(mode);
             }}
-            onZoomIn={stage.zoomIn}
-            onZoomOut={stage.zoomOut}
+            onZoomIn={() => canvas.current?.zoomIn()}
+            onZoomOut={() => canvas.current?.zoomOut()}
             onToggleSpread={() => {
               const page = pages[currentIndex];
               if (page !== undefined) {
@@ -182,21 +181,8 @@ export function ViewerPage({
             <p className="px-3 pt-2 text-sm text-muted-foreground">{MESSAGES.viewer.unknownPage}</p>
           ) : null}
           <div className="flex min-h-0 flex-1">
-            <div className="relative min-w-0 flex-1">
-              <div
-                ref={stage.containerRef}
-                className="absolute inset-0 bg-muted"
-                data-testid="viewer-canvas"
-                data-state={stage.state}
-                data-page-ids={shown.map((page) => page.id).join(',')}
-              />
-              {missingImage || stage.state === StageState.Failed ? (
-                <p className="absolute inset-x-0 top-3 mx-auto w-fit rounded-md bg-background/90 px-3 py-1 text-sm shadow">
-                  {stage.state === StageState.Failed
-                    ? MESSAGES.viewer.loadFailed
-                    : MESSAGES.viewer.noImage}
-                </p>
-              ) : null}
+            <div className="min-w-0 flex-1">
+              <PageCanvas view={view} around={around} fitMode={fitMode} handle={canvas} />
             </div>
             {panelOpen ? (
               <aside className="flex w-36 shrink-0 flex-col border-l sm:w-44">

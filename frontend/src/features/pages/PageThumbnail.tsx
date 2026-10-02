@@ -13,11 +13,15 @@ export function PageThumbnail({
   page,
   alt,
   className,
+  src,
 }: {
   page: PageSchema;
   alt: string;
   className?: string;
+  /** The path of the picture to draw instead of the page's own thumbnail, such as the result of a stage. */
+  src?: string | null;
 }): React.JSX.Element {
+  const thumbnail = src === undefined ? (page.images?.thumbnail ?? null) : src;
   return (
     <div
       className={cn(
@@ -26,13 +30,13 @@ export function PageThumbnail({
         className,
       )}
     >
-      {page.images === null ? (
+      {thumbnail === null ? (
         <span className="px-2 text-center text-xs text-muted-foreground">
           {page.origin === 'placeholder' ? MESSAGES.pages.noImage : MESSAGES.pages.preparing}
         </span>
       ) : (
         <img
-          src={page.images.thumbnail}
+          src={thumbnail}
           alt={alt}
           loading="lazy"
           draggable={false}

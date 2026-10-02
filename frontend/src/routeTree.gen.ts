@@ -22,6 +22,7 @@ import { Route as AuthProviderCallbackRouteImport } from './routes/auth.$provide
 import { Route as AuthenticatedProjectsProjectIdIndexRouteImport } from './routes/_authenticated/projects/$projectId/index'
 import { Route as AuthenticatedProjectsProjectIdAboutRouteImport } from './routes/_authenticated/projects/$projectId/about'
 import { Route as AuthenticatedProjectsProjectIdViewerRouteImport } from './routes/_authenticated/projects/$projectId/viewer'
+import { Route as AuthenticatedProjectsProjectIdStagesStageRouteImport } from './routes/_authenticated/projects/$projectId/stages.$stage'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -92,6 +93,12 @@ const AuthenticatedProjectsProjectIdViewerRoute =
     path: '/viewer',
     getParentRoute: () => AuthenticatedProjectsProjectIdRouteRoute,
   } as any)
+const AuthenticatedProjectsProjectIdStagesStageRoute =
+  AuthenticatedProjectsProjectIdStagesStageRouteImport.update({
+    id: '/stages/$stage',
+    path: '/stages/$stage',
+    getParentRoute: () => AuthenticatedProjectsProjectIdRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -106,6 +113,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/about': typeof AuthenticatedProjectsProjectIdAboutRoute
   '/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
   '/projects/$projectId/': typeof AuthenticatedProjectsProjectIdIndexRoute
+  '/projects/$projectId/stages/$stage': typeof AuthenticatedProjectsProjectIdStagesStageRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -119,6 +127,7 @@ export interface FileRoutesByTo {
   '/projects/$projectId/about': typeof AuthenticatedProjectsProjectIdAboutRoute
   '/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdIndexRoute
+  '/projects/$projectId/stages/$stage': typeof AuthenticatedProjectsProjectIdStagesStageRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -135,6 +144,7 @@ export interface FileRoutesById {
   '/_authenticated/projects/$projectId/about': typeof AuthenticatedProjectsProjectIdAboutRoute
   '/_authenticated/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
   '/_authenticated/projects/$projectId/': typeof AuthenticatedProjectsProjectIdIndexRoute
+  '/_authenticated/projects/$projectId/stages/$stage': typeof AuthenticatedProjectsProjectIdStagesStageRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -151,6 +161,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/about'
     | '/projects/$projectId/viewer'
     | '/projects/$projectId/'
+    | '/projects/$projectId/stages/$stage'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -164,6 +175,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/about'
     | '/projects/$projectId/viewer'
     | '/projects/$projectId'
+    | '/projects/$projectId/stages/$stage'
   id:
     | '__root__'
     | '/'
@@ -179,6 +191,7 @@ export interface FileRouteTypes {
     | '/_authenticated/projects/$projectId/about'
     | '/_authenticated/projects/$projectId/viewer'
     | '/_authenticated/projects/$projectId/'
+    | '/_authenticated/projects/$projectId/stages/$stage'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -285,6 +298,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProjectsProjectIdViewerRouteImport
       parentRoute: typeof AuthenticatedProjectsProjectIdRouteRoute
     }
+    '/_authenticated/projects/$projectId/stages/$stage': {
+      id: '/_authenticated/projects/$projectId/stages/$stage'
+      path: '/stages/$stage'
+      fullPath: '/projects/$projectId/stages/$stage'
+      preLoaderRoute: typeof AuthenticatedProjectsProjectIdStagesStageRouteImport
+      parentRoute: typeof AuthenticatedProjectsProjectIdRouteRoute
+    }
   }
 }
 
@@ -292,6 +312,7 @@ interface AuthenticatedProjectsProjectIdRouteRouteChildren {
   AuthenticatedProjectsProjectIdAboutRoute: typeof AuthenticatedProjectsProjectIdAboutRoute
   AuthenticatedProjectsProjectIdViewerRoute: typeof AuthenticatedProjectsProjectIdViewerRoute
   AuthenticatedProjectsProjectIdIndexRoute: typeof AuthenticatedProjectsProjectIdIndexRoute
+  AuthenticatedProjectsProjectIdStagesStageRoute: typeof AuthenticatedProjectsProjectIdStagesStageRoute
 }
 
 const AuthenticatedProjectsProjectIdRouteRouteChildren: AuthenticatedProjectsProjectIdRouteRouteChildren =
@@ -302,6 +323,8 @@ const AuthenticatedProjectsProjectIdRouteRouteChildren: AuthenticatedProjectsPro
       AuthenticatedProjectsProjectIdViewerRoute,
     AuthenticatedProjectsProjectIdIndexRoute:
       AuthenticatedProjectsProjectIdIndexRoute,
+    AuthenticatedProjectsProjectIdStagesStageRoute:
+      AuthenticatedProjectsProjectIdStagesStageRoute,
   }
 
 const AuthenticatedProjectsProjectIdRouteRouteWithChildren =
