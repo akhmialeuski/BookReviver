@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, type Page } from '@playwright/test';
+import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../../src/shared/http/csrf';
 import { SERVER_LOG } from './env';
 import { solidPng } from './png';
 
@@ -75,6 +76,39 @@ export async function writePagesFolder(count: number): Promise<string> {
     );
   }
   return root;
+}
+
+/** Return the identifier of the book open in the page, read from its address. */
+export function openProjectId(page: Page): string {
+  const id = new URL(page.url()).pathname.match(/\/projects\/([^/]+)/)?.[1];
+  if (id === undefined) {
+    throw new Error(`No book is open at ${page.url()}.`);
+  }
+  return id;
+}
+
+/**
+ * Append placeholder pages labelled with their numbers to the open book, one request each, as the Order stage does,
+ * and come back to the book on the given stage. A long book is made this way, since importing hundreds of scans would
+ * spend the run on the import.
+ *
+ * The browser leaves the book meanwhile, because the open book would read its pages again on every page added.
+ *
+ * @param stage The stage the book opens on afterwards, such as `geometry` or `page-order`.
+ */
+export async function addPlaceholderPages(page: Page, count: number, stage: string): Promise<void> {
+  const projectId = openProjectId(page);
+  await page.goto('about:blank');
+  const cookies = await page.context().cookies();
+  const token = cookies.find((cookie) => cookie.name === CSRF_COOKIE_NAME)?.value ?? '';
+  for (let number = 1; number <= count; number += 1) {
+    const response = await page.request.post(`/api/v1/projects/${projectId}/pages`, {
+      headers: { [CSRF_HEADER_NAME]: token },
+      data: { origin: 'placeholder', kind: 'text', label: String(number) },
+    });
+    expect(response.ok()).toBe(true);
+  }
+  await page.goto(`/projects/${projectId}/stages/${stage}`);
 }
 
 /** Open the Import stage of the open book, which shows its files and their scans, or the drop area of an empty book. */
