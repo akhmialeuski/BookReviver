@@ -2,6 +2,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobSchema } from '@/api';
 import { readJobApiV1JobsJobIdGetQueryKey } from '@/api/@tanstack/react-query.gen';
+import { pagesScope } from '@/features/projects/queries';
 import { STAGES } from '@/features/stages/stages';
 import { applyProjectEvent, BURST_DELAY_MS, EventName, isActiveJob, isJob } from './events';
 
@@ -47,6 +48,36 @@ describe('applyProjectEvent', () => {
   beforeEach(() => {
     queryClient = new QueryClient();
     invalidated = watchInvalidations(queryClient);
+  });
+
+  it('leaves the pages alone on a pages-changed event while a change of the reader is in flight', () => {
+    // The change that is in flight reads the pages again when it ends, and by then sees what this event announces
+    void queryClient
+      .getMutationCache()
+      .build(queryClient, {
+        mutationFn: () => new Promise(() => undefined),
+        scope: pagesScope(PROJECT_ID),
+      })
+      .execute(undefined);
+
+    applyProjectEvent(queryClient, PROJECT_ID, { event: EventName.PagesChanged, data: {} });
+
+    expect(invalidated()).not.toContain('listPagesApiV1ProjectsProjectIdPagesGet');
+    expect(invalidated()).toContain('projectApiV1ProjectsProjectIdGet');
+  });
+
+  it('does not hold back the pages for a change of another book', () => {
+    void queryClient
+      .getMutationCache()
+      .build(queryClient, {
+        mutationFn: () => new Promise(() => undefined),
+        scope: pagesScope('p-2'),
+      })
+      .execute(undefined);
+
+    applyProjectEvent(queryClient, PROJECT_ID, { event: EventName.PagesChanged, data: {} });
+
+    expect(invalidated()).toContain('listPagesApiV1ProjectsProjectIdPagesGet');
   });
 
   it('writes the job of a running job-changed event into the query of that job', () => {

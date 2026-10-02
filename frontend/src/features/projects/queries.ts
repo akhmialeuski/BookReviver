@@ -40,6 +40,27 @@ export function invalidateSources(queryClient: QueryClient, projectId: string): 
   });
 }
 
+/**
+ * The mutation scope of the changes that rewrite pages that exist, which TanStack Query runs one after the other.
+ *
+ * The server reads a page, changes it and writes the whole row, so two changes of one page that are in flight together
+ * each write back the page as it was before the other, and the first change is lost.
+ */
+export function pagesScope(projectId: string): { id: string } {
+  return { id: `pages-${projectId}` };
+}
+
+/**
+ * Count the changes that rewrite pages of a book and are queued or in flight.
+ *
+ * While there are some, the pages read from the server lack a change that the screen already shows, so a read must
+ * wait, and the last of the changes reads the pages when it ends.
+ */
+export function pageChangesInFlight(queryClient: QueryClient, projectId: string): number {
+  const { id } = pagesScope(projectId);
+  return queryClient.isMutating({ predicate: (mutation) => mutation.options.scope?.id === id });
+}
+
 /** Refresh the pages of a book, in every request shape the manifest has been read with. */
 export function invalidatePages(queryClient: QueryClient, projectId: string): Promise<void> {
   return queryClient.invalidateQueries({

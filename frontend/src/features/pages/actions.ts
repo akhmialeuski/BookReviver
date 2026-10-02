@@ -1,8 +1,14 @@
 import { type QueryClient, useMutation, useQueryClient } from '@tanstack/react-query';
-import type { PageSchema } from '@/api';
+import {
+  createPageApiV1ProjectsProjectIdPagesPost,
+  deletePageApiV1ProjectsProjectIdPagesPageIdDelete,
+  type PageCreate,
+  type PageSchema,
+  type PageUpdate,
+  updatePageApiV1ProjectsProjectIdPagesPageIdPatch,
+} from '@/api';
 import {
   attachScanApiV1ProjectsProjectIdPagesPageIdScanPutMutation,
-  createPageApiV1ProjectsProjectIdPagesPostMutation,
   deletePageApiV1ProjectsProjectIdPagesPageIdDeleteMutation,
   deleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteMutation,
   movePagesApiV1ProjectsProjectIdPagesMovePostMutation,
@@ -10,6 +16,7 @@ import {
   numberPagesApiV1ProjectsProjectIdPagesLabelsPostMutation,
   updatePageApiV1ProjectsProjectIdPagesPageIdPatchMutation,
 } from '@/api/@tanstack/react-query.gen';
+import { applyChanges } from '@/features/pages/edits';
 import { manifestOptions } from '@/features/pages/manifest';
 import { anchorOf, movePages, pageIdsOfSource } from '@/features/pages/order';
 import {
@@ -18,15 +25,18 @@ import {
   invalidateProjectList,
   invalidateScans,
   invalidateSources,
+  pageChangesInFlight,
+  pagesScope,
 } from '@/features/projects/queries';
 
 /**
  * Every change a reader can make to the pages of a book, as TanStack Query mutations over the generated client.
  *
- * A move is applied to the cached manifest before the server answers and put back if it fails, so the strip never
- * lags behind a click. Whatever the outcome, the manifest is read again afterwards, which settles on the server's
- * order and makes a conflict show what the other change did. The other changes wait for the answer, since they
- * cannot be predicted: a numbering, a blank leaf whose image a job writes, a scan taken over from a page.
+ * A move, and a change of the kind, inclusion, number or notes of pages, is applied to the cached manifest before
+ * the server answers and put back if it fails, so the grid never lags behind a click. Whatever the outcome, the
+ * manifest is read again afterwards, which settles on the server's state and makes a conflict show what the other
+ * change did. The other changes wait for the answer, since they cannot be predicted: a numbering, a blank leaf whose
+ * image a job writes, a scan taken over from a page.
  * Each hook takes the book it changes, so a screen asks for exactly the actions it offers.
  */
 
@@ -34,8 +44,24 @@ interface Snapshot {
   previous: PageSchema[] | undefined;
 }
 
-/** Read the pages again, and the counts that depend on them. */
-async function refreshPages(queryClient: QueryClient, projectId: string): Promise<void> {
+/**
+ * Read the pages again, and the counts that depend on them, unless a change of the pages is still to come.
+ *
+ * A read now would show the pages without the change that is queued or in flight, and write that over the page order
+ * the grid is showing, which flips a page back for as long as the change takes. Each change reads the pages again when
+ * it ends, so the last one to end makes the read that matters.
+ *
+ * @param settling How many of the changes in flight are the one that calls this, which is one for a change that runs in
+ * the scope of the pages and none for one that does not.
+ */
+async function refreshPages(
+  queryClient: QueryClient,
+  projectId: string,
+  settling = 0,
+): Promise<void> {
+  if (pageChangesInFlight(queryClient, projectId) > settling) {
+    return;
+  }
   await Promise.all([
     invalidatePages(queryClient, projectId),
     invalidateProject(queryClient, projectId),
@@ -55,7 +81,10 @@ async function applyOptimistically(
   newOrder: (pages: PageSchema[]) => PageSchema[] | null,
 ): Promise<Snapshot> {
   const { queryKey } = manifestOptions(projectId);
-  // A read that is still in flight would write the old order over this one when it lands
+  // A read that is still in flight would write the old state over this one when it lands. It is cancelled with the
+  // default revert, which puts the query back to a success with the data it had. Cancelling without the revert leaves
+  // the query in the error state, and a screen that shows an error in place of the pages loses its grid until the
+  // next read ends
   await queryClient.cancelQueries({ queryKey });
   const previous = queryClient.getQueryData(queryKey);
   const next = previous === undefined ? null : newOrder(previous);
@@ -63,6 +92,17 @@ async function applyOptimistically(
     queryClient.setQueryData(queryKey, next);
   }
   return { previous };
+}
+
+/**
+ * The scope of the changes that rewrite pages that exist. A reader changing the number, the kind and the notes of a
+ * page in a row makes two changes of one page in flight together, and a move on top of an edit would too.
+ */
+const rewriteScope = pagesScope;
+
+/** What a change that runs in the scope of the pages does when it ends: read the pages once the rest have ended. */
+function readWhenLast(queryClient: QueryClient, projectId: string): () => Promise<void> {
+  return () => refreshPages(queryClient, projectId, 1);
 }
 
 function restore(
@@ -80,13 +120,14 @@ export function useMovePages(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...movePagesApiV1ProjectsProjectIdPagesMovePostMutation(),
+    scope: rewriteScope(projectId),
     onMutate: ({ body }) =>
       applyOptimistically(queryClient, projectId, (pages) => {
         const anchor = anchorOf(body);
         return anchor === null ? null : movePages(pages, body.page_ids, anchor);
       }),
     onError: (_error, _variables, snapshot) => restore(queryClient, projectId, snapshot),
-    onSettled: () => refreshPages(queryClient, projectId),
+    onSettled: readWhenLast(queryClient, projectId),
   });
 }
 
@@ -95,6 +136,7 @@ export function useMoveSourcePages(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...moveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostMutation(),
+    scope: rewriteScope(projectId),
     onMutate: ({ body, path }) =>
       applyOptimistically(queryClient, projectId, (pages) => {
         const anchor = anchorOf(body);
@@ -103,7 +145,7 @@ export function useMoveSourcePages(projectId: string) {
           : movePages(pages, pageIdsOfSource(pages, path.source_id), anchor);
       }),
     onError: (_error, _variables, snapshot) => restore(queryClient, projectId, snapshot),
-    onSettled: () => refreshPages(queryClient, projectId),
+    onSettled: readWhenLast(queryClient, projectId),
   });
 }
 
@@ -112,6 +154,85 @@ export function useUpdatePage(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...updatePageApiV1ProjectsProjectIdPagesPageIdPatchMutation(),
+    scope: rewriteScope(projectId),
+    onSettled: readWhenLast(queryClient, projectId),
+  });
+}
+
+/**
+ * Change the same fields of several pages at once, as the panel of selected pages does.
+ *
+ * The change is shown on the pages at once, and put back if a request fails. The requests go out together and the
+ * manifest is read once when all have answered. When one fails the others have still been made, and the read
+ * afterwards shows which pages changed.
+ */
+export function useUpdatePages(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    scope: rewriteScope(projectId),
+    onMutate: ({ pageIds, changes }) =>
+      applyOptimistically(queryClient, projectId, (pages) => {
+        const targets = new Set(pageIds);
+        return pages.map((page) => (targets.has(page.id) ? applyChanges(page, changes) : page));
+      }),
+    onError: (_error, _variables, snapshot) => restore(queryClient, projectId, snapshot),
+    mutationFn: async ({
+      pageIds,
+      changes,
+    }: {
+      pageIds: readonly string[];
+      changes: PageUpdate;
+    }): Promise<void> => {
+      await Promise.all(
+        pageIds.map((pageId) =>
+          updatePageApiV1ProjectsProjectIdPagesPageIdPatch({
+            path: { project_id: projectId, page_id: pageId },
+            body: changes,
+            throwOnError: true,
+          }),
+        ),
+      );
+    },
+    onSettled: readWhenLast(queryClient, projectId),
+  });
+}
+
+/**
+ * Add several placeholders or blank leaves one after the other, so that pages put before the same page stand in the
+ * order they are listed.
+ *
+ * The manifest is read once when the last request has answered or one has failed.
+ */
+export function useCreatePages(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (bodies: readonly PageCreate[]): Promise<void> => {
+      for (const body of bodies) {
+        await createPageApiV1ProjectsProjectIdPagesPost({
+          path: { project_id: projectId },
+          body,
+          throwOnError: true,
+        });
+      }
+    },
+    onSettled: () => refreshPages(queryClient, projectId),
+  });
+}
+
+/** Delete several pages with their versions, leaving their scans and sources. */
+export function useDeletePages(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (pageIds: readonly string[]): Promise<void> => {
+      await Promise.all(
+        pageIds.map((pageId) =>
+          deletePageApiV1ProjectsProjectIdPagesPageIdDelete({
+            path: { project_id: projectId, page_id: pageId },
+            throwOnError: true,
+          }),
+        ),
+      );
+    },
     onSettled: () => refreshPages(queryClient, projectId),
   });
 }
@@ -121,16 +242,8 @@ export function useNumberPages(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...numberPagesApiV1ProjectsProjectIdPagesLabelsPostMutation(),
-    onSettled: () => refreshPages(queryClient, projectId),
-  });
-}
-
-/** Add a placeholder or a blank leaf. */
-export function useCreatePage(projectId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...createPageApiV1ProjectsProjectIdPagesPostMutation(),
-    onSettled: () => refreshPages(queryClient, projectId),
+    scope: rewriteScope(projectId),
+    onSettled: readWhenLast(queryClient, projectId),
   });
 }
 

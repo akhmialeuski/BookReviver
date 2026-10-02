@@ -1,6 +1,7 @@
 import { createFileRoute, notFound } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { ImportScreen } from '@/features/import/ImportScreen';
+import { OrderScreen } from '@/features/order/OrderScreen';
 import { parseStage } from '@/features/stages/parse';
 import { parseStageSearch, type StageSearch } from '@/features/workspace/params';
 import { StageScreen } from '@/features/workspace/StageScreen';
@@ -50,6 +51,10 @@ function StageRoute(): React.JSX.Element {
   // Import works on files and scans, not on pages, so it has a screen of its own
   if (known === 'import') {
     return <ImportScreen projectId={projectId} search={search} onSearchChange={onSearchChange} />;
+  }
+  // The Order stage is a grid of pages with its own panel, not a strip, a canvas and a recipe
+  if (known === 'page-order') {
+    return <OrderScreen projectId={projectId} search={search} onSearchChange={onSearchChange} />;
   }
   return (
     <StageScreen

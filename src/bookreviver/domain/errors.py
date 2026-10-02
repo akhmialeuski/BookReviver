@@ -29,6 +29,17 @@ class ConflictError(DomainError):
     """The operation conflicts with the current state, for example a running import."""
 
 
+class AnchorInsideMovedPagesError(ConflictError):
+    """The page to put pages next to is one of the pages being moved, so the place is not defined.
+
+    The message is a sentence for the person moving the pages, which the API sends as the detail of the problem.
+    """
+
+    def __init__(self) -> None:
+        """Report the conflict with its fixed sentence."""
+        super().__init__('The place chosen is one of the pages being moved. Choose a page that stays where it is.')
+
+
 class UnsupportedTransformError(DomainError):
     """A point cannot be mapped through a transform, such as one that follows a stored mesh."""
 

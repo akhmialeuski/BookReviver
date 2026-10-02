@@ -9,7 +9,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.enums import PageChange, Side
-from bookreviver.domain.errors import ConflictError, NotFoundError
+from bookreviver.domain.errors import AnchorInsideMovedPagesError, ConflictError, NotFoundError
 from bookreviver.domain.events import PagesChanged
 from bookreviver.domain.values import PageAnchor, SliceRequest
 from bookreviver.ports.ordering import OrderKeys
@@ -294,7 +294,7 @@ class TestMove:
         book = await _commit_book(fx_database, fx_actor)
         before = dict(fx_database.tables.pages)
 
-        with pytest.raises(ConflictError):
+        with pytest.raises(AnchorInsideMovedPagesError):
             await fx_service().move(
                 fx_actor, book.project.id, book.pages[1].id, PageAnchor(page_id=book.pages[1].id, side=Side.AFTER)
             )
@@ -457,7 +457,7 @@ class TestMoveGroup:
         book = await _commit_book(fx_database, fx_actor)
         before = dict(fx_database.tables.pages)
 
-        with pytest.raises(ConflictError):
+        with pytest.raises(AnchorInsideMovedPagesError):
             await fx_service().move_group(
                 fx_actor,
                 book.project.id,
@@ -576,7 +576,7 @@ class TestMoveSource:
         """
         book = await _commit_book(fx_database, fx_actor)
 
-        with pytest.raises(ConflictError):
+        with pytest.raises(AnchorInsideMovedPagesError):
             await fx_service().move_source(
                 fx_actor, book.project.id, book.first.id, PageAnchor(page_id=book.pages[1].id, side=Side.AFTER)
             )

@@ -18,7 +18,6 @@ import { useViewerKeys } from '@/features/viewer/useViewerKeys';
 import { CanvasToolbar } from '@/features/workspace/CanvasToolbar';
 import { PageFilter, type StageSearch, ViewMode } from '@/features/workspace/params';
 import { useStageRows, useStageSummaries } from '@/features/workspace/queries';
-import { bridgeOf } from '@/features/workspace/StageBridges';
 import { StageGrid } from '@/features/workspace/StageGrid';
 import { StagePanel } from '@/features/workspace/StagePanel';
 import { StageStrip } from '@/features/workspace/StageStrip';
@@ -240,16 +239,13 @@ export function StageScreen({
       </div>
     );
 
-  // Import and Order show the bridge of the old page of the book in place of the strip and the canvas
-  const bridge = bridgeOf(stage, projectId);
-
   return (
     <div className="flex size-full flex-col" data-testid="stage-screen" data-stage={stage}>
       {rows.isError ? <ErrorAlert message={describeError(rows.error)} /> : null}
       <div className="min-h-0 flex-1">
         <StageWorkspace
           strip={
-            bridge !== null || grid ? null : (
+            grid ? null : (
               <StageStrip
                 items={filtered}
                 total={count}
@@ -262,11 +258,9 @@ export function StageScreen({
               />
             )
           }
-          canvasHeader={bridge !== null || grid ? null : header}
+          canvasHeader={grid ? null : header}
           canvas={
-            bridge !== null ? (
-              bridge
-            ) : grid ? (
+            grid ? (
               <StageGrid
                 items={filtered}
                 total={count}

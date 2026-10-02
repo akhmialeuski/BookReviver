@@ -8,6 +8,7 @@ import {
   firstPageOfSource,
   movePages,
   pageIdsOfSource,
+  readingWindow,
 } from '@/features/pages/order';
 
 function page(id: string, position: number, extra: Partial<PageSchema> = {}): PageSchema {
@@ -136,5 +137,49 @@ describe('selecting the pages of a source or a scan', () => {
     expect(firstPageOfSource(book, 'nope')).toBeUndefined();
     expect(firstPageOfScan(book, 'n3')?.id).toBe('c');
     expect(firstPageOfScan(book, 'nope')).toBeUndefined();
+  });
+});
+
+describe('readingWindow', () => {
+  const names = (entries: ReturnType<typeof readingWindow>): string[] =>
+    (entries ?? []).map((entry) =>
+      entry.kind === 'more' ? '…' : `${entry.moved ? '*' : ''}${entry.page.id}`,
+    );
+
+  it('shows two pages before the moved ones, the moved ones and two pages after', () => {
+    const moved = readingWindow(BOOK, ['a', 'b'], { pageId: 'd', side: AnchorSide.After });
+    expect(names(moved)).toEqual(['c', 'd', '*a', '*b', 'e', 'f']);
+  });
+
+  it('shows the moved pages before the anchor when the side is before', () => {
+    const moved = readingWindow(BOOK, ['e', 'f'], { pageId: 'b', side: AnchorSide.Before });
+    expect(names(moved)).toEqual(['a', '*e', '*f', 'b', 'c']);
+  });
+
+  it('keeps the order the moved pages have in the book, whatever the order they are listed in', () => {
+    const moved = readingWindow(BOOK, ['c', 'a'], { pageId: 'f', side: AnchorSide.After });
+    expect(names(moved)).toEqual(['e', 'f', '*a', '*c']);
+  });
+
+  it('folds the middle of a long group into one mark', () => {
+    const long = Array.from({ length: 10 }, (_, index) => page(`p${index}`, index));
+    const moved = readingWindow(long, ['p0', 'p1', 'p2', 'p3', 'p4'], {
+      pageId: 'p8',
+      side: AnchorSide.After,
+    });
+    expect(names(moved)).toEqual(['p7', 'p8', '*p0', '*p1', '…', '*p4', 'p9']);
+  });
+
+  it('gives each page as it is now, with the place in the book it has now', () => {
+    const moved = readingWindow(BOOK, ['a'], { pageId: 'c', side: AnchorSide.After });
+    const positions = (moved ?? []).flatMap((entry) =>
+      entry.kind === 'page' ? [`${entry.page.id}${entry.page.position}`] : [],
+    );
+    expect(positions).toEqual(['b1', 'c2', 'a0', 'd3', 'e4']);
+  });
+
+  it('gives nothing for a place inside the moved pages or a page that is not in the book', () => {
+    expect(readingWindow(BOOK, ['a', 'b'], { pageId: 'b', side: AnchorSide.After })).toBeNull();
+    expect(readingWindow(BOOK, ['a'], { pageId: 'zz', side: AnchorSide.After })).toBeNull();
   });
 });

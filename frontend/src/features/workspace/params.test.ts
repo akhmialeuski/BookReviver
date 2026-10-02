@@ -61,6 +61,7 @@ describe('parseStageSearch', () => {
       page: 'p-1',
       source: 'f-1',
     });
+    expect(parseStageSearch({ page: '  p-1 ', scan: '   ', source: '' })).toEqual({ page: 'p-1' });
     expect(parseStageSearch({ page: {}, scan: ['s-1'], source: {} })).toEqual({});
   });
 });
