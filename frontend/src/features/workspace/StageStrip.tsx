@@ -4,6 +4,7 @@ import { PageTile } from '@/features/workspace/PageTile';
 import { PageFilter } from '@/features/workspace/params';
 import { StripToolbar } from '@/features/workspace/StripToolbar';
 import type { FilterCounts, StripItem } from '@/features/workspace/strip';
+import { useAfterPick } from '@/features/workspace/stripSheet';
 import { useStripPlace } from '@/features/workspace/useStripPlace';
 import { MESSAGES } from '@/shared/messages';
 
@@ -46,6 +47,7 @@ export function StageStrip({
   withWide?: boolean;
 }): React.JSX.Element {
   const scroller = useRef<HTMLDivElement>(null);
+  const afterPick = useAfterPick();
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scroller.current,
@@ -102,7 +104,10 @@ export function StageStrip({
                     item={item}
                     highlighted={item.page.id === currentId}
                     caption={filter === PageFilter.Check ? (reasonOf?.(item) ?? null) : null}
-                    onClick={() => onOpen(item.page.id)}
+                    onClick={() => {
+                      onOpen(item.page.id);
+                      afterPick();
+                    }}
                   />
                 </li>
               );
