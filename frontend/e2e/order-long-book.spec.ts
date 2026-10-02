@@ -91,6 +91,17 @@ test.describe('a book of a thousand pages in the Order grid', () => {
       // Back to the middle of the grid, out of the zone where it scrolls, and let go over the tile that is there
       await page.mouse.move(centre.x, centre.y, { steps: 10 });
       await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+      // The grid goes on scrolling for a moment after the pointer left the edge, longer on a busy machine, and the tile
+      // under the pointer is read only once the scroll position has stopped changing
+      let lastTop = -1;
+      await expect
+        .poll(async () => {
+          const top = await scroller.evaluate((element) => element.scrollTop);
+          const settled = top === lastTop;
+          lastTop = top;
+          return settled;
+        })
+        .toBe(true);
       // The page held under the pointer covers the tile, so the tile is found by its box and not by the pointer
       const overText = await tiles.evaluateAll((all, point) => {
         const hit = all.find((tile) => {

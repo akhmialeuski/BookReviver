@@ -16,13 +16,23 @@ const SERVER_COMMAND = [
   `uv run uvicorn tests.helpers.e2e_app:app --port ${SERVER_PORT} 2>&1 | tee ${SERVER_LOG}`,
 ].join(' && ');
 
+// Every scenario registers an account of its own, so scenarios can share the one server and its database
+const DEFAULT_WORKERS = 3;
+const TEST_TIMEOUT_MS = 90_000;
+const EXPECT_TIMEOUT_MS = 15_000;
+const WORKERS = Number(process.env.BOOKREVIVER_E2E_WORKERS ?? DEFAULT_WORKERS);
+
 export default defineConfig({
   testDir: 'e2e',
+  // Scenario files run side by side, and the steps inside one file in turn
   fullyParallel: false,
-  workers: 1,
+  workers: WORKERS,
+  // The scenarios share one server process, which answers each of them more slowly while the others work
+  timeout: TEST_TIMEOUT_MS,
+  expect: { timeout: EXPECT_TIMEOUT_MS },
   retries: 0,
   reporter: 'list',
-  use: { baseURL: BASE_URL, trace: 'retain-on-failure' },
+  use: { baseURL: BASE_URL, screenshot: 'only-on-failure', trace: 'retain-on-failure' },
   projects: [
     {
       name: 'chromium',

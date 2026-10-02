@@ -1,6 +1,5 @@
-import { readFile } from 'node:fs/promises';
 import { expect, type Page, test } from '@playwright/test';
-import { SERVER_LOG } from './support/env';
+import { mailedLink } from './support/account';
 
 /**
  * The ways into an account besides the first registration: signing in with the fake provider the end-to-end server
@@ -12,17 +11,10 @@ const NEW_PASSWORD = 'a completely different phrase';
 // The authorization code of the fake provider is the address it vouches for; see tests/helpers/fake_oauth.py
 const PROVIDER_CODE = 'reader@example.org';
 
-/** Wait for a mail link of the given page in the server log and return its path and query. */
-async function mailedLink(page: string): Promise<string> {
-  let link = '';
-  await expect
-    .poll(async () => {
-      const log = await readFile(SERVER_LOG, 'utf8').catch(() => '');
-      link = log.match(new RegExp(`https?://\\S+/${page}\\?token=\\S+`, 'g'))?.at(-1) ?? '';
-      return link;
-    })
-    .not.toBe('');
-  return new URL(link).pathname + new URL(link).search;
+/** Wait for the mail to the address in the server log and return the path and query of its link to the page. */
+async function mailedPath(email: string, page: string): Promise<string> {
+  const link = new URL(await mailedLink(email, page));
+  return link.pathname + link.search;
 }
 
 async function signIn(page: Page, email: string, password: string): Promise<void> {
@@ -70,7 +62,7 @@ test('a reader who forgot the password resets it from the mailed link', async ({
     await page.getByLabel('Password').fill(PASSWORD);
     await page.getByRole('button', { name: 'Create account' }).click();
     await expect(page.getByText('Check your mail')).toBeVisible();
-    await page.goto(await mailedLink('verify-email'));
+    await page.goto(await mailedPath(email, 'verify-email'));
     await expect(page.getByText('Your address is confirmed')).toBeVisible();
   });
 
@@ -86,7 +78,7 @@ test('a reader who forgot the password resets it from the mailed link', async ({
   });
 
   await test.step('open the link and choose a new password', async () => {
-    await page.goto(await mailedLink('reset-password'));
+    await page.goto(await mailedPath(email, 'reset-password'));
     await page.getByLabel('New password').fill(NEW_PASSWORD);
     await page.getByRole('button', { name: 'Save the password' }).click();
     await expect(page.getByText('Your password is changed')).toBeVisible();

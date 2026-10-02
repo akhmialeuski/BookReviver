@@ -3407,6 +3407,51 @@ export type PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostRespon
 
 export type PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostResponse = PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostResponses[keyof PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostResponses];
 
+export type CreatePagesApiV1ProjectsProjectIdPagesBatchPostData = {
+    /**
+     * Body
+     */
+    body: Array<PageCreate>;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/batch';
+};
+
+export type CreatePagesApiV1ProjectsProjectIdPagesBatchPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type CreatePagesApiV1ProjectsProjectIdPagesBatchPostError = CreatePagesApiV1ProjectsProjectIdPagesBatchPostErrors[keyof CreatePagesApiV1ProjectsProjectIdPagesBatchPostErrors];
+
+export type CreatePagesApiV1ProjectsProjectIdPagesBatchPostResponses = {
+    /**
+     * Response Create Pages Api V1 Projects  Project Id  Pages Batch Post
+     *
+     * Successful Response
+     */
+    201: Array<PageSchema>;
+};
+
+export type CreatePagesApiV1ProjectsProjectIdPagesBatchPostResponse = CreatePagesApiV1ProjectsProjectIdPagesBatchPostResponses[keyof CreatePagesApiV1ProjectsProjectIdPagesBatchPostResponses];
+
 export type AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutData = {
     body: ScanAttach;
     path: {

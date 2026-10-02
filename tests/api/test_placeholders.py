@@ -61,6 +61,11 @@ class Book(NamedTuple):
         """The path of the project's pages."""
         return f'{PROJECTS_PATH}/{self.project.id}/pages'
 
+    @property
+    def batch_path(self) -> str:
+        """The path that adds several pages at once."""
+        return f'{self.pages_path}/batch'
+
 
 def _jpeg() -> bytes:
     """Encode a small gray page as a JPEG.
@@ -312,6 +317,96 @@ class TestCreatePage:
         expect(unknown.status_code == status.HTTP_404_NOT_FOUND)
         expect(foreign.status_code == status.HTTP_404_NOT_FOUND)
         assert_expectations()
+
+
+class TestCreatePages:
+    """Tests for POST /projects/{project_id}/pages/batch."""
+
+    async def test_adds_the_list_in_order_and_answers_every_page(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a list with a place for its first page is answered 201 with the pages in the order of the request.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        body = [
+            {'origin': 'placeholder', 'kind': 'text', 'label': '1', 'before_page_id': str(fx_book.placeholder.id)},
+            {'origin': 'placeholder', 'kind': 'text', 'label': '2'},
+            {'origin': 'placeholder', 'kind': 'text', 'label': '3'},
+        ]
+
+        response = await fx_client.post(fx_book.batch_path, json=body)
+
+        created = [PageSchema.model_validate(item) for item in response.json()]
+        listed = (await fx_client.get(fx_book.pages_path)).json()['items']
+        expect(response.status_code == status.HTTP_201_CREATED)
+        expect([page.label for page in created] == ['1', '2', '3'])
+        expect([page.position for page in created] == [1, 2, 3])
+        expect([item['label'] for item in listed] == ['', '1', '2', '3', ''])
+        assert_expectations()
+
+    async def test_a_page_that_cannot_be_added_refuses_the_list_and_names_its_index(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a place that is no page answers 409 with the index, and the pages before it are not added.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        body = [
+            {'origin': 'placeholder', 'kind': 'text'},
+            {'origin': 'placeholder', 'kind': 'text', 'after_page_id': str(uuid4())},
+        ]
+
+        response = await fx_client.post(fx_book.batch_path, json=body)
+
+        listed = (await fx_client.get(fx_book.pages_path)).json()['items']
+        expect(response.status_code == status.HTTP_409_CONFLICT)
+        expect('index 1' in response.json()[DETAIL_FIELD])
+        expect(len(listed) == 2)
+        assert_expectations()
+
+    async def test_an_invalid_page_is_refused_with_its_index_in_the_location(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify an invalid body answers 422 whose error location holds the index of the page.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        body = [{'origin': 'placeholder', 'kind': 'text'}, {'origin': 'scan', 'kind': 'text'}]
+
+        response = await fx_client.post(fx_book.batch_path, json=body)
+
+        expect(response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
+        expect(1 in response.json()['errors'][0]['loc'])
+        assert_expectations()
+
+    @pytest.mark.parametrize('count', [0, 1001], ids=['empty', 'over-the-limit'])
+    async def test_an_empty_list_and_a_list_over_the_limit_are_refused(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, count: int
+    ) -> None:
+        """Verify the list needs at least one page and at most the limit of the service.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param count: Number of pages in the list.
+        :type count: int
+        """
+        body = [{'origin': 'placeholder', 'kind': 'text'}] * count
+
+        response = await fx_client.post(fx_book.batch_path, json=body)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 class TestDeletePage:

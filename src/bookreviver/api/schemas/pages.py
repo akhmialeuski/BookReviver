@@ -23,6 +23,7 @@ from bookreviver.domain.enums import LabelStyle, NewPageOrigin, PageKind, PageOr
 from bookreviver.domain.ids import PageId, ScanId, SourceId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import NewPage, PageAnchor, PageNumbering, PageSize
+from bookreviver.services.pages import PageService
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -173,6 +174,13 @@ class PageCreate(OptionalAnchor):
             anchor=self.optional_anchor,
             size=size,
         )
+
+
+# The pages of one batch request: at least one, and no more than the service adds in one transaction
+PageCreateList = Annotated[
+    list[PageCreate],
+    Field(min_length=1, max_length=PageService.MAX_PAGES_PER_BATCH),
+]
 
 
 class ScanAttach(RequestModel):

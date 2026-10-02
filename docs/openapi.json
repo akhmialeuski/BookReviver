@@ -1806,6 +1806,104 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/pages/batch": {
+      "post": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Create Pages",
+        "description": "Add several placeholders or blank leaves in one transaction, up to a thousand at once.\n\nEach page is placed as in ``POST /pages``. A page without a place stands after the page before it in the list, and\nthe first one at the end of the book. All pages are added or none is, and one ``pages-changed`` event follows. The\nanswer is 422 for a page whose body is invalid, with its index in the list in the location of the error, and 409\nfor a page whose place is no page of the book or a blank leaf without a size in a book with no page to take the\nmedian of, with its index in the detail.",
+        "operationId": "create_pages_api_v1_projects__project_id__pages_batch_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PageCreate"
+                },
+                "minItems": 1,
+                "maxItems": 1000,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PageSchema"
+                  },
+                  "title": "Response Create Pages Api V1 Projects  Project Id  Pages Batch Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project_id}/pages/{page_id}/scan": {
       "put": {
         "tags": [

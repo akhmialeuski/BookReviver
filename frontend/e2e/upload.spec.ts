@@ -58,7 +58,7 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
     await page.getByRole('button', { name: 'Create account' }).click();
     await expect(page.getByText('Check your mail')).toBeVisible();
 
-    const link = await confirmationLink();
+    const link = await confirmationLink(email);
     await page.goto(new URL(link).pathname + new URL(link).search);
     await expect(page.getByText('Your address is confirmed')).toBeVisible();
   });

@@ -1,6 +1,6 @@
 import { type QueryClient, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  createPageApiV1ProjectsProjectIdPagesPost,
+  createPagesApiV1ProjectsProjectIdPagesBatchPost,
   deletePageApiV1ProjectsProjectIdPagesPageIdDelete,
   type PageCreate,
   type PageSchema,
@@ -198,24 +198,26 @@ export function useUpdatePages(projectId: string) {
 }
 
 /**
- * Add several placeholders or blank leaves one after the other, so that pages put before the same page stand in the
- * order they are listed.
+ * Add several placeholders or blank leaves in one request, so that pages put before the same page stand in the order
+ * they are listed.
  *
- * The manifest is read once when the last request has answered or one has failed.
+ * The server adds all of them or none, so a page it refuses leaves the book as it was. The request runs in the scope of
+ * the pages, behind the changes already queued, and the manifest is read once when the last of them has ended. Outside
+ * the scope, the read that an earlier change makes when it ends could start before the new pages are stored, and the
+ * request would then find that change still running and leave the reading to it.
  */
 export function useCreatePages(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
+    scope: rewriteScope(projectId),
     mutationFn: async (bodies: readonly PageCreate[]): Promise<void> => {
-      for (const body of bodies) {
-        await createPageApiV1ProjectsProjectIdPagesPost({
-          path: { project_id: projectId },
-          body,
-          throwOnError: true,
-        });
-      }
+      await createPagesApiV1ProjectsProjectIdPagesBatchPost({
+        path: { project_id: projectId },
+        body: [...bodies],
+        throwOnError: true,
+      });
     },
-    onSettled: () => refreshPages(queryClient, projectId),
+    onSettled: readWhenLast(queryClient, projectId),
   });
 }
 
