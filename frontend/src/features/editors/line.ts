@@ -1,4 +1,5 @@
 import type { LineShape, Point, Size } from '@/features/editors/shapes';
+import type { PageResult } from '@/features/processing/results';
 
 /**
  * The arithmetic of the split line: where it starts, how an end moves, and how the arrow keys nudge it.
@@ -10,6 +11,8 @@ import type { LineShape, Point, Size } from '@/features/editors/shapes';
 /** Pixels an arrow key moves the line by, and with `Shift` held. */
 export const NUDGE_PX = 1;
 export const NUDGE_SHIFT_PX = 10;
+
+const HALF = 2;
 
 /** The least vertical distance between the two ends, in pixels. */
 export const MIN_SPAN_PX = 1;
@@ -28,6 +31,25 @@ function within(value: number, least: number, most: number): number {
 export function verticalLine(x: number, size: Size): LineShape {
   const at = within(x, 0, size.width);
   return { start: { x: at, y: 0 }, end: { x: at, y: size.height } };
+}
+
+/**
+ * Give the line where a step cut a scan: the slanted line through the ends it reported, else the vertical line at its cut,
+ * else the vertical line down the middle of the scan.
+ *
+ * @param result What the step found on the page, or null when it has not run.
+ * @param size The size of the scan.
+ */
+export function cutLine(result: PageResult | null, size: Size): LineShape {
+  const top = result?.cutTopX ?? null;
+  const bottom = result?.cutBottomX ?? null;
+  if (top !== null && bottom !== null) {
+    return {
+      start: clampToScan({ x: top, y: 0 }, size),
+      end: clampToScan({ x: bottom, y: size.height }, size),
+    };
+  }
+  return verticalLine(result?.cutX ?? size.width / HALF, size);
 }
 
 /** Keep a point on the scan. */

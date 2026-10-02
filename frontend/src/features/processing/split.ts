@@ -123,7 +123,7 @@ export function cutterOf(recipes: readonly RecipeSchema[]): RecipeSchema | undef
 }
 
 /** The number of pages a reader chose for a scan, as the edit stores it. */
-const PAGES_OF = { [SplitChoice.One]: 1, [SplitChoice.Two]: 2 } as const;
+export const PAGES_OF = { [SplitChoice.One]: 1, [SplitChoice.Two]: 2 } as const;
 
 /** Write the form of the edit that stores the choice of a reader: the editor that draws it and its shape as JSON. */
 export function choiceForm(choice: SplitChoice): { kind: 'split'; geometry: string } {

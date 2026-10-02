@@ -1,7 +1,7 @@
 import { ChevronDownIcon, EyeIcon, LoaderCircleIcon, PlayIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { StageRunBody } from '@/api';
-import { useRunStage } from '@/features/processing/queries';
+import { useRunInFlight, useRunStage } from '@/features/processing/queries';
 import { pageIdsFor, RunScope, scopeChoices, troubleOf } from '@/features/processing/scope';
 import { undoesSplit } from '@/features/processing/split';
 import { UnsplitDialog, UnsplitQuestion } from '@/features/processing/UnsplitDialog';
@@ -55,7 +55,8 @@ export function RunControls({
   const [confirming, setConfirming] = useState<StageRunBody | null>(null);
   const trouble = troubleOf(items);
   const choices = scopeChoices(items, current?.page.id, selected);
-  const anotherJobGoing = (activeJobs.data?.length ?? 0) > 0;
+  const runInFlight = useRunInFlight(projectId);
+  const anotherJobGoing = (activeJobs.data?.length ?? 0) > 0 || runInFlight;
   const blocked = recipe === undefined || processing.dirty;
 
   const send = (body: StageRunBody): void =>

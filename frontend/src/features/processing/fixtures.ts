@@ -111,6 +111,17 @@ export function spread(overrides: Partial<ProcessorSchema> = {}): ProcessorSchem
   });
 }
 
+/** `split.auto`, which decides for each scan and reads the choice a reader made for it. */
+export function autoSplit(overrides: Partial<ProcessorSchema> = {}): ProcessorSchema {
+  return processor('split.auto', {
+    title: 'Automatic split',
+    stage: 'page-split',
+    scope: 'split',
+    editor: 'split',
+    ...overrides,
+  });
+}
+
 /** `split.none`. */
 export function whole(overrides: Partial<ProcessorSchema> = {}): ProcessorSchema {
   return processor('split.none', { title: 'Whole scan', stage: 'page-split', ...overrides });

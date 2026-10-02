@@ -6,6 +6,8 @@
  * shape to {@link EditorShapes}, and the registry then asks for its definition.
  */
 
+import { PAGES_OF, SplitChoice } from '@/features/processing/split';
+
 /** A point in pixels, from the top left corner of an image. */
 export interface Point {
   x: number;
@@ -29,10 +31,21 @@ export interface RotationShape {
   degrees: number;
 }
 
+/** How many pages a scan becomes, as a choice stores it: 1 keeps the scan whole, 2 cuts it. */
+export type SplitPages = (typeof PAGES_OF)[SplitChoice];
+
+/** The choice of a reader for a scan: how many pages it becomes, and the cut they drew for two pages, if any. */
+export interface SplitShape {
+  pages: SplitPages;
+  /** The cut drawn for a scan of two pages, or null to cut where the gutter is found. */
+  line: LineShape | null;
+}
+
 /** The shape of each editor that has a component, by the name of its kind. */
 export interface EditorShapes {
   line: LineShape;
   rotation: RotationShape;
+  split: SplitShape;
 }
 
 /** The kinds of editor that have a component. */
@@ -69,6 +82,30 @@ export function writeLine(line: LineShape): Geometry {
     start: { x: line.start.x, y: line.start.y },
     end: { x: line.end.x, y: line.end.y },
   };
+}
+
+/**
+ * Read the choice of pages from the geometry of an edit.
+ *
+ * @param geometry The geometry of the stored edit.
+ * @returns The choice, or null when the geometry has no valid number of pages or holds a cut that is not a line.
+ */
+export function readSplit(geometry: Geometry | null): SplitShape | null {
+  const pages = numberOf(geometry?.pages);
+  if (pages !== PAGES_OF[SplitChoice.One] && pages !== PAGES_OF[SplitChoice.Two]) {
+    return null;
+  }
+  const stored = geometry?.line ?? null;
+  if (stored === null) {
+    return { pages, line: null };
+  }
+  const line = readLine(recordOf(stored));
+  return line === null ? null : { pages, line };
+}
+
+/** Write a choice of pages the way the server reads it: the cut is null when none was drawn. */
+export function writeSplit(split: SplitShape): Geometry {
+  return { pages: split.pages, line: split.line === null ? null : writeLine(split.line) };
 }
 
 /** Read a rotation from the geometry of an edit, or null when the geometry is not a rotation. */

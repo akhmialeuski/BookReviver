@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { processing, recipe, step } from '@/features/processing/fixtures';
+import { useRunStage } from '@/features/processing/queries';
 import { SplitSection } from '@/features/processing/SplitSection';
 import { page, row } from '@/features/workspace/fixtures';
 import { joinRows } from '@/features/workspace/strip';
@@ -53,6 +54,23 @@ describe('SplitSection', () => {
   let root: Root;
   let client: QueryClient;
 
+  /** A control elsewhere on the screen that sends the same request to run the stage as the banners and the footer do. */
+  function OtherRun(): React.JSX.Element {
+    const run = useRunStage('project', 'page-split');
+    return (
+      <button
+        type="button"
+        data-testid="other-run"
+        onClick={() =>
+          run.mutate({
+            path: { project_id: 'project', stage: 'page-split' },
+            body: { recipe_id: 'auto' },
+          })
+        }
+      />
+    );
+  }
+
   async function render(pages: ReturnType<typeof page>[], open: number, state = STATE) {
     const items = joinRows(
       pages,
@@ -66,6 +84,7 @@ describe('SplitSection', () => {
       root.render(
         <QueryClientProvider client={client}>
           <SplitSection processing={state} items={items} current={current} />
+          <OtherRun />
         </QueryClientProvider>,
       );
     });
@@ -198,6 +217,44 @@ describe('SplitSection', () => {
 
     expect(sdk.run).not.toHaveBeenCalled();
     expect(container.textContent).toContain('The edit was refused.');
+  });
+
+  it('holds the choice while a run sent from another control is on its way, and frees it once the run is on the list', async () => {
+    let answer: (value: unknown) => void = () => undefined;
+    sdk.run.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    await render(whole, 0);
+    expect(radio('Two pages')?.disabled).toBe(false);
+
+    await act(async () => {
+      testid('other-run')?.click();
+    });
+    await settle();
+    expect(radio('Two pages')?.disabled).toBe(true);
+    await act(async () => {
+      radio('Two pages')?.click();
+    });
+    expect(sdk.put).not.toHaveBeenCalled();
+
+    // The server took the run, and its job is on the list when the request ends
+    sdk.jobs.mockResolvedValue({
+      data: { items: [{ id: 'j' }], total: 1, page: 1, size: 20, pages: 1 },
+    });
+    await act(async () => {
+      answer({ data: { id: 'j' } });
+    });
+    await settle();
+    expect(radio('Two pages')?.disabled).toBe(true);
+
+    sdk.jobs.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 20, pages: 1 } });
+    await act(async () => {
+      await client.invalidateQueries();
+    });
+    await settle();
+    expect(radio('Two pages')?.disabled).toBe(false);
   });
 
   it('offers the automatic decision only to a scan the reader chose for', async () => {

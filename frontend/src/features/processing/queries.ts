@@ -2,6 +2,7 @@ import {
   type QueryClient,
   queryOptions,
   type UseQueryResult,
+  useIsMutating,
   useMutation,
   useQuery,
   useQueryClient,
@@ -164,14 +165,37 @@ export function useActivateRecipe(projectId: string, stage: Stage) {
   });
 }
 
-/** Run the stage over some pages in the background, which the activity of the book then follows. */
+/** The key that marks the requests to run a stage of a book, so that every part of the screen can see one in flight. */
+function runKey(projectId: string): readonly [string, string] {
+  return ['run-stage', projectId];
+}
+
+/**
+ * Run the stage over some pages in the background, which the activity of the book then follows.
+ *
+ * The mutation stays pending until the jobs of the book are read again, so the job it started is on the list by the time
+ * it ends, and {@link useRunInFlight} covers the stretch from the press to that moment.
+ */
 export function useRunStage(projectId: string, stage: Stage) {
   const queryClient = useQueryClient();
   return useMutation({
     ...runStageApiV1ProjectsProjectIdStagesStageRunPostMutation(),
+    mutationKey: runKey(projectId),
     onSettled: () => invalidateJobs(queryClient, projectId),
     onSuccess: () => refreshStage(queryClient, projectId, stage),
   });
+}
+
+/**
+ * Tell whether a request to run a stage of the book was sent from anywhere on the screen and its job is not yet on the
+ * list of active jobs.
+ *
+ * The server runs one job at a time, and the list of active jobs lags the press by the round trip of the request and of
+ * the read that follows. A control that decides from that list alone stays open in that stretch, and what it sends there
+ * is refused with a conflict.
+ */
+export function useRunInFlight(projectId: string): boolean {
+  return useIsMutating({ mutationKey: runKey(projectId) }) > 0;
 }
 
 /** Preview the steps of the form on one page in the background; the picture arrives as an event. */
