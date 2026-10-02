@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { confirmationLink, PASSWORD } from './support/account';
+import { confirmationLink, openBookPage, PASSWORD } from './support/account';
 import { solidPng } from './support/png';
 
 /**
@@ -74,7 +74,12 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
     await page.getByLabel('Title', { exact: true }).fill('An old primer');
     await page.getByRole('button', { name: 'Create book' }).click();
     await expect(page.getByRole('heading', { name: 'An old primer' })).toBeVisible();
-    await expect(page.getByText('0 pages')).toBeVisible();
+    await expect(page).toHaveURL(/\/projects\/[^/]+\/stages\/import$/);
+  });
+
+  await test.step('open the page of the book, which has no pages yet', async () => {
+    await openBookPage(page);
+    await expect(page.getByRole('main').getByText('0 pages')).toBeVisible();
   });
 
   await test.step('choose the folder and check the list before sending', async () => {
@@ -129,7 +134,7 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
   });
 
   await test.step('the book shows its pages, sources in the order that was chosen, and scans', async () => {
-    await expect(page.getByText('4 pages')).toBeVisible();
+    await expect(page.getByRole('main').getByText('4 pages')).toBeVisible();
     await expect(page.getByTestId('source-name')).toHaveText([
       'book/vol2/a-1.png',
       'book/vol1/1.png',
@@ -140,7 +145,8 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
   });
 
   await test.step('sign out closes the book again', async () => {
-    await page.getByRole('button', { name: 'Sign out' }).click();
+    await page.getByRole('button', { name: 'Account menu' }).click();
+    await page.getByRole('menuitem', { name: 'Sign out' }).click();
     await expect(page).toHaveURL(/\/sign-in/);
     await page.goBack();
     await expect(page).toHaveURL(/\/sign-in\?redirect=/);

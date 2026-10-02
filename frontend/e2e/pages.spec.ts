@@ -1,7 +1,13 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
-import { createBook, registerAndSignIn, uploadFolder, writePagesFolder } from './support/account';
+import {
+  createBook,
+  openBookPage,
+  registerAndSignIn,
+  uploadFolder,
+  writePagesFolder,
+} from './support/account';
 
 /**
  * Arranging the pages of a book: open a page from the strip, move it from the viewer, move groups and a whole file
@@ -72,7 +78,9 @@ test('a reader arranges the pages of a book', async ({ page }) => {
     await expect(caption).toContainText('5 of 5');
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
 
+    // Back to the book opens its last stage, and the page strip of the book page is on the About tab
     await page.getByRole('link', { name: 'Back to the book' }).click();
+    await openBookPage(page);
     await expect.poll(() => stripOrder(page)).toEqual([ids[0], ids[1], ids[2], ids[4], ids[3]]);
   });
 

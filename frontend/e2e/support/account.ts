@@ -50,7 +50,7 @@ export async function registerAndSignIn(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { name: 'Your books' })).toBeVisible();
 }
 
-/** Create a book with a title and open its page. */
+/** Create a book with a title, which opens on its first stage with the title in the header. */
 export async function createBook(page: Page, title: string): Promise<void> {
   await page.getByRole('button', { name: 'New book' }).click();
   await page.getByLabel('Title', { exact: true }).fill(title);
@@ -77,8 +77,18 @@ export async function writePagesFolder(count: number): Promise<string> {
   return root;
 }
 
+/**
+ * Open the "About the book" tab of the open book, where the files, the page strip and the scans still are until the
+ * stage workspaces take them over.
+ */
+export async function openBookPage(page: Page): Promise<void> {
+  await page.getByTestId('stage-about').click();
+  await expect(page).toHaveURL(/\/projects\/[^/]+\/about$/);
+}
+
 /** Upload a folder into the open book and wait until its import has finished. */
 export async function uploadFolder(page: Page, folder: string, files: number): Promise<void> {
+  await openBookPage(page);
   await page.getByRole('button', { name: 'Upload files' }).click();
   await page.getByTestId('folder-input').setInputFiles(folder);
   await page.getByRole('button', { name: `Upload ${files} files` }).click();
