@@ -2,6 +2,7 @@ import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../src/shared/http/csrf';
+import { MESSAGES } from '../src/shared/messages';
 import {
   createBook,
   openProjectId,
@@ -21,8 +22,7 @@ const PAGES = 4;
 const PLATE_POSITION = 2;
 const SCENARIO_TIMEOUT_MS = 240_000;
 const RUN_TIMEOUT_MS = 90_000;
-const PLATES_VARIANT = 'Deskew (copy)';
-const TEXT_VARIANT = 'Deskew';
+const DESKEW_PROCESSOR = 'geometry.deskew';
 
 // Tall enough for the pictures of the key states to show two pages of the strip and a section of the panel
 test.use({ viewport: { width: 1280, height: 1000 } });
@@ -43,6 +43,19 @@ async function setKind(page: Page, position: number, kind: string): Promise<void
     data: { kind },
   });
   expect(response.ok()).toBe(true);
+}
+
+/** Read the name of the active recipe of a stage of the open book, which the API lists first. */
+async function activeRecipeName(page: Page, stage: string): Promise<string> {
+  const listed = await page.request.get(
+    `/api/v1/projects/${openProjectId(page)}/stages/${stage}/variants?size=100`,
+  );
+  const items = ((await listed.json()) as { items: { name: string; active: boolean }[] }).items;
+  const active = items.find((item) => item.active);
+  if (active === undefined) {
+    throw new Error(`The stage ${stage} has no active recipe.`);
+  }
+  return active.name;
 }
 
 /** Count the runs of a stage that ended well in the open book, which tells that a run the reader started is over. */
@@ -70,6 +83,9 @@ test('plates get their own variant by a rule, a pinned variant survives a run on
     });
   };
   let bookPath = '';
+  // The names of the two variants, read from the book once it is open: the active recipe, and the copy made of it
+  let textVariant = '';
+  let platesVariant = '';
 
   await test.step('a book with a plate among its pages opens on the Geometry stage', async () => {
     await registerAndSignIn(page);
@@ -83,12 +99,19 @@ test('plates get their own variant by a rule, a pinned variant survives a run on
     // One recipe has nothing to tell the pages apart by, so the strip marks none
     await expect(marks).toHaveCount(0);
     await expect(page.getByTestId('strip-variant-filter')).toHaveCount(0);
+    textVariant = await activeRecipeName(page, 'geometry');
+    platesVariant = MESSAGES.processing.recipe.copyName(textVariant);
   });
 
   await test.step('a copy of the recipe with settings of its own is the variant for the plates', async () => {
     await page.getByTestId('recipe-new').click();
-    await expect(page.getByTestId('recipe-select')).toContainText(PLATES_VARIANT);
-    await page.getByRole('spinbutton', { name: 'Largest slant' }).fill('9');
+    await expect(page.getByTestId('recipe-select')).toContainText(platesVariant);
+    // The recipe has several steps, closed at first, and only the deskew one has a largest slant
+    const deskew = page.locator(
+      `[data-testid="recipe-step"][data-processor="${DESKEW_PROCESSOR}"]`,
+    );
+    await deskew.getByTestId('step-toggle').click();
+    await deskew.getByRole('spinbutton', { name: 'Largest slant' }).fill('9');
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
   });
@@ -110,24 +133,24 @@ test('plates get their own variant by a rule, a pinned variant survives a run on
     await runAll();
     await expect(marks).toHaveCount(PAGES, { timeout: RUN_TIMEOUT_MS });
     const plateMarks = page.locator(
-      `[data-testid="strip-variant"][data-variant="${PLATES_VARIANT}"]`,
+      `[data-testid="strip-variant"][data-variant="${platesVariant}"]`,
     );
     await expect(plateMarks).toHaveCount(1);
     await expect(
-      page.locator(`[data-testid="strip-variant"][data-variant="${TEXT_VARIANT}"]`),
+      page.locator(`[data-testid="strip-variant"][data-variant="${textVariant}"]`),
     ).toHaveCount(PAGES - 1);
-    await expect(page.getByTestId('variant-counts')).toContainText(`${TEXT_VARIANT} ${PAGES - 1}`);
-    await expect(page.getByTestId('variant-counts')).toContainText(`${PLATES_VARIANT} 1`);
+    await expect(page.getByTestId('variant-counts')).toContainText(`${textVariant} ${PAGES - 1}`);
+    await expect(page.getByTestId('variant-counts')).toContainText(`${platesVariant} 1`);
     await snap(page, 'strip-variant-marks');
   });
 
   await test.step('the strip is narrowed to the pages of one variant, and back to all', async () => {
     const filter = page.getByTestId('strip-variant-filter');
-    await filter.selectOption({ label: `${PLATES_VARIANT} · 1` });
+    await filter.selectOption({ label: `${platesVariant} · 1` });
     await expect(strip).toHaveCount(1);
-    await expect(marks).toHaveAttribute('data-variant', PLATES_VARIANT);
+    await expect(marks).toHaveAttribute('data-variant', platesVariant);
     await strip.first().click();
-    await expect(page.getByTestId('page-variant')).toContainText(PLATES_VARIANT);
+    await expect(page.getByTestId('page-variant')).toContainText(platesVariant);
     await expect(page.getByTestId('page-variant-source')).toHaveText('By the rules of the book');
     await page.getByTestId('apply-to').scrollIntoViewIfNeeded();
     await snap(page, 'plate-by-its-own-variant');
@@ -142,7 +165,7 @@ test('plates get their own variant by a rule, a pinned variant survives a run on
     await page.getByTestId('apply-menu').click();
     await page.getByTestId('apply-page').click();
     const first = page.locator(`[data-testid="strip-page"] [data-testid="strip-variant"]`).first();
-    await expect(first).toHaveAttribute('data-variant', PLATES_VARIANT, {
+    await expect(first).toHaveAttribute('data-variant', platesVariant, {
       timeout: RUN_TIMEOUT_MS,
     });
     await expect(first).toHaveAttribute('data-pinned', 'true');
@@ -152,7 +175,7 @@ test('plates get their own variant by a rule, a pinned variant survives a run on
     await expect(page.getByTestId('run-menu')).toBeEnabled({ timeout: RUN_TIMEOUT_MS });
     await page.getByTestId('recipe-select').selectOption({ index: 0 });
     await runAll();
-    await expect(first).toHaveAttribute('data-variant', PLATES_VARIANT);
+    await expect(first).toHaveAttribute('data-variant', platesVariant);
     await expect(first).toHaveAttribute('data-pinned', 'true');
   });
 
@@ -161,7 +184,7 @@ test('plates get their own variant by a rule, a pinned variant survives a run on
     await expect(page.getByTestId('use-rules')).toHaveCount(0, { timeout: RUN_TIMEOUT_MS });
     await runAll();
     const first = page.locator(`[data-testid="strip-page"] [data-testid="strip-variant"]`).first();
-    await expect(first).toHaveAttribute('data-variant', TEXT_VARIANT, { timeout: RUN_TIMEOUT_MS });
+    await expect(first).toHaveAttribute('data-variant', textVariant, { timeout: RUN_TIMEOUT_MS });
     await expect(first).toHaveAttribute('data-pinned', 'false');
   });
 
