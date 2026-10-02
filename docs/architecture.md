@@ -1599,7 +1599,16 @@ The project list counts in `page_count` the included pages of the book, and show
   (`GET /projects/{id}/stages`) and the status of each stage in the book (`ProjectSchema.progress`): the number or the
   mark of the state, the name, the bar of up-to-date, out-of-date, failed and not-run pages, and the counts of pages to
   check and failed. A stage the book cannot work in yet says "Soon" and still opens. The count to check is
-  `StageSummarySchema.check`, equal to the number of pages in the Check filter of the strip of the same stage.
+  `StageSummarySchema.check`, equal to the number of pages in the Check filter of the strip of the same stage. In a
+  window narrower than 1024 px, the `lg` breakpoint of Tailwind, the bar shows the open stage whole (mark, name and
+  note) and an "Other stages" menu lists the rest with the same marks, followed by the About tab.
+- The narrow layout is decided by `useIsNarrow` (`shared/hooks/useMediaQuery.ts`), built on `useSyncExternalStore` and
+  `window.matchMedia`, with the 1024 px breakpoint written once as `WIDE_MIN_WIDTH_PX`. Below it `StageWorkspace`
+  draws the canvas alone at full width, and the two buttons above it open the strip and the panel as sheets
+  (`shared/ui/sheet.tsx`, shadcn/ui on the Radix dialog) from the left and the right. The strip tells its sheet through
+  `features/workspace/stripSheet.ts` when a page is picked, and the sheet closes. The wide layout is a component of its
+  own, so the narrow layout never writes the remembered widths, and a window that grows back reads them again.
+  Import and Order get this layout for free, since they are built on `StageWorkspace`.
 - A stage screen is a workspace of three parts on shadcn/ui Resizable (`react-resizable-panels`), made by
   `features/workspace/StageWorkspace.tsx`: the strip of pages on the left, the canvas in the middle and the panel of
   the stage on the right. A stage passes the content of each part, and a stage that lays pages out differently passes

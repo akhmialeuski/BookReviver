@@ -525,6 +525,7 @@ export const MESSAGES = {
     bar: {
       label: 'Stages of the book',
       about: 'About the book',
+      otherStages: 'Other stages',
       noFiles: 'No files yet',
       waitsForPages: 'Waits for pages',
       files: (files: number, scans: number) =>
@@ -537,6 +538,7 @@ export const MESSAGES = {
     layout: {
       toggleStrip: 'Show or hide the pages',
       togglePanel: 'Show or hide the stage panel',
+      panelTitle: 'Stage panel',
     },
     strip: {
       title: 'Pages',

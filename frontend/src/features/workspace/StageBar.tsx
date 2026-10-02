@@ -4,6 +4,7 @@ import {
   CheckCircle2Icon,
   CircleXIcon,
   InfoIcon,
+  ListIcon,
   Loader2Icon,
   TriangleAlertIcon,
 } from 'lucide-react';
@@ -15,8 +16,17 @@ import { parseIdentifier } from '@/features/viewer/params';
 import { latestActiveJob } from '@/features/workspace/jobs';
 import { stageProgress } from '@/features/workspace/progress';
 import { useActiveJobs, useStageSummaries } from '@/features/workspace/queries';
+import { useIsNarrow } from '@/shared/hooks/useMediaQuery';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
+import { Button } from '@/shared/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/shared/ui/dropdown-menu';
 
 /**
  * The bar of the ten stages above every screen of a book: four phases, and for each stage its number or state mark,
@@ -145,6 +155,36 @@ function StageNote({
   );
 }
 
+/** A stage as the bar writes it: its mark, its name, the word for its state read out, and the note under the name. */
+function StageBody({
+  entry,
+  status,
+  summary,
+  project,
+  importing,
+}: {
+  entry: StageEntry;
+  status: StageStatus;
+  summary: StageSummarySchema | undefined;
+  project: ProjectSchema | undefined;
+  importing: JobSchema | undefined;
+}): React.JSX.Element {
+  return (
+    <>
+      <StageMark number={STAGES.indexOf(entry) + 1} status={status} />
+      <span className="grid text-left">
+        <span className="text-sm leading-tight font-medium">
+          {MESSAGES.stages.names[entry.stage]}
+        </span>
+        {status === 'unavailable' ? null : (
+          <span className="sr-only">{MESSAGES.stages.status[status]}</span>
+        )}
+        <StageNote entry={entry} summary={summary} project={project} importing={importing} />
+      </span>
+    </>
+  );
+}
+
 export function StageBar({ projectId }: { projectId: string }): React.JSX.Element {
   const project = useQuery(
     projectApiV1ProjectsProjectIdGetOptions({ path: { project_id: projectId } }),
@@ -154,6 +194,7 @@ export function StageBar({ projectId }: { projectId: string }): React.JSX.Elemen
   const importing = latestActiveJob(
     (activeJobs.data ?? []).filter((job) => job.kind === 'import-source'),
   );
+  const narrow = useIsNarrow();
   const { stage } = useParams({ strict: false });
   const page = parseIdentifier(useSearch({ strict: false }).page);
   const current = parseStage(stage);
@@ -165,6 +206,91 @@ export function StageBar({ projectId }: { projectId: string }): React.JSX.Elemen
     summaries.data?.find((summary) => summary.stage === key);
   const statusOf = (key: Stage): StageStatus =>
     project.data?.progress.find((entry) => entry.stage === key)?.status ?? 'waiting';
+
+  if (narrow) {
+    const currentEntry = onAbout ? undefined : STAGES.find((entry) => entry.stage === current);
+    const itemClass =
+      'flex items-center gap-2 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50';
+    return (
+      <nav
+        aria-label={MESSAGES.workspace.bar.label}
+        className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5"
+        data-testid="stage-bar"
+      >
+        {currentEntry === undefined ? (
+          <span className={cn(itemClass, 'text-sm font-medium')}>
+            {onAbout ? MESSAGES.workspace.bar.about : null}
+          </span>
+        ) : (
+          <Link
+            to="/projects/$projectId/stages/$stage"
+            params={{ projectId, stage: currentEntry.stage }}
+            search={page === undefined ? {} : { page }}
+            aria-current="page"
+            data-testid={`stage-${currentEntry.stage}`}
+            data-status={statusOf(currentEntry.stage)}
+            className={cn(itemClass, 'min-w-0 rounded-md px-1')}
+          >
+            <StageBody
+              entry={currentEntry}
+              status={statusOf(currentEntry.stage)}
+              summary={summaryOf(currentEntry.stage)}
+              project={project.data}
+              importing={importing}
+            />
+          </Link>
+        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" data-testid="stage-menu">
+              <ListIcon aria-hidden="true" />
+              {MESSAGES.workspace.bar.otherStages}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" data-testid="stage-menu-list">
+            {STAGES.filter((entry) => entry.stage !== currentEntry?.stage).map((entry) => {
+              const status = statusOf(entry.stage);
+              return (
+                <DropdownMenuItem key={entry.stage} asChild>
+                  <Link
+                    to="/projects/$projectId/stages/$stage"
+                    params={{ projectId, stage: entry.stage }}
+                    search={page === undefined ? {} : { page }}
+                    data-testid={`stage-${entry.stage}`}
+                    data-status={status}
+                    className={cn(status === 'unavailable' && 'text-muted-foreground')}
+                  >
+                    <StageBody
+                      entry={entry}
+                      status={status}
+                      summary={summaryOf(entry.stage)}
+                      project={project.data}
+                      importing={importing}
+                    />
+                  </Link>
+                </DropdownMenuItem>
+              );
+            })}
+            {onAbout ? null : (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link
+                    to="/projects/$projectId/about"
+                    params={{ projectId }}
+                    data-testid="stage-about"
+                  >
+                    <InfoIcon aria-hidden="true" />
+                    {MESSAGES.workspace.bar.about}
+                  </Link>
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </nav>
+    );
+  }
 
   return (
     <nav
@@ -198,21 +324,13 @@ export function StageBar({ projectId }: { projectId: string }): React.JSX.Elemen
                     status === 'unavailable' && 'text-muted-foreground',
                   )}
                 >
-                  <StageMark number={STAGES.indexOf(entry) + 1} status={status} />
-                  <span className="grid text-left">
-                    <span className="text-sm leading-tight font-medium">
-                      {MESSAGES.stages.names[entry.stage]}
-                    </span>
-                    {status === 'unavailable' ? null : (
-                      <span className="sr-only">{MESSAGES.stages.status[status]}</span>
-                    )}
-                    <StageNote
-                      entry={entry}
-                      summary={summaryOf(entry.stage)}
-                      project={project.data}
-                      importing={importing}
-                    />
-                  </span>
+                  <StageBody
+                    entry={entry}
+                    status={status}
+                    summary={summaryOf(entry.stage)}
+                    project={project.data}
+                    importing={importing}
+                  />
                 </Link>
               );
             })}
