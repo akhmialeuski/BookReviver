@@ -33,7 +33,7 @@ describe('parseStageSearch', () => {
     for (const compare of ['off', 'swipe', 'side']) {
       expect(parseStageSearch({ compare }).compare).toBe(compare);
     }
-    for (const filter of ['all', 'check', 'left-out']) {
+    for (const filter of ['all', 'check', 'left-out', 'wide']) {
       expect(parseStageSearch({ filter }).filter).toBe(filter);
     }
   });

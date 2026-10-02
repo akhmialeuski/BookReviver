@@ -1437,7 +1437,7 @@ The project list counts in `page_count` the included pages of the book, and show
     `Stage`, and a value that is none of them answers with a not-found screen inside the layout, so the header and the
     bar stay. `page` is a `PageId`, `scan` a scan id and `source` a source id, which is a file of the book: the Import
     stage selects that file, and the Order stage selects the pages cut from it. `view` is `page`, `spread` or `grid`,
-    `compare` is `off`, `swipe` or `side`, and `filter` is `all`, `check` or `left-out`. A parameter left out means
+    `compare` is `off`, `swipe` or `side`, and `filter` is `all`, `check`, `left-out` or, on the Split stage, `wide`. A parameter left out means
     its default, and one of the wrong shape is dropped by `parseStageSearch` (`features/workspace/params.ts`), which
     has unit tests.
   - `/projects/<id>/about` is the description of the book and the tab at the end of the stage bar, and
@@ -1519,6 +1519,51 @@ The project list counts in `page_count` the included pages of the book, and show
       strip of thumbnails or by its number, before or after it, writes how the book will read around the new place
       (`readingWindow` of `features/pages/order.ts`) and names the move in its button. The pages that move are on the
       strip and cannot be chosen.
+- A stage whose catalogue has a processor is built by `features/processing/` on the same three-part frame, with no line
+  written for a particular stage: `StageScreen` asks `useProcessing` (`useProcessing.ts`), and a stage with processors
+  gets `ProcessingPanel` in place of the bare `StagePanel`, a before-and-after canvas in place of `PageCanvas` in the
+  one-page view, banners above the canvas, and the reasons under the pages of the Check filter. Split and Geometry are
+  such stages today, and a stage that gets its first plugin gets all of it without a change to the interface.
+  - The panel reads the catalogue (`GET /processors`) and the recipes of the stage (`.../variants`, the active one
+    first). It shows the recipe chosen, its steps and the steps that are coming (`features/stages/roadmap.ts`, words
+    under `MESSAGES.processing.soon`, a step leaves the list when the catalogue has its processor), and below them
+    what the stage did to the open page and the results it made on it. The steps are a draft that belongs to the saved
+    recipe it was made from (`recipe.ts`, a new draft whenever the recipe's `updated_at` changes), reordered by
+    dragging on `@dnd-kit/sortable`, switched on and off with `enabled`, removed and added from the catalogue. Nothing
+    is saved until the button, which says first how many pages the save makes out of date, and a recipe is saved
+    through `PUT .../variants/{recipe_id}`, which serves the active recipe too. "New recipe" copies the draft as a
+    variant, and "Use this recipe" activates a variant.
+  - The settings of a step are a react-jsonschema-form (`@rjsf/core`, `@rjsf/shadcn`, `@rjsf/validator-ajv8`) over the
+    JSON Schema of its processor (`ParamsForm.tsx`, `schema.ts`). The label of a field is its `title`, the hint its
+    `description`, and the title and the docstring of the model are left out. A number with both bounds is a slider
+    with an input (`BoundedNumberWidget.tsx`), the form validates as it changes, and a value outside its bounds keeps
+    the recipe from being saved and a preview from being asked for. The classes of the theme are named to Tailwind by
+    an `@source` line of `index.css`, since Tailwind does not read `node_modules`.
+  - A preview (`usePreview.ts`) asks `POST .../preview` for the steps of the draft on the open page once the form has
+    stood still for 400 ms, and the version the server announces is shown in the half after of the compare. The
+    `page-version-ready` event leaves the version in the cache (`versionReadyKey` of `features/projects/queries.ts`,
+    set by `events.ts`), the version is read and shown only if it answers the ask, and a job that ends without an event,
+    as one answered from the server's cache does, is looked up among the previews of the page. An ask for a form that has
+    been shown already starts no job, one that comes while a job of the book is going waits for it, and a server that
+    turns it away with 409 is asked again a second after the book is idle. A step that cuts a scan into pages has no
+    preview.
+  - The compare (`CompareCanvas.tsx`, `compareStage.ts`) is one OpenSeadragon world with the picture before drawn over
+    the picture after and clipped by `TiledImage.setClip` to the left of a divider the reader drags, so zoom and pan are
+    shared, and the clip follows the divider as the view moves. Side by side is two viewers that follow each other's
+    bounds, and Space held shows the picture before in every mode (`useHoldKey.ts`). The picture before is the result of
+    the nearest earlier stage that has processors (`useEarlierRows.ts`, `compare.ts`), and the Split stage, which has
+    none before it, has no compare. `compare=` of the address holds `off`, `swipe` or `side`, and a preview turns it on.
+  - A run goes by the recipe shown over the pages of a scope (`scope.ts`): this page, the selected pages, the pages out
+    of date or failed, or all pages, which names no page and so means every page with an image. It waits for a draft to
+    be saved. A stage with pages out of date shows a banner that runs it again on exactly them. The Check filter writes
+    why a page asks for a look under it (`reasons.ts`), and the page panel shows the facts of the current version, an
+    amber plate for a result the step was unsure of, and the history of the full results of the page
+    (`GET .../versions?scale=full`), from which `PUT .../pages/{page_id}/stages/{stage}` makes an earlier one current.
+  - The Split stage adds the Wide filter (`filter=wide`, pages cut from a scan whose `ScanFacts` are wider than tall),
+    a banner that cuts every wide scan still whole with the recipe that starts with `split.spread` in one run, and the
+    choice of one page or two for the scan of the open page, which runs `split.none` or `split.spread` on its pages
+    (`split.ts`, `SplitSection.tsx`). Going back to one page, from the choice or from a run that would do it, asks
+    first and sends the run with `confirm_unsplit = true` only after the answer.
 - Viewer state (page, spread, variant) lives in search params, so every view can be linked and reloaded. Server
   state lives in TanStack Query, and SSE events patch or invalidate the affected queries.
   - `features/projects/events.ts` maps the events to queries. `job-changed` writes the job into its own query and marks
@@ -1550,8 +1595,6 @@ The project list counts in `page_count` the included pages of the book, and show
 - Editors are a react-konva layer kept in step with the OpenSeadragon viewport. An editor registry maps each
   `EditorKind` to a component: draggable frame, quad with corner handles, rotation handle, dewarp mesh, brush and
   eraser, region polygons labelled text or illustration.
-- Processor parameter forms are rendered from their JSON Schema by react-jsonschema-form with its shadcn theme.
-  Previews run on the visible page, and variants compare side by side or with a swipe.
 
 ## Testing
 

@@ -2,7 +2,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobSchema } from '@/api';
 import { readJobApiV1JobsJobIdGetQueryKey } from '@/api/@tanstack/react-query.gen';
-import { pagesScope } from '@/features/projects/queries';
+import { pagesScope, versionReadyKey } from '@/features/projects/queries';
 import { STAGES } from '@/features/stages/stages';
 import { applyProjectEvent, BURST_DELAY_MS, EventName, isActiveJob, isJob } from './events';
 
@@ -111,6 +111,39 @@ describe('applyProjectEvent', () => {
         'projectApiV1ProjectsProjectIdGet',
       ].sort(),
     );
+  });
+
+  it('keeps the version a page-version-ready event names and marks the results of that page stale', () => {
+    applyProjectEvent(queryClient, PROJECT_ID, {
+      event: EventName.PageVersionReady,
+      data: { project_id: PROJECT_ID, page_id: 'pg-1', version_id: 'abc' },
+    });
+
+    expect(queryClient.getQueryData(versionReadyKey(PROJECT_ID, 'pg-1'))).toMatchObject({
+      versionId: 'abc',
+    });
+    expect(invalidated().sort()).toEqual([
+      'listPagesApiV1ProjectsProjectIdPagesGet',
+      'listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet',
+    ]);
+  });
+
+  it('shows a version announced twice as a new event', () => {
+    const event = {
+      event: EventName.PageVersionReady,
+      data: { project_id: PROJECT_ID, page_id: 'pg-1', version_id: 'abc' },
+    };
+    vi.useFakeTimers();
+    vi.setSystemTime(1000);
+    applyProjectEvent(queryClient, PROJECT_ID, event);
+    vi.setSystemTime(2000);
+    applyProjectEvent(queryClient, PROJECT_ID, event);
+    vi.useRealTimers();
+
+    expect(queryClient.getQueryData(versionReadyKey(PROJECT_ID, 'pg-1'))).toEqual({
+      versionId: 'abc',
+      at: 2000,
+    });
   });
 
   it('ignores a job-changed event whose data is not a job', () => {

@@ -43,6 +43,13 @@ describe('viewerKeyAction', () => {
     expect(viewerKeyAction(press('ArrowLeft', { target }), false)).toBeNull();
   });
 
+  it('leaves the arrow keys to a slider, which moves its own value by them', () => {
+    const target = document.createElement('span');
+    target.setAttribute('role', 'slider');
+    expect(viewerKeyAction(press('ArrowRight', { target }), false)).toBeNull();
+    expect(viewerKeyAction(press('Home', { target }), false)).toBeNull();
+  });
+
   it('still acts on a key pressed on a button', () => {
     const target = document.createElement('button');
     expect(viewerKeyAction(press('ArrowLeft', { target }), false)).toBe('previous');

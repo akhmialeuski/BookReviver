@@ -1,0 +1,239 @@
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CompareCanvas } from '@/features/processing/CompareCanvas';
+import { type ComparePair, SourceKind } from '@/features/processing/compare';
+import { CompareMode } from '@/features/workspace/params';
+
+/**
+ * The canvas of the compare around its OpenSeadragon stage: what it puts on the stage and when, what it draws over it for
+ * each mode, and what Space and the keys of the divider do.
+ *
+ * OpenSeadragon needs a canvas that jsdom does not have, so the stage is a stand-in that records what it is told. Its
+ * pictures and its clip are checked in a real browser by the end-to-end scenario.
+ */
+
+const stage = vi.hoisted(() => ({
+  instances: [] as unknown[],
+  show: vi.fn(),
+  setMode: vi.fn(),
+  setDivider: vi.fn(),
+  setHolding: vi.fn(),
+  destroy: vi.fn(),
+}));
+
+vi.mock('@/features/processing/compareStage', () => ({
+  CompareStage: class {
+    constructor() {
+      stage.instances.push(this);
+    }
+    show = stage.show;
+    setMode = stage.setMode;
+    setDivider = stage.setDivider;
+    setHolding = stage.setHolding;
+    destroy = stage.destroy;
+    fit = vi.fn();
+    zoomIn = vi.fn();
+    zoomOut = vi.fn();
+  },
+}));
+
+const BEFORE = { kind: SourceKind.Iiif, url: '/before/info.json' } as const;
+const AFTER = { kind: SourceKind.Image, url: '/after.png' } as const;
+
+describe('CompareCanvas', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  function render(
+    mode: CompareMode,
+    pairs: ComparePair = { before: BEFORE, after: AFTER },
+    notice: { text: string; working: boolean } | null = null,
+  ): void {
+    act(() =>
+      root.render(
+        <CompareCanvas
+          pairs={pairs}
+          mode={mode}
+          beforeLabel="Before · result of Order"
+          afterLabel="After · Geometry"
+          notice={notice}
+          pageIds={['p1']}
+        />,
+      ),
+    );
+  }
+
+  const handle = (): HTMLElement | null =>
+    container.querySelector<HTMLElement>('[data-testid="compare-handle"]');
+
+  beforeEach(() => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    stage.instances.length = 0;
+    stage.show.mockReset();
+    stage.show.mockResolvedValue({ failed: [] });
+    stage.setMode.mockReset();
+    stage.setDivider.mockReset();
+    stage.setHolding.mockReset();
+    stage.destroy.mockReset();
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  it('puts the two pictures on the stage once, and says when they are loaded', async () => {
+    render(CompareMode.Off);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(stage.instances).toHaveLength(1);
+    expect(stage.show).toHaveBeenCalledTimes(1);
+    expect(stage.show).toHaveBeenCalledWith(BEFORE, AFTER);
+    expect(
+      container.querySelector('[data-testid="viewer-canvas"]')?.getAttribute('data-state'),
+    ).toBe('ready');
+  });
+
+  it('does not load the pictures again when only the mode changes', async () => {
+    render(CompareMode.Off);
+    render(CompareMode.Swipe);
+    render(CompareMode.Side);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(stage.show).toHaveBeenCalledTimes(1);
+    expect(stage.setMode).toHaveBeenLastCalledWith(CompareMode.Side);
+  });
+
+  it('loads the pictures again for another page', async () => {
+    render(CompareMode.Swipe);
+    render(CompareMode.Swipe, {
+      before: BEFORE,
+      after: { kind: SourceKind.Iiif, url: '/other/info.json' },
+    });
+
+    expect(stage.show).toHaveBeenCalledTimes(2);
+  });
+
+  it('says a picture could not be loaded', async () => {
+    stage.show.mockResolvedValue({ failed: ['after'] });
+    render(CompareMode.Off);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector('[data-testid="viewer-canvas"]')?.getAttribute('data-state'),
+    ).toBe('failed');
+    expect(container.textContent).toContain('could not be loaded');
+  });
+
+  it('draws the divider and both labels for a swipe, and no divider for the other modes', () => {
+    render(CompareMode.Swipe);
+    expect(handle()).not.toBeNull();
+    expect(container.textContent).toContain('Before · result of Order');
+    expect(container.textContent).toContain('After · Geometry');
+
+    render(CompareMode.Off);
+    expect(handle()).toBeNull();
+    expect(container.textContent).not.toContain('Before · result of Order');
+
+    render(CompareMode.Side);
+    expect(handle()).toBeNull();
+    expect(container.textContent).toContain('Before · result of Order');
+    expect(container.querySelector('[data-testid="viewer-canvas-after"]')?.className).not.toContain(
+      'hidden',
+    );
+  });
+
+  it('draws no divider when there is no picture before to swipe over', () => {
+    render(CompareMode.Swipe, { before: null, after: AFTER });
+
+    expect(handle()).toBeNull();
+  });
+
+  it('moves the divider with the arrow keys, within the canvas', () => {
+    render(CompareMode.Swipe);
+
+    act(() => {
+      handle()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    });
+
+    expect(handle()?.getAttribute('aria-valuenow')).toBe('55');
+    expect(stage.setDivider).toHaveBeenLastCalledWith(0.55);
+
+    for (let press = 0; press < 20; press += 1) {
+      act(() => {
+        handle()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      });
+    }
+    expect(handle()?.getAttribute('aria-valuenow')).toBe('98');
+  });
+
+  it('shows the picture before while Space is held, and the picture after again when it is let go', () => {
+    render(CompareMode.Off);
+
+    act(() => {
+      document.body.dispatchEvent(
+        new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true, cancelable: true }),
+      );
+    });
+    expect(stage.setHolding).toHaveBeenLastCalledWith(true);
+    expect(
+      container.querySelector('[data-testid="viewer-canvas"]')?.getAttribute('data-holding'),
+    ).toBe('true');
+    expect(container.textContent).toContain('Before · result of Order');
+
+    act(() => {
+      document.body.dispatchEvent(
+        new KeyboardEvent('keyup', { code: 'Space', key: ' ', bubbles: true }),
+      );
+    });
+    expect(stage.setHolding).toHaveBeenLastCalledWith(false);
+  });
+
+  it('leaves Space alone when there is no picture before to show', () => {
+    render(CompareMode.Off, { before: null, after: AFTER });
+
+    act(() => {
+      document.body.dispatchEvent(
+        new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(stage.setHolding).not.toHaveBeenCalledWith(true);
+  });
+
+  it('says what the preview is doing, and why it failed', () => {
+    render(CompareMode.Swipe, undefined, { text: 'Making the preview…', working: true });
+    expect(container.querySelector('[data-testid="preview-working"]')?.textContent).toBe(
+      'Making the preview…',
+    );
+
+    render(CompareMode.Swipe, undefined, {
+      text: 'The preview could not be made.',
+      working: false,
+    });
+    expect(container.querySelector('[data-testid="preview-error"]')?.textContent).toBe(
+      'The preview could not be made.',
+    );
+    expect(container.querySelector('[data-testid="preview-working"]')).toBeNull();
+  });
+
+  it('releases the stage when it leaves', () => {
+    render(CompareMode.Off);
+
+    act(() => root.unmount());
+
+    expect(stage.destroy).toHaveBeenCalled();
+    root = createRoot(container);
+  });
+});

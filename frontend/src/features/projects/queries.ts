@@ -8,6 +8,7 @@ import {
   listSourcesApiV1ProjectsProjectIdSourcesGetQueryKey,
   listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey,
   listStagesApiV1ProjectsProjectIdStagesGetQueryKey,
+  listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey,
   projectApiV1ProjectsProjectIdGetQueryKey,
 } from '@/api/@tanstack/react-query.gen';
 import { STAGES } from '@/features/stages/stages';
@@ -96,6 +97,31 @@ export async function invalidateAllStageRows(
   projectId: string,
 ): Promise<void> {
   await Promise.all(STAGES.map(({ stage }) => invalidateStageRows(queryClient, projectId, stage)));
+}
+
+/** What the event of a ready version leaves in the cache for the page it is about. */
+export interface VersionReady {
+  versionId: string;
+  /** When the event arrived, so a version announced twice is still a change the screen waiting for it sees. */
+  at: number;
+}
+
+/** The key under which the last version announced ready for a page is kept, which a preview waits on. */
+export function versionReadyKey(projectId: string, pageId: string): readonly string[] {
+  return ['version-ready', projectId, pageId];
+}
+
+/** Refresh the results of a page, which a run adds to when its version is ready. */
+export function invalidateVersions(
+  queryClient: QueryClient,
+  projectId: string,
+  pageId: string,
+): Promise<void> {
+  return queryClient.invalidateQueries({
+    queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
+      path: { project_id: projectId, page_id: pageId },
+    }),
+  });
 }
 
 /** Refresh the jobs of a book, those running and the latest of any state, which the activity shows. */

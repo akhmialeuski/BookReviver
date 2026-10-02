@@ -68,3 +68,14 @@ export const REVIEW_TONE = 'bg-status-attention';
 export function stageNumber(stage: Stage): number {
   return STAGES.findIndex((entry) => entry.stage === stage) + 1;
 }
+
+/**
+ * Give the stage that comes right before a stage in the pipeline.
+ *
+ * @param stage The stage.
+ * @returns The stage before it, or null for the first.
+ */
+export function stageBefore(stage: Stage): Stage | null {
+  const index = STAGES.findIndex((entry) => entry.stage === stage);
+  return STAGES[index - 1]?.stage ?? null;
+}

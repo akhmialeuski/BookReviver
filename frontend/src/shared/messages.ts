@@ -20,6 +20,7 @@ import type { Problem } from '@/features/about/fields';
 import type { Section } from '@/features/about/sections';
 import type { SuggestedField } from '@/features/about/suggestion';
 import type { OAuthFailure } from '@/features/auth/oauth';
+import type { RoadmapKey } from '@/features/stages/roadmap';
 import type { Phase } from '@/features/stages/stages';
 import type { PageFilter } from '@/features/workspace/params';
 import { ProblemCode } from '@/shared/http/codes';
@@ -542,6 +543,7 @@ export const MESSAGES = {
         all: 'All',
         check: (count: number) => `Check ${count}`,
         leftOut: (count: number) => `Left out ${count}`,
+        wide: (count: number) => `Wide ${count}`,
       },
       grid: 'Show the pages as a grid',
       list: 'Show the pages as a strip',
@@ -550,6 +552,7 @@ export const MESSAGES = {
         all: 'This book has no pages yet.',
         check: 'No page needs a look in this stage.',
         'left-out': 'No page is left out of the book.',
+        wide: 'No scan of this book is wider than tall.',
       } satisfies Record<PageFilter, string>,
     },
     grid: {
@@ -919,6 +922,180 @@ export const MESSAGES = {
     bar: {
       progress: (done: number, total: number) =>
         total > 0 ? `Importing ${done} of ${total}` : 'Importing…',
+    },
+  },
+  processing: {
+    loading: 'Loading the steps of this stage…',
+    loadFailed: 'The steps of this stage could not be read.',
+    recipe: {
+      label: 'Recipe',
+      active: 'Active',
+      option: (name: string, active: boolean, pages: number) =>
+        `${name}${active ? ' · active' : ''} · ${pages} ${pluralize(pages, 'page', 'pages')}`,
+      activeBadge: (pages: number) => `Active · ${pages} ${pluralize(pages, 'page', 'pages')}`,
+      newRecipe: 'New recipe',
+      newRecipeHint: 'A copy of this recipe, to try other settings on some pages',
+      copyName: (name: string) => `${name} (copy)`,
+      use: 'Use this recipe',
+      useHint: 'The stage runs by it from now on, and the pages the old one made go out of date',
+      choose: 'Recipe of the stage',
+    },
+    steps: {
+      title: 'Steps',
+      step: (number: number, title: string) => `${number} · ${title}`,
+      switchLabel: (title: string) => `Run the ${title} step`,
+      remove: (title: string) => `Remove the ${title} step`,
+      move: (title: string) => `Move the ${title} step`,
+      showSettings: (title: string) => `Show the settings of the ${title} step`,
+      hideSettings: (title: string) => `Hide the settings of the ${title} step`,
+      noSettings: 'This step has no settings.',
+      switchedOff: 'Off: the step is kept, but a run and a preview skip it.',
+      empty: 'This recipe has no steps. Add one from the list below.',
+      add: 'Add a step',
+      unknownProcessor: 'This step is not installed on this machine.',
+      outOfLimits: 'A value is outside its limits, so the recipe cannot be saved.',
+      drag: {
+        instructions:
+          'To pick up a step, press Space. Move it with the arrow keys, drop it with Space, and cancel with Escape.',
+        pickedUp: (name: string) => `Picked up the ${name} step.`,
+        over: (name: string) => `Over the ${name} step.`,
+        dropped: (name: string) => `Dropped the ${name} step.`,
+        cancelled: 'Move cancelled. The steps stay in their order.',
+      },
+    },
+    soon: {
+      label: 'Soon',
+      title: 'Coming steps',
+      steps: {
+        'geometry.perspective': 'Perspective crop',
+        'geometry.dewarp': 'Dewarp by mesh',
+        'geometry.crop': 'Crop to the content',
+      } satisfies Record<RoadmapKey, string>,
+    },
+    save: {
+      save: 'Save the recipe',
+      saving: 'Saving…',
+      discard: 'Discard changes',
+      unsaved: 'Changes not saved yet.',
+      staleWarning: (pages: number) =>
+        `Saving makes ${pages} ${pluralize(pages, 'page', 'pages')} out of date.`,
+      failed: 'The recipe could not be saved.',
+      saveFirst: 'Save the recipe to run it.',
+    },
+    footer: {
+      allClear: 'Every page is up to date.',
+      outOfDate: (pages: number) => `${pages} ${pluralize(pages, 'page', 'pages')} out of date`,
+      failed: (pages: number) => `${pages} failed`,
+      preview: 'Preview this page',
+      previewOn: 'Stop the preview',
+      previewNoPage: 'Open a page to preview it.',
+      previewNoStep: 'Switch on a step that makes a picture to preview it.',
+      previewInvalid: 'A value is outside its limits, so there is nothing to preview.',
+      previewSplit: 'A cut of a scan into pages has no preview. Try it on a scan instead.',
+      run: 'Run',
+      busy: 'Another job of this book is still going.',
+    },
+    scope: {
+      menu: 'Run on',
+      page: (label: string) => (label === '' ? 'This page' : `This page · ${label}`),
+      selected: (count: number) => `Selected pages · ${count}`,
+      attention: (count: number) => `Out of date and failed · ${count}`,
+      all: (count: number) => `All pages · ${count}`,
+    },
+    preview: {
+      working: 'Making the preview…',
+      failed: 'The preview could not be made.',
+      busy: 'Another job of this book is running, so the preview waits for it.',
+      after: (stage: string) => `After · ${stage} preview`,
+    },
+    compare: {
+      before: (stage: string) => (stage === '' ? 'Before' : `Before · result of ${stage}`),
+      after: (stage: string) => `After · ${stage}`,
+      swipe: 'Swipe',
+      side: 'Side by side',
+      off: 'After only',
+      toggle: 'Before / after',
+      modeLabel: 'How to compare',
+      hold: 'Hold Space to see the page before',
+      handle: 'Drag to compare before and after',
+      none: 'Nothing comes before this stage, so there is nothing to compare.',
+      spreadOnly: 'Comparing works on one page at a time.',
+      noImage: 'This page has no picture before or after to compare.',
+    },
+    thisPage: {
+      title: (label: string) => (label === '' ? 'This page' : `This page · ${label}`),
+      notProcessed: 'This stage has not run on this page yet.',
+      failed: (error: string) =>
+        error === '' ? 'The step failed on this page.' : `The step failed: ${error}`,
+      outOfDate:
+        'This result is out of date: an earlier stage or the recipe changed after it was made.',
+      angle: 'Turned by',
+      confidence: 'Confidence',
+      method: 'Found',
+      cut: 'Cut at',
+      overlap: 'Overlap',
+      degrees: (value: number) => `${value.toFixed(1)}°`,
+      pixels: (value: number) => `${Math.round(value)} px`,
+      sure: (value: number) => `${value.toFixed(2)} · sure`,
+      unsure: (value: number) => `${value.toFixed(2)} · unsure`,
+      left: 'Left as it was',
+      reviewTitle: {
+        'not-applied': 'Left as it was: the step was unsure.',
+        'low-confidence': 'The step was not sure of this result.',
+      },
+      reviewHint: 'Set it by hand in the page editor, or change the settings and preview again.',
+      byHand: 'Set by hand',
+      byHandSoon: 'The page editor comes soon',
+    },
+    history: {
+      title: 'Results on this page',
+      current: 'Current',
+      use: 'Use this result',
+      using: 'Using…',
+      empty: 'Run the stage to make a result.',
+      made: (time: string) => `Made ${time}`,
+    },
+    stale: {
+      title: (before: string, verb: string) => `${before} changed after these pages were ${verb}`,
+      verbs: {
+        'page-split': 'cut',
+        geometry: 'straightened',
+      } satisfies Partial<Record<Stage, string>>,
+      otherVerb: 'processed',
+      rerun: (pages: number) => `Run again on ${pages} ${pluralize(pages, 'page', 'pages')}`,
+    },
+    reasons: {
+      failed: (error: string) => (error === '' ? 'Failed' : `Failed: ${error}`),
+      stale: 'Out of date',
+      notApplied: (confidence: number | null) =>
+        confidence === null ? 'Left as it was' : `Left as it was · ${confidence.toFixed(2)}`,
+      lowConfidence: (confidence: number | null) =>
+        confidence === null ? 'Unsure' : `Unsure · ${confidence.toFixed(2)}`,
+    },
+    split: {
+      banner: (wide: number, split: number, toCut: number) => {
+        const looks =
+          wide === 1
+            ? '1 scan is wider than tall and looks like an open book.'
+            : `${wide} scans are wider than tall and look like open books.`;
+        const next =
+          split === 0
+            ? `Cut ${toCut === 1 ? 'it' : 'them all'} in one go, then check the cut on ${toCut === 1 ? 'it' : 'each'}.`
+            : `${split} ${pluralize(split, 'is', 'are')} split already; cut the other ${toCut} the same way, then check the cut on each.`;
+        return `${looks} ${next}`;
+      },
+      cut: (count: number) => `Split the ${count} ${pluralize(count, 'scan', 'scans')}`,
+      notNow: 'Not now',
+      scan: 'This scan',
+      choice: 'What this scan becomes',
+      onePage: 'One page',
+      twoPages: 'Two pages',
+      noRecipe: 'The stage has no recipe for this choice.',
+      confirmTitle: 'Go back to one page?',
+      confirmBody:
+        'The right page of this scan is deleted together with its work, including its number, its kind and the notes written on it. The left page becomes the whole scan again.',
+      confirm: 'Go back to one page',
+      cancel: 'Keep two pages',
     },
   },
 } as const;

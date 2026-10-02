@@ -1,7 +1,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useEffect, useRef } from 'react';
 import { PageTile } from '@/features/workspace/PageTile';
-import type { PageFilter } from '@/features/workspace/params';
+import { PageFilter } from '@/features/workspace/params';
 import { StripToolbar } from '@/features/workspace/StripToolbar';
 import type { FilterCounts, StripItem } from '@/features/workspace/strip';
 import { MESSAGES } from '@/shared/messages';
@@ -26,6 +26,8 @@ export function StageStrip({
   onFilter,
   onOpen,
   onGrid,
+  reasonOf,
+  withWide = false,
 }: {
   /** The pages the filter lists, in book order. */
   items: readonly StripItem[];
@@ -37,6 +39,10 @@ export function StageStrip({
   onFilter: (filter: PageFilter) => void;
   onOpen: (pageId: string) => void;
   onGrid: () => void;
+  /** Says why a page asks for a look; the Check filter writes it under the page. Absent for no reasons. */
+  reasonOf?: (item: StripItem) => string | null;
+  /** Whether the filter of wide scans is offered, which only the Split stage has. */
+  withWide?: boolean;
 }): React.JSX.Element {
   const scroller = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -62,6 +68,7 @@ export function StageStrip({
         counts={counts}
         filter={filter}
         grid={false}
+        withWide={withWide}
         onFilter={onFilter}
         onSwitchView={onGrid}
       />
@@ -89,6 +96,7 @@ export function StageStrip({
                   <PageTile
                     item={item}
                     highlighted={item.page.id === currentId}
+                    caption={filter === PageFilter.Check ? (reasonOf?.(item) ?? null) : null}
                     onClick={() => onOpen(item.page.id)}
                   />
                 </li>

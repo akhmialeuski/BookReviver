@@ -47,7 +47,7 @@ const HIDDEN = 0;
 const VISIBLE = 1;
 
 /** Pull the added image out of the object OpenSeadragon passes to the `success` callback of `addTiledImage`. */
-function addedItem(event: unknown): OpenSeadragon.TiledImage | null {
+export function addedItem(event: unknown): OpenSeadragon.TiledImage | null {
   if (typeof event === 'object' && event !== null && 'item' in event) {
     return event.item as OpenSeadragon.TiledImage;
   }
@@ -65,7 +65,7 @@ const WHOLE_IMAGE_SIZE = '/full/max/';
  * tile in each direction would otherwise stay blank. The size keyword is rewritten to the stored one, and every
  * other tile address is left as OpenSeadragon builds it.
  */
-function nameWholeImageTile(item: OpenSeadragon.TiledImage): void {
+export function nameWholeImageTile(item: OpenSeadragon.TiledImage): void {
   const { source } = item;
   const original = source.getTileUrl.bind(source);
   const stored = `/full/${source.dimensions.x},${source.dimensions.y}/`;

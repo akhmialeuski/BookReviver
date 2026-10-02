@@ -73,8 +73,23 @@ describe('filters', () => {
     expect(items.filter(isLeftOut).map((item) => item.page.id)).toEqual(['c']);
   });
 
+  it('lists the pages cut from a wide scan for Wide', () => {
+    const cut = joinRows(
+      [page('a', { scan_id: 's1' }), page('b', { scan_id: 's2' }), page('c', { scan_id: null })],
+      [],
+      new Set(['s1']),
+    );
+
+    expect(applyFilter(cut, PageFilter.Wide).map((item) => item.page.id)).toEqual(['a']);
+    expect(countFilters(cut)[PageFilter.Wide]).toBe(1);
+  });
+
+  it('lists no page for Wide when no scan is known to be wide', () => {
+    expect(applyFilter(items, PageFilter.Wide)).toEqual([]);
+  });
+
   it('counts what each filter lists', () => {
-    expect(countFilters(items)).toEqual({ all: 4, check: 3, 'left-out': 1 });
+    expect(countFilters(items)).toEqual({ all: 4, check: 3, 'left-out': 1, wide: 0 });
   });
 });
 

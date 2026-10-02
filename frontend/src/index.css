@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+/* The classes of the shadcn theme of the parameter forms, which Tailwind does not read in node_modules by itself */
+@source "../node_modules/@rjsf/shadcn/lib";
 
 @custom-variant dark (&:is(.dark *));
 
