@@ -275,6 +275,7 @@ class PageMapper(RowMapper[Page, PageRow]):
             notes=row.notes,
             created_at=row.created_at,
             updated_at=row.updated_at,
+            revision=row.revision,
         )
 
     @override
@@ -299,6 +300,7 @@ class PageMapper(RowMapper[Page, PageRow]):
             notes=entity.notes,
             created_at=entity.created_at,
             updated_at=entity.updated_at,
+            revision=entity.revision,
         )
 
 

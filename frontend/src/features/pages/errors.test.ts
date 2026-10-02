@@ -15,6 +15,17 @@ describe('describePageError', () => {
     );
   });
 
+  it.each([
+    'The pages changed while this ran. The book now shows them as they are. Try again.',
+    'The numbering runs from a later page to an earlier one.',
+    'Only a missing page can take a scan.',
+    'This scan is already a page of the book: p. 12.',
+  ])('quotes the sentence the server gives for a conflict of pages: %s', (detail) => {
+    const error = parseProblem({ status: 409, detail }, 409);
+
+    expect(describePageError(error)).toBe(MESSAGES.pages.conflict(detail));
+  });
+
   it('names the conflict alone when the server gave no reason', () => {
     expect(describePageError(parseProblem({ status: 409 }, 409))).toBe(MESSAGES.pages.conflict(''));
   });

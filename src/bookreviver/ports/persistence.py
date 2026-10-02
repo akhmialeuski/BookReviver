@@ -198,6 +198,9 @@ class PageRepository(Repository[Page, PageId]):
     Within a project an order key is unique, and a part of a scan, the pair of a scan and a slot, belongs to one page
     at most. A page keeps its row when its scan is deleted, and loses only the reference to it. Deleting a page
     removes its versions.
+
+    A page carries a ``revision`` that every update raises by one. An update whose page has not the revision stored is
+    a write over a change the caller never read, so it is refused with a ``ConcurrentChangeError`` and writes nothing.
     """
 
     @abstractmethod
@@ -296,6 +299,8 @@ class PageRepository(Repository[Page, PageId]):
         :raises ConflictError: If the new state of a page takes an order key, or a part of a scan, that another page
                                of the project has, such as a page moved to the place another move took in the
                                meantime.
+        :raises ConcurrentChangeError: If another transaction changed a page after it was read, which its revision no
+                                       longer matches.
         """
 
     @abstractmethod

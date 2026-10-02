@@ -28,7 +28,7 @@ record of the page, so the page split and the page order stage read like any oth
 import logging
 import statistics
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
 from attrs import evolve, frozen
@@ -45,7 +45,16 @@ from bookreviver.domain.enums import (
     VersionData,
     VersionState,
 )
-from bookreviver.domain.errors import AnchorInsideMovedPagesError, ConflictError, DomainError, NotFoundError
+from bookreviver.domain.errors import (
+    AnchorInsideMovedPagesError,
+    ConcurrentChangeError,
+    ConflictError,
+    DomainError,
+    NotAPlaceholderError,
+    NotFoundError,
+    ReversedRangeError,
+    ScanAlreadyInBookError,
+)
 from bookreviver.domain.events import JobChanged, PagesChanged, PageVersionReady
 from bookreviver.domain.ids import JobId, PageId
 from bookreviver.domain.keys import ProjectKeys
@@ -117,7 +126,13 @@ class PageImaging:
 
 
 class PageService:
-    """Pages of the acting account's projects, addressed by identifier, their order, and access to their files."""
+    """Pages of the acting account's projects, addressed by identifier, their order, and access to their files.
+
+    :cvar PAGE_WRITE_ATTEMPTS: How many times a change of one page is read, applied and written when another request
+                               keeps changing the page in between.
+    """
+
+    PAGE_WRITE_ATTEMPTS: ClassVar[int] = 3
 
     def __init__(self, *, uow: UnitOfWork, assets: AssetStore, runtime: PageRuntime, imaging: PageImaging) -> None:
         """Work over the ports of one request or job.
@@ -197,11 +212,34 @@ class PageService:
         :returns: The changed page with its position.
         :rtype: PageOverview
         :raises NotFoundError: If the actor has no such project, or the project has no such page.
+        :raises ConcurrentChangeError: If another request kept changing the page on every one of the attempts.
         """
         await owned_project(self._uow.projects, actor, project_id)
+        # The changes set only the fields they carry, so applying them again to the page another request just wrote
+        # keeps both edits. The rollback drops the stale read, and the next attempt reads the page afresh
+        for _ in range(self.PAGE_WRITE_ATTEMPTS - 1):
+            try:
+                return await self._write_page(project_id, page_id, changes)
+            except ConcurrentChangeError:
+                await self._uow.rollback()
+        return await self._write_page(project_id, page_id, changes)
+
+    async def _write_page(self, project_id: ProjectId, page_id: PageId, changes: PageChanges) -> PageOverview:
+        """Read a page, apply the changes to it, and write and commit it, once.
+
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param page_id: Identifier of the page.
+        :type page_id: PageId
+        :param changes: New values for the fields to change, None keeping a field.
+        :type changes: PageChanges
+        :returns: The changed page with its position.
+        :rtype: PageOverview
+        :raises NotFoundError: If the project has no such page.
+        :raises ConcurrentChangeError: If another request changed the page after it was read.
+        """
         page = changes.apply_to(await self._page(project_id, page_id))
-        changed = evolve(page, updated_at=self._clock.now())
-        await self._uow.pages.update(changed)
+        changed = await self._uow.pages.update(evolve(page, updated_at=self._clock.now()))
         overview = await self._overview(changed)
         await self._finish(project_id, [changed], PageChange.EDITED)
         return overview
@@ -220,8 +258,9 @@ class PageService:
         :param numbering: The range, the style and the first number.
         :type numbering: PageNumbering
         :raises NotFoundError: If the actor has no such project, or the project lacks the first or the last page.
-        :raises ConflictError: If the range runs backwards, or a number does not fit the style, such as 4000 in Roman
-                               numerals.
+        :raises ReversedRangeError: If the range runs backwards.
+        :raises ConflictError: If a number does not fit the style, such as 4000 in Roman numerals.
+        :raises ConcurrentChangeError: If another request changed one of the pages meanwhile, which writes none.
         """
         await owned_project(self._uow.projects, actor, project_id)
         moment = self._clock.now()
@@ -252,7 +291,8 @@ class PageService:
                   that is its label now or not.
         :rtype: list[NumberedPage]
         :raises NotFoundError: If the actor has no such project, or the project lacks the first or the last page.
-        :raises ConflictError: If the range runs backwards, or a number does not fit the style.
+        :raises ReversedRangeError: If the range runs backwards.
+        :raises ConflictError: If a number does not fit the style.
         """
         await owned_project(self._uow.projects, actor, project_id)
         return [
@@ -270,12 +310,13 @@ class PageService:
                   its new label.
         :rtype: list[tuple[Page, str]]
         :raises NotFoundError: If the project lacks the first or the last page.
-        :raises ConflictError: If the range runs backwards, or a number does not fit the style.
+        :raises ReversedRangeError: If the range runs backwards.
+        :raises ConflictError: If a number does not fit the style.
         """
         first = await self._page(project_id, numbering.first_page_id)
         last = await self._page(project_id, numbering.last_page_id)
         if first.order_key.encode() > last.order_key.encode():
-            raise ConflictError(numbering.first_page_id, numbering.last_page_id)
+            raise ReversedRangeError
         pages = await self._uow.pages.list_range(project_id, first.order_key, last.order_key)
         counted = [page for page in pages if page.included and page.kind not in numbering.skip_kinds]
         try:
@@ -369,13 +410,16 @@ class PageService:
         :returns: The page, which now shows the scan.
         :rtype: PageOverview
         :raises NotFoundError: If the actor has no such project, or the project has no such page or scan.
-        :raises ConflictError: If the page is not a placeholder, the scan is not cut yet, or another page shows the scan
-                               and ``take_over`` is not set, the error naming those pages.
+        :raises NotAPlaceholderError: If the page is not a placeholder.
+        :raises ScanAlreadyInBookError: If another page shows the scan and ``take_over`` is not set, the error naming
+                                        those pages by their printed number or position.
+        :raises ConflictError: If the scan is not cut yet.
+        :raises ConcurrentChangeError: If another request changed the page meanwhile.
         """
         await owned_project(self._uow.projects, actor, project_id)
         placeholder = await self._page(project_id, page_id)
         if placeholder.origin is not PageOrigin.PLACEHOLDER:
-            raise ConflictError(page_id, placeholder.origin)
+            raise NotAPlaceholderError
         scan = await self._uow.scans.get(scan_id)
         # A scan of another project is reported like a missing one, as a page of another project is
         if scan.project_id != project_id:
@@ -384,7 +428,12 @@ class PageService:
             raise ConflictError(SCAN_NOT_CUT)
         taken = await self._uow.pages.list_for_scan(scan_id)
         if taken and not take_over:
-            raise ConflictError(*(page.id for page in taken))
+            raise ScanAlreadyInBookError(
+                [
+                    f'p. {page.label}' if page.label else f'position {await self._uow.pages.count_before(page) + 1}'
+                    for page in taken
+                ]
+            )
         for page in taken:
             await self._uow.pages.delete(page.id)
         moment = self._clock.now()
@@ -509,6 +558,7 @@ class PageService:
         :rtype: PageOverview
         :raises NotFoundError: If the actor has no such project, or the project has no such page or anchor.
         :raises ConflictError: If the anchor is the page itself, or another request took the new place first.
+        :raises ConcurrentChangeError: If another request changed the page meanwhile.
         """
         await owned_project(self._uow.projects, actor, project_id)
         [moved] = await self._place(project_id, [await self._page(project_id, page_id)], anchor)
@@ -532,6 +582,7 @@ class PageService:
         :type anchor: PageAnchor
         :raises NotFoundError: If the actor has no such project, or the project lacks a page or the anchor.
         :raises ConflictError: If the anchor is one of the pages, or another request took a new place first.
+        :raises ConcurrentChangeError: If another request changed one of the pages meanwhile, which moves none.
         """
         await owned_project(self._uow.projects, actor, project_id)
         await self._move_run(project_id, await self._uow.pages.list_by_ids(project_id, page_ids), anchor)
@@ -551,6 +602,7 @@ class PageService:
         :type anchor: PageAnchor
         :raises NotFoundError: If the actor has no such project, or the project has no such source or anchor.
         :raises ConflictError: If the anchor is a page of the source, or another request took a new place first.
+        :raises ConcurrentChangeError: If another request changed one of the pages meanwhile, which moves none.
         """
         await owned_project(self._uow.projects, actor, project_id)
         # A source of another project is reported like a missing one, as a page of another project is

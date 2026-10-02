@@ -3,6 +3,8 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from bookreviver.domain.enums import UploadProblem
 
 
@@ -38,6 +40,60 @@ class AnchorInsideMovedPagesError(ConflictError):
     def __init__(self) -> None:
         """Report the conflict with its fixed sentence."""
         super().__init__('The place chosen is one of the pages being moved. Choose a page that stays where it is.')
+
+
+class ConcurrentChangeError(ConflictError):
+    """A row was changed by another transaction after this one read it, so writing it would lose that change.
+
+    The message is a sentence for the person whose request lost the race, which the API sends as the detail of the
+    problem.
+    """
+
+    def __init__(self) -> None:
+        """Report the conflict with its fixed sentence."""
+        super().__init__('The pages changed while this ran. The book now shows them as they are. Try again.')
+
+
+class ReversedRangeError(ConflictError):
+    """A numbering runs from a page that stands after its last page.
+
+    The message is a sentence for the person numbering the pages, which the API sends as the detail of the problem.
+    """
+
+    def __init__(self) -> None:
+        """Report the conflict with its fixed sentence."""
+        super().__init__('The numbering runs from a later page to an earlier one.')
+
+
+class NotAPlaceholderError(ConflictError):
+    """A scan is bound to a page that is not a placeholder, which is the only kind of page that waits for a scan.
+
+    The message is a sentence for the person binding the scan, which the API sends as the detail of the problem.
+    """
+
+    def __init__(self) -> None:
+        """Report the conflict with its fixed sentence."""
+        super().__init__('Only a missing page can take a scan.')
+
+
+class ScanAlreadyInBookError(ConflictError):
+    """A scan is bound to a placeholder while other pages of the book show it already.
+
+    The message names those pages by their printed number or position, which the API sends as the detail of the
+    problem.
+
+    :ivar places: How each page that shows the scan is named to the person, in book order.
+    """
+
+    def __init__(self, places: Sequence[str]) -> None:
+        """Report the conflict with the places of the pages that show the scan.
+
+        :param places: Printed number or position of each page that shows the scan, such as ``p. 12``.
+        :type places: Sequence[str]
+        """
+        noun = 'a page' if len(places) == 1 else 'pages'
+        super().__init__(f'This scan is already {noun} of the book: {", ".join(places)}.')
+        self.places = places
 
 
 class UnsupportedTransformError(DomainError):

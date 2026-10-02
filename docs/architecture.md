@@ -386,6 +386,7 @@ split the scan again. The identity of a page is stable: reordering, splitting ag
 | `included`                 | `bool`           | Whether the page is part of the book                                          |
 | `notes`                    | `str`            | Notes of the user                                                             |
 | `created_at`, `updated_at` | `datetime`       | When the page was created and last changed                                    |
+| `revision`                 | `int`            | Writes of the stored page since it was added, which the next write must match |
 
 `PageKind` is `cover`, `back-cover`, `endpaper`, `frontispiece`, `title`, `text`, `plate`, `blank` or `other`. A
 `scan` page holds a copy of a part of a scan, a `blank` page holds a generated blank leaf, and a `placeholder` holds
@@ -597,8 +598,29 @@ from are not stored. Four things write it:
   skipped kind take no number and keep their label, because the plates of an old book usually stand outside its
   pagination, and a page outside the range keeps its label as well. The style `none` erases the labels of the range.
   Only the pages whose label changes are written, and one `PagesChanged` of kind `edited` follows. The range may not run
-  backwards, and a Roman style stops at 3999, so a numbering that would pass it is a 409 and the first number of a
-  Roman range above it is a 422.
+  backwards, which is a `ReversedRangeError`, and a Roman style stops at 3999, so a numbering that would pass it is a
+  409 and the first number of a Roman range above it is a 422.
+
+A page row carries a `revision`, which makes a write over a change the writer never read fail instead of replacing it.
+The table declares the column as SQLAlchemy's version counter (`version_id_col`), so every `UPDATE` carries
+`WHERE id = ? AND revision = ?` and raises the revision by one, and a row inserted starts at zero, the value the
+migration gives the rows that existed. The counter alone does not catch the lost update, because advanced-alchemy's
+`update` loads the row again at the write and the session keeps no row nothing refers to, so the row it loads is
+always the current one. `SqlAlchemyPageRepository.update` therefore compares the revision of the page it was given
+with the revision of the row it loads, and the counter covers the time from that load to the `UPDATE`. Both
+report a `ConcurrentChangeError`, a `ConflictError` whose sentence tells the person to try again, and the in-memory
+adapter checks the revision of the committed row in `update` the same way, which one contract test runs against both
+adapters. `PageService.update` catches it, rolls the unit of work back and reads, applies and writes again, up to
+`PAGE_WRITE_ATTEMPTS` (3) times, which keeps both edits because `PageChanges` sets only the fields it carries, so
+the person never sees the race. A number, a move and the binding of a scan write many rows or depend
+on the order, so they are not retried: the error is the 409 of the person's request, nothing of it is committed, and
+the interface reads the book again.
+
+Every 409 of a page action says its reason in a sentence of its own, and none carries an identifier: a
+`ReversedRangeError` for a numbering that runs from a later page to an earlier one, a `NotAPlaceholderError` for a scan
+bound to a page that is not a placeholder, a `ScanAlreadyInBookError` for a scan another page shows, which names those
+pages by their printed number (`p. 12`) or their position, and an `AnchorInsideMovedPagesError` for a move next to a
+page that is moving.
 - **`LabelStyle.write`.** The Roman numerals are a dozen lines in the domain, because the domain imports only the
   standard library and the `roman` package would be its one dependency for a function that small.
 
@@ -1778,6 +1800,13 @@ The book model rests on these decisions, each with its reason.
     the way leaves versions that are old and read by nothing, which the next collection chooses again. Deleting an input
     that a surviving version reads is never done, since the database would set its input to none and make it look like
     a base version that nothing may delete.
+
+44. **A page has a revision, and a single edit is retried.** Two requests that read one page and write it whole lose
+    one edit, so the row counts its writes and a write over another revision is refused. A single edit is applied again
+    to the fresh page, three times at most, because its changes touch only the fields they carry. A batch, a move or a
+    scan binding is not retried, since what it computed from the pages it read may no longer hold, and it answers 409
+    instead. A conditional `UPDATE` with a check of the row count was refused, because SQLAlchemy's counter writes the
+    same statement and raises `StaleDataError` itself.
 
 Smaller technical choices follow the same model. Languages are ISO 639-3 codes, XMP is parsed with defusedxml, the
 parameters of processing jobs are kept in `Job.params`, a DjVu source suggests a publication year only from its
