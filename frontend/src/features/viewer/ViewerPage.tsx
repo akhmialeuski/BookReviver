@@ -103,7 +103,7 @@ export function ViewerPage({
   const shownIds = new Set(shown.map((page) => page.id));
 
   return (
-    <div className="flex h-[calc(100dvh-3.5rem)] min-h-96 flex-col">
+    <div className="flex h-full min-h-96 flex-col">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 pt-2">
         <Link
           to="/projects/$projectId"

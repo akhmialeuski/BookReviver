@@ -2,20 +2,27 @@ import type { QueryClient } from '@tanstack/react-query';
 import type { JobSchema, JobState } from '@/api';
 import { readJobApiV1JobsJobIdGetQueryKey } from '@/api/@tanstack/react-query.gen';
 import {
+  invalidateAllStageRows,
+  invalidateJobs,
   invalidatePages,
   invalidateProject,
   invalidateProjectList,
   invalidateScans,
   invalidateSources,
+  invalidateStageRows,
+  invalidateStageSummary,
 } from '@/features/projects/queries';
+import { parseStage } from '@/features/stages/parse';
+import { Coalescer } from '@/shared/lib/coalescer';
 
 /**
  * What the events of a project do to the cached queries.
  *
- * The server pushes events when a job changes, a source is imported, a scan becomes ready, pages change or the
- * description changes. A job event carries the whole job, so it is written straight into the query of that job and
- * the progress bar moves without a request. The other events only say that something changed, so they mark the
- * affected queries stale, and TanStack Query refetches the ones a screen is showing.
+ * The server pushes events when a job changes, a source is imported, a scan becomes ready, pages change, a page
+ * changes in a stage or the description changes. A job event carries the whole job, so it is written straight into the
+ * query of that job. The other events only say that something changed, so they mark the affected queries stale, and
+ * TanStack Query refetches the ones a screen is showing. A run sends an event per page and per job step, so the
+ * queries of the stage bar, the strip and the activity are marked stale once per burst, not once per event.
  */
 
 /** Names of the server-sent events, as `EventName` of the backend spells them. */
@@ -25,8 +32,14 @@ export const EventName = {
   ScanReady: 'scan-ready',
   PagesChanged: 'pages-changed',
   PageVersionReady: 'page-version-ready',
+  PageStageChanged: 'page-stage-changed',
   ProjectChanged: 'project-changed',
 } as const;
+
+/** How long the first event of a burst waits for the rest before the queries it affects are read again. */
+export const BURST_DELAY_MS = 400;
+
+const bursts = new Coalescer(BURST_DELAY_MS);
 
 /** One event received from the stream. */
 export interface ProjectEvent {
@@ -74,6 +87,9 @@ export async function refreshProject(queryClient: QueryClient, projectId: string
     invalidateScans(queryClient, projectId),
     invalidateProjectList(queryClient),
     invalidatePages(queryClient, projectId),
+    invalidateStageSummary(queryClient, projectId),
+    invalidateAllStageRows(queryClient, projectId),
+    invalidateJobs(queryClient, projectId),
   ]);
 }
 
@@ -90,7 +106,9 @@ export function applyProjectEvent(
           readJobApiV1JobsJobIdGetQueryKey({ path: { job_id: event.data.id } }),
           event.data,
         );
-        if (!isActiveJob(event.data)) {
+        if (isActiveJob(event.data)) {
+          bursts.schedule(`${projectId}/jobs`, () => void invalidateJobs(queryClient, projectId));
+        } else {
           void refreshProject(queryClient, projectId);
         }
       }
@@ -110,7 +128,23 @@ export function applyProjectEvent(
       void invalidatePages(queryClient, projectId);
       void invalidateProject(queryClient, projectId);
       void invalidateProjectList(queryClient);
+      // Pages added, removed or moved change the counts of every stage and the order of its rows
+      void invalidateStageSummary(queryClient, projectId);
+      void invalidateAllStageRows(queryClient, projectId);
       break;
+    case EventName.PageStageChanged: {
+      const stage = isRecord(event.data) ? parseStage(event.data.stage) : null;
+      if (stage !== null) {
+        bursts.schedule(`${projectId}/stage/${stage}`, () => {
+          void invalidateStageSummary(queryClient, projectId);
+          void invalidateStageRows(queryClient, projectId, stage);
+          // The status of each stage and the next stage are part of the book, and its card in the library
+          void invalidateProject(queryClient, projectId);
+          void invalidateProjectList(queryClient);
+        });
+      }
+      break;
+    }
     case EventName.PageVersionReady:
       // The image of a blank leaf or of a bound scan is written by a job, and its path appears in the manifest
       void invalidatePages(queryClient, projectId);
