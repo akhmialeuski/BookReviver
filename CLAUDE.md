@@ -3,9 +3,8 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 BookReviver digitises old printed books, mainly pre-reform Russian and Belarusian. One project is one book, moving
-through stages that stay viewable and re-runnable at any time. `docs/architecture.md` is the source of truth for
-structure, ports, adapters, API and delivery plan. Read it before any change, and update it in the same pull request
-when a change alters what it describes.
+through stages that stay viewable and re-runnable at any time. The rules below and the import-linter contracts in the
+gate describe the structure the code keeps, and the OpenAPI schema in `docs/openapi.json` describes the API.
 
 ## Commands
 
@@ -31,7 +30,7 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 
 - Before any task, find how the library in use already does it and how the community does it: its documentation,
   its bundled agent guides (FastAPI ships `fastapi/.agents/skills/fastapi/SKILL.md` in the virtual environment),
-  then established packages. The "Libraries" table in `docs/architecture.md` lists what each concern reuses.
+  then established packages. `pyproject.toml` and `frontend/package.json` list what the project already depends on.
 - Write only what is specific to BookReviver. A pull request that re-implements something a dependency offers
   states why the dependency does not fit.
 - FastAPI specifics: `Annotated` dependency aliases, prefix and tags on the `APIRouter`, return types instead of
