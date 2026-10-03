@@ -85,7 +85,8 @@ Run these once on a new machine, in this order, from the root of the repository.
   `uv run bookreviver-migrate upgrade head`, after copying `data/` if it holds anything worth keeping. Until then the
   server refuses to start and names this command.
 - A change of `pyproject.toml` or `uv.lock` needs `uv sync --extra cv`. Plain `uv sync` removes OpenCV, and the server
-  then starts without the steps that split a spread and straighten a page.
+  then starts without the steps that split a spread and straighten a page. With the pre-commit hooks installed, the
+  `uv-sync` hook does this by itself after every checkout, merge and rebase, with every optional group.
 - A change under `frontend/` needs `npm --prefix frontend ci` and `npm --prefix frontend run build`.
 - A new route or schema of the API needs `uv run bookreviver-openapi`, then `npm --prefix frontend run generate`, and
   both results are committed.
@@ -277,7 +278,8 @@ uv run pre-commit run --all-files
 ```
 
 The `ty` hook needs OpenCV to resolve the processing plugins. Run the checks in an environment made with
-`uv sync --extra cv`, and tell `uv run` not to change it with `UV_NO_SYNC=1`:
+`uv sync --extra cv`, and tell `uv run` not to change it with `UV_NO_SYNC=1`. The `uv-sync` hook keeps every optional
+group installed after a checkout, a merge or a rebase, so a change of branch does not take OpenCV away:
 
 ```bash
 uv sync --extra cv
