@@ -2,8 +2,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PLACEMENT_KEY } from '@/features/editors/placement';
 import { processing } from '@/features/processing/fixtures';
 import { MeasureBook } from '@/features/processing/MeasureBook';
+import type { StepDraft } from '@/features/processing/recipe';
+import type { Processing } from '@/features/processing/useProcessing';
 
 /**
  * The button that measures the book, in the panel of the normalize step: it asks the server for the job, and waits while
@@ -28,11 +31,16 @@ describe('MeasureBook', () => {
   let root: Root;
   let client: QueryClient;
 
-  function render(dirty = false): void {
+  function render(
+    dirty = false,
+    params: Record<string, unknown> = {},
+    change: Processing['change'] = () => undefined,
+  ): void {
+    const step: StepDraft = { id: 'step-0', processorKey: PLACEMENT_KEY, params, enabled: true };
     act(() =>
       root.render(
         <QueryClientProvider client={client}>
-          <MeasureBook processing={processing({ dirty })} />
+          <MeasureBook processing={processing({ dirty, change })} step={step} />
         </QueryClientProvider>,
       ),
     );
@@ -73,6 +81,26 @@ describe('MeasureBook', () => {
 
     expect(container.querySelector<HTMLButtonElement>(BUTTON)?.disabled).toBe(true);
     expect(container.textContent).toContain('Save the recipe before measuring the book.');
+  });
+
+  it('offers no way back while the margins are measured', () => {
+    render(false, { margins_source: 'measured' });
+
+    expect(container.querySelector('[data-testid="use-measured-margins"]')).toBeNull();
+  });
+
+  it('offers to use the measured margins again once they are set by hand, and keeps every other setting', () => {
+    const change = vi.fn();
+    render(false, { margins_source: 'manual', margin_top: 40, page_width: 900 }, change);
+
+    expect(container.textContent).toContain('The margins are set by hand');
+    container.querySelector<HTMLButtonElement>('[data-testid="use-measured-margins"]')?.click();
+
+    expect(change).toHaveBeenCalledWith('step-0', {
+      margins_source: 'measured',
+      margin_top: 40,
+      page_width: 900,
+    });
   });
 
   it('waits while another job of the book is going', async () => {

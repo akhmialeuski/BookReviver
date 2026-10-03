@@ -132,7 +132,7 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Geometry     | `Point`, `Size`, `Rect`, `Quad`, `Line`, `Rotation` and `Transform` in `domain/geometry.py`   |
 | Edits        | `PageEdit` with its `EditorKind` and a shape (`Rect`, `Quad`, `Line`, `Rotation`) or a mask   |
 | Events       | `JobChanged`, `SourceImported`, `ScanReady`, `PagesChanged`, `PageVersionReady`, and others   |
-| Jobs         | `Job`, `JobKind` (the import, the preparing of pages, the four processing jobs and the measure of the book), `JobState` |
+| Jobs         | `Job`, `JobKind` (the import, the preparing of pages, the four processing jobs and the measure of the book, which is a processing job too), `JobState` |
 |              | `Progress`, `WorkerPool`                                                                      |
 | Imports      | `ImportRequest`, `ImportResult`, `RejectedFile`, `RejectionReason`, `UploadProblem`           |
 |              | `UploadPath` (a checked relative path), `SystemFile` (names an operating system adds)         |
@@ -861,8 +861,9 @@ erDiagram
   `ix_jobs_one_active_prepare` on `project_id` `WHERE kind = 'prepare-pages' AND state IN ('queued', 'running')` does
   the same for the jobs that write page images, and an import and a prepare job of one project do not collide. The
   partial unique index `ix_jobs_one_active_processing` on `project_id` `WHERE kind IN ('collect-versions', 'cut-tiles',
-  'preview-step', 'run-stage') AND state IN ('queued', 'running')` keeps a project to one job that processes the
-  versions of its pages, so two runs never write the same files and a collection never deletes what a run reuses.
+  'measure-book', 'preview-step', 'run-stage') AND state IN ('queued', 'running')` keeps a project to one job that
+  processes the versions of its pages, so two runs never write the same files, a collection never deletes what a run
+  reuses, and a measure of the book never reads versions a run is writing or rewrites parameters a run has read.
 - `page_versions` has the primary key `id`, `page_id` with `ON DELETE CASCADE`, `input_id` with `ON DELETE SET NULL`,
   and an index on `(page_id, stage)`. Its columns are `stage`, `processor_key`, `processor_version`, `params`,
   `transform` and `data` as JSON, `renditions_ready`, `renditions_full`, `state`, `scale` (`full` or `preview`),
@@ -1133,14 +1134,19 @@ indistinguishable to the application.
   which is what its editor draws on, and the line height the page has after scaling. The transform is `place`, the
   scaling and the shift of the block. The parameter model refuses margins that leave no room for text.
 - Measuring the book is the `measure-book` job, `POST /projects/{id}/stages/geometry/measure`, answered 202 with the
-  job. It is not one of the jobs of the partial unique index of the processing jobs, since it writes a recipe and no
-  version, but the request is refused with 409 while one of those is queued or running, because it reads the versions
-  they write. The entry point `measure_book` in `app/worker.py` calls `ProcessingJobs.measure_book`, which calls
+  job. It is one of the processing jobs (`JobKind.processing()`, the rows of the partial unique index
+  `ix_jobs_one_active_processing`, added by a hand-written revision since autogenerate does not compare the condition of
+  a partial index), so the request is refused with 409 while a run, a preview, a tile cutting, a collection or another
+  measure is queued or running, because it reads the versions they write, and a run, a preview or any of the others
+  is refused with the same 409 ("The project is processing something ...") while a measure is queued or running, because
+  the measure rewrites the parameters a run reads. The entry point `measure_book` in `app/worker.py` calls `ProcessingJobs.measure_book`, which calls
   `BookMeasure.run` (`services/book_measure.py`). That follows the chain of the current version of the Geometry stage of
   each page back to its `geometry.crop` version, reads `frame` and `line_height_px`, brings each block to the median
   line height as `geometry.normalize` will, and writes into the normalize step of the active Geometry recipe the median
-  `line_height`, the margins (8 % of the median block height at the top, 10 % at the bottom, 10 % of its width at the
-  gutter, 8 % outside, in pixels) and a page of the median block plus the margins. The recipe is stored through
+  `line_height` and a page of the median block plus the margins, always. The margins (8 % of the median block height at
+  the top, 10 % at the bottom, 10 % of its width at the gutter, 8 % outside, in pixels) are written only while
+  `margins_source` of the step is `measured` (the default, `MarginsSource` in `domain/enums.py`). With `manual` the
+  margins the step has stay as the user set them and the page is the median block plus those margins. The recipe is stored through
   `RecipeBook.rewrite`, so the bounds of the parameters are checked, and `StageRecords.mark_recipe_stale` marks the pages
   the recipe processed stale, which is what any change of a recipe does. A measure that finds the numbers the step has
   changes nothing. The job fails with the reason when the recipe has no normalize step or no page was cut yet.
@@ -1966,7 +1972,10 @@ The project list counts in `page_count` the included pages of the book, and show
     `POST .../stages/geometry/measure`. It waits while the draft is not saved, since the job writes the saved recipe,
     and while a job of the book is going. When the job ends the event of the job (`kind` `measure-book`) makes the
     recipes of the stage be read again (`invalidateRecipes`), the step stays open, and the form shows the new line
-    height, page size and margins. The pages the recipe made go out of date and the stage bar says so.
+    height, page size and margins. The pages the recipe made go out of date and the stage bar says so. Changing any of
+    the four margins in the form switches `margins_source` to `manual` (`withMarginsSource` in `margins.ts`, called by
+    `setStepParams`), and while it is `manual` the panel says so and offers "Use measured margins", which sets the
+    source back to `measured` in the draft, so the next measure fills the margins in again.
   - An edit is saved with `PUT .../pages/{page_id}/edits/{stage}/{processor_key}` when the handle is let go, the field is
     left or a pause follows the keys or the wheel, and then the stage is run on that one page with the recipe on screen, whose
     processor reads the edit. The run waits while another job of the book is going, or while a run sent from any control

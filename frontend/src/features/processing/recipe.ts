@@ -1,5 +1,6 @@
 import { arrayMove } from '@dnd-kit/sortable';
 import type { ProcessorSchema, RecipeSchema, StagePageSchema, StepBody } from '@/api';
+import { withMarginsSource } from '@/features/processing/margins';
 import { defaultsOf, formSchemaOf } from '@/features/processing/schema';
 
 /**
@@ -65,13 +66,20 @@ export function removeStep(steps: readonly StepDraft[], id: string): StepDraft[]
   return steps.filter((step) => step.id !== id);
 }
 
-/** Replace the parameters of a step with what its form holds. */
+/**
+ * Replace the parameters of a step with what its form holds. A change of a margin of the normalize step also marks its
+ * margins as set by hand, so the next measure of the book leaves them.
+ */
 export function setStepParams(
   steps: readonly StepDraft[],
   id: string,
   params: Record<string, unknown>,
 ): StepDraft[] {
-  return steps.map((step) => (step.id === id ? { ...step, params } : step));
+  return steps.map((step) =>
+    step.id === id
+      ? { ...step, params: withMarginsSource(step.processorKey, step.params, params) }
+      : step,
+  );
 }
 
 /**

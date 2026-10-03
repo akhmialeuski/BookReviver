@@ -29,6 +29,7 @@ from bookreviver.domain.enums import (
     ColorMode,
     HorizontalAlign,
     MarginsBy,
+    MarginsSource,
     PageSide,
     PaperFill,
     ProcessorScope,
@@ -76,6 +77,8 @@ NO_ROOM: str = 'The margins leave no room for text on the page: they take {margi
 class NormalizeParams(Params):
     """How the block of text is scaled and where it is put on the page.
 
+    :ivar margins_source: Whether measuring the book writes the four margins, or the user set them and the measure
+                          leaves them as they are. The step itself places the block by the margins either way.
     :ivar line_height: Target distance between the lines of text in pixels, 0 to keep the size of the text.
     :ivar max_scale_change: How far the line height of a page may be from the target, in percent of the target, before
                             the page is left unscaled and marked for review.
@@ -91,6 +94,12 @@ class NormalizeParams(Params):
     :ivar fill: What fills the page round the block.
     """
 
+    margins_source: MarginsSource = Field(
+        default=MarginsSource.MEASURED,
+        title='Margins',
+        description='measured lets Measure the book fill in the four margins, manual keeps the margins you set '
+        'and the measure leaves them as they are',
+    )
     line_height: float = Field(
         default=0.0,
         ge=0,

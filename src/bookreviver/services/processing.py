@@ -217,7 +217,8 @@ class ProcessingService:
         :rtype: Job
         :raises NotFoundError: If the actor has no such project, or the project has no such recipe, stage recipe or
                                page.
-        :raises ConflictError: If a run, a preview, a tile cutting or a collection of the project is queued or running.
+        :raises ConflictError: If a run, a preview, a tile cutting, a collection or a measure of the project is queued
+                               or running.
         """
         await owned_project(self._uow.projects, actor, project_id)
         if run.recipe_id is None:
@@ -238,8 +239,8 @@ class ProcessingService:
         :returns: The queued job.
         :rtype: Job
         :raises NotFoundError: If the actor has no such project, or the Geometry stage has no recipe.
-        :raises ConflictError: If a run, a preview, a tile cutting or a collection of the project is queued or running,
-                               which may be writing the versions that are measured.
+        :raises ConflictError: If a run, a preview, a tile cutting, a collection or a measure of the project is queued
+                               or running, which may be writing the versions that are measured or the recipe.
         """
         await owned_project(self._uow.projects, actor, project_id)
         await self._recipes.active(project_id, Stage.GEOMETRY)
@@ -258,7 +259,8 @@ class ProcessingService:
         :rtype: Job
         :raises NotFoundError: If the actor has no such project, or the project has no such page.
         :raises InvalidParametersError: If a step does not fit its processor.
-        :raises ConflictError: If a run, a preview, a tile cutting or a collection of the project is queued or running.
+        :raises ConflictError: If a run, a preview, a tile cutting, a collection or a measure of the project is queued
+                               or running.
         """
         await owned_project(self._uow.projects, actor, project_id)
         await self._page(project_id, preview.page_id)
