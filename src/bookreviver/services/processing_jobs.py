@@ -9,7 +9,8 @@ the pinned one, else the one of the first matching rule, else the active one (``
 version of the nearest earlier stage of a page, finds the versions it made before by their identifier, makes only what
 is new, and makes the last version the current one of the stage. A page that fails is recorded as failed and the job
 goes on to the next, and the job succeeds when it processed at least one page. When it ends it queues a collection of
-the project's old versions, so old versions go by their age without the user asking.
+the project's old versions, so old versions go by their age without the user asking. The collection is stored in the
+same commit as the end of the run, so the project is never free between the two.
 
 A measure of the book reads the versions of the crop of every page and writes the parameters of the normalize step of
 the active Geometry recipe, which marks the pages of that recipe stale.
@@ -98,11 +99,15 @@ class ProcessingJobs:
             if outcomes is None:
                 return
             done, failed, total = outcomes
-            if failed and not done:
-                await self._tracker.finish(job, JobState.FAILED, error=NO_PAGE_PROCESSED, total=total)
-            else:
-                await self._tracker.finish(job, JobState.SUCCEEDED, total=total)
-            await self._starter.enqueue_collection(job.project_id)
+            no_page = bool(failed) and not done
+            # The collection is stored with the end of the run, so the project is never free in between
+            await self._tracker.finish(
+                job,
+                JobState.FAILED if no_page else JobState.SUCCEEDED,
+                error=NO_PAGE_PROCESSED if no_page else '',
+                total=total,
+                follow_up=self._starter.new_collection(job.project_id),
+            )
 
     async def preview_step(self, job_id: JobId) -> None:
         """Run a ``preview-step`` job: the steps of a form on the previews of a page, up to one of them.

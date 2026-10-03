@@ -8,7 +8,6 @@ import {
   registerAndSignIn,
   snap,
   uploadFolder,
-  waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
 
@@ -86,8 +85,6 @@ test('plates get their own variant by a rule, a pinned variant survives a run on
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });
-    // The collection of old versions that follows the run refuses what the next step asks while it is queued or going
-    await waitForIdleJobs(page, openProjectId(page));
   };
   let bookPath = '';
   // The names of the two variants, read from the book once it is open: the active recipe, and the copy made of it
@@ -168,8 +165,7 @@ test('plates get their own variant by a rule, a pinned variant survives a run on
     await expect(first).toHaveAttribute('data-pinned', 'true');
     await expect(page.getByTestId('page-variant-source')).toHaveText('Pinned to this page');
 
-    // The run that pinned the variant is over, with the collection that follows it, once the book has no job to wait for
-    await waitForIdleJobs(page, openProjectId(page));
+    // The run that pinned the variant is over once the menu of the run is free again
     await expect(page.getByTestId('run-menu')).toBeEnabled({ timeout: RUN_TIMEOUT_MS });
     await page.getByTestId('recipe-select').selectOption({ index: 0 });
     await runAll();

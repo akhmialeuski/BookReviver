@@ -34,7 +34,7 @@ CROP_KEY: str = 'geometry.crop'
 NORMALIZE_KEY: str = 'geometry.normalize'
 VERSION_ID_DIGITS: int = 16
 FIRST_KEY: str = 'a0'
-BUSY_MESSAGE: str = 'processing something'
+BUSY_MESSAGE: str = 'project is busy'
 # The pages of the first test: a block and a line height each, the block being the same size when the lines are brought
 # to the median one, which is 30 pixels, so the median block is 300 by 600
 BLOCKS: tuple[tuple[float, float, float], ...] = ((200, 400, 20), (300, 600, 30), (400, 800, 40))

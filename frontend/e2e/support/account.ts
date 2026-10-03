@@ -18,17 +18,6 @@ export const PASSWORD = 'correct horse battery staple';
 const PAGE_SIZE = 40;
 const IMPORT_TIMEOUT_MS = 60_000;
 const JOBS_TIMEOUT_MS = 90_000;
-const ACTIVE_JOB_STATES: ReadonlySet<string> = new Set(['queued', 'running']);
-const RUN_JOB_KIND = 'run-stage';
-// The states a run ends in that are followed by a collection of old versions; a cancelled run is not
-const ENDED_RUN_STATES: ReadonlySet<string> = new Set(['succeeded', 'failed']);
-
-/** The fields of a job in the list of the jobs of a book that the scenarios read. */
-interface JobRow {
-  kind: string;
-  state: string;
-  created_at: string;
-}
 // The most pages one batch request adds, which is the limit of the server
 const PAGES_PER_BATCH = 1000;
 
@@ -262,25 +251,22 @@ export async function readPlace(
  * Wait until the book has no job queued or running, as the server counts them.
  *
  * A scenario that changes something a run reads, one change after another, waits with this between them, since the server
- * refuses a run while another is going and the screen cannot know of a job before it is told. A run that ended well or
- * badly queues a collection of the old versions a moment after it ends, and the list of active jobs is empty in that
- * moment, so a run that is the newest job of the book is not yet the end of its work.
+ * refuses a run while another is going and the screen cannot know of a job before it is told. The collection of old
+ * versions that follows a run is stored with the end of the run, so the list is never empty between the two.
  */
 export async function waitForIdleJobs(page: Page, projectId: string): Promise<void> {
   await expect
     .poll(
       async () => {
-        const response = await page.request.get(`/api/v1/projects/${projectId}/jobs?size=20`);
-        const { items } = (await response.json()) as { items: JobRow[] };
-        const newest = items.toSorted((a, b) => b.created_at.localeCompare(a.created_at))[0];
-        const working = items.some((job) => ACTIVE_JOB_STATES.has(job.state));
-        const collectionPending =
-          newest?.kind === RUN_JOB_KIND && ENDED_RUN_STATES.has(newest.state);
-        return !working && !collectionPending;
+        const response = await page.request.get(
+          `/api/v1/projects/${projectId}/jobs?active=true&size=20`,
+        );
+        const body = (await response.json()) as { items: unknown[] };
+        return body.items.length;
       },
       { timeout: JOBS_TIMEOUT_MS },
     )
-    .toBe(true);
+    .toBe(0);
 }
 
 /** Send a mutating request to the API as the signed-in reader, with the CSRF header the browser would add. */

@@ -103,7 +103,7 @@ class TestChooseVersion:
         """
         actor, project, page, first = await ran_geometry(fx_kit)
         await fx_kit.service().start_collection(actor, project.id)
-        with pytest.raises(ConflictError, match='processing something'):
+        with pytest.raises(ConflictError, match='project is busy'):
             await fx_kit.service().choose_version(actor, project.id, page.id, Stage.GEOMETRY, first.id)
 
     async def test_old_versions_are_kept_when_a_later_one_is_chosen(self, fx_kit: ProcessingKit) -> None:

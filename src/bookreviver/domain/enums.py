@@ -788,7 +788,28 @@ class JobKind(LabeledStrEnum):
         :returns: The kinds of the processing jobs.
         :rtype: frozenset[JobKind]
         """
-        return frozenset({cls.RUN_STAGE, cls.PREVIEW_STEP, cls.CUT_TILES, cls.COLLECT_VERSIONS, cls.MEASURE_BOOK})
+        return cls.requested() | cls.housekeeping()
+
+    @classmethod
+    def requested(cls) -> frozenset[JobKind]:
+        """Return the kinds of processing job that the user asks for, of which a project has one queued or running.
+
+        :returns: A run, a preview and a measure of the book.
+        :rtype: frozenset[JobKind]
+        """
+        return frozenset({cls.RUN_STAGE, cls.PREVIEW_STEP, cls.MEASURE_BOOK})
+
+    @classmethod
+    def housekeeping(cls) -> frozenset[JobKind]:
+        """Return the kinds of processing job that the application queues for itself, of which a project has one.
+
+        A job of these kinds never refuses what the user asks for. The request is stored and waits, and starts when
+        the housekeeping job ends.
+
+        :returns: A tile cutting and a collection of old versions.
+        :rtype: frozenset[JobKind]
+        """
+        return frozenset({cls.CUT_TILES, cls.COLLECT_VERSIONS})
 
 
 class JobState(LabeledStrEnum):

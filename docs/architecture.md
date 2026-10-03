@@ -868,10 +868,13 @@ erDiagram
   both adapters report its violation as a `ConflictError` when the job is added. The partial unique index
   `ix_jobs_one_active_prepare` on `project_id` `WHERE kind = 'prepare-pages' AND state IN ('queued', 'running')` does
   the same for the jobs that write page images, and an import and a prepare job of one project do not collide. The
-  partial unique index `ix_jobs_one_active_processing` on `project_id` `WHERE kind IN ('collect-versions', 'cut-tiles',
-  'measure-book', 'preview-step', 'run-stage') AND state IN ('queued', 'running')` keeps a project to one job that
-  processes the versions of its pages, so two runs never write the same files, a collection never deletes what a run
-  reuses, and a measure of the book never reads versions a run is writing or rewrites parameters a run has read.
+  partial unique indexes on `project_id` keep a project to one job that processes the versions of its pages at a time.
+  `ix_jobs_one_active_requested` covers `kind IN ('measure-book', 'preview-step', 'run-stage')` and
+  `ix_jobs_one_active_housekeeping` covers `kind IN ('collect-versions', 'cut-tiles')`, each `AND state IN ('queued',
+  'running')`, and `ix_jobs_one_running_processing` covers all five kinds `AND state = 'running'`. So two runs never
+  write the same files, a collection never deletes what a run reuses, and a measure never reads versions a run is
+  writing or rewrites parameters a run has read, since at most one of them runs, while a job of the other group may be
+  stored beside the running one and wait as queued.
 - `page_versions` has the primary key `id`, `page_id` with `ON DELETE CASCADE`, `input_id` with `ON DELETE SET NULL`,
   and an index on `(page_id, stage)`. Its columns are `stage`, `processor_key`, `processor_version`, `params`,
   `transform` and `data` as JSON, `renditions_ready`, `renditions_full`, `state`, `scale` (`full` or `preview`),
@@ -1182,12 +1185,10 @@ indistinguishable to the application.
   which is what its editor draws on, and the line height the page has after scaling. The transform is `place`, the
   scaling and the shift of the block. The parameter model refuses margins that leave no room for text.
 - Measuring the book is the `measure-book` job, `POST /projects/{id}/stages/geometry/measure`, answered 202 with the
-  job. It is one of the processing jobs (`JobKind.processing()`, the rows of the partial unique index
-  `ix_jobs_one_active_processing`, added by a hand-written revision since autogenerate does not compare the condition of
-  a partial index), so the request is refused with 409 while a run, a preview, a tile cutting, a collection or another
-  measure is queued or running, because it reads the versions they write, and a run, a preview or any of the others
-  is refused with the same 409 ("The project is processing something ...") while a measure is queued or running, because
-  the measure rewrites the parameters a run reads. The entry point `measure_book` in `app/worker.py` calls `ProcessingJobs.measure_book`, which calls
+  job. It is one of the jobs the user asks for (`JobKind.requested()`, with a run and a preview), so the request is
+  refused with 409 while a run, a preview or another measure is queued or running, because it reads the versions they
+  write and rewrites the parameters a run reads. During a tile cutting or a collection it is stored as queued and starts
+  when that job ends. The entry point `measure_book` in `app/worker.py` calls `ProcessingJobs.measure_book`, which calls
   `BookMeasure.run` (`services/book_measure.py`). That follows the chain of the current version of the Geometry stage of
   each page back to its `geometry.crop` version, reads `frame` and `line_height_px`, brings each block to the median
   line height as `geometry.normalize` will, and writes into the normalize step of the active Geometry recipe the median
@@ -2417,11 +2418,20 @@ The book model rests on these decisions, each with its reason.
     new page, the change of the left page, the versions and the heads of both halves together, so a split that fails
     leaves no empty page. Undoing a split commits the deletion of the right half with the new current version of the
     left half, and removes the files after, so a replacement that fails deletes nothing.
-42. **A project processes one thing at a time.** A run, a preview, a tile cutting and a collection exclude each other
-    and themselves, kept by a partial unique index, because a collection deletes the versions a run may be reusing and
-    two runs write the same files. A request for a second one is a 409, and the collection that every run queues when it
-    ends is left out when something else is processing the project. Choosing a current version is refused as well while
-    one is active. The price is that a second preview waits for the first, which takes about a second.
+42. **A project processes one thing at a time, and housekeeping never refuses the user.** A run, a preview and a measure
+    of the book (`JobKind.requested()`) exclude each other and themselves, and so do a tile cutting and a collection
+    (`JobKind.housekeeping()`), each kept by a partial unique index, and one index keeps the running ones to one,
+    because a collection deletes the versions a run may be reusing and two runs write the same files. A second request
+    of the same group is a 409. A request that comes while a job of the other group is active is stored as queued and
+    not handed to the queue. `JobStarter.hand_off` hands it over when the job before it ends, called by
+    `JobTracker.finish`, or `advance` for a job found cancelled. It picks the oldest queued job stored before the ended
+    job ended, because a job stored after that found the project free and was queued at once. The viewer's tile cutting
+    waits behind a run the same way. The collection that every run queues is stored in the same commit as the final
+    state of the run (`JobTracker.finish` with a follow-up job), so the project is never free between the two. It is
+    left out when something else is active or waiting, and the queue is handed the job after the commit, a refusal of it
+    leaving the collection failed. Choosing a current version is refused while any of these is active. A job stored as
+    queued whose hand-off never happens, because the worker died between the commit and the queue, stays queued until
+    the user cancels it.
 43. **A collection marks before it deletes.** It chooses the old versions that no version that stays reads, marks them
     failed so that none can be chosen or reused, removes their directories and then deletes their rows. One that stops on
     the way leaves versions that are old and read by nothing, which the next collection chooses again. Deleting an input

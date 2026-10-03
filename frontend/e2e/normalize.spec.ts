@@ -114,8 +114,6 @@ test('the book is measured, its pages come out of one size, and the block of a p
   });
 
   await test.step('measuring the book fills the settings of the normalize step from the pages', async () => {
-    // The run queues a collection of old versions, and the server refuses the measure while it is going
-    await waitForIdleJobs(page, projectId);
     await normalize.getByTestId('step-toggle').click();
     await expect(field('page_width')).toHaveValue(DEFAULT_PAGE_WIDTH);
     await normalize.getByTestId('measure-book-button').click();

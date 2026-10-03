@@ -12,21 +12,28 @@ from typing import TYPE_CHECKING
 
 from attrs import evolve
 
-from bookreviver.domain.enums import JobState
+from bookreviver.domain.enums import JobKind, JobState
+from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.events import JobChanged
 from bookreviver.domain.values import Progress
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from bookreviver.domain.entities import Job
     from bookreviver.domain.ids import JobId
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock, EventPublisher
 
+    type HandOff = Callable[[Job, Job | None], Awaitable[None]]
+
 
 class JobTracker:
     """Moves a job through its states for the worker that runs it."""
 
-    def __init__(self, *, uow: UnitOfWork, publisher: EventPublisher, clock: Clock) -> None:
+    def __init__(
+        self, *, uow: UnitOfWork, publisher: EventPublisher, clock: Clock, hand_off: HandOff | None = None
+    ) -> None:
         """Track jobs through the unit of work of the worker.
 
         :param uow: Unit of work of the job, committed after each write.
@@ -35,10 +42,14 @@ class JobTracker:
         :type publisher: EventPublisher
         :param clock: Clock stamping the start and the end of the job.
         :type clock: Clock
+        :param hand_off: What passes the project on to the next job once a processing job has ended or found itself
+                         cancelled, or None for a tracker of jobs that do not process versions.
+        :type hand_off: HandOff | None
         """
         self._uow = uow
         self._publisher = publisher
         self._clock = clock
+        self._hand_off = hand_off
 
     async def start(self, job_id: JobId) -> Job | None:
         """Move a queued job to running, or pick up a job found running, which is a delivery repeated after a crash.
@@ -80,15 +91,39 @@ class JobTracker:
         )
         if saved is None:
             await self._uow.rollback()
+            await self._pass_on(job, None)
             return None
         await self._uow.commit()
         await self._publisher.publish(JobChanged(project_id=saved.project_id, job=saved))
         return saved
 
-    async def finish(self, job: Job, state: JobState, *, error: str = '', total: int | None = None) -> None:
+    async def _pass_on(self, job: Job, collection: Job | None) -> None:
+        """Hand the project to the next job, when the job that stops was one that processes versions.
+
+        :param job: The job that ended or found itself cancelled.
+        :type job: Job
+        :param collection: The collection stored with the end of the job, which is queued to a worker next, or None.
+        :type collection: Job | None
+        """
+        if self._hand_off is not None and job.kind in JobKind.processing():
+            await self._hand_off(job, collection)
+
+    async def finish(
+        self,
+        job: Job,
+        state: JobState,
+        *,
+        error: str = '',
+        total: int | None = None,
+        follow_up: Job | None = None,
+    ) -> None:
         """Store the final state of a running job, unless it was cancelled meanwhile, and announce it.
 
-        Whatever the worker left uncommitted is discarded first.
+        Whatever the worker left uncommitted is discarded first. A follow-up job is stored in the same commit as the
+        final state, so the project is never seen free between the two, and a client that reacts to the end of the job
+        finds the project busy with the follow-up. The follow-up is left out when another processing job of the project
+        is queued or running already, which then is the one the project waits for. After the commit the hand-off queues
+        to a worker the follow-up, or else the job that waited for this one to end.
 
         :param job: The job as last stored by this run.
         :type job: Job
@@ -99,11 +134,26 @@ class JobTracker:
         :param total: Number of steps the job went through, which becomes its complete progress, or None to keep the
                       progress it has.
         :type total: int | None
+        :param follow_up: A queued job to store with the final state, or None for no job.
+        :type follow_up: Job | None
         """
         await self._uow.rollback()
         progress = job.progress if total is None else Progress(done=total, total=total)
         final = evolve(job, state=state, error=error, progress=progress, finished_at=self._clock.now())
         stored = await self._uow.jobs.update_if_state(final, expected=(JobState.RUNNING,))
-        await self._uow.commit()
+        queued: Job | None = None
+        try:
+            if follow_up is not None:
+                active = await self._uow.jobs.list_for_project(job.project_id, JobState.active())
+                if not any(other.kind in JobKind.processing() for other in active):
+                    queued = await self._uow.jobs.add(follow_up)
+            await self._uow.commit()
+        except ConflictError:
+            # Another request took the project between the check and the insert, so only the final state is kept
+            await self._uow.rollback()
+            queued = None
+            stored = await self._uow.jobs.update_if_state(final, expected=(JobState.RUNNING,))
+            await self._uow.commit()
         if stored is not None:
             await self._publisher.publish(JobChanged(project_id=stored.project_id, job=stored))
+        await self._pass_on(job, queued)
