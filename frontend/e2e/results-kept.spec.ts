@@ -73,19 +73,23 @@ test('a result whose picture was collected is made again when it is used', async
     await page.getByRole('spinbutton', { name: 'Top margin', exact: true }).fill('160');
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
-    await page.getByTestId('stale-banner-run').click();
+    // The page is marked to check, which the stale banner does not offer to run, so the stage is run on all pages
+    await page.getByTestId('run-menu').click();
+    await page.getByTestId('run-all').click();
     await expect(entries).toHaveCount(2, { timeout: RUN_TIMEOUT_MS });
     await expect(entries.first()).toHaveAttribute('data-current', 'true');
     await waitForIdleJobs(page, projectId);
   });
 
   await test.step('a collection past the retention removes the picture of the earlier result and keeps its row', async () => {
-    const aged = await page.request.post(
-      `/e2e/age-versions?project_id=${projectId}&days=${AGE_DAYS}`,
-    );
-    expect(aged.ok()).toBe(true);
+    // The CSRF check guards every POST of the server, the route of the scenarios too
     const cookies = await page.context().cookies();
     const token = cookies.find((cookie) => cookie.name === CSRF_COOKIE_NAME)?.value ?? '';
+    const aged = await page.request.post(
+      `/e2e/age-versions?project_id=${projectId}&days=${AGE_DAYS}`,
+      { headers: { [CSRF_HEADER_NAME]: token } },
+    );
+    expect(aged.ok()).toBe(true);
     const collected = await page.request.post(`/api/v1/projects/${projectId}/versions/collect`, {
       headers: { [CSRF_HEADER_NAME]: token },
     });
@@ -112,13 +116,15 @@ test('a result whose picture was collected is made again when it is used', async
       timeout: RUN_TIMEOUT_MS,
     });
     await expect(entries.first()).toHaveAttribute('data-current', 'false');
-    await expect(page.getByTestId('history-removed')).toHaveCount(0);
+    await expect(entries.nth(1).getByTestId('history-removed')).toHaveCount(0);
     await expect(entries.nth(1)).toContainText('Top margin 150');
 
+    // The run queues a collection after it, and the result it replaced is past the retention too, so only the one that
+    // was used is sure to have its picture
     const versions = await listVersions();
-    expect(versions.filter((version) => version.files_removed)).toHaveLength(0);
     // The same version, not another one, has its picture again
     const remade = versions.find((version) => version.id === removedId);
+    expect(remade?.files_removed).toBe(false);
     expect(remade?.images).not.toBeNull();
     const picture = await page.request.get(remade?.images?.full ?? '');
     expect(picture.ok()).toBe(true);
