@@ -74,10 +74,7 @@ async def list_profiles(
 
 @router.post(PROFILES_PATH, status_code=status.HTTP_201_CREATED)
 async def create_profile(
-    body: RecipeProfileBody,
-    actor: ActorDep,
-    profiles: FromDishka[RecipeProfiles],
-    order: FromDishka[RecipeOrder],
+    body: RecipeProfileBody, actor: ActorDep, profiles: FromDishka[RecipeProfiles]
 ) -> RecipeProfileSchema:
     """Save the steps of a recipe as a profile, which is not the default until it is made one.
 
@@ -91,14 +88,10 @@ async def create_profile(
     :type actor: Actor
     :param profiles: Profiles service of the request.
     :type profiles: RecipeProfiles
-    :param order: Finder of the steps that stand off the place their processors ask for.
-    :type order: RecipeOrder
     :returns: The profile as stored.
     :rtype: RecipeProfileSchema
     """
-    steps = body.to_steps()
-    order.enforce(steps, body.order)
-    profile = await profiles.save(actor, body.stage, body.name, steps)
+    profile = await profiles.save(actor, body.stage, body.to_draft())
     return RecipeProfileSchema.model_validate(profile)
 
 

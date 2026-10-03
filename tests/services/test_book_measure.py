@@ -21,7 +21,7 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.geometry import Rect
 from bookreviver.domain.ids import PageVersionId
-from bookreviver.domain.values import PageStageKey, ProcessorRef, StageRun, Step
+from bookreviver.domain.values import PageStageKey, ProcessorRef, RecipeDraft, StageRun, Step
 from tests.helpers.builders import make_page_stage, make_page_version
 
 if TYPE_CHECKING:
@@ -179,7 +179,7 @@ async def set_normalize_params(kit: ProcessingKit, actor: Actor, project: Projec
         evolve(step, params={**step.params, **changes}) if step.processor_key == NORMALIZE_KEY else step
         for step in recipe.steps
     ]
-    await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, recipe.name, steps)
+    await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, RecipeDraft(name=recipe.name, steps=steps))
 
 
 class TestMeasureBook:
@@ -303,7 +303,7 @@ class TestMeasureBook:
         actor, project = await fx_cv_kit.seed_project()
         recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
         recipe = await fx_cv_kit.service().save_recipe(
-            actor, project.id, Stage.GEOMETRY, recipe.name, [Step(processor_key=CROP_KEY)]
+            actor, project.id, Stage.GEOMETRY, RecipeDraft(name=recipe.name, steps=[Step(processor_key=CROP_KEY)])
         )
         page = await crop_page(fx_cv_kit, project, recipe, FIRST_KEY, crop_data(300, 600, 30))
         job = await measure(fx_cv_kit, actor, project)

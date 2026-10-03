@@ -20,9 +20,10 @@ from typing import TYPE_CHECKING, ClassVar
 
 from attrs import evolve, frozen
 
-from bookreviver.domain.enums import MarginsSource, NormalizeParam, Stage, VersionData, VersionState
+from bookreviver.domain.enums import MarginsSource, NormalizeParam, OrderMode, Stage, VersionData, VersionState
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Rect
+from bookreviver.domain.values import RecipeDraft
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -205,7 +206,8 @@ class BookMeasure:
         :raises InvalidParametersError: If the measured page does not fit the bounds of the step.
         """
         steps = (*recipe.steps[:position], step, *recipe.steps[position + 1 :])
-        await self._recipes.rewrite(recipe, recipe.name, steps)
+        # The steps keep the order they were saved in, whatever mode that was
+        await self._recipes.rewrite(recipe, RecipeDraft(name=recipe.name, steps=steps, order=OrderMode.FREE))
         stale = await self._records.mark_recipe_stale(recipe.id)
         await self._uow.commit()
         await self._records.announce(recipe.project_id, stale)

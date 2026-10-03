@@ -153,9 +153,7 @@ async def put_recipe(
               place.
     :rtype: RecipeSchema
     """
-    steps = body.to_steps()
-    order.enforce(steps, body.order)
-    saved = await processing.save_recipe(actor, address.project_id, address.stage, body.name, steps)
+    saved = await processing.save_recipe(actor, address.project_id, address.stage, body.to_draft())
     return RecipeSchema.of(saved, order.issues(saved.steps))
 
 
@@ -213,9 +211,7 @@ async def create_variant(
     :returns: The variant as stored, with the steps that are out of their place.
     :rtype: RecipeSchema
     """
-    steps = body.to_steps()
-    order.enforce(steps, body.order)
-    variant = await processing.add_variant(actor, address.project_id, address.stage, body.name, steps)
+    variant = await processing.add_variant(actor, address.project_id, address.stage, body.to_draft())
     return RecipeSchema.of(variant, order.issues(variant.steps))
 
 
@@ -245,10 +241,8 @@ async def put_variant(
     :returns: The recipe as stored, with the steps that are out of their place.
     :rtype: RecipeSchema
     """
-    steps = body.to_steps()
-    order.enforce(steps, body.order)
     saved = await processing.save_variant(
-        actor, address.project_id, RecipeKey(address.stage, address.recipe_id), body.name, steps
+        actor, address.project_id, RecipeKey(address.stage, address.recipe_id), body.to_draft()
     )
     return RecipeSchema.of(saved, order.issues(saved.steps))
 

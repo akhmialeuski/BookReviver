@@ -7,7 +7,7 @@ reads through a unit of work of its own, as committed.
 
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.values import PageStageKey, SliceRequest, Step
+from bookreviver.domain.values import PageStageKey, RecipeDraft, SliceRequest, Step
 from tests.helpers.samples import png_bytes, spread
 
 if TYPE_CHECKING:
@@ -56,7 +56,8 @@ async def use_recipe(kit: ProcessingKit, actor: Actor, project: Project, stage: 
     :param processor_key: Key of the processor of the one step.
     :type processor_key: str
     """
-    await kit.service().save_recipe(actor, project.id, stage, processor_key, [Step(processor_key=processor_key)])
+    draft = RecipeDraft(name=processor_key, steps=[Step(processor_key=processor_key)])
+    await kit.service().save_recipe(actor, project.id, stage, draft)
 
 
 async def run_stage(kit: ProcessingKit, actor: Actor, project: Project, run: StageRun) -> None:

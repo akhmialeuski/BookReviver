@@ -27,6 +27,7 @@ from bookreviver.domain.events import JobChanged
 from bookreviver.domain.ids import JobId
 from bookreviver.domain.values import VersionCollection
 from bookreviver.services.job_runs import JobTracker
+from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipes import RecipeBook
 from bookreviver.services.stage_records import StageRecords
 
@@ -282,7 +283,9 @@ class ProcessingParts:
         """
         starter = JobStarter(uow=uow, runtime=runtime, config=config)
         return cls(
-            recipes=RecipeBook(uow=uow, catalogue=catalogue, defaults=defaults, clock=runtime.clock),
+            recipes=RecipeBook(
+                uow=uow, catalogue=catalogue, defaults=defaults, clock=runtime.clock, order=RecipeOrder(catalogue)
+            ),
             records=StageRecords(uow=uow, publisher=runtime.publisher, clock=runtime.clock),
             tracker=JobTracker(uow=uow, publisher=runtime.publisher, clock=runtime.clock, hand_off=starter.hand_off),
             starter=starter,

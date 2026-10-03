@@ -12,7 +12,15 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, SliceRequest, StageRun, Step
+from bookreviver.domain.values import (
+    NewPageEdit,
+    PageStageKey,
+    PageStepKey,
+    RecipeDraft,
+    SliceRequest,
+    StageRun,
+    Step,
+)
 from bookreviver.services.stage_runs import REMAKE_INPUT_CHANGED
 from tests.helpers.builders import EPOCH
 from tests.helpers.processors import STRENGTH_PARAMETER
@@ -57,9 +65,8 @@ async def collected_book(kit: ProcessingKit) -> tuple[Actor, Project, Page, Page
     """
     actor, project, page, first = await ran_geometry(kit)
     fake = kit.fake.spec.key
-    await kit.service().save_recipe(
-        actor, project.id, Stage.GEOMETRY, 'Stronger', [Step(processor_key=fake, params={STRENGTH_PARAMETER: STRONGER})]
-    )
+    stronger = RecipeDraft(name='Stronger', steps=[Step(processor_key=fake, params={STRENGTH_PARAMETER: STRONGER})])
+    await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, stronger)
     run = await kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
     await kit.jobs().run_stage(run.id)
     await kit.work_queue()
@@ -186,13 +193,17 @@ class TestRemake:
         page, _ = await fx_kit.seed_scan_page(project)
         await fx_kit.seed_base_version(page)
         step = Step(processor_key=fx_kit.fake.spec.key, params={STRENGTH_PARAMETER: 1})
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, EDITED_RECIPE, [step])
+        await fx_kit.service().save_recipe(
+            actor, project.id, Stage.GEOMETRY, RecipeDraft(name=EDITED_RECIPE, steps=[step])
+        )
         await fx_kit.edits().save(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step.step_id), ROTATION, None)
         await run_geometry(fx_kit, actor, project)
         first = await head_of(fx_kit, page, Stage.GEOMETRY)
         # The same step with another parameter, as the settings of a step are changed in the interface
         stronger = evolve(step, params={STRENGTH_PARAMETER: STRONGER})
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, EDITED_RECIPE, [stronger])
+        await fx_kit.service().save_recipe(
+            actor, project.id, Stage.GEOMETRY, RecipeDraft(name=EDITED_RECIPE, steps=[stronger])
+        )
         await run_geometry(fx_kit, actor, project)
         fx_kit.clock.moment = EPOCH + timedelta(days=AFTER_RETENTION_DAYS)
         collection = await fx_kit.service().start_collection(actor, project.id)

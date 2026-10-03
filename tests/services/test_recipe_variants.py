@@ -7,7 +7,7 @@ from attrs import evolve
 
 from bookreviver.domain.enums import PageKind, RuleCondition, Stage, StageState
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.values import PageStageKey, StageRun, Step
+from bookreviver.domain.values import PageStageKey, RecipeDraft, StageRun, Step
 from bookreviver.services.recipe_picks import RecipePicker
 from tests.helpers.processors import FakeProcessor
 
@@ -83,8 +83,8 @@ async def add_variant(kit: ProcessingKit, actor: Actor, project: Project, name: 
     :returns: The variant.
     :rtype: Recipe
     """
-    steps = [Step(processor_key=FAKE_KEY, params={'strength': strength})]
-    return await kit.service().add_variant(actor, project.id, Stage.GEOMETRY, name, steps)
+    draft = RecipeDraft(name=name, steps=[Step(processor_key=FAKE_KEY, params={'strength': strength})])
+    return await kit.service().add_variant(actor, project.id, Stage.GEOMETRY, draft)
 
 
 async def run_all(kit: ProcessingKit, actor: Actor, project: Project, run: StageRun | None = None) -> None:

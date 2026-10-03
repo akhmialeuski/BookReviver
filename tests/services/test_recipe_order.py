@@ -1,13 +1,17 @@
 """Tests for the order of the steps of a recipe: the issues a step out of its place makes, and the refusal of one."""
 
+from typing import TYPE_CHECKING
+
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import OrderMode, OrderRuleKind
+from bookreviver.domain.enums import OrderMode, OrderRuleKind, Stage
 from bookreviver.domain.errors import InvalidParametersError
-from bookreviver.domain.values import Step
+from bookreviver.domain.values import RecipeDraft, RecipeKey, Step
+from bookreviver.plugins.split_none import SplitNone
 from bookreviver.services.recipe_order import RecipeOrder
 from tests.helpers.fake_processing import FakeCatalogue
+from tests.helpers.processing import ProcessingKit
 from tests.helpers.processors import (
     FIRST_KEY,
     OPENING_KEY,
@@ -16,13 +20,19 @@ from tests.helpers.processors import (
     SECOND_REASON,
     THIRD_KEY,
     THIRD_REASON,
+    CleanupProcessor,
+    FakeProcessor,
     FirstProcessor,
     OpeningProcessor,
     SecondProcessor,
     ThirdProcessor,
 )
 
+if TYPE_CHECKING:
+    from bookreviver.adapters.storage import LocalAssetStore
+
 UNKNOWN_KEY: str = 'geometry.gone'
+DRAFT_NAME: str = 'Ordered'
 
 
 @pytest.fixture
@@ -186,3 +196,91 @@ class TestEnforce:
         with pytest.raises(InvalidParametersError) as refused:
             fx_order.enforce(steps_of(THIRD_KEY, THIRD_KEY, SECOND_KEY), OrderMode.USUAL)
         assert str(refused.value) == THIRD_REASON
+
+
+def draft_of(*keys: str, order: OrderMode = OrderMode.USUAL) -> RecipeDraft:
+    """Build a draft of steps of the processors in the given order.
+
+    :param keys: Keys of the processors.
+    :type keys: str
+    :param order: The order to keep.
+    :type order: OrderMode
+    :returns: The draft.
+    :rtype: RecipeDraft
+    """
+    return RecipeDraft(name=DRAFT_NAME, steps=steps_of(*keys), order=order)
+
+
+@pytest.fixture
+def fx_ordered_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
+    """Build the processing kit over processors that declare a place.
+
+    :param fx_asset_store: Local asset store over the test's storage root.
+    :type fx_asset_store: LocalAssetStore
+    :returns: The kit whose catalogue holds the fakes of the tests and the processors that ask for a place.
+    :rtype: ProcessingKit
+    """
+    processors = [
+        SplitNone(),
+        FakeProcessor(),
+        CleanupProcessor(),
+        FirstProcessor(),
+        SecondProcessor(),
+        ThirdProcessor(),
+    ]
+    return ProcessingKit(fx_asset_store, processors=processors)
+
+
+@pytest.mark.anyio
+class TestSavePaths:
+    """Tests that every way of storing steps keeps the order, since the check is part of the service."""
+
+    async def test_the_active_recipe_is_refused_a_required_place_and_saved_in_the_free_order(
+        self, fx_ordered_kit: ProcessingKit
+    ) -> None:
+        """Verify ProcessingService.save_recipe refuses in the usual order and stores the steps in the free one.
+
+        :param fx_ordered_kit: The kit over the processors that declare a place.
+        :type fx_ordered_kit: ProcessingKit
+        """
+        actor, project = await fx_ordered_kit.seed_project()
+        service = fx_ordered_kit.service()
+        with pytest.raises(InvalidParametersError, match=THIRD_REASON):
+            await service.save_recipe(actor, project.id, Stage.GEOMETRY, draft_of(THIRD_KEY, SECOND_KEY))
+        saved = await service.save_recipe(
+            actor, project.id, Stage.GEOMETRY, draft_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE)
+        )
+        assert [step.processor_key for step in saved.steps] == [THIRD_KEY, SECOND_KEY]
+
+    async def test_a_variant_is_refused_when_it_is_added_and_when_it_is_saved(
+        self, fx_ordered_kit: ProcessingKit
+    ) -> None:
+        """Verify ProcessingService.add_variant and save_variant keep the order as the active recipe does.
+
+        :param fx_ordered_kit: The kit over the processors that declare a place.
+        :type fx_ordered_kit: ProcessingKit
+        """
+        actor, project = await fx_ordered_kit.seed_project()
+        service = fx_ordered_kit.service()
+        wrong = draft_of(THIRD_KEY, SECOND_KEY)
+        with pytest.raises(InvalidParametersError, match=THIRD_REASON):
+            await service.add_variant(actor, project.id, Stage.GEOMETRY, wrong)
+        variant = await service.add_variant(actor, project.id, Stage.GEOMETRY, draft_of(FIRST_KEY, SECOND_KEY))
+        with pytest.raises(InvalidParametersError, match=THIRD_REASON):
+            await service.save_variant(actor, project.id, RecipeKey(Stage.GEOMETRY, variant.id), wrong)
+
+    async def test_a_profile_is_refused_a_required_place_unless_the_order_is_free(
+        self, fx_ordered_kit: ProcessingKit
+    ) -> None:
+        """Verify RecipeProfiles.save keeps the order, and applying a profile saved in the free order is allowed.
+
+        :param fx_ordered_kit: The kit over the processors that declare a place.
+        :type fx_ordered_kit: ProcessingKit
+        """
+        actor, project = await fx_ordered_kit.seed_project()
+        profiles = fx_ordered_kit.profiles()
+        with pytest.raises(InvalidParametersError, match=THIRD_REASON):
+            await profiles.save(actor, Stage.GEOMETRY, draft_of(THIRD_KEY, SECOND_KEY))
+        profile = await profiles.save(actor, Stage.GEOMETRY, draft_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE))
+        applied = await profiles.apply(actor, project.id, profile.id, activate=False)
+        assert [step.processor_key for step in applied.recipe.steps] == [THIRD_KEY, SECOND_KEY]

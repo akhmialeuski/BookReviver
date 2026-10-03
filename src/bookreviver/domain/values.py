@@ -16,6 +16,7 @@ from bookreviver.domain.enums import (
     JobKind,
     NewPageOrigin,
     NumberDisplay,
+    OrderMode,
     Orthography,
     PageFilter,
     ProcessorScope,
@@ -34,7 +35,7 @@ from bookreviver.domain.errors import InvalidIdentifierError, InvalidParametersE
 from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StepId
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from attrs import Attribute
 
@@ -488,6 +489,31 @@ class PageStageKey:
 
     page_id: PageId
     stage: Stage
+
+
+def _steps_tuple(steps: Iterable[Step]) -> tuple[Step, ...]:
+    """Keep the steps of a draft as a tuple, whatever sequence they were given in.
+
+    :param steps: The steps.
+    :type steps: Iterable[Step]
+    :returns: The steps as a tuple.
+    :rtype: tuple[Step, ...]
+    """
+    return tuple(steps)
+
+
+@frozen(kw_only=True)
+class RecipeDraft:
+    """The name and the steps of a recipe or a profile as a user gives them, with the order they are to be kept in.
+
+    :ivar name: Name the user sees.
+    :ivar steps: The steps in the order they run, not yet checked against their processors.
+    :ivar order: Whether a step that stands where it cannot work is refused or only warned of.
+    """
+
+    name: str = field(validator=validators.min_len(1))
+    steps: tuple[Step, ...] = field(converter=_steps_tuple)
+    order: OrderMode = OrderMode.USUAL
 
 
 @frozen

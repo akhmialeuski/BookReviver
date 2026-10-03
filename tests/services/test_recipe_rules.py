@@ -9,7 +9,7 @@ from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import RuleCondition, Stage
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import RecipeRuleId
-from bookreviver.domain.values import RecipeKey, SliceRequest, Step
+from bookreviver.domain.values import RecipeDraft, RecipeKey, SliceRequest, Step
 from tests.helpers.builders import new_account_id
 from tests.helpers.processors import FakeProcessor
 
@@ -32,9 +32,8 @@ async def seed_with_variant(kit: ProcessingKit) -> tuple[Actor, Project, Recipe]
     :rtype: tuple[Actor, Project, Recipe]
     """
     actor, project = await kit.seed_project()
-    variant = await kit.service().add_variant(
-        actor, project.id, Stage.GEOMETRY, 'Plates', [Step(processor_key=FAKE_KEY, params={})]
-    )
+    draft = RecipeDraft(name='Plates', steps=[Step(processor_key=FAKE_KEY, params={})])
+    variant = await kit.service().add_variant(actor, project.id, Stage.GEOMETRY, draft)
     return actor, project, variant
 
 

@@ -12,7 +12,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import AppliesTo, EditorKind, PageKind, Stage, TransformKind, VersionData
 from bookreviver.domain.geometry import Rotation
-from bookreviver.domain.values import NewPageEdit, PageStepKey, StageRun, Step
+from bookreviver.domain.values import NewPageEdit, PageStepKey, RecipeDraft, StageRun, Step
 from tests.helpers.processors import RAN_KEY, STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.spreads import head_of, run_stage
 
@@ -75,7 +75,8 @@ class TestCondition:
             Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 1}, applies_to=AppliesTo.TEXT),
             Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2}, applies_to=AppliesTo.PICTURES),
         ]
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, TWO_STEPS, steps)
+        two = RecipeDraft(name=TWO_STEPS, steps=steps)
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, two)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         text_last = await head_of(fx_kit, text, Stage.GEOMETRY)
         text_first = await input_of(fx_kit, text_last)
@@ -98,7 +99,8 @@ class TestCondition:
         """
         actor, project, text, _ = await text_and_plate(fx_kit)
         step = Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 5}, applies_to=AppliesTo.PICTURES)
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, PICTURES_ONLY, [step])
+        pictures = RecipeDraft(name=PICTURES_ONLY, steps=[step])
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, pictures)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         skipped = await head_of(fx_kit, text, Stage.GEOMETRY)
         # Only the plate of the book met the condition
@@ -119,7 +121,8 @@ class TestCondition:
         """
         actor, project, text, _ = await text_and_plate(fx_kit)
         step = Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 5}, applies_to=AppliesTo.PICTURES)
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, PICTURES_ONLY, [step])
+        pictures = RecipeDraft(name=PICTURES_ONLY, steps=[step])
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, pictures)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         before = await head_of(fx_kit, text, Stage.GEOMETRY)
         changed = Step(
@@ -128,7 +131,8 @@ class TestCondition:
             applies_to=AppliesTo.PICTURES,
             step_id=step.step_id,
         )
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, PICTURES_ONLY, [changed])
+        changed_draft = RecipeDraft(name=PICTURES_ONLY, steps=[changed])
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, changed_draft)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         assert (await head_of(fx_kit, text, Stage.GEOMETRY)).id == before.id
 
@@ -142,7 +146,8 @@ class TestCondition:
         """
         actor, project, text, _ = await text_and_plate(fx_kit)
         step = Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 3}, applies_to=AppliesTo.PICTURES)
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, PICTURES_ONLY, [step])
+        pictures = RecipeDraft(name=PICTURES_ONLY, steps=[step])
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, pictures)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         skipped = await head_of(fx_kit, text, Stage.GEOMETRY)
         uow = fx_kit.uow()
@@ -169,7 +174,8 @@ class TestIdentity:
         actor, project, text, _ = await text_and_plate(fx_kit)
         first = Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 1})
         second = Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2})
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, TWO_STEPS, [first, second])
+        two = RecipeDraft(name=TWO_STEPS, steps=[first, second])
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, two)
         await fx_kit.edits().save(
             actor, project.id, PageStepKey(text.id, Stage.GEOMETRY, second.step_id), ROTATION, None
         )
@@ -191,9 +197,15 @@ class TestIdentity:
         actor, project, _, _ = await text_and_plate(fx_kit)
         first = Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 1})
         second = Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2})
-        saved = await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, TWO_STEPS, [first, second])
-        reordered = await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, TWO_STEPS, [second, first])
-        variant = await fx_kit.service().add_variant(actor, project.id, Stage.GEOMETRY, 'Copy', reordered.steps)
+        saved = await fx_kit.service().save_recipe(
+            actor, project.id, Stage.GEOMETRY, RecipeDraft(name=TWO_STEPS, steps=[first, second])
+        )
+        reordered = await fx_kit.service().save_recipe(
+            actor, project.id, Stage.GEOMETRY, RecipeDraft(name=TWO_STEPS, steps=[second, first])
+        )
+        variant = await fx_kit.service().add_variant(
+            actor, project.id, Stage.GEOMETRY, RecipeDraft(name='Copy', steps=reordered.steps)
+        )
         expect([step.step_id for step in saved.steps] == [first.step_id, second.step_id])
         expect([step.step_id for step in reordered.steps] == [second.step_id, first.step_id])
         expect([step.step_id for step in variant.steps] == [second.step_id, first.step_id])
@@ -210,7 +222,7 @@ class TestIdentity:
             Step(processor_key=FAKE_KEY, applies_to=AppliesTo.TEXT),
             Step(processor_key=FAKE_KEY, applies_to=AppliesTo.COLOR_PICTURES),
         ]
-        profile = await fx_kit.profiles().save(actor, Stage.GEOMETRY, TWO_STEPS, steps)
+        profile = await fx_kit.profiles().save(actor, Stage.GEOMETRY, RecipeDraft(name=TWO_STEPS, steps=steps))
         applied = await fx_kit.profiles().apply(actor, project.id, profile.id, activate=True)
         wanted = [(step.step_id, step.applies_to) for step in steps]
         expect([(step.step_id, step.applies_to) for step in profile.steps] == wanted)
@@ -225,8 +237,10 @@ class TestIdentity:
         """
         actor, project, _, _ = await text_and_plate(fx_kit)
         kept = Step(processor_key=FAKE_KEY)
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, 'One', [kept])
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, RecipeDraft(name='One', steps=[kept]))
         added = Step(processor_key=FAKE_KEY)
-        recipe = await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, TWO_STEPS, [kept, added])
+        recipe = await fx_kit.service().save_recipe(
+            actor, project.id, Stage.GEOMETRY, RecipeDraft(name=TWO_STEPS, steps=[kept, added])
+        )
         ids = [step.step_id for step in recipe.steps]
         assert (ids[0] == kept.step_id, len(set(ids))) == (True, 2)

@@ -13,7 +13,7 @@ from bookreviver.domain.enums import ChangeSource, EditorKind, JobState, Stage, 
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import StepId
-from bookreviver.domain.values import NewPageEdit, PageStageKey, SliceRequest, StepPreview
+from bookreviver.domain.values import NewPageEdit, PageStageKey, RecipeDraft, SliceRequest, StepPreview
 from tests.helpers.builders import EPOCH, new_account_id
 from tests.helpers.processors import FAILING_PARAMETER, RAN_KEY, STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.spreads import head_of
@@ -237,9 +237,8 @@ class TestRunWithPageSettings:
         key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
         await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
         recipe = await fx_kit.parts(fx_kit.uow()).recipes.active(project.id, Stage.GEOMETRY)
-        await fx_kit.service().save_recipe(
-            actor, project.id, Stage.GEOMETRY, recipe.name, [evolve(step, params={STRENGTH_PARAMETER: STRONGEST})]
-        )
+        draft = RecipeDraft(name=recipe.name, steps=[evolve(step, params={STRENGTH_PARAMETER: STRONGEST})])
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, draft)
         await run_geometry(fx_kit, actor, project)
         own, shared = await head_of(fx_kit, page, Stage.GEOMETRY), await head_of(fx_kit, other, Stage.GEOMETRY)
         expect((own.params[STRENGTH_PARAMETER], shared.params[STRENGTH_PARAMETER]) == (STRONGER, STRONGEST))
@@ -262,9 +261,8 @@ class TestRunWithPageSettings:
         first, runs = await head_of(fx_kit, page, Stage.GEOMETRY), fx_kit.fake.runs
         await fx_kit.page_settings().reset(actor, project.id, key, STRENGTH_PARAMETER)
         recipe = await fx_kit.parts(fx_kit.uow()).recipes.active(project.id, Stage.GEOMETRY)
-        await fx_kit.service().save_recipe(
-            actor, project.id, Stage.GEOMETRY, recipe.name, [evolve(step, params={STRENGTH_PARAMETER: STRONGER})]
-        )
+        draft = RecipeDraft(name=recipe.name, steps=[evolve(step, params={STRENGTH_PARAMETER: STRONGER})])
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, draft)
         await run_geometry(fx_kit, actor, project)
         second = await head_of(fx_kit, page, Stage.GEOMETRY)
         expect(second.id == first.id)

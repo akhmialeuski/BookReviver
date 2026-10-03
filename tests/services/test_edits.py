@@ -13,7 +13,7 @@ from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.geometry import BrushStrokes, Line, Point, Rect, Rotation, Stroke
 from bookreviver.domain.ids import StepId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, StageRun, Step
+from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, RecipeDraft, StageRun, Step
 from tests.helpers.builders import make_page_stage
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
 from tests.helpers.storage import upload
@@ -174,7 +174,8 @@ class TestSave:
         """
         actor, project, page = await prepared(fx_kit)
         first, second = Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, 'Twice', [first, second])
+        twice = RecipeDraft(name='Twice', steps=[first, second])
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, twice)
         key = PageStepKey(page.id, Stage.GEOMETRY, first.step_id)
         saved = await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
         listed = await fx_kit.edits().list(actor, project.id, page.id, Stage.GEOMETRY)

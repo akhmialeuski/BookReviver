@@ -9,7 +9,9 @@ templates follow it as variants.
 
 Every step is checked before it is saved: its processor must exist, belong to the stage of the recipe, and accept its
 parameters, which are stored in the form ``validate_params`` returns, defaults filled in, so two recipes that differ in
-spelling alone are equal and give the same page versions.
+spelling alone are equal and give the same page versions. The order of the steps is checked too, by ``RecipeOrder``: a
+step that stands where its processor cannot work is refused unless the draft asks for the free order, and one that
+stands off its usual place is saved, and the routes report it through ``RecipeOrder.issues``.
 """
 
 from datetime import timedelta
@@ -23,6 +25,7 @@ from bookreviver.domain.enums import (
     BinarizationMethod,
     DeskewMethod,
     DewarpMethod,
+    OrderMode,
     OutputMode,
     RuleCondition,
     Stage,
@@ -36,10 +39,11 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.domain.ids import ProjectId
-    from bookreviver.domain.values import MetadataMap, PageStepKey
+    from bookreviver.domain.values import MetadataMap, PageStepKey, RecipeDraft
     from bookreviver.ports.persistence import RecipeRepository, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
+    from bookreviver.services.recipe_order import RecipeOrder
 
 NO_STEPS: str = 'A recipe needs at least one step.'
 ALL_STEPS_OFF: str = 'A recipe needs at least one step that is switched on.'
@@ -189,7 +193,15 @@ class DefaultRecipes:
 class RecipeBook:
     """Finds the recipes of a project, creates the default ones, and checks the steps of a recipe."""
 
-    def __init__(self, *, uow: UnitOfWork, catalogue: ProcessorCatalog, defaults: DefaultRecipes, clock: Clock) -> None:
+    def __init__(
+        self,
+        *,
+        uow: UnitOfWork,
+        catalogue: ProcessorCatalog,
+        defaults: DefaultRecipes,
+        clock: Clock,
+        order: RecipeOrder,
+    ) -> None:
         """Work over the ports of one request or job.
 
         :param uow: Unit of work, whose commit ends the use case.
@@ -200,11 +212,14 @@ class RecipeBook:
         :type defaults: DefaultRecipes
         :param clock: Clock stamping new recipes.
         :type clock: Clock
+        :param order: The check of the order of the steps.
+        :type order: RecipeOrder
         """
         self._uow = uow
         self._catalogue = catalogue
         self._defaults = defaults
         self._clock = clock
+        self._order = order
 
     async def active(self, project_id: ProjectId, stage: Stage) -> Recipe:
         """Return the active recipe of a stage, creating the default recipes of the stage the first time.
@@ -295,21 +310,20 @@ class RecipeBook:
             raise NotFoundError(recipe_id)
         return recipe
 
-    async def add_variant(self, project_id: ProjectId, stage: Stage, name: str, steps: Sequence[Step]) -> Recipe:
+    async def add_variant(self, project_id: ProjectId, stage: Stage, draft: RecipeDraft) -> Recipe:
         """Store a recipe of a stage that is not active.
 
         :param project_id: Project owning the recipe.
         :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
-        :param name: Name of the variant.
-        :type name: str
-        :param steps: Steps of the variant, which are checked against their processors.
-        :type steps: Sequence[Step]
+        :param draft: Name and steps of the variant, which are checked against their processors and their order.
+        :type draft: RecipeDraft
         :returns: The variant as stored, not yet committed.
         :rtype: Recipe
         :raises NotFoundError: If the stage has no recipe.
-        :raises InvalidParametersError: If a step does not fit its processor.
+        :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
+                                        usual order.
         """
         await self.active(project_id, stage)
         moment = self._clock.now()
@@ -317,28 +331,32 @@ class RecipeBook:
             id=RecipeId(uuid4()),
             project_id=project_id,
             stage=stage,
-            name=name,
-            steps=await self.check(stage, steps),
+            name=draft.name,
+            steps=await self.check(stage, draft.steps, order=draft.order),
             created_at=moment,
             updated_at=moment,
         )
         await self._uow.recipes.add(variant)
         return variant
 
-    async def rewrite(self, recipe: Recipe, name: str, steps: Sequence[Step]) -> Recipe:
+    async def rewrite(self, recipe: Recipe, draft: RecipeDraft) -> Recipe:
         """Store a new name and new steps of a recipe.
 
         :param recipe: The recipe to change.
         :type recipe: Recipe
-        :param name: New name.
-        :type name: str
-        :param steps: New steps, which are checked against their processors.
-        :type steps: Sequence[Step]
+        :param draft: New name and steps, which are checked against their processors and their order.
+        :type draft: RecipeDraft
         :returns: The recipe as stored, not yet committed.
         :rtype: Recipe
-        :raises InvalidParametersError: If a step does not fit its processor.
+        :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
+                                        usual order.
         """
-        changed = evolve(recipe, name=name, steps=await self.check(recipe.stage, steps), updated_at=self._clock.now())
+        changed = evolve(
+            recipe,
+            name=draft.name,
+            steps=await self.check(recipe.stage, draft.steps, order=draft.order),
+            updated_at=self._clock.now(),
+        )
         await self._uow.recipes.update(changed)
         return changed
 
@@ -360,23 +378,31 @@ class RecipeBook:
         await self._uow.recipes.update(activated)
         return activated
 
-    async def check(self, stage: Stage, steps: Sequence[Step]) -> tuple[Step, ...]:
+    async def check(
+        self, stage: Stage, steps: Sequence[Step], *, order: OrderMode = OrderMode.USUAL
+    ) -> tuple[Step, ...]:
         """Check the steps of a recipe of a stage and return them with their parameters in checked form.
 
         :param stage: Stage the recipe processes.
         :type stage: Stage
         :param steps: The steps as a user gave them.
         :type steps: Sequence[Step]
+        :param order: Whether a step that stands where it cannot work is refused or only warned of. Steps that were
+                      stored before, or that are only previewed, are checked in the free order.
+        :type order: OrderMode
         :returns: The steps with the defaults of each processor filled in.
         :rtype: tuple[Step, ...]
         :raises InvalidParametersError: If there is no step or every step is switched off, a processor does not exist
-                                        or belongs to another stage, or a parameter is wrong.
+                                        or belongs to another stage, a parameter is wrong, or a step stands off a
+                                        required place in the usual order.
         """
         if not steps:
             raise InvalidParametersError(NO_STEPS)
         if not any(step.enabled for step in steps):
             raise InvalidParametersError(ALL_STEPS_OFF)
-        return tuple([await self._check_step(stage, step) for step in steps])
+        checked = tuple([await self._check_step(stage, step) for step in steps])
+        self._order.enforce(checked, order)
+        return checked
 
     async def _check_step(self, stage: Stage, step: Step) -> Step:
         """Check one step.
@@ -433,7 +459,7 @@ class RecipeBook:
         if (profile := await self._uow.recipe_profiles.find_default(owner_id, stage)) is None:
             return None
         try:
-            steps = await self.check(stage, self.installed(profile.steps)[0])
+            steps = await self.check(stage, self.installed(profile.steps)[0], order=OrderMode.FREE)
         except InvalidParametersError:
             return None
         return Recipe(

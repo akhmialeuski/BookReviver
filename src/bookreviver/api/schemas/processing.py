@@ -44,7 +44,7 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId, StepId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PIN_NEEDS_RECIPE, StageRun, Step, StepPreview, VersionFilter
+from bookreviver.domain.values import PIN_NEEDS_RECIPE, RecipeDraft, StageRun, Step, StepPreview, VersionFilter
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -218,13 +218,13 @@ class RecipeBody(RequestModel):
     steps: Annotated[list[StepBody], Field(min_length=1, max_length=RECIPE_STEPS_MAX_LENGTH)]
     order: OrderMode = OrderMode.USUAL
 
-    def to_steps(self) -> list[Step]:
-        """Return the steps as the domain states them.
+    def to_draft(self) -> RecipeDraft:
+        """Return the name, the steps and the order as the domain states them.
 
-        :returns: The steps.
-        :rtype: list[Step]
+        :returns: The draft.
+        :rtype: RecipeDraft
         """
-        return [step.to_step() for step in self.steps]
+        return RecipeDraft(name=self.name, steps=[step.to_step() for step in self.steps], order=self.order)
 
 
 class StageRunBody(RequestModel):

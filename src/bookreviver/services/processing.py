@@ -19,7 +19,7 @@ its picture and a run makes the picture again under the same identifier. Only a 
 import contextlib
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import JobKind, ProcessorScope, Stage, VersionScale, VersionState
+from bookreviver.domain.enums import JobKind, OrderMode, ProcessorScope, Stage, VersionScale, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.values import PageStageKey, Slice, StageRun, StepPreview, TileCut
 from bookreviver.services.processing_parts import PROJECT_BUSY
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Job, Page, PageStage, PageVersion, Recipe
     from bookreviver.domain.geometry import Point
     from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
-    from bookreviver.domain.values import ProcessorSpec, RecipeKey, SliceRequest, Step, VersionFilter
+    from bookreviver.domain.values import ProcessorSpec, RecipeDraft, RecipeKey, SliceRequest, VersionFilter
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.services.processing_parts import ProcessingParts
@@ -93,9 +93,7 @@ class ProcessingService:
         await owned_project(self._uow.projects, actor, project_id)
         return await self._recipes.active(project_id, stage)
 
-    async def save_recipe(
-        self, actor: Actor, project_id: ProjectId, stage: Stage, name: str, steps: Sequence[Step]
-    ) -> Recipe:
+    async def save_recipe(self, actor: Actor, project_id: ProjectId, stage: Stage, draft: RecipeDraft) -> Recipe:
         """Replace the name and the steps of the active recipe, and mark the pages it processed stale.
 
         :param actor: Account acting in the current request.
@@ -104,17 +102,16 @@ class ProcessingService:
         :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
-        :param name: New name of the recipe.
-        :type name: str
-        :param steps: New steps, which are checked against their processors.
-        :type steps: Sequence[Step]
+        :param draft: New name and steps, which are checked against their processors and their order.
+        :type draft: RecipeDraft
         :returns: The recipe as stored.
         :rtype: Recipe
         :raises NotFoundError: If the actor has no such project, or the stage has no recipe.
-        :raises InvalidParametersError: If a step does not fit its processor.
+        :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
+                                        usual order.
         """
         await owned_project(self._uow.projects, actor, project_id)
-        return await self._rewrite(await self._recipes.active(project_id, stage), name, steps)
+        return await self._rewrite(await self._recipes.active(project_id, stage), draft)
 
     async def variants(self, actor: Actor, project_id: ProjectId, stage: Stage, request: SliceRequest) -> Slice[Recipe]:
         """List the recipes of a stage, the active one first and then the variants by creation.
@@ -136,9 +133,7 @@ class ProcessingService:
         recipes = await self._uow.recipes.list_for_stage(project_id, stage)
         return Slice(items=recipes[request.offset : request.offset + request.limit], total=len(recipes))
 
-    async def add_variant(
-        self, actor: Actor, project_id: ProjectId, stage: Stage, name: str, steps: Sequence[Step]
-    ) -> Recipe:
+    async def add_variant(self, actor: Actor, project_id: ProjectId, stage: Stage, draft: RecipeDraft) -> Recipe:
         """Add a recipe of a stage that is not active, to try on some pages or to compare with the active one.
 
         :param actor: Account acting in the current request.
@@ -147,23 +142,20 @@ class ProcessingService:
         :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
-        :param name: Name of the variant.
-        :type name: str
-        :param steps: Steps of the variant, which are checked against their processors.
-        :type steps: Sequence[Step]
+        :param draft: Name and steps of the variant, which are checked against their processors and their order.
+        :type draft: RecipeDraft
         :returns: The variant as stored.
         :rtype: Recipe
         :raises NotFoundError: If the actor has no such project, or the stage has no recipe.
-        :raises InvalidParametersError: If a step does not fit its processor.
+        :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
+                                        usual order.
         """
         await owned_project(self._uow.projects, actor, project_id)
-        variant = await self._recipes.add_variant(project_id, stage, name, steps)
+        variant = await self._recipes.add_variant(project_id, stage, draft)
         await self._uow.commit()
         return variant
 
-    async def save_variant(
-        self, actor: Actor, project_id: ProjectId, key: RecipeKey, name: str, steps: Sequence[Step]
-    ) -> Recipe:
+    async def save_variant(self, actor: Actor, project_id: ProjectId, key: RecipeKey, draft: RecipeDraft) -> Recipe:
         """Replace the name and the steps of a recipe of a stage, and mark the pages it processed stale.
 
         :param actor: Account acting in the current request.
@@ -172,17 +164,16 @@ class ProcessingService:
         :type project_id: ProjectId
         :param key: The stage the request names and the identifier of the recipe, which must belong to that stage.
         :type key: RecipeKey
-        :param name: New name of the recipe.
-        :type name: str
-        :param steps: New steps, which are checked against their processors.
-        :type steps: Sequence[Step]
+        :param draft: New name and steps, which are checked against their processors and their order.
+        :type draft: RecipeDraft
         :returns: The recipe as stored.
         :rtype: Recipe
         :raises NotFoundError: If the actor has no such project, or the project has no such recipe of the stage.
-        :raises InvalidParametersError: If a step does not fit its processor.
+        :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
+                                        usual order.
         """
         await owned_project(self._uow.projects, actor, project_id)
-        return await self._rewrite(await self._recipes.get(project_id, key.recipe_id, stage=key.stage), name, steps)
+        return await self._rewrite(await self._recipes.get(project_id, key.recipe_id, stage=key.stage), draft)
 
     async def activate(self, actor: Actor, project_id: ProjectId, stage: Stage, recipe_id: RecipeId) -> Recipe:
         """Make a variant the active recipe of its stage, and mark the pages the old active recipe processed stale.
@@ -280,7 +271,8 @@ class ProcessingService:
         checked = StepPreview(
             page_id=preview.page_id,
             stage=preview.stage,
-            steps=await self._recipes.check(preview.stage, preview.steps),
+            # A preview only draws, so an order the user may still be arranging is not refused
+            steps=await self._recipes.check(preview.stage, preview.steps, order=OrderMode.FREE),
             step_index=preview.step_index,
         )
         return await self._starter.enqueue(project_id, JobKind.PREVIEW_STEP, checked.to_map())
@@ -567,20 +559,19 @@ class ProcessingService:
                 return mapped
             version = await self._version_of(page_id, version.input_id)
 
-    async def _rewrite(self, recipe: Recipe, name: str, steps: Sequence[Step]) -> Recipe:
+    async def _rewrite(self, recipe: Recipe, draft: RecipeDraft) -> Recipe:
         """Change the name and the steps of a recipe, and mark the pages it processed stale.
 
         :param recipe: The recipe to change.
         :type recipe: Recipe
-        :param name: New name.
-        :type name: str
-        :param steps: New steps, which are checked against their processors.
-        :type steps: Sequence[Step]
+        :param draft: New name and steps, which are checked against their processors and their order.
+        :type draft: RecipeDraft
         :returns: The recipe as stored.
         :rtype: Recipe
-        :raises InvalidParametersError: If a step does not fit its processor.
+        :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
+                                        usual order.
         """
-        changed = await self._recipes.rewrite(recipe, name, steps)
+        changed = await self._recipes.rewrite(recipe, draft)
         stale = await self._records.mark_recipe_stale(recipe.id)
         await self._uow.commit()
         await self._records.announce(recipe.project_id, stale)

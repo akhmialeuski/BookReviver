@@ -9,6 +9,7 @@ from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.enums import PageKind, RuleCondition, Stage
 from bookreviver.domain.values import SliceRequest
+from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_picks import RecipePicker
 from bookreviver.services.recipes import DefaultRecipes, RecipeBook
 from tests.helpers.builders import EPOCH, make_page, make_pinned_stage, make_project, make_recipe, make_recipe_rule
@@ -83,7 +84,14 @@ async def _statements_of_pick(database: SqlDatabase, project_id: ProjectId, coun
     """
     async with database.sessions() as session:
         uow = SqlAlchemyUnitOfWork(session)
-        book = RecipeBook(uow=uow, catalogue=FakeCatalogue([]), defaults=DefaultRecipes({}), clock=FixedClock(EPOCH))
+        catalogue = FakeCatalogue([])
+        book = RecipeBook(
+            uow=uow,
+            catalogue=catalogue,
+            defaults=DefaultRecipes({}),
+            clock=FixedClock(EPOCH),
+            order=RecipeOrder(catalogue),
+        )
         pages: list[Page] = list((await uow.pages.list_for_project(project_id, WHOLE_BOOK)).items)[:count]
         counter = StatementCounter()
         event.listen(database.engine.sync_engine, STATEMENT_EVENT, counter)
