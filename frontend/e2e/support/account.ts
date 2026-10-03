@@ -354,4 +354,6 @@ export async function uploadFolder(page: Page, folder: string, files: number): P
   });
   // The job goes on after the last file is listed, so its row needs the same time as the import
   await expect(page.getByTestId('import-row')).toHaveCount(0, { timeout: IMPORT_TIMEOUT_MS });
+  // The import starts the split of the new pages, and until it ends a later stage has no page and refuses a run
+  await waitForIdleJobs(page, openProjectId(page));
 }
