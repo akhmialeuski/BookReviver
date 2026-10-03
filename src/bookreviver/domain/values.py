@@ -14,6 +14,7 @@ from bookreviver.domain.enums import (
     EditorKind,
     JobKind,
     NewPageOrigin,
+    NumberDisplay,
     Orthography,
     PageFilter,
     ProcessorScope,
@@ -573,17 +574,19 @@ class PageAnchor:
 
 @frozen(kw_only=True)
 class PageNumbering:
-    """How to write the printed numbers of a range of pages, which is applied once and not stored.
+    """How to number a range of pages, which makes a pagination section of the book and is not stored itself.
 
-    The range runs from one page to another in the order of the book. Pages kept out of the book, and pages of the kinds
-    in ``skip_kinds``, take no number and keep their label, since the plates of an old book are usually not counted.
+    The range runs from one page to another in the order of the book. Numbering it makes a section of the main flow
+    that starts at the first page, a series of the kinds in ``skip_kinds`` that does not count, and, when the book goes
+    on after the last page, a section after the range that does not count either. Pages kept out of the book, and pages
+    of the skipped kinds, take no number and keep their label, since the plates of an old book are usually not counted.
 
     :ivar first_page_id: First page of the range.
     :ivar last_page_id: Last page of the range, which may be the first page but not stand before it.
     :ivar style: How the numbers are written; ``none`` erases the labels of the range.
     :ivar start: Number of the first numbered page, from 1.
-    :ivar bracketed: Whether the label is enclosed in square brackets, as a bibliographer marks a number that is not
-                     printed in the book.
+    :ivar bracketed: Whether the pages are counted and not printed, so the label is enclosed in square brackets, as a
+                     bibliographer marks a number that is not printed in the book.
     :ivar skip_kinds: Kinds of page that are not numbered.
     """
 
@@ -601,18 +604,34 @@ class PageNumbering:
         """
         self.style.write(self.start)
 
-    def label(self, number: int) -> str:
-        """Write the label of the page that takes ``number``.
 
-        :param number: Number of the page, counted from ``start``.
-        :type number: int
-        :returns: The number in the style of the numbering, in square brackets when ``bracketed``, and empty for the
-                  style ``none``.
-        :rtype: str
-        :raises ValueError: If the style cannot write the number, such as 4000 in Roman numerals.
+@frozen(kw_only=True)
+class PaginationSectionDraft:
+    """What the user states of a pagination section, to make a section or to replace the rule of one.
+
+    :ivar first_page_id: The page the section starts at.
+    :ivar name: Name the user sees.
+    :ivar style: How the numbers are written.
+    :ivar start: Number of the first counted page, from 1.
+    :ivar prefix: Text written before every number.
+    :ivar display: Whether the pages count, and whether their numbers are printed or only implied.
+    :ivar kinds: Kinds of page a series by kind takes; empty for a section of the main flow.
+    """
+
+    first_page_id: PageId
+    name: str = ''
+    style: LabelStyle
+    start: int = field(default=1, validator=validators.ge(1))
+    prefix: str = ''
+    display: NumberDisplay = NumberDisplay.PRINTED
+    kinds: frozenset[PageKind] = frozenset()
+
+    def __attrs_post_init__(self) -> None:
+        """Check that the first number can be written in the style.
+
+        :raises ValueError: If the style is Roman and the first number is above 3999.
         """
-        text = self.style.write(number)
-        return f'[{text}]' if self.bracketed and text else text
+        self.style.write(self.start)
 
 
 @frozen(kw_only=True)

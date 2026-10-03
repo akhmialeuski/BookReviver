@@ -156,9 +156,11 @@ class PageChanges:
     """New values for some fields of a page; a field left as None keeps its current value.
 
     A cleared label or note is an empty string, so None never has to mean "clear" here. The kind and the inclusion of a
-    page have no empty value and are never cleared.
+    page have no empty value and are never cleared. A label that is given and not empty is written by hand, so it is an
+    exception that the numbers computed from the sections never change, and an empty one gives the number back to the
+    sections.
 
-    :ivar label: New printed number, or an empty string for an unnumbered page.
+    :ivar label: New printed number, or an empty string to leave the number to the pagination sections.
     :ivar kind: New role of the page in the book.
     :ivar included: New decision whether the page is part of the book.
     :ivar notes: New notes of the user, or an empty string for none.
@@ -182,4 +184,6 @@ class PageChanges:
         :rtype: Page
         """
         given = {name: value for name, value in asdict(self, recurse=False).items() if value is not None}
+        if self.label is not None:
+            given['label_manual'] = bool(self.label)
         return evolve(page, **given)

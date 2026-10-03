@@ -1,11 +1,12 @@
 """Tables of the books feature, private to the SQLAlchemy persistence adapter.
 
 The module declares the ``projects``, ``jobs``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
-``page_edits``, ``book_places``, ``recipes``, ``recipe_rules`` and ``recipe_profiles`` tables in the SQLAlchemy 2.0
-declarative style: ``Mapped`` annotations, ``mapped_column`` and ``relationship`` with ``back_populates``. Every table
-derives from advanced-alchemy's :class:`~advanced_alchemy.base.DefaultBase`, which is a ``DeclarativeBase`` carrying
-the metadata shared with the account tables, the portable ``GUID``, ``DateTimeUTC`` and ``JsonB`` column types for
-``UUID``, ``datetime`` and ``dict`` annotations, and the naming convention of keys and constraints.
+``page_edits``, ``pagination_sections``, ``book_places``, ``recipes``, ``recipe_rules`` and ``recipe_profiles`` tables
+in the SQLAlchemy 2.0 declarative style: ``Mapped`` annotations, ``mapped_column`` and ``relationship`` with
+``back_populates``. Every table derives from advanced-alchemy's :class:`~advanced_alchemy.base.DefaultBase`, which is a
+``DeclarativeBase`` carrying the metadata shared with the account tables, the portable ``GUID``, ``DateTimeUTC`` and
+``JsonB`` column types for ``UUID``, ``datetime`` and ``dict`` annotations, and the naming convention of keys and
+constraints.
 
 Rows never leave the adapter. The mappers in :mod:`bookreviver.adapters.persistence.sqlalchemy.mappers` turn them into
 frozen domain entities, so nothing outside this package depends on the shape of a table.
@@ -44,6 +45,8 @@ from bookreviver.domain.enums import (
     ImagePolicy,
     JobKind,
     JobState,
+    LabelStyle,
+    NumberDisplay,
     Orthography,
     PageFilter,
     PageKind,
@@ -83,6 +86,7 @@ FIRST_REVISION_NUMBER: Final = 0
 FIRST_REVISION: Final = str(FIRST_REVISION_NUMBER)
 PAGES_TABLE: Final = 'pages'
 PAGE_VERSIONS_TABLE: Final = 'page_versions'
+PAGINATION_SECTIONS_TABLE: Final = 'pagination_sections'
 RECIPES_TABLE: Final = 'recipes'
 RECIPE_RULES_TABLE: Final = 'recipe_rules'
 RECIPE_PROFILES_TABLE: Final = 'recipe_profiles'
@@ -471,6 +475,7 @@ class PageRow(DefaultBase):
     :ivar project_id: Project owning the page.
     :ivar order_key: Fractional index string, compared byte by byte, whose order is the order of the book.
     :ivar label: Printed number of the page, or empty.
+    :ivar label_manual: Whether the label was written by hand, which a recompute of the numbers never changes.
     :ivar kind: Role of the page in the book, stored by value.
     :ivar origin: Where the image of the page comes from, stored by value.
     :ivar scan_id: Scan the page was cut from, or null.
@@ -495,6 +500,7 @@ class PageRow(DefaultBase):
     project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE))
     order_key: Mapped[str] = mapped_column(ORDER_KEY_TYPE)
     label: Mapped[str]
+    label_manual: Mapped[bool] = mapped_column(server_default=false())
     kind: Mapped[PageKind] = mapped_column(enum_by_value(PageKind))
     origin: Mapped[PageOrigin] = mapped_column(enum_by_value(PageOrigin))
     scan_id: Mapped[UUID | None] = mapped_column(ForeignKey(ScanRow.id, ondelete=SET_NULL))
@@ -520,6 +526,41 @@ class PageRow(DefaultBase):
     edits: Mapped[list[PageEditRow]] = relationship(
         back_populates=Relation.PAGE, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
+
+
+class PaginationSectionRow(DefaultBase):
+    """Row of one pagination section of a book, which numbers the pages from the page it starts at.
+
+    A project owns its sections, and so does the page a section starts at, so the database removes a section with
+    either. The kinds of a series by kind are a JSON list of the values of the kinds, empty for a section of the main
+    flow, and no query looks inside it.
+
+    :ivar id: Section identifier, assigned by the domain.
+    :ivar project_id: Project owning the section.
+    :ivar first_page_id: Page the section starts at.
+    :ivar name: Name the user sees.
+    :ivar style: How the numbers are written, stored by value.
+    :ivar start: Number of the first counted page of the section.
+    :ivar prefix: Text written before every number.
+    :ivar display: Whether the pages count and whether their numbers are printed, stored by value.
+    :ivar kinds: Values of the kinds of page a series by kind takes, as JSON.
+    :ivar created_at: Time the section was made.
+    :ivar updated_at: Time the section last changed.
+    """
+
+    __tablename__ = PAGINATION_SECTIONS_TABLE
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), index=True)
+    first_page_id: Mapped[UUID] = mapped_column(ForeignKey(PageRow.id, ondelete=CASCADE), index=True)
+    name: Mapped[str]
+    style: Mapped[LabelStyle] = mapped_column(enum_by_value(LabelStyle))
+    start: Mapped[int]
+    prefix: Mapped[str]
+    display: Mapped[NumberDisplay] = mapped_column(enum_by_value(NumberDisplay))
+    kinds: Mapped[list[str]] = mapped_column(JsonB)
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
 
 
 class PageVersionRow(DefaultBase):

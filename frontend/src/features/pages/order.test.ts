@@ -16,6 +16,7 @@ function page(id: string, position: number, extra: Partial<PageSchema> = {}): Pa
     id,
     position,
     label: '',
+    label_manual: false,
     kind: 'text',
     origin: 'scan',
     scan_id: null,

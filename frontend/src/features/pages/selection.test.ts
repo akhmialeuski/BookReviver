@@ -7,6 +7,7 @@ function page(id: string, position: number): PageSchema {
     id,
     position,
     label: '',
+    label_manual: false,
     kind: 'text',
     origin: 'scan',
     scan_id: null,

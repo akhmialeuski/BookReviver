@@ -198,9 +198,11 @@ class ScanAttach(RequestModel):
 class PageUpdate(RequestModel):
     """A JSON Merge Patch of a page: an omitted field is kept, and a null label or note is cleared.
 
-    The kind and the inclusion of a page have no empty value, so they may be omitted but not null.
+    The kind and the inclusion of a page have no empty value, so they may be omitted but not null. A label that is not
+    empty is written by hand, so it is an exception to the pagination sections, and clearing it gives the number of the
+    page back to the sections.
 
-    :ivar label: New printed number, or None to clear it.
+    :ivar label: New printed number, or None to give the number back to the pagination sections.
     :ivar kind: New role of the page in the book.
     :ivar included: New decision whether the page is part of the book.
     :ivar notes: New notes, or None to clear them.
@@ -251,7 +253,7 @@ class LabelRange(RequestModel):
     :ivar last_page_id: Last page of the range, which may be the first page but not stand before it.
     :ivar style: How the numbers are written; ``none`` erases the labels of the range.
     :ivar start: Number of the first numbered page, from 1, and at most 3999 in a Roman style.
-    :ivar bracketed: Whether to enclose the label in square brackets.
+    :ivar bracketed: Whether the pages are counted and not printed, so their labels are in square brackets.
     :ivar skip_kinds: Kinds of page that take no number and keep their label, such as plates.
     """
 
@@ -308,6 +310,8 @@ class PageSchema(ResponseModel):
     :ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except
                     in a manifest listing only the included pages, which numbers those.
     :ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.
+    :ivar label_manual: Whether the label is an exception to the pagination sections: written by hand, or taken from
+                        the source of the scan, and so never changed when the numbers of the book are computed again.
     :ivar kind: Role of the page in the book.
     :ivar origin: Where the image of the page comes from.
     :ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was
@@ -325,6 +329,7 @@ class PageSchema(ResponseModel):
     id: PageId
     position: int
     label: str
+    label_manual: bool
     kind: PageKind
     origin: PageOrigin
     scan_id: ScanId | None
@@ -359,6 +364,7 @@ class PageSchema(ResponseModel):
             id=page.id,
             position=overview.position,
             label=page.label,
+            label_manual=page.label_manual,
             kind=page.kind,
             origin=page.origin,
             scan_id=page.scan_id,

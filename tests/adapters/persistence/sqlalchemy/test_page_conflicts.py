@@ -18,22 +18,22 @@ from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyU
 from bookreviver.adapters.storage import LocalAssetStore
 from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.entities import Actor
-from bookreviver.domain.enums import LabelStyle, PageKind
+from bookreviver.domain.enums import PageKind
 from bookreviver.domain.errors import ConcurrentChangeError
-from bookreviver.domain.values import PageNumbering, SliceRequest
+from bookreviver.domain.values import SliceRequest
 from tests.helpers.builders import EPOCH, make_page, make_project
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.page_services import make_page_service
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Sequence
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Page
-    from bookreviver.domain.ids import AccountId, PageId, ProjectId
+    from bookreviver.domain.ids import AccountId, PageId
     from bookreviver.services.pages import PageService
 
 pytestmark = pytest.mark.anyio
@@ -45,34 +45,21 @@ ORDER_KEYS: tuple[str, ...] = ('a0', 'a1', 'a2')
 
 
 class RacingPages(SqlAlchemyPageRepository):
-    """Page repository that awaits a rival request after the service has read a page or a range of pages.
+    """Page repository that awaits a rival request after the service has read a page.
 
     :ivar reads: How many reads of one page the service has made.
     """
 
-    def __init__(
-        self,
-        session: AsyncSession,
-        rival: Callable[[], Awaitable[None]],
-        *,
-        after_get: bool = False,
-        after_range: bool = False,
-    ) -> None:
+    def __init__(self, session: AsyncSession, rival: Callable[[], Awaitable[None]]) -> None:
         """Bind the repository to the session of the service, and the rival to the reads that give it its turn.
 
         :param session: Session of the service's unit of work.
         :type session: AsyncSession
-        :param rival: Request that commits its change, awaited after each read that gives it a turn.
+        :param rival: Request that commits its change, awaited after each read of one page.
         :type rival: Callable[[], Awaitable[None]]
-        :param after_get: Whether the rival gets a turn after the read of one page.
-        :type after_get: bool
-        :param after_range: Whether the rival gets a turn after the read of a range of pages.
-        :type after_range: bool
         """
         super().__init__(session)
         self._rival = rival
-        self._after_get = after_get
-        self._after_range = after_range
         self.reads = 0
 
     @override
@@ -86,27 +73,8 @@ class RacingPages(SqlAlchemyPageRepository):
         """
         page = await super().get(entity_id)
         self.reads += 1
-        if self._after_get:
-            await self._rival()
+        await self._rival()
         return page
-
-    @override
-    async def list_range(self, project_id: ProjectId, first_key: str, last_key: str) -> Sequence[Page]:
-        """Read a range of pages, then give the rival its turn.
-
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
-        :param first_key: Smallest order key of the range.
-        :type first_key: str
-        :param last_key: Greatest order key of the range.
-        :type last_key: str
-        :returns: The pages as they were before the rival wrote.
-        :rtype: Sequence[Page]
-        """
-        pages = await super().list_range(project_id, first_key, last_key)
-        if self._after_range:
-            await self._rival()
-        return pages
 
 
 class Race:
@@ -159,20 +127,16 @@ class Race:
             await pages.update(evolve(await pages.get(self.pages[1].id), label=f'{RIVAL_LABEL}{self.rival_writes}'))
             await session.commit()
 
-    def service(self, session: AsyncSession, *, after_get: bool = False, after_range: bool = False) -> PageService:
+    def service(self, session: AsyncSession) -> PageService:
         """Build the page service over a unit of work whose page reads give the rival a turn.
 
         :param session: Session of the request.
         :type session: AsyncSession
-        :param after_get: Whether the rival gets a turn after the read of one page.
-        :type after_get: bool
-        :param after_range: Whether the rival gets a turn after the read of a range of pages.
-        :type after_range: bool
         :returns: The service of one request.
         :rtype: PageService
         """
         uow = SqlAlchemyUnitOfWork(session)
-        self.racing = RacingPages(session, self.rival, after_get=after_get, after_range=after_range)
+        self.racing = RacingPages(session, self.rival)
         uow.pages = self.racing
         runtime = (RecordingEventBus(), FixedClock(EPOCH), RecordingJobQueue())
         return make_page_service(uow, LocalAssetStore(root=self._storage), runtime)
@@ -229,7 +193,7 @@ class TestUpdateOnSqlAlchemy:
         race = await _race(fx_database, fx_owner_id, tmp_path, rival_writes=1)
 
         async with fx_database.sessions() as session:
-            updated = await race.service(session, after_get=True).update(
+            updated = await race.service(session).update(
                 race.actor, race.project.id, race.pages[1].id, PageChanges(kind=PageKind.PLATE)
             )
 
@@ -256,40 +220,11 @@ class TestUpdateOnSqlAlchemy:
         race = await _race(fx_database, fx_owner_id, tmp_path, rival_writes=PAGE_COUNT)
 
         async with fx_database.sessions() as session:
-            service = race.service(session, after_get=True)
+            service = race.service(session)
             with pytest.raises(ConcurrentChangeError):
                 await service.update(race.actor, race.project.id, race.pages[1].id, PageChanges(kind=PageKind.PLATE))
 
         [_, middle, _] = await race.stored()
         expect(race.racing is not None and race.racing.reads == PAGE_COUNT)
         expect((middle.label, middle.kind) == (f'{RIVAL_LABEL}{PAGE_COUNT}', race.pages[1].kind))
-        assert_expectations()
-
-
-class TestNumberOnSqlAlchemy:
-    """Tests for PageService.number() against a row another request changes after the range was read."""
-
-    async def test_a_page_changed_after_the_range_was_read_fails_the_numbering_and_writes_no_page(
-        self, fx_database: SqlDatabase, fx_owner_id: AccountId, tmp_path: Path
-    ) -> None:
-        """Verify the numbering is refused whole, so the pages before the changed one keep their label too.
-
-        :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
-        :param fx_owner_id: Committed account owning the project.
-        :type fx_owner_id: AccountId
-        :param tmp_path: Temporary directory of the test.
-        :type tmp_path: Path
-        """
-        race = await _race(fx_database, fx_owner_id, tmp_path, rival_writes=1)
-        numbering = PageNumbering(
-            first_page_id=race.pages[0].id, last_page_id=race.pages[2].id, style=LabelStyle.ARABIC
-        )
-
-        async with fx_database.sessions() as session:
-            with pytest.raises(ConcurrentChangeError):
-                await race.service(session, after_range=True).number(race.actor, race.project.id, numbering)
-
-        first, middle, last = await race.stored()
-        expect((first.label, middle.label, last.label) == (STALE_LABEL, f'{RIVAL_LABEL}1', STALE_LABEL))
         assert_expectations()

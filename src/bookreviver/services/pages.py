@@ -8,7 +8,10 @@ inside the persistence adapter's ordering, so no client ever sees it.
 Moving a page writes a new order key to the moved pages alone: the key lies between the key of the page next to the
 place and the key of the page after it, which the repository finds while leaving the moved pages out, so the pages that
 stay never change. A group of pages, or every page of one source, is placed as one run that keeps its order in the
-book. Every change commits first and publishes one ``PagesChanged`` event after, naming all the pages it touched.
+book. Every change commits first and publishes one ``PagesChanged`` event after, naming all the pages it touched. A
+change that adds, deletes or moves pages, or changes the kind or the inclusion of one, also recomputes the labels the
+pagination sections give the pages, in its own transaction, and announces the pages renumbered as a second
+``PagesChanged``.
 
 A page without a scan is added in a place of the book: a placeholder has no image and waits for a scan, and a blank leaf
 gets the base version ``pages.blank``, a white image of the median size of the book's pages. Binding a scan to a
@@ -52,14 +55,14 @@ from bookreviver.domain.errors import (
     DomainError,
     NotAPlaceholderError,
     NotFoundError,
-    ReversedRangeError,
     ScanAlreadyInBookError,
 )
 from bookreviver.domain.events import JobChanged, PagesChanged, PageVersionReady
 from bookreviver.domain.ids import JobId, PageId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import NumberedPage, PageSize, PageStageKey, Progress, Slice
+from bookreviver.domain.values import PageSize, PageStageKey, Progress, Slice
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
+from bookreviver.services.page_labels import PageLabels
 from bookreviver.services.projects import owned_project
 from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.steps import StepRun
@@ -72,7 +75,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.changes import PageChanges
     from bookreviver.domain.entities import Actor, PageVersion
     from bookreviver.domain.ids import ProjectId, ScanId, SourceId, StorageKey
-    from bookreviver.domain.values import NewPage, PageAnchor, PageNumbering, SliceRequest
+    from bookreviver.domain.values import NewPage, PageAnchor, SliceRequest
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
@@ -162,6 +165,7 @@ class PageService:
         self._base_versions = imaging.base_versions
         self._runner = imaging.runner
         self._records = StageRecords(uow=uow, publisher=runtime.publisher, clock=runtime.clock)
+        self._labels = PageLabels(uow=uow, publisher=runtime.publisher, clock=runtime.clock)
 
     async def manifest(
         self, actor: Actor, project_id: ProjectId, request: SliceRequest, *, included_only: bool = False
@@ -246,90 +250,14 @@ class PageService:
         """
         page = changes.apply_to(await self._page(project_id, page_id))
         changed = await self._uow.pages.update(evolve(page, updated_at=self._clock.now()))
+        # A label, a kind or an inclusion changes what the sections give the pages, the page itself included
+        if any(field is not None for field in (changes.label, changes.kind, changes.included)) and (
+            await self._labels.recompute(project_id)
+        ):
+            changed = await self._uow.pages.get(page_id)
         overview = await self._overview(changed)
         await self._finish(project_id, [changed], PageChange.EDITED)
         return overview
-
-    async def number(self, actor: Actor, project_id: ProjectId, numbering: PageNumbering) -> None:
-        """Write the printed numbers of a range of pages into their labels.
-
-        The numbers count the pages of the range that are part of the book and not of a skipped kind, from the start of
-        the numbering, and the pages left out keep their label, as do the pages outside the range. Only the pages whose
-        label changes are written.
-
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :param numbering: The range, the style and the first number.
-        :type numbering: PageNumbering
-        :raises NotFoundError: If the actor has no such project, or the project lacks the first or the last page.
-        :raises ReversedRangeError: If the range runs backwards.
-        :raises ConflictError: If a number does not fit the style, such as 4000 in Roman numerals.
-        :raises ConcurrentChangeError: If another request changed one of the pages meanwhile, which writes none.
-        """
-        await owned_project(self._uow.projects, actor, project_id)
-        moment = self._clock.now()
-        changed = [
-            evolve(page, label=label, updated_at=moment)
-            for page, label in await self._numbered(project_id, numbering)
-            if page.label != label
-        ]
-        if not changed:
-            return
-        await self._uow.pages.update_many(changed)
-        await self._finish(project_id, changed, PageChange.EDITED)
-
-    async def preview_numbers(
-        self, actor: Actor, project_id: ProjectId, numbering: PageNumbering
-    ) -> list[NumberedPage]:
-        """Give the labels a numbering would write, without writing any.
-
-        The labels come from the same rule ``number`` applies, so a client shows exactly what saving would store.
-
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :param numbering: The range, the style and the first number.
-        :type numbering: PageNumbering
-        :returns: One entry for each page the numbering counts, in book order, with the label it would get, whether
-                  that is its label now or not.
-        :rtype: list[NumberedPage]
-        :raises NotFoundError: If the actor has no such project, or the project lacks the first or the last page.
-        :raises ReversedRangeError: If the range runs backwards.
-        :raises ConflictError: If a number does not fit the style.
-        """
-        await owned_project(self._uow.projects, actor, project_id)
-        return [
-            NumberedPage(page_id=page.id, label=label) for page, label in await self._numbered(project_id, numbering)
-        ]
-
-    async def _numbered(self, project_id: ProjectId, numbering: PageNumbering) -> list[tuple[Page, str]]:
-        """Pair each page a numbering counts with the label it gets, which is the one rule of numbering.
-
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :param numbering: The range, the style and the first number.
-        :type numbering: PageNumbering
-        :returns: The pages of the range that are part of the book and not of a skipped kind, in book order, each with
-                  its new label.
-        :rtype: list[tuple[Page, str]]
-        :raises NotFoundError: If the project lacks the first or the last page.
-        :raises ReversedRangeError: If the range runs backwards.
-        :raises ConflictError: If a number does not fit the style.
-        """
-        first = await self._page(project_id, numbering.first_page_id)
-        last = await self._page(project_id, numbering.last_page_id)
-        if first.order_key.encode() > last.order_key.encode():
-            raise ReversedRangeError
-        pages = await self._uow.pages.list_range(project_id, first.order_key, last.order_key)
-        counted = [page for page in pages if page.included and page.kind not in numbering.skip_kinds]
-        try:
-            labels = [numbering.label(number) for number in range(numbering.start, numbering.start + len(counted))]
-        except ValueError as error:
-            raise ConflictError(str(error)) from error
-        return list(zip(counted, labels, strict=True))
 
     async def add(self, actor: Actor, project_id: ProjectId, new_page: NewPage) -> PageOverview:
         """Add a placeholder or a blank leaf at a place of the book, or at its end.
@@ -359,6 +287,8 @@ class PageService:
         if size is not None:
             full = project.image_policy.full_format(ColorMode.BILEVEL)
             await self._uow.page_versions.add(BaseVersions.blank(page=page, size=size, full=full, moment=moment))
+        if await self._labels.recompute(project_id):
+            page = await self._uow.pages.get(page.id)
         overview = await self._overview(page)
         await self._finish(project_id, [page], PageChange.ADDED)
         if blank:
@@ -429,6 +359,10 @@ class PageService:
                 leaves.append(BaseVersions.blank(page=page, size=size, full=full, moment=moment))
         await self._uow.page_versions.add_many(leaves)
 
+        # The new pages take the numbers of their sections, which the overviews show
+        if await self._labels.recompute(project_id):
+            stored = {page.id: page for page in await self._uow.pages.list_by_ids(project_id, [p.id for p in added])}
+            pages = {index: stored[page.id] for index, page in enumerate(added)}
         overviews: dict[PageId, PageOverview] = {}
         for indexes in places.values():
             run = [pages[index] for index in indexes]
@@ -453,6 +387,7 @@ class PageService:
         """
         await owned_project(self._uow.projects, actor, project_id)
         page = await self._page(project_id, page_id)
+        await self._labels.recompute(project_id, leaving=[page.id])
         await self._uow.pages.delete(page.id)
         await self._uow.commit()
         await self._discard_files(project_id, [page])
@@ -535,15 +470,21 @@ class PageService:
                     for page in taken
                 ]
             )
+        if taken:
+            # Renumbering may write the placeholder too, so it is read again for the write below
+            await self._labels.recompute(project_id, leaving=[page.id for page in taken])
+            placeholder = await self._page(project_id, page_id)
         for page in taken:
             await self._uow.pages.delete(page.id)
         moment = self._clock.now()
+        # The label of the scan is the one its source printed, so it is an exception of the sections, like one typed
         page = evolve(
             placeholder,
             origin=PageOrigin.SCAN,
             scan_id=scan_id,
             slot=Page.WHOLE_SCAN,
             label=placeholder.label or scan.source_label,
+            label_manual=placeholder.label_manual or (not placeholder.label and bool(scan.source_label)),
             updated_at=moment,
         )
         await self._uow.pages.update(page)
@@ -645,7 +586,7 @@ class PageService:
             await self._publisher.publish(JobChanged(project_id=stored.project_id, job=stored))
 
     async def move(self, actor: Actor, project_id: ProjectId, page_id: PageId, anchor: PageAnchor) -> PageOverview:
-        """Put one page before or after another, which writes one row and renumbers nothing.
+        """Put one page before or after another, and renumber the pages whose number the sections now give differently.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -664,6 +605,8 @@ class PageService:
         await owned_project(self._uow.projects, actor, project_id)
         [moved] = await self._place(project_id, [await self._page(project_id, page_id)], anchor)
         await self._uow.pages.update(moved)
+        if await self._labels.recompute(project_id):
+            moved = await self._uow.pages.get(moved.id)
         overview = await self._overview(moved)
         await self._finish(project_id, [moved], PageChange.MOVED)
         return overview
@@ -829,6 +772,7 @@ class PageService:
             project_id=project_id,
             order_key=key,
             label=new_page.label,
+            label_manual=bool(new_page.label),
             kind=new_page.kind,
             origin=new_page.origin.page_origin,
             notes=new_page.notes,
@@ -903,6 +847,7 @@ class PageService:
         if not moved:
             return
         await self._uow.pages.update_many(moved)
+        await self._labels.recompute(project_id)
         await self._finish(project_id, moved, PageChange.MOVED)
 
     async def _finish(self, project_id: ProjectId, pages: Sequence[Page], change: PageChange) -> None:
@@ -932,6 +877,7 @@ class PageService:
         await self._publisher.publish(
             PagesChanged(project_id=project_id, page_ids=[page.id for page in pages], change=change)
         )
+        await self._labels.announce(project_id)
 
     async def _discard_files(self, project_id: ProjectId, pages: Sequence[Page]) -> None:
         """Remove every file of pages that were deleted, after the transaction that deleted them committed.

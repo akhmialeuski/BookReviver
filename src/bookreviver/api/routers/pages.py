@@ -30,6 +30,7 @@ from bookreviver.api.schemas.pages import (
 from bookreviver.domain.entities import PageOverview
 from bookreviver.domain.ids import PageId, ProjectId
 from bookreviver.services.pages import PageService
+from bookreviver.services.pagination import PaginationService
 
 PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
 PAGE_ID_DESCRIPTION: str = 'Identifier of the page'
@@ -224,12 +225,15 @@ async def number_pages(
     project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
     body: LabelRange,
     actor: ActorDep,
-    pages: FromDishka[PageService],
+    pagination: FromDishka[PaginationService],
 ) -> None:
-    """Write the printed numbers of a range of pages into their labels, in the style and from the number given.
+    """Make the pagination sections that number a range of pages, in the style and from the number given.
 
-    Pages kept out of the book, and pages of the kinds to skip, take no number and keep their label. The answer is 409
-    when the range runs backwards. The new labels reach the browser as a ``pages-changed`` event.
+    The range becomes a section of the main flow that starts at its first page, with a series that does not count for
+    the kinds to skip, and a section that does not count after the range, so the numbers follow the sections from then
+    on. Pages kept out of the book, and pages of the kinds to skip, take no number and keep their label. The pages the
+    range numbers give up the labels written by hand. The answer is 409 when the range runs backwards. The new labels
+    reach the browser as a ``pages-changed`` event.
 
     \N{FORM FEED}
     :param project_id: Identifier of the project.
@@ -238,10 +242,10 @@ async def number_pages(
     :type body: LabelRange
     :param actor: The signed-in account.
     :type actor: Actor
-    :param pages: Page service of the request.
-    :type pages: PageService
+    :param pagination: Pagination service of the request.
+    :type pagination: PaginationService
     """
-    await pages.number(actor, project_id, body.to_numbering())
+    await pagination.number(actor, project_id, body.to_numbering())
 
 
 @router.post('/{project_id}/pages/labels/preview')
@@ -249,12 +253,12 @@ async def preview_page_numbers(
     project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
     body: LabelRange,
     actor: ActorDep,
-    pages: FromDishka[PageService],
+    pagination: FromDishka[PaginationService],
 ) -> list[NumberedPageSchema]:
     """Return the labels a numbering of the same body would write, and write nothing.
 
-    The labels come from the rule the numbering applies, so the interface shows exactly what saving stores. The answer
-    is 409 when the range runs backwards.
+    The labels come from the sections the numbering would make, so the interface shows exactly what saving stores. The
+    answer is 409 when the range runs backwards.
 
     \N{FORM FEED}
     :param project_id: Identifier of the project.
@@ -263,12 +267,12 @@ async def preview_page_numbers(
     :type body: LabelRange
     :param actor: The signed-in account.
     :type actor: Actor
-    :param pages: Page service of the request.
-    :type pages: PageService
+    :param pagination: Pagination service of the request.
+    :type pagination: PaginationService
     :returns: Every page the numbering counts, in book order, with the label it would get.
     :rtype: list[NumberedPageSchema]
     """
-    numbered = await pages.preview_numbers(actor, project_id, body.to_numbering())
+    numbered = await pagination.preview_numbers(actor, project_id, body.to_numbering())
     return [NumberedPageSchema.model_validate(page) for page in numbered]
 
 

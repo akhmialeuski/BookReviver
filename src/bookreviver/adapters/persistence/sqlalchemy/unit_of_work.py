@@ -14,6 +14,7 @@ from bookreviver.adapters.persistence.sqlalchemy.repositories import (
     SqlAlchemyPageRepository,
     SqlAlchemyPageStageRepository,
     SqlAlchemyPageVersionRepository,
+    SqlAlchemyPaginationSectionRepository,
     SqlAlchemyProjectRepository,
     SqlAlchemyRecipeProfileRepository,
     SqlAlchemyRecipeRepository,
@@ -34,6 +35,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     :ivar sources: Source repository bound to the session.
     :ivar scans: Scan repository bound to the session.
     :ivar pages: Page repository bound to the session.
+    :ivar pagination_sections: Pagination section repository bound to the session.
     :ivar page_versions: Page version repository bound to the session.
     :ivar page_stages: Page stage repository bound to the session.
     :ivar page_edits: Page edit repository bound to the session.
@@ -55,6 +57,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.sources = SqlAlchemySourceRepository(session)
         self.scans = SqlAlchemyScanRepository(session)
         self.pages = SqlAlchemyPageRepository(session)
+        self.pagination_sections = SqlAlchemyPaginationSectionRepository(session)
         self.page_versions = SqlAlchemyPageVersionRepository(session)
         self.page_stages = SqlAlchemyPageStageRepository(session)
         self.page_edits = SqlAlchemyPageEditRepository(session)

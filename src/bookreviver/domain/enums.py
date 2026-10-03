@@ -3,6 +3,7 @@
 import enum
 import re
 from itertools import cycle
+from string import ascii_lowercase
 from typing import Final, Self
 from urllib.parse import urlsplit
 
@@ -345,31 +346,61 @@ class LabelStyle(LabeledStrEnum):
     ARABIC = 'arabic', 'Arabic'
     ROMAN_LOWER = 'roman-lower', 'Roman, lower case'
     ROMAN_UPPER = 'roman-upper', 'Roman, upper case'
+    ALPHA_LOWER = 'alpha-lower', 'Letters, lower case'
+    ALPHA_UPPER = 'alpha-upper', 'Letters, upper case'
     NONE = 'none', 'No label'
+
+    @property
+    def is_roman(self) -> bool:
+        """Whether the style writes Roman numerals, which stop at 3999."""
+        return self in {LabelStyle.ROMAN_LOWER, LabelStyle.ROMAN_UPPER}
 
     def write(self, number: int) -> str:
         """Write a page number in this style, which for ``none`` is the empty label that erases a numbering.
 
-        The method is not called ``format``, since that name belongs to ``str``, whose signature it would break.
+        The method is not called ``format``, since that name belongs to ``str``, whose signature it would break. The
+        letter styles follow the page labels of PDF: ``a`` to ``z``, then ``aa`` to ``zz``, then ``aaa``.
 
         :param number: Number of the page, from 1.
         :type number: int
-        :returns: ``12``, ``xii`` or ``XII`` for the number 12, and an empty string for ``none``.
+        :returns: ``12``, ``xii`` or ``XII`` for the number 12, ``b`` or ``B`` for the number 2, and an empty string
+                  for ``none``.
         :rtype: str
         :raises ValueError: If the number is below 1, or above 3999 in a Roman style, which has no numeral for it.
         """
         if self is LabelStyle.NONE:
             return ''
-        if number < 1 or (self is not LabelStyle.ARABIC and number > ROMAN_MAX):
+        if number < 1 or (self.is_roman and number > ROMAN_MAX):
             err_msg = f'{number} cannot be written as a {self.label.lower()} page number.'
             raise ValueError(err_msg)
         if self is LabelStyle.ARABIC:
             return str(number)
+        if self in {LabelStyle.ALPHA_LOWER, LabelStyle.ALPHA_UPPER}:
+            repeats, index = divmod(number - 1, len(ascii_lowercase))
+            letters = ascii_lowercase[index] * (repeats + 1)
+            return letters if self is LabelStyle.ALPHA_LOWER else letters.upper()
         numeral, remaining = '', number
         for value, symbol in ROMAN_NUMERALS:
             repeats, remaining = divmod(remaining, value)
             numeral += symbol * repeats
         return numeral.lower() if self is LabelStyle.ROMAN_LOWER else numeral
+
+
+class NumberDisplay(LabeledStrEnum):
+    """How the pages of a pagination section show their numbers, and whether they take part in the count.
+
+    A page that is counted but not printed is shown with its number in square brackets, as a bibliographer writes a
+    number the book implies and does not print, such as ``[iii]``.
+    """
+
+    NOT_COUNTED = 'not-counted', 'Not counted'
+    COUNTED = 'counted', 'Counted, not printed'
+    PRINTED = 'printed', 'Printed'
+
+    @property
+    def counts(self) -> bool:
+        """Whether a page of the section takes a number and so moves the count on."""
+        return self is not NumberDisplay.NOT_COUNTED
 
 
 class Side(LabeledStrEnum):

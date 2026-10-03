@@ -11,6 +11,7 @@ from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
 from bookreviver.ports.storage import AssetStore, SourceStore
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.pages import PageImaging, PageRuntime, PageService
+from bookreviver.services.pagination import PaginationService
 from bookreviver.services.places import PlaceService
 from bookreviver.services.projects import ProjectService
 from bookreviver.services.sources import SourceService
@@ -108,6 +109,21 @@ class ProjectsProvider(Provider):
         :rtype: PageService
         """
         return PageService(uow=uow, assets=assets, runtime=runtime, imaging=imaging)
+
+    @provide
+    def pagination(self, uow: UnitOfWork, publisher: EventPublisher, clock: Clock) -> PaginationService:
+        """Build the pagination service over the request's unit of work.
+
+        :param uow: Unit of work of the current request.
+        :type uow: UnitOfWork
+        :param publisher: Publisher of the application's event bus.
+        :type publisher: EventPublisher
+        :param clock: Clock of the application.
+        :type clock: Clock
+        :returns: The pagination service of the request.
+        :rtype: PaginationService
+        """
+        return PaginationService(uow=uow, publisher=publisher, clock=clock)
 
     @provide
     def places(self, uow: UnitOfWork, clock: Clock) -> PlaceService:

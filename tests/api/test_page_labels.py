@@ -87,6 +87,7 @@ async def fx_book(fx_database: InMemoryDatabase, fx_actor: Actor) -> Book:
             kind=kind,
             included=included,
             label=STALE_LABEL,
+            label_manual=True,
             notes='Kept',
         )
         for key, (kind, included) in zip(keys, LAYOUT, strict=True)
@@ -179,8 +180,11 @@ class TestUpdatePage:
 
         after = PageSchema.model_validate_json(response.content)
         unchanged = {'id', 'position', 'created_at', 'scan_id', 'slot', 'origin', 'images', 'updated_at', case.field}
+        # A label typed by hand is an exception, and clearing it gives the page back to the pagination sections
+        unchanged |= {'label_manual'} if case.field == 'label' else set()
         expect(response.status_code == status.HTTP_200_OK)
         expect(getattr(after, case.field) == case.shown)
+        expect(after.label_manual is (case.field != 'label' or bool(case.shown)))
         expect(after.model_dump(exclude=unchanged) == before.model_dump(exclude=unchanged))
         expect((after.id, after.position) == (before.id, before.position))
         assert_expectations()
@@ -293,6 +297,66 @@ class TestNumberPages:
         expect(response.status_code == status.HTTP_204_NO_CONTENT)
         expect(response.content == b'')
         expect(await _labels(fx_client, fx_book) == [STALE_LABEL, first, STALE_LABEL, STALE_LABEL, second])
+        assert_expectations()
+
+    async def test_makes_the_sections_that_give_the_numbers(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify a numbering stores a section of the main flow and a series for the kinds it skips.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        body = {
+            'first_page_id': str(fx_book.pages[1].id),
+            'last_page_id': str(fx_book.pages[4].id),
+            'style': 'roman-lower',
+            'start': 5,
+            'skip_kinds': ['plate'],
+        }
+
+        await fx_client.post(fx_book.labels_path, json=body)
+
+        listed = await fx_client.get(f'{PROJECTS_PATH}/{fx_book.project.id}/pagination-sections')
+        flow, series = listed.json()['items']
+        expect(
+            (flow['first_page_id'], flow['style'], flow['start'], flow['kinds'])
+            == (body['first_page_id'], 'roman-lower', 5, [])
+        )
+        expect((series['display'], series['kinds']) == ('not-counted', ['plate']))
+        assert_expectations()
+
+    async def test_the_preview_lists_the_labels_the_numbering_stores(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify the preview names the pages the numbering numbers with their labels, and stores nothing.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        body = {
+            'first_page_id': str(fx_book.pages[1].id),
+            'last_page_id': str(fx_book.pages[4].id),
+            'style': 'arabic',
+            'start': 5,
+            'bracketed': True,
+            'skip_kinds': ['plate'],
+        }
+
+        previewed = await fx_client.post(f'{fx_book.labels_path}/preview', json=body)
+        listed = await fx_client.get(f'{PROJECTS_PATH}/{fx_book.project.id}/pagination-sections')
+
+        expect(previewed.status_code == status.HTTP_200_OK)
+        expect(
+            previewed.json()
+            == [
+                {'page_id': str(fx_book.pages[1].id), 'label': '[5]'},
+                {'page_id': str(fx_book.pages[4].id), 'label': '[6]'},
+            ]
+        )
+        expect(listed.json()['items'] == [])
         assert_expectations()
 
     @pytest.mark.parametrize(

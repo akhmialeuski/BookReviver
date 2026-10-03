@@ -56,6 +56,10 @@ pytestmark = pytest.mark.anyio
 DESCRIPTION_REVISION: str = '4f4f125a9583'
 # The revision the one that records the format of the full image follows
 PREVIOUS_REVISION: str = '6446f5ce697c'
+# The revision before the one that adds the pagination sections, and two labels a person might have typed
+BEFORE_SECTIONS_REVISION: str = 'dd065348e01a'
+TYPED_LABEL: str = 'vi'
+BRACKETED_LABEL: str = '[4]'
 # Identifier and message of the revision a test adds after the head of the shipped migrations
 TEST_REVISION: str = 'test_revision'
 TEST_REVISION_MESSAGE: str = 'A revision a test adds after the baseline.'
@@ -240,6 +244,49 @@ class TestRecordFullFormatRevision:
 
         expect(scans == [Rendition.FULL_JPEG])
         expect(versions == {with_image.id: Rendition.FULL_JPEG, without_image.id: None})
+        assert_expectations()
+
+
+class TestPaginationSectionsRevision:
+    """Tests for the revision that adds the pagination sections and the mark of a label written by hand."""
+
+    async def test_every_label_that_exists_becomes_an_exception_of_the_sections(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify a downgrade past the revision and an upgrade again keep each label and mark the labels as exceptions.
+
+        The downgrade drops the mark, so the pages come back as the pages of a database migrated from before the
+        revision: the labels a person typed, or that came with a scan, are all there is, and none may be lost.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        project = make_project(owner_id=await commit_account(fx_empty_database))
+        typed = evolve(make_page(project_id=project.id, order_key='a0'), label=TYPED_LABEL)
+        bracketed = evolve(make_page(project_id=project.id, order_key='a1'), label=BRACKETED_LABEL)
+        bare = make_page(project_id=project.id, order_key='a2')
+        async with fx_empty_database.sessions() as session:
+            uow = SqlAlchemyUnitOfWork(session)
+            await uow.projects.add(project)
+            await uow.pages.add_many([typed, bracketed, bare])
+            await uow.commit()
+
+        await _migrate(fx_empty_database, migrations.downgrade, BEFORE_SECTIONS_REVISION)
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        async with fx_empty_database.sessions() as session:
+            rows = (await session.execute(select(PageRow.id, PageRow.label, PageRow.label_manual))).all()
+
+        stored = {row.id: (row.label, row.label_manual) for row in rows}
+        expect(
+            stored
+            == {
+                typed.id: (TYPED_LABEL, True),
+                bracketed.id: (BRACKETED_LABEL, True),
+                bare.id: ('', False),
+            }
+        )
         assert_expectations()
 
 
