@@ -126,13 +126,18 @@ describe('uiSchemaOf', () => {
     const marked = new Set(['max_angle', 'min_lines']);
     const ui = uiSchemaOf(formSchemaOf(DESKEW_METHODS_PARAMETERS), marked, (title) => `${title}!`);
 
-    expect(ui.max_angle).toMatchObject({ 'ui:widget': BOUNDED_NUMBER_WIDGET });
-    const titles = (ui.oneOf as Record<string, unknown>[]).flatMap((method) =>
-      Object.values(method).flatMap((entry) =>
-        typeof entry === 'object' && entry !== null && 'ui:title' in entry
-          ? [(entry as Record<string, unknown>)['ui:title']]
-          : [],
-      ),
+    // The fields of a processor with methods are in the branches of `oneOf`, not at the top of the ui schema
+    const branches = ui.oneOf as Record<string, Record<string, unknown>>[];
+    expect(branches.length).toBeGreaterThan(0);
+    for (const branch of branches) {
+      expect(branch.max_angle).toMatchObject({
+        'ui:widget': BOUNDED_NUMBER_WIDGET,
+        'ui:title': 'Largest slant!',
+      });
+      expect(branch.min_confidence).not.toHaveProperty('ui:title');
+    }
+    const titles = branches.flatMap((branch) =>
+      Object.values(branch).map((entry) => entry['ui:title']),
     );
     expect(titles).toContain('Fewest lines!');
   });
