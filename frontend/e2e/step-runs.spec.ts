@@ -7,6 +7,7 @@ import {
   registerAndSignIn,
   snap,
   uploadFolder,
+  waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
 
@@ -63,6 +64,9 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
 
   /** Run the recipe up to a step on all pages and wait for the run to end. */
   const runThrough = async (index: number): Promise<void> => {
+    // A run is refused while the book still splits, collects old versions or does anything else, and a job of the
+    // earlier stage that ends now would count as the run started here
+    await waitForIdleJobs(page, openProjectId(page));
     const before = await finishedRuns(page);
     await steps.nth(index).getByTestId('step-run').click();
     await page.getByTestId('step-run-all').click();
@@ -77,6 +81,8 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
     await expect(page.getByTestId('page-strip').getByTestId('strip-page')).toHaveCount(PAGES);
+    // The panel draws the steps once the recipe of the stage is read, so they are counted after the first one shows
+    await expect(steps.first()).toBeVisible();
     stepCount = await steps.count();
     expect(stepCount).toBeGreaterThan(1);
     // Nothing has run, so no step has been passed and no page stopped short
