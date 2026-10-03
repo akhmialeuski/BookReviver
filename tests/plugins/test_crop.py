@@ -176,56 +176,6 @@ class TestCrop:
         )
         assert_expectations()
 
-    @pytest.mark.parametrize('scale', LINE_SCALES)
-    def test_the_distance_between_the_lines_is_recorded_for_the_page(
-        self, fx_crop: Processor, tmp_path: Path, scale: float
-    ) -> None:
-        """Verify the line height in the data is the pitch of the lines drawn, within 2 percent, at any scale of the page.
-
-        :param fx_crop: The processor under test.
-        :type fx_crop: Processor
-        :param tmp_path: Temporary directory of the test.
-        :type tmp_path: Path
-        :param scale: Size of the page over the size it was drawn at.
-        :type scale: float
-        """
-        page = text_page(*SHEET_SIZE_PX)
-        scaled = page.resize((round(page.width * scale), round(page.height * scale)), Image.Resampling.LANCZOS)
-        output = run_on(fx_crop, save(scaled, tmp_path / PAGE_NAME), tmp_path)
-        expect(output.data[VersionData.LINE_HEIGHT_PX] == pytest.approx(LINE_PITCH_PX * scale, rel=LINE_TOLERANCE))
-        assert_expectations()
-
-    def test_a_preview_reports_the_line_height_in_the_pixels_of_the_full_image(
-        self, fx_crop: Processor, tmp_path: Path
-    ) -> None:
-        """Verify a page at half size gives the line height of the full page, as it gives the frame.
-
-        :param fx_crop: The processor under test.
-        :type fx_crop: Processor
-        :param tmp_path: Temporary directory of the test.
-        :type tmp_path: Path
-        """
-        page = text_page(*SHEET_SIZE_PX)
-        half_page = page.resize((page.width // 2, page.height // 2), Image.Resampling.LANCZOS)
-        half = run_on(fx_crop, save(half_page, tmp_path / HALF_NAME), tmp_path, scale=HALF_SCALE)
-        expect(half.data[VersionData.LINE_HEIGHT_PX] == pytest.approx(LINE_PITCH_PX, rel=LINE_TOLERANCE))
-        assert_expectations()
-
-    def test_a_page_with_fewer_than_three_lines_has_no_line_height(self, fx_crop: Processor, tmp_path: Path) -> None:
-        """Verify a frame too short to hold the ripple of lines of text leaves the line height out.
-
-        :param fx_crop: The processor under test.
-        :type fx_crop: Processor
-        :param tmp_path: Temporary directory of the test.
-        :type tmp_path: Path
-        """
-        page = Image.new('L', (600, 800), PAPER)
-        ImageDraw.Draw(page).rectangle((100, 300, 500, 340), fill=0)
-        output = run_on(fx_crop, save(page, tmp_path / PAGE_NAME), tmp_path)
-        expect(VersionData.LINE_HEIGHT_PX not in output.data)
-        expect(output.data[VersionData.SKIPPED] is False)
-        assert_expectations()
-
     def test_the_margin_beyond_the_page_is_the_colour_of_the_paper(self, fx_crop: Processor, tmp_path: Path) -> None:
         """Verify what the margin reaches beyond the edge of the page is filled with the median colour of the paper.
 
@@ -505,3 +455,57 @@ class TestCrop:
         assert CropMethod.LAYOUT in set(CropMethod)
         with pytest.raises(InvalidParametersError, match=KEY_PATTERN):
             fx_crop.validate_params({METHOD: CropMethod.LAYOUT})
+
+
+class TestCropLineHeight:
+    """Tests for the line height Crop records, which the normalization of the book reads."""
+
+    @pytest.mark.parametrize('scale', LINE_SCALES)
+    def test_the_distance_between_the_lines_is_recorded_for_the_page(
+        self, fx_crop: Processor, tmp_path: Path, scale: float
+    ) -> None:
+        """Verify the line height in the data is the pitch of the lines drawn, within 2 percent, at any scale of the page.
+
+        :param fx_crop: The processor under test.
+        :type fx_crop: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param scale: Size of the page over the size it was drawn at.
+        :type scale: float
+        """
+        page = text_page(*SHEET_SIZE_PX)
+        scaled = page.resize((round(page.width * scale), round(page.height * scale)), Image.Resampling.LANCZOS)
+        output = run_on(fx_crop, save(scaled, tmp_path / PAGE_NAME), tmp_path)
+        expect(output.data[VersionData.LINE_HEIGHT_PX] == pytest.approx(LINE_PITCH_PX * scale, rel=LINE_TOLERANCE))
+        assert_expectations()
+
+    def test_a_preview_reports_the_line_height_in_the_pixels_of_the_full_image(
+        self, fx_crop: Processor, tmp_path: Path
+    ) -> None:
+        """Verify a page at half size gives the line height of the full page, as it gives the frame.
+
+        :param fx_crop: The processor under test.
+        :type fx_crop: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        page = text_page(*SHEET_SIZE_PX)
+        half_page = page.resize((page.width // 2, page.height // 2), Image.Resampling.LANCZOS)
+        half = run_on(fx_crop, save(half_page, tmp_path / HALF_NAME), tmp_path, scale=HALF_SCALE)
+        expect(half.data[VersionData.LINE_HEIGHT_PX] == pytest.approx(LINE_PITCH_PX, rel=LINE_TOLERANCE))
+        assert_expectations()
+
+    def test_a_page_with_fewer_than_three_lines_has_no_line_height(self, fx_crop: Processor, tmp_path: Path) -> None:
+        """Verify a frame too short to hold the ripple of lines of text leaves the line height out.
+
+        :param fx_crop: The processor under test.
+        :type fx_crop: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        page = Image.new('L', (600, 800), PAPER)
+        ImageDraw.Draw(page).rectangle((100, 300, 500, 340), fill=0)
+        output = run_on(fx_crop, save(page, tmp_path / PAGE_NAME), tmp_path)
+        expect(VersionData.LINE_HEIGHT_PX not in output.data)
+        expect(output.data[VersionData.SKIPPED] is False)
+        assert_expectations()

@@ -26,8 +26,8 @@ const SCENARIO_TIMEOUT_MS = 240_000;
 const RUN_TIMEOUT_MS = 90_000;
 const SCALES = [1, 1.2] as const;
 const PAGES = SCALES.length;
-// What the settings of the step hold before the book is measured, which no book of these scans has
-const DEFAULT_PAGE_WIDTH = '1800';
+// What the settings of the step hold before the book is measured: 0 makes each page its block and its margins
+const DEFAULT_PAGE_WIDTH = '0';
 const NUDGE_KEYS = 2;
 const LINE_TOLERANCE = 0.02;
 // How many pixels the top margin is made larger than the measured one, to tell it from a measured value

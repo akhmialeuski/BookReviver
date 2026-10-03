@@ -72,6 +72,7 @@ LINE_HEIGHT: str = NormalizeParam.LINE_HEIGHT
 TARGET_LINE_PX: float = float(LINE_PITCH_PX)
 PAPER_COLOUR: tuple[int, int, int] = (238, 226, 190)
 SIDES: tuple[PageSide, ...] = (PageSide.LEFT, PageSide.RIGHT)
+SIDE_ARG: str = 'side'
 
 
 def text_block(scale: float = 1.0) -> Image.Image:
@@ -351,7 +352,7 @@ class TestNormalize:
         expect(bottom - top == SHORT_BLOCK_PX[1])
         assert_expectations()
 
-    @pytest.mark.parametrize('side', SIDES, ids=[side.value for side in SIDES])
+    @pytest.mark.parametrize(SIDE_ARG, SIDES, ids=[side.value for side in SIDES])
     @pytest.mark.parametrize('horizontal', list(HorizontalAlign), ids=[member.value for member in HorizontalAlign])
     def test_every_horizontal_alignment_puts_a_short_block_at_its_edge(
         self, fx_normalize: Processor, tmp_path: Path, horizontal: HorizontalAlign, side: PageSide
@@ -565,3 +566,76 @@ class TestNormalize:
         """
         with pytest.raises(ConflictError, match=KEY_PATTERN):
             fx_normalize.run(StepInput(image=None, params=fx_normalize.validate_params({}), workdir=tmp_path))
+
+
+class TestNormalizePageOfTheBlock:
+    """Tests for the page Normalize makes before the book is measured, whose size is the block and its margins."""
+
+    @pytest.mark.parametrize(SIDE_ARG, SIDES, ids=[side.value for side in SIDES])
+    def test_a_page_of_size_zero_is_the_block_and_its_margins(
+        self, fx_normalize: Processor, tmp_path: Path, side: PageSide
+    ) -> None:
+        """Verify the page fits the block with each margin round it, the inner one at the gutter of the side.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param side: Side of the book the page lies on.
+        :type side: PageSide
+        """
+        width, height = SHORT_BLOCK_PX
+        output = normalized(
+            fx_normalize,
+            solid_block(width, height),
+            tmp_path,
+            params={NormalizeParam.PAGE_WIDTH: 0, NormalizeParam.PAGE_HEIGHT: 0},
+            side=side,
+        )
+        left = MARGIN_OUTER_PX if side is PageSide.LEFT else MARGIN_INNER_PX
+        assert output.image is not None
+        expect(
+            (output.data[VersionData.SOURCE_WIDTH_PX], output.data[VersionData.SOURCE_HEIGHT_PX])
+            == (width + MARGIN_INNER_PX + MARGIN_OUTER_PX, height + MARGIN_TOP_PX + MARGIN_BOTTOM_PX)
+        )
+        expect(ink_box(output.image) == (left, MARGIN_TOP_PX, left + width, MARGIN_TOP_PX + height))
+        assert_expectations()
+
+    def test_a_block_placed_by_hand_on_a_page_of_size_zero_keeps_the_margins_past_it(
+        self, fx_normalize: Processor, tmp_path: Path
+    ) -> None:
+        """Verify the rectangle of the user stands where it was put, and the page reaches the margins beyond it.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        output = normalized(
+            fx_normalize,
+            solid_block(*SHORT_BLOCK_PX),
+            tmp_path,
+            params={NormalizeParam.PAGE_WIDTH: 0, NormalizeParam.PAGE_HEIGHT: 0},
+            side=PageSide.RIGHT,
+            edit=EDIT_RECT,
+        )
+        assert output.image is not None
+        expect(
+            (output.data[VersionData.SOURCE_WIDTH_PX], output.data[VersionData.SOURCE_HEIGHT_PX])
+            == (
+                EDIT_RECT.left + EDIT_RECT.width + MARGIN_OUTER_PX,
+                EDIT_RECT.top + EDIT_RECT.height + MARGIN_BOTTOM_PX,
+            )
+        )
+        expect(ink_box(output.image) == (210, 330, 610, 850))
+        assert_expectations()
+
+    def test_the_default_page_is_the_block_until_the_book_is_measured(self, fx_normalize: Processor) -> None:
+        """Verify the size of the page is 0 by default, which the parameters accept whatever the margins.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        """
+        params = fx_normalize.validate_params({})
+        expect((params[NormalizeParam.PAGE_WIDTH], params[NormalizeParam.PAGE_HEIGHT]) == (0, 0))
+        assert_expectations()

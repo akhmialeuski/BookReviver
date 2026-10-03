@@ -1,8 +1,11 @@
 """Placing the block of text of a page on a page of the book, so every page has one size, text size and layout.
 
 ``geometry.normalize`` reads the page ``geometry.crop`` cut to its block of text and puts it on a blank page of the size
-the parameters give. The block is scaled so that the distance between its lines becomes the target one, which makes the
-letters of a photograph as large as those of a scan of the same book, and a page whose line height is farther from the
+the parameters give. A size of 0, which a book has until it is measured, makes the page the block and its margins, so
+the page is never mostly blank before the size of the book is known.
+
+The block is scaled so that the distance between its lines becomes the target one, which makes the letters of a
+photograph as large as those of a scan of the same book, and a page whose line height is farther from the
 target than ``max_scale_change`` percent of it is placed unscaled and marked for review, since such a difference means
 the lines were not measured right. The line height comes from the data ``geometry.crop`` wrote, or else it is
 measured on the block here.
@@ -19,6 +22,7 @@ page, which sets its place and its scale at once. The transform is the scaling a
 block to the page.
 """
 
+import math
 from typing import TYPE_CHECKING, Self, override
 
 import cv2
@@ -72,6 +76,7 @@ MIN_PAGE_PX: int = 64
 MAX_MARGIN_PX: int = 10_000
 MAX_LINE_HEIGHT_PX: float = 1_000.0
 NO_ROOM: str = 'The margins leave no room for text on the page: they take {margins} of {page} pixels.'
+TOO_SMALL: str = 'A page of {page} pixels is too small: give at least {smallest} pixels, or 0 to fit the block.'
 
 
 class NormalizeParams(Params):
@@ -117,10 +122,20 @@ class NormalizeParams(Params):
         'is left as it is and marked for review',
     )
     page_width: int = Field(
-        default=1_800, ge=MIN_PAGE_PX, le=MAX_PAGE_PX, title='Page width', description='Width of the page, in pixels'
+        default=0,
+        ge=0,
+        le=MAX_PAGE_PX,
+        title='Page width',
+        description='Width of the page, in pixels; 0 makes it the block and the side margins. '
+        'Measure the book fills it in',
     )
     page_height: int = Field(
-        default=2_600, ge=MIN_PAGE_PX, le=MAX_PAGE_PX, title='Page height', description='Height of the page, in pixels'
+        default=0,
+        ge=0,
+        le=MAX_PAGE_PX,
+        title='Page height',
+        description='Height of the page, in pixels; 0 makes it the block and the top and bottom margins. '
+        'Measure the book fills it in',
     )
     margin_top: int = Field(
         default=150, ge=0, le=MAX_MARGIN_PX, title='Top margin', description='Margin at the top, in pixels'
@@ -165,42 +180,73 @@ class NormalizeParams(Params):
 
     @model_validator(mode='after')
     def check_room_for_text(self) -> Self:
-        """Check that the margins leave some of the page for the text.
+        """Check that a size of the page that is given is not too small and leaves some of it for the text.
+
+        A size of 0 is the block and its margins, which always has room for the block.
 
         :returns: The parameters.
         :rtype: Self
-        :raises ValueError: If the margins of a direction take the whole page.
+        :raises ValueError: If a size of the page is below the smallest one, or the margins of a direction take the
+                            whole page.
         """
         for margins, page in (
             (self.margin_top + self.margin_bottom, self.page_height),
             (self.margin_inner + self.margin_outer, self.page_width),
         ):
+            if page == 0:
+                continue
+            if page < MIN_PAGE_PX:
+                raise ValueError(TOO_SMALL.format(page=page, smallest=MIN_PAGE_PX))
             if margins >= page:
                 raise ValueError(NO_ROOM.format(margins=margins, page=page))
         return self
 
 
 class PagePlan:
-    """Where a block of text stands on a page of the book, worked out in the pixels of the full page."""
+    """Where a block of text stands on a page of the book, worked out in the pixels of the full page.
 
-    def __init__(self, params: NormalizeParams, side: PageSide | None) -> None:
-        """Work out the room the margins leave on the page of a side of the book.
+    :ivar size: Width and height of the page, as the parameters give them or else as the block and its margins make.
+    :ivar area: The room the margins leave on the page.
+    """
+
+    def __init__(self, params: NormalizeParams, side: PageSide | None, block: tuple[float, float]) -> None:
+        """Work out the size of the page of a side of the book and the room its margins leave.
 
         :param params: The parameters of the step.
         :type params: NormalizeParams
         :param side: Side of the book the page lies on, or None, which is taken for the right page.
         :type side: PageSide | None
+        :param block: Width and height of the block as it is placed, which make a size of the page the parameters leave
+                      at 0.
+        :type block: tuple[float, float]
         """
         self._params = params
         # The gutter is on the left of a right page, and the left margin of a book without spreads is the inner one
         self._inner_left = params.margins_by is MarginsBy.LEFT_RIGHT or side is not PageSide.LEFT
         left = params.margin_inner if self._inner_left else params.margin_outer
         right = params.margin_outer if self._inner_left else params.margin_inner
+        self._right = right
+        width = params.page_width or math.ceil(left + block[0] + right)
+        height = params.page_height or math.ceil(params.margin_top + block[1] + params.margin_bottom)
+        self.size = (width, height)
         self.area = Rect(
             left=left,
             top=params.margin_top,
-            width=params.page_width - left - right,
-            height=params.page_height - params.margin_top - params.margin_bottom,
+            width=width - left - right,
+            height=height - params.margin_top - params.margin_bottom,
+        )
+
+    def size_around(self, frame: Rect) -> tuple[int, int]:
+        """Give the size of a page that holds a block the user placed by hand, with the margins past it.
+
+        :param frame: The place of the block on the page, from a rect edit.
+        :type frame: Rect
+        :returns: Width and height of the page, as the parameters give them or else as the frame and the margins make.
+        :rtype: tuple[int, int]
+        """
+        return (
+            self._params.page_width or math.ceil(frame.left + frame.width + self._right),
+            self._params.page_height or math.ceil(frame.top + frame.height + self._params.margin_bottom),
         )
 
     def place(self, width: float, height: float) -> Rect:
@@ -266,21 +312,20 @@ class Normalize(ModelProcessor):
         scale = step_input.scale
         height, width = image.shape[:2]
         measured = self._measured(step_input, image)
-        target, review = self._target(step_input, params, (width / scale, height / scale), measured)
+        target, page_size, review = self._target(step_input, params, (width / scale, height / scale), measured)
         box = (
             round(target.left * scale),
             round(target.top * scale),
             max(1, round(target.width * scale)),
             max(1, round(target.height * scale)),
         )
-        page = self._paint(image, color_mode, params, box, scale)
+        page = self._paint(image, color_mode, params, box, (round(page_size[0] * scale), round(page_size[1] * scale)))
         write_png(page, step_input.workdir / NORMALIZED_IMAGE_NAME)
         data = image_data(page, step_input.input_data, color_mode)
-        edit = step_input.edit
-        edited = edit is not None and isinstance(edit.geometry, Rect)
+        edited = step_input.edit is not None and isinstance(step_input.edit.geometry, Rect)
         data |= {
-            VersionData.SOURCE_WIDTH_PX: params.page_width,
-            VersionData.SOURCE_HEIGHT_PX: params.page_height,
+            VersionData.SOURCE_WIDTH_PX: page_size[0],
+            VersionData.SOURCE_HEIGHT_PX: page_size[1],
             VersionData.FRAME: target.to_data(),
             VersionData.CONFIDENCE: MANUAL_CONFIDENCE
             if edited
@@ -325,8 +370,8 @@ class Normalize(ModelProcessor):
     @staticmethod
     def _target(
         step_input: StepInput, params: NormalizeParams, size: tuple[float, float], measured: float | None
-    ) -> tuple[Rect, ReviewReason | None]:
-        """Work out where the block stands on the page, and whether the page needs a look for it.
+    ) -> tuple[Rect, tuple[int, int], ReviewReason | None]:
+        """Work out where the block stands on the page, how large the page is, and whether the page needs a look.
 
         :param step_input: The side of the page and the rect edit if there is one.
         :type step_input: StepInput
@@ -336,13 +381,15 @@ class Normalize(ModelProcessor):
         :type size: tuple[float, float]
         :param measured: The distance between the lines of the block, or None when it has none to measure.
         :type measured: float | None
-        :returns: The place of the block in the pixels of the full page, and the reason to review the page or None.
-        :rtype: tuple[Rect, ReviewReason | None]
+        :returns: The place of the block and the width and height of the page, in the pixels of the full page, and the
+                  reason to review the page or None.
+        :rtype: tuple[Rect, tuple[int, int], ReviewReason | None]
         """
+        width, height = size
         edit = step_input.edit
         if edit is not None and isinstance(edit.geometry, Rect):
-            return edit.geometry, None
-        width, height = size
+            frame = edit.geometry
+            return frame, PagePlan(params, step_input.side, (frame.width, frame.height)).size_around(frame), None
         factor, review = 1.0, None
         if (wanted := params.line_height) > 0:
             if measured is None or measured <= 0:
@@ -352,11 +399,16 @@ class Normalize(ModelProcessor):
                 review = ReviewReason.TEXT_SIZE
             else:
                 factor = wanted / measured
-        return PagePlan(params, step_input.side).place(width * factor, height * factor), review
+        plan = PagePlan(params, step_input.side, (width * factor, height * factor))
+        return plan.place(width * factor, height * factor), plan.size, review
 
     @staticmethod
     def _paint(
-        image: Samples, color_mode: ColorMode, params: NormalizeParams, box: tuple[int, int, int, int], scale: float
+        image: Samples,
+        color_mode: ColorMode,
+        params: NormalizeParams,
+        box: tuple[int, int, int, int],
+        page_size: tuple[int, int],
     ) -> Samples:
         """Scale the block to its place and paint it on a page of the colour of the fill.
 
@@ -364,13 +416,13 @@ class Normalize(ModelProcessor):
         :type image: Samples
         :param color_mode: Colour mode of the block, which a bilevel block keeps after it is scaled.
         :type color_mode: ColorMode
-        :param params: The parameters of the step.
+        :param params: The parameters of the step, whose fill colours the page.
         :type params: NormalizeParams
         :param box: Left, top, width and height of the place of the block on the page, in pixels of this run.
         :type box: tuple[int, int, int, int]
-        :param scale: Size of the image over the size of the full image, 1 for a full run.
-        :type scale: float
-        :returns: The samples of the page, of the size of the page at this scale.
+        :param page_size: Width and height of the page, in pixels of this run.
+        :type page_size: tuple[int, int]
+        :returns: The samples of the page.
         :rtype: Samples
         """
         height, width = image.shape[:2]
@@ -385,7 +437,7 @@ class Normalize(ModelProcessor):
             )
             if color_mode is ColorMode.BILEVEL:
                 image = to_bilevel(image)
-        page_width, page_height = round(params.page_width * scale), round(params.page_height * scale)
+        page_width, page_height = page_size
         page = np.empty((page_height, page_width, *image.shape[2:]), dtype=np.uint8)
         page[:] = WHITE if params.fill is PaperFill.WHITE else paper_colour(image)
         inside = (max(left, 0), max(top, 0), min(left + new_width, page_width), min(top + new_height, page_height))
