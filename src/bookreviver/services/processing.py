@@ -2,9 +2,9 @@
 
 A stage is processed by a recipe, and a page by the recipe it was last processed by. The use cases here change a recipe
 or the current version of a stage, which writes rows, commits and marks the pages they affect stale, or start heavy
-work, a run, a preview, a cut of tiles or a collection, which records a job with its parameters, queues it and answers
-at once, since a request handler never blocks on CPU-bound work. Neither runs a processor. The workers do, through
-``ProcessingJobs``, and the files of a step are written by ``steps.py``.
+work, a run, a preview, a cut of tiles, a collection or a measure of the book, which records a job with its parameters,
+queues it and answers at once, since a request handler never blocks on CPU-bound work. Neither runs a processor. The
+workers do, through ``ProcessingJobs``, and the files of a step are written by ``steps.py``.
 
 Editing the active recipe does not process any page again. It marks the stage stale on every page the recipe processed,
 and the user starts the run. Changing the active variant does the same for the pages the old active recipe processed.
@@ -18,7 +18,7 @@ Versions are not deleted when they stop being current, so going back to earlier 
 import contextlib
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import JobKind, VersionScale, VersionState
+from bookreviver.domain.enums import JobKind, Stage, VersionScale, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.values import PageStageKey, Slice, StepPreview, TileCut
 from bookreviver.services.processing_parts import PROJECT_BUSY
@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bookreviver.domain.entities import Actor, Job, Page, PageStage, PageVersion, Recipe
-    from bookreviver.domain.enums import Stage
     from bookreviver.domain.geometry import Point
     from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
     from bookreviver.domain.values import ProcessorSpec, RecipeKey, SliceRequest, StageRun, Step, VersionFilter
@@ -198,7 +197,7 @@ class ProcessingService:
             return chosen
         previous = await self._recipes.active(project_id, stage)
         activated = await self._recipes.switch_active(previous, chosen)
-        stale = await self._stale_for(previous.id)
+        stale = await self._records.mark_recipe_stale(previous.id)
         await self._uow.commit()
         await self._records.announce(project_id, stale)
         return activated
@@ -228,6 +227,23 @@ class ProcessingService:
         if run.page_ids is not None:
             await self._uow.pages.list_by_ids(project_id, run.page_ids)
         return await self._starter.enqueue(project_id, JobKind.RUN_STAGE, run.to_map())
+
+    async def start_measure(self, actor: Actor, project_id: ProjectId) -> Job:
+        """Record a job that measures the book and writes the medians into the normalize step, and queue it.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :returns: The queued job.
+        :rtype: Job
+        :raises NotFoundError: If the actor has no such project, or the Geometry stage has no recipe.
+        :raises ConflictError: If a run, a preview, a tile cutting or a collection of the project is queued or running,
+                               which may be writing the versions that are measured.
+        """
+        await owned_project(self._uow.projects, actor, project_id)
+        await self._recipes.active(project_id, Stage.GEOMETRY)
+        return await self._starter.enqueue(project_id, JobKind.MEASURE_BOOK, {})
 
     async def start_preview(self, actor: Actor, project_id: ProjectId, preview: StepPreview) -> Job:
         """Record a job that previews the steps of a form on a page, and queue it.
@@ -513,23 +529,10 @@ class ProcessingService:
         :raises InvalidParametersError: If a step does not fit its processor.
         """
         changed = await self._recipes.rewrite(recipe, name, steps)
-        stale = await self._stale_for(recipe.id)
+        stale = await self._records.mark_recipe_stale(recipe.id)
         await self._uow.commit()
         await self._records.announce(recipe.project_id, stale)
         return changed
-
-    async def _stale_for(self, recipe_id: RecipeId) -> list[PageStage]:
-        """Mark the stage of every page a recipe processed stale.
-
-        :param recipe_id: Recipe that changed or stopped being active.
-        :type recipe_id: RecipeId
-        :returns: The records that became stale.
-        :rtype: list[PageStage]
-        """
-        stale: list[PageStage] = []
-        for record in await self._uow.page_stages.list_for_recipe(recipe_id):
-            stale.extend(await self._records.mark_stale(record.page_id, record.stage))
-        return stale
 
     async def _page(self, project_id: ProjectId, page_id: PageId) -> Page:
         """Return a page of the project.

@@ -648,7 +648,7 @@ export type ImportResultSchema = {
  *
  * What a background job does.
  */
-export type JobKind = 'import-source' | 'prepare-pages' | 'run-stage' | 'preview-step' | 'cut-tiles' | 'collect-versions';
+export type JobKind = 'import-source' | 'prepare-pages' | 'run-stage' | 'preview-step' | 'cut-tiles' | 'collect-versions' | 'measure-book';
 
 /**
  * JobSchema
@@ -2210,7 +2210,7 @@ export type RejectionReason = 'duplicate' | 'unreadable' | 'unsupported-type' | 
  *
  * Why a processed page is marked for a second look, though its step finished without an error.
  */
-export type ReviewReason = 'low-confidence' | 'not-applied' | 'unsure-gutter' | 'narrow-gutter' | 'cut-by-edge';
+export type ReviewReason = 'low-confidence' | 'not-applied' | 'unsure-gutter' | 'narrow-gutter' | 'cut-by-edge' | 'size-differs';
 
 /**
  * RightsStatus
@@ -2709,7 +2709,7 @@ export type StepSchema = {
  *
  * Kind of the coordinate transform a processing step applies from its input to its output.
  */
-export type TransformKind = 'identity' | 'crop' | 'rotate' | 'perspective' | 'mesh';
+export type TransformKind = 'identity' | 'crop' | 'rotate' | 'perspective' | 'mesh' | 'place';
 
 /**
  * TransformSchema
@@ -4380,6 +4380,46 @@ export type PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponses = {
 };
 
 export type PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponse = PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponses[keyof PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponses];
+
+export type MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/geometry/measure';
+};
+
+export type MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostError = MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostErrors[keyof MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostErrors];
+
+export type MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostResponses = {
+    /**
+     * Successful Response
+     */
+    202: JobSchema;
+};
+
+export type MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostResponse = MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostResponses[keyof MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostResponses];
 
 export type ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData = {
     body?: never;

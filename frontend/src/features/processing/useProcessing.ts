@@ -120,10 +120,13 @@ export function useProcessing(
     () => (edit?.owner === draftOwner ? edit.steps : recipe === undefined ? [] : draftOf(recipe)),
     [edit, draftOwner, recipe],
   );
-  const [openChoice, setOpenChoice] = useState<{ owner: string; id: string | undefined } | null>(
-    null,
-  );
-  const openId = openChoice?.owner === draftOwner ? openChoice.id : steps[0]?.id;
+  const [openChoice, setOpenChoice] = useState<{
+    owner: string | undefined;
+    id: string | undefined;
+  } | null>(null);
+  // The step that is open stays open when the recipe it belongs to is saved or measured, which only moves its time; the
+  // steps keep their places, so the reader sees the new numbers in the form they were looking at
+  const openId = openChoice?.owner === recipe?.id ? openChoice?.id : steps[0]?.id;
 
   const schemas = useMemo(
     () =>
@@ -174,7 +177,7 @@ export function useProcessing(
     chooseRecipe: (id) => setChosenId({ stage, id }),
     steps,
     openId,
-    open: (id) => setOpenChoice({ owner: draftOwner, id }),
+    open: (id) => setOpenChoice({ owner: recipe?.id, id }),
     dirty,
     valid,
     move: (activeId, overId) => write(moveStep(steps, activeId, overId)),
@@ -184,7 +187,7 @@ export function useProcessing(
     add: (processor) => {
       const next = addStep(steps, processor);
       write(next);
-      setOpenChoice({ owner: draftOwner, id: next.at(-1)?.id });
+      setOpenChoice({ owner: recipe?.id, id: next.at(-1)?.id });
     },
     discard: () => setEdit(null),
     preview: {

@@ -229,6 +229,7 @@ class ProcessingKit:
             JobKind.PREVIEW_STEP: 'preview_step',
             JobKind.CUT_TILES: 'cut_tiles',
             JobKind.COLLECT_VERSIONS: 'collect_versions',
+            JobKind.MEASURE_BOOK: 'measure_book',
         }
         for queued in list(self.recording.enqueued):
             if not (await self.uow().jobs.get(queued.id)).state.is_final:

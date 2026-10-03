@@ -10,6 +10,7 @@ from tests.helpers.builders import make_geometry_edit
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bookreviver.domain.enums import PageSide
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.processing import Processor, StepOutput
@@ -21,11 +22,13 @@ class StepExtras(TypedDict):
     :ivar edit: The shape of the manual edit of the page.
     :ivar facts: Data of the input version, such as the sides the scanner cut.
     :ivar scale: Ratio of the image to the full image, 1 for a full run.
+    :ivar side: Side of the book the page lies on, for a step that reads it.
     """
 
     edit: NotRequired[EditGeometry]
     facts: NotRequired[MetadataMap]
     scale: NotRequired[float]
+    side: NotRequired[PageSide]
 
 
 def run_on(
@@ -41,7 +44,8 @@ def run_on(
     :type workdir: Path
     :param params: Parameters of the step, the defaults where none are given.
     :type params: MetadataMap | None
-    :param extras: The edit, the facts of the input and the scale of the image, each when the test gives it.
+    :param extras: The edit, the facts of the input, the scale of the image and the side of the page, each when the test
+                   gives it.
     :type extras: Unpack[StepExtras]
     :returns: The output.
     :rtype: StepOutput
@@ -58,6 +62,7 @@ def run_on(
         edit=edit,
         scale=extras.get('scale', 1.0),
         input_data=extras.get('facts', {}),
+        side=extras.get('side'),
         workdir=workdir,
     )
     [output] = processor.run(step_input).outputs

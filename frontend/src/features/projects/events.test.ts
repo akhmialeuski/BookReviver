@@ -114,6 +114,29 @@ describe('applyProjectEvent', () => {
     );
   });
 
+  it('reads the recipes of the Geometry stage again when the measure of the book finishes', () => {
+    applyProjectEvent(queryClient, PROJECT_ID, {
+      event: EventName.JobChanged,
+      data: { ...job('succeeded', 3, 3), kind: 'measure-book' },
+    });
+
+    expect(invalidated()).toContain('getRecipeApiV1ProjectsProjectIdStagesStageRecipeGet');
+    expect(invalidated()).toContain('listVariantsApiV1ProjectsProjectIdStagesStageVariantsGet');
+  });
+
+  it('leaves the recipes alone while the measure runs, and when another job finishes', () => {
+    applyProjectEvent(queryClient, PROJECT_ID, {
+      event: EventName.JobChanged,
+      data: { ...job('running', 1, 3), kind: 'measure-book' },
+    });
+    applyProjectEvent(queryClient, PROJECT_ID, {
+      event: EventName.JobChanged,
+      data: job('succeeded', 4),
+    });
+
+    expect(invalidated()).not.toContain('getRecipeApiV1ProjectsProjectIdStagesStageRecipeGet');
+  });
+
   it('keeps the version a page-version-ready event names and marks the results of that page stale', () => {
     applyProjectEvent(queryClient, PROJECT_ID, {
       event: EventName.PageVersionReady,

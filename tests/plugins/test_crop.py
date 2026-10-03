@@ -25,7 +25,7 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
 from bookreviver.domain.geometry import Point, Rect
 from bookreviver.ports.processing import StepInput
-from tests.helpers.samples import PAPER, save, text_page
+from tests.helpers.samples import LINE_PITCH_PX, PAPER, save, text_page
 from tests.plugins.runner import run_on
 from tests.plugins.synthetic import SHEET_PAPER, SHEET_SIZE_PX, draw_sheet
 
@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 SCAN_ON_BINDING: Path = Path(__file__).parent / 'data' / 'book_scan_on_binding.jpg'
 CLEAN_PAGE: Path = Path(__file__).parent / 'data' / 'book_clean_page.jpg'
 PAGE_NAME: str = 'page.png'
+HALF_NAME: str = 'half.png'
 KEY_PATTERN: str = r'geometry\.crop'
 MARGIN: str = 'margin_percent'
 BINARIZATION: str = 'binarization'
@@ -51,6 +52,9 @@ MOST_INK: float = 0.97
 SHEETS: list[tuple[float, float]] = [(0.0, 0.0), (4.0, 0.03), (-5.0, 0.05), (5.0, 0.05)]
 SHEET_CASE: tuple[str, str] = ('rotation', 'slant')
 FRAME_TOLERANCE_PX: float = 2.0
+# The sizes the lines are drawn at, as the pages of a book scanned and photographed are, and how far the pitch may be off
+LINE_SCALES: tuple[float, ...] = (0.8, 1.0, 1.2)
+LINE_TOLERANCE: float = 0.02
 EDIT_FRAME: Rect = Rect(left=100, top=150, width=300, height=420)
 HALF_SCALE: float = 0.5
 # The page of the paper-coloured test, its words, and how far the words stand from the left edge
@@ -147,7 +151,7 @@ class TestCrop:
         assert_expectations()
 
     def test_the_margin_is_a_share_of_the_width_of_the_frame(self, fx_crop: Processor, tmp_path: Path) -> None:
-        """Verify each side gets the percent of the width of the frame the parameter says, the default being 8.
+        """Verify each side gets the percent of the width of the frame the parameter says, and none by default.
 
         :param fx_crop: The processor under test.
         :type fx_crop: Processor
@@ -155,17 +159,69 @@ class TestCrop:
         :type tmp_path: Path
         """
         image = save(text_page(*SHEET_SIZE_PX), tmp_path / PAGE_NAME)
-        bare = run_on(fx_crop, image, tmp_path, params={MARGIN: 0})
         default = run_on(fx_crop, image, tmp_path)
+        bare = run_on(fx_crop, image, tmp_path, params={MARGIN: 0})
+        narrow = run_on(fx_crop, image, tmp_path, params={MARGIN: 8})
         wide = run_on(fx_crop, image, tmp_path, params={MARGIN: 20})
         frame_width = Rect.from_data(default.data[VersionData.FRAME]).width
-        expect(bare.data[VersionData.WIDTH_PX] == pytest.approx(frame_width, abs=FRAME_TOLERANCE_PX))
-        expect(default.data[VersionData.WIDTH_PX] == pytest.approx(1.16 * frame_width, abs=FRAME_TOLERANCE_PX))
+        expect(default.data[VersionData.WIDTH_PX] == bare.data[VersionData.WIDTH_PX])
+        expect(default.data[VersionData.WIDTH_PX] == pytest.approx(frame_width, abs=FRAME_TOLERANCE_PX))
+        expect(narrow.data[VersionData.WIDTH_PX] == pytest.approx(1.16 * frame_width, abs=FRAME_TOLERANCE_PX))
         expect(wide.data[VersionData.WIDTH_PX] == pytest.approx(1.4 * frame_width, abs=FRAME_TOLERANCE_PX))
         expect(
-            default.data[VersionData.HEIGHT_PX]
+            narrow.data[VersionData.HEIGHT_PX]
             == pytest.approx(bare.data[VersionData.HEIGHT_PX] + 0.16 * frame_width, abs=FRAME_TOLERANCE_PX)
         )
+        assert_expectations()
+
+    @pytest.mark.parametrize('scale', LINE_SCALES)
+    def test_the_distance_between_the_lines_is_recorded_for_the_page(
+        self, fx_crop: Processor, tmp_path: Path, scale: float
+    ) -> None:
+        """Verify the line height in the data is the pitch of the lines drawn, within 2 percent, at any scale of the page.
+
+        :param fx_crop: The processor under test.
+        :type fx_crop: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param scale: Size of the page over the size it was drawn at.
+        :type scale: float
+        """
+        page = text_page(*SHEET_SIZE_PX)
+        scaled = page.resize((round(page.width * scale), round(page.height * scale)), Image.Resampling.LANCZOS)
+        output = run_on(fx_crop, save(scaled, tmp_path / PAGE_NAME), tmp_path)
+        expect(output.data[VersionData.LINE_HEIGHT_PX] == pytest.approx(LINE_PITCH_PX * scale, rel=LINE_TOLERANCE))
+        assert_expectations()
+
+    def test_a_preview_reports_the_line_height_in_the_pixels_of_the_full_image(
+        self, fx_crop: Processor, tmp_path: Path
+    ) -> None:
+        """Verify a page at half size gives the line height of the full page, as it gives the frame.
+
+        :param fx_crop: The processor under test.
+        :type fx_crop: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        page = text_page(*SHEET_SIZE_PX)
+        half_page = page.resize((page.width // 2, page.height // 2), Image.Resampling.LANCZOS)
+        half = run_on(fx_crop, save(half_page, tmp_path / HALF_NAME), tmp_path, scale=HALF_SCALE)
+        expect(half.data[VersionData.LINE_HEIGHT_PX] == pytest.approx(LINE_PITCH_PX, rel=LINE_TOLERANCE))
+        assert_expectations()
+
+    def test_a_page_with_fewer_than_three_lines_has_no_line_height(self, fx_crop: Processor, tmp_path: Path) -> None:
+        """Verify a frame too short to hold the ripple of lines of text leaves the line height out.
+
+        :param fx_crop: The processor under test.
+        :type fx_crop: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        page = Image.new('L', (600, 800), PAPER)
+        ImageDraw.Draw(page).rectangle((100, 300, 500, 340), fill=0)
+        output = run_on(fx_crop, save(page, tmp_path / PAGE_NAME), tmp_path)
+        expect(VersionData.LINE_HEIGHT_PX not in output.data)
+        expect(output.data[VersionData.SKIPPED] is False)
         assert_expectations()
 
     def test_the_margin_beyond_the_page_is_the_colour_of_the_paper(self, fx_crop: Processor, tmp_path: Path) -> None:
@@ -246,7 +302,7 @@ class TestCrop:
         expect(output.data[VersionData.CONFIDENCE] == pytest.approx(1.0))
         expect(output.data[VersionData.SKIPPED] is False)
         expect(output.review is None)
-        expect(output.data[VersionData.WIDTH_PX] == pytest.approx(1.16 * EDIT_FRAME.width, abs=FRAME_TOLERANCE_PX))
+        expect(output.data[VersionData.WIDTH_PX] == pytest.approx(EDIT_FRAME.width, abs=FRAME_TOLERANCE_PX))
         assert_expectations()
 
     def test_transform_puts_the_frame_inside_the_margin(self, fx_crop: Processor, tmp_path: Path) -> None:
@@ -258,7 +314,7 @@ class TestCrop:
         :type tmp_path: Path
         """
         image = save(Image.new('L', (600, 800), PAPER), tmp_path / PAGE_NAME)
-        output = run_on(fx_crop, image, tmp_path, edit=EDIT_FRAME)
+        output = run_on(fx_crop, image, tmp_path, params={MARGIN: 8}, edit=EDIT_FRAME)
         margin = 0.08 * EDIT_FRAME.width
         corner = output.transform.to_output(Point(x=EDIT_FRAME.left, y=EDIT_FRAME.top))
         back = output.transform.to_input(corner)
@@ -303,7 +359,7 @@ class TestCrop:
         page = text_page(*SHEET_SIZE_PX)
         full = run_on(fx_crop, save(page, tmp_path / PAGE_NAME), tmp_path)
         half_page = page.resize((page.width // 2, page.height // 2), Image.Resampling.LANCZOS)
-        half = run_on(fx_crop, save(half_page, tmp_path / 'half.png'), tmp_path, scale=HALF_SCALE)
+        half = run_on(fx_crop, save(half_page, tmp_path / HALF_NAME), tmp_path, scale=HALF_SCALE)
         found, truth = Rect.from_data(half.data[VersionData.FRAME]), Rect.from_data(full.data[VersionData.FRAME])
         expect(found.left == pytest.approx(truth.left, abs=6))
         expect(found.width == pytest.approx(truth.width, abs=8))
@@ -421,7 +477,7 @@ class TestCrop:
         :type fx_crop: Processor
         """
         spec = fx_crop.spec
-        expect(fx_crop.validate_params({}) == {MARGIN: 8.0, BINARIZATION: Binarization.OTSU.value, SPECK: 4})
+        expect(fx_crop.validate_params({}) == {MARGIN: 0.0, BINARIZATION: Binarization.OTSU.value, SPECK: 4})
         expect((spec.key, spec.stage, spec.scope) == ('geometry.crop', Stage.GEOMETRY, ProcessorScope.PAGE))
         expect(spec.editor is EditorKind.RECT)
         assert_expectations()

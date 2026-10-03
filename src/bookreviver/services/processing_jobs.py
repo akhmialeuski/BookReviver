@@ -11,6 +11,9 @@ is new, and makes the last version the current one of the stage. A page that fai
 goes on to the next, and the job succeeds when it processed at least one page. When it ends it queues a collection of
 the project's old versions, so old versions go by their age without the user asking.
 
+A measure of the book reads the versions of the crop of every page and writes the parameters of the normalize step of
+the active Geometry recipe, which marks the pages of that recipe stale.
+
 A project processes one thing at a time, so a collection never overlaps a run that may be reusing the versions it
 deletes. A collection chooses the versions, marks them failed so that none can be chosen or reused any more, removes
 their directories and then deletes their rows. A collection that stops on the way leaves the versions marked, which are
@@ -28,6 +31,7 @@ from bookreviver.domain.errors import DomainError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import SliceRequest, StageRun, StepPreview, TileCut, VersionCollection
+from bookreviver.services.book_measure import BookMeasure
 from bookreviver.services.recipe_picks import PAGE_WINDOW, RecipePicker
 from bookreviver.services.stage_runs import PreviewRun, RecipeRun
 
@@ -69,6 +73,7 @@ class ProcessingJobs:
         self._recipes = parts.recipes
         self._records = parts.records
         self._picker = RecipePicker(uow=uow, recipes=parts.recipes)
+        self._measure = BookMeasure(uow=uow, recipes=parts.recipes, records=parts.records)
         self._tracker = parts.tracker
         self._starter = parts.starter
 
@@ -160,6 +165,26 @@ class ProcessingJobs:
         else:
             if total is not None:
                 await self._tracker.finish(job, JobState.SUCCEEDED, total=total)
+
+    async def measure_book(self, job_id: JobId) -> None:
+        """Run a ``measure-book`` job: the median line height and page size of the book, written into its recipe.
+
+        :param job_id: Identifier of the job.
+        :type job_id: JobId
+        :raises NotFoundError: If there is no such job.
+        """
+        if (job := await self._tracker.start(job_id)) is None:
+            return
+        try:
+            total = await self._measure.run(job.project_id)
+        except DomainError as error:
+            await self._uow.rollback()
+            await self._tracker.finish(job, JobState.FAILED, error=str(error))
+        except Exception:
+            logger.exception('The measure-book job %s stopped', job_id)
+            await self._tracker.finish(job, JobState.FAILED, error=UNEXPECTED_FAILURE)
+        else:
+            await self._tracker.finish(job, JobState.SUCCEEDED, total=total)
 
     async def _run_pages(self, job: Job) -> tuple[int, int, int] | None:
         """Run the recipe of a ``run-stage`` job over its pages, recording the progress as it goes.

@@ -24,6 +24,7 @@ from attrs import evolve, frozen
 from bookreviver.domain.entities import Page, PageVersion, VersionInputs
 from bookreviver.domain.enums import (
     PageOrigin,
+    PageSide,
     ProcessorScope,
     Rendition,
     RunOutcome,
@@ -284,6 +285,10 @@ class StageWork:
             raise ConflictError(SPLIT_NOT_AVAILABLE.format(key=step.processor_key))
         params = processor.validate_params(step.params)
         edit = await self._uow.page_edits.find(PageEditKey(page.id, stage, step.processor_key))
+        # The side is part of what a step depends on, so a page moved to the other side of the book is made again
+        side = (
+            PageSide.of_position(await self._uow.pages.count_before(page) + 1) if processor.spec.by_page_side else None
+        )
         inputs = VersionInputs(
             page_id=page.id,
             processor=processor.spec.ref,
@@ -291,6 +296,7 @@ class StageWork:
             input_id=source.version_id,
             edit_hash='' if edit is None else edit.edit_hash,
             scale=scale,
+            side=side,
         )
         existing = await self._uow.page_versions.find(inputs.identify())
         if existing is not None and existing.state is VersionState.READY:
@@ -318,6 +324,7 @@ class StageWork:
             edit=edit,
             scale=scale,
             ratio=source.ratio,
+            side=side,
         )
         try:
             made = await self._execute(version, run)

@@ -4,6 +4,7 @@ import type { ScanSchema } from '@/api';
 import { stepChain, stepVersions } from '@/features/editors/chain';
 import { popUndo, pushUndo, type UndoEntry } from '@/features/editors/history';
 import { pictureOf } from '@/features/editors/picture';
+import { isPlacement, pictureFor } from '@/features/editors/placement';
 import { editsKey, useEditChanges, useEdits } from '@/features/editors/queries';
 import { editableProcessorsOf, editorOf, hasEditor } from '@/features/editors/registry';
 import type { EditorScene } from '@/features/editors/scene';
@@ -89,12 +90,21 @@ export function useEditorSession({
   const made = found.made ?? (editable.length === 1 ? head : null);
   const result = made === null ? null : readResult(made);
   const context: PageContext | undefined =
-    current === undefined ? undefined : { current, items, scan, stepInput: found.read, result };
+    current === undefined || processor === undefined
+      ? undefined
+      : { current, items, scan, stepInput: found.read, result, processorKey: processor.key };
   const owner = editor === undefined || context === undefined ? undefined : editor.owner(context);
   const picture =
-    editor === undefined || current === undefined
+    editor === undefined || current === undefined || processor === undefined
       ? null
-      : pictureOf(editor.picture, scan, current.page, before, found.read);
+      : pictureOf(
+          pictureFor(editor.picture, processor.key),
+          scan,
+          current.page,
+          before,
+          found.read,
+          made,
+        );
   const available =
     processor !== undefined &&
     picture !== null &&
@@ -251,7 +261,9 @@ export function useEditorSession({
     return [
       {
         key: entry.key,
-        title: MESSAGES.editors.steps.kinds[entry.editor],
+        title: isPlacement(entry.key)
+          ? MESSAGES.editors.steps.placement
+          : MESSAGES.editors.steps.kinds[entry.editor],
         manual: edits?.some((candidate) => candidate.processor_key === entry.key) ?? false,
         detail:
           entry.editor === 'rotation' && angle !== null
@@ -293,6 +305,13 @@ export function useEditorSession({
         onCommit={commit}
       />
     ),
-    renderPanel: () => <editor.Panel geometry={geometry} disabled={saving} onCommit={commit} />,
+    renderPanel: () => (
+      <editor.Panel
+        geometry={geometry}
+        processorKey={processor.key}
+        disabled={saving}
+        onCommit={commit}
+      />
+    ),
   };
 }

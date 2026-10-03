@@ -133,6 +133,30 @@ export async function writeSheetsFolder(count: number): Promise<string> {
   return root;
 }
 
+/**
+ * Write a folder of scans of sheets with lines of words, each taken at its own scale of the text as a scan and a
+ * photograph of one book are, and return its path. A scan of a larger scale is larger by the same factor, so the sheet and
+ * its words keep their proportions and only the size of the text differs.
+ *
+ * @param scales The scale of the text of each scan, such as `[1, 1.2]`.
+ */
+export async function writeScaledSheetsFolder(scales: readonly number[]): Promise<string> {
+  const root = path.join(await mkdtemp(path.join(tmpdir(), 'bookreviver-')), 'scaled-sheets');
+  await mkdir(root, { recursive: true });
+  for (const [index, scale] of scales.entries()) {
+    await writeFile(
+      path.join(root, `sheet-${String(index + 1).padStart(2, '0')}.png`),
+      sheetPng(
+        Math.round(SHEET_SCAN_SIZE.width * scale),
+        Math.round(SHEET_SCAN_SIZE.height * scale),
+        (index + 1) * 7919,
+        scale,
+      ),
+    );
+  }
+  return root;
+}
+
 const SCAN_SIZE = { width: 160, height: 90 };
 const TALL_SCAN_SIZE = { width: 60, height: 90 };
 

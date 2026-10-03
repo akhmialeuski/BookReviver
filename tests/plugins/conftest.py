@@ -93,3 +93,15 @@ def fx_crop() -> Processor:
     processor = pytest.importorskip('bookreviver.plugins.crop', reason=CV_MISSING).Crop()
     assert isinstance(processor, Processor)
     return processor
+
+
+@pytest.fixture
+def fx_normalize() -> Processor:
+    """Build the normalize processor, or skip the test where OpenCV is not installed.
+
+    :returns: The processor ``geometry.normalize``.
+    :rtype: Processor
+    """
+    processor = pytest.importorskip('bookreviver.plugins.normalize', reason=CV_MISSING).Normalize()
+    assert isinstance(processor, Processor)
+    return processor

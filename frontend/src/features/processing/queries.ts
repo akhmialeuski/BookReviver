@@ -31,6 +31,7 @@ import {
   listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetOptions,
   listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey,
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey,
+  measureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostMutation,
   previewStepApiV1ProjectsProjectIdStagesStagePreviewPostMutation,
   putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutMutation,
   putRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutMutation,
@@ -250,6 +251,20 @@ export function useRunStage(projectId: string, stage: Stage) {
  */
 export function useRunInFlight(projectId: string): boolean {
   return useIsMutating({ mutationKey: runKey(projectId) }) > 0;
+}
+
+/**
+ * Measure the book in the background: the line height and the page size written into the normalize step of the recipe.
+ *
+ * The job reads the crop of every page and writes the recipe when it ends, which the event of the job tells the screen, so
+ * the recipe is read again then and the form shows the new numbers.
+ */
+export function useMeasureBook(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...measureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostMutation(),
+    onSettled: () => invalidateJobs(queryClient, projectId),
+  });
 }
 
 /** Preview the steps of the form on one page in the background; the picture arrives as an event. */

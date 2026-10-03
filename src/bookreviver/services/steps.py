@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from bookreviver.domain.entities import PageEdit, PageVersion
-    from bookreviver.domain.enums import ImagePolicy
+    from bookreviver.domain.enums import ImagePolicy, PageSide
     from bookreviver.domain.ids import StorageKey
     from bookreviver.domain.keys import ProjectKeys
     from bookreviver.domain.values import MetadataMap
@@ -55,6 +55,7 @@ class StepRun:
     :ivar edit: Manual edit the step reads, or None.
     :ivar scale: Whether the step runs on the full image or on the preview.
     :ivar ratio: Size of the image the step reads over the size of the full image, 1 for a full run.
+    :ivar side: Side of the book the page lies on, for a step that reads it, or None.
     """
 
     processor_key: str
@@ -64,6 +65,7 @@ class StepRun:
     edit: PageEdit | None = None
     scale: VersionScale = VersionScale.FULL
     ratio: float = 1.0
+    side: PageSide | None = None
 
 
 class StepRunner:
@@ -126,6 +128,7 @@ class StepRunner:
                 edit=run.edit,
                 edit_mask=mask,
                 input_data=run.input_data,
+                side=run.side,
                 workdir=Path(workdir),
             )
             work = processor.run if run.scale is VersionScale.FULL else processor.preview

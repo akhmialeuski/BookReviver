@@ -314,8 +314,9 @@ class Transform:
 
     The chain of transforms from a scan to any page version maps coordinates of the version back to the scan. A crop and
     a perspective correction name the quadrilateral of the input they take, a rotation its angle, and a dewarping the
-    key of its stored mesh. Every kind but the identity and the mesh also carries the ``matrix`` that maps a point of
-    the input to the output, nine numbers of a 3 by 3 matrix in rows, which the plugin of the step computes.
+    key of its stored mesh, and the placing of a block of text on a page only the matrix of its scaling and shift. Every
+    kind but the identity and the mesh also carries the ``matrix`` that maps a point of the input to the output, nine
+    numbers of a 3 by 3 matrix in rows, which the plugin of the step computes.
 
     :ivar kind: Kind of the transform.
     :ivar quad: Area of the input that becomes the output, for a crop or a perspective correction.
@@ -330,6 +331,7 @@ class Transform:
         TransformKind.ROTATE: frozenset({'angle', 'matrix'}),
         TransformKind.PERSPECTIVE: frozenset({'quad', 'matrix'}),
         TransformKind.MESH: frozenset({'mesh_key'}),
+        TransformKind.PLACE: frozenset({'matrix'}),
     }
 
     kind: TransformKind = TransformKind.IDENTITY

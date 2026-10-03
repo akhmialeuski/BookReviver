@@ -64,6 +64,7 @@ bookreviver-openapi = "bookreviver.app.openapi:main"
 "geometry.perspective" = "bookreviver.plugins.perspective:Perspective"
 "geometry.deskew" = "bookreviver.plugins.deskew:Deskew"
 "geometry.crop" = "bookreviver.plugins.crop:Crop"
+"geometry.normalize" = "bookreviver.plugins.normalize:Normalize"
 
 [project.optional-dependencies]
 cv = [

@@ -33,6 +33,8 @@ export function reasonOf(item: StripItem): string | null {
       return words.narrowGutter;
     case 'cut-by-edge':
       return words.cutByEdge;
+    case 'size-differs':
+      return words.sizeDiffers;
     default:
       return words.lowConfidence(confidence);
   }

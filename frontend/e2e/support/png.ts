@@ -85,8 +85,14 @@ function inside(corners: readonly Corner[], x: number, y: number): boolean {
  * @param width Width of the scan in pixels.
  * @param height Height of the scan in pixels.
  * @param seed A number that decides the widths of the words.
+ * @param textScale How large the text is over its usual size, which a scan taken closer to the page or at a higher
+ * resolution shows: the lines stand farther apart and the words are larger, and the scan is made larger by the same factor
+ * by the caller so that the sheet stays in proportion.
  */
-export function sheetPng(width: number, height: number, seed: number): Buffer {
+export function sheetPng(width: number, height: number, seed: number, textScale = 1): Buffer {
+  const pitch = LINE_PITCH_PX * textScale;
+  const lineHeight = LINE_HEIGHT_PX * textScale;
+  const gap = WORD_GAP_PX * textScale;
   const turn = 0.03;
   const inset = 0.04;
   const centre = [width / 2, height / 2] as const;
@@ -116,12 +122,12 @@ export function sheetPng(width: number, height: number, seed: number): Buffer {
     state = (state * 1103515245 + 12345) % 2147483648;
     return state / 2147483648;
   };
-  for (let lineTop = top; lineTop < bottom; lineTop += LINE_PITCH_PX) {
+  for (let lineTop = top; lineTop < bottom; lineTop += pitch) {
     const runs: [number, number][] = [];
     for (let at = left; at < right; ) {
-      const end = Math.min(at + 18 + next() * 50, right);
+      const end = Math.min(at + (18 + next() * 50) * textScale, right);
       runs.push([at, end]);
-      at = end + WORD_GAP_PX + next() * 8;
+      at = end + gap + next() * 8 * textScale;
     }
     words.set(Math.round(lineTop), runs);
   }
@@ -130,9 +136,7 @@ export function sheetPng(width: number, height: number, seed: number): Buffer {
   for (let y = 0; y < height; y += 1) {
     const row = Buffer.alloc(1 + width * 3);
     row[0] = FILTER_NONE;
-    const line = [...words.entries()].find(
-      ([lineTop]) => y >= lineTop && y < lineTop + LINE_HEIGHT_PX,
-    );
+    const line = [...words.entries()].find(([lineTop]) => y >= lineTop && y < lineTop + lineHeight);
     for (let x = 0; x < width; x += 1) {
       let color: Color = BINDING;
       if (inside(corners, x, y)) {

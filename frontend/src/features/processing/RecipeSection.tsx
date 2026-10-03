@@ -1,5 +1,7 @@
 import { CopyPlusIcon, PlusIcon } from 'lucide-react';
 import type { StagePageSchema } from '@/api';
+import { isPlacement } from '@/features/editors/placement';
+import { MeasureBook } from '@/features/processing/MeasureBook';
 import {
   useActivateRecipe,
   useCreateVariant,
@@ -149,6 +151,9 @@ export function RecipeSection({
         steps={steps}
         catalogue={catalogue}
         openId={processing.openId}
+        extraOf={(step) =>
+          isPlacement(step.processorKey) ? <MeasureBook processing={processing} /> : null
+        }
         onOpen={processing.open}
         onMove={processing.move}
         onToggle={processing.toggle}

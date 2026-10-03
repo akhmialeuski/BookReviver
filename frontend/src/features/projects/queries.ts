@@ -1,6 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query';
 import type { Stage } from '@/api';
 import {
+  getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey,
   listPagesApiV1ProjectsProjectIdPagesGetQueryKey,
   listProjectJobsApiV1ProjectsProjectIdJobsGetQueryKey,
   listProjectsApiV1ProjectsGetQueryKey,
@@ -8,6 +9,7 @@ import {
   listSourcesApiV1ProjectsProjectIdSourcesGetQueryKey,
   listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey,
   listStagesApiV1ProjectsProjectIdStagesGetQueryKey,
+  listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey,
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey,
   projectApiV1ProjectsProjectIdGetQueryKey,
 } from '@/api/@tanstack/react-query.gen';
@@ -122,6 +124,23 @@ export function invalidateVersions(
       path: { project_id: projectId, page_id: pageId },
     }),
   });
+}
+
+/** Refresh the recipes of a stage, which a job that writes their parameters, such as the measure of a book, changed. */
+export function invalidateRecipes(
+  queryClient: QueryClient,
+  projectId: string,
+  stage: Stage,
+): Promise<void> {
+  const path = { project_id: projectId, stage };
+  return Promise.all([
+    queryClient.invalidateQueries({
+      queryKey: getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey({ path }),
+    }),
+    queryClient.invalidateQueries({
+      queryKey: listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey({ path }),
+    }),
+  ]).then(() => undefined);
 }
 
 /** Refresh the jobs of a book, those running and the latest of any state, which the activity shows. */

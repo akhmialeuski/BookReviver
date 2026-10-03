@@ -10,7 +10,7 @@ import pytest
 from attrs import evolve
 
 from bookreviver.domain.entities import VERSION_ID_PATTERN, PageEdit, VersionInputs
-from bookreviver.domain.enums import JobKind, PageOrigin, Rendition, Stage, StepField, VersionScale
+from bookreviver.domain.enums import JobKind, PageOrigin, PageSide, Rendition, Stage, StepField, VersionScale
 from bookreviver.domain.geometry import Line, Point, Rotation
 from bookreviver.domain.ids import PageId, PageVersionId, ScanId
 from bookreviver.domain.values import BookDetails, ProcessorRef, Progress, Renditions, StageRun, Step
@@ -153,8 +153,9 @@ class TestVersionInputsIdentify:
             {'input_id': PageVersionId('0123456789abcdef')},
             {'edit_hash': '0123456789abcdef'},
             {'scale': VersionScale.PREVIEW},
+            {'side': PageSide.RIGHT},
         ],
-        ids=['page', 'processor-version', 'processor-key', 'params', 'input', 'edit', 'scale'],
+        ids=['page', 'processor-version', 'processor-key', 'params', 'input', 'edit', 'scale', 'side'],
     )
     def test_any_change_of_what_produced_the_version_changes_its_identifier(self, changed: dict[str, Any]) -> None:
         """Verify each ingredient of the hash moves the identifier, so different work never shares a directory.
@@ -164,6 +165,12 @@ class TestVersionInputsIdentify:
         """
         reference: dict[str, Any] = {'page_id': PAGE_ID, 'processor': SPLIT_NONE}
         assert VersionInputs(**reference).identify() != VersionInputs(**{**reference, **changed}).identify()
+
+    def test_the_two_sides_of_the_book_are_different_work(self) -> None:
+        """Verify a page of a step that reads its side gets another identifier on the other side of the book."""
+        left = VersionInputs(page_id=PAGE_ID, processor=SPLIT_NONE, side=PageSide.LEFT).identify()
+        right = VersionInputs(page_id=PAGE_ID, processor=SPLIT_NONE, side=PageSide.RIGHT).identify()
+        assert left != right
 
     def test_order_of_parameters_does_not_matter(self) -> None:
         """Verify the same parameters written in another order are the same work."""

@@ -102,6 +102,19 @@ class StageRecords:
         await self._uow.page_stages.save(stale)
         return [stale]
 
+    async def mark_recipe_stale(self, recipe_id: RecipeId) -> list[PageStage]:
+        """Mark the stage of every page a recipe processed stale, because the recipe changed or stopped being active.
+
+        :param recipe_id: Recipe that changed or stopped being active.
+        :type recipe_id: RecipeId
+        :returns: The records that became stale.
+        :rtype: list[PageStage]
+        """
+        stale: list[PageStage] = []
+        for record in await self._uow.page_stages.list_for_recipe(recipe_id):
+            stale.extend(await self.mark_stale(record.page_id, record.stage))
+        return stale
+
     async def mark_failed(
         self, page_id: PageId, stage: Stage, *, recipe_id: RecipeId | None, pin: bool | None = None
     ) -> PageStage:

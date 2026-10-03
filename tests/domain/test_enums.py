@@ -8,6 +8,7 @@ from bookreviver.domain.enums import (
     FileType,
     ImagePolicy,
     JobState,
+    PageSide,
     Rendition,
     RightsStatus,
     Script,
@@ -190,6 +191,26 @@ class TestJobState:
     def test_active_states_are_queued_and_running(self) -> None:
         """Verify the active states are exactly the queued and running ones, the complement of the final states."""
         assert JobState.active() == {JobState.QUEUED, JobState.RUNNING}
+
+
+class TestPageSide:
+    """Tests for PageSide.of_position()."""
+
+    @pytest.mark.parametrize(
+        ('position', EXPECTED_ARG),
+        [(1, PageSide.RIGHT), (2, PageSide.LEFT), (3, PageSide.RIGHT), (100, PageSide.LEFT)],
+    )
+    def test_an_odd_place_in_the_book_is_a_right_page_and_an_even_one_a_left_page(
+        self, position: int, expected: PageSide
+    ) -> None:
+        """Verify the side of a page follows the parity of its place counted from 1, as the viewer shows a spread.
+
+        :param position: Place of the page in the book counted from 1.
+        :type position: int
+        :param expected: Side of the page.
+        :type expected: PageSide
+        """
+        assert PageSide.of_position(position) is expected
 
 
 class TestContributorRole:

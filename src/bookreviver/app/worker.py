@@ -115,6 +115,18 @@ async def collect_versions(job_id: str, container: FromDishka[AsyncContainer]) -
     await jobs.collect_versions(JobId(UUID(job_id)))
 
 
+async def measure_book(job_id: str, container: FromDishka[AsyncContainer]) -> None:
+    """Measure the book and write the medians into its normalize step: the entry point of ``JobKind.MEASURE_BOOK``.
+
+    :param job_id: Identifier of the job as text, the one argument the queue sends.
+    :type job_id: str
+    :param container: Request-scoped container of the task.
+    :type container: AsyncContainer
+    """
+    jobs = await container.get(ProcessingJobs)
+    await jobs.measure_book(JobId(UUID(job_id)))
+
+
 JOB_TASKS: Mapping[JobKind, JobTask] = MappingProxyType(
     {
         JobKind.IMPORT_SOURCE: import_source,
@@ -123,6 +135,7 @@ JOB_TASKS: Mapping[JobKind, JobTask] = MappingProxyType(
         JobKind.PREVIEW_STEP: preview_step,
         JobKind.CUT_TILES: cut_tiles,
         JobKind.COLLECT_VERSIONS: collect_versions,
+        JobKind.MEASURE_BOOK: measure_book,
     }
 )
 

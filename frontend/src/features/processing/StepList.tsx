@@ -38,6 +38,7 @@ function StepCard({
   number,
   processor,
   open,
+  extra,
   onOpen,
   onToggle,
   onRemove,
@@ -48,6 +49,8 @@ function StepCard({
   number: number;
   processor: ProcessorSchema | undefined;
   open: boolean;
+  /** What the step shows under its settings when it is open, such as the button that measures the book. */
+  extra: React.ReactNode;
   onOpen: (open: boolean) => void;
   onToggle: () => void;
   onRemove: () => void;
@@ -126,6 +129,7 @@ function StepCard({
           ) : (
             <ParamsForm processor={processor} params={step.params} onChange={onChange} />
           )}
+          {extra}
         </div>
       ) : null}
     </li>
@@ -136,6 +140,7 @@ export function StepList({
   steps,
   catalogue,
   openId,
+  extraOf,
   onOpen,
   onMove,
   onToggle,
@@ -145,6 +150,8 @@ export function StepList({
   steps: readonly StepDraft[];
   catalogue: readonly ProcessorSchema[];
   openId: string | undefined;
+  /** What a step shows under its settings when it is open, or nothing. */
+  extraOf?: (step: StepDraft) => React.ReactNode;
   onOpen: (id: string | undefined) => void;
   onMove: (activeId: string, overId: string) => void;
   onToggle: (id: string) => void;
@@ -193,6 +200,7 @@ export function StepList({
               number={index + 1}
               processor={catalogue.find((entry) => entry.key === step.processorKey)}
               open={step.id === openId}
+              extra={extraOf?.(step) ?? null}
               onOpen={(open) => onOpen(open ? step.id : undefined)}
               onToggle={() => onToggle(step.id)}
               onRemove={() => onRemove(step.id)}

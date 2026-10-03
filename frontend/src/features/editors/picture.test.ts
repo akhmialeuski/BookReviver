@@ -47,6 +47,16 @@ describe('pictureOf', () => {
     ).toEqual({ kind: SourceKind.Iiif, url: '/made/info.json' });
   });
 
+  it('gives the page the step made itself for an editor that lies on the page of the book', () => {
+    const made = version('v2', { tiles_ready: true, images: images('page') });
+
+    expect(pictureOf(Picture.Output, null, page('p'), BEFORE, null, made)).toEqual({
+      kind: SourceKind.Iiif,
+      url: '/page/info.json',
+    });
+    expect(pictureOf(Picture.Output, null, page('p'), BEFORE, null, null)).toBeNull();
+  });
+
   it('gives nothing for a page without an image', () => {
     expect(pictureOf(Picture.Input, null, page('p', { images: null }), null)).toBeNull();
   });

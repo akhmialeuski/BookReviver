@@ -395,6 +395,68 @@ class Binarization(LabeledStrEnum):
     ADAPTIVE = 'adaptive', 'A threshold for each neighbourhood, for a page lit unevenly'
 
 
+class PageSide(LabeledStrEnum):
+    """Which side of an open book a page lies on, which its place in the book decides."""
+
+    LEFT = 'left', 'Left page'
+    RIGHT = 'right', 'Right page'
+
+    @classmethod
+    def of_position(cls, position: int) -> PageSide:
+        """Give the side of the page at a place in the book, an odd place being a right page, as in the viewer.
+
+        :param position: Place of the page in the book counted from 1.
+        :type position: int
+        :returns: The side.
+        :rtype: PageSide
+        """
+        return cls.RIGHT if position % 2 == 1 else cls.LEFT
+
+
+class VerticalAlign(LabeledStrEnum):
+    """Where a block of text stands between the top and the bottom margin of a page."""
+
+    TOP = 'top', 'By the top margin'
+    CENTER = 'center', 'In the middle'
+    BOTTOM = 'bottom', 'By the bottom margin'
+
+
+class HorizontalAlign(LabeledStrEnum):
+    """Where a block of text stands between the side margins of a page."""
+
+    INNER = 'inner', 'By the margin at the gutter'
+    OUTER = 'outer', 'By the margin at the outer edge'
+    LEFT = 'left', 'By the left margin'
+    RIGHT = 'right', 'By the right margin'
+    CENTER = 'center', 'In the middle'
+
+
+class MarginsBy(LabeledStrEnum):
+    """How the side margins of a page are told apart."""
+
+    INNER_OUTER = 'inner-outer', 'Inner and outer, by the side of the page in the book'
+    LEFT_RIGHT = 'left-right', 'Left and right, the same on every page'
+
+
+class NormalizeParam(LabeledStrEnum):
+    """Names of the parameters of the step ``geometry.normalize`` that measuring the book writes."""
+
+    LINE_HEIGHT = 'line_height', 'Distance between the lines of text, in pixels'
+    PAGE_WIDTH = 'page_width', 'Width of the page, in pixels'
+    PAGE_HEIGHT = 'page_height', 'Height of the page, in pixels'
+    MARGIN_TOP = 'margin_top', 'Margin at the top, in pixels'
+    MARGIN_BOTTOM = 'margin_bottom', 'Margin at the bottom, in pixels'
+    MARGIN_INNER = 'margin_inner', 'Margin at the gutter, in pixels'
+    MARGIN_OUTER = 'margin_outer', 'Margin at the outer edge, in pixels'
+
+
+class PaperFill(LabeledStrEnum):
+    """What colour fills the page round a block of text."""
+
+    PAPER = 'paper', 'The median colour of the paper of the block'
+    WHITE = 'white', 'White'
+
+
 class PlaceMode(LabeledStrEnum):
     """Where in the interface a reader left a book."""
 
@@ -467,11 +529,12 @@ class VersionData(LabeledStrEnum):
     CUT_TOP_X = 'cut_top_x', 'Place of the cut at the top row of the scan, in pixels from its left edge'
     CUT_BOTTOM_X = 'cut_bottom_x', 'Place of the cut at the bottom row of the scan, in pixels from its left edge'
     PAGES = 'pages', 'Number of pages the scan was split into, one or two'
-    SOURCE_WIDTH_PX = 'source_width_px', 'Width in pixels of the full image the step read, which its edit is drawn on'
+    SOURCE_WIDTH_PX = 'source_width_px', 'Width in pixels of the full image the edit of the step is drawn on'
     SOURCE_HEIGHT_PX = (
         'source_height_px',
-        'Height in pixels of the full image the step read, which its edit is drawn on',
+        'Height in pixels of the full image the edit of the step is drawn on',
     )
+    LINE_HEIGHT_PX = 'line_height_px', 'Median distance between the lines of text, in the pixels of the full image'
     QUAD = 'quad', 'Corners of the sheet the step found in its input, in the pixels of the full image'
     FRAME = 'frame', 'Frame of the content the step found in its input, in the pixels of the full image'
     CUT_EDGES = 'cut_edges', 'Sides of the sheet that lie on the edge of the scan, where the paper was cut'
@@ -533,6 +596,7 @@ class ReviewReason(LabeledStrEnum):
     UNSURE_GUTTER = 'unsure-gutter', 'The gutter of the spread was not found for certain'
     NARROW_GUTTER = 'narrow-gutter', 'Narrow scan with a gutter in the middle'
     CUT_BY_EDGE = 'cut-by-edge', 'Text may be cut by the edge of the scan'
+    TEXT_SIZE = 'size-differs', 'The text of this page differs too much in size'
 
 
 class RunOutcome(LabeledStrEnum):
@@ -596,6 +660,7 @@ class TransformKind(LabeledStrEnum):
     ROTATE = 'rotate', 'Rotation by an angle'
     PERSPECTIVE = 'perspective', 'Perspective correction of a quadrilateral'
     MESH = 'mesh', 'Dewarping along a stored mesh'
+    PLACE = 'place', 'Scaling and placing a block of text on a page'
 
 
 class JobKind(LabeledStrEnum):
@@ -607,6 +672,7 @@ class JobKind(LabeledStrEnum):
     PREVIEW_STEP = 'preview-step', 'Preview a step'
     CUT_TILES = 'cut-tiles', 'Cut tiles'
     COLLECT_VERSIONS = 'collect-versions', 'Collect old versions'
+    MEASURE_BOOK = 'measure-book', 'Measure the book'
 
     @classmethod
     def processing(cls) -> frozenset[JobKind]:

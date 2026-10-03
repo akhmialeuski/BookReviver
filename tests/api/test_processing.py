@@ -7,6 +7,7 @@ written by libvips as they are for a user, and a test waits for the broker to fi
 import io
 import json
 from typing import TYPE_CHECKING, NamedTuple
+from uuid import uuid4
 
 import pytest
 from attrs import evolve
@@ -57,6 +58,7 @@ pytestmark = pytest.mark.anyio
 
 PROJECTS_PATH: str = '/api/v1/projects'
 PROCESSORS_PATH: str = '/api/v1/processors'
+MEASURE_SUFFIX: str = '/stages/geometry/measure'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
 FAKE_KEY: str = 'geometry.fake'
@@ -456,6 +458,45 @@ class TestRunAndVersions:
         expect(response.status_code == status.HTTP_202_ACCEPTED)
         expect(job.kind is JobKind.COLLECT_VERSIONS)
         assert_expectations()
+
+    async def test_measuring_the_book_is_a_202_job(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify the measure of the book is queued as a job and answered 202.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.post(f'{fx_book.path}{MEASURE_SUFFIX}')
+        job = JobSchema.model_validate_json(response.content)
+        expect(response.status_code == status.HTTP_202_ACCEPTED)
+        expect((job.kind, job.state) == (JobKind.MEASURE_BOOK, JobState.QUEUED))
+        assert_expectations()
+
+    async def test_measuring_the_book_while_a_run_is_active_is_a_409_problem(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify the measure is refused while a run of the project is queued, which may be writing what it reads.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        run = await fx_client.post(f'{fx_book.path}/stages/page-split/run', json={})
+        measure = await fx_client.post(f'{fx_book.path}{MEASURE_SUFFIX}')
+        expect(run.status_code == status.HTTP_202_ACCEPTED)
+        expect(measure.status_code == status.HTTP_409_CONFLICT)
+        assert_expectations()
+
+    async def test_measuring_the_book_of_another_account_is_a_404(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify a project that is not the account's is reported like a missing one.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        response = await fx_client.post(f'{PROJECTS_PATH}/{uuid4()}{MEASURE_SUFFIX}')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     async def test_tiles_of_a_version_are_cut_on_request(
         self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
