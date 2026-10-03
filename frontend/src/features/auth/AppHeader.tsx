@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useMatch, useRouter } from '@tanstack/react-router';
-import { LogOutIcon } from 'lucide-react';
+import { BookmarkIcon, LogOutIcon } from 'lucide-react';
 import { authCookieLogoutApiV1AuthLogoutPostMutation } from '@/api/@tanstack/react-query.gen';
 import { useSession } from '@/features/auth/session';
 import { MESSAGES } from '@/shared/messages';
@@ -57,6 +57,12 @@ export function AccountMenu(): React.JSX.Element {
       <DropdownMenuContent>
         <DropdownMenuLabel className="font-normal text-muted-foreground">{email}</DropdownMenuLabel>
         <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link to="/settings/profiles" data-testid="account-profiles">
+            <BookmarkIcon />
+            {MESSAGES.profiles.menu}
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuItem disabled={signOut.isPending} onSelect={() => signOut.mutate({})}>
           <LogOutIcon />
           {signOut.isPending ? MESSAGES.auth.signingOut : MESSAGES.auth.signOut}
@@ -85,6 +91,12 @@ export function AppHeader(): React.JSX.Element | null {
           <span className="hidden text-sm text-muted-foreground sm:inline">
             {session.data?.email}
           </span>
+          <Button variant="ghost" size="sm" asChild>
+            <Link to="/settings/profiles" data-testid="library-profiles">
+              <BookmarkIcon />
+              {MESSAGES.profiles.menu}
+            </Link>
+          </Button>
           <Button
             variant="outline"
             size="sm"

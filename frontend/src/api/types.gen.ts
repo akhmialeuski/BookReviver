@@ -89,6 +89,36 @@ export type AccountUpdate = {
 };
 
 /**
+ * AppliedProfileSchema
+ *
+ * The recipe a profile made in a book, and what was left out of it.
+ *
+ * :ivar recipe: The variant added to the book, which is the active recipe when the request asked for that.
+ * :ivar missing_processors: Keys of the processors of the profile that are not installed, whose steps were left out.
+ */
+export type AppliedProfileSchema = {
+    recipe: RecipeSchema;
+    /**
+     * Missing Processors
+     */
+    missing_processors: Array<string>;
+};
+
+/**
+ * ApplyProfileBody
+ *
+ * How to apply a profile to a book.
+ *
+ * :ivar activate: Whether the new variant also becomes the active recipe of the stage.
+ */
+export type ApplyProfileBody = {
+    /**
+     * Activate
+     */
+    activate?: boolean;
+};
+
+/**
  * Body_auth_cookie_login_api_v1_auth_login_post
  */
 export type BodyAuthCookieLoginApiV1AuthLoginPost = {
@@ -1419,6 +1449,32 @@ export type PageProjectSchema = {
 };
 
 /**
+ * Page[RecipeProfileSchema]
+ */
+export type PageRecipeProfileSchema = {
+    /**
+     * Items
+     */
+    items: Array<RecipeProfileSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
+};
+
+/**
  * Page[RecipeRuleSchema]
  */
 export type PageRecipeRuleSchema = {
@@ -2056,6 +2112,82 @@ export type RecipeBody = {
      * Steps
      */
     steps: Array<StepBody>;
+};
+
+/**
+ * RecipeProfileBody
+ *
+ * The name and the steps of a profile to save, with the stage whose recipes it fits.
+ *
+ * :ivar name: Name of the profile.
+ * :ivar steps: Its steps in the order they run, each checked against its processor.
+ * :ivar stage: Stage whose recipes the profile can be applied to.
+ */
+export type RecipeProfileBody = {
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Steps
+     */
+    steps: Array<StepBody>;
+    stage: Stage;
+};
+
+/**
+ * RecipeProfileName
+ *
+ * The new name of a profile.
+ *
+ * :ivar name: Name of the profile.
+ */
+export type RecipeProfileName = {
+    /**
+     * Name
+     */
+    name: string;
+};
+
+/**
+ * RecipeProfileSchema
+ *
+ * A recipe profile of the signed-in account.
+ *
+ * :ivar id: Identifier of the profile.
+ * :ivar stage: Stage whose recipes the profile can be applied to.
+ * :ivar name: Name the user sees.
+ * :ivar steps: The steps in the order they run, each with its parameters and its switch.
+ * :ivar is_default: Whether a new book starts the stage with this profile.
+ * :ivar created_at: When the profile was saved.
+ * :ivar updated_at: When the profile was last changed.
+ */
+export type RecipeProfileSchema = {
+    /**
+     * Id
+     */
+    id: string;
+    stage: Stage;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Steps
+     */
+    steps: Array<StepSchema>;
+    /**
+     * Is Default
+     */
+    is_default: boolean;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
 };
 
 /**
@@ -4979,6 +5111,291 @@ export type PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutResponses = {
 };
 
 export type PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutResponse = PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutResponses[keyof PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutResponses];
+
+export type ListProfilesApiV1RecipeProfilesGetData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Size
+         */
+        size?: number;
+        /**
+         * Stage
+         */
+        stage?: Stage | null;
+    };
+    url: '/api/v1/recipe-profiles';
+};
+
+export type ListProfilesApiV1RecipeProfilesGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ListProfilesApiV1RecipeProfilesGetError = ListProfilesApiV1RecipeProfilesGetErrors[keyof ListProfilesApiV1RecipeProfilesGetErrors];
+
+export type ListProfilesApiV1RecipeProfilesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageRecipeProfileSchema;
+};
+
+export type ListProfilesApiV1RecipeProfilesGetResponse = ListProfilesApiV1RecipeProfilesGetResponses[keyof ListProfilesApiV1RecipeProfilesGetResponses];
+
+export type CreateProfileApiV1RecipeProfilesPostData = {
+    body: RecipeProfileBody;
+    path?: never;
+    query?: never;
+    url: '/api/v1/recipe-profiles';
+};
+
+export type CreateProfileApiV1RecipeProfilesPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type CreateProfileApiV1RecipeProfilesPostError = CreateProfileApiV1RecipeProfilesPostErrors[keyof CreateProfileApiV1RecipeProfilesPostErrors];
+
+export type CreateProfileApiV1RecipeProfilesPostResponses = {
+    /**
+     * Successful Response
+     */
+    201: RecipeProfileSchema;
+};
+
+export type CreateProfileApiV1RecipeProfilesPostResponse = CreateProfileApiV1RecipeProfilesPostResponses[keyof CreateProfileApiV1RecipeProfilesPostResponses];
+
+export type DeleteProfileApiV1RecipeProfilesProfileIdDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
+    };
+    query?: never;
+    url: '/api/v1/recipe-profiles/{profile_id}';
+};
+
+export type DeleteProfileApiV1RecipeProfilesProfileIdDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type DeleteProfileApiV1RecipeProfilesProfileIdDeleteError = DeleteProfileApiV1RecipeProfilesProfileIdDeleteErrors[keyof DeleteProfileApiV1RecipeProfilesProfileIdDeleteErrors];
+
+export type DeleteProfileApiV1RecipeProfilesProfileIdDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteProfileApiV1RecipeProfilesProfileIdDeleteResponse = DeleteProfileApiV1RecipeProfilesProfileIdDeleteResponses[keyof DeleteProfileApiV1RecipeProfilesProfileIdDeleteResponses];
+
+export type RenameProfileApiV1RecipeProfilesProfileIdPatchData = {
+    body: RecipeProfileName;
+    path: {
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
+    };
+    query?: never;
+    url: '/api/v1/recipe-profiles/{profile_id}';
+};
+
+export type RenameProfileApiV1RecipeProfilesProfileIdPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type RenameProfileApiV1RecipeProfilesProfileIdPatchError = RenameProfileApiV1RecipeProfilesProfileIdPatchErrors[keyof RenameProfileApiV1RecipeProfilesProfileIdPatchErrors];
+
+export type RenameProfileApiV1RecipeProfilesProfileIdPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: RecipeProfileSchema;
+};
+
+export type RenameProfileApiV1RecipeProfilesProfileIdPatchResponse = RenameProfileApiV1RecipeProfilesProfileIdPatchResponses[keyof RenameProfileApiV1RecipeProfilesProfileIdPatchResponses];
+
+export type DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
+    };
+    query?: never;
+    url: '/api/v1/recipe-profiles/{profile_id}/default';
+};
+
+export type DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteError = DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteErrors[keyof DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteErrors];
+
+export type DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: RecipeProfileSchema;
+};
+
+export type DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteResponse = DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteResponses[keyof DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteResponses];
+
+export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutData = {
+    body?: never;
+    path: {
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
+    };
+    query?: never;
+    url: '/api/v1/recipe-profiles/{profile_id}/default';
+};
+
+export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutError = PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutErrors[keyof PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutErrors];
+
+export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: RecipeProfileSchema;
+};
+
+export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutResponse = PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutResponses[keyof PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutResponses];
+
+export type ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostData = {
+    body: ApplyProfileBody;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/recipe-profiles/{profile_id}/apply';
+};
+
+export type ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostError = ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostErrors[keyof ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostErrors];
+
+export type ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostResponses = {
+    /**
+     * Successful Response
+     */
+    201: AppliedProfileSchema;
+};
+
+export type ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostResponse = ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostResponses[keyof ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostResponses];
 
 export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData = {
     body?: never;

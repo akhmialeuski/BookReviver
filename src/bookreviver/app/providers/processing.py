@@ -24,6 +24,7 @@ from bookreviver.services.edits import EditService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
+from bookreviver.services.recipe_profiles import RecipeProfiles
 from bookreviver.services.recipe_rules import RecipeRules
 from bookreviver.services.recipes import DefaultRecipes
 from bookreviver.services.stage_runs import StageRuntime
@@ -157,6 +158,25 @@ class ProcessingProvider(Provider):
         :rtype: RecipeRules
         """
         return RecipeRules(uow=uow, recipes=parts.recipes)
+
+    @provide(scope=Scope.REQUEST)
+    def recipe_profiles(
+        self, uow: UnitOfWork, parts: ProcessingParts, processing: ProcessingService, clock: Clock
+    ) -> RecipeProfiles:
+        """Build the service of the recipe profiles of a request.
+
+        :param uow: Unit of work of the current request.
+        :type uow: UnitOfWork
+        :param parts: The parts the processing use cases share, of which the recipes are used.
+        :type parts: ProcessingParts
+        :param processing: The processing service of the request, which adds the variant a profile makes.
+        :type processing: ProcessingService
+        :param clock: Clock of the application.
+        :type clock: Clock
+        :returns: The profiles service.
+        :rtype: RecipeProfiles
+        """
+        return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing, clock=clock)
 
     @provide(scope=Scope.APP)
     def stage_runtime(

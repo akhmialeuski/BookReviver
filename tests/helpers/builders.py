@@ -16,6 +16,7 @@ from bookreviver.domain.entities import (
     PageVersion,
     Project,
     Recipe,
+    RecipeProfile,
     RecipeRule,
     Scan,
     Source,
@@ -49,6 +50,7 @@ from bookreviver.domain.ids import (
     PageVersionId,
     ProjectId,
     RecipeId,
+    RecipeProfileId,
     RecipeRuleId,
     ScanId,
     SourceId,
@@ -117,6 +119,8 @@ SPLIT_NONE: ProcessorRef = ProcessorRef(key='split.none', version='1')
 VERSION_ID_DIGITS: int = 16
 # The deskew step of the geometry stage, which the processing tests run
 DESKEW: ProcessorRef = ProcessorRef(key='geometry.deskew', version='1')
+# The parameters of the deskew step the builders give a recipe and a profile
+DESKEW_PARAMS: MetadataMap = {'max_angle_deg': 5}
 
 
 def new_account_id() -> AccountId:
@@ -308,8 +312,44 @@ def make_recipe(
         project_id=project_id,
         stage=stage,
         name=name,
-        steps=(Step(processor_key=DESKEW.key, params={'max_angle_deg': 5}),),
+        steps=(Step(processor_key=DESKEW.key, params=DESKEW_PARAMS),),
         active=active,
+        created_at=moment,
+        updated_at=moment,
+    )
+
+
+def make_recipe_profile(
+    *,
+    account_id: AccountId,
+    stage: Stage = Stage.GEOMETRY,
+    steps: tuple[Step, ...] | None = None,
+    is_default: bool = False,
+    minutes: int = 0,
+) -> RecipeProfile:
+    """Build a profile of an account named ``Photographed book``, saved ``minutes`` after the epoch.
+
+    :param account_id: Account owning the profile.
+    :type account_id: AccountId
+    :param stage: Stage whose recipes the profile fits.
+    :type stage: Stage
+    :param steps: Steps of the profile, or None for one deskew step.
+    :type steps: tuple[Step, ...] | None
+    :param is_default: Whether the profile is the default of its stage.
+    :type is_default: bool
+    :param minutes: Minutes after ``EPOCH`` the profile was saved.
+    :type minutes: int
+    :returns: A profile with a fresh identifier.
+    :rtype: RecipeProfile
+    """
+    moment = EPOCH + timedelta(minutes=minutes)
+    return RecipeProfile(
+        id=RecipeProfileId(uuid4()),
+        account_id=account_id,
+        stage=stage,
+        name='Photographed book',
+        steps=steps or (Step(processor_key=DESKEW.key, params=DESKEW_PARAMS),),
+        is_default=is_default,
         created_at=moment,
         updated_at=moment,
     )

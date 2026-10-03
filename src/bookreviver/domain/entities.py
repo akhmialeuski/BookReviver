@@ -47,6 +47,7 @@ if TYPE_CHECKING:
         PageId,
         ProjectId,
         RecipeId,
+        RecipeProfileId,
         RecipeRuleId,
         ScanId,
         SourceId,
@@ -456,6 +457,34 @@ class Recipe:
     def enabled_steps(self) -> tuple[Step, ...]:
         """The steps a run and a preview run, in order, which leaves out the ones switched off."""
         return tuple(step for step in self.steps if step.enabled)
+
+
+@frozen(kw_only=True)
+class RecipeProfile:
+    """The steps of a recipe of one stage that an account saved, to apply to its books.
+
+    A recipe belongs to one book, and a profile to the account, so a book that is set up once can be set up again in
+    another by applying the profile. The steps keep their order, their parameters and their ``enabled`` switch. An
+    account has at most one default profile for each stage, which a new book takes as the active recipe of the stage.
+
+    :ivar id: Identifier of the profile.
+    :ivar account_id: Account owning the profile, the only one that may read or change it.
+    :ivar stage: Stage whose recipes the profile can be applied to.
+    :ivar name: Name the user sees, such as ``Photographed book``.
+    :ivar steps: The steps in the order they run, each a processor with its parameters.
+    :ivar is_default: Whether a new book of the account starts the stage with this profile.
+    :ivar created_at: When the profile was saved.
+    :ivar updated_at: When the profile was last changed.
+    """
+
+    id: RecipeProfileId
+    account_id: AccountId
+    stage: Stage
+    name: str = field(validator=validators.min_len(1))
+    steps: tuple[Step, ...]
+    is_default: bool = False
+    created_at: datetime
+    updated_at: datetime
 
 
 @frozen(kw_only=True)

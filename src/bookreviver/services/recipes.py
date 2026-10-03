@@ -3,7 +3,9 @@
 A stage has exactly one active recipe, by which a page without a choice of its own is processed. The first time a
 stage is asked for, ``RecipeBook`` creates its recipes from ``DefaultRecipes``: the first of the stage is active and
 the others are variants the user may try. A template whose processor the catalogue does not offer, such as one that
-needs OpenCV on a machine that has none, is left out, and a stage with no template left has no recipe at all.
+needs OpenCV on a machine that has none, is left out, and a stage with no template left has no recipe at all. When the
+owner of the project has chosen a default profile for the stage, the active recipe is made from the profile and the
+templates follow it as variants.
 
 Every step is checked before it is saved: its processor must exist, belong to the stage of the recipe, and accept its
 parameters, which are stored in the form ``validate_params`` returns, defaults filled in, so two recipes that differ in
@@ -23,6 +25,7 @@ from bookreviver.domain.values import Step
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from datetime import datetime
 
     from bookreviver.domain.ids import ProjectId
     from bookreviver.ports.persistence import UnitOfWork
@@ -123,7 +126,8 @@ class RecipeBook:
             for template in self._defaults.for_stage(stage)
             if all(self._offers(key) for key in template.processor_keys)
         ]
-        if not buildable:
+        preferred = await self._default_profile_recipe(project_id, stage, moment)
+        if not buildable and preferred is None:
             raise NotFoundError(NO_RECIPE.format(stage=stage.label))
         recipes = [
             Recipe(
@@ -135,12 +139,14 @@ class RecipeBook:
                     Step(processor_key=key, params=self._catalogue.get(key).validate_params({}))
                     for key in template.processor_keys
                 ),
-                active=index == 0,
+                active=index == 0 and preferred is None,
                 created_at=moment,
                 updated_at=moment,
             )
             for index, template in enumerate(buildable)
         ]
+        if preferred is not None:
+            recipes.insert(0, preferred)
         try:
             await self._uow.recipes.add_many(recipes)
             await self._uow.commit()
@@ -275,6 +281,52 @@ class RecipeBook:
             )
             raise InvalidParametersError(err_msg)
         return evolve(step, params=processor.validate_params(step.params))
+
+    def installed(self, steps: Sequence[Step]) -> tuple[tuple[Step, ...], tuple[str, ...]]:
+        """Split steps into those whose processor the catalogue offers and the keys of the processors it does not.
+
+        :param steps: Steps of a saved recipe, whose processors may have been removed from the application since.
+        :type steps: Sequence[Step]
+        :returns: The steps that can run, in their order, and the distinct keys of the processors that are missing.
+        :rtype: tuple[tuple[Step, ...], tuple[str, ...]]
+        """
+        kept = tuple(step for step in steps if self._offers(step.processor_key))
+        missing = dict.fromkeys(step.processor_key for step in steps if not self._offers(step.processor_key))
+        return kept, tuple(missing)
+
+    async def _default_profile_recipe(self, project_id: ProjectId, stage: Stage, moment: datetime) -> Recipe | None:
+        """Build the active recipe of a stage from the default profile of the project's owner, if there is a usable one.
+
+        A step whose processor is not installed is left out. A profile that has no step left to run, or whose steps no
+        longer fit their processors, is passed over, so the stage starts with the built-in recipes as it does for an
+        account without a default profile.
+
+        :param project_id: Project the recipe is for.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :param moment: The time the recipe is created at.
+        :type moment: datetime
+        :returns: The recipe, not stored yet, or None.
+        :rtype: Recipe | None
+        """
+        owner_id = (await self._uow.projects.get(project_id)).owner_id
+        if (profile := await self._uow.recipe_profiles.find_default(owner_id, stage)) is None:
+            return None
+        try:
+            steps = await self.check(stage, self.installed(profile.steps)[0])
+        except InvalidParametersError:
+            return None
+        return Recipe(
+            id=RecipeId(uuid4()),
+            project_id=project_id,
+            stage=stage,
+            name=profile.name,
+            steps=steps,
+            active=True,
+            created_at=moment,
+            updated_at=moment,
+        )
 
     def _offers(self, key: str) -> bool:
         """Tell whether the catalogue has a processor.

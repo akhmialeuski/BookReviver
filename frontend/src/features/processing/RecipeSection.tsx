@@ -13,6 +13,7 @@ import { StepList } from '@/features/processing/StepList';
 import { UsedFor } from '@/features/processing/UsedFor';
 import type { Processing } from '@/features/processing/useProcessing';
 import { countsOf } from '@/features/processing/variants';
+import { ProfileActions } from '@/features/profiles/ProfileActions';
 import { roadmapOf } from '@/features/stages/roadmap';
 import { useStageSummaries } from '@/features/workspace/queries';
 import { describeError } from '@/shared/http/problem';
@@ -135,6 +136,7 @@ export function RecipeSection({
           </Button>
         )}
       </div>
+      <ProfileActions processing={processing} />
 
       <UsedFor
         projectId={projectId}

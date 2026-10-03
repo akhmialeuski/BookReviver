@@ -40,13 +40,24 @@ from bookreviver.domain.entities import (
     Project,
     ProjectOverview,
     Recipe,
+    RecipeProfile,
     RecipeRule,
     Scan,
     Source,
 )
 from bookreviver.domain.enums import JobKind, JobState, PageOrigin, Side, Stage, StageState, VersionScale, VersionState
 from bookreviver.domain.errors import ConcurrentChangeError, ConflictError, DomainError, NotFoundError
-from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, RecipeRuleId, ScanId, SourceId
+from bookreviver.domain.ids import (
+    JobId,
+    PageId,
+    PageVersionId,
+    ProjectId,
+    RecipeId,
+    RecipeProfileId,
+    RecipeRuleId,
+    ScanId,
+    SourceId,
+)
 from bookreviver.domain.stage_summaries import StageTally, VariantTally
 from bookreviver.domain.values import BookPlaceKey, PageEditKey, PageSize, PageStageKey, Slice, SliceRequest
 from bookreviver.domain.version_chains import collectable_versions
@@ -58,6 +69,7 @@ from bookreviver.ports.persistence import (
     PageStageRepository,
     PageVersionRepository,
     ProjectRepository,
+    RecipeProfileRepository,
     RecipeRepository,
     RecipeRuleRepository,
     Repository,
@@ -98,6 +110,7 @@ class InMemoryTables:
     :ivar page_edits: Page edits by page, stage and processor.
     :ivar recipes: Recipes by identifier.
     :ivar recipe_rules: Rules of the stages by identifier.
+    :ivar recipe_profiles: Recipe profiles of the accounts by identifier.
     :ivar jobs: Jobs by identifier.
     :ivar book_places: Places of books by account and book.
     """
@@ -111,6 +124,7 @@ class InMemoryTables:
     page_edits: dict[PageEditKey, PageEdit] = field(factory=dict)
     recipes: dict[RecipeId, Recipe] = field(factory=dict)
     recipe_rules: dict[RecipeRuleId, RecipeRule] = field(factory=dict)
+    recipe_profiles: dict[RecipeProfileId, RecipeProfile] = field(factory=dict)
     jobs: dict[JobId, Job] = field(factory=dict)
     book_places: dict[BookPlaceKey, BookPlace] = field(factory=dict)
 
@@ -1420,6 +1434,73 @@ class InMemoryRecipeRuleRepository(InMemoryRepository[RecipeRule, RecipeRuleId],
         )
 
 
+class InMemoryRecipeProfileRepository(InMemoryRepository[RecipeProfile, RecipeProfileId], RecipeProfileRepository):
+    """The recipe profiles of the accounts, one default per stage of an account."""
+
+    def __init__(self, tables: InMemoryTables) -> None:
+        """Work on the profile table of the unit of work's copy.
+
+        :param tables: Every table of the working copy.
+        :type tables: InMemoryTables
+        """
+        super().__init__(tables.recipe_profiles, tables)
+
+    @override
+    def _check(self, entity: RecipeProfile) -> None:
+        """Require no other default profile of the stage of the account, as the partial unique index does.
+
+        The account is not required to be stored, since accounts have no port.
+
+        :param entity: Profile about to be stored.
+        :type entity: RecipeProfile
+        :raises ConflictError: If the profile is the default and another profile of the stage is too.
+        """
+        if entity.is_default:
+            self._require_unique(
+                entity, lambda profile: (profile.account_id, profile.stage) if profile.is_default else profile.id
+            )
+
+    @override
+    async def list_for_account(self, account_id: AccountId, stage: Stage | None = None) -> Sequence[RecipeProfile]:
+        """Return the account's profiles in the order of the stages, then by creation, ties by identifier.
+
+        :param account_id: Account owning the profiles.
+        :type account_id: AccountId
+        :param stage: The stage whose profiles are wanted, or None for every stage.
+        :type stage: Stage | None
+        :returns: The profiles of the account.
+        :rtype: Sequence[RecipeProfile]
+        """
+        return sorted(
+            (
+                profile
+                for profile in self._rows.values()
+                if profile.account_id == account_id and (stage is None or profile.stage is stage)
+            ),
+            key=lambda profile: (profile.stage.position, profile.created_at, profile.id),
+        )
+
+    @override
+    async def find_default(self, account_id: AccountId, stage: Stage) -> RecipeProfile | None:
+        """Return the profile a new book of the account starts a stage with.
+
+        :param account_id: Account owning the profile.
+        :type account_id: AccountId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The default profile of the stage, or None.
+        :rtype: RecipeProfile | None
+        """
+        return next(
+            (
+                profile
+                for profile in self._rows.values()
+                if profile.account_id == account_id and profile.stage is stage and profile.is_default
+            ),
+            None,
+        )
+
+
 class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
     """Jobs of every project."""
 
@@ -1563,6 +1644,7 @@ class InMemoryUnitOfWork(UnitOfWork):
     :ivar page_edits: Page edit repository over the working copy.
     :ivar recipes: Recipe repository over the working copy.
     :ivar recipe_rules: Recipe rule repository over the working copy.
+    :ivar recipe_profiles: Recipe profile repository over the working copy.
     :ivar jobs: Job repository over the working copy.
     :ivar book_places: Book place repository over the working copy.
     """
@@ -1603,6 +1685,7 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.page_edits = InMemoryPageEditRepository(self._tables)
         self.recipes = InMemoryRecipeRepository(self._tables)
         self.recipe_rules = InMemoryRecipeRuleRepository(self._tables)
+        self.recipe_profiles = InMemoryRecipeProfileRepository(self._tables)
         self.jobs = InMemoryJobRepository(
             self._tables, snapshot=self._snapshot, committed=self._database.tables, guards=self._guards
         )
