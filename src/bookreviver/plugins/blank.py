@@ -184,7 +184,8 @@ def paper_of(image: Path) -> tuple[int, int, int] | None:
     if sample.hasalpha():
         sample = sample.flatten(background=[WHITE])
     sample = sample.colourspace(pyvips.enums.Interpretation.SRGB).cast(pyvips.enums.BandFormat.UCHAR)
-    pixels = sample.write_to_memory()
+    # libvips hands out a buffer that cannot be sliced with a step, so it is copied to bytes first
+    pixels = bytes(sample.write_to_memory())
     reds, greens, blues = pixels[0::COLOR_PLANES], pixels[1::COLOR_PLANES], pixels[2::COLOR_PLANES]
     tones = [
         (RED_WEIGHT * red + GREEN_WEIGHT * green + BLUE_WEIGHT * blue) // WEIGHT_SCALE

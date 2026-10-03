@@ -92,6 +92,12 @@ INSERT_RECIPE: str = (
     'INSERT INTO recipes (id, project_id, stage, name, steps, active, created_at, updated_at) '
     "VALUES (:id, :project_id, 'geometry', :name, :steps, :active, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
 )
+INSERT_PAGE: str = (
+    'INSERT INTO pages (id, project_id, order_key, label, label_manual, kind, origin, scan_id, slot, included, notes,'
+    ' group_label, created_at, updated_at, revision)'
+    " VALUES (:id, :project_id, :order_key, '', 0, 'text', 'placeholder', NULL, 0, 1, '', '',"
+    " '2026-01-01 00:00:00', '2026-01-01 00:00:00', 0)"
+)
 INSERT_STAGE: str = (
     'INSERT INTO page_stages (page_id, stage, recipe_id, state, updated_at) '
     "VALUES (:page_id, 'geometry', :recipe_id, 'fresh', '2026-01-01 00:00:00')"
@@ -355,8 +361,12 @@ class TestStepIdentityRevision:
         async with database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
             await uow.projects.add(project)
-            await uow.pages.add_many(list(pages.values()))
             await uow.commit()
+            # Plain SQL, since the pages of the ORM have columns that later revisions added
+            for name, page in pages.items():
+                await session.execute(
+                    text(INSERT_PAGE), {'id': page.id.bytes, 'project_id': project.id.bytes, 'order_key': name}
+                )
             for name, recipe_id in recipes.items():
                 await session.execute(
                     text(INSERT_RECIPE),
