@@ -96,7 +96,7 @@ test('a blank scan gets a leaf of the paper of the book in its place, and the sc
   });
 
   await test.step('a white leaf replaces the scan of the selected page only', async () => {
-    await block.getByRole('radio', { name: 'White leaf' }).check();
+    await block.getByRole('radio', { name: 'White leaf' }).click();
     await expect(block.getByRole('radio', { name: 'White leaf' })).toBeChecked();
     await waitForImages(page, [1], 'white', true);
     const others = (await listPages(page)).filter((entry) => entry.position === 2);
@@ -104,7 +104,7 @@ test('a blank scan gets a leaf of the paper of the book in its place, and the sc
   });
 
   await test.step('the button gives every blank page a leaf of the paper of the book', async () => {
-    await block.getByRole('radio', { name: 'Paper of the book' }).check();
+    await block.getByRole('radio', { name: 'Paper of the book' }).click();
     await block.getByRole('button', { name: 'Apply to all 2 Blank pages' }).click();
     await waitForImages(page, BLANK_POSITIONS, 'paper', true);
     await waitForIdleJobs(page, openProjectId(page));
@@ -113,7 +113,8 @@ test('a blank scan gets a leaf of the paper of the book in its place, and the sc
   });
 
   await test.step('the scan comes back with the choice of the scan', async () => {
-    await block.getByRole('radio', { name: 'Keep the scan' }).check();
+    // The radio shows the fill of the manifest, which the request changes a moment after the click
+    await block.getByRole('radio', { name: 'Keep the scan' }).click();
     await waitForImages(page, [1], 'scan', false);
     await expect(block.getByRole('radio', { name: 'Keep the scan' })).toBeChecked();
     await snap(page, 'blank-leaf-scan-back');
