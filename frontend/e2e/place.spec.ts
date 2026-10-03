@@ -169,6 +169,8 @@ test('a book that was closed in the reading mode opens in it on the same page', 
     await page.goto(`/projects/${projectId}/stages/geometry`);
     await expect(page.getByTestId('stage-screen')).toHaveAttribute('data-stage', 'geometry');
     await page.getByRole('link', { name: 'Read the book' }).click();
+    // The stage screen has a canvas of the same name, so the caption only the reading mode has says it has come up
+    await expect(caption).toContainText('1 of 6');
     await expect(canvas).toHaveAttribute('data-state', 'ready');
     for (const position of [2, 3, 4]) {
       await page.getByRole('button', { name: 'Next page' }).click();

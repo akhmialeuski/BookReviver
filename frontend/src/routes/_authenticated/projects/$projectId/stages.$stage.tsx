@@ -55,8 +55,13 @@ function StageOfBook({ projectId }: { projectId: string }): React.JSX.Element {
   if (known === null) {
     return <StageNotFound />;
   }
+  // The stage is named in the call, because a move made while the router is already on its way to a screen that has no
+  // stage, such as the reading mode that is still loading, would otherwise read the stage from there and go to `undefined`
   const onSearchChange = (changes: Partial<StageSearch>): void =>
-    void navigate({ search: (previous) => ({ ...previous, ...changes }) });
+    void navigate({
+      params: (previous) => ({ ...previous, stage: known }),
+      search: (previous) => ({ ...previous, ...changes }),
+    });
   let screen = (
     <StageScreen
       projectId={projectId}

@@ -3,8 +3,10 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import {
   createBook,
+  openProjectId,
   registerAndSignIn,
   uploadFolder,
+  waitForIdleJobs,
   writePagesFolder,
   writeScansFolder,
 } from './support/account';
@@ -79,6 +81,8 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
   });
 
   await test.step('a preview is asked for once and not again for what is shown', async () => {
+    // A job the book still has refuses the first request, which the screen then repeats, and that is a request too
+    await waitForIdleJobs(page, openProjectId(page));
     await page.getByTestId('preview-toggle').click();
     // The picture after is the half of the compare that the preview fills
     await expect(page).toHaveURL(/compare=swipe/);

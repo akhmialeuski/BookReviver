@@ -485,9 +485,39 @@ class PageService:
         :raises ScanAlreadyInBookError: If another page shows the scan and ``take_over`` is not set, the error naming
                                         those pages by their printed number or position.
         :raises ConflictError: If the scan is not cut yet.
-        :raises ConcurrentChangeError: If another request changed the page meanwhile.
+        :raises ConcurrentChangeError: If another request kept changing the page on every one of the attempts.
         """
         await owned_project(self._uow.projects, actor, project_id)
+        # A change of the placeholder that is still being written, such as its printed number, commits between the read
+        # and the write below. The rollback drops the stale read, and the next attempt reads the page afresh
+        for _ in range(self.PAGE_WRITE_ATTEMPTS - 1):
+            try:
+                return await self._bind_scan(project_id, page_id, scan_id, take_over=take_over)
+            except ConcurrentChangeError:
+                await self._uow.rollback()
+        return await self._bind_scan(project_id, page_id, scan_id, take_over=take_over)
+
+    async def _bind_scan(
+        self, project_id: ProjectId, page_id: PageId, scan_id: ScanId, *, take_over: bool
+    ) -> PageOverview:
+        """Read a placeholder and a scan, bind them and commit, once.
+
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param page_id: Identifier of the placeholder.
+        :type page_id: PageId
+        :param scan_id: Identifier of the scan to bind.
+        :type scan_id: ScanId
+        :param take_over: Whether to take the scan from the pages that show it, deleting them.
+        :type take_over: bool
+        :returns: The page, which now shows the scan.
+        :rtype: PageOverview
+        :raises NotFoundError: If the project has no such page or scan.
+        :raises NotAPlaceholderError: If the page is not a placeholder.
+        :raises ScanAlreadyInBookError: If another page shows the scan and ``take_over`` is not set.
+        :raises ConflictError: If the scan is not cut yet.
+        :raises ConcurrentChangeError: If another request changed the page after it was read.
+        """
         placeholder = await self._page(project_id, page_id)
         if placeholder.origin is not PageOrigin.PLACEHOLDER:
             raise NotAPlaceholderError

@@ -26,6 +26,8 @@ import { CompareMode } from '@/features/workspace/params';
 const ANIMATION_SECONDS = 0.35;
 const HIDDEN = 0;
 const VISIBLE = 1;
+/** Decimal digits of the width over the height of a picture that tell one shape from another. */
+const SHAPE_DIGITS = 2;
 /** The least a clip may uncover, since a clip of no width is read as no clip at all. */
 const LEAST_CLIP_PX = 0.5;
 
@@ -40,6 +42,8 @@ const VIEWER_OPTIONS = {
   showNavigationControl: false,
   showNavigator: false,
   keyboardNavEnabled: false,
+  // The stage fits and restores the view itself, and a world that is down to one picture must not send it home
+  preserveViewport: true,
   animationTime: ANIMATION_SECONDS,
   visibilityRatio: 0.5,
   minZoomImageRatio: 0.5,
@@ -70,6 +74,10 @@ export class CompareStage {
   private generation = 0;
   private syncing = false;
   private hasFitted = false;
+  /** Whether the canvas shows the view `fit` made, which the reader has not moved since. */
+  private atFit = false;
+  /** The pages and the shape of the pictures last fitted, or null while a fitted picture is not on the stage. */
+  private fittedFor: string | null = null;
   /** Whether the pictures of the latest `show` are on the stage, so the position of the canvas belongs to them. */
   private settled = false;
   private padding = 0;
@@ -88,7 +96,25 @@ export class CompareStage {
     this.hooks = hooks;
     this.first = OpenSeadragon({ element, ...VIEWER_OPTIONS });
     this.first.addHandler('animation', () => this.follow(this.first, this.second));
-    this.first.addHandler('resize', () => this.follow(this.first, this.second));
+    this.first.addHandler('resize', () => {
+      this.follow(this.first, this.second);
+      // A canvas that the reader has not moved since it was fitted stays fitted when its element changes size
+      if (this.atFit) {
+        this.fit(true);
+      }
+    });
+    this.first.addHandler('canvas-drag', () => {
+      this.atFit = false;
+    });
+    this.first.addHandler('canvas-scroll', () => {
+      this.atFit = false;
+    });
+    this.first.addHandler('canvas-pinch', () => {
+      this.atFit = false;
+    });
+    this.first.addHandler('canvas-double-click', () => {
+      this.atFit = false;
+    });
     this.first.addHandler('animation-finish', () => {
       this.publishZoom();
       this.hooks.onViewChange?.();
@@ -122,9 +148,15 @@ export class CompareStage {
    *
    * @param before The picture before the stage, or null when there is none.
    * @param after The picture after, or null when there is none.
+   * @param pageKey What names the pages the pictures belong to. Pictures of the same pages and the same shape as the
+   * ones fitted before keep the view of the reader, and any other pictures are fitted.
    * @returns What could not be read, or null when a later call replaced this one before it finished.
    */
-  async show(before: ImageSource | null, after: ImageSource | null): Promise<ShownCompare | null> {
+  async show(
+    before: ImageSource | null,
+    after: ImageSource | null,
+    pageKey: string,
+  ): Promise<ShownCompare | null> {
     const token = ++this.generation;
     this.settled = false;
     if (!sameSource(this.shown.before, before)) {
@@ -158,13 +190,18 @@ export class CompareStage {
     }
     await this.placeAside(after, token);
     this.arrange();
-    // The first pictures of a screen go back to where the reader left the canvas, and later ones are fitted
+    // The first pictures of a screen go back to where the reader left the canvas, and later ones are fitted, unless
+    // they are other pictures of the pages that were fitted before, of the same shape
+    const size = this.image?.getContentSize();
+    const fittedFor =
+      size === undefined ? null : `${pageKey}|${(size.x / size.y).toFixed(SHAPE_DIGITS)}`;
     const restored = this.hasFitted ? null : (this.hooks.restore?.() ?? null);
-    if (restored === null) {
-      this.fit(!this.hasFitted);
-    } else {
+    if (restored !== null) {
       this.look(restored);
+    } else if (fittedFor === null || fittedFor !== this.fittedFor) {
+      this.fit(!this.hasFitted);
     }
+    this.fittedFor = fittedFor;
     this.hasFitted = true;
     this.settled = true;
     return {
@@ -222,6 +259,7 @@ export class CompareStage {
   /** Fit the picture to the viewport. */
   fit(immediately = false): void {
     const rect = this.fitRect();
+    this.atFit = true;
     this.first.viewport.fitBounds(rect, immediately);
     this.second?.viewport.fitBounds(rect, immediately);
   }
@@ -248,6 +286,7 @@ export class CompareStage {
   private look(position: CanvasPositionSchema): void {
     const { viewport } = this.first;
     const fitted = fittedWidth(this.fitRect(), viewport.getAspectRatio());
+    this.atFit = false;
     viewport.zoomTo(viewportZoom(position, fitted), undefined, true);
     viewport.panTo(new OpenSeadragon.Point(position.centre_x, position.centre_y), true);
     viewport.applyConstraints(true);
@@ -264,12 +303,14 @@ export class CompareStage {
 
   /** Zoom in by one step around the centre of the viewport. */
   zoomIn(): void {
+    this.atFit = false;
     this.first.viewport.zoomBy(1.5);
     this.first.viewport.applyConstraints();
   }
 
   /** Zoom out by one step around the centre of the viewport. */
   zoomOut(): void {
+    this.atFit = false;
     this.first.viewport.zoomBy(1 / 1.5);
     this.first.viewport.applyConstraints();
   }

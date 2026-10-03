@@ -20,6 +20,7 @@ import {
 } from '@/features/processing/fixtures';
 import { images, page, row } from '@/features/workspace/fixtures';
 import { joinRows, type StripItem } from '@/features/workspace/strip';
+import { ProblemError } from '@/shared/http/problem';
 
 /**
  * The page editor of a stage as the screen sees it: when there is one, what a save sends and when the stage is run
@@ -329,6 +330,19 @@ describe('useEditorSession', () => {
     await settle();
 
     expect(sdk.run).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks for the run again when the server is busy with a job the list did not show yet', async () => {
+    sdk.run.mockRejectedValueOnce(new ProblemError('The project is processing.', 409, null, []));
+    await render();
+
+    await typeAngle('2.5');
+    await settle();
+    await settle();
+    await settle();
+
+    expect(sdk.run).toHaveBeenCalledTimes(2);
+    expect(session?.error).toBeNull();
   });
 
   it('follows the recipe on screen, and runs that recipe, not another one that also has the processor', async () => {

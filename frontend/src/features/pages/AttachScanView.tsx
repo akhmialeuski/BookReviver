@@ -120,9 +120,11 @@ export function AttachScanView({
             <button
               type="button"
               aria-pressed={scanId === scan.id}
+              // A scan without pictures is not cut yet, and the server refuses to bind it
+              disabled={scan.images === null}
               onClick={() => setScanId(scan.id)}
               className={cn(
-                'grid w-full gap-1 rounded-md border p-1 text-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                'grid w-full gap-1 rounded-md border p-1 text-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60',
                 scanId === scan.id ? 'border-primary ring-2 ring-primary' : 'hover:bg-accent/50',
               )}
             >

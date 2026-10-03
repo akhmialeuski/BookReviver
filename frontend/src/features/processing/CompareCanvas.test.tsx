@@ -107,7 +107,7 @@ describe('CompareCanvas', () => {
 
     expect(stage.instances).toHaveLength(1);
     expect(stage.show).toHaveBeenCalledTimes(1);
-    expect(stage.show).toHaveBeenCalledWith(BEFORE, AFTER);
+    expect(stage.show).toHaveBeenCalledWith(BEFORE, AFTER, 'p1');
     expect(
       container.querySelector('[data-testid="viewer-canvas"]')?.getAttribute('data-state'),
     ).toBe('ready');
