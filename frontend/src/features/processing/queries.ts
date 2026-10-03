@@ -170,7 +170,7 @@ export function useDeleteRule(projectId: string, stage: Stage) {
 }
 
 /** Mark stale what a change of the recipes or of the results of a stage changes. */
-async function refreshStage(
+export async function refreshStage(
   queryClient: QueryClient,
   projectId: string,
   stage: Stage,

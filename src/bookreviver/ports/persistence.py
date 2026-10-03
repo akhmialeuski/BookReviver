@@ -17,11 +17,22 @@ from bookreviver.domain.entities import (
     PageVersion,
     Project,
     Recipe,
+    RecipeProfile,
     RecipeRule,
     Scan,
     Source,
 )
-from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, RecipeRuleId, ScanId, SourceId
+from bookreviver.domain.ids import (
+    JobId,
+    PageId,
+    PageVersionId,
+    ProjectId,
+    RecipeId,
+    RecipeProfileId,
+    RecipeRuleId,
+    ScanId,
+    SourceId,
+)
 from bookreviver.domain.values import BookPlaceKey, PageEditKey, PageStageKey
 
 if TYPE_CHECKING:
@@ -672,6 +683,38 @@ class RecipeRuleRepository(Repository[RecipeRule, RecipeRuleId]):
         """
 
 
+class RecipeProfileRepository(Repository[RecipeProfile, RecipeProfileId]):
+    """The recipe profiles of the accounts; an account has at most one default profile for each stage.
+
+    Deleting an account removes its profiles. Nothing in a book refers to a profile, so deleting one leaves the recipes
+    made from it as they are.
+    """
+
+    @abstractmethod
+    async def list_for_account(self, account_id: AccountId, stage: Stage | None = None) -> Sequence[RecipeProfile]:
+        """Return the account's profiles in the order of the stages, then by creation, ties by identifier.
+
+        :param account_id: Account owning the profiles.
+        :type account_id: AccountId
+        :param stage: The stage whose profiles are wanted, or None for every stage.
+        :type stage: Stage | None
+        :returns: The profiles of the account.
+        :rtype: Sequence[RecipeProfile]
+        """
+
+    @abstractmethod
+    async def find_default(self, account_id: AccountId, stage: Stage) -> RecipeProfile | None:
+        """Return the profile a new book of the account starts a stage with.
+
+        :param account_id: Account owning the profile.
+        :type account_id: AccountId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The default profile of the stage, or None when the account has not chosen one.
+        :rtype: RecipeProfile | None
+        """
+
+
 class JobRepository(Repository[Job, JobId]):
     """Background jobs; a project has at most one import job queued or running at a time."""
 
@@ -774,6 +817,7 @@ class UnitOfWork(ABC):
     :ivar page_edits: Page edit repository of this transaction.
     :ivar recipes: Recipe repository of this transaction.
     :ivar recipe_rules: Repository of the rules that send pages to recipes, of this transaction.
+    :ivar recipe_profiles: Repository of the recipe profiles of the accounts, of this transaction.
     :ivar jobs: Job repository of this transaction.
     :ivar book_places: Repository of the places accounts left books at, of this transaction.
     """
@@ -787,6 +831,7 @@ class UnitOfWork(ABC):
     page_edits: PageEditRepository
     recipes: RecipeRepository
     recipe_rules: RecipeRuleRepository
+    recipe_profiles: RecipeProfileRepository
     jobs: JobRepository
     book_places: BookPlaceRepository
 

@@ -18,6 +18,7 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as AuthenticatedProjectsIndexRouteImport } from './routes/_authenticated/projects/index'
 import { Route as AuthenticatedProjectsProjectIdRouteRouteImport } from './routes/_authenticated/projects/$projectId/route'
+import { Route as AuthenticatedSettingsProfilesRouteImport } from './routes/_authenticated/settings/profiles'
 import { Route as AuthProviderCallbackRouteImport } from './routes/auth.$provider.callback'
 import { Route as AuthenticatedProjectsProjectIdIndexRouteImport } from './routes/_authenticated/projects/$projectId/index'
 import { Route as AuthenticatedProjectsProjectIdAboutRouteImport } from './routes/_authenticated/projects/$projectId/about'
@@ -70,6 +71,12 @@ const AuthenticatedProjectsProjectIdRouteRoute =
     path: '/projects/$projectId',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
+const AuthenticatedSettingsProfilesRoute =
+  AuthenticatedSettingsProfilesRouteImport.update({
+    id: '/settings/profiles',
+    path: '/settings/profiles',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthProviderCallbackRoute = AuthProviderCallbackRouteImport.update({
   id: '/auth/$provider/callback',
   path: '/auth/$provider/callback',
@@ -108,6 +115,7 @@ export interface FileRoutesByFullPath {
   '/sign-in': typeof SignInRoute
   '/verify-email': typeof VerifyEmailRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteRouteWithChildren
+  '/settings/profiles': typeof AuthenticatedSettingsProfilesRoute
   '/auth/$provider/callback': typeof AuthProviderCallbackRoute
   '/projects/': typeof AuthenticatedProjectsIndexRoute
   '/projects/$projectId/about': typeof AuthenticatedProjectsProjectIdAboutRoute
@@ -122,6 +130,7 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/sign-in': typeof SignInRoute
   '/verify-email': typeof VerifyEmailRoute
+  '/settings/profiles': typeof AuthenticatedSettingsProfilesRoute
   '/auth/$provider/callback': typeof AuthProviderCallbackRoute
   '/projects': typeof AuthenticatedProjectsIndexRoute
   '/projects/$projectId/about': typeof AuthenticatedProjectsProjectIdAboutRoute
@@ -139,6 +148,7 @@ export interface FileRoutesById {
   '/sign-in': typeof SignInRoute
   '/verify-email': typeof VerifyEmailRoute
   '/_authenticated/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteRouteWithChildren
+  '/_authenticated/settings/profiles': typeof AuthenticatedSettingsProfilesRoute
   '/auth/$provider/callback': typeof AuthProviderCallbackRoute
   '/_authenticated/projects/': typeof AuthenticatedProjectsIndexRoute
   '/_authenticated/projects/$projectId/about': typeof AuthenticatedProjectsProjectIdAboutRoute
@@ -156,6 +166,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/verify-email'
     | '/projects/$projectId'
+    | '/settings/profiles'
     | '/auth/$provider/callback'
     | '/projects/'
     | '/projects/$projectId/about'
@@ -170,6 +181,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/sign-in'
     | '/verify-email'
+    | '/settings/profiles'
     | '/auth/$provider/callback'
     | '/projects'
     | '/projects/$projectId/about'
@@ -186,6 +198,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/verify-email'
     | '/_authenticated/projects/$projectId'
+    | '/_authenticated/settings/profiles'
     | '/auth/$provider/callback'
     | '/_authenticated/projects/'
     | '/_authenticated/projects/$projectId/about'
@@ -270,6 +283,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProjectsProjectIdRouteRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/settings/profiles': {
+      id: '/_authenticated/settings/profiles'
+      path: '/settings/profiles'
+      fullPath: '/settings/profiles'
+      preLoaderRoute: typeof AuthenticatedSettingsProfilesRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/auth/$provider/callback': {
       id: '/auth/$provider/callback'
       path: '/auth/$provider/callback'
@@ -334,12 +354,14 @@ const AuthenticatedProjectsProjectIdRouteRouteWithChildren =
 
 interface AuthenticatedRouteChildren {
   AuthenticatedProjectsProjectIdRouteRoute: typeof AuthenticatedProjectsProjectIdRouteRouteWithChildren
+  AuthenticatedSettingsProfilesRoute: typeof AuthenticatedSettingsProfilesRoute
   AuthenticatedProjectsIndexRoute: typeof AuthenticatedProjectsIndexRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedProjectsProjectIdRouteRoute:
     AuthenticatedProjectsProjectIdRouteRouteWithChildren,
+  AuthenticatedSettingsProfilesRoute: AuthenticatedSettingsProfilesRoute,
   AuthenticatedProjectsIndexRoute: AuthenticatedProjectsIndexRoute,
 }
 

@@ -129,6 +129,7 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Storage keys | `StorageKey`, and `ProjectKeys` in `domain/keys.py`, the one builder of every key             |
 | Processing   | `Stage`, `ProcessorRef`, `Recipe` (a variant is a recipe that is not active), `Step`          |
 | Rules        | `RecipeRule` (a stage, a `RuleCondition` and a recipe, in order), `RecipeRuleId`               |
+| Profiles     | `RecipeProfile` (an account, a stage, steps in order and a default flag), `RecipeProfileId`    |
 | Geometry     | `Point`, `Size`, `Rect`, `Quad`, `Line`, `Rotation` and `Transform` in `domain/geometry.py`   |
 | Edits        | `PageEdit` with its `EditorKind` and a shape (`Rect`, `Quad`, `Line`, `Rotation`) or a mask   |
 | Events       | `JobChanged`, `SourceImported`, `ScanReady`, `PagesChanged`, `PageVersionReady`, and others   |
@@ -690,7 +691,8 @@ for a whole window in one call each, so the manifest costs no query per page, an
 `ProjectRepository.overview` counts the book of one
 project, and the project listing counts every project of a window in the same query. `RecipeRuleRepository` lists the
 rules of a stage in the order they are tried, and `PageStageRepository.variant_tally` counts the pages each recipe
-processed in one grouped query.
+processed in one grouped query. `RecipeProfileRepository` lists the profiles of an account in the order of the stages
+and finds the default profile of a stage, and the database keeps one default for each stage of an account.
 `OrderKeys` is a port with an adapter on fractional-indexing, because the domain imports only the standard library
 and attrs. Like `Clock.now`, its methods are synchronous, because they compute a string and wait on nothing.
 
@@ -886,6 +888,10 @@ erDiagram
   them, and the unique key `(project_id, stage, condition, group_label)`, so a stage has one rule for each condition
   and one for each label of a manual group. Its columns are `stage`, `condition`, `group_label`, `recipe_id` and
   `order`, the place of the rule among the rules of its stage.
+- `recipe_profiles` has the primary key `id`, `account_id` referencing `user.id` with `ON DELETE CASCADE` and an index,
+  and the partial unique index `ix_recipe_profiles_one_default` on `(account_id, stage)` `WHERE is_default`, which keeps
+  one default profile per stage of an account. Its columns are `stage`, `name`, `steps` as JSON in the form of the steps
+  of a recipe, `is_default`, `created_at` and `updated_at`. No column refers to a book.
 
 `order_key` holds a fractional index string from the fractional-indexing package, such as `a0`, `a0V` or `a1`, so
 inserting a page between two neighbours writes one row instead of renumbering the book. Keys compare byte by byte,
@@ -899,12 +905,14 @@ the in-memory adapter has no accounts and there is no accounts port.
 
 Unlike `projects`, `book_places` cascades from `user.id`, because a place has no files that a cascade would leave
 behind. An account is deleted only after its projects, and that deletion already removes the places in them.
+`recipe_profiles` cascades from `user.id` for the same reason, so deleting an account removes its profiles.
 
 The tables `sources`, `scans`, `pages` and `page_versions` come with the book model, because a page gets its base
 version with its own copy of the image when it is created, and the baseline migration creates them. `page_stages`,
 `page_edits` and `recipes`, the columns `scale`, `edit_hash` and `tiles_ready` of `page_versions` and the column `params`
 of `jobs` come with the processing framework, in one revision. The table `recipe_rules`, the column `pinned` of
-`page_stages` and the column `group_label` of `pages` come with the recipes for groups of pages, in another. The `request` and
+`page_stages` and the column `group_label` of `pages` come with the recipes for groups of pages, in another, and the table
+`recipe_profiles` comes with the recipe profiles, in a third. The `request` and
 `result` columns and the partial unique index of `jobs` came with the import job, in their own revision, and the
 `renditions_full` columns of `scans` and `page_versions` came with the choice of the format of `full`, in another.
 The columns of the extended description came in a revision of their own, which turns a non-empty `authors` string into one
@@ -982,6 +990,7 @@ flowchart TD
 | `PageService`       | Page manifest, one page, order, labels, placeholders, blank leaves, binding scans   |
 | `ProcessingService` | Recipes, previews, runs, variants, invalidation of later stages, unpinning a page   |
 | `RecipeRules`       | List, add, retarget and remove the rules that send pages to the variants of a stage |
+| `RecipeProfiles`    | Save, rename, delete, apply to a book and choose the default of a profile           |
 | `EditService`       | Save and load manual page edits (frames, meshes, masks, regions)                    |
 | `JobService`        | Job state, cancellation, the event stream of a project                              |
 
@@ -1047,7 +1056,8 @@ hashing, sessions and the OAuth flow are what it already maintains. The rules th
 - **Password rules.** At least 12 characters, and the password must not contain the email address.
 - **Deleting an account.** The user manager's `on_before_delete` hook first deletes every project of the user with
   its files through `ProjectService`, and only then is the user deleted, because the `RESTRICT` key of
-  `projects.owner_id` refuses to leave projects without an owner.
+  `projects.owner_id` refuses to leave projects without an owner. The recipe profiles and the book places of the user
+  go with the user, since their keys cascade.
 - **Mail links.** Account messages link to `/verify-email`, `/reset-password` and `/sign-in` under
   `settings.public_url`. The frontend builds `/sign-in` and `/verify-email`, which reads the `token` of the link and
   posts it to `POST /auth/verify`. `/forgot-password` asks for a reset mail with `POST /auth/forgot-password`, and
@@ -1071,8 +1081,9 @@ indistinguishable to the application.
 | worker pool         | cpu, gpu or llm, which routes its jobs to the right workers                       |
 | `run`, `preview`    | Full run, and a fast run on a downscaled page for interactive tuning              |
 
-- A **recipe** is the ordered list of steps with parameters for one stage, saved per project, with presets per
-  account. A **variant** is an alternative recipe for the same stage, and one variant per stage feeds the next.
+- A **recipe** is the ordered list of steps with parameters for one stage, saved per project. A **profile** is the
+  steps of a recipe that an account keeps to apply to its books (see [Recipe profiles](#recipe-profiles)). A **variant**
+  is an alternative recipe for the same stage, and one variant per stage feeds the next.
 - Every result of a page step is a **page version** with its provenance: processor key and version, parameters,
   input version and manual edit. Their hash is the version's identifier and the cache key, so re-running a recipe
   recomputes only changed steps, and changing a stage marks the later stages of the page stale. A result of a
@@ -1223,6 +1234,43 @@ flowchart TD
 - **Summary.** `StageSummary.variants` lists how many pages with an image each recipe of the stage processed, from
   `PageStageRepository.variant_tally`, one grouped statement for the whole book. The list of books leaves it out.
 - **Changing a rule** runs nothing and marks no page stale. The pages follow it at the next run of the stage.
+
+### Recipe profiles
+
+A recipe lives in one book. A `RecipeProfile` (`domain/entities.py`) keeps the steps of a recipe in the account, so a
+book that was set up once, such as "Photographed book" with the perspective and bend steps or "Clean flatbed scan"
+without them, can be set up again in another book. A profile holds its account, a stage, a name, the steps in their
+order with their parameters and their `enabled` switch, and `is_default`. No book refers to a profile. A recipe made
+from a profile is a recipe like any other, and deleting the profile changes no book.
+
+```mermaid
+flowchart LR
+    R[Steps on the screen of a book] -- Save as profile --> P[(RecipeProfile of the account)]
+    P -- Apply profile --> V[New variant of another book]
+    P -- Default for new books --> D[Active recipe at the first opening of the stage]
+```
+
+- **Saving.** `RecipeProfiles.save` takes the stage, a name and the steps, and checks the steps like `RecipeBook.check`
+  does for a recipe, so a profile never holds a step that could not run when it was saved. The route takes the steps
+  from the request and not from a stored recipe, because the panel saves what is on the screen, whether or not that
+  recipe was saved to the book.
+- **Applying.** `POST /projects/{id}/recipe-profiles/{profile_id}/apply` adds a variant of the profile's stage to the
+  book through `ProcessingService.add_variant`, and with `activate` makes it the active recipe through
+  `ProcessingService.activate`, which marks the pages the old active recipe processed stale. Nothing is processed
+  until the stage is run. A step whose processor is not installed on the server is left out of the variant. The answer
+  names the missing processors in `missing_processors`, and the panel writes the warning from `messages.ts`. A profile
+  with no step left to run answers 422 and names them.
+- **The default.** An account has at most one default profile for each stage, kept by a partial unique index. Choosing
+  one demotes the earlier one first in the same transaction, `PUT .../default` chooses and `DELETE .../default` gives up.
+- **First opening of a stage.** `RecipeBook.active` creates the recipes of a stage the first time it is asked for.
+  When the owner of the book has a default profile for the stage, the active recipe is made from it, with its steps
+  that the catalogue offers, and the built-in templates follow as variants, so nothing the stage offered is lost. A
+  profile that has no step left to run, or whose steps no longer fit their processors, is passed over, and the stage
+  starts with the built-in recipes as it does for an account without a default. A book that has opened the stage keeps
+  its recipes when a default is chosen later.
+- **Ownership.** Every use case of a profile reads it through `RecipeProfiles._owned`, which reports a profile of
+  another account exactly like a missing one, so the identifiers of other accounts' profiles cannot be probed. The
+  list holds the profiles of the signed-in account only.
 
 ## AI engines and models
 
@@ -1571,6 +1619,9 @@ The rest of the design is not served yet, apart from the fastapi-users routers:
 | Edits      | `GET, PUT /projects/{id}/pages/{page_id}/edits/{stage}`                                                   |
 | Processing | `GET, PUT /projects/{id}/stages/{stage}/recipe`, `POST .../preview`, `POST .../run`, `GET .../variants`, `POST /projects/{id}/stages/geometry/measure`   |
 | Rules      | `GET, POST /projects/{id}/stages/{stage}/rules`, `PUT, DELETE .../rules/{rule_id}`                        |
+| Profiles   | `GET, POST /recipe-profiles`, `PATCH, DELETE /recipe-profiles/{profile_id}`                               |
+| Default    | `PUT, DELETE /recipe-profiles/{profile_id}/default`                                                       |
+| Apply      | `POST /projects/{id}/recipe-profiles/{profile_id}/apply`                                                  |
 | Pin        | `DELETE /projects/{id}/pages/{page_id}/stages/{stage}/pin`                                                |
 
 Every image address in a response is a path of `/iiif/{key}` without scheme or host. On a server, a reverse proxy
@@ -1842,6 +1893,14 @@ The project list counts in `page_count` the included pages of the book, and show
     is saved until the button, which says first how many pages the save makes out of date, and a recipe is saved
     through `PUT .../variants/{recipe_id}`, which serves the active recipe too. "New recipe" copies the draft as a
     variant, and "Use this recipe" activates a variant.
+  - Under those buttons stand "Save as profile" and "Apply profile" (`features/profiles/`). The first asks for a name,
+    which starts as the name of the recipe, and saves the steps of the draft as they are on the screen. The second lists
+    the profiles of the stage (`GET /recipe-profiles?stage=`), adds the chosen one to the book as a variant, optionally
+    as the active recipe, and opens it in the panel. A line under the buttons names the processors the server left out.
+  - The profiles of the account are on `/settings/profiles` (`ProfilesPage.tsx`), which the account menu of a book and the
+    bar of the library link to. They are grouped by stage in the order of the pipeline, each with its steps, the switched
+    off ones marked, and the buttons that rename it, delete it, make it the default of its stage or give that up. There
+    is no other page of account settings yet, so the route stands alone and is not nested in a settings layout.
   - The variants of a stage show in four places. Under the recipe stands a line of the pages each variant made, such as
     "Text 412 · Plates 14", from `StageSummary.variants`, and the section "Used for" (`UsedFor.tsx`) of the variant
     shown, with the pages it made, the rules that send pages to it and "Add a rule". A condition that has a rule moves
@@ -2174,6 +2233,15 @@ The book model rests on these decisions, each with its reason.
     scan binding is not retried, since what it computed from the pages it read may no longer hold, and it answers 409
     instead. A conditional `UPDATE` with a check of the row count was refused, because SQLAlchemy's counter writes the
     same statement and raises `StaleDataError` itself.
+45. **A profile belongs to the account, and no book refers to it.** A profile is the steps of a recipe, copied into a
+    book when it is applied, so a book keeps working when the profile is renamed or deleted, and the recipes of a book
+    never change behind its owner's back. A link from a recipe to its profile was refused for that reason. A profile is
+    also not a recipe with no project, since the stage records and the rules of a book name recipes and a profile is
+    named by none of them.
+46. **The default profile leads, and the templates follow.** At the first opening of a stage the active recipe is the
+    default profile, and the built-in templates are added as variants, instead of the profile replacing them. A stage
+    such as the page split offers three templates, and an account that chose a default for it should not lose the other
+    two in every new book.
 
 Smaller technical choices follow the same model. Languages are ISO 639-3 codes, XMP is parsed with defusedxml, the
 parameters of processing jobs are kept in `Job.params`, a DjVu source suggests a publication year only from its

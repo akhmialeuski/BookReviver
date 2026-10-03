@@ -34,6 +34,7 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     PageVersionMapper,
     ProjectMapper,
     RecipeMapper,
+    RecipeProfileMapper,
     RecipeRuleMapper,
     ScanMapper,
     SourceMapper,
@@ -46,6 +47,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     PageStageRow,
     PageVersionRow,
     ProjectRow,
+    RecipeProfileRow,
     RecipeRow,
     RecipeRuleRow,
     ScanRow,
@@ -61,13 +63,24 @@ from bookreviver.domain.entities import (
     Project,
     ProjectOverview,
     Recipe,
+    RecipeProfile,
     RecipeRule,
     Scan,
     Source,
 )
 from bookreviver.domain.enums import PageOrigin, Side, Stage, StageState, VersionScale, VersionState
 from bookreviver.domain.errors import ConcurrentChangeError, ConflictError, NotFoundError
-from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, RecipeRuleId, ScanId, SourceId
+from bookreviver.domain.ids import (
+    JobId,
+    PageId,
+    PageVersionId,
+    ProjectId,
+    RecipeId,
+    RecipeProfileId,
+    RecipeRuleId,
+    ScanId,
+    SourceId,
+)
 from bookreviver.domain.stage_summaries import StageTally, VariantTally
 from bookreviver.domain.values import BookPlaceKey, PageEditKey, PageSize, PageStageKey, Slice
 from bookreviver.domain.version_chains import collectable_versions
@@ -79,6 +92,7 @@ from bookreviver.ports.persistence import (
     PageStageRepository,
     PageVersionRepository,
     ProjectRepository,
+    RecipeProfileRepository,
     RecipeRepository,
     RecipeRuleRepository,
     Repository,
@@ -284,6 +298,12 @@ class RecipeRuleRows(RowRepository[RecipeRuleRow]):
     """Rows of the ``recipe_rules`` table."""
 
     model_type = RecipeRuleRow
+
+
+class RecipeProfileRows(RowRepository[RecipeProfileRow]):
+    """Rows of the ``recipe_profiles`` table."""
+
+    model_type = RecipeProfileRow
 
 
 class JobRows(RowRepository[JobRow]):
@@ -1467,6 +1487,53 @@ class SqlAlchemyRecipeRuleRepository(
             order_by=[RecipeRuleRow.order.asc(), RecipeRuleRow.id.asc()], project_id=project_id, stage=stage
         )
         return [self._mapper.to_entity(row) for row in rows]
+
+
+class SqlAlchemyRecipeProfileRepository(
+    SqlAlchemyRepository[RecipeProfile, RecipeProfileId, RecipeProfileRow], RecipeProfileRepository
+):
+    """The recipe profiles of the accounts, of which a stage has one default for each account."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Create the repository over the ``recipe_profiles`` table.
+
+        :param session: Session of the unit of work.
+        :type session: AsyncSession
+        """
+        super().__init__(rows=RecipeProfileRows(session=session), mapper=RecipeProfileMapper())
+
+    @override
+    async def list_for_account(self, account_id: AccountId, stage: Stage | None = None) -> Sequence[RecipeProfile]:
+        """Return the account's profiles in the order of the stages, then by creation, ties by identifier.
+
+        :param account_id: Account owning the profiles.
+        :type account_id: AccountId
+        :param stage: The stage whose profiles are wanted, or None for every stage.
+        :type stage: Stage | None
+        :returns: The profiles of the account.
+        :rtype: Sequence[RecipeProfile]
+        """
+        rows = await self._rows.get_many(
+            order_by=[RecipeProfileRow.created_at.asc(), RecipeProfileRow.id.asc()], account_id=account_id
+        )
+        return sorted(
+            (self._mapper.to_entity(row) for row in rows if stage is None or row.stage is stage),
+            key=lambda profile: profile.stage.position,
+        )
+
+    @override
+    async def find_default(self, account_id: AccountId, stage: Stage) -> RecipeProfile | None:
+        """Return the profile a new book of the account starts a stage with.
+
+        :param account_id: Account owning the profile.
+        :type account_id: AccountId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The default profile of the stage, or None.
+        :rtype: RecipeProfile | None
+        """
+        row = await self._rows.get_one_or_none(account_id=account_id, stage=stage, is_default=True)
+        return None if row is None else self._mapper.to_entity(row)
 
 
 class SqlAlchemyJobRepository(SqlAlchemyRepository[Job, JobId, JobRow], JobRepository):

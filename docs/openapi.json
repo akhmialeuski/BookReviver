@@ -4416,6 +4416,594 @@
         }
       }
     },
+    "/api/v1/recipe-profiles": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "List Profiles",
+        "description": "List the profiles of the signed-in account in the order of the stages, then oldest first.",
+        "operationId": "list_profiles_api_v1_recipe_profiles_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Size"
+            }
+          },
+          {
+            "name": "stage",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Stage"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stage"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_RecipeProfileSchema_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Create Profile",
+        "description": "Save the steps of a recipe as a profile, which is not the default until it is made one.\n\nA step whose processor is unknown or of another stage, or whose parameters do not fit, answers 422.",
+        "operationId": "create_profile_api_v1_recipe_profiles_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecipeProfileBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeProfileSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/recipe-profiles/{profile_id}": {
+      "patch": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Rename Profile",
+        "description": "Give a profile another name.",
+        "operationId": "rename_profile_api_v1_recipe_profiles__profile_id__patch",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe profile",
+              "title": "Profile Id"
+            },
+            "description": "Identifier of the recipe profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecipeProfileName"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeProfileSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Delete Profile",
+        "description": "Delete a profile, which changes no recipe of any book.",
+        "operationId": "delete_profile_api_v1_recipe_profiles__profile_id__delete",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe profile",
+              "title": "Profile Id"
+            },
+            "description": "Identifier of the recipe profile"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/recipe-profiles/{profile_id}/default": {
+      "put": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Put Default Profile",
+        "description": "Make a profile the default of its stage, so a new book starts the stage with it instead of the built-in recipe.\n\nThe profile that was the default of the stage stops being one.",
+        "operationId": "put_default_profile_api_v1_recipe_profiles__profile_id__default_put",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe profile",
+              "title": "Profile Id"
+            },
+            "description": "Identifier of the recipe profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeProfileSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Delete Default Profile",
+        "description": "Stop a profile being the default of its stage, so a new book starts the stage with the built-in recipe again.",
+        "operationId": "delete_default_profile_api_v1_recipe_profiles__profile_id__default_delete",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe profile",
+              "title": "Profile Id"
+            },
+            "description": "Identifier of the recipe profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeProfileSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/recipe-profiles/{profile_id}/apply": {
+      "post": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Apply Profile",
+        "description": "Add the steps of a profile to a book as a variant of the profile's stage, and optionally make it the active one.\n\nA step whose processor is not installed on the server is left out and the processor is named in the answer. A\nprofile with no step left to run answers 422. A profile of another account answers 404.",
+        "operationId": "apply_profile_api_v1_projects__project_id__recipe_profiles__profile_id__apply_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe profile",
+              "title": "Profile Id"
+            },
+            "description": "Identifier of the recipe profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyProfileBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppliedProfileSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}": {
       "get": {
         "tags": [
@@ -6557,6 +7145,40 @@
         "title": "AccountUpdate",
         "description": "A change to the signed-in account: its password."
       },
+      "AppliedProfileSchema": {
+        "properties": {
+          "recipe": {
+            "$ref": "#/components/schemas/RecipeSchema"
+          },
+          "missing_processors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missing Processors"
+          }
+        },
+        "type": "object",
+        "required": [
+          "recipe",
+          "missing_processors"
+        ],
+        "title": "AppliedProfileSchema",
+        "description": "The recipe a profile made in a book, and what was left out of it.\n\n:ivar recipe: The variant added to the book, which is the active recipe when the request asked for that.\n:ivar missing_processors: Keys of the processors of the profile that are not installed, whose steps were left out."
+      },
+      "ApplyProfileBody": {
+        "properties": {
+          "activate": {
+            "type": "boolean",
+            "title": "Activate",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ApplyProfileBody",
+        "description": "How to apply a profile to a book.\n\n:ivar activate: Whether the new variant also becomes the active recipe of the stage."
+      },
       "Body_auth_cookie_login_api_v1_auth_login_post": {
         "properties": {
           "grant_type": {
@@ -8582,6 +9204,46 @@
         ],
         "title": "Page[ProjectSchema]"
       },
+      "Page_RecipeProfileSchema_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecipeProfileSchema"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[RecipeProfileSchema]"
+      },
       "Page_RecipeRuleSchema_": {
         "properties": {
           "items": {
@@ -9646,6 +10308,103 @@
         ],
         "title": "RecipeBody",
         "description": "The name and the steps of a recipe, for the active recipe and for a variant alike.\n\n:ivar name: Name of the recipe.\n:ivar steps: Its steps in the order they run, each checked against its processor."
+      },
+      "RecipeProfileBody": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/StepBody"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Steps"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "steps",
+          "stage"
+        ],
+        "title": "RecipeProfileBody",
+        "description": "The name and the steps of a profile to save, with the stage whose recipes it fits.\n\n:ivar name: Name of the profile.\n:ivar steps: Its steps in the order they run, each checked against its processor.\n:ivar stage: Stage whose recipes the profile can be applied to."
+      },
+      "RecipeProfileName": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "RecipeProfileName",
+        "description": "The new name of a profile.\n\n:ivar name: Name of the profile."
+      },
+      "RecipeProfileSchema": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/StepSchema"
+            },
+            "type": "array",
+            "title": "Steps"
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "stage",
+          "name",
+          "steps",
+          "is_default",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "RecipeProfileSchema",
+        "description": "A recipe profile of the signed-in account.\n\n:ivar id: Identifier of the profile.\n:ivar stage: Stage whose recipes the profile can be applied to.\n:ivar name: Name the user sees.\n:ivar steps: The steps in the order they run, each with its parameters and its switch.\n:ivar is_default: Whether a new book starts the stage with this profile.\n:ivar created_at: When the profile was saved.\n:ivar updated_at: When the profile was last changed."
       },
       "RecipeRuleBody": {
         "properties": {

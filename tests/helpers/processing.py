@@ -34,6 +34,7 @@ from bookreviver.services.edits import EditService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
+from bookreviver.services.recipe_profiles import RecipeProfiles
 from bookreviver.services.recipe_rules import RecipeRules
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from bookreviver.services.stage_runs import StageRuntime
@@ -168,6 +169,17 @@ class ProcessingKit:
         """
         uow = InMemoryUnitOfWork(self.database)
         return RecipeRules(uow=uow, recipes=self.parts(uow).recipes)
+
+    def profiles(self) -> RecipeProfiles:
+        """Build the service of the recipe profiles over a new unit of work.
+
+        :returns: The service, which applies a profile through a processing service of the same unit of work.
+        :rtype: RecipeProfiles
+        """
+        uow = InMemoryUnitOfWork(self.database)
+        parts = self.parts(uow)
+        processing = ProcessingService(uow=uow, catalogue=self.catalogue, parts=parts)
+        return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing, clock=self.clock)
 
     async def add_rule(
         self, actor: Actor, recipe: Recipe, condition: RuleCondition, group_label: str = ''

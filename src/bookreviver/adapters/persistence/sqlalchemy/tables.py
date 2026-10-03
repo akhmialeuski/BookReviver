@@ -1,11 +1,11 @@
 """Tables of the books feature, private to the SQLAlchemy persistence adapter.
 
 The module declares the ``projects``, ``jobs``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
-``page_edits``, ``book_places``, ``recipes`` and ``recipe_rules`` tables in the SQLAlchemy 2.0 declarative style:
-``Mapped`` annotations, ``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from
-advanced-alchemy's :class:`~advanced_alchemy.base.DefaultBase`, which is a ``DeclarativeBase`` carrying the metadata
-shared with the account tables, the portable ``GUID``, ``DateTimeUTC`` and ``JsonB`` column types for ``UUID``,
-``datetime`` and ``dict`` annotations, and the naming convention of keys and constraints.
+``page_edits``, ``book_places``, ``recipes``, ``recipe_rules`` and ``recipe_profiles`` tables in the SQLAlchemy 2.0
+declarative style: ``Mapped`` annotations, ``mapped_column`` and ``relationship`` with ``back_populates``. Every table
+derives from advanced-alchemy's :class:`~advanced_alchemy.base.DefaultBase`, which is a ``DeclarativeBase`` carrying
+the metadata shared with the account tables, the portable ``GUID``, ``DateTimeUTC`` and ``JsonB`` column types for
+``UUID``, ``datetime`` and ``dict`` annotations, and the naming convention of keys and constraints.
 
 Rows never leave the adapter. The mappers in :mod:`bookreviver.adapters.persistence.sqlalchemy.mappers` turn them into
 frozen domain entities, so nothing outside this package depends on the shape of a table.
@@ -85,6 +85,7 @@ PAGES_TABLE: Final = 'pages'
 PAGE_VERSIONS_TABLE: Final = 'page_versions'
 RECIPES_TABLE: Final = 'recipes'
 RECIPE_RULES_TABLE: Final = 'recipe_rules'
+RECIPE_PROFILES_TABLE: Final = 'recipe_profiles'
 # Length of a page version identifier, a hash cut to 16 hexadecimal digits
 VERSION_ID_LENGTH: Final = 16
 POSTGRESQL_DIALECT: Final = 'postgresql'
@@ -94,6 +95,8 @@ ORDER_KEY_TYPE: Final = String().with_variant(String(collation='C'), POSTGRESQL_
 EMPTY_OBJECT: Final = '{}'
 # The rows of the partial unique index of ``recipes``: the active recipe of a stage
 ACTIVE_RECIPE: Final = text('active')
+# The rows of the partial unique index of ``recipe_profiles``: the default profile of a stage of an account
+DEFAULT_PROFILE: Final = text('is_default')
 # The rows of the partial unique index of ``jobs``: the imports that are queued or running
 ACTIVE_IMPORT: Final = text(
     f"kind = '{JobKind.IMPORT_SOURCE}' AND state IN ('{JobState.QUEUED}', '{JobState.RUNNING}')"
@@ -714,3 +717,42 @@ class RecipeRuleRow(DefaultBase):
     group_label: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     recipe_id: Mapped[UUID] = mapped_column(ForeignKey(RecipeRow.id, ondelete=CASCADE), index=True)
     order: Mapped[int]
+
+
+class RecipeProfileRow(DefaultBase):
+    """Row of one recipe profile of an account, of which at most one per stage is the default.
+
+    The steps are a JSON list of ``{processor_key, params, enabled}`` objects, as in a recipe. No column refers to a
+    book, so a profile outlives every recipe made from it and is removed only with its account.
+
+    :ivar id: Profile identifier, assigned by the domain.
+    :ivar account_id: Account owning the profile, whose deletion removes the profile.
+    :ivar stage: Stage whose recipes the profile can be applied to, stored by value.
+    :ivar name: Name the user sees.
+    :ivar steps: The steps in order, as JSON.
+    :ivar is_default: Whether a new book of the account starts the stage with this profile.
+    :ivar created_at: Time the profile was saved.
+    :ivar updated_at: Time the profile last changed.
+    """
+
+    __tablename__ = RECIPE_PROFILES_TABLE
+    # The database keeps two requests that both choose the default profile of a stage from both succeeding
+    __table_args__ = (
+        Index(
+            'ix_recipe_profiles_one_default',
+            'account_id',
+            'stage',
+            unique=True,
+            sqlite_where=DEFAULT_PROFILE,
+            postgresql_where=DEFAULT_PROFILE,
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    account_id: Mapped[UUID] = mapped_column(ForeignKey(AccountTable.__table__.c.id, ondelete=CASCADE), index=True)
+    stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
+    name: Mapped[str]
+    steps: Mapped[list[dict[str, Any]]] = mapped_column(JsonB)
+    is_default: Mapped[bool]
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]

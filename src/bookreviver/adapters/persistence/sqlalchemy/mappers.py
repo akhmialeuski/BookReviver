@@ -28,6 +28,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     PageStageRow,
     PageVersionRow,
     ProjectRow,
+    RecipeProfileRow,
     RecipeRow,
     RecipeRuleRow,
     ScanRow,
@@ -42,6 +43,7 @@ from bookreviver.domain.entities import (
     PageVersion,
     Project,
     Recipe,
+    RecipeProfile,
     RecipeRule,
     Scan,
     Source,
@@ -55,6 +57,7 @@ from bookreviver.domain.ids import (
     PageVersionId,
     ProjectId,
     RecipeId,
+    RecipeProfileId,
     RecipeRuleId,
     ScanId,
     SourceId,
@@ -798,6 +801,50 @@ class RecipeMapper(RowMapper[Recipe, RecipeRow]):
             name=entity.name,
             steps=[step.to_map() for step in entity.steps],
             active=entity.active,
+            created_at=entity.created_at,
+            updated_at=entity.updated_at,
+        )
+
+
+class RecipeProfileMapper(RowMapper[RecipeProfile, RecipeProfileRow]):
+    """Translation of a recipe profile, whose steps are a JSON list."""
+
+    @override
+    def to_entity(self, row: RecipeProfileRow) -> RecipeProfile:
+        """Build the profile stored in ``row``.
+
+        :param row: Profile row loaded from the database.
+        :type row: RecipeProfileRow
+        :returns: The profile with its steps.
+        :rtype: RecipeProfile
+        """
+        return RecipeProfile(
+            id=RecipeProfileId(row.id),
+            account_id=AccountId(row.account_id),
+            stage=row.stage,
+            name=row.name,
+            steps=tuple(Step.from_map(step) for step in row.steps),
+            is_default=row.is_default,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    @override
+    def to_row(self, entity: RecipeProfile) -> RecipeProfileRow:
+        """Build the row of ``entity``.
+
+        :param entity: Profile to store.
+        :type entity: RecipeProfile
+        :returns: Transient profile row.
+        :rtype: RecipeProfileRow
+        """
+        return RecipeProfileRow(
+            id=entity.id,
+            account_id=entity.account_id,
+            stage=entity.stage,
+            name=entity.name,
+            steps=[step.to_map() for step in entity.steps],
+            is_default=entity.is_default,
             created_at=entity.created_at,
             updated_at=entity.updated_at,
         )
