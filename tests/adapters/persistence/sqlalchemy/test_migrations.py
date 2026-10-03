@@ -465,8 +465,11 @@ class TestStepStateRevision:
         async with database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
             await uow.projects.add(project)
-            await uow.pages.add(page)
             await uow.commit()
+            # Plain SQL, since the pages of the ORM have columns that later revisions added
+            await session.execute(
+                text(INSERT_PAGE), {'id': page.id.bytes, 'project_id': project.id.bytes, 'order_key': page.order_key}
+            )
             await session.execute(
                 text(INSERT_STATE_EDIT),
                 {
