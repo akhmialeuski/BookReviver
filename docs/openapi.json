@@ -2560,7 +2560,7 @@
           "stages"
         ],
         "summary": "List Stage Pages",
-        "description": "List the pages of a book in book order, each with where it stands in a stage and the version that is its result.\n\nA page the stage has not run on has the status ``not-run`` and no version. A page holds up to a thousand rows, as\nthe page manifest does, so a strip of a whole book takes few requests.",
+        "description": "List the pages of a book in book order, each with where it stands in a stage and the version that is its result.\n\nA page the stage has not run on has the status ``not-run`` and no version. A page holds up to a thousand rows, as\nthe page manifest does, so a strip of a whole book takes few requests. With ``step`` every row also says what that\nstep read and made on its page and where the shape of the step comes from; a step no recipe of the stage has is a\n404.",
         "operationId": "list_stage_pages_api_v1_projects__project_id__stages__stage__pages_get",
         "parameters": [
           {
@@ -2584,6 +2584,25 @@
               "description": "Stage of the pipeline"
             },
             "description": "Stage of the pipeline"
+          },
+          {
+            "name": "step",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A step of a recipe of the stage to place every page at",
+              "title": "Step"
+            },
+            "description": "A step of a recipe of the stage to place every page at"
           },
           {
             "name": "page",
@@ -8819,6 +8838,17 @@
         ],
         "title": "ErrorModel"
       },
+      "FigureState": {
+        "type": "string",
+        "enum": [
+          "default",
+          "found",
+          "by-hand",
+          "skipped"
+        ],
+        "title": "FigureState",
+        "description": "Where the shape of one step on one page comes from, which the step bar paints as a dot.\n\nA page that was never run through the step holds the default shape, which computes nothing. A step that ran leaves\nthe shape it found, a manual edit puts the shape the user set and outlives the next run, and a page that did not\nmeet the condition of the step passes it with no shape at all."
+      },
       "FileType": {
         "type": "string",
         "enum": [
@@ -12402,6 +12432,16 @@
               }
             ],
             "title": "Review Processor"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StepPageSchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -12413,10 +12453,11 @@
           "pinned",
           "version",
           "through_step",
-          "review_processor"
+          "review_processor",
+          "step"
         ],
         "title": "StagePageSchema",
-        "description": "One page of a book in one stage: where it stands there and the version that is its result.\n\n:ivar page_id: The page.\n:ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.\n:ivar review: Why the result asks for a second look, or None.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar pinned: Whether the recipe is pinned to the page.\n:ivar version: The current version of the stage on the page with its data and images, or None.\n:ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step\n                    that is on, so the page is not ready for the next stage, or None.\n:ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None."
+        "description": "One page of a book in one stage: where it stands there and the version that is its result.\n\n:ivar page_id: The page.\n:ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.\n:ivar review: Why the result asks for a second look, or None.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar pinned: Whether the recipe is pinned to the page.\n:ivar version: The current version of the stage on the page with its data and images, or None.\n:ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step\n                    that is on, so the page is not ready for the next stage, or None.\n:ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.\n:ivar step: The page at the step the list was asked for, or None for a list of the stage alone."
       },
       "StageProgressSchema": {
         "properties": {
@@ -12651,6 +12692,47 @@
         ],
         "title": "StepBody",
         "description": "A step of a recipe or of a preview as the interface sends it.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which the processor checks and fills in.\n:ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.\n:ivar step_id: Identifier of a step that already exists, which the interface sends back to keep its edits, or\n               omitted for a step that is added, which gets a new one.\n:ivar applies_to: Which pages the step processes, all of them unless the interface says otherwise."
+      },
+      "StepPageSchema": {
+        "properties": {
+          "step_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Step Id"
+          },
+          "state": {
+            "$ref": "#/components/schemas/FigureState"
+          },
+          "input_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PageVersionSchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PageVersionSchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "step_id",
+          "state",
+          "input_version",
+          "version"
+        ],
+        "title": "StepPageSchema",
+        "description": "One page of a book at one step of a stage: what the step read and made, and where its shape comes from.\n\n:ivar step_id: The step of the recipe.\n:ivar state: Where the shape of the step on the page comes from: the default, found by the step, set by hand, or\n             skipped because the page does not meet the condition of the step.\n:ivar input_version: The version the step reads on the page, which the canvas of the step shows, or None when the\n                     page has not come as far as the step or is not run.\n:ivar version: The version the step made on the page, or None when the page was not run through the step."
       },
       "StepPagesSchema": {
         "properties": {

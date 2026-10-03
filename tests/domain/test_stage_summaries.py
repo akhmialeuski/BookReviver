@@ -1,19 +1,37 @@
 """Tests for the summary of a stage of a book, its status, and the progress of a book along the pipeline."""
 
-from typing import NamedTuple
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, NamedTuple
 from uuid import uuid4
 
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import PageStageStatus, ReviewReason, Stage, StageState, StageStatus
-from bookreviver.domain.ids import PageId, ProjectId
-from bookreviver.domain.stage_summaries import BookProgress, StageRow, StageSummary, StageTally, StepTally
+from bookreviver.domain.entities import Recipe
+from bookreviver.domain.enums import (
+    FigureState,
+    PageStageStatus,
+    ReviewReason,
+    Stage,
+    StageState,
+    StageStatus,
+    VersionData,
+)
+from bookreviver.domain.ids import PageId, ProjectId, RecipeId
+from bookreviver.domain.stage_summaries import BookProgress, StageRow, StageSummary, StageTally, StepRow, StepTally
+from bookreviver.domain.values import ProcessorRef, Step
 from tests.helpers.builders import make_page_version
+
+if TYPE_CHECKING:
+    from bookreviver.domain.entities import PageVersion
 
 PROJECT_ID: ProjectId = ProjectId(uuid4())
 PAGES: int = 5
+# The processors of the steps of the recipe the tests of the rows of a step place a page in
+PERSPECTIVE_KEY: str = 'geometry.perspective'
+DESKEW_KEY: str = 'geometry.deskew'
+CROP_KEY: str = 'geometry.crop'
 
 
 class Counts(NamedTuple):
@@ -346,6 +364,130 @@ class TestStageRow:
         page_id = PageId(uuid4())
         version = evolve(make_page_version(page_id=page_id), review=ReviewReason.NOT_APPLIED)
         assert StageRow(page_id=page_id, head_version=version).review is ReviewReason.NOT_APPLIED
+
+
+def recipe_of(*steps: Step) -> Recipe:
+    """Build a recipe of the geometry stage with the steps, in the order given.
+
+    :param steps: The steps of the recipe.
+    :type steps: Step
+    :returns: The recipe.
+    :rtype: Recipe
+    """
+    moment = datetime(2026, 1, 1, tzinfo=UTC)
+    return Recipe(
+        id=RecipeId(uuid4()),
+        project_id=PROJECT_ID,
+        stage=Stage.GEOMETRY,
+        name='Book',
+        steps=steps,
+        active=True,
+        created_at=moment,
+        updated_at=moment,
+    )
+
+
+def made_by(page_id: PageId, processor_key: str, *, skipped: bool = False) -> PageVersion:
+    """Build a version of the geometry stage that a step of a processor made.
+
+    :param page_id: The page.
+    :type page_id: PageId
+    :param processor_key: Key of the processor of the step.
+    :type processor_key: str
+    :param skipped: Whether the page did not meet the condition of the step, so the step passed it unchanged.
+    :type skipped: bool
+    :returns: The version.
+    :rtype: PageVersion
+    """
+    return evolve(
+        make_page_version(page_id=page_id),
+        stage=Stage.GEOMETRY,
+        processor=ProcessorRef(key=processor_key, version='1'),
+        data={VersionData.SKIPPED_BY_CONDITION: True} if skipped else {},
+    )
+
+
+class TestStepRow:
+    """Tests for StepRow.of, the place of one step on one page."""
+
+    def test_a_page_the_stage_has_not_run_on_holds_the_default_shape_and_no_version(self) -> None:
+        """Verify a page without a recipe has nothing of the step but the default shape."""
+        step = Step(processor_key=DESKEW_KEY)
+        row = StepRow.of(step.step_id, None, [], None, edited=False)
+        assert (row.state, row.input_version, row.version) == (FigureState.DEFAULT, None, None)
+
+    def test_a_step_that_ran_has_found_a_shape_and_reads_the_version_before_it(self) -> None:
+        """Verify the version of a step is the one at its place in the chain, and its input the one before."""
+        page_id = PageId(uuid4())
+        first, second = Step(processor_key=PERSPECTIVE_KEY), Step(processor_key=DESKEW_KEY)
+        chain = [made_by(page_id, PERSPECTIVE_KEY), made_by(page_id, DESKEW_KEY)]
+        row = StepRow.of(second.step_id, recipe_of(first, second), chain, None, edited=False)
+        expect(row.state is FigureState.FOUND)
+        expect(row.version is chain[1])
+        expect(row.input_version is chain[0])
+        assert_expectations()
+
+    def test_the_first_step_reads_the_version_the_stage_before_made(self) -> None:
+        """Verify the input of the first step of the chain is the version of the earlier stage it read."""
+        page_id = PageId(uuid4())
+        step = Step(processor_key=PERSPECTIVE_KEY)
+        before = make_page_version(page_id=page_id)
+        chain = [made_by(page_id, PERSPECTIVE_KEY)]
+        row = StepRow.of(step.step_id, recipe_of(step), chain, before, edited=False)
+        assert row.input_version is before
+
+    def test_a_step_a_run_stopped_before_has_no_version_but_reads_what_the_step_before_made(self) -> None:
+        """Verify a page run through the first step only offers the next step the picture it would read."""
+        page_id = PageId(uuid4())
+        first, second = Step(processor_key=PERSPECTIVE_KEY), Step(processor_key=DESKEW_KEY)
+        chain = [made_by(page_id, PERSPECTIVE_KEY)]
+        row = StepRow.of(second.step_id, recipe_of(first, second), chain, None, edited=False)
+        expect((row.state, row.version) == (FigureState.DEFAULT, None))
+        expect(row.input_version is chain[0])
+        assert_expectations()
+
+    def test_a_step_that_is_switched_off_leaves_the_places_of_the_others(self) -> None:
+        """Verify the place in the chain counts the steps that are on, as the run makes the versions."""
+        page_id = PageId(uuid4())
+        off = Step(processor_key=PERSPECTIVE_KEY, enabled=False)
+        first, second = Step(processor_key=DESKEW_KEY), Step(processor_key=CROP_KEY)
+        chain = [made_by(page_id, DESKEW_KEY), made_by(page_id, CROP_KEY)]
+        recipe = recipe_of(off, first, second)
+        expect(StepRow.of(off.step_id, recipe, chain, None, edited=False).version is None)
+        expect(StepRow.of(second.step_id, recipe, chain, None, edited=False).version is chain[1])
+        assert_expectations()
+
+    def test_a_version_of_another_processor_is_the_version_of_a_step_the_recipe_changed(self) -> None:
+        """Verify a step does not take for its own the version of another processor that stands at its place."""
+        page_id = PageId(uuid4())
+        step = Step(processor_key=DESKEW_KEY)
+        row = StepRow.of(step.step_id, recipe_of(step), [made_by(page_id, CROP_KEY)], None, edited=False)
+        assert row.version is None
+
+    def test_a_page_that_did_not_meet_the_condition_is_skipped_whatever_the_edit_is(self) -> None:
+        """Verify the skip wins over an edit, which a skipped step does not read."""
+        page_id = PageId(uuid4())
+        step = Step(processor_key=DESKEW_KEY)
+        row = StepRow.of(step.step_id, recipe_of(step), [made_by(page_id, DESKEW_KEY, skipped=True)], None, edited=True)
+        assert row.state is FigureState.SKIPPED
+
+    def test_an_edit_makes_the_shape_set_by_hand_on_a_page_that_ran_and_on_one_that_did_not(self) -> None:
+        """Verify an edit outlives the run, and is there before the first run."""
+        page_id = PageId(uuid4())
+        step = Step(processor_key=DESKEW_KEY)
+        ran = StepRow.of(step.step_id, recipe_of(step), [made_by(page_id, DESKEW_KEY)], None, edited=True)
+        not_run = StepRow.of(step.step_id, None, [], None, edited=True)
+        assert (ran.state, not_run.state) == (FigureState.BY_HAND, FigureState.BY_HAND)
+
+    def test_two_steps_of_one_processor_are_told_apart_by_their_identifiers(self) -> None:
+        """Verify the second deskew of a recipe gets the second version and not the first."""
+        page_id = PageId(uuid4())
+        first, second = Step(processor_key=DESKEW_KEY), Step(processor_key=DESKEW_KEY)
+        chain = [made_by(page_id, DESKEW_KEY, skipped=True), made_by(page_id, DESKEW_KEY)]
+        recipe = recipe_of(first, second)
+        expect(StepRow.of(first.step_id, recipe, chain, None, edited=False).state is FigureState.SKIPPED)
+        expect(StepRow.of(second.step_id, recipe, chain, None, edited=False).state is FigureState.FOUND)
+        assert_expectations()
 
 
 class TestStageManual:

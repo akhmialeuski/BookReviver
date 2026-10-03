@@ -15,14 +15,14 @@ from typing import TYPE_CHECKING, Self
 
 from attrs import evolve, field, frozen, validators
 
-from bookreviver.domain.enums import PageStageStatus, StageStatus
+from bookreviver.domain.enums import FigureState, PageStageStatus, StageStatus, VersionData
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
-    from bookreviver.domain.entities import PageVersion
+    from bookreviver.domain.entities import PageVersion, Recipe
     from bookreviver.domain.enums import ReviewReason, Stage
-    from bookreviver.domain.ids import PageId, ProjectId, RecipeId
+    from bookreviver.domain.ids import PageId, ProjectId, RecipeId, StepId
 
 # The statuses of a stage that a user still has something to do or to watch in, which a book's next stage is taken from
 STATUSES_WITH_WORK: frozenset[StageStatus] = frozenset(
@@ -256,6 +256,69 @@ class BookProgress:
 
 
 @frozen(kw_only=True)
+class StepRow:
+    """One page of a book at one step of a stage: what the step read, what it made and where its shape comes from.
+
+    :ivar step_id: The step of the recipe the page was processed by.
+    :ivar state: Where the shape of the step on the page comes from.
+    :ivar input_version: The version the step reads on the page, which an editor of the step lies on, or None when the
+                         page has not come as far as that, or the step is the first and the page is not run.
+    :ivar version: The version the step made on the page, or None when the page was not run through the step, or its
+                   recipe has no such step switched on.
+    """
+
+    step_id: StepId
+    state: FigureState = FigureState.DEFAULT
+    input_version: PageVersion | None = None
+    version: PageVersion | None = None
+
+    @classmethod
+    def of(
+        cls,
+        step_id: StepId,
+        recipe: Recipe | None,
+        chain: Sequence[PageVersion],
+        before: PageVersion | None,
+        *,
+        edited: bool,
+    ) -> Self:
+        """Place one step on one page from the versions that made the current version of the stage.
+
+        The chain holds one version for each step that is on, so the place of a step in it is the number of steps that
+        are on before it. A version of another processor than the step's stands for a step the recipe has changed since,
+        which the page has not been through yet.
+
+        :param step_id: The step.
+        :type step_id: StepId
+        :param recipe: The recipe the page was processed by, or None for a page no recipe processed.
+        :type recipe: Recipe | None
+        :param chain: The versions of the stage that made its current version, the first step first, or none.
+        :type chain: Sequence[PageVersion]
+        :param before: The version the first of the chain read, which an earlier stage made, or None.
+        :type before: PageVersion | None
+        :param edited: Whether the user made an edit of the step on the page.
+        :type edited: bool
+        :returns: The row. A page whose recipe has no such step, or has it switched off, has neither version.
+        :rtype: Self
+        """
+        steps = () if recipe is None else recipe.enabled_steps
+        place = next((index for index, step in enumerate(steps) if step.step_id == step_id), None)
+        made = None
+        read = None
+        if place is not None:
+            if place < len(chain) and chain[place].processor.key == steps[place].processor_key:
+                made = chain[place]
+            read = before if place == 0 else (chain[place - 1] if place <= len(chain) else None)
+        if made is not None and made.data.get(VersionData.SKIPPED_BY_CONDITION) is True:
+            state = FigureState.SKIPPED
+        elif edited:
+            state = FigureState.BY_HAND
+        else:
+            state = FigureState.DEFAULT if made is None else FigureState.FOUND
+        return cls(step_id=step_id, state=state, input_version=read, version=made)
+
+
+@frozen(kw_only=True)
 class StageRow:
     """One page of a book in one stage: its state there and the version that is its result.
 
@@ -268,6 +331,7 @@ class StageRow:
                         that is on, or None.
     :ivar review_processor: Key of the processor of the first step of the stage that marked the page for review, or None
                             when the page is not marked or an earlier stage marked it.
+    :ivar step: The page at the step the row was asked for, or None for a row of the stage as a whole.
     """
 
     page_id: PageId
@@ -277,6 +341,7 @@ class StageRow:
     head_version: PageVersion | None = None
     through_step: int | None = None
     review_processor: str | None = None
+    step: StepRow | None = None
 
     @property
     def review(self) -> ReviewReason | None:

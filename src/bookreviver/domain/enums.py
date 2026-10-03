@@ -800,6 +800,20 @@ class PageStageStatus(LabeledStrEnum):
         return cls.NOT_RUN if state is None else cls(state.value)
 
 
+class FigureState(LabeledStrEnum):
+    """Where the shape of one step on one page comes from, which the step bar paints as a dot.
+
+    A page that was never run through the step holds the default shape, which computes nothing. A step that ran leaves
+    the shape it found, a manual edit puts the shape the user set and outlives the next run, and a page that did not
+    meet the condition of the step passes it with no shape at all.
+    """
+
+    DEFAULT = 'default', 'Default shape'
+    FOUND = 'found', 'Found by the step'
+    BY_HAND = 'by-hand', 'Set by hand'
+    SKIPPED = 'skipped', 'Skipped by the condition of the step'
+
+
 class StageStatus(LabeledStrEnum):
     """Where a whole stage stands in a book, summed over its pages."""
 

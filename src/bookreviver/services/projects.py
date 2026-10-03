@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.changes import ProjectChanges
     from bookreviver.domain.entities import Actor
     from bookreviver.domain.enums import Stage
+    from bookreviver.domain.ids import StepId
     from bookreviver.domain.stage_summaries import StageRow, StageSummary
     from bookreviver.domain.values import BookDetails
     from bookreviver.ports.persistence import ProjectRepository, UnitOfWork
@@ -141,7 +142,7 @@ class ProjectService:
         return Slice(items=summaries[request.offset : request.offset + request.limit], total=len(summaries))
 
     async def stage_pages(
-        self, actor: Actor, project_id: ProjectId, stage: Stage, request: SliceRequest
+        self, actor: Actor, project_id: ProjectId, stage: Stage, request: SliceRequest, step_id: StepId | None = None
     ) -> Slice[StageRow]:
         """Return a window of the pages of one of the actor's projects, each with where it stands in a stage.
 
@@ -153,12 +154,14 @@ class ProjectService:
         :type stage: Stage
         :param request: Offset and limit of the window of pages.
         :type request: SliceRequest
+        :param step_id: A step of a recipe of the stage to place each page at, or None for the rows of the stage alone.
+        :type step_id: StepId | None
         :returns: The rows of the window in book order, and the number of pages of the book.
         :rtype: Slice[StageRow]
-        :raises NotFoundError: If the actor has no such project.
+        :raises NotFoundError: If the actor has no such project, or no recipe of the stage has the step.
         """
         project = await owned_project(self._uow.projects, actor, project_id)
-        return await self._stages.rows(project, stage, request)
+        return await self._stages.rows(project, stage, request, step_id)
 
     async def update(self, actor: Actor, project_id: ProjectId, changes: ProjectChanges) -> ProjectOverview:
         """Change some fields of the project, such as its description or its cover, and mark it as updated.
