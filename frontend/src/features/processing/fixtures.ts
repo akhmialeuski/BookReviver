@@ -329,9 +329,16 @@ export function whole(overrides: Partial<ProcessorSchema> = {}): ProcessorSchema
   return processor('split.none', { title: 'Whole scan', stage: 'page-split', ...overrides });
 }
 
-/** A step of a recipe. */
+/** A step of a recipe, whose identifier is named by its processor unless a test gives another. */
 export function step(processorKey: string, overrides: Partial<StepSchema> = {}): StepSchema {
-  return { processor_key: processorKey, params: {}, enabled: true, ...overrides };
+  return {
+    processor_key: processorKey,
+    params: {},
+    enabled: true,
+    step_id: `id-${processorKey}`,
+    applies_to: 'all',
+    ...overrides,
+  };
 }
 
 /** A recipe of a stage. */
@@ -423,6 +430,7 @@ export function processing(overrides: Partial<Processing> = {}): Processing {
     toggle: () => undefined,
     remove: () => undefined,
     change: () => undefined,
+    condition: () => undefined,
     add: () => undefined,
     discard: () => undefined,
     preview: {

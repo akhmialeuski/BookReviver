@@ -4,7 +4,7 @@ import type { ImageSource } from '@/features/processing/compare';
 
 /** One step of the recipe of a stage that has an editor, as the reader picks it from the list in the panel. */
 export interface StepChoice {
-  /** The key of the processor of the step. */
+  /** The identifier of the step in its recipe, which its edits belong to. */
   key: string;
   /** What the editor of the step sets, in the reader's words. */
   title: string;

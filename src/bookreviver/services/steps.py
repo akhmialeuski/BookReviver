@@ -24,11 +24,19 @@ import anyio
 from asyncer import asyncify
 from attrs import evolve, frozen
 
-from bookreviver.domain.enums import Rendition, TransformKind, VersionScale, VersionState
+from bookreviver.domain.enums import (
+    ColorMode,
+    Rendition,
+    ReviewReason,
+    TransformKind,
+    VersionData,
+    VersionScale,
+    VersionState,
+)
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Transform
-from bookreviver.domain.values import Renditions
-from bookreviver.ports.processing import StepInput
+from bookreviver.domain.values import COLOR_MODE_KEY, Renditions
+from bookreviver.ports.processing import StepInput, StepOutput, StepResult
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -39,7 +47,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.keys import ProjectKeys
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.imaging import RenditionWriter, Tiler
-    from bookreviver.ports.processing import ProcessorCatalog, StepOutput, StepResult
+    from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.storage import AssetStore
 
 NOT_READY: str = 'The version {version_id} has no image that is ready to cut.'
@@ -57,6 +65,8 @@ class StepRun:
     :ivar scale: Whether the step runs on the full image or on the preview.
     :ivar ratio: Size of the image the step reads over the size of the full image, 1 for a full run.
     :ivar side: Side of the book the page lies on, for a step that reads it, or None.
+    :ivar skipped: Whether the page did not meet the condition of the step, so the processor is not run and the page
+                   passes with its image and its data as they are.
     """
 
     processor_key: str
@@ -67,6 +77,7 @@ class StepRun:
     scale: VersionScale = VersionScale.FULL
     ratio: float = 1.0
     side: PageSide | None = None
+    skipped: bool = False
 
 
 class StepRunner:
@@ -118,6 +129,9 @@ class StepRunner:
         processor = self._catalogue.get(run.processor_key)
         async with AsyncExitStack() as stack:
             image = None if run.image is None else await stack.enter_async_context(self._assets.readable(run.image))
+            if run.skipped:
+                yield self._unchanged(run, image)
+                return
             mask = None
             if run.edit is not None and run.edit.mask_key is not None:
                 mask = await stack.enter_async_context(self._assets.readable(run.edit.mask_key))
@@ -134,6 +148,33 @@ class StepRunner:
             )
             work = processor.run if run.scale is VersionScale.FULL else processor.preview
             yield await asyncify(work)(step_input)
+
+    @staticmethod
+    def _unchanged(run: StepRun, image: Path | None) -> StepResult:
+        """Make the result of a page that passes a step unchanged: its image, its data and its mark as they were.
+
+        The data is the input's, so the steps after it read what the steps before found, and the mark the input carried
+        stays while the step adds none. The result is the identity.
+
+        :param run: What the step reads, whose input data is carried over.
+        :type run: StepRun
+        :param image: Local path of the image of the input.
+        :type image: Path | None
+        :returns: One output with the image of the input and the flag that the condition skipped the step.
+        :rtype: StepResult
+        """
+        carried = run.input_data.get(VersionData.REVIEW)
+        stated = run.input_data.get(COLOR_MODE_KEY)
+        return StepResult(
+            outputs=[
+                StepOutput(
+                    image=image,
+                    color_mode=ColorMode(stated) if stated in set(ColorMode) else ColorMode.UNKNOWN,
+                    data={**run.input_data, VersionData.SKIPPED: True, VersionData.SKIPPED_BY_CONDITION: True},
+                    review=ReviewReason(carried) if carried in set(ReviewReason) else None,
+                )
+            ]
+        )
 
     async def store(
         self, keys: ProjectKeys, version: PageVersion, output: StepOutput, *, policy: ImagePolicy, tiles: bool

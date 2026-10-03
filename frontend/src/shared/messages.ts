@@ -1,4 +1,5 @@
 import type {
+  AppliesTo,
   ContributorRole,
   FileType,
   IdentifierScheme,
@@ -1091,6 +1092,17 @@ export const MESSAGES = {
       add: 'Add a step',
       unknownProcessor: 'This step is not installed on this machine.',
       outOfLimits: 'A value is outside its limits, so the recipe cannot be saved.',
+      condition: {
+        label: (title: string) => `Pages the ${title} step processes`,
+        hint: 'A page that is not one of these passes the step as it is',
+        options: {
+          all: 'All pages',
+          text: 'Text pages',
+          pictures: 'Pictures',
+          'color-pictures': 'Colour pictures',
+          'bw-pictures': 'Black-and-white pictures',
+        } satisfies Record<AppliesTo, string>,
+      },
       measure: {
         button: 'Measure the book',
         hint: 'Read the text block and the line height the crop found on every page, and fill in the line height and the page size from their medians, and the margins too while they are measured. The pages of this recipe go out of date.',
@@ -1414,6 +1426,7 @@ export const MESSAGES = {
         'brush-mask': 'Eraser',
       },
       placement: 'Block on the page',
+      numbered: (number: number, title: string) => `${number} · ${title}`,
       auto: 'auto',
       manual: 'by hand',
     },

@@ -43,8 +43,8 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet: sdk.versions,
   listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGet: sdk.edits,
-  putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPut: sdk.put,
-  deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDelete: sdk.remove,
+  putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPut: sdk.put,
+  deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDelete: sdk.remove,
   runStageApiV1ProjectsProjectIdStagesStageRunPost: sdk.run,
   listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
 }));
@@ -109,7 +109,7 @@ function edit(overrides: Partial<PageEditSchema>): PageEditSchema {
   return {
     page_id: 'page',
     stage: 'geometry',
-    processor_key: 'geometry.deskew',
+    step_id: 'id-geometry.deskew',
     kind: 'rotation',
     geometry: { degrees: 1.5 },
     mask: null,
@@ -281,6 +281,50 @@ describe('useEditorSession', () => {
     expect(session?.active).toBe(false);
   });
 
+  describe('with a recipe that runs one processor twice', () => {
+    const twice = recipe('twice', {
+      steps: [
+        step('geometry.deskew', { step_id: 'first' }),
+        step('geometry.deskew', { step_id: 'second' }),
+      ],
+    });
+    const twiceState = processing({ recipe: twice, recipes: [twice] });
+
+    it('offers an editor for each step, told apart by their place, and starts on the first', async () => {
+      await render({ state: twiceState });
+
+      expect(session?.steps.map((entry) => [entry.key, entry.title, entry.chosen])).toEqual([
+        ['first', '1 · Angle', true],
+        ['second', '2 · Angle', false],
+      ]);
+    });
+
+    it('saves the angle for the step that was chosen, and the edit of the other step is not its edit', async () => {
+      sdk.edits.mockResolvedValue(listOf(edit({ step_id: 'first', geometry: { degrees: 4 } })));
+      await render({ state: twiceState });
+      expect(session?.hasEdit).toBe(true);
+
+      act(() => session?.choose('second'));
+      await settle();
+      expect(session?.hasEdit).toBe(false);
+      await typeAngle('2.5');
+
+      expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({ path: { step_id: 'second' } });
+      expect(session?.steps.map((entry) => entry.manual)).toEqual([true, false]);
+    });
+  });
+
+  it('has no editor on a page that did not meet the condition of the step, which passed it as it was', async () => {
+    const skipped = joinRows(
+      [page('page')],
+      [row('page', { version: version('v', { data: { skipped_by_condition: true } }) })],
+    );
+
+    await render({ items: skipped });
+
+    expect(state()).toBe('none');
+  });
+
   it('saves the typed angle as a rotation of the processor and runs the stage on the one page', async () => {
     await render();
 
@@ -292,7 +336,7 @@ describe('useEditorSession', () => {
         project_id: 'project',
         page_id: 'page',
         stage: 'geometry',
-        processor_key: 'geometry.deskew',
+        step_id: 'id-geometry.deskew',
       },
       body: { kind: 'rotation', geometry: '{"degrees":2.5}' },
     });
@@ -414,7 +458,7 @@ describe('useEditorSession', () => {
 
       expect(sdk.remove).toHaveBeenCalledTimes(1);
       expect(sdk.remove.mock.calls[0]?.[0]).toMatchObject({
-        path: { page_id: 'page', processor_key: 'geometry.deskew' },
+        path: { page_id: 'page', step_id: 'id-geometry.deskew' },
       });
       expect(sdk.run).toHaveBeenCalledTimes(1);
     });
@@ -494,7 +538,7 @@ describe('useEditorSession', () => {
           edit({
             page_id: 'p0',
             stage: 'page-split',
-            processor_key: 'split.spread',
+            step_id: 'id-split.spread',
             kind: 'line',
             geometry: { start: { x: 480, y: 0 }, end: { x: 500, y: 600 } },
           }),
@@ -536,7 +580,7 @@ describe('useEditorSession', () => {
       await commitLine();
 
       expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({
-        path: { page_id: 'p0', stage: 'page-split', processor_key: 'split.spread' },
+        path: { page_id: 'p0', stage: 'page-split', step_id: 'id-split.spread' },
         body: {
           kind: 'line',
           geometry: '{"start":{"x":10,"y":0},"end":{"x":12,"y":600}}',
@@ -608,7 +652,7 @@ describe('useEditorSession', () => {
       await commitLine();
 
       expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({
-        path: { page_id: 'p0', stage: 'page-split', processor_key: 'split.auto' },
+        path: { page_id: 'p0', stage: 'page-split', step_id: 'id-split.auto' },
         body: {
           kind: 'split',
           geometry: '{"pages":2,"line":{"start":{"x":10,"y":0},"end":{"x":12,"y":600}}}',
@@ -647,7 +691,7 @@ describe('useEditorSession', () => {
           edit({
             page_id: 'p0',
             stage: 'page-split',
-            processor_key: 'split.auto',
+            step_id: 'id-split.auto',
             kind: 'split',
             geometry: { pages: 2, line: null },
           }),
@@ -667,7 +711,7 @@ describe('useEditorSession', () => {
           edit({
             page_id: 'p0',
             stage: 'page-split',
-            processor_key: 'split.auto',
+            step_id: 'id-split.auto',
             kind: 'split',
             geometry: { pages: 2, line: { start: { x: 300, y: 0 }, end: { x: 310, y: 600 } } },
           }),
@@ -694,7 +738,7 @@ describe('useEditorSession', () => {
       await commitLine();
 
       expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({
-        path: { page_id: 'p0', processor_key: 'split.spread' },
+        path: { page_id: 'p0', step_id: 'id-split.spread' },
         body: { kind: 'line' },
       });
       expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({ body: { recipe_id: 'cut' } });
@@ -707,7 +751,7 @@ describe('useEditorSession', () => {
           edit({
             page_id: 'p0',
             stage: 'page-split',
-            processor_key: 'split.auto',
+            step_id: 'id-split.auto',
             kind: 'split',
             geometry: { pages: 2, line: { start: { x: 300, y: 0 }, end: { x: 310, y: 600 } } },
           }),
@@ -720,7 +764,7 @@ describe('useEditorSession', () => {
       await settle();
 
       expect(sdk.remove.mock.calls[0]?.[0]).toMatchObject({
-        path: { page_id: 'p0', processor_key: 'split.auto' },
+        path: { page_id: 'p0', step_id: 'id-split.auto' },
       });
       expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({ body: { recipe_id: 'auto' } });
     });
@@ -794,10 +838,10 @@ describe('useEditorSession', () => {
       await render({ state: STATE, items: ITEMS });
       expect(session?.picture).toEqual(BEFORE);
 
-      await act(async () => session?.choose('geometry.deskew'));
+      await act(async () => session?.choose('id-geometry.deskew'));
       expect(session?.picture).toEqual({ kind: SourceKind.Iiif, url: '/version-v1/info.json' });
 
-      await act(async () => session?.choose('geometry.crop'));
+      await act(async () => session?.choose('id-geometry.crop'));
       expect(session?.picture).toEqual({ kind: SourceKind.Image, url: '/version-v2/preview' });
     });
 
@@ -805,7 +849,7 @@ describe('useEditorSession', () => {
       await render({ state: STATE, items: ITEMS });
       expect(session?.active).toBe(false);
 
-      await act(async () => session?.choose('geometry.crop'));
+      await act(async () => session?.choose('id-geometry.crop'));
 
       expect(session?.active).toBe(true);
       expect(session?.steps.map((entry) => entry.chosen)).toEqual([false, false, true]);
@@ -827,7 +871,7 @@ describe('useEditorSession', () => {
 
     it('saves the frame as a rect of the crop step and runs the stage on the one page', async () => {
       await render({ state: STATE, items: ITEMS, canvas: true });
-      await act(async () => session?.choose('geometry.crop'));
+      await act(async () => session?.choose('id-geometry.crop'));
 
       await act(async () => {
         container.querySelector<HTMLButtonElement>('[data-testid="commit-rect"]')?.click();
@@ -836,7 +880,7 @@ describe('useEditorSession', () => {
       await settle();
 
       expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({
-        path: { page_id: 'page', stage: 'geometry', processor_key: 'geometry.crop' },
+        path: { page_id: 'page', stage: 'geometry', step_id: 'id-geometry.crop' },
         body: { kind: 'rect', geometry: '{"left":50,"top":60,"width":700,"height":900}' },
       });
       expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
@@ -846,7 +890,7 @@ describe('useEditorSession', () => {
 
     it('starts the frame from the one the step found', async () => {
       await render({ state: STATE, items: ITEMS, canvas: true });
-      await act(async () => session?.choose('geometry.crop'));
+      await act(async () => session?.choose('id-geometry.crop'));
 
       const shape = container
         .querySelector('[data-testid="commit-rect"]')
@@ -858,7 +902,7 @@ describe('useEditorSession', () => {
       sdk.edits.mockResolvedValue(
         listOf(
           edit({
-            processor_key: 'geometry.perspective',
+            step_id: 'id-geometry.perspective',
             kind: 'quad',
             geometry: SHEET,
           }),

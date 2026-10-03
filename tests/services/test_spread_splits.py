@@ -17,7 +17,7 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.events import PagesChanged, PageVersionReady
 from bookreviver.domain.geometry import Line, Point
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import NewPageEdit, PageEditKey, StageRun, Step, StepPreview
+from bookreviver.domain.values import NewPageEdit, StageRun, Step, StepPreview
 from tests.helpers.samples import png_bytes, spread
 from tests.helpers.spreads import (
     HEIGHT_PX,
@@ -164,7 +164,7 @@ class TestSplit:
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         left, right = await book_of(fx_cv_kit, project)
         before = [await head_of(fx_cv_kit, page, Stage.PAGE_SPLIT) for page in (left, right)]
-        key = PageEditKey(left.id, Stage.PAGE_SPLIT, SPLIT_SPREAD)
+        key = await fx_cv_kit.edit_key(left, Stage.PAGE_SPLIT, SPLIT_SPREAD)
         await fx_cv_kit.edits().save(actor, project.id, key, NewPageEdit(kind=CUT_LINE.editor, geometry=CUT_LINE), None)
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         after = [await head_of(fx_cv_kit, page, Stage.PAGE_SPLIT) for page in (left, right)]

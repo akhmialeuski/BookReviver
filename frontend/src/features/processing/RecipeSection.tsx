@@ -181,6 +181,7 @@ export function RecipeSection({
         onToggle={processing.toggle}
         onRemove={processing.remove}
         onChange={processing.change}
+        onCondition={processing.condition}
       />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

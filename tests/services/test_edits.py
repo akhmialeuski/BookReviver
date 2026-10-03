@@ -1,16 +1,19 @@
 """Tests for the manual edits of a page, which a processor reads as an input beside its parameters."""
 
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import pytest
+from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import EditorKind, Rendition, Stage, StageState
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.geometry import BrushStrokes, Line, Point, Rect, Rotation, Stroke
+from bookreviver.domain.ids import StepId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import NewPageEdit, PageEditKey, PageStageKey, StageRun
+from bookreviver.domain.values import NewPageEdit, PageEditKey, PageStageKey, StageRun, Step
 from tests.helpers.builders import make_page_stage
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
 from tests.helpers.storage import upload
@@ -55,9 +58,8 @@ class TestSave:
         """
         actor, project, page = await prepared(fx_kit)
         runs = fx_kit.fake.runs
-        stored = await fx_kit.edits().save(
-            actor, project.id, PageEditKey(page.id, Stage.GEOMETRY, FAKE_KEY), ROTATION, None
-        )
+        key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
+        stored = await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
         listed = await fx_kit.edits().list(actor, project.id, page.id, Stage.GEOMETRY)
         record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         expect(listed == [stored])
@@ -81,7 +83,7 @@ class TestSave:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared(fx_kit)
-        key = PageEditKey(page.id, Stage.GEOMETRY, FAKE_KEY)
+        key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
 
         async def rerun() -> str:
             """Run the geometry stage again and return the identifier of its current version.
@@ -111,7 +113,7 @@ class TestSave:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared(fx_kit)
-        key = PageEditKey(page.id, Stage.GEOMETRY, FAKE_KEY)
+        key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
         await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
         second = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=-2))
         replaced = await fx_kit.edits().save(actor, project.id, key, second, None)
@@ -120,7 +122,6 @@ class TestSave:
     @pytest.mark.parametrize(
         ('key_stage', 'processor', 'edit', 'match'),
         [
-            (Stage.CLEANUP, FAKE_KEY, ROTATION, 'not to the Cleanup stage'),
             (
                 Stage.GEOMETRY,
                 FAKE_KEY,
@@ -130,18 +131,18 @@ class TestSave:
             (Stage.GEOMETRY, FAKE_KEY, NewPageEdit(kind=EditorKind.ROTATION), 'needs its shape'),
             (Stage.CLEANUP, ERASER_KEY, NewPageEdit(kind=EditorKind.BRUSH_MASK), 'needs its mask'),
         ],
-        ids=['other-stage', 'other-editor', 'no-shape', 'no-mask'],
+        ids=['other-editor', 'no-shape', 'no-mask'],
     )
     async def test_edit_the_processor_does_not_read_is_rejected(
         self, fx_kit: ProcessingKit, key_stage: Stage, processor: str, edit: NewPageEdit, match: str
     ) -> None:
-        """Reject an edit of another stage or editor, one without its shape, and a brush edit without its mask.
+        """Reject an edit of another editor, one without its shape, and a brush edit without its mask.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         :param key_stage: Stage the edit is saved for.
         :type key_stage: Stage
-        :param processor: Key of the processor.
+        :param processor: Key of the processor of the step the edit is saved for.
         :type processor: str
         :param edit: The edit.
         :type edit: NewPageEdit
@@ -149,8 +150,38 @@ class TestSave:
         :type match: str
         """
         actor, project, page = await prepared(fx_kit)
+        key = await fx_kit.edit_key(page, key_stage, processor)
         with pytest.raises(InvalidParametersError, match=match):
-            await fx_kit.edits().save(actor, project.id, PageEditKey(page.id, key_stage, processor), edit, None)
+            await fx_kit.edits().save(actor, project.id, key, edit, None)
+
+    async def test_edit_of_a_step_that_no_recipe_of_the_stage_has_is_not_found(self, fx_kit: ProcessingKit) -> None:
+        """Reject an edit named for an identifier that is the step of no recipe, or of a recipe of another stage.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page = await prepared(fx_kit)
+        geometry_key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
+        for key in (PageEditKey(page.id, Stage.GEOMETRY, StepId(uuid4())), evolve(geometry_key, stage=Stage.CLEANUP)):
+            with pytest.raises(NotFoundError):
+                await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
+
+    async def test_two_steps_of_one_processor_keep_their_own_edits(self, fx_kit: ProcessingKit) -> None:
+        """Verify an edit saved for one of two steps of the same processor leaves the other without one.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page = await prepared(fx_kit)
+        first, second = Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, 'Twice', [first, second])
+        key = PageEditKey(page.id, Stage.GEOMETRY, first.step_id)
+        saved = await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
+        listed = await fx_kit.edits().list(actor, project.id, page.id, Stage.GEOMETRY)
+        found = await fx_kit.uow().page_edits.find(PageEditKey(page.id, Stage.GEOMETRY, second.step_id))
+        expect(listed == [saved])
+        expect(found is None)
+        assert_expectations()
 
     async def test_mask_is_stored_under_the_hash_of_its_edit(self, fx_kit: ProcessingKit) -> None:
         """Verify a mask is streamed in, kept under the key of its edit, and the scratch file is removed.
@@ -159,16 +190,16 @@ class TestSave:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared(fx_kit)
-        key = PageEditKey(page.id, Stage.CLEANUP, ERASER_KEY)
+        key = await fx_kit.edit_key(page, Stage.CLEANUP, ERASER_KEY)
         edit = NewPageEdit(kind=EditorKind.BRUSH_MASK)
         stored = await fx_kit.edits().save(actor, project.id, key, edit, upload('mask.png', content=MASK_CONTENT))
         assert stored.mask_key is not None
         async with fx_kit.assets.readable(stored.mask_key) as mask:
             content = mask.read_bytes()
-        directory = ProjectKeys(project.id).page_edit(page.id, ERASER_KEY, stored.edit_hash)
+        directory = ProjectKeys(project.id).page_edit(page.id, key.step_id, stored.edit_hash)
         expect(content == MASK_CONTENT)
         expect(stored.mask_key == f'{directory}/{Rendition.MASK}')
-        async with fx_kit.assets.readable(ProjectKeys(project.id).page_edits(page.id, ERASER_KEY)) as folder:
+        async with fx_kit.assets.readable(ProjectKeys(project.id).page_edits(page.id, key.step_id)) as folder:
             expect(sorted(entry.name for entry in folder.iterdir()) == [stored.edit_hash])
         assert_expectations()
 
@@ -179,7 +210,7 @@ class TestSave:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared(fx_kit)
-        key = PageEditKey(page.id, Stage.CLEANUP, ERASER_KEY)
+        key = await fx_kit.edit_key(page, Stage.CLEANUP, ERASER_KEY)
         strokes = BrushStrokes(strokes=(Stroke(radius=9, points=(Point(x=3, y=4),)),))
         edit = NewPageEdit(kind=EditorKind.BRUSH_MASK, geometry=strokes)
         stored = await fx_kit.edits().save(actor, project.id, key, edit, upload('mask.png', content=MASK_CONTENT))
@@ -197,7 +228,7 @@ class TestSave:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared(fx_kit)
-        key = PageEditKey(page.id, Stage.CLEANUP, ERASER_KEY)
+        key = await fx_kit.edit_key(page, Stage.CLEANUP, ERASER_KEY)
         edit = NewPageEdit(kind=EditorKind.BRUSH_MASK)
         first = await fx_kit.edits().save(actor, project.id, key, edit, upload('mask.png', content=MASK_CONTENT))
         second = await fx_kit.edits().save(actor, project.id, key, edit, upload('mask.png', content=MASK_CONTENT))
@@ -209,13 +240,12 @@ class TestSave:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, _ = await prepared(fx_kit)
+        actor, project, page = await prepared(fx_kit)
         _, other_project = await fx_kit.seed_project()
         foreign, _ = await fx_kit.seed_scan_page(other_project)
+        key = evolve(await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY), page_id=foreign.id)
         with pytest.raises(NotFoundError):
-            await fx_kit.edits().save(
-                actor, project.id, PageEditKey(foreign.id, Stage.GEOMETRY, FAKE_KEY), ROTATION, None
-            )
+            await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
 
 
 class TestDelete:
@@ -228,7 +258,7 @@ class TestDelete:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared(fx_kit)
-        key = PageEditKey(page.id, Stage.GEOMETRY, FAKE_KEY)
+        key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
         await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
         uow = fx_kit.uow()
         await uow.page_stages.save(make_page_stage(page_id=page.id))

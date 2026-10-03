@@ -7,7 +7,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import Rendition
-from bookreviver.domain.ids import JobId, PageId, ProjectId, SourceId, StorageKey
+from bookreviver.domain.ids import JobId, PageId, ProjectId, SourceId, StepId, StorageKey
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import ProcessorRef, Renditions
 from tests.helpers.builders import make_page_version, make_scan, make_source
@@ -17,6 +17,7 @@ OTHER_PROJECT_ID: ProjectId = ProjectId(uuid4())
 KEYS: ProjectKeys = ProjectKeys(PROJECT_ID)
 PREFIX: StorageKey = KEYS.prefix
 PAGE_ID: PageId = PageId(uuid4())
+STEP_ID: StepId = StepId(uuid4())
 JOB_ID: JobId = JobId(uuid4())
 SCAN_NUMBER: int = 12
 RENDITION_ARG: str = 'rendition'
@@ -39,7 +40,7 @@ class TestPrefix:
             KEYS.scan_rendition(make_scan(source=source, number=0), Rendition.FULL_JPEG),
             KEYS.page(PAGE_ID),
             KEYS.version_rendition(make_page_version(page_id=PAGE_ID), Rendition.TILES),
-            KEYS.page_edits(PAGE_ID, 'cleanup.eraser'),
+            KEYS.page_edits(PAGE_ID, STEP_ID),
         ]
         assert [key for key in keys if not key.startswith(PREFIX)] == []
 
@@ -148,9 +149,9 @@ class TestPageEdits:
 
     def test_edits_lie_beside_the_versions_of_the_page(self) -> None:
         """Verify the edits of a page are removed with the page's directory."""
-        key = KEYS.page_edits(PAGE_ID, 'cleanup.eraser')
+        key = KEYS.page_edits(PAGE_ID, STEP_ID)
         assert (key, key.startswith(f'{KEYS.page(PAGE_ID)}/')) == (
-            f'{PREFIX}assets/pages/{PAGE_ID}/edits/cleanup.eraser',
+            f'{PREFIX}assets/pages/{PAGE_ID}/edits/{STEP_ID}',
             True,
         )
 

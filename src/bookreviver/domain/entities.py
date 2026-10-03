@@ -62,6 +62,7 @@ if TYPE_CHECKING:
         RecipeRuleId,
         ScanId,
         SourceId,
+        StepId,
         StorageKey,
     )
     from bookreviver.domain.stage_summaries import BookProgress
@@ -366,6 +367,8 @@ class VersionInputs:
     :ivar edit_hash: Hash of the manual edit the step reads, or empty for none.
     :ivar scale: Whether the step runs on the full image or on the preview.
     :ivar side: Side of the book the page lies on, for a step that reads it, or None for a step that does not.
+    :ivar skipped: Whether the page did not meet the condition of the step and passes it unchanged. Such a version
+                   holds the image of its input whatever the parameters and the edit of the step are, so it has none.
     """
 
     page_id: PageId
@@ -375,13 +378,14 @@ class VersionInputs:
     edit_hash: str = ''
     scale: VersionScale = VersionScale.FULL
     side: PageSide | None = None
+    skipped: bool = False
 
     def identify(self) -> PageVersionId:
         """Return the identifier of the version these inputs produce, a hash of all of them.
 
-        The edit, the scale and the side join the hash only when they are not the empty edit, the full scale and no
-        side, so a full run without an edit hashes what it hashed before they existed, and the identifiers already
-        stored stay the ones a repeated run finds.
+        The edit, the scale, the side and the skip join the hash only when they are not the empty edit, the full scale,
+        no side and a page that is processed, so a full run without an edit hashes what it hashed before they existed,
+        and the identifiers already stored stay the ones a repeated run finds.
 
         :returns: The SHA-256 of the inputs in canonical JSON, cut to 16 lower-case hexadecimal digits.
         :rtype: PageVersionId
@@ -393,6 +397,8 @@ class VersionInputs:
             produced_by.append({'scale': self.scale.value})
         if self.side is not None:
             produced_by.append({'side': self.side.value})
+        if self.skipped:
+            produced_by.append({'skipped': True})
         digest = hashlib.sha256(json.dumps(produced_by, sort_keys=True, separators=(',', ':')).encode())
         return PageVersionId(digest.hexdigest()[:VERSION_ID_LENGTH])
 
@@ -771,8 +777,8 @@ class PageEdit:
     edit finds the old version again.
 
     :ivar page_id: Page the edit belongs to.
-    :ivar stage: Stage of the processor reading the edit.
-    :ivar processor_key: Key of the processor reading the edit.
+    :ivar stage: Stage of the step reading the edit.
+    :ivar step_id: The step of a recipe reading the edit, so two steps of one processor keep their own edits.
     :ivar kind: Editor that made the edit.
     :ivar geometry: The shape the user drew, or None for an edit that is only a mask.
     :ivar mask_key: Storage key of the mask the user painted, or None for an edit without one.
@@ -782,7 +788,7 @@ class PageEdit:
 
     page_id: PageId
     stage: Stage
-    processor_key: str = field(validator=validators.min_len(1))
+    step_id: StepId
     kind: EditorKind
     geometry: EditGeometry | None = None
     mask_key: StorageKey | None = None
@@ -792,7 +798,7 @@ class PageEdit:
     @property
     def key(self) -> PageEditKey:
         """The key the edit is stored under."""
-        return PageEditKey(self.page_id, self.stage, self.processor_key)
+        return PageEditKey(self.page_id, self.stage, self.step_id)
 
     @staticmethod
     def hash_of(geometry: EditGeometry | None, mask_sha256: str | None) -> str:

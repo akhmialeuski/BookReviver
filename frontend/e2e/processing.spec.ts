@@ -56,8 +56,8 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     await expect(page.getByTestId('recipe-step').nth(0)).toContainText('1 · Perspective');
     await expect(page.getByTestId('recipe-step').nth(1)).toContainText('2 · Deskew');
     await expect(page.getByTestId('recipe-step').nth(2)).toContainText('3 · Dewarp');
-    await expect(page.getByTestId('recipe-step').nth(3)).toContainText('4 · Crop');
-    await expect(page.getByTestId('recipe-step').nth(4)).toContainText('5 · Normalize');
+    await expect(page.getByTestId('recipe-step').nth(3)).toContainText('4 · Select content');
+    await expect(page.getByTestId('recipe-step').nth(4)).toContainText('5 · Margins');
     // The settings of the first step are open, with the titles of the schema and no name of the code
     await expect(page.getByRole('slider', { name: 'Smallest sheet' })).toBeVisible();
     await expect(page.getByTestId('stage-panel')).not.toContainText('min_sheet_fraction');
@@ -66,7 +66,9 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
   });
 
   await test.step('the settings of the last step are opened, and a value outside its limits cannot be saved', async () => {
-    await page.getByRole('button', { name: 'Show the settings of the Crop step' }).click();
+    await page
+      .getByRole('button', { name: 'Show the settings of the Select content step' })
+      .click();
     const margin = page.getByRole('spinbutton', { name: 'Margin' });
     // The crop cuts to the block of text alone by default, since the normalize step sets the margins of the page
     await expect(margin).toHaveValue('0');
@@ -149,7 +151,7 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
 
   await test.step('a changed recipe says how many pages it makes out of date and is saved by the button', async () => {
     // The result of the stage is the page the last step made, so its settings are the ones the history tells apart
-    await page.getByRole('button', { name: 'Show the settings of the Normalize step' }).click();
+    await page.getByRole('button', { name: 'Show the settings of the Margins step' }).click();
     await page.getByRole('spinbutton', { name: 'Top margin', exact: true }).fill('160');
     await expect(page.getByTestId('recipe-stale-warning')).toContainText(
       `${PAGES} pages out of date`,

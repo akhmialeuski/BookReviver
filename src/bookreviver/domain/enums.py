@@ -328,6 +328,49 @@ _KINDS_OF_CONDITION: Final[dict[RuleCondition, frozenset[PageKind]]] = {
 }
 
 
+class AppliesTo(LabeledStrEnum):
+    """The condition of a step of a recipe: which pages the step processes, the others passing it unchanged.
+
+    What makes a page text or a picture is decided here and nowhere else. Until the content of a page is detected, the
+    role the user gave the page decides: a plate or a frontispiece is a picture, and every other kind of page is text.
+    The colour of a picture is the colour mode of the image the stage starts from, and an unknown mode counts as colour,
+    since a step for black and white pictures must not touch a page that may be a colour plate.
+    """
+
+    ALL = 'all', 'All pages'
+    TEXT = 'text', 'Text pages'
+    PICTURES = 'pictures', 'Pictures'
+    COLOR_PICTURES = 'color-pictures', 'Colour pictures'
+    BW_PICTURES = 'bw-pictures', 'Black-and-white pictures'
+
+    def matches(self, kind: PageKind, color_mode: ColorMode) -> bool:
+        """Tell whether a step with this condition processes a page.
+
+        :param kind: Role of the page in the book.
+        :type kind: PageKind
+        :param color_mode: Colour mode of the image the stage starts from.
+        :type color_mode: ColorMode
+        :returns: True when the page is processed, False when it passes the step unchanged.
+        :rtype: bool
+        """
+        picture = kind in _PICTURE_KINDS
+        match self:
+            case AppliesTo.ALL:
+                return True
+            case AppliesTo.TEXT:
+                return not picture
+            case AppliesTo.PICTURES:
+                return picture
+            case AppliesTo.COLOR_PICTURES:
+                return picture and color_mode in {ColorMode.COLOR, ColorMode.UNKNOWN}
+            case AppliesTo.BW_PICTURES:
+                return picture and color_mode in {ColorMode.BILEVEL, ColorMode.GRAY}
+
+
+# The kinds of page that are pictures, which are those a rule on plates sends to the plates recipe
+_PICTURE_KINDS: Final[frozenset[PageKind]] = RuleCondition.PLATES.kinds
+
+
 class PageOrigin(LabeledStrEnum):
     """Where the image of a page comes from."""
 
@@ -644,6 +687,7 @@ class VersionData(LabeledStrEnum):
     ANGLE = 'angle', 'Angle a page was turned by, in degrees'
     CONFIDENCE = 'confidence', 'How sure the step is of what it found, from 0 to 1'
     SKIPPED = 'skipped', 'Whether the step left the image as it was'
+    SKIPPED_BY_CONDITION = 'skipped_by_condition', 'Whether the page did not meet the condition of the step'
     OVERLAP_PX = 'overlap_px', 'Width in pixels a half of a spread reaches over the cut'
     CUT_X = 'cut_x', 'Place of the cut in the scan, as the distance in pixels from its left edge'
     CUT_TOP_X = 'cut_top_x', 'Place of the cut at the top row of the scan, in pixels from its left edge'
@@ -768,6 +812,8 @@ class StepField(LabeledStrEnum):
     PROCESSOR_KEY = 'processor_key', 'Key of the processor that runs the step'
     PARAMS = 'params', 'Parameters the processor runs with'
     ENABLED = 'enabled', 'Whether a run and a preview run the step'
+    STEP_ID = 'step_id', 'Identifier of the step, which stays as the step moves and is saved'
+    APPLIES_TO = 'applies_to', 'Which pages the step processes'
 
 
 class EditorKind(LabeledStrEnum):

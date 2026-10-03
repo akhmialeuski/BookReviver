@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { stepChain, stepVersions } from '@/features/editors/chain';
-import { version } from '@/features/processing/fixtures';
+import { step, version } from '@/features/processing/fixtures';
 
 /** Finding the versions that made the current one of a stage, one for each step. */
 
@@ -40,17 +40,33 @@ describe('stepChain', () => {
 
 describe('stepVersions', () => {
   const chain = [PERSPECTIVE, DESKEW, CROP];
+  const steps = [step('geometry.perspective'), step('geometry.deskew'), step('geometry.crop')];
 
   it('gives the version of a step and the version it read', () => {
-    expect(stepVersions(chain, 'geometry.crop')).toEqual({ made: CROP, read: DESKEW });
-    expect(stepVersions(chain, 'geometry.deskew')).toEqual({ made: DESKEW, read: PERSPECTIVE });
+    expect(stepVersions(chain, steps, 2)).toEqual({ made: CROP, read: DESKEW });
+    expect(stepVersions(chain, steps, 1)).toEqual({ made: DESKEW, read: PERSPECTIVE });
   });
 
   it('gives no version read for the first step, which reads the picture before the stage', () => {
-    expect(stepVersions(chain, 'geometry.perspective')).toEqual({ made: PERSPECTIVE, read: null });
+    expect(stepVersions(chain, steps, 0)).toEqual({ made: PERSPECTIVE, read: null });
   });
 
-  it('gives nothing for a step the page has no version of', () => {
-    expect(stepVersions(chain, 'geometry.unknown')).toEqual({ made: null, read: null });
+  it('gives nothing for a step the page has not reached, or one whose processor changed', () => {
+    expect(stepVersions([PERSPECTIVE], steps, 2)).toEqual({ made: null, read: null });
+    const changed = [step('geometry.perspective'), step('geometry.dewarp'), step('geometry.crop')];
+    expect(stepVersions(chain, changed, 1)).toEqual({ made: null, read: null });
+  });
+
+  it('tells two steps of one processor apart by their place, and counts only the steps that are on', () => {
+    const second = version('v4', { input_id: 'v2' });
+    const twice = [
+      step('geometry.deskew', { step_id: 'first' }),
+      step('geometry.crop', { enabled: false }),
+      step('geometry.deskew', { step_id: 'second' }),
+    ];
+
+    expect(stepVersions([DESKEW, second], twice, 2)).toEqual({ made: second, read: DESKEW });
+    expect(stepVersions([DESKEW, second], twice, 0)).toEqual({ made: DESKEW, read: null });
+    expect(stepVersions([DESKEW, second], twice, 1)).toEqual({ made: null, read: null });
   });
 });

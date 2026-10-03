@@ -5513,9 +5513,9 @@
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the processor that reads the edit"
+              "description": "Stage of the step that reads the edit"
             },
-            "description": "Stage of the processor that reads the edit"
+            "description": "Stage of the step that reads the edit"
           },
           {
             "name": "page",
@@ -5597,14 +5597,14 @@
         }
       }
     },
-    "/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{processor_key}": {
+    "/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{step_id}": {
       "put": {
         "tags": [
           "edits"
         ],
         "summary": "Put Edit",
-        "description": "Save the edit a processor reads, replacing the one it had, and mark the stage of the page stale.\n\nThe form carries the editor that drew the edit, its shape as JSON text, and the mask as a file for a brush edit. The\nanswer is 422 for an edit the processor does not read, and nothing is processed by this request.",
-        "operationId": "put_edit_api_v1_projects__project_id__pages__page_id__edits__stage___processor_key__put",
+        "description": "Save the edit a step of a recipe reads, replacing the one it had, and mark the stage of the page stale.\n\nThe form carries the editor that drew the edit, its shape as JSON text, and the mask as a file for a brush edit. The\nanswer is 422 for an edit the processor of the step does not read, and nothing is processed by this request.",
+        "operationId": "put_edit_api_v1_projects__project_id__pages__page_id__edits__stage___step_id__put",
         "parameters": [
           {
             "name": "project_id",
@@ -5636,22 +5636,21 @@
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the processor that reads the edit"
+              "description": "Stage of the step that reads the edit"
             },
-            "description": "Stage of the processor that reads the edit"
+            "description": "Stage of the step that reads the edit"
           },
           {
-            "name": "processor_key",
+            "name": "step_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1,
-              "maxLength": 100,
-              "description": "Key of the processor that reads the edit",
-              "title": "Processor Key"
+              "format": "uuid",
+              "description": "Identifier of the step of a recipe that reads the edit",
+              "title": "Step Id"
             },
-            "description": "Key of the processor that reads the edit"
+            "description": "Identifier of the step of a recipe that reads the edit"
           }
         ],
         "requestBody": {
@@ -5724,8 +5723,8 @@
           "edits"
         ],
         "summary": "Delete Edit",
-        "description": "Delete the edit a processor reads, and mark the stage of the page stale.",
-        "operationId": "delete_edit_api_v1_projects__project_id__pages__page_id__edits__stage___processor_key__delete",
+        "description": "Delete the edit a step of a recipe reads, and mark the stage of the page stale.",
+        "operationId": "delete_edit_api_v1_projects__project_id__pages__page_id__edits__stage___step_id__delete",
         "parameters": [
           {
             "name": "project_id",
@@ -5757,22 +5756,21 @@
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the processor that reads the edit"
+              "description": "Stage of the step that reads the edit"
             },
-            "description": "Stage of the processor that reads the edit"
+            "description": "Stage of the step that reads the edit"
           },
           {
-            "name": "processor_key",
+            "name": "step_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1,
-              "maxLength": 100,
-              "description": "Key of the processor that reads the edit",
-              "title": "Processor Key"
+              "format": "uuid",
+              "description": "Identifier of the step of a recipe that reads the edit",
+              "title": "Step Id"
             },
-            "description": "Key of the processor that reads the edit"
+            "description": "Identifier of the step of a recipe that reads the edit"
           }
         ],
         "responses": {
@@ -7636,6 +7634,18 @@
         "title": "AppliedProfileSchema",
         "description": "The recipe a profile made in a book, and what was left out of it.\n\n:ivar recipe: The variant added to the book, which is the active recipe when the request asked for that.\n:ivar missing_processors: Keys of the processors of the profile that are not installed, whose steps were left out."
       },
+      "AppliesTo": {
+        "type": "string",
+        "enum": [
+          "all",
+          "text",
+          "pictures",
+          "color-pictures",
+          "bw-pictures"
+        ],
+        "title": "AppliesTo",
+        "description": "The condition of a step of a recipe: which pages the step processes, the others passing it unchanged.\n\nWhat makes a page text or a picture is decided here and nowhere else. Until the content of a page is detected, the\nrole the user gave the page decides: a plate or a frontispiece is a picture, and every other kind of page is text.\nThe colour of a picture is the colour mode of the image the stage starts from, and an unknown mode counts as colour,\nsince a step for black and white pictures must not touch a page that may be a colour plate."
+      },
       "ApplyProfileBody": {
         "properties": {
           "activate": {
@@ -8980,9 +8990,10 @@
           "stage": {
             "$ref": "#/components/schemas/Stage"
           },
-          "processor_key": {
+          "step_id": {
             "type": "string",
-            "title": "Processor Key"
+            "format": "uuid",
+            "title": "Step Id"
           },
           "kind": {
             "$ref": "#/components/schemas/EditorKind"
@@ -9024,7 +9035,7 @@
         "required": [
           "page_id",
           "stage",
-          "processor_key",
+          "step_id",
           "kind",
           "geometry",
           "mask",
@@ -9032,7 +9043,7 @@
           "updated_at"
         ],
         "title": "PageEditSchema",
-        "description": "A manual edit of a page.\n\n:ivar page_id: Page the edit belongs to.\n:ivar stage: Stage of the processor that reads the edit.\n:ivar processor_key: Key of that processor.\n:ivar kind: Editor that drew the edit.\n:ivar geometry: The shape as JSON, or None for an edit that is only a mask.\n:ivar mask: Path of the mask on the IIIF route, or None.\n:ivar edit_hash: Hash of the shape and the mask.\n:ivar updated_at: When the edit was last saved."
+        "description": "A manual edit of a page.\n\n:ivar page_id: Page the edit belongs to.\n:ivar stage: Stage of the step that reads the edit.\n:ivar step_id: Identifier of that step.\n:ivar kind: Editor that drew the edit.\n:ivar geometry: The shape as JSON, or None for an edit that is only a mask.\n:ivar mask: Path of the mask on the IIIF route, or None.\n:ivar edit_hash: Hash of the shape and the mask.\n:ivar updated_at: When the edit was last saved."
       },
       "PageFilter": {
         "type": "string",
@@ -11915,6 +11926,22 @@
             "type": "boolean",
             "title": "Enabled",
             "default": true
+          },
+          "step_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Id"
+          },
+          "applies_to": {
+            "$ref": "#/components/schemas/AppliesTo",
+            "default": "all"
           }
         },
         "additionalProperties": false,
@@ -11923,7 +11950,7 @@
           "processor_key"
         ],
         "title": "StepBody",
-        "description": "A step of a recipe or of a preview as the interface sends it.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which the processor checks and fills in.\n:ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off."
+        "description": "A step of a recipe or of a preview as the interface sends it.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which the processor checks and fills in.\n:ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.\n:ivar step_id: Identifier of a step that already exists, which the interface sends back to keep its edits, or\n               omitted for a step that is added, which gets a new one.\n:ivar applies_to: Which pages the step processes, all of them unless the interface says otherwise."
       },
       "StepPagesSchema": {
         "properties": {
@@ -11990,16 +12017,26 @@
           "enabled": {
             "type": "boolean",
             "title": "Enabled"
+          },
+          "step_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Step Id"
+          },
+          "applies_to": {
+            "$ref": "#/components/schemas/AppliesTo"
           }
         },
         "type": "object",
         "required": [
           "processor_key",
           "params",
-          "enabled"
+          "enabled",
+          "step_id",
+          "applies_to"
         ],
         "title": "StepSchema",
-        "description": "One step of a recipe: a processor and the parameters it runs with.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, with the defaults of the processor filled in.\n:ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters."
+        "description": "One step of a recipe: a processor and the parameters it runs with.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, with the defaults of the processor filled in.\n:ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters.\n:ivar step_id: Identifier of the step, which stays as the step is moved and saved and which its manual edits name.\n:ivar applies_to: Which pages the step processes; the others pass it unchanged."
       },
       "TransformKind": {
         "type": "string",

@@ -7,18 +7,28 @@ make.
 
 from datetime import timedelta
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import pytest
 from attrs import evolve
 
 from bookreviver.domain.entities import PageEdit
-from bookreviver.domain.enums import PageOrigin, ReviewReason, Stage, StageState, VersionScale, VersionState
+from bookreviver.domain.enums import (
+    AppliesTo,
+    PageOrigin,
+    ReviewReason,
+    Stage,
+    StageState,
+    VersionScale,
+    VersionState,
+)
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.geometry import Line, Point
-from bookreviver.domain.ids import PageId, PageVersionId, ProjectId
+from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, StepId
 from bookreviver.domain.stage_summaries import StepTally
 from bookreviver.domain.values import PageEditKey, PageStageKey, SliceRequest, Step
 from tests.helpers.builders import (
+    DESKEW_STEP_ID,
     EPOCH,
     make_job,
     make_page,
@@ -219,7 +229,7 @@ class TestRecipeRepository:
         assert [recipe.id for recipe in await recipes.list_active(project.id)] == [geometry.id, cleanup.id]
 
     async def test_steps_survive_the_store(self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
-        """Verify a recipe reads back with its steps, their parameters and which of them are switched off.
+        """Verify a recipe reads back with its steps, their parameters, identifiers and conditions, and the switches.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -229,7 +239,8 @@ class TestRecipeRepository:
         uow = await fx_uow_factory()
         project = make_project(owner_id=await fx_new_owner())
         plain = make_recipe(project_id=project.id)
-        recipe = evolve(plain, steps=(*plain.steps, Step(processor_key='geometry.other', params={}, enabled=False)))
+        other = Step(processor_key='geometry.other', params={}, enabled=False, applies_to=AppliesTo.PICTURES)
+        recipe = evolve(plain, steps=(*plain.steps, other, evolve(plain.steps[0], step_id=StepId(uuid4()))))
         await uow.projects.add(project)
         await uow.recipes.add(recipe)
         await uow.commit()
@@ -609,7 +620,7 @@ class TestPageEditRepository:
         replacement = make_page_edit(page_id=page_id, degrees=-0.5)
         await uow.page_edits.save(replacement)
         await uow.commit()
-        found = await (await fx_uow_factory()).page_edits.find(PageEditKey(page_id, Stage.GEOMETRY, 'geometry.deskew'))
+        found = await (await fx_uow_factory()).page_edits.find(PageEditKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID))
         assert found == replacement
 
     async def test_geometry_and_mask_survive_the_store(
@@ -627,7 +638,7 @@ class TestPageEditRepository:
         edit = PageEdit(
             page_id=page_id,
             stage=Stage.PAGE_SPLIT,
-            processor_key='split.spread',
+            step_id=StepId(uuid4()),
             kind=geometry.editor,
             geometry=geometry,
             mask_key=None,
@@ -659,6 +670,26 @@ class TestPageEditRepository:
             await uow.page_edits.list_for_page(page_id, Stage.GEOMETRY),
             await uow.page_edits.list_for_page(page_id),
         ) == ([geometry], [geometry, cleanup])
+
+    async def test_two_steps_of_one_processor_keep_two_edits(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify edits of two steps on one page and stage are stored apart and found each by its step.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        first = make_page_edit(page_id=page_id, degrees=1.0)
+        second = evolve(make_page_edit(page_id=page_id, degrees=2.0), step_id=StepId(uuid4()))
+        uow = await fx_uow_factory()
+        await uow.page_edits.save(first)
+        await uow.page_edits.save(second)
+        await uow.commit()
+        edits = (await fx_uow_factory()).page_edits
+        assert (await edits.find(first.key), await edits.find(second.key)) == (first, second)
 
     async def test_edit_of_a_missing_page_is_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
         """Reject an edit whose page is not stored.

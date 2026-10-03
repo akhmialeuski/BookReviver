@@ -64,6 +64,7 @@ from bookreviver.domain.ids import (
     RecipeRuleId,
     ScanId,
     SourceId,
+    StepId,
     StorageKey,
 )
 from bookreviver.domain.values import (
@@ -729,7 +730,7 @@ class PageEditMapper(RowMapper[PageEdit, PageEditRow]):
         return PageEdit(
             page_id=PageId(row.page_id),
             stage=row.stage,
-            processor_key=row.processor_key,
+            step_id=StepId(row.step_id),
             kind=row.kind,
             geometry=None if row.geometry is None else geometry_from_data(row.kind, row.geometry),
             mask_key=None if row.mask_key is None else StorageKey(row.mask_key),
@@ -749,7 +750,7 @@ class PageEditMapper(RowMapper[PageEdit, PageEditRow]):
         return PageEditRow(
             page_id=entity.page_id,
             stage=entity.stage,
-            processor_key=entity.processor_key,
+            step_id=entity.step_id,
             kind=entity.kind,
             geometry=None if entity.geometry is None else entity.geometry.to_data(),
             mask_key=entity.mask_key,

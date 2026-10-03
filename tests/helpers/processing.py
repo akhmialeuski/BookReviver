@@ -21,13 +21,14 @@ from bookreviver.domain.entities import Actor, PageStage
 from bookreviver.domain.enums import (
     ImagePolicy,
     JobKind,
+    PageKind,
     Rendition,
     Stage,
     StageState,
     VersionState,
 )
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import RecipeKey, Renditions
+from bookreviver.domain.values import PageEditKey, RecipeKey, Renditions
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.services.edits import EditService
@@ -258,6 +259,22 @@ class ProcessingKit:
             uow=uow, assets=self.assets, catalogue=self.catalogue, records=self.parts(uow).records, clock=self.clock
         )
 
+    async def edit_key(self, page: Page, stage: Stage, processor_key: str) -> PageEditKey:
+        """Give the key of the edit of a step of the active recipe of a stage on a page, found by its processor.
+
+        :param page: Page the edit belongs to.
+        :type page: Page
+        :param stage: Stage of the recipe.
+        :type stage: Stage
+        :param processor_key: Key of the processor of the step, whose first step in the recipe is the one named.
+        :type processor_key: str
+        :returns: The key of the edit of that step.
+        :rtype: PageEditKey
+        """
+        recipe = await self.parts(self.uow()).recipes.active(page.project_id, stage)
+        step = next(step for step in recipe.steps if step.processor_key == processor_key)
+        return PageEditKey(page.id, stage, step.step_id)
+
     def uow(self) -> InMemoryUnitOfWork:
         """Open a unit of work to read what was committed.
 
@@ -282,7 +299,7 @@ class ProcessingKit:
         return Actor(account_id=owner), project
 
     async def seed_scan_page(
-        self, project: Project, *, order_key: str = 'a0', image: bytes = IMAGE_CONTENT
+        self, project: Project, *, order_key: str = 'a0', image: bytes = IMAGE_CONTENT, kind: PageKind = PageKind.TEXT
     ) -> tuple[Page, Scan]:
         """Commit a scan whose images are stored and a page that shows it whole.
 
@@ -292,12 +309,14 @@ class ProcessingKit:
         :type order_key: str
         :param image: Content of the ``full`` and the preview image of the scan.
         :type image: bytes
+        :param kind: Role of the page in the book, a text page unless given.
+        :type kind: PageKind
         :returns: The page and its scan.
         :rtype: tuple[Page, Scan]
         """
         source = make_source(project_id=project.id, name=f'{order_key}.pdf')
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
-        page = make_page(project_id=project.id, order_key=order_key, scan=scan)
+        page = make_page(project_id=project.id, order_key=order_key, scan=scan, kind=kind)
         uow = self.uow()
         await uow.sources.add(source)
         await uow.scans.add(scan)

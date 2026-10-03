@@ -85,7 +85,7 @@ class Eraser(ModelProcessor):
     spec = ProcessorSpec(
         key='cleanup.eraser',
         version='1',
-        title='Eraser',
+        title='Fill zones',
         stage=Stage.CLEANUP,
         scope=ProcessorScope.PAGE,
         outputs=frozenset({VersionOutput.IMAGE}),

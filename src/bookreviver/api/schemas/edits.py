@@ -15,7 +15,7 @@ from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.domain.enums import EditorKind, Stage
 from bookreviver.domain.geometry import geometry_from_data
-from bookreviver.domain.ids import PageId
+from bookreviver.domain.ids import PageId, StepId
 from bookreviver.domain.values import NewPageEdit
 
 if TYPE_CHECKING:
@@ -70,8 +70,8 @@ class PageEditSchema(ResponseModel):
     """A manual edit of a page.
 
     :ivar page_id: Page the edit belongs to.
-    :ivar stage: Stage of the processor that reads the edit.
-    :ivar processor_key: Key of that processor.
+    :ivar stage: Stage of the step that reads the edit.
+    :ivar step_id: Identifier of that step.
     :ivar kind: Editor that drew the edit.
     :ivar geometry: The shape as JSON, or None for an edit that is only a mask.
     :ivar mask: Path of the mask on the IIIF route, or None.
@@ -81,7 +81,7 @@ class PageEditSchema(ResponseModel):
 
     page_id: PageId
     stage: Stage
-    processor_key: str
+    step_id: StepId
     kind: EditorKind
     geometry: dict[str, Any] | None
     mask: str | None
@@ -103,7 +103,7 @@ class PageEditSchema(ResponseModel):
         return cls(
             page_id=edit.page_id,
             stage=edit.stage,
-            processor_key=edit.processor_key,
+            step_id=edit.step_id,
             kind=edit.kind,
             geometry=None if edit.geometry is None else edit.geometry.to_data(),
             mask=mask,

@@ -4,11 +4,12 @@ import re
 from collections.abc import Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Self, override
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from attrs import evolve, field, fields_dict, frozen, validators
 
 from bookreviver.domain.enums import (
+    AppliesTo,
     CompareMode,
     ContributorRole,
     EditorKind,
@@ -30,7 +31,7 @@ from bookreviver.domain.enums import (
     WorkerPool,
 )
 from bookreviver.domain.errors import InvalidIdentifierError, InvalidParametersError, UploadRejectedError
-from bookreviver.domain.ids import PageId, PageVersionId, RecipeId
+from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StepId
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -416,46 +417,63 @@ class ProcessorRef:
 
 @frozen(kw_only=True)
 class Step:
-    """One step of a recipe: a processor and the parameters it runs with.
+    """One step of a recipe: a processor, the parameters it runs with and the pages it runs on.
+
+    The processor key is not unique in a recipe, since a processor may be added twice with other parameters or another
+    condition, so the step has an identifier of its own. A manual edit belongs to it, and it stays as the step is moved,
+    saved, copied into a variant or kept in a profile.
 
     :ivar processor_key: Key of the processor, such as ``geometry.deskew``.
     :ivar params: Parameters of the step, following the processor's JSON Schema.
     :ivar enabled: Whether a run and a preview run the step. A step that is off stays in the recipe with its parameters,
                    so switching it on again loses nothing.
+    :ivar step_id: Identifier of the step, made when the step is added.
+    :ivar applies_to: Which pages the step processes. A page that does not meet the condition passes the step as it is.
     """
 
     processor_key: str = field(validator=validators.min_len(1))
     params: MetadataMap = field(factory=dict)
     enabled: bool = True
+    step_id: StepId = field(factory=lambda: StepId(uuid4()))
+    applies_to: AppliesTo = AppliesTo.ALL
 
     def to_map(self) -> dict[str, Any]:
         """Return the step as the JSON object a recipe and the parameters of a job store.
 
-        :returns: The processor key, the parameters and whether the step is on.
+        :returns: The processor key, the parameters, whether the step is on, its identifier and its condition.
         :rtype: dict[str, Any]
         """
         return {
             StepField.PROCESSOR_KEY: self.processor_key,
             StepField.PARAMS: dict(self.params),
             StepField.ENABLED: self.enabled,
+            StepField.STEP_ID: str(self.step_id),
+            StepField.APPLIES_TO: self.applies_to.value,
         }
 
     @classmethod
     def from_map(cls, stored: MetadataMap) -> Self:
         """Read the step from the JSON object ``to_map`` wrote.
 
-        A step stored before the switch existed has no ``enabled`` key and is on, as every step was.
+        A step stored before the switch existed has no ``enabled`` key and is on, as every step was. One stored before
+        the identifier and the condition existed has no ``step_id`` and gets a new one, and has no condition and is
+        processing every page. The migration of the recipes gives the stored steps their identifiers, so only the
+        parameters of a job queued before it can lack one.
 
         :param stored: The stored object.
         :type stored: MetadataMap
         :returns: The step.
         :rtype: Self
         :raises KeyError: If the object has no processor key or no parameters.
+        :raises ValueError: If the identifier or the condition is not valid.
         """
+        step_id = stored.get(StepField.STEP_ID)
         return cls(
             processor_key=stored[StepField.PROCESSOR_KEY],
             params=stored[StepField.PARAMS],
             enabled=stored.get(StepField.ENABLED, True),
+            step_id=StepId(uuid4() if step_id is None else UUID(step_id)),
+            applies_to=AppliesTo(stored.get(StepField.APPLIES_TO, AppliesTo.ALL)),
         )
 
 
@@ -485,16 +503,16 @@ class RecipeKey:
 
 @frozen
 class PageEditKey:
-    """The key of a manual edit: a processor's input on a page in a stage.
+    """The key of a manual edit: the input of a step of a recipe on a page.
 
     :ivar page_id: Page the edit belongs to.
-    :ivar stage: Stage of the processor reading the edit.
-    :ivar processor_key: Key of the processor reading the edit.
+    :ivar stage: Stage of the step reading the edit.
+    :ivar step_id: The step reading the edit, which tells two steps of one processor apart.
     """
 
     page_id: PageId
     stage: Stage
-    processor_key: str
+    step_id: StepId
 
 
 @frozen

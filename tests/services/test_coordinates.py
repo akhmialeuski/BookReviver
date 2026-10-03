@@ -15,7 +15,7 @@ from PIL import Image
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.geometry import Point, Rotation
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import NewPageEdit, PageEditKey, StageRun
+from bookreviver.domain.values import NewPageEdit, StageRun
 from tests.helpers.samples import find_mark, mark, png_bytes, spread
 from tests.helpers.spreads import (
     HEIGHT_PX,
@@ -100,7 +100,8 @@ class TestChainOfTransforms:
         await use_recipe(fx_cv_kit, actor, project, Stage.GEOMETRY, DESKEW)
         if degrees is not None:
             edit = NewPageEdit(kind=Rotation.editor, geometry=Rotation(degrees=degrees))
-            await fx_cv_kit.edits().save(actor, project.id, PageEditKey(left.id, Stage.GEOMETRY, DESKEW), edit, None)
+            key = await fx_cv_kit.edit_key(left, Stage.GEOMETRY, DESKEW)
+            await fx_cv_kit.edits().save(actor, project.id, key, edit, None)
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.GEOMETRY, page_ids=(left.id,)))
         deskewed = await head_of(fx_cv_kit, left, Stage.GEOMETRY)
         found = await landmark_on(fx_cv_kit, project, deskewed)

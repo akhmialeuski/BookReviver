@@ -14,8 +14,8 @@ export const UNDO_DEPTH = 50;
 export interface UndoEntry {
   /** The page the edit belongs to. */
   ownerId: string;
-  /** The processor that reads the edit. */
-  processorKey: string;
+  /** The step of the recipe that reads the edit. */
+  stepId: string;
   /** What the page had before the change, or null for no edit. */
   previous: Geometry | null;
 }
@@ -30,16 +30,16 @@ export function pushUndo(stack: readonly UndoEntry[], entry: UndoEntry): UndoEnt
  *
  * @param stack The stack.
  * @param ownerId The page.
- * @param processorKey The processor.
+ * @param stepId The step.
  * @returns The change and the stack without it, or null when the edit has nothing to take back.
  */
 export function popUndo(
   stack: readonly UndoEntry[],
   ownerId: string,
-  processorKey: string,
+  stepId: string,
 ): { entry: UndoEntry; rest: UndoEntry[] } | null {
   const index = stack.findLastIndex(
-    (entry) => entry.ownerId === ownerId && entry.processorKey === processorKey,
+    (entry) => entry.ownerId === ownerId && entry.stepId === stepId,
   );
   const entry = stack[index];
   if (entry === undefined) {

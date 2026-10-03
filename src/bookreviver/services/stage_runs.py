@@ -3,9 +3,10 @@
 A run reads the current version of the nearest earlier stage of the page, or the scan itself for the page split, and
 makes one version for each step of the recipe, each reading the one before. Before a step is run its identifier is
 worked out from everything it depends on, so a version that was made already is found and used again, and only a step
-whose parameters, edit or input changed is computed. A version that is made is stored in its own directory and never
-changed, and one that fails is stored as failed with its reason, so a repeated run makes it again under the same
-identifier.
+whose parameters, edit or input changed is computed. A page that does not meet the condition of a step (``AppliesTo``)
+passes it unchanged: the version of the step holds the image of its input, flagged as skipped by the condition. A
+version that is made is stored in its own directory and never changed, and one that fails is stored as failed with its
+reason, so a repeated run makes it again under the same identifier.
 
 ``RecipeRun`` ends a page's run by making the last version the current one of the stage, which marks the later stages of
 the page stale, and by cutting its tile pyramid. A run may stop at one step of the recipe, and the page is then recorded
@@ -24,6 +25,7 @@ from attrs import evolve, frozen
 
 from bookreviver.domain.entities import Page, PageVersion, VersionInputs
 from bookreviver.domain.enums import (
+    ColorMode,
     PageOrigin,
     PageSide,
     ProcessorScope,
@@ -38,7 +40,7 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PageEditKey, PageSize, PageStageKey, Step
+from bookreviver.domain.values import COLOR_MODE_KEY, PageEditKey, PageSize, PageStageKey, Step
 from bookreviver.services.spread_splits import SpreadSplit
 from bookreviver.services.steps import StepRun
 
@@ -83,15 +85,24 @@ class StepSource:
     :ivar version_id: Version the step reads, or None when it reads a scan.
     :ivar image: Key of the image, the ``full`` or the ``preview`` of the version or the scan.
     :ivar data: ``data`` of the version, or the facts of the scan.
+    :ivar scale: Whether the image is the full one or the preview, which is what the step reading it runs on.
     :ivar ratio: Size of the image over the size of the full image, 1 for a full run.
-    :ivar scale: Whether the image is the full one, which a full run reads, or the preview a preview reads.
+    :ivar stage_color: Colour mode of the image the stage started from, which the condition of a step reads, or None
+                       when the source is that image.
     """
 
     version_id: PageVersionId | None
     image: StorageKey
     data: MetadataMap
-    ratio: float = 1.0
     scale: VersionScale = VersionScale.FULL
+    ratio: float = 1.0
+    stage_color: ColorMode | None = None
+
+    @property
+    def color_mode(self) -> ColorMode:
+        """The colour mode the image says it has, or unknown when it says none."""
+        stated = self.data.get(COLOR_MODE_KEY)
+        return ColorMode(stated) if stated in set(ColorMode) else ColorMode.UNKNOWN
 
 
 @frozen(kw_only=True)
@@ -204,10 +215,12 @@ class StageWork:
                 version_id=None,
                 image=self._keys.scan_rendition(scan, Rendition.PREVIEW),
                 data=data,
+                scale=scale,
                 ratio=self._ratio(facts.width_px, facts.height_px),
-                scale=VersionScale.PREVIEW,
             )
-        return StepSource(version_id=None, image=self._keys.scan_rendition(scan, scan.renditions.full), data=data)
+        return StepSource(
+            version_id=None, image=self._keys.scan_rendition(scan, scan.renditions.full), data=data, scale=scale
+        )
 
     def _version_source(self, version: PageVersion, scale: VersionScale) -> StepSource:
         """Make a source of the files of a version that has an image.
@@ -230,13 +243,14 @@ class StageWork:
                 version_id=version.id,
                 image=self._keys.version_rendition(version, Rendition.PREVIEW),
                 data=version.data,
+                scale=scale,
                 ratio=ratio,
-                scale=VersionScale.PREVIEW,
             )
         return StepSource(
             version_id=version.id,
             image=self._keys.version_rendition(version, version.renditions.full),
             data=version.data,
+            scale=scale,
         )
 
     def _ratio(self, width_px: int, height_px: int) -> float:
@@ -283,7 +297,9 @@ class StageWork:
 
         A version that is ready and has its files is returned as it is. One that is new, or failed or left running by a
         crash, or whose files a collection removed, is run, and returned as ready or failed. The one whose files were
-        removed keeps its row, its identifier and its creation time.
+        removed keeps its row, its identifier and its creation time. A page that does not meet the condition of the step
+        is not run through the processor: its version holds the image of the source as it is, with no parameters and no
+        edit, so every step that skips the same input shares it.
 
         :param page: Page being processed.
         :type page: Page
@@ -291,7 +307,8 @@ class StageWork:
         :type stage: Stage
         :param step: The step to run.
         :type step: Step
-        :param source: What the step reads, which also says whether it runs on the full image or on the preview.
+        :param source: What the step reads, whose scale says whether the step runs on the full image or on the preview,
+                       and whose colour of the start of the stage the condition of the step reads.
         :type source: StepSource
         :param expected: Identifier the version must have, when the step makes a version again, or None.
         :type expected: PageVersionId | None
@@ -306,11 +323,15 @@ class StageWork:
         processor = self._catalogue.get(step.processor_key)
         if processor.spec.scope is ProcessorScope.SPLIT:
             raise ConflictError(SPLIT_NOT_AVAILABLE.format(key=step.processor_key))
-        params = processor.validate_params(step.params)
-        edit = await self._uow.page_edits.find(PageEditKey(page.id, stage, step.processor_key))
+        skipped = not step.applies_to.matches(page.kind, source.stage_color or source.color_mode)
+        checked = processor.validate_params(step.params)
+        params = {} if skipped else checked
+        edit = None if skipped else await self._uow.page_edits.find(PageEditKey(page.id, stage, step.step_id))
         # The side is part of what a step depends on, so a page moved to the other side of the book is made again
         side = (
-            PageSide.of_position(await self._uow.pages.count_before(page) + 1) if processor.spec.by_page_side else None
+            PageSide.of_position(await self._uow.pages.count_before(page) + 1)
+            if processor.spec.by_page_side and not skipped
+            else None
         )
         inputs = VersionInputs(
             page_id=page.id,
@@ -320,6 +341,7 @@ class StageWork:
             edit_hash='' if edit is None else edit.edit_hash,
             scale=scale,
             side=side,
+            skipped=skipped,
         )
         if expected is not None and inputs.identify() != expected:
             raise ConflictError(REMAKE_CHANGED)
@@ -350,6 +372,7 @@ class StageWork:
             scale=scale,
             ratio=source.ratio,
             side=side,
+            skipped=skipped,
         )
         try:
             made = await self._execute(version, run)
@@ -482,25 +505,36 @@ class RecipeRun(StageWork):
                 break
             chain.append(earlier)
         chain.reverse()
+        previous = await self._uow.page_stages.find(PageStageKey(page.id, target.stage))
+        # The edit and the condition of a step belong to its identifier, so the chain is run with the steps of the
+        # recipe of the page, in their order, and a version no step of it made is run by a new step
+        recipe_steps = (
+            iter(())
+            if previous is None or previous.recipe_id is None
+            else iter((await self._uow.recipes.get(previous.recipe_id)).steps)
+        )
+        steps: list[Step] = []
+        for made in chain:
+            own = next(
+                (step for step in recipe_steps if step.enabled and step.processor_key == made.processor.key), None
+            )
+            steps.append(
+                Step(processor_key=made.processor.key, params=made.params)
+                if own is None
+                else evolve(own, params=own.params if made.data.get(VersionData.SKIPPED_BY_CONDITION) else made.params)
+            )
         try:
             source = await self._source(page, target.stage, VersionScale.FULL)
             if source is None:
                 return RunOutcome.SKIPPED
             if source.version_id != chain[0].input_id:
                 raise ConflictError(REMAKE_INPUT_CHANGED)
-            version = await self._run_steps(
-                page,
-                target.stage,
-                [Step(processor_key=made.processor.key, params=made.params) for made in chain],
-                source,
-                expected=[made.id for made in chain],
-            )
+            version = await self._run_steps(page, target.stage, steps, source, expected=[made.id for made in chain])
         except DomainError:
             await self._uow.rollback()
             raise
         if version is None:
             return RunOutcome.FAILED
-        previous = await self._uow.page_stages.find(PageStageKey(page.id, target.stage))
         changed = await self._records.set_head(
             PageStageKey(page.id, target.stage),
             head_version_id=version.id,
@@ -538,13 +572,15 @@ class RecipeRun(StageWork):
                              one, or the pyramid cannot be cut.
         """
         version: PageVersion | None = None
+        # The colour of a picture is the one the stage started from, so a step that binarises it does not change it
+        stage_color = source.color_mode
         for index, step in enumerate(steps):
             version = await self._make_version(
                 page, stage, step, source, expected=None if expected is None else expected[index]
             )
             if version.state is not VersionState.READY:
                 return None
-            source = self._version_source(version, VersionScale.FULL)
+            source = evolve(self._version_source(version, VersionScale.FULL), stage_color=stage_color)
         if version is not None and version.renditions is not None and not version.tiles_ready:
             version = await self._runner.cut_tiles(self._keys, version)
             await self._uow.page_versions.update(version)
@@ -613,11 +649,12 @@ class PreviewRun(StageWork):
         if source is None:
             raise ConflictError(NO_PREVIEW_INPUT)
         version: PageVersion | None = None
+        stage_color = source.color_mode
         for step in (step for step in steps[: step_index + 1] if step.enabled):
             version = await self._make_version(page, stage, step, source)
             if version.state is not VersionState.READY:
                 raise ConflictError(version.data[VersionData.ERROR])
-            source = self._version_source(version, VersionScale.PREVIEW)
+            source = evolve(self._version_source(version, VersionScale.PREVIEW), stage_color=stage_color)
         if version is None:
             raise ConflictError(NO_STEP_TO_PREVIEW)
         return version

@@ -4,6 +4,7 @@ import { expect, test } from '@playwright/test';
 import {
   createBook,
   registerAndSignIn,
+  stepIdsOf,
   uploadFolder,
   writePagesFolder,
   writeScansFolder,
@@ -288,7 +289,8 @@ test('a book on the older recipe that cuts every spread keeps its split line edi
     await expect(facts).toContainText(`${moved} px`, { timeout: RUN_TIMEOUT_MS });
     await expect(facts).toContainText('By hand');
     expect(saved).toHaveLength(1);
-    expect(saved[0]).toContain('/edits/page-split/split.spread');
+    const [spreadStep] = await stepIdsOf(page, 'page-split', 'split.spread');
+    expect(saved[0]).toContain(`/edits/page-split/${spreadStep}`);
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

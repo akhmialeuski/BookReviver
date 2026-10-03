@@ -275,7 +275,7 @@ class Crop(ModelProcessor):
     spec = ProcessorSpec(
         key='geometry.crop',
         version='1',
-        title='Crop',
+        title='Select content',
         stage=Stage.GEOMETRY,
         scope=ProcessorScope.PAGE,
         outputs=frozenset({VersionOutput.IMAGE}),
