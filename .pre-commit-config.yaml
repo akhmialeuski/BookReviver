@@ -79,8 +79,10 @@ repos:
   - repo: https://github.com/astral-sh/uv-pre-commit
     rev: d153933366256874470b9d8395de436c50714f41  # frozen: 0.12.9
     hooks:
+      # Runs after every checkout, merge and rebase too, so it syncs the optional groups the checks and the plugins
+      # need: a plain sync would remove OpenCV and leave out a dependency or entry point that a branch adds to them
       - id: uv-sync
-        args: [ --locked ]
+        args: [ --locked, --all-extras ]
 
   # Type checkers (all three REQUIRED — local hooks)
   - repo: local
