@@ -560,6 +560,8 @@ class PageStageRow(DefaultBase):
     :ivar head_version_id: Current version of the stage, or null.
     :ivar state: Whether the current version matches the inputs of the stage, stored by value.
     :ivar pinned: Whether the recipe of the record is pinned to the page, so a run without a recipe keeps it.
+    :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
+                        that is on, or null for a page run through all of them.
     :ivar updated_at: Time the record last changed.
     :ivar page: Page owning the record, never loaded implicitly.
     """
@@ -573,6 +575,7 @@ class PageStageRow(DefaultBase):
     head_version_id: Mapped[str | None] = mapped_column(ForeignKey(PageVersionRow.id, ondelete=SET_NULL), index=True)
     state: Mapped[StageState] = mapped_column(enum_by_value(StageState))
     pinned: Mapped[bool] = mapped_column(server_default=false())
+    through_step: Mapped[int | None]
     updated_at: Mapped[datetime]
 
     page: Mapped[PageRow] = relationship(back_populates=Relation.STAGES, lazy=NO_IMPLICIT_LOAD)

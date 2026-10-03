@@ -50,6 +50,24 @@ export interface VariantView {
   onSelect: (id: string | null) => void;
 }
 
+/** A step the strip can be narrowed to, with the pages a run of the stage stopped at it. */
+export interface StopOption {
+  /** Index of the step in the recipe, from zero. */
+  step: number;
+  pages: number;
+}
+
+/**
+ * The steps a run of the stage stopped at: the choice of one step to list the pages of. A stage no run stopped short of
+ * the last step on has no such view.
+ */
+export interface StopView {
+  options: readonly StopOption[];
+  /** The step whose pages are listed, or null for every page. */
+  selected: number | null;
+  onSelect: (step: number | null) => void;
+}
+
 /**
  * Join the pages of the book with the rows of a stage.
  *
@@ -77,6 +95,32 @@ export function needsCheck(item: StripItem): boolean {
   return (
     row !== undefined && (row.status === 'stale' || row.status === 'failed' || row.review !== null)
   );
+}
+
+/** Tell whether the result of a page was made through some of the steps of its recipe only. */
+function stoppedAt(item: StripItem): number | null {
+  const { row } = item;
+  return row === undefined || row.status === 'failed' ? null : row.through_step;
+}
+
+/** List the steps a run stopped at with the pages of each, the first step first. */
+export function stopOptions(items: readonly StripItem[]): StopOption[] {
+  const counts = new Map<number, number>();
+  for (const item of items) {
+    const step = stoppedAt(item);
+    if (step !== null) {
+      counts.set(step, (counts.get(step) ?? 0) + 1);
+    }
+  }
+  return [...counts].map(([step, pages]) => ({ step, pages })).sort((a, b) => a.step - b.step);
+}
+
+/** Keep the pages a run stopped at a step, or every page for no step. */
+export function applyStopped(
+  items: readonly StripItem[],
+  step: number | null,
+): readonly StripItem[] {
+  return step === null ? items : items.filter((item) => stoppedAt(item) === step);
 }
 
 /** Tell whether a page is kept in the book but not part of it. */

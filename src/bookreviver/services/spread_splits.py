@@ -47,7 +47,7 @@ from bookreviver.domain.events import PagesChanged, PageVersionReady
 from bookreviver.domain.geometry import SplitChoice
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PageEditKey
+from bookreviver.domain.values import PageEditKey, PageStageKey
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
@@ -399,7 +399,7 @@ class SpreadSplit:
             record
             for page, version in zip(pages, made, strict=True)
             for record in await self._records.set_head(
-                page.id, Stage.PAGE_SPLIT, head_version_id=version.id, recipe_id=recipe.id
+                PageStageKey(page.id, Stage.PAGE_SPLIT), head_version_id=version.id, recipe_id=recipe.id
             )
         ]
         if undoing is not None:

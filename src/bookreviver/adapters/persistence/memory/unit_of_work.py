@@ -58,7 +58,7 @@ from bookreviver.domain.ids import (
     ScanId,
     SourceId,
 )
-from bookreviver.domain.stage_summaries import StageTally, VariantTally
+from bookreviver.domain.stage_summaries import StageTally, StepTally, VariantTally
 from bookreviver.domain.values import BookPlaceKey, PageEditKey, PageSize, PageStageKey, Slice, SliceRequest
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
@@ -1181,8 +1181,33 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
                 failed=sum(record.state is StageState.FAILED for record in records),
                 review=sum(marked(record) for record in records),
                 check=sum(record.state is not StageState.FRESH or marked(record) for record in records),
+                partial=sum(
+                    record.state is not StageState.FAILED and record.through_step is not None for record in records
+                ),
             )
             for (project_id, stage), records in groups.items()
+        ]
+
+    @override
+    async def step_tally(self, project_id: ProjectId) -> Sequence[StepTally]:
+        """Count the pages a run stopped at each step, for every stage of the project, leaving out failed records.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: One tally for each step of a stage that a page stopped at.
+        :rtype: Sequence[StepTally]
+        """
+        counts: Counter[tuple[Stage, int]] = Counter(
+            (record.stage, record.through_step)
+            for record in self._rows.values()
+            if record.through_step is not None
+            and record.state is not StageState.FAILED
+            and (page := self._tables.pages[record.page_id]).project_id == project_id
+            and page.origin is not PageOrigin.PLACEHOLDER
+        )
+        return [
+            StepTally(stage=stage, through_step=through_step, pages=pages)
+            for (stage, through_step), pages in counts.items()
         ]
 
 

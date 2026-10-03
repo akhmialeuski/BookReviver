@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { PageTile } from '@/features/workspace/PageTile';
 import { PageFilter } from '@/features/workspace/params';
 import { StripToolbar } from '@/features/workspace/StripToolbar';
-import type { FilterCounts, StripItem, VariantView } from '@/features/workspace/strip';
+import type { FilterCounts, StopView, StripItem, VariantView } from '@/features/workspace/strip';
 import { useAfterPick } from '@/features/workspace/stripSheet';
 import { useStripPlace } from '@/features/workspace/useStripPlace';
 import { MESSAGES } from '@/shared/messages';
@@ -31,6 +31,7 @@ export function StageStrip({
   reasonOf,
   withWide = false,
   variants,
+  stopped,
 }: {
   /** The pages the filter lists, in book order. */
   items: readonly StripItem[];
@@ -48,6 +49,8 @@ export function StageStrip({
   withWide?: boolean;
   /** The variants of the stage: a mark on each page, and the choice of one to list. Absent for none to choose from. */
   variants?: VariantView;
+  /** The steps a run stopped at, which narrow the pages to those stopped at one. Absent when no run stopped short. */
+  stopped?: StopView;
 }): React.JSX.Element {
   const scroller = useRef<HTMLDivElement>(null);
   const afterPick = useAfterPick();
@@ -80,6 +83,7 @@ export function StageStrip({
         grid={false}
         withWide={withWide}
         variants={variants}
+        stopped={stopped}
         onFilter={onFilter}
         onSwitchView={onGrid}
       />

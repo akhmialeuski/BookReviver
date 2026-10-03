@@ -1,12 +1,9 @@
 import { ChevronDownIcon, EyeIcon, LoaderCircleIcon, PlayIcon } from 'lucide-react';
-import { useState } from 'react';
-import type { StageRunBody } from '@/api';
-import { useRunInFlight, useRunStage } from '@/features/processing/queries';
-import { pageIdsFor, RunScope, scopeChoices, troubleOf } from '@/features/processing/scope';
-import { undoesSplit } from '@/features/processing/split';
+import { troubleOf } from '@/features/processing/scope';
 import { UnsplitDialog, UnsplitQuestion } from '@/features/processing/UnsplitDialog';
 import { PreviewBlock, type Processing } from '@/features/processing/useProcessing';
-import { useActiveJobs } from '@/features/workspace/queries';
+import type { StageRun } from '@/features/processing/useStageRun';
+import { useStageSummaries } from '@/features/workspace/queries';
 import type { StripItem } from '@/features/workspace/strip';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
@@ -29,7 +26,7 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  *
  * A run goes by the saved recipe, so while the draft has changes the run waits for them to be saved, and a preview, which
  * goes by the draft, is what to use to try them. A run that would send a scan back to one page asks first, and carries the
- * confirmation the server wants.
+ * confirmation the server wants. The pages a run through some of the steps left short of the last say so, by the step.
  */
 
 const labels = MESSAGES.processing;
@@ -44,67 +41,32 @@ const PREVIEW_BLOCKED: Record<PreviewBlock, string> = {
 export function RunControls({
   processing,
   items,
-  current,
-  selected,
+  run,
 }: {
   processing: Processing;
   items: readonly StripItem[];
-  current: StripItem | undefined;
-  selected: ReadonlySet<string>;
+  run: StageRun;
 }): React.JSX.Element {
   const { projectId, stage, recipe, preview } = processing;
-  const run = useRunStage(projectId, stage);
-  const activeJobs = useActiveJobs(projectId);
-  const [confirming, setConfirming] = useState<StageRunBody | null>(null);
+  const summaries = useStageSummaries(projectId);
   const trouble = troubleOf(items);
-  const choices = scopeChoices(items, current?.page.id, selected);
-  const runInFlight = useRunInFlight(projectId);
-  const anotherJobGoing = (activeJobs.data?.length ?? 0) > 0 || runInFlight;
-  const blocked = recipe === undefined || processing.dirty;
-
-  const send = (body: StageRunBody): void =>
-    run.mutate({ path: { project_id: projectId, stage }, body });
-
-  const start = (scope: RunScope): void => {
-    if (recipe === undefined) {
-      return;
-    }
-    const ids = pageIdsFor(scope, items, current?.page.id, selected);
-    // The active recipe is the book's own: each page then gets the variant it is pinned to or the rules choose. Any
-    // other variant is a trial, and goes to every page of the scope
-    const body: StageRunBody = {
-      ...(recipe.active ? {} : { recipe_id: recipe.id }),
-      ...(ids === null ? {} : { page_ids: ids }),
-    };
-    const affected =
-      ids === null
-        ? items.map((item) => item.page)
-        : items.filter((item) => ids.includes(item.page.id)).map((item) => item.page);
-    if (undoesSplit(recipe, affected)) {
-      setConfirming(body);
-    } else {
-      send(body);
-    }
-  };
-
-  const scopeLabel = (scope: RunScope, count: number): string => {
-    switch (scope) {
-      case RunScope.Page:
-        return labels.scope.page(current?.page.label ?? '');
-      case RunScope.Selected:
-        return labels.scope.selected(count);
-      case RunScope.Attention:
-        return labels.scope.attention(count);
-      case RunScope.All:
-        return labels.scope.all(count);
-    }
-  };
+  const stopped = summaries.data?.find((entry) => entry.stage === stage)?.stopped ?? [];
 
   return (
     <div className="grid gap-3">
+      {stopped.length === 0 || recipe === undefined ? null : (
+        <ul className="grid gap-0.5 text-sm" data-testid="run-stopped">
+          {stopped.map(({ through_step: step, pages }) => (
+            <li key={step}>{labels.footer.stoppedAt(step + 1, recipe.steps.length, pages)}</li>
+          ))}
+        </ul>
+      )}
       <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm" data-testid="run-summary">
         {trouble.stale === 0 && trouble.failed === 0 ? (
-          <span className="text-muted-foreground">{labels.footer.allClear}</span>
+          // Pages that stopped short are up to date but not done, which the lines above say
+          stopped.length === 0 && (
+            <span className="text-muted-foreground">{labels.footer.allClear}</span>
+          )
         ) : (
           <>
             {trouble.stale === 0 ? null : (
@@ -124,7 +86,7 @@ export function RunControls({
       </p>
       {processing.dirty ? (
         <p className="text-xs text-muted-foreground">{labels.save.saveFirst}</p>
-      ) : anotherJobGoing ? (
+      ) : run.busy ? (
         <p className="text-xs text-muted-foreground">{labels.footer.busy}</p>
       ) : null}
       <div className="flex gap-2">
@@ -146,26 +108,22 @@ export function RunControls({
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button
-              className="flex-1"
-              disabled={blocked || run.isPending || anotherJobGoing}
-              data-testid="run-menu"
-            >
-              {run.isPending ? <LoaderCircleIcon className="animate-spin" /> : <PlayIcon />}
+            <Button className="flex-1" disabled={run.disabled} data-testid="run-menu">
+              {run.pending ? <LoaderCircleIcon className="animate-spin" /> : <PlayIcon />}
               {labels.footer.run}
               <ChevronDownIcon />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuLabel>{labels.scope.menu}</DropdownMenuLabel>
-            {choices.map(({ scope, count }) => (
+            {run.choices.map(({ scope, count }) => (
               <DropdownMenuItem
                 key={scope}
                 disabled={count === 0}
                 data-testid={`run-${scope}`}
-                onSelect={() => start(scope)}
+                onSelect={() => run.start(scope)}
               >
-                {scopeLabel(scope, count)}
+                {run.describe(scope, count)}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
@@ -173,14 +131,9 @@ export function RunControls({
       </div>
       {run.error === null ? null : <ErrorAlert message={describeError(run.error)} />}
       <UnsplitDialog
-        question={confirming === null ? null : UnsplitQuestion.One}
-        onCancel={() => setConfirming(null)}
-        onConfirm={() => {
-          if (confirming !== null) {
-            send({ ...confirming, confirm_unsplit: true });
-          }
-          setConfirming(null);
-        }}
+        question={run.confirming ? UnsplitQuestion.One : null}
+        onCancel={run.cancel}
+        onConfirm={run.confirm}
       />
     </div>
   );

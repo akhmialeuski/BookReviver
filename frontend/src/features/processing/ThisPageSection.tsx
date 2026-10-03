@@ -1,11 +1,11 @@
 import { TriangleAlertIcon } from 'lucide-react';
-import { stepChain } from '@/features/editors/chain';
 import { EditorControls } from '@/features/editors/EditorControls';
 import type { EditorSession } from '@/features/editors/session';
 import { ApplyTo } from '@/features/processing/ApplyTo';
 import { useChooseVersion, useVersions } from '@/features/processing/queries';
 import { describeParams, historyOf, readChainResult } from '@/features/processing/results';
 import type { Processing } from '@/features/processing/useProcessing';
+import { useShownStep } from '@/features/processing/useShownStep';
 import type { StripItem } from '@/features/workspace/strip';
 import { describeError } from '@/shared/http/problem';
 import { formatDateTime } from '@/shared/lib/format';
@@ -47,9 +47,27 @@ export function ThisPageSection({
   const versions = useVersions(projectId, page.id, stage);
   const choose = useChooseVersion(projectId, stage);
   const entries = historyOf(versions.data ?? [], version?.id);
-  // A stage of several steps stands on the version of the last, so what the first ones found is read down the chain
-  const chain = stepChain(versions.data ?? [], version);
-  const result = readChainResult(chain);
+  // A stage of several steps stands on the version of the last, so what the first ones found is read down the chain, up to
+  // the step the reader chose to look at
+  const shown = useShownStep(processing, item);
+  const { chain } = shown;
+  const result = readChainResult(
+    shown.version === null ? chain : chain.slice(0, chain.indexOf(shown.version) + 1),
+  );
+  const stepsOfPage = shown.recipe?.steps ?? [];
+  // The steps that are on, each by its index in the recipe, which is what the server and the panel name a step by
+  const stepChoices = stepsOfPage.flatMap((entry, value) =>
+    entry.enabled
+      ? [
+          {
+            value,
+            title:
+              catalogue.find((candidate) => candidate.key === entry.processor_key)?.title ??
+              entry.processor_key,
+          },
+        ]
+      : [],
+  );
   const review = row?.review ?? null;
   const facts: { label: string; value: string }[] = [];
   if (editor !== null && version !== null) {
@@ -130,6 +148,36 @@ export function ThisPageSection({
             ))}
           </dl>
         </>
+      )}
+      {row?.through_step === null || row?.through_step === undefined ? null : (
+        <p className="text-sm text-status-attention" data-testid="this-page-stopped">
+          {labels.thisPage.stoppedAt(row.through_step + 1, stepsOfPage.length)}
+        </p>
+      )}
+      {stepsOfPage.length < 2 || chain.length === 0 ? null : (
+        <label className="grid gap-1 text-sm">
+          <span className="text-muted-foreground">{labels.thisPage.result.label}</span>
+          <select
+            className="h-9 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            data-testid="this-page-step"
+            value={shown.index === null ? '' : String(shown.index)}
+            onChange={(event) =>
+              processing.showStep(event.target.value === '' ? null : Number(event.target.value))
+            }
+          >
+            <option value="">{labels.thisPage.result.last}</option>
+            {stepChoices.map(({ value, title }) => (
+              <option key={value} value={value}>
+                {labels.thisPage.result.option(value + 1, title)}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {shown.reached || shown.index === null ? null : (
+        <p className="text-xs text-muted-foreground" data-testid="this-page-not-reached">
+          {labels.thisPage.result.notReached(shown.index + 1)}
+        </p>
       )}
       {review === null ? null : (
         <div

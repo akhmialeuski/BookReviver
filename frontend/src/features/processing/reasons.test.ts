@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { version } from '@/features/processing/fixtures';
-import { reasonOf } from '@/features/processing/reasons';
+import { processor, recipe, step, version } from '@/features/processing/fixtures';
+import { reasonOf, reasonWithStep } from '@/features/processing/reasons';
 import { page, row } from '@/features/workspace/fixtures';
 
 function item(overrides: Parameters<typeof row>[1] = {}) {
@@ -80,5 +80,60 @@ describe('reasonOf', () => {
   it('gives no reason to a page that needs no look or has no row yet', () => {
     expect(reasonOf(item())).toBeNull();
     expect(reasonOf({ page: page('a'), row: undefined })).toBeNull();
+  });
+});
+
+describe('reasonWithStep', () => {
+  const recipes = [
+    recipe('r', { steps: [step('geometry.deskew'), step('geometry.crop')] }),
+    recipe('single', { steps: [step('geometry.deskew')] }),
+  ];
+  const catalogue = [processor('geometry.crop', { title: 'Crop' })];
+  const reasonOfStep = reasonWithStep(recipes, catalogue);
+
+  it('names the step that marked a page, with its number and its title', () => {
+    const marked = item({
+      recipe_id: 'r',
+      review: 'cut-by-edge',
+      review_processor: 'geometry.crop',
+    });
+
+    expect(reasonOfStep(marked)).toBe('Step 2 · Crop: Text may be cut by the edge of the scan');
+  });
+
+  it('falls back to the key of a processor the catalogue does not have', () => {
+    const marked = item({
+      recipe_id: 'r',
+      review: 'low-confidence',
+      review_processor: 'geometry.deskew',
+    });
+
+    expect(reasonOfStep(marked)).toBe('Step 1 · geometry.deskew: Unsure');
+  });
+
+  it('names no step in a recipe of one step, which has no other to tell it from', () => {
+    const marked = item({
+      recipe_id: 'single',
+      review: 'low-confidence',
+      review_processor: 'geometry.deskew',
+    });
+
+    expect(reasonOfStep(marked)).toBe('Unsure');
+  });
+
+  it('says only that a page failed or is out of date, whichever step marked it', () => {
+    const base = {
+      recipe_id: 'r',
+      review: 'low-confidence',
+      review_processor: 'geometry.crop',
+    } as const;
+
+    expect(reasonOfStep(item({ ...base, status: 'stale' }))).toBe('Out of date');
+    expect(reasonOfStep(item({ ...base, status: 'failed' }))).toBe('Failed');
+  });
+
+  it('leaves the reason as it is when the step is not known, and gives none to a page that needs no look', () => {
+    expect(reasonOfStep(item({ recipe_id: 'r', review: 'low-confidence' }))).toBe('Unsure');
+    expect(reasonOfStep(item({ recipe_id: 'r' }))).toBeNull();
   });
 });

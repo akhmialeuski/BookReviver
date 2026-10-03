@@ -21,6 +21,8 @@ export interface StageProgress {
   check: number;
   /** Pages the stage failed on. */
   failed: number;
+  /** Pages run through some of the steps of their recipe only, which the next stage does not read yet. */
+  stopped: number;
   /** The coloured parts, in the order they are drawn; none for a stage without pages. */
   segments: ProgressSegment[];
 }
@@ -36,7 +38,7 @@ const FULL = 100;
  * @param summary The summary of the stage.
  */
 export function stageProgress(summary: StageSummarySchema): StageProgress {
-  const { pages, fresh, stale, failed, not_run: notRun, check } = summary;
+  const { pages, fresh, stale, failed, not_run: notRun, check, partial } = summary;
   const parts: ProgressSegment[] = [
     { status: 'fresh', percent: pages === 0 ? 0 : (fresh / pages) * FULL },
     { status: 'stale', percent: pages === 0 ? 0 : (stale / pages) * FULL },
@@ -48,6 +50,7 @@ export function stageProgress(summary: StageSummarySchema): StageProgress {
     total: pages,
     check,
     failed,
+    stopped: partial,
     segments: parts.filter((part) => part.percent > 0),
   };
 }

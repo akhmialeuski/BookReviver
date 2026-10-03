@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import ProjectOverview
     from bookreviver.domain.enums import JobState, Side, Stage, VersionScale
     from bookreviver.domain.ids import AccountId
-    from bookreviver.domain.stage_summaries import StageTally, VariantTally
+    from bookreviver.domain.stage_summaries import StageTally, StepTally, VariantTally
     from bookreviver.domain.values import PageSize, Slice, SliceRequest
 
 
@@ -561,6 +561,19 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         :type project_id: ProjectId
         :returns: One tally for each recipe that processed a page, in no particular order.
         :rtype: Sequence[VariantTally]
+        """
+
+    @abstractmethod
+    async def step_tally(self, project_id: ProjectId) -> Sequence[StepTally]:
+        """Count the pages of every stage of a project that a run stopped at each step, in one grouped query.
+
+        Only pages with an image are counted, and a record that failed is left out, since its step belongs to a run that
+        did not end. A page run through every step that is on has no step and is not counted.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: One tally for each step of a stage that a page stopped at, in no particular order.
+        :rtype: Sequence[StepTally]
         """
 
     @abstractmethod

@@ -4,12 +4,14 @@ import { images, page, row } from '@/features/workspace/fixtures';
 import { PageFilter } from '@/features/workspace/params';
 import {
   applyFilter,
+  applyStopped,
   canvasSourceOf,
   countFilters,
   isLeftOut,
   joinRows,
   needsCheck,
   type StripItem,
+  stopOptions,
   thumbnailOf,
 } from '@/features/workspace/strip';
 
@@ -25,6 +27,35 @@ describe('joinRows', () => {
 
   it('is empty for a book without pages, whatever rows it is given', () => {
     expect(joinRows([], [row('a')])).toEqual([]);
+  });
+});
+
+describe('steps a run stopped at', () => {
+  const items = joinRows(
+    [page('a'), page('b'), page('c'), page('d'), page('e')],
+    [
+      row('a', { through_step: 1 }),
+      row('b', { through_step: 0 }),
+      row('c', { through_step: 1 }),
+      row('d', { status: 'failed', through_step: 2 }),
+      row('e'),
+    ],
+  );
+
+  it('lists the steps with the pages of each, the first step first, and leaves out failed pages', () => {
+    expect(stopOptions(items)).toEqual([
+      { step: 0, pages: 1 },
+      { step: 1, pages: 2 },
+    ]);
+  });
+
+  it('lists none for a stage no run stopped short', () => {
+    expect(stopOptions(joinRows([page('a')], [row('a')]))).toEqual([]);
+  });
+
+  it('keeps the pages that stopped at a step, and every page for no step', () => {
+    expect(applyStopped(items, 1).map((item) => item.page.id)).toEqual(['a', 'c']);
+    expect(applyStopped(items, null)).toHaveLength(5);
   });
 });
 

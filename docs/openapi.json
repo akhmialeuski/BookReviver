@@ -8763,6 +8763,17 @@
             "type": "boolean",
             "title": "Pinned"
           },
+          "through_step": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Through Step"
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time",
@@ -8777,10 +8788,11 @@
           "head_version_id",
           "state",
           "pinned",
+          "through_step",
           "updated_at"
         ],
         "title": "PageStageSchema",
-        "description": "The current version of a stage of a page and whether it is up to date; the data of a stage event too.\n\n:ivar page_id: Page the record belongs to.\n:ivar stage: The stage.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar head_version_id: The current version of the stage, or None.\n:ivar state: Whether the current version matches the inputs of the stage.\n:ivar pinned: Whether the recipe is pinned to the page, so a run without a recipe keeps it.\n:ivar updated_at: When the record last changed."
+        "description": "The current version of a stage of a page and whether it is up to date; the data of a stage event too.\n\n:ivar page_id: Page the record belongs to.\n:ivar stage: The stage.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar head_version_id: The current version of the stage, or None.\n:ivar state: Whether the current version matches the inputs of the stage.\n:ivar pinned: Whether the recipe is pinned to the page, so a run without a recipe keeps it.\n:ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step\n                    that is on, so the page is not ready for the next stage, or None.\n:ivar updated_at: When the record last changed."
       },
       "PageStageStatus": {
         "type": "string",
@@ -10993,6 +11005,28 @@
                 "type": "null"
               }
             ]
+          },
+          "through_step": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Through Step"
+          },
+          "review_processor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Processor"
           }
         },
         "type": "object",
@@ -11002,10 +11036,12 @@
           "review",
           "recipe_id",
           "pinned",
-          "version"
+          "version",
+          "through_step",
+          "review_processor"
         ],
         "title": "StagePageSchema",
-        "description": "One page of a book in one stage: where it stands there and the version that is its result.\n\n:ivar page_id: The page.\n:ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.\n:ivar review: Why the result asks for a second look, or None.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar pinned: Whether the recipe is pinned to the page.\n:ivar version: The current version of the stage on the page with its data and images, or None."
+        "description": "One page of a book in one stage: where it stands there and the version that is its result.\n\n:ivar page_id: The page.\n:ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.\n:ivar review: Why the result asks for a second look, or None.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar pinned: Whether the recipe is pinned to the page.\n:ivar version: The current version of the stage on the page with its data and images, or None.\n:ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step\n                    that is on, so the page is not ready for the next stage, or None.\n:ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None."
       },
       "StageProgressSchema": {
         "properties": {
@@ -11064,12 +11100,25 @@
             "type": "boolean",
             "title": "Pin",
             "default": false
+          },
+          "through_step": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMaximum": 50.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Through Step"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "StageRunBody",
-        "description": "What a run of a stage is asked to do; the stage is in the address.\n\n:ivar recipe_id: Recipe to run it by, or omitted for the active recipe.\n:ivar page_ids: Pages to run it on, or omitted for every page with an image.\n:ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a\n                       run that would do so leaves that page failed.\n:ivar pin: Whether to pin the recipe to the pages of the run, so a later run without a recipe keeps it there. It is\n           given with a recipe, since a run that chooses the recipes pins nothing."
+        "description": "What a run of a stage is asked to do; the stage is in the address.\n\n:ivar recipe_id: Recipe to run it by, or omitted for the active recipe.\n:ivar page_ids: Pages to run it on, or omitted for every page with an image.\n:ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a\n                       run that would do so leaves that page failed.\n:ivar pin: Whether to pin the recipe to the pages of the run, so a later run without a recipe keeps it there. It is\n           given with a recipe, since a run that chooses the recipes pins nothing.\n:ivar through_step: Index in the recipe of the last step to run, from zero, or omitted to run through the last step\n                    that is on. The steps before it come from the cache of versions when their inputs did not\n                    change."
       },
       "StageState": {
         "type": "string",
@@ -11134,6 +11183,10 @@
             "type": "integer",
             "title": "Check"
           },
+          "partial": {
+            "type": "integer",
+            "title": "Partial"
+          },
           "active_recipe_id": {
             "anyOf": [
               {
@@ -11152,6 +11205,13 @@
             },
             "type": "array",
             "title": "Variants"
+          },
+          "stopped": {
+            "items": {
+              "$ref": "#/components/schemas/StepPagesSchema"
+            },
+            "type": "array",
+            "title": "Stopped"
           }
         },
         "type": "object",
@@ -11166,11 +11226,13 @@
           "not_run",
           "review",
           "check",
+          "partial",
           "active_recipe_id",
-          "variants"
+          "variants",
+          "stopped"
         ],
         "title": "StageSummarySchema",
-        "description": "One stage of a book summed over its pages.\n\n:ivar stage: The stage.\n:ivar available: Whether the stage can be worked in: a stage done by hand always can, and any other when a\n                 processor of the stage is installed.\n:ivar manual: Whether the user does the stage by hand, so it has no counts.\n:ivar pages: Number of pages of the book with an image, which a run of the stage goes over.\n:ivar fresh: Pages whose result of the stage is up to date.\n:ivar stale: Pages whose result is out of date.\n:ivar failed: Pages the stage failed on.\n:ivar not_run: Pages the stage has not run on.\n:ivar review: Pages, not failed, whose result asks for a second look.\n:ivar check: Pages the strip lists under Check: stale, failed or marked, each counted once.\n:ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used.\n:ivar variants: How many pages each recipe of the stage processed, the recipe with the most pages first."
+        "description": "One stage of a book summed over its pages.\n\n:ivar stage: The stage.\n:ivar available: Whether the stage can be worked in: a stage done by hand always can, and any other when a\n                 processor of the stage is installed.\n:ivar manual: Whether the user does the stage by hand, so it has no counts.\n:ivar pages: Number of pages of the book with an image, which a run of the stage goes over.\n:ivar fresh: Pages whose result of the stage is up to date.\n:ivar stale: Pages whose result is out of date.\n:ivar failed: Pages the stage failed on.\n:ivar not_run: Pages the stage has not run on.\n:ivar review: Pages, not failed, whose result asks for a second look.\n:ivar check: Pages the strip lists under Check: stale, failed or marked, each counted once.\n:ivar partial: Pages, not failed, that were run through some of the steps of their recipe only.\n:ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used.\n:ivar variants: How many pages each recipe of the stage processed, the recipe with the most pages first.\n:ivar stopped: How many pages stopped at each step, the first step first."
       },
       "StepBody": {
         "properties": {
@@ -11198,6 +11260,25 @@
         ],
         "title": "StepBody",
         "description": "A step of a recipe or of a preview as the interface sends it.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which the processor checks and fills in.\n:ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off."
+      },
+      "StepPagesSchema": {
+        "properties": {
+          "through_step": {
+            "type": "integer",
+            "title": "Through Step"
+          },
+          "pages": {
+            "type": "integer",
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "through_step",
+          "pages"
+        ],
+        "title": "StepPagesSchema",
+        "description": "How many pages of a stage a run stopped at one step.\n\n:ivar through_step: Index in the recipe of the last step the pages were run through, from zero.\n:ivar pages: Pages with an image, not failed, that stopped at the step."
       },
       "StepPreviewBody": {
         "properties": {

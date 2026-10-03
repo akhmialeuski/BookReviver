@@ -61,6 +61,7 @@ from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import (
     ImportRequest,
     ImportResult,
+    PageStageKey,
     Progress,
     RejectedFile,
     Renditions,
@@ -468,7 +469,7 @@ class ImportRun:
                 record
                 for page, version in zip(pages, versions, strict=True)
                 for record in await self._records.set_head(
-                    page.id, version.stage, head_version_id=version.id, recipe_id=None
+                    PageStageKey(page.id, version.stage), head_version_id=version.id, recipe_id=None
                 )
             ]
             await self._uow.scans.update(ready)

@@ -159,6 +159,8 @@ describe('countsOf', () => {
     not_run: 3,
     review: 0,
     check: 0,
+    partial: 0,
+    stopped: [],
     active_recipe_id: 'text',
     variants: [
       { recipe_id: 'text', pages: 412 },

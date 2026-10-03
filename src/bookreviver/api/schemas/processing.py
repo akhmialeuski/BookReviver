@@ -160,12 +160,16 @@ class StageRunBody(RequestModel):
                            run that would do so leaves that page failed.
     :ivar pin: Whether to pin the recipe to the pages of the run, so a later run without a recipe keeps it there. It is
                given with a recipe, since a run that chooses the recipes pins nothing.
+    :ivar through_step: Index in the recipe of the last step to run, from zero, or omitted to run through the last step
+                        that is on. The steps before it come from the cache of versions when their inputs did not
+                        change.
     """
 
     recipe_id: RecipeId | None = None
     page_ids: PageIdList | None = None
     confirm_unsplit: bool = False
     pin: bool = False
+    through_step: Annotated[int, Field(ge=0, lt=RECIPE_STEPS_MAX_LENGTH)] | None = None
 
     @model_validator(mode='after')
     def _pin_names_a_recipe(self) -> Self:
@@ -193,6 +197,7 @@ class StageRunBody(RequestModel):
             page_ids=None if self.page_ids is None else tuple(self.page_ids),
             confirm_unsplit=self.confirm_unsplit,
             pin=self.pin,
+            through_step=self.through_step,
         )
 
 
@@ -245,6 +250,8 @@ class PageStageSchema(ResponseModel):
     :ivar head_version_id: The current version of the stage, or None.
     :ivar state: Whether the current version matches the inputs of the stage.
     :ivar pinned: Whether the recipe is pinned to the page, so a run without a recipe keeps it.
+    :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
+                        that is on, so the page is not ready for the next stage, or None.
     :ivar updated_at: When the record last changed.
     """
 
@@ -254,6 +261,7 @@ class PageStageSchema(ResponseModel):
     head_version_id: PageVersionId | None
     state: StageState
     pinned: bool
+    through_step: int | None
     updated_at: datetime
 
     @classmethod

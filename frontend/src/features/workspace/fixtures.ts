@@ -44,6 +44,8 @@ export function row(id: string, overrides: Partial<StagePageSchema> = {}): Stage
     recipe_id: null,
     pinned: false,
     version: null,
+    through_step: null,
+    review_processor: null,
     ...overrides,
   };
 }

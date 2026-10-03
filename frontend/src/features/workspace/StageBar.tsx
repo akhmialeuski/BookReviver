@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useMatch, useParams, useSearch } from '@tanstack/react-router';
 import {
   CheckCircle2Icon,
+  ChevronsRightIcon,
   CircleXIcon,
   InfoIcon,
   ListIcon,
@@ -139,6 +140,17 @@ function StageNote({
           <TriangleAlertIcon className="size-3" aria-hidden="true" />
           {progress.check}
           <span className="sr-only">{labels.check(progress.check)}</span>
+        </span>
+      ) : null}
+      {progress.stopped > 0 ? (
+        <span
+          className="flex items-center gap-0.5"
+          title={labels.stopped(progress.stopped)}
+          data-testid="stage-stopped"
+        >
+          <ChevronsRightIcon className="size-3" aria-hidden="true" />
+          {progress.stopped}
+          <span className="sr-only">{labels.stopped(progress.stopped)}</span>
         </span>
       ) : null}
       {progress.failed > 0 ? (

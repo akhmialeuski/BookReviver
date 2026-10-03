@@ -8,9 +8,10 @@ changed, and one that fails is stored as failed with its reason, so a repeated r
 identifier.
 
 ``RecipeRun`` ends a page's run by making the last version the current one of the stage, which marks the later stages of
-the page stale, and by cutting its tile pyramid. If the earlier stage of the page is stale, it is run again first by its
-own recipe, which finds its versions in the cache when nothing changed. ``PreviewRun`` runs the steps of a form on the
-previews of the images and never changes what is current.
+the page stale, and by cutting its tile pyramid. A run may stop at one step of the recipe, and the page is then recorded
+as stopped there. If the earlier stage of the page is stale, or stopped short of its last step, it is run again first by
+its own recipe, which finds its versions in the cache when nothing changed. ``PreviewRun`` runs the steps of a form on
+the previews of the images and never changes what is current.
 
 Both classes read and write through one unit of work and commit after each version, so the viewer shows the first
 results while the rest are made.
@@ -153,7 +154,8 @@ class StageWork:
             record = await self._uow.page_stages.find(PageStageKey(page.id, earlier))
             if record is None or record.head_version_id is None:
                 continue
-            if record.state is StageState.STALE:
+            # A page run through some of the steps only is not ready to be read, and is run through the rest first
+            if record.state is StageState.STALE or record.through_step is not None:
                 await self._refresh(page, earlier)
                 record = await self._uow.page_stages.get(PageStageKey(page.id, earlier))
                 if record.state is StageState.FAILED:
@@ -364,10 +366,21 @@ class RecipeRun(StageWork):
         self._records = records
         self._splits = SpreadSplit(project=project, uow=uow, runtime=runtime, records=records)
 
-    async def run(self, page: Page, recipe: Recipe, *, confirmed: bool = False, pin: bool | None = None) -> RunOutcome:
+    async def run(
+        self,
+        page: Page,
+        recipe: Recipe,
+        *,
+        confirmed: bool = False,
+        pin: bool | None = None,
+        through_step: int | None = None,
+    ) -> RunOutcome:
         """Run the steps of the recipe on the page, and make the version of the last one current.
 
         The right half of a split spread is made by the run of its left half, so a run of the page split leaves it out.
+        A run through a step makes the steps up to it, finding those before in the cache when their inputs did not
+        change, and records the page as stopped there, so the stage after it does not read the page until the rest is
+        run.
 
         :param page: Page to process.
         :type page: Page
@@ -377,6 +390,8 @@ class RecipeRun(StageWork):
         :type confirmed: bool
         :param pin: Whether the recipe is pinned to the page, or None to keep the pin the page has.
         :type pin: bool | None
+        :param through_step: Index in the recipe of the last step to run, or None for every step that is on.
+        :type through_step: int | None
         :returns: Whether the page was processed, skipped for lack of an image, or failed.
         :rtype: RunOutcome
         """
@@ -393,13 +408,19 @@ class RecipeRun(StageWork):
                     else await self._fail(page, recipe, pin=pin)
                 )
             undoing = await self._splits.undoing(page, recipe, confirmed=confirmed)
-            version = await self._run_steps(page, recipe, source)
+            version = await self._run_steps(page, recipe, source, through_step)
         except DomainError:
             await self._uow.rollback()
             return await self._fail(page, recipe, pin=pin)
         if version is None:
             return await self._fail(page, recipe, pin=pin)
-        changed = await self._records.set_head(page.id, stage, head_version_id=version.id, recipe_id=recipe.id, pin=pin)
+        changed = await self._records.set_head(
+            PageStageKey(page.id, stage),
+            head_version_id=version.id,
+            recipe_id=recipe.id,
+            pin=pin,
+            through_step=recipe.stopped_at(through_step),
+        )
         if undoing is not None:
             await self._splits.unsplit(undoing)
         await self._uow.commit()
@@ -408,8 +429,10 @@ class RecipeRun(StageWork):
         await self._records.announce(page.project_id, changed)
         return RunOutcome.DONE
 
-    async def _run_steps(self, page: Page, recipe: Recipe, source: StepSource) -> PageVersion | None:
-        """Make the version of each step of the recipe that is switched on, and cut the pyramid of the last one.
+    async def _run_steps(
+        self, page: Page, recipe: Recipe, source: StepSource, through_step: int | None
+    ) -> PageVersion | None:
+        """Make the version of each step of the recipe that is switched on up to one, and cut the pyramid of the last.
 
         :param page: Page to process.
         :type page: Page
@@ -417,12 +440,14 @@ class RecipeRun(StageWork):
         :type recipe: Recipe
         :param source: What the first step reads.
         :type source: StepSource
-        :returns: The version of the last step, or None when a step failed.
+        :param through_step: Index in the recipe of the last step to run, or None for every step that is on.
+        :type through_step: int | None
+        :returns: The version of the last step run, or None when a step failed or every step up to the index is off.
         :rtype: PageVersion | None
         :raises DomainError: If a processor is missing, its parameters do not fit, or the pyramid cannot be cut.
         """
         version: PageVersion | None = None
-        for step in recipe.enabled_steps:
+        for _, step in recipe.indexed_steps_through(through_step):
             version = await self._make_version(page, recipe.stage, step, source, VersionScale.FULL)
             if version.state is not VersionState.READY:
                 return None

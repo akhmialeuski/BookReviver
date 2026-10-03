@@ -8,6 +8,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import (
     ColorMode,
+    EditorKind,
     ImagePolicy,
     JobState,
     Rendition,
@@ -16,14 +17,15 @@ from bookreviver.domain.enums import (
     VersionScale,
     VersionState,
 )
-from bookreviver.domain.errors import InvalidParametersError
+from bookreviver.domain.errors import ConflictError, InvalidParametersError
 from bookreviver.domain.events import PageStageChanged, PageVersionReady
+from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PageStageKey, SliceRequest, StageRun, Step, StepPreview
+from bookreviver.domain.values import NewPageEdit, PageEditKey, PageStageKey, SliceRequest, StageRun, Step, StepPreview
 from tests.helpers.builders import make_page
 from tests.helpers.fake_processing import PREVIEW_TOKEN
 from tests.helpers.processing import IMAGE_CONTENT
-from tests.helpers.processors import FakeProcessor
+from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Page, PageVersion, Project
@@ -410,6 +412,177 @@ class TestRunStage:
         await fx_kit.jobs().run_stage(job.id)
         stored = await fx_kit.uow().jobs.get(job.id)
         assert (stored.state, 'not valid' in stored.error) == (JobState.FAILED, True)
+
+
+async def save_three_steps(kit: ProcessingKit, actor: Actor, project: Project) -> None:
+    """Save a geometry recipe of three steps of the fake processor, which differ by their strength.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param actor: Account owning the project.
+    :type actor: Actor
+    :param project: Project to save the recipe in.
+    :type project: Project
+    """
+    steps = [Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: strength}) for strength in range(1, 4)]
+    await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, 'Three', steps)
+
+
+class TestRunThroughStep:
+    """Tests for a run of a stage that stops at one of the steps of its recipe."""
+
+    async def test_run_makes_the_steps_up_to_the_one_asked_and_leaves_the_rest(self, fx_kit: ProcessingKit) -> None:
+        """Verify a run through the second step makes two versions, and the stage head is the result of the second.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page = await prepared_page(fx_kit)
+        await save_three_steps(fx_kit, actor, project)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=1))
+        head = await head_of(fx_kit, page, Stage.GEOMETRY)
+        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        versions = await fx_kit.uow().page_versions.list_for_stage(page.id, Stage.GEOMETRY, None, EVERYTHING)
+        expect((fx_kit.fake.runs, versions.total) == (2, 2))
+        expect(head.params[STRENGTH_PARAMETER] == 2)
+        expect((record.through_step, record.state) == (1, StageState.FRESH))
+        expect(head.tiles_ready)
+        assert_expectations()
+
+    async def test_run_through_the_next_step_finds_the_steps_before_it_in_the_cache(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify going on from step one to step two and then to the last step runs each processor once.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page = await prepared_page(fx_kit)
+        await save_three_steps(fx_kit, actor, project)
+        calls = []
+        for through_step in (0, 1, None):
+            await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=through_step))
+            calls.append(fx_kit.fake.runs)
+        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        versions = await fx_kit.uow().page_versions.list_for_stage(page.id, Stage.GEOMETRY, None, EVERYTHING)
+        expect(calls == [1, 2, 3])
+        expect(versions.total == 3)
+        expect(record.through_step is None)
+        assert_expectations()
+
+    async def test_run_through_the_last_step_that_is_on_is_a_complete_run(self, fx_kit: ProcessingKit) -> None:
+        """Verify a run through a step that is the last one on leaves no step to finish, though a step is off after it.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page = await prepared_page(fx_kit)
+        steps = [
+            Step(processor_key=FAKE_KEY),
+            Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2}, enabled=False),
+        ]
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, 'Off at the end', steps)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=0))
+        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        assert record.through_step is None
+
+    async def test_page_stopped_before_the_last_step_is_run_through_the_rest_before_the_next_stage(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify the cleanup does not read a geometry that stopped at step one, and finishes it first from its cache.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page = await prepared_page(fx_kit)
+        await save_three_steps(fx_kit, actor, project)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=0))
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
+        geometry = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        cleanup = await head_of(fx_kit, page, Stage.CLEANUP)
+        expect((geometry.through_step, geometry.state) == (None, StageState.FRESH))
+        expect(cleanup.input_id == geometry.head_version_id)
+        expect((await head_of(fx_kit, page, Stage.GEOMETRY)).params[STRENGTH_PARAMETER] == 3)
+        # The first geometry step is not computed twice, and the cleanup has a processor of its own
+        expect(fx_kit.fake.runs == 3)
+        assert_expectations()
+
+    async def test_edit_made_after_the_first_step_reaches_the_steps_run_after_it(self, fx_kit: ProcessingKit) -> None:
+        """Verify a manual edit saved while the page is stopped at step one is read by the steps made on the next run.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page = await prepared_page(fx_kit)
+        await save_three_steps(fx_kit, actor, project)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=0))
+        first = await head_of(fx_kit, page, Stage.GEOMETRY)
+        edit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=1.5))
+        await fx_kit.edits().save(actor, project.id, PageEditKey(page.id, Stage.GEOMETRY, FAKE_KEY), edit, None)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        last = await head_of(fx_kit, page, Stage.GEOMETRY)
+        expect(last.edit_hash != '')
+        expect(first.id not in {last.id, last.input_id})
+        assert_expectations()
+
+    async def test_failing_step_fails_the_stage_and_keeps_the_page_where_it_was(self, fx_kit: ProcessingKit) -> None:
+        """Verify a step that fails on a run through it marks the stage failed and keeps the earlier stop.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page = await prepared_page(fx_kit)
+        steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={FAILING_PARAMETER: True})]
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, 'Fails second', steps)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=0))
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=1))
+        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        expect((record.state, record.through_step) == (StageState.FAILED, 0))
+        assert_expectations()
+
+    @pytest.mark.parametrize('through_step', [3, 7])
+    async def test_run_through_a_step_the_recipe_does_not_have_is_refused(
+        self, fx_kit: ProcessingKit, through_step: int
+    ) -> None:
+        """Verify the request is refused at once, and no job is queued.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param through_step: Index past the last of the three steps.
+        :type through_step: int
+        """
+        actor, project, _ = await prepared_page(fx_kit)
+        await save_three_steps(fx_kit, actor, project)
+        run = StageRun(stage=Stage.GEOMETRY, through_step=through_step)
+        with pytest.raises(ConflictError):
+            await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, run)
+        assert fx_kit.recording.enqueued == []
+
+    async def test_run_through_a_step_with_every_step_up_to_it_off_is_refused(self, fx_kit: ProcessingKit) -> None:
+        """Verify there is nothing to run when the steps up to the one asked are all switched off.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, _ = await prepared_page(fx_kit)
+        steps = [Step(processor_key=FAKE_KEY, enabled=False), Step(processor_key=FAKE_KEY)]
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, 'Off first', steps)
+        with pytest.raises(ConflictError):
+            await fx_kit.service().start_run(
+                actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY, through_step=0)
+            )
+
+    async def test_run_through_a_step_is_stored_with_the_job_and_read_back(self, fx_kit: ProcessingKit) -> None:
+        """Verify the step travels in the parameters of the job.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, _ = await prepared_page(fx_kit)
+        await save_three_steps(fx_kit, actor, project)
+        run = StageRun(stage=Stage.GEOMETRY, through_step=1)
+        job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, run)
+        assert StageRun.from_map(job.params) == run
 
 
 class TestPreviewStep:

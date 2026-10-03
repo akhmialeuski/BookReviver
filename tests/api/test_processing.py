@@ -27,6 +27,7 @@ from bookreviver.api.schemas.processing import (
     StageRunBody,
 )
 from bookreviver.api.schemas.rules import RecipeRuleSchema
+from bookreviver.api.schemas.types import RECIPE_STEPS_MAX_LENGTH
 from bookreviver.domain.enums import (
     EditorKind,
     JobKind,
@@ -826,6 +827,50 @@ class TestPinAndGroups:
         """
         response = await fx_client.post(f'{fx_book.path}/stages/geometry/run', json={'pin': True})
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    @pytest.mark.parametrize(
+        'through_step', [-1, 'first', RECIPE_STEPS_MAX_LENGTH], ids=['negative', 'text', 'too-large']
+    )
+    async def test_a_run_through_a_step_that_is_not_an_index_is_a_422(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, through_step: object
+    ) -> None:
+        """Verify the body of a run checks the index of the last step before the route runs.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param through_step: Value under test.
+        :type through_step: object
+        """
+        response = await fx_client.post(f'{fx_book.path}/stages/geometry/run', json={'through_step': through_step})
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    async def test_a_run_through_a_step_the_recipe_does_not_have_is_a_409(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify the recipe is asked, and a step past its last one is refused with the reason and no job is queued.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.post(
+            f'{fx_book.path}/stages/geometry/run', json={'through_step': RECIPE_STEPS_MAX_LENGTH - 1}
+        )
+        assert response.status_code == status.HTTP_409_CONFLICT
+
+    async def test_a_run_through_the_first_step_is_a_202_job(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify a run that stops at the first step is queued like any other run.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.post(f'{fx_book.path}/stages/geometry/run', json={'through_step': 0})
+        assert response.status_code == status.HTTP_202_ACCEPTED
 
     async def test_the_group_label_of_a_page_is_set_and_cleared(
         self, fx_client: httpx.AsyncClient, fx_book: Book

@@ -207,21 +207,15 @@ class ProcessingJobs:
         executor = RecipeRun(
             project=project, uow=self._uow, runtime=self._runtime, recipes=self._recipes, records=self._records
         )
-        # A run by a named recipe pins it only when asked to, and a run that chooses the recipes keeps the pins it finds
-        pin = True if run.pin else None
         outcomes: list[RunOutcome] = []
         for page in pages:
             if (saved := await self._tracker.advance(job, done=len(outcomes), total=len(pages))) is None:
                 return None
             job = saved
-            outcomes.append(
-                await self._run_page(executor, page, recipes[page.id], confirmed=run.confirm_unsplit, pin=pin)
-            )
+            outcomes.append(await self._run_page(executor, page, recipes[page.id], run))
         return outcomes.count(RunOutcome.DONE), outcomes.count(RunOutcome.FAILED), len(pages)
 
-    async def _run_page(
-        self, executor: RecipeRun, page: Page, recipe: Recipe, *, confirmed: bool, pin: bool | None
-    ) -> RunOutcome:
+    async def _run_page(self, executor: RecipeRun, page: Page, recipe: Recipe, run: StageRun) -> RunOutcome:
         """Run the recipe on one page, so that whatever goes wrong on it fails the page and not the job.
 
         :param executor: Runner of recipes of the project.
@@ -230,15 +224,17 @@ class ProcessingJobs:
         :type page: Page
         :param recipe: Recipe to run.
         :type recipe: Recipe
-        :param confirmed: Whether the user confirmed that undoing a split deletes the right half of a spread.
-        :type confirmed: bool
-        :param pin: Whether the recipe is pinned to the page, or None to keep the pin the page has.
-        :type pin: bool | None
+        :param run: What the job was asked to run, whose confirmation, pin and last step apply to the page.
+        :type run: StageRun
         :returns: What the run came to.
         :rtype: RunOutcome
         """
+        # A run by a named recipe pins it only when asked to, and a run that chooses the recipes keeps the pins it finds
+        pin = True if run.pin else None
         try:
-            return await executor.run(page, recipe, confirmed=confirmed, pin=pin)
+            return await executor.run(
+                page, recipe, confirmed=run.confirm_unsplit, pin=pin, through_step=run.through_step
+            )
         except Exception:
             logger.exception('The stage %s failed on page %s', recipe.stage, page.id)
             await self._uow.rollback()

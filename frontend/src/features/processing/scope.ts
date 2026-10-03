@@ -1,4 +1,5 @@
 import type { StripItem } from '@/features/workspace/strip';
+import { MESSAGES } from '@/shared/messages';
 
 /**
  * The pages a run of a stage goes over, and the counts the panel and the menu of the run show.
@@ -74,6 +75,27 @@ export function pageIdsFor(
       return processable.filter(isTrouble).map((item) => item.page.id);
     case RunScope.All:
       return null;
+  }
+}
+
+/**
+ * Write a scope of the menu of the run, with the number of pages it covers.
+ *
+ * @param scope The scope.
+ * @param count The pages it covers now.
+ * @param pageLabel The printed label of the open page, which "This page" names.
+ */
+export function describeScope(scope: RunScope, count: number, pageLabel: string): string {
+  const words = MESSAGES.processing.scope;
+  switch (scope) {
+    case RunScope.Page:
+      return words.page(pageLabel);
+    case RunScope.Selected:
+      return words.selected(count);
+    case RunScope.Attention:
+      return words.attention(count);
+    case RunScope.All:
+      return words.all(count);
   }
 }
 

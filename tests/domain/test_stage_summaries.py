@@ -9,7 +9,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import PageStageStatus, ReviewReason, Stage, StageState, StageStatus
 from bookreviver.domain.ids import PageId, ProjectId
-from bookreviver.domain.stage_summaries import BookProgress, StageRow, StageSummary, StageTally
+from bookreviver.domain.stage_summaries import BookProgress, StageRow, StageSummary, StageTally, StepTally
 from tests.helpers.builders import make_page_version
 
 PROJECT_ID: ProjectId = ProjectId(uuid4())
@@ -24,6 +24,7 @@ class Counts(NamedTuple):
     :ivar failed: Pages the stage failed on.
     :ivar review: Pages marked for review.
     :ivar check: Pages that are stale, failed or marked, each once.
+    :ivar partial: Pages run through some of the steps of their recipe only.
     """
 
     fresh: int = 0
@@ -31,6 +32,7 @@ class Counts(NamedTuple):
     failed: int = 0
     review: int = 0
     check: int = 0
+    partial: int = 0
 
 
 class StatusCase(NamedTuple):
@@ -80,6 +82,14 @@ STATUS_CASES: dict[str, StatusCase] = {
         available=True,
         pages=PAGES,
         counts=Counts(fresh=3),
+        running=False,
+        expected=StageStatus.WAITING,
+    ),
+    'every-page-up-to-date-but-stopped-at-a-step': StatusCase(
+        stage=Stage.GEOMETRY,
+        available=True,
+        pages=PAGES,
+        counts=Counts(fresh=PAGES, partial=2),
         running=False,
         expected=StageStatus.WAITING,
     ),
@@ -211,6 +221,15 @@ class TestStageSummary:
         """Verify a page both stale and marked is counted once, since the count comes from the tally as it is."""
         summary = summary_of(Stage.GEOMETRY, counts=Counts(fresh=2, stale=2, review=2, check=3))
         assert summary.check == 3
+
+    def test_the_steps_the_pages_stopped_at_come_in_the_order_of_the_steps(self) -> None:
+        """Verify the counts of the steps are sorted, and a stage done by hand takes none."""
+        stopped = [StepTally(stage=Stage.GEOMETRY, through_step=step, pages=1) for step in (2, 0, 1)]
+        summary = summary_of(Stage.GEOMETRY, counts=Counts(fresh=3, partial=3)).with_stopped(stopped)
+        manual = summary_of(Stage.PAGE_ORDER).with_stopped(stopped)
+        expect([one.through_step for one in summary.stopped] == [0, 1, 2])
+        expect((summary.partial, manual.stopped) == (3, ()))
+        assert_expectations()
 
     def test_a_stage_that_never_ran_has_every_page_not_run(self) -> None:
         """Verify a stage no page has a record of counts all its pages as not run."""

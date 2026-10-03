@@ -14,7 +14,7 @@ from bookreviver.domain.enums import (
     StageStatus,
     VersionState,
 )
-from bookreviver.domain.values import SliceRequest, StageRun
+from bookreviver.domain.values import ProcessorRef, SliceRequest, StageRun
 from tests.helpers.builders import make_page_stage, make_page_version
 
 if TYPE_CHECKING:
@@ -46,7 +46,13 @@ async def seed_book(kit: ProcessingKit) -> tuple[Actor, Project, list[Page]]:
     return actor, project, pages
 
 
-async def seed_geometry(kit: ProcessingKit, page: Page, state: StageState, review: ReviewReason | None = None) -> None:
+async def seed_geometry(
+    kit: ProcessingKit,
+    page: Page,
+    state: StageState,
+    review: ReviewReason | None = None,
+    through_step: int | None = None,
+) -> None:
     """Commit a record of the geometry stage of a page with a ready current version.
 
     :param kit: What the processing services of the test share.
@@ -57,6 +63,8 @@ async def seed_geometry(kit: ProcessingKit, page: Page, state: StageState, revie
     :type state: StageState
     :param review: Review mark of the current version, or None.
     :type review: ReviewReason | None
+    :param through_step: Step the page was run through when that is short of the last step, or None.
+    :type through_step: int | None
     """
     base = (await kit.uow().page_versions.list_for_page(page.id))[0]
     version = evolve(
@@ -68,8 +76,40 @@ async def seed_geometry(kit: ProcessingKit, page: Page, state: StageState, revie
     )
     uow = kit.uow()
     await uow.page_versions.add(version)
+    record = make_page_stage(page_id=page.id, stage=Stage.GEOMETRY, head_version_id=version.id, state=state)
+    await uow.page_stages.save(evolve(record, through_step=through_step))
+    await uow.commit()
+
+
+async def seed_marked_chain(kit: ProcessingKit, page: Page, *, steps: int, marked_at: int) -> None:
+    """Commit a geometry record whose current version is the last of a chain of steps, the marks starting at one.
+
+    A step keeps the mark of the step before it, as the processors do, so every version from ``marked_at`` on has one.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param page: The page.
+    :type page: Page
+    :param steps: Number of versions in the chain.
+    :type steps: int
+    :param marked_at: Index of the first version that carries the mark.
+    :type marked_at: int
+    """
+    uow = kit.uow()
+    previous = (await uow.page_versions.list_for_page(page.id))[0]
+    for index in range(steps):
+        version = evolve(
+            make_page_version(page_id=page.id, minutes=index + 1),
+            stage=Stage.GEOMETRY,
+            processor=ProcessorRef(key=f'geometry.step{index}', version='1'),
+            input_id=previous.id,
+            review=ReviewReason.NOT_APPLIED if index >= marked_at else None,
+            state=VersionState.READY,
+        )
+        await uow.page_versions.add(version)
+        previous = version
     await uow.page_stages.save(
-        make_page_stage(page_id=page.id, stage=Stage.GEOMETRY, head_version_id=version.id, state=state)
+        make_page_stage(page_id=page.id, stage=Stage.GEOMETRY, head_version_id=previous.id, state=StageState.FRESH)
     )
     await uow.commit()
 
@@ -147,6 +187,38 @@ class TestOfBook:
         expect(split.status(running=False) is StageStatus.DONE)
         assert_expectations()
 
+    async def test_pages_stopped_before_the_last_step_are_counted_by_the_step_and_keep_the_stage_waiting(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify two pages stopped at steps one and two are told apart from the one run through, and are not done.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, project, pages = await seed_book(fx_kit)
+        await seed_geometry(fx_kit, pages[0], StageState.FRESH, through_step=0)
+        await seed_geometry(fx_kit, pages[1], StageState.FRESH, through_step=1)
+        await seed_geometry(fx_kit, pages[2], StageState.FRESH)
+        geometry = (await summaries_of(fx_kit, project))[Stage.GEOMETRY]
+        expect((geometry.fresh, geometry.partial, geometry.not_run) == (3, 2, 0))
+        expect(
+            [(one.stage, one.through_step, one.pages) for one in geometry.stopped]
+            == [(Stage.GEOMETRY, 0, 1), (Stage.GEOMETRY, 1, 1)]
+        )
+        expect(geometry.status(running=False) is StageStatus.WAITING)
+        assert_expectations()
+
+    async def test_a_page_that_failed_is_not_counted_as_stopped(self, fx_kit: ProcessingKit) -> None:
+        """Verify the step a failed record keeps is left out of the counts, since that run did not end.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, project, pages = await seed_book(fx_kit)
+        await seed_geometry(fx_kit, pages[0], StageState.FAILED, through_step=0)
+        geometry = (await summaries_of(fx_kit, project))[Stage.GEOMETRY]
+        assert (geometry.partial, geometry.stopped) == (0, ())
+
     async def test_the_active_recipe_is_named_once_the_stage_has_been_asked_for(self, fx_kit: ProcessingKit) -> None:
         """Verify a stage has no recipe to name before it is used, and the recipe the default made after.
 
@@ -184,6 +256,52 @@ class TestRows:
         expect([row.head_version is not None for row in rows.items] == [True, False, True])
         expect(rows.total == len(pages))
         assert_expectations()
+
+    async def test_a_row_names_the_step_it_stopped_at(self, fx_kit: ProcessingKit) -> None:
+        """Verify the step a page was run through is on its row, and none for a page run through every step.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, project, pages = await seed_book(fx_kit)
+        await seed_geometry(fx_kit, pages[0], StageState.FRESH, through_step=1)
+        await seed_geometry(fx_kit, pages[1], StageState.FRESH)
+        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
+        assert [row.through_step for row in rows.items] == [1, None, None]
+
+    async def test_a_marked_row_names_the_processor_of_the_step_that_marked_it(self, fx_kit: ProcessingKit) -> None:
+        """Verify the mark a step passed on is traced back to the first step that made it.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, project, pages = await seed_book(fx_kit)
+        await seed_marked_chain(fx_kit, pages[0], steps=3, marked_at=1)
+        await seed_marked_chain(fx_kit, pages[1], steps=3, marked_at=3)
+        await seed_geometry(fx_kit, pages[2], StageState.FRESH, ReviewReason.LOW_CONFIDENCE)
+        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
+        expect([row.review is not None for row in rows.items] == [True, False, True])
+        expect(rows.items[0].review_processor == 'geometry.step1')
+        expect(rows.items[1].review_processor is None)
+        expect(rows.items[2].review_processor == make_page_version(page_id=pages[2].id).processor.key)
+        assert_expectations()
+
+    async def test_a_mark_an_earlier_stage_made_names_no_step(self, fx_kit: ProcessingKit) -> None:
+        """Verify a mark that leads back out of the stage is not put on a step of it.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, project, pages = await seed_book(fx_kit)
+        marked_base = evolve(
+            (await fx_kit.uow().page_versions.list_for_page(pages[0].id))[0], review=ReviewReason.UNSURE_GUTTER
+        )
+        uow = fx_kit.uow()
+        await uow.page_versions.update(marked_base)
+        await uow.commit()
+        await seed_marked_chain(fx_kit, pages[0], steps=2, marked_at=0)
+        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
+        assert (rows.items[0].review is not None, rows.items[0].review_processor) == (True, None)
 
     async def test_only_the_records_of_the_asked_stage_count(self, fx_kit: ProcessingKit) -> None:
         """Verify the page split the pages all have is not shown as the state of the geometry.

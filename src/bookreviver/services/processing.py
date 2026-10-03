@@ -40,6 +40,9 @@ NOT_READY: str = 'it is not ready'
 NOT_FULL: str = 'it is a preview'
 OTHER_STAGE: str = 'it belongs to another stage'
 NO_IMAGE: str = 'The version {version_id} has no image.'
+NO_STEP_TO_RUN_THROUGH: str = (
+    'Step {index} of the recipe {name} does not exist, or it and every step before it are switched off.'
+)
 
 
 class ProcessingService:
@@ -218,13 +221,18 @@ class ProcessingService:
         :raises NotFoundError: If the actor has no such project, or the project has no such recipe, stage recipe or
                                page.
         :raises ConflictError: If a run, a preview, a tile cutting, a collection or a measure of the project is queued
-                               or running.
+                               or running, or the run goes through a step the recipe has no such step for, or whose
+                               steps up to it are all switched off.
         """
         await owned_project(self._uow.projects, actor, project_id)
         if run.recipe_id is None:
-            await self._recipes.active(project_id, stage)
+            recipe = await self._recipes.active(project_id, stage)
         else:
-            await self._recipes.get(project_id, run.recipe_id, stage=stage)
+            recipe = await self._recipes.get(project_id, run.recipe_id, stage=stage)
+        if run.through_step is not None and (
+            run.through_step >= len(recipe.steps) or not recipe.indexed_steps_through(run.through_step)
+        ):
+            raise ConflictError(NO_STEP_TO_RUN_THROUGH.format(index=run.through_step + 1, name=recipe.name))
         if run.page_ids is not None:
             await self._uow.pages.list_by_ids(project_id, run.page_ids)
         return await self._starter.enqueue(project_id, JobKind.RUN_STAGE, run.to_map())
@@ -327,9 +335,10 @@ class ProcessingService:
         version = await self._version_of(page_id, version_id)
         if (reason := self._why_not_choosable(version, stage)) is not None:
             raise ConflictError(NOT_CHOOSABLE.format(version_id=version_id, reason=reason))
-        previous = await self._uow.page_stages.find(PageStageKey(page_id, stage))
+        key = PageStageKey(page_id, stage)
+        previous = await self._uow.page_stages.find(key)
         changed = await self._records.set_head(
-            page_id, stage, head_version_id=version_id, recipe_id=None if previous is None else previous.recipe_id
+            key, head_version_id=version_id, recipe_id=None if previous is None else previous.recipe_id
         )
         await self._uow.commit()
         await self._records.announce(project_id, changed)

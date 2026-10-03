@@ -7,8 +7,8 @@ processor. It has no counts either, and it is done as soon as the book has pages
 
 The status of a whole stage, the one the stage bar and the book list show, follows one rule: a stage that is not
 available is unavailable, a stage a job is running is running, a stage with a stale, failed or marked page needs a look,
-a stage every page of which is up to date is done, and any other stage waits. The next stage of a book is the first one
-in the pipeline that has work to do.
+a stage every page of which is up to date and run through every step is done, and any other stage waits. The next
+stage of a book is the first one in the pipeline that has work to do.
 """
 
 from typing import TYPE_CHECKING, Self
@@ -41,6 +41,7 @@ class StageTally:
     :ivar failed: Pages the stage failed on.
     :ivar review: Pages, not failed, whose current version carries a review mark.
     :ivar check: Pages that are stale, failed or marked for review, each counted once.
+    :ivar partial: Pages, not failed, that were run through some of the steps of their recipe only.
     """
 
     project_id: ProjectId
@@ -50,6 +51,21 @@ class StageTally:
     failed: int = field(default=0, validator=validators.ge(0))
     review: int = field(default=0, validator=validators.ge(0))
     check: int = field(default=0, validator=validators.ge(0))
+    partial: int = field(default=0, validator=validators.ge(0))
+
+
+@frozen(kw_only=True)
+class StepTally:
+    """The pages of one stage of one book that a run stopped at one step of their recipe, as a repository counts them.
+
+    :ivar stage: The stage.
+    :ivar through_step: Index in the recipe of the last step the pages were run through.
+    :ivar pages: Pages with an image, not failed, whose record of the stage stopped at that step.
+    """
+
+    stage: Stage
+    through_step: int = field(validator=validators.ge(0))
+    pages: int = field(validator=validators.ge(1))
 
 
 @frozen(kw_only=True)
@@ -81,10 +97,13 @@ class StageSummary:
     :ivar not_run: Pages the stage has not run on.
     :ivar review: Pages, not failed, whose result carries a review mark.
     :ivar check: Pages the strip lists under Check: stale, failed or marked for review, each counted once.
+    :ivar partial: Pages, not failed, that were run through some of the steps of their recipe only, so the stage after
+                   this one cannot read them yet.
     :ivar active_recipe_id: The recipe the stage runs by, or None when the stage has none yet, since the default recipes
                             are made the first time a stage is asked for.
     :ivar variants: How many pages each recipe of the stage processed, the recipe with the most pages first. A recipe
                     that processed none is left out, and so is the list of a book list, which does not read it.
+    :ivar stopped: How many pages stopped at each step, the first step first. The list of a book list leaves it out.
     """
 
     stage: Stage
@@ -97,8 +116,10 @@ class StageSummary:
     not_run: int = field(default=0, validator=validators.ge(0))
     review: int = field(default=0, validator=validators.ge(0))
     check: int = field(default=0, validator=validators.ge(0))
+    partial: int = field(default=0, validator=validators.ge(0))
     active_recipe_id: RecipeId | None = None
     variants: tuple[VariantTally, ...] = ()
+    stopped: tuple[StepTally, ...] = ()
 
     @classmethod
     def of(
@@ -127,8 +148,10 @@ class StageSummary:
         """
         if stage.manual:
             return cls(stage=stage, available=available, manual=True, pages=pages, active_recipe_id=active_recipe_id)
-        fresh, stale, failed, review, check = (
-            (0, 0, 0, 0, 0) if tally is None else (tally.fresh, tally.stale, tally.failed, tally.review, tally.check)
+        fresh, stale, failed, review, check, partial = (
+            (0, 0, 0, 0, 0, 0)
+            if tally is None
+            else (tally.fresh, tally.stale, tally.failed, tally.review, tally.check, tally.partial)
         )
         return cls(
             stage=stage,
@@ -141,6 +164,7 @@ class StageSummary:
             not_run=max(0, pages - fresh - stale - failed),
             review=review,
             check=check,
+            partial=partial,
             active_recipe_id=active_recipe_id,
         )
 
@@ -155,6 +179,18 @@ class StageSummary:
         if self.manual:
             return self
         return evolve(self, variants=tuple(sorted(variants, key=lambda one: (-one.pages, str(one.recipe_id)))))
+
+    def with_stopped(self, stopped: Sequence[StepTally]) -> Self:
+        """Add how many pages stopped at each step, the first step first.
+
+        :param stopped: The counts of the steps of this stage.
+        :type stopped: Sequence[StepTally]
+        :returns: The summary with its steps. A stage done by hand has none, whatever the counts say.
+        :rtype: Self
+        """
+        if self.manual:
+            return self
+        return evolve(self, stopped=tuple(sorted(stopped, key=lambda one: one.through_step)))
 
     def status(self, *, running: bool) -> StageStatus:
         """Give the status of the stage in the book.
@@ -172,7 +208,7 @@ class StageSummary:
             return StageStatus.RUNNING
         if self.stale or self.failed or self.review:
             return StageStatus.ATTENTION
-        if self.pages and not self.not_run:
+        if self.pages and not self.not_run and not self.partial:
             return StageStatus.DONE
         return StageStatus.WAITING
 
@@ -228,6 +264,10 @@ class StageRow:
     :ivar recipe_id: Recipe the page was processed by, or None.
     :ivar pinned: Whether the recipe is pinned to the page.
     :ivar head_version: The current version of the stage on the page, or None when there is none.
+    :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
+                        that is on, or None.
+    :ivar review_processor: Key of the processor of the first step of the stage that marked the page for review, or None
+                            when the page is not marked or an earlier stage marked it.
     """
 
     page_id: PageId
@@ -235,6 +275,8 @@ class StageRow:
     recipe_id: RecipeId | None = None
     pinned: bool = False
     head_version: PageVersion | None = None
+    through_step: int | None = None
+    review_processor: str | None = None
 
     @property
     def review(self) -> ReviewReason | None:

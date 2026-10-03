@@ -1145,6 +1145,8 @@ export type PageSchema = {
  * :ivar head_version_id: The current version of the stage, or None.
  * :ivar state: Whether the current version matches the inputs of the stage.
  * :ivar pinned: Whether the recipe is pinned to the page, so a run without a recipe keeps it.
+ * :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
+ * that is on, so the page is not ready for the next stage, or None.
  * :ivar updated_at: When the record last changed.
  */
 export type PageStageSchema = {
@@ -1166,6 +1168,10 @@ export type PageStageSchema = {
      * Pinned
      */
     pinned: boolean;
+    /**
+     * Through Step
+     */
+    through_step: number | null;
     /**
      * Updated At
      */
@@ -2616,6 +2622,9 @@ export type Stage = 'import' | 'page-split' | 'page-order' | 'geometry' | 'clean
  * :ivar recipe_id: Recipe the page was processed by, or None.
  * :ivar pinned: Whether the recipe is pinned to the page.
  * :ivar version: The current version of the stage on the page with its data and images, or None.
+ * :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
+ * that is on, so the page is not ready for the next stage, or None.
+ * :ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.
  */
 export type StagePageSchema = {
     /**
@@ -2633,6 +2642,14 @@ export type StagePageSchema = {
      */
     pinned: boolean;
     version: PageVersionSchema | null;
+    /**
+     * Through Step
+     */
+    through_step: number | null;
+    /**
+     * Review Processor
+     */
+    review_processor: string | null;
 };
 
 /**
@@ -2659,6 +2676,9 @@ export type StageProgressSchema = {
  * run that would do so leaves that page failed.
  * :ivar pin: Whether to pin the recipe to the pages of the run, so a later run without a recipe keeps it there. It is
  * given with a recipe, since a run that chooses the recipes pins nothing.
+ * :ivar through_step: Index in the recipe of the last step to run, from zero, or omitted to run through the last step
+ * that is on. The steps before it come from the cache of versions when their inputs did not
+ * change.
  */
 export type StageRunBody = {
     /**
@@ -2677,6 +2697,10 @@ export type StageRunBody = {
      * Pin
      */
     pin?: boolean;
+    /**
+     * Through Step
+     */
+    through_step?: number | null;
 };
 
 /**
@@ -2709,8 +2733,10 @@ export type StageStatus = 'done' | 'attention' | 'running' | 'waiting' | 'unavai
  * :ivar not_run: Pages the stage has not run on.
  * :ivar review: Pages, not failed, whose result asks for a second look.
  * :ivar check: Pages the strip lists under Check: stale, failed or marked, each counted once.
+ * :ivar partial: Pages, not failed, that were run through some of the steps of their recipe only.
  * :ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used.
  * :ivar variants: How many pages each recipe of the stage processed, the recipe with the most pages first.
+ * :ivar stopped: How many pages stopped at each step, the first step first.
  */
 export type StageSummarySchema = {
     stage: Stage;
@@ -2751,6 +2777,10 @@ export type StageSummarySchema = {
      */
     check: number;
     /**
+     * Partial
+     */
+    partial: number;
+    /**
      * Active Recipe Id
      */
     active_recipe_id: string | null;
@@ -2758,6 +2788,10 @@ export type StageSummarySchema = {
      * Variants
      */
     variants: Array<VariantPagesSchema>;
+    /**
+     * Stopped
+     */
+    stopped: Array<StepPagesSchema>;
 };
 
 /**
@@ -2784,6 +2818,25 @@ export type StepBody = {
      * Enabled
      */
     enabled?: boolean;
+};
+
+/**
+ * StepPagesSchema
+ *
+ * How many pages of a stage a run stopped at one step.
+ *
+ * :ivar through_step: Index in the recipe of the last step the pages were run through, from zero.
+ * :ivar pages: Pages with an image, not failed, that stopped at the step.
+ */
+export type StepPagesSchema = {
+    /**
+     * Through Step
+     */
+    through_step: number;
+    /**
+     * Pages
+     */
+    pages: number;
 };
 
 /**
