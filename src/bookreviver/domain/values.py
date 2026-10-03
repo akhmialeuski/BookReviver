@@ -502,12 +502,12 @@ class RecipeKey:
 
 
 @frozen
-class PageEditKey:
-    """The key of a manual edit: the input of a step of a recipe on a page.
+class PageStepKey:
+    """The key of a step of a recipe on a page, under which the page keeps its settings and its manual edit of the step.
 
-    :ivar page_id: Page the edit belongs to.
-    :ivar stage: Stage of the step reading the edit.
-    :ivar step_id: The step reading the edit, which tells two steps of one processor apart.
+    :ivar page_id: Page the state belongs to.
+    :ivar stage: Stage of the step.
+    :ivar step_id: The step, which tells two steps of one processor apart.
     """
 
     page_id: PageId

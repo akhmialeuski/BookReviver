@@ -3,7 +3,7 @@
 import hashlib
 import json
 import re
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from attrs import field, frozen, validators
 
@@ -29,8 +29,8 @@ from bookreviver.domain.values import (
     SHA256_PATTERN,
     BookPlaceKey,
     MetadataSuggestion,
-    PageEditKey,
     PageStageKey,
+    PageStepKey,
     Progress,
     Renditions,
     StageRun,
@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.domain.enums import (
+        ChangeSource,
         EditorKind,
         FileType,
         LabelStyle,
@@ -49,12 +50,15 @@ if TYPE_CHECKING:
         ReviewReason,
         SourceKind,
         Stage,
+        StepLayer,
     )
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.ids import (
         AccountId,
+        ChangeBatchId,
         JobId,
         PageId,
+        PageStepChangeId,
         PaginationSectionId,
         ProjectId,
         RecipeId,
@@ -796,9 +800,9 @@ class PageEdit:
     updated_at: datetime
 
     @property
-    def key(self) -> PageEditKey:
+    def key(self) -> PageStepKey:
         """The key the edit is stored under."""
-        return PageEditKey(self.page_id, self.stage, self.step_id)
+        return PageStepKey(self.page_id, self.stage, self.step_id)
 
     @staticmethod
     def hash_of(geometry: EditGeometry | None, mask_sha256: str | None) -> str:
@@ -814,3 +818,83 @@ class PageEdit:
         shape = None if geometry is None else {'kind': geometry.editor.value, **geometry.to_data()}
         text = json.dumps([shape, mask_sha256], sort_keys=True, separators=(',', ':'))
         return hashlib.sha256(text.encode()).hexdigest()[:VERSION_ID_LENGTH]
+
+
+@frozen(kw_only=True)
+class PageStepState:
+    """What a page keeps for one step of a recipe: its own settings of the step and the manual edit the step reads.
+
+    The settings are only the fields of the parameters of the step that the user changed for this page. A run takes
+    every other field from the step of the recipe, so a field changed in the recipe reaches each page that did not
+    change it itself. The values join the parameters the step runs with, which the identifier of a version hashes, so
+    a page whose effective parameters equal those of another finds the same version in the cache.
+
+    :ivar page_id: Page the state belongs to.
+    :ivar stage: Stage of the step.
+    :ivar step_id: The step of a recipe, so two steps of one processor keep their own state.
+    :ivar params: The fields of the parameters of the step that this page changes, by name.
+    :ivar edit: The manual edit the step reads on this page, or None.
+    :ivar updated_at: When the state was last saved.
+    """
+
+    page_id: PageId
+    stage: Stage
+    step_id: StepId
+    params: MetadataMap = field(factory=dict)
+    edit: PageEdit | None = None
+    updated_at: datetime
+
+    @property
+    def key(self) -> PageStepKey:
+        """The key the state is stored under."""
+        return PageStepKey(self.page_id, self.stage, self.step_id)
+
+    @property
+    def is_empty(self) -> bool:
+        """Whether the state holds neither a setting nor an edit, so there is nothing left to store."""
+        return not self.params and self.edit is None
+
+    def apply_to(self, params: MetadataMap) -> dict[str, Any]:
+        """Lay the settings of the page over the parameters of the step of a recipe.
+
+        :param params: Parameters of the step as the recipe, or the form of a preview, gives them.
+        :type params: MetadataMap
+        :returns: The parameters with each field the page changes taken from the page, which are the parameters the
+                  step runs with on this page.
+        :rtype: dict[str, Any]
+        """
+        return {**params, **self.params}
+
+
+@frozen(kw_only=True)
+class PageStepChange:
+    """One change of a layer of a step on a page, which the history of the page keeps and never rewrites.
+
+    The values are the whole content of the layer before and after the change, so undoing a change writes ``before``
+    back without knowing how the layer is built. The layer of the settings holds the fields the page changes, by name.
+
+    :ivar id: Identifier of the change.
+    :ivar page_id: Page the change was made on.
+    :ivar stage: Stage of the step.
+    :ivar step_id: The step whose layer changed.
+    :ivar layer: The layer that changed.
+    :ivar before: Content of the layer before the change, or None when the layer was empty.
+    :ivar after: Content of the layer after the change, or None when the change emptied it.
+    :ivar source: What made the change.
+    :ivar batch_id: Identifier shared by the changes of one batch, which are undone together, or None.
+    :ivar created_at: When the change was made.
+    :ivar sequence: Place of the change in the history of its page, from one, which the repository gives it when it is
+                    added, so changes made at the same instant keep the order they were written in.
+    """
+
+    id: PageStepChangeId
+    page_id: PageId
+    stage: Stage
+    step_id: StepId
+    layer: StepLayer
+    before: MetadataMap | None = None
+    after: MetadataMap | None = None
+    source: ChangeSource
+    batch_id: ChangeBatchId | None = None
+    created_at: datetime
+    sequence: int = 0

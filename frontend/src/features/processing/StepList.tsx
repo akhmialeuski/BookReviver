@@ -20,6 +20,7 @@ import {
   StepForwardIcon,
   Trash2Icon,
 } from 'lucide-react';
+import { useMemo } from 'react';
 import type { AppliesTo, ProcessorSchema } from '@/api';
 import { ParamsForm } from '@/features/processing/ParamsForm';
 import { CONDITIONS, type StepDraft } from '@/features/processing/recipe';
@@ -46,10 +47,14 @@ import { Switch } from '@/shared/ui/switch';
  * still shows, with a note, so a recipe is never edited blind and the step can still be removed.
  *
  * When the list is given a way to run, each step of a recipe of several offers "Run up to here" over the scopes of a run,
- * and says how many pages already passed it.
+ * and says how many pages already passed it. When it is given the fields the open page changes for itself, the form of a
+ * step marks them.
  */
 
 const labels = MESSAGES.processing.steps;
+
+/** The fields of a step the open page does not change, which is what a step has when no page is open. */
+const NO_PAGE_VALUES: Readonly<Record<string, unknown>> = {};
 
 /** What the steps need to run the recipe up to one of them and to show how far the pages have come. */
 export interface StepRunControl {
@@ -74,6 +79,7 @@ function StepCard({
   extra,
   runnable,
   run,
+  pageValues,
   onOpen,
   onToggle,
   onRemove,
@@ -90,6 +96,8 @@ function StepCard({
   /** Whether a step or one before it is on, so the recipe can be run up to this one. */
   runnable: boolean;
   run: StepRunControl | undefined;
+  /** The fields the open page changes for this step, which its form marks. */
+  pageValues: Readonly<Record<string, unknown>>;
   onOpen: (open: boolean) => void;
   onToggle: () => void;
   onRemove: () => void;
@@ -100,6 +108,7 @@ function StepCard({
     id: step.id,
   });
   const title = processor?.title ?? step.processorKey;
+  const marked = useMemo(() => new Set(Object.keys(pageValues)), [pageValues]);
   const outOfLimits =
     processor !== undefined && !fitsSchema(formSchemaOf(processor.parameters), step.params);
 
@@ -221,7 +230,12 @@ function StepCard({
           {processor === undefined ? (
             <p className="text-sm text-muted-foreground">{labels.unknownProcessor}</p>
           ) : (
-            <ParamsForm processor={processor} params={step.params} onChange={onChange} />
+            <ParamsForm
+              processor={processor}
+              params={step.params}
+              marked={marked}
+              onChange={onChange}
+            />
           )}
           {extra}
         </div>
@@ -236,6 +250,7 @@ export function StepList({
   openId,
   extraOf,
   run,
+  pageValuesOf,
   onOpen,
   onMove,
   onToggle,
@@ -250,6 +265,8 @@ export function StepList({
   extraOf?: (step: StepDraft) => React.ReactNode;
   /** How to run the recipe up to a step, or absent for a list that only edits. A recipe of one step has no such thing. */
   run?: StepRunControl;
+  /** The fields the open page changes for a step, or absent when no page is open. */
+  pageValuesOf?: (step: StepDraft) => Readonly<Record<string, unknown>>;
   onOpen: (id: string | undefined) => void;
   onMove: (activeId: string, overId: string) => void;
   onToggle: (id: string) => void;
@@ -302,6 +319,7 @@ export function StepList({
               extra={extraOf?.(step) ?? null}
               runnable={canRunThrough(steps, index)}
               run={steps.length > 1 ? run : undefined}
+              pageValues={pageValuesOf?.(step) ?? NO_PAGE_VALUES}
               onOpen={(open) => onOpen(open ? step.id : undefined)}
               onToggle={() => onToggle(step.id)}
               onRemove={() => onRemove(step.id)}

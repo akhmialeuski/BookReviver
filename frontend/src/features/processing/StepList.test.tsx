@@ -39,10 +39,20 @@ describe('StepList', () => {
     onCondition: vi.fn(),
   };
 
-  function render(steps = STEPS, openId: string | undefined = undefined): void {
+  function render(
+    steps = STEPS,
+    openId: string | undefined = undefined,
+    pageValuesOf?: (step: (typeof STEPS)[number]) => Record<string, unknown>,
+  ): void {
     act(() =>
       root.render(
-        <StepList steps={steps} catalogue={[deskew(), whole()]} openId={openId} {...handlers} />,
+        <StepList
+          steps={steps}
+          catalogue={[deskew(), whole()]}
+          openId={openId}
+          pageValuesOf={pageValuesOf}
+          {...handlers}
+        />,
       ),
     );
   }
@@ -137,6 +147,21 @@ describe('StepList', () => {
 
     expect(steps()[0]?.querySelector('form')?.textContent).toContain('Largest slant');
     expect(steps()[1]?.querySelector('form')).toBeNull();
+  });
+
+  it('marks in the form of the open step the fields the open page changes for itself', () => {
+    render(STEPS, 'step-0', () => ({ min_confidence: 0.6 }));
+
+    const labels = [...(steps()[0]?.querySelectorAll('form label') ?? [])].map(
+      (label) => label.textContent,
+    );
+    expect(labels).toEqual(['Largest slant', 'Least confidence · changed for this page']);
+  });
+
+  it('draws no mark when no page is open', () => {
+    render(STEPS, 'step-0');
+
+    expect(steps()[0]?.textContent).not.toContain('changed for this page');
   });
 
   it('switches a step off and on with its switch', () => {

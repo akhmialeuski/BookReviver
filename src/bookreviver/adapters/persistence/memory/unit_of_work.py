@@ -5,18 +5,18 @@ reproduces the behaviour services rely on rather than only storing rows. It mirr
 transaction isolation:
 
 - Foreign keys: a source, a scan, a page, a recipe or a job needs its project, a scan its source, a version, a page
-  stage and a page edit their page, and a source, a page, a version or a page stage the import job, scan, input
-  version, head version or recipe it names. A project's cover is one of its own
-  pages. The owner of a project is not checked, because accounts belong to fastapi-users and have no port.
+  stage, a page step state and a page step change their page, and a source, a page, a version or a page stage the
+  import job, scan, input version, head version or recipe it names. A project's cover is one of its own pages. The
+  owner of a project is not checked, because accounts belong to fastapi-users and have no port.
 - Unique keys: the digest of a source's main file within its project, the number of a scan within its source, the
   order key of a page within its project, the pair of a scan and a slot, the project of a queued or running
   import job, so a project runs one import at a time, and the project and stage of an active recipe, so a stage has
   one active recipe.
 - Referential actions: a project takes its sources, scans, pages, recipes and jobs with it, a source its scans, and a
-  page its versions, stage records and edits. A deleted cover page leaves its project without a cover, a deleted
-  scan leaves its pages without their scan, a deleted job leaves the sources it imported without their import job,
-  a deleted version leaves the versions it fed without their input and the stage records it headed without their
-  head, and a deleted recipe leaves the stage records it processed without their recipe.
+  page its versions, stage records, step states and step changes. A deleted cover page leaves its project without a
+  cover, a deleted scan leaves its pages without their scan, a deleted job leaves the sources it imported without
+  their import job, a deleted version leaves the versions it fed without their input and the stage records it headed
+  without their head, and a deleted recipe leaves the stage records it processed without their recipe.
 - Isolation: a unit of work reads and writes a private copy of the tables, and ``commit`` merges only the rows it
   added, replaced or removed, so two units of work touching different rows do not overwrite each other.
 
@@ -35,8 +35,9 @@ from bookreviver.domain.entities import (
     BookPlace,
     Job,
     Page,
-    PageEdit,
     PageStage,
+    PageStepChange,
+    PageStepState,
     PageVersion,
     PaginationSection,
     Project,
@@ -52,6 +53,7 @@ from bookreviver.domain.errors import ConcurrentChangeError, ConflictError, Doma
 from bookreviver.domain.ids import (
     JobId,
     PageId,
+    PageStepChangeId,
     PageVersionId,
     PaginationSectionId,
     ProjectId,
@@ -62,14 +64,15 @@ from bookreviver.domain.ids import (
     SourceId,
 )
 from bookreviver.domain.stage_summaries import StageTally, StepTally, VariantTally
-from bookreviver.domain.values import BookPlaceKey, PageEditKey, PageSize, PageStageKey, Slice, SliceRequest
+from bookreviver.domain.values import BookPlaceKey, PageSize, PageStageKey, PageStepKey, Slice, SliceRequest
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
     BookPlaceRepository,
     JobRepository,
-    PageEditRepository,
     PageRepository,
     PageStageRepository,
+    PageStepChangeRepository,
+    PageStepStateRepository,
     PageVersionRepository,
     PaginationSectionRepository,
     ProjectRepository,
@@ -115,7 +118,8 @@ class InMemoryTables:
     :ivar pagination_sections: Pagination sections by identifier.
     :ivar page_versions: Page versions by identifier.
     :ivar page_stages: Page stage records by page and stage.
-    :ivar page_edits: Page edits by page, stage and processor.
+    :ivar page_step_states: Settings and manual edits of the steps by page, stage and step.
+    :ivar page_step_changes: Changes of the layers of the steps of the pages by identifier.
     :ivar recipes: Recipes by identifier.
     :ivar recipe_rules: Rules of the stages by identifier.
     :ivar recipe_profiles: Recipe profiles of the accounts by identifier.
@@ -130,7 +134,8 @@ class InMemoryTables:
     pagination_sections: dict[PaginationSectionId, PaginationSection] = field(factory=dict)
     page_versions: dict[PageVersionId, PageVersion] = field(factory=dict)
     page_stages: dict[PageStageKey, PageStage] = field(factory=dict)
-    page_edits: dict[PageEditKey, PageEdit] = field(factory=dict)
+    page_step_states: dict[PageStepKey, PageStepState] = field(factory=dict)
+    page_step_changes: dict[PageStepChangeId, PageStepChange] = field(factory=dict)
     recipes: dict[RecipeId, Recipe] = field(factory=dict)
     recipe_rules: dict[RecipeRuleId, RecipeRule] = field(factory=dict)
     recipe_profiles: dict[RecipeProfileId, RecipeProfile] = field(factory=dict)
@@ -337,7 +342,8 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
         doomed_pages = {page.id for page in self._tables.pages.values() if page.project_id == entity.id}
         remove_where(self._tables.page_versions, lambda version: version.page_id in doomed_pages)
         remove_where(self._tables.page_stages, lambda stage: stage.page_id in doomed_pages)
-        remove_where(self._tables.page_edits, lambda edit: edit.page_id in doomed_pages)
+        remove_where(self._tables.page_step_states, lambda state: state.page_id in doomed_pages)
+        remove_where(self._tables.page_step_changes, lambda change: change.page_id in doomed_pages)
         remove_where(self._tables.pagination_sections, lambda section: section.project_id == entity.id)
         remove_where(self._tables.pages, lambda page: page.id in doomed_pages)
         remove_where(self._tables.recipe_rules, lambda rule: rule.project_id == entity.id)
@@ -610,7 +616,7 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
 
     @override
     def _cascade(self, entity: Page) -> None:
-        """Remove the page's versions, records, edits and sections, and leave a project it covered without a cover.
+        """Remove the page's versions, records, states, changes and sections, and leave a project it covered coverless.
 
         :param entity: Page just removed.
         :type entity: Page
@@ -618,7 +624,8 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         remove_where(self._tables.pagination_sections, lambda section: section.first_page_id == entity.id)
         remove_where(self._tables.page_versions, lambda version: version.page_id == entity.id)
         remove_where(self._tables.page_stages, lambda stage: stage.page_id == entity.id)
-        remove_where(self._tables.page_edits, lambda edit: edit.page_id == entity.id)
+        remove_where(self._tables.page_step_states, lambda state: state.page_id == entity.id)
+        remove_where(self._tables.page_step_changes, lambda change: change.page_id == entity.id)
         if (project := self._tables.projects.get(entity.project_id)) is not None and project.cover_page_id == entity.id:
             self._tables.projects[project.id] = evolve(project, cover_page_id=None)
 
@@ -1273,72 +1280,128 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         ]
 
 
-class InMemoryPageEditRepository(InMemoryRepository[PageEdit, PageEditKey], PageEditRepository):
-    """Manual edits of the pages."""
+class InMemoryPageStepStateRepository(InMemoryRepository[PageStepState, PageStepKey], PageStepStateRepository):
+    """Settings and manual edits of the steps of the pages."""
 
     def __init__(self, tables: InMemoryTables) -> None:
-        """Work on the page edit table of the unit of work's copy, checking edits against pages.
+        """Work on the page step state table of the unit of work's copy, checking states against pages.
 
         :param tables: Every table of the working copy.
         :type tables: InMemoryTables
         """
-        super().__init__(tables.page_edits, tables)
+        super().__init__(tables.page_step_states, tables)
         self._identify = attrgetter(KEY_ATTRIBUTE)
 
     @override
-    def _check(self, entity: PageEdit) -> None:
-        """Require the page of the edit.
+    def _check(self, entity: PageStepState) -> None:
+        """Require the page of the state.
 
-        :param entity: Edit about to be stored.
-        :type entity: PageEdit
+        :param entity: State about to be stored.
+        :type entity: PageStepState
         :raises NotFoundError: If the page is not stored.
         """
         require(self._tables.pages, entity.page_id)
 
     @override
-    async def save(self, edit: PageEdit) -> PageEdit:
-        """Store the edit, replacing the one of the same page, stage and step.
+    async def save(self, state: PageStepState) -> PageStepState:
+        """Store the state, replacing the one of the same page, stage and step.
 
-        :param edit: Edit to store.
-        :type edit: PageEdit
-        :returns: The edit as stored.
-        :rtype: PageEdit
+        :param state: State to store.
+        :type state: PageStepState
+        :returns: The state as stored.
+        :rtype: PageStepState
         :raises NotFoundError: If the page is not stored.
         """
-        self._check(edit)
-        self._rows[edit.key] = edit
-        return edit
+        self._check(state)
+        self._rows[state.key] = state
+        return state
 
     @override
-    async def find(self, key: PageEditKey) -> PageEdit | None:
-        """Return one edit.
+    async def find(self, key: PageStepKey) -> PageStepState | None:
+        """Return the state of one step on one page.
 
         :param key: Page, stage and step.
-        :type key: PageEditKey
-        :returns: The edit, or None.
-        :rtype: PageEdit | None
+        :type key: PageStepKey
+        :returns: The state, or None.
+        :rtype: PageStepState | None
         """
         return self._rows.get(key)
 
     @override
-    async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageEdit]:
-        """Return the edits of one page, by stage and step.
+    async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepState]:
+        """Return the states of one page, by stage and step.
 
-        :param page_id: Page owning the edits.
+        :param page_id: Page owning the states.
         :type page_id: PageId
         :param stage: Stage listed, or None for every stage.
         :type stage: Stage | None
-        :returns: The edits of the page.
-        :rtype: Sequence[PageEdit]
+        :returns: The states of the page.
+        :rtype: Sequence[PageStepState]
         """
         order = list(Stage)
         return sorted(
             (
-                edit
-                for edit in self._rows.values()
-                if edit.page_id == page_id and (stage is None or edit.stage == stage)
+                state
+                for state in self._rows.values()
+                if state.page_id == page_id and (stage is None or state.stage == stage)
             ),
-            key=lambda edit: (order.index(edit.stage), str(edit.step_id)),
+            key=lambda state: (order.index(state.stage), str(state.step_id)),
+        )
+
+
+class InMemoryPageStepChangeRepository(InMemoryRepository[PageStepChange, PageStepChangeId], PageStepChangeRepository):
+    """The history of the layers of the steps of the pages."""
+
+    def __init__(self, tables: InMemoryTables) -> None:
+        """Work on the page step change table of the unit of work's copy, checking changes against pages.
+
+        :param tables: Every table of the working copy.
+        :type tables: InMemoryTables
+        """
+        super().__init__(tables.page_step_changes, tables)
+
+    @override
+    async def add(self, entity: PageStepChange) -> PageStepChange:
+        """Store a change, numbering it after the last change of its page.
+
+        :param entity: Change to store.
+        :type entity: PageStepChange
+        :returns: The change as stored, with its sequence.
+        :rtype: PageStepChange
+        :raises ConflictError: If a change with this identifier is stored already.
+        :raises NotFoundError: If the page is not stored.
+        """
+        last = max((change.sequence for change in self._rows.values() if change.page_id == entity.page_id), default=0)
+        return await super().add(evolve(entity, sequence=last + 1))
+
+    @override
+    def _check(self, entity: PageStepChange) -> None:
+        """Require the page of the change.
+
+        :param entity: Change about to be stored.
+        :type entity: PageStepChange
+        :raises NotFoundError: If the page is not stored.
+        """
+        require(self._tables.pages, entity.page_id)
+
+    @override
+    async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepChange]:
+        """Return the changes of one page, by their sequence.
+
+        :param page_id: Page the changes were made on.
+        :type page_id: PageId
+        :param stage: Stage listed, or None for every stage.
+        :type stage: Stage | None
+        :returns: The changes of the page.
+        :rtype: Sequence[PageStepChange]
+        """
+        return sorted(
+            (
+                change
+                for change in self._rows.values()
+                if change.page_id == page_id and (stage is None or change.stage == stage)
+            ),
+            key=attrgetter('sequence'),
         )
 
 
@@ -1729,7 +1792,8 @@ class InMemoryUnitOfWork(UnitOfWork):
     :ivar pagination_sections: Pagination section repository over the working copy.
     :ivar page_versions: Page version repository over the working copy.
     :ivar page_stages: Page stage repository over the working copy.
-    :ivar page_edits: Page edit repository over the working copy.
+    :ivar page_step_states: Page step state repository over the working copy.
+    :ivar page_step_changes: Page step change repository over the working copy.
     :ivar recipes: Recipe repository over the working copy.
     :ivar recipe_rules: Recipe rule repository over the working copy.
     :ivar recipe_profiles: Recipe profile repository over the working copy.
@@ -1771,7 +1835,8 @@ class InMemoryUnitOfWork(UnitOfWork):
             self._tables, snapshot=self._snapshot, committed=self._database.tables
         )
         self.page_stages = InMemoryPageStageRepository(self._tables)
-        self.page_edits = InMemoryPageEditRepository(self._tables)
+        self.page_step_states = InMemoryPageStepStateRepository(self._tables)
+        self.page_step_changes = InMemoryPageStepChangeRepository(self._tables)
         self.recipes = InMemoryRecipeRepository(self._tables)
         self.recipe_rules = InMemoryRecipeRuleRepository(self._tables)
         self.recipe_profiles = InMemoryRecipeProfileRepository(self._tables)

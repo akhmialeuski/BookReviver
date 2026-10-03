@@ -1163,6 +1163,22 @@ export type PageSchema = {
 };
 
 /**
+ * PageSettingForm
+ *
+ * The value one page uses for one field of the parameters of a step.
+ *
+ * :ivar value: The value, as JSON, which the processor of the step checks against the field.
+ */
+export type PageSettingForm = {
+    /**
+     * Value
+     *
+     * The value the page uses for the field
+     */
+    value: unknown;
+};
+
+/**
  * PageStageSchema
  *
  * The current version of a stage of a page and whether it is up to date; the data of a stage event too.
@@ -1212,6 +1228,40 @@ export type PageStageSchema = {
  * Where one page stands in one stage: the state of its record, or that the stage has not run on it yet.
  */
 export type PageStageStatus = 'not-run' | 'fresh' | 'stale' | 'failed';
+
+/**
+ * PageStepSettingsSchema
+ *
+ * The fields of the parameters of a step that one page changes.
+ *
+ * :ivar page_id: Page the settings belong to.
+ * :ivar stage: Stage of the step.
+ * :ivar step_id: Identifier of the step.
+ * :ivar params: The fields the page changes, by name, each with the value the page uses. The others come from the
+ * step of the recipe.
+ * :ivar updated_at: When the settings were last saved.
+ */
+export type PageStepSettingsSchema = {
+    /**
+     * Page Id
+     */
+    page_id: string;
+    stage: Stage;
+    /**
+     * Step Id
+     */
+    step_id: string;
+    /**
+     * Params
+     */
+    params: {
+        [key: string]: unknown;
+    };
+    /**
+     * Updated At
+     */
+    updated_at: string;
+};
 
 /**
  * PageUpdate
@@ -1399,6 +1449,32 @@ export type PagePageStageSchema = {
      * Items
      */
     items: Array<PageStageSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
+};
+
+/**
+ * Page[PageStepSettingsSchema]
+ */
+export type PagePageStepSettingsSchema = {
+    /**
+     * Items
+     */
+    items: Array<PageStepSettingsSchema>;
     /**
      * Total
      */
@@ -6031,6 +6107,189 @@ export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutResponses
 };
 
 export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutResponse = PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutResponses[keyof PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutResponses];
+
+export type ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Stage of the step the settings are for
+         */
+        stage: Stage;
+    };
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Size
+         */
+        size?: number;
+    };
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/settings/{stage}';
+};
+
+export type ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetError = ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetErrors[keyof ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetErrors];
+
+export type ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: PagePageStepSettingsSchema;
+};
+
+export type ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetResponse = ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetResponses[keyof ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetResponses];
+
+export type DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Stage of the step the settings are for
+         */
+        stage: Stage;
+        /**
+         * Step Id
+         *
+         * Identifier of the step of a recipe
+         */
+        step_id: string;
+        /**
+         * Name
+         *
+         * Name of the field in the parameters of the step
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/settings/{stage}/{step_id}/{name}';
+};
+
+export type DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteError = DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteErrors[keyof DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteErrors];
+
+export type DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteResponse = DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteResponses[keyof DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteResponses];
+
+export type PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutData = {
+    body: PageSettingForm;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Stage of the step the settings are for
+         */
+        stage: Stage;
+        /**
+         * Step Id
+         *
+         * Identifier of the step of a recipe
+         */
+        step_id: string;
+        /**
+         * Name
+         *
+         * Name of the field in the parameters of the step
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/settings/{stage}/{step_id}/{name}';
+};
+
+export type PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutError = PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutErrors[keyof PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutErrors];
+
+export type PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageStepSettingsSchema;
+};
+
+export type PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutResponse = PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutResponses[keyof PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutResponses];
 
 export type ListProcessorsApiV1ProcessorsGetData = {
     body?: never;

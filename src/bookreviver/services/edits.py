@@ -1,11 +1,13 @@
 """Manual edits of a page, which a processor reads as an input beside its parameters.
 
 A frame, an angle, a split line or the mask of an eraser is stored apart from the parameters of a step, on the page,
-the stage and the step of a recipe that reads it, which a ``PageEditKey`` names, so two steps of one processor keep
-their own edits. The hash of the edit, taken over its shape in
-canonical JSON and over the SHA-256 digest of its mask, joins the identifier of the versions that read it, so an edit
-behaves like a parameter: a changed line gives a new version, and the old line finds the old version in the cache. A
-mask is stored under the key of its edit, in a directory of the hash, so a later mask never replaces an earlier one.
+the stage and the step of a recipe that reads it, which a ``PageStepKey`` names, so two steps of one processor keep
+their own edits. The edit is the manual layer of the ``PageStepState`` of the step on the page, which also holds the
+settings of the page, so saving or deleting an edit leaves the settings as they are. The hash of the edit, taken over
+its shape in canonical JSON and over the SHA-256 digest of its mask, joins the identifier of the versions that read it,
+so an edit behaves like a parameter: a changed line gives a new version, and the old line finds the old version in the
+cache. A mask is stored under the key of its edit, in a directory of the hash, so a later mask never replaces an
+earlier one.
 
 An edit computes nothing. It marks the stage of its page stale, and a run of the stage picks it up like any other.
 
@@ -19,13 +21,15 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import anyio
+from attrs import evolve
 
-from bookreviver.domain.entities import PageEdit
+from bookreviver.domain.entities import PageEdit, PageStepState
 from bookreviver.domain.enums import EditorKind, Rendition
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import StorageKey
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.services.projects import owned_project
+from bookreviver.services.recipes import find_step
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -33,7 +37,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Page
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import PageId, ProjectId
-    from bookreviver.domain.values import NewPageEdit, PageEditKey, ProcessorSpec
+    from bookreviver.domain.values import NewPageEdit, PageStepKey, ProcessorSpec
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
@@ -84,7 +88,7 @@ class EditService:
         self._clock = clock
 
     async def save(
-        self, actor: Actor, project_id: ProjectId, key: PageEditKey, edit: NewPageEdit, mask: IncomingFile | None
+        self, actor: Actor, project_id: ProjectId, key: PageStepKey, edit: NewPageEdit, mask: IncomingFile | None
     ) -> PageEdit:
         """Store the edit a step reads, replacing the one it read before, and mark the stage stale.
 
@@ -93,7 +97,7 @@ class EditService:
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param key: The page, the stage and the step that reads the edit.
-        :type key: PageEditKey
+        :type key: PageStepKey
         :param edit: The shape the user drew and the editor that drew it.
         :type edit: NewPageEdit
         :param mask: The mask the user painted, or None for an edit without one.
@@ -126,7 +130,10 @@ class EditService:
             edit_hash=edit_hash,
             updated_at=self._clock.now(),
         )
-        await self._uow.page_edits.save(stored)
+        state = await self._uow.page_step_states.find(key) or PageStepState(
+            page_id=key.page_id, stage=key.stage, step_id=key.step_id, updated_at=stored.updated_at
+        )
+        await self._uow.page_step_states.save(evolve(state, edit=stored, updated_at=stored.updated_at))
         stale = await self._records.mark_stale(key.page_id, key.stage)
         await self._uow.commit()
         await self._records.announce(project_id, stale)
@@ -149,9 +156,10 @@ class EditService:
         """
         await owned_project(self._uow.projects, actor, project_id)
         await self._page(project_id, page_id)
-        return await self._uow.page_edits.list_for_page(page_id, stage)
+        states = await self._uow.page_step_states.list_for_page(page_id, stage)
+        return [state.edit for state in states if state.edit is not None]
 
-    async def delete(self, actor: Actor, project_id: ProjectId, key: PageEditKey) -> None:
+    async def delete(self, actor: Actor, project_id: ProjectId, key: PageStepKey) -> None:
         """Delete the edit a step reads, and mark the stage stale.
 
         The files of its mask stay, since an edit is the input of the user and an equal edit stored again finds them.
@@ -161,33 +169,36 @@ class EditService:
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param key: The page, the stage and the step that reads the edit.
-        :type key: PageEditKey
+        :type key: PageStepKey
         :raises NotFoundError: If the actor has no such project, the project has no such page, or the step has no edit
                                there.
         """
         await owned_project(self._uow.projects, actor, project_id)
         await self._page(project_id, key.page_id)
-        await self._uow.page_edits.delete(key)
+        state = await self._uow.page_step_states.find(key)
+        if state is None or state.edit is None:
+            raise NotFoundError(key)
+        if state.params:
+            await self._uow.page_step_states.save(evolve(state, edit=None, updated_at=self._clock.now()))
+        else:
+            await self._uow.page_step_states.delete(key)
         stale = await self._records.mark_stale(key.page_id, key.stage)
         await self._uow.commit()
         await self._records.announce(project_id, stale)
 
-    async def _spec(self, project_id: ProjectId, key: PageEditKey) -> ProcessorSpec:
+    async def _spec(self, project_id: ProjectId, key: PageStepKey) -> ProcessorSpec:
         """Find the spec of the processor of a step, by the step in the recipes of the stage.
 
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param key: The page, the stage and the step that reads the edit.
-        :type key: PageEditKey
+        :type key: PageStepKey
         :returns: What the processor of the step says about itself.
         :rtype: ProcessorSpec
         :raises NotFoundError: If no recipe of the stage has the step, or its processor is not installed.
         """
-        for recipe in await self._uow.recipes.list_for_stage(project_id, key.stage):
-            for step in recipe.steps:
-                if step.step_id == key.step_id:
-                    return self._catalogue.get(step.processor_key).spec
-        raise NotFoundError(key.step_id)
+        step = await find_step(self._uow.recipes, project_id, key)
+        return self._catalogue.get(step.processor_key).spec
 
     async def _page(self, project_id: ProjectId, page_id: PageId) -> Page:
         """Return a page of the project.
@@ -205,13 +216,13 @@ class EditService:
             raise NotFoundError(page_id)
         return page
 
-    async def _check(self, project_id: ProjectId, key: PageEditKey, edit: NewPageEdit, *, has_mask: bool) -> None:
+    async def _check(self, project_id: ProjectId, key: PageStepKey, edit: NewPageEdit, *, has_mask: bool) -> None:
         """Check that the edit is the one the processor of the step reads.
 
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param key: The page, the stage and the step that reads the edit.
-        :type key: PageEditKey
+        :type key: PageStepKey
         :param edit: The edit.
         :type edit: NewPageEdit
         :param has_mask: Whether a mask came with the edit.
@@ -232,13 +243,13 @@ class EditService:
         if not masked and edit.geometry is None:
             raise InvalidParametersError(NEEDS_GEOMETRY.format(editor=edit.kind.label))
 
-    async def _receive(self, keys: ProjectKeys, key: PageEditKey, mask: IncomingFile) -> tuple[str, StorageKey]:
+    async def _receive(self, keys: ProjectKeys, key: PageStepKey, mask: IncomingFile) -> tuple[str, StorageKey]:
         """Write an uploaded mask to a scratch key, and work out its digest while it streams in.
 
         :param keys: Keys of the project.
         :type keys: ProjectKeys
         :param key: The page, the stage and the step that reads the edit.
-        :type key: PageEditKey
+        :type key: PageStepKey
         :param mask: The upload.
         :type mask: IncomingFile
         :returns: The SHA-256 digest of the mask and the scratch key it was written to.

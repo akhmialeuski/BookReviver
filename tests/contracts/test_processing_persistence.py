@@ -1,4 +1,4 @@
-"""Contract of the persistence ports of processing: recipes, stage records, manual edits and page version queries.
+"""Contract of the persistence ports of processing: recipes, stage records, the state and history of steps and page versions.
 
 Every test runs against each adapter registered in the conftest, the in-memory one and the SQL one, so both keep the
 promises of the ports: the keys they check, the actions of the foreign keys, and the queries a run and a collection
@@ -15,6 +15,7 @@ from attrs import evolve
 from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import (
     AppliesTo,
+    ChangeSource,
     PageOrigin,
     ReviewReason,
     Stage,
@@ -24,9 +25,9 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.geometry import Line, Point
-from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, StepId
+from bookreviver.domain.ids import ChangeBatchId, PageId, PageVersionId, ProjectId, StepId
 from bookreviver.domain.stage_summaries import StepTally
-from bookreviver.domain.values import PageEditKey, PageStageKey, SliceRequest, Step
+from bookreviver.domain.values import PageStageKey, PageStepKey, SliceRequest, Step
 from tests.helpers.builders import (
     DESKEW_STEP_ID,
     EPOCH,
@@ -34,6 +35,8 @@ from tests.helpers.builders import (
     make_page,
     make_page_edit,
     make_page_stage,
+    make_page_step_change,
+    make_page_step_state,
     make_page_version,
     make_project,
     make_recipe,
@@ -576,10 +579,10 @@ class TestPageStageRepository:
         kept = await (await fx_uow_factory()).page_stages.get(PageStageKey(page_id, Stage.GEOMETRY))
         assert kept.head_version_id is None
 
-    async def test_deleting_the_page_deletes_its_records_and_edits(
+    async def test_deleting_the_page_deletes_its_records_states_and_history(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the stage records and the edits go with their page.
+        """Verify the stage records, the step states and the history of the steps go with their page.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -589,7 +592,8 @@ class TestPageStageRepository:
         _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         await uow.page_stages.save(make_page_stage(page_id=page_id))
-        await uow.page_edits.save(make_page_edit(page_id=page_id))
+        await uow.page_step_states.save(make_page_step_state(page_id=page_id, edit=make_page_edit(page_id=page_id)))
+        await uow.page_step_changes.add(make_page_step_change(page_id=page_id))
         await uow.commit()
         uow = await fx_uow_factory()
         await uow.pages.delete(page_id)
@@ -597,17 +601,18 @@ class TestPageStageRepository:
         uow = await fx_uow_factory()
         assert (
             await uow.page_stages.find(PageStageKey(page_id, Stage.GEOMETRY)),
-            await uow.page_edits.list_for_page(page_id),
-        ) == (None, [])
+            await uow.page_step_states.list_for_page(page_id),
+            await uow.page_step_changes.list_for_page(page_id),
+        ) == (None, [], [])
 
 
-class TestPageEditRepository:
-    """Tests for the manual edits of the pages."""
+class TestPageStepStateRepository:
+    """Tests for the settings and the manual edits of the steps of the pages."""
 
-    async def test_save_stores_an_edit_and_replaces_it(
+    async def test_save_stores_a_state_and_replaces_it(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify a second save of the same processor on the same page and stage replaces the edit.
+        """Verify a second save of the same step on the same page and stage replaces the state.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -616,17 +621,48 @@ class TestPageEditRepository:
         """
         _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
-        await uow.page_edits.save(make_page_edit(page_id=page_id, degrees=1.5))
-        replacement = make_page_edit(page_id=page_id, degrees=-0.5)
-        await uow.page_edits.save(replacement)
+        await uow.page_step_states.save(make_page_step_state(page_id=page_id, params={'max_angle_deg': 3}))
+        replacement = make_page_step_state(page_id=page_id, params={'max_angle_deg': 7})
+        await uow.page_step_states.save(replacement)
         await uow.commit()
-        found = await (await fx_uow_factory()).page_edits.find(PageEditKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID))
+        found = await (await fx_uow_factory()).page_step_states.find(
+            PageStepKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID)
+        )
         assert found == replacement
+
+    async def test_settings_and_edit_survive_the_store_together(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the fields a page changes and its manual edit read back, and a state may hold either alone.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        both = make_page_step_state(
+            page_id=page_id, params={'max_angle_deg': 3, 'method': 'projection'}, edit=make_page_edit(page_id=page_id)
+        )
+        settings_only = make_page_step_state(page_id=page_id, stage=Stage.CLEANUP, params={'threshold': 0.5})
+        edit_only = make_page_step_state(
+            page_id=page_id, stage=Stage.LAYOUT, edit=make_page_edit(page_id=page_id, stage=Stage.LAYOUT)
+        )
+        uow = await fx_uow_factory()
+        for state in (both, settings_only, edit_only):
+            await uow.page_step_states.save(state)
+        await uow.commit()
+        states = (await fx_uow_factory()).page_step_states
+        assert [await states.get(state.key) for state in (both, settings_only, edit_only)] == [
+            both,
+            settings_only,
+            edit_only,
+        ]
 
     async def test_geometry_and_mask_survive_the_store(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the split line a user drew reads back as the same line, with the key of its mask.
+        """Verify the split line a user drew reads back as the same line in the edit of a state.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -645,15 +681,16 @@ class TestPageEditRepository:
             edit_hash=PageEdit.hash_of(geometry, None),
             updated_at=EPOCH,
         )
+        state = make_page_step_state(page_id=page_id, stage=Stage.PAGE_SPLIT, step_id=edit.step_id, edit=edit)
         uow = await fx_uow_factory()
-        await uow.page_edits.save(edit)
+        await uow.page_step_states.save(state)
         await uow.commit()
-        assert await (await fx_uow_factory()).page_edits.get(edit.key) == edit
+        assert await (await fx_uow_factory()).page_step_states.get(state.key) == state
 
     async def test_list_for_page_filters_by_stage(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the edits of one stage are listed apart from those of the page's other stages.
+        """Verify the states of one stage are listed apart from those of the page's other stages.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -662,19 +699,19 @@ class TestPageEditRepository:
         """
         _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
-        geometry = make_page_edit(page_id=page_id)
-        cleanup = evolve(make_page_edit(page_id=page_id), stage=Stage.CLEANUP)
-        await uow.page_edits.save(cleanup)
-        await uow.page_edits.save(geometry)
+        geometry = make_page_step_state(page_id=page_id, params={'max_angle_deg': 3})
+        cleanup = evolve(geometry, stage=Stage.CLEANUP)
+        await uow.page_step_states.save(cleanup)
+        await uow.page_step_states.save(geometry)
         assert (
-            await uow.page_edits.list_for_page(page_id, Stage.GEOMETRY),
-            await uow.page_edits.list_for_page(page_id),
+            await uow.page_step_states.list_for_page(page_id, Stage.GEOMETRY),
+            await uow.page_step_states.list_for_page(page_id),
         ) == ([geometry], [geometry, cleanup])
 
-    async def test_two_steps_of_one_processor_keep_two_edits(
+    async def test_two_steps_of_one_processor_keep_two_states(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify edits of two steps on one page and stage are stored apart and found each by its step.
+        """Verify states of two steps on one page and stage are stored apart and found each by its step.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -682,27 +719,27 @@ class TestPageEditRepository:
         :type fx_new_owner: OwnerFactory
         """
         _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
-        first = make_page_edit(page_id=page_id, degrees=1.0)
-        second = evolve(make_page_edit(page_id=page_id, degrees=2.0), step_id=StepId(uuid4()))
+        first = make_page_step_state(page_id=page_id, params={'max_angle_deg': 1})
+        second = make_page_step_state(page_id=page_id, step_id=StepId(uuid4()), params={'max_angle_deg': 2})
         uow = await fx_uow_factory()
-        await uow.page_edits.save(first)
-        await uow.page_edits.save(second)
+        await uow.page_step_states.save(first)
+        await uow.page_step_states.save(second)
         await uow.commit()
-        edits = (await fx_uow_factory()).page_edits
-        assert (await edits.find(first.key), await edits.find(second.key)) == (first, second)
+        states = (await fx_uow_factory()).page_step_states
+        assert (await states.find(first.key), await states.find(second.key)) == (first, second)
 
-    async def test_edit_of_a_missing_page_is_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Reject an edit whose page is not stored.
+    async def test_state_of_a_missing_page_is_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Reject a state whose page is not stored.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
         """
         uow = await fx_uow_factory()
         with pytest.raises(NotFoundError):
-            await uow.page_edits.save(make_page_edit(page_id=PageId(new_account_id())))
+            await uow.page_step_states.save(make_page_step_state(page_id=PageId(new_account_id())))
 
-    async def test_delete_removes_an_edit(self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
-        """Verify a deleted edit is gone, and deleting it again is a NotFoundError.
+    async def test_delete_removes_a_state(self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
+        """Verify a deleted state is gone, and deleting it again is a NotFoundError.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -711,11 +748,114 @@ class TestPageEditRepository:
         """
         _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
-        edit = make_page_edit(page_id=page_id)
-        await uow.page_edits.save(edit)
-        await uow.page_edits.delete(edit.key)
+        state = make_page_step_state(page_id=page_id, params={'max_angle_deg': 3})
+        await uow.page_step_states.save(state)
+        await uow.page_step_states.delete(state.key)
         with pytest.raises(NotFoundError):
-            await uow.page_edits.delete(edit.key)
+            await uow.page_step_states.delete(state.key)
+
+
+class TestPageStepChangeRepository:
+    """Tests for the history of the layers of the steps of the pages."""
+
+    async def test_change_survives_the_store(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a change reads back with its layers before and after, its source and its batch.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        change = evolve(
+            make_page_step_change(page_id=page_id, before=None, after={'method': 'otsu'}),
+            source=ChangeSource.CARRY_OVER,
+            batch_id=ChangeBatchId(uuid4()),
+        )
+        uow = await fx_uow_factory()
+        stored = await uow.page_step_changes.add(change)
+        await uow.commit()
+        assert (await (await fx_uow_factory()).page_step_changes.get(change.id), stored) == (
+            stored,
+            evolve(change, sequence=1),
+        )
+
+    async def test_changes_made_at_the_same_instant_list_in_the_order_they_were_written(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the sequence, not the time or the identifier, orders the history, across transactions and a batch.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        written = [make_page_step_change(page_id=page_id, created_at=EPOCH) for _ in range(6)]
+        uow = await fx_uow_factory()
+        for change in written[:2]:
+            await uow.page_step_changes.add(change)
+        await uow.commit()
+        uow = await fx_uow_factory()
+        await uow.page_step_changes.add_many(written[2:5])
+        await uow.page_step_changes.add(written[5])
+        await uow.commit()
+        listed = await (await fx_uow_factory()).page_step_changes.list_for_page(page_id)
+        assert ([change.id for change in listed], [change.sequence for change in listed]) == (
+            [change.id for change in written],
+            [1, 2, 3, 4, 5, 6],
+        )
+
+    async def test_list_for_page_is_oldest_first_and_filters_by_stage(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the history of a page is listed from the oldest change, and one stage apart from the others.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        later = make_page_step_change(page_id=page_id, created_at=EPOCH + RECENT)
+        earlier = make_page_step_change(page_id=page_id, created_at=EPOCH)
+        cleanup = make_page_step_change(page_id=page_id, stage=Stage.CLEANUP, created_at=EPOCH + OLD)
+        uow = await fx_uow_factory()
+        await uow.page_step_changes.add_many([earlier, later, cleanup])
+        listed = await uow.page_step_changes.list_for_page(page_id)
+        in_stage = await uow.page_step_changes.list_for_page(page_id, Stage.GEOMETRY)
+        assert ([change.id for change in listed], [change.id for change in in_stage]) == (
+            [earlier.id, later.id, cleanup.id],
+            [earlier.id, later.id],
+        )
+
+    async def test_change_of_a_missing_page_is_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Reject a change whose page is not stored.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        uow = await fx_uow_factory()
+        with pytest.raises(NotFoundError):
+            await uow.page_step_changes.add(make_page_step_change(page_id=PageId(new_account_id())))
+
+    async def test_change_is_stored_once(self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
+        """Verify a change with an identifier that is stored already is a conflict.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        change = make_page_step_change(page_id=page_id)
+        uow = await fx_uow_factory()
+        await uow.page_step_changes.add(change)
+        await uow.commit()
+        with pytest.raises(ConflictError):
+            await (await fx_uow_factory()).page_step_changes.add(change)
 
 
 class TestPageVersionProcessing:

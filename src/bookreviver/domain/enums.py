@@ -830,6 +830,23 @@ class EditorKind(LabeledStrEnum):
     REGIONS = 'regions', 'Regions'
 
 
+class StepLayer(LabeledStrEnum):
+    """One of the three layers a page keeps for a step, which a change of the history names."""
+
+    SETTINGS = 'settings', 'Settings of the page'
+    FOUND = 'found', 'Found by the automatic run'
+    HAND = 'hand', 'Set by hand'
+
+
+class ChangeSource(LabeledStrEnum):
+    """What made a change of a layer of a step on a page."""
+
+    USER = 'user', 'The user'
+    RUN = 'run', 'A run'
+    CARRY_OVER = 'carry-over', 'A carry-over from another page'
+    RESET = 'reset', 'A reset to the defaults'
+
+
 class TransformKind(LabeledStrEnum):
     """Kind of the coordinate transform a processing step applies from its input to its output."""
 

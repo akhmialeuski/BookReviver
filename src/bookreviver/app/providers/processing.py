@@ -1,10 +1,10 @@
-"""Provider of the processing feature: the catalogue of processors, and the services that run recipes and keep edits.
+"""Provider of the processing feature: the catalogue of processors and the services that run recipes and keep edits.
 
 The catalogue and the runner of processors keep no per-request state, so one of each serves the whole application, and
 the catalogue loads the plugins of the pools the settings name when it is built. Everything that works through a
 unit of work is built per request or job: the parts the use cases share, the service of the requests, the jobs of the
-workers and the service of the manual edits. The IIIF root comes from the mount point of the IIIF routes, which only
-``api`` knows, as it does for the import.
+workers and the services of the manual edits and of the settings of pages. The IIIF root comes from the mount point
+of the IIIF routes, which only ``api`` knows, as it does for the import.
 """
 
 from datetime import timedelta
@@ -21,6 +21,7 @@ from bookreviver.ports.processing import ProcessorCatalog, ProcessorSettings
 from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
 from bookreviver.ports.storage import AssetStore
 from bookreviver.services.edits import EditService
+from bookreviver.services.page_settings import PageSettingsService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
@@ -254,3 +255,22 @@ class ProcessingProvider(Provider):
         :rtype: EditService
         """
         return EditService(uow=uow, assets=assets, catalogue=catalogue, records=parts.records, clock=clock)
+
+    @provide(scope=Scope.REQUEST)
+    def page_settings_service(
+        self, uow: UnitOfWork, catalogue: ProcessorCatalog, parts: ProcessingParts, clock: Clock
+    ) -> PageSettingsService:
+        """Build the page settings service of a request.
+
+        :param uow: Unit of work of the current request.
+        :type uow: UnitOfWork
+        :param catalogue: The processors the application can run.
+        :type catalogue: ProcessorCatalog
+        :param parts: The parts the processing use cases share, of which the stage records are used.
+        :type parts: ProcessingParts
+        :param clock: Clock of the application.
+        :type clock: Clock
+        :returns: The page settings service.
+        :rtype: PageSettingsService
+        """
+        return PageSettingsService(uow=uow, catalogue=catalogue, records=parts.records, clock=clock)

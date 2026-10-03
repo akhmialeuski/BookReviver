@@ -21,7 +21,7 @@ from bookreviver.domain.errors import ConflictError, InvalidParametersError
 from bookreviver.domain.events import PageStageChanged, PageVersionReady
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import NewPageEdit, PageEditKey, PageStageKey, SliceRequest, StageRun, Step, StepPreview
+from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, SliceRequest, StageRun, Step, StepPreview
 from tests.helpers.builders import make_page
 from tests.helpers.fake_processing import PREVIEW_TOKEN
 from tests.helpers.processing import IMAGE_CONTENT
@@ -519,7 +519,7 @@ class TestRunThroughStep:
         first = await head_of(fx_kit, page, Stage.GEOMETRY)
         edit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=1.5))
         recipe = await fx_kit.parts(fx_kit.uow()).recipes.active(project.id, Stage.GEOMETRY)
-        key = PageEditKey(page.id, Stage.GEOMETRY, recipe.steps[-1].step_id)
+        key = PageStepKey(page.id, Stage.GEOMETRY, recipe.steps[-1].step_id)
         await fx_kit.edits().save(actor, project.id, key, edit, None)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         last = await head_of(fx_kit, page, Stage.GEOMETRY)

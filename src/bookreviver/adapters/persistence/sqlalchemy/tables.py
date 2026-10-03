@@ -1,24 +1,24 @@
 """Tables of the books feature, private to the SQLAlchemy persistence adapter.
 
 The module declares the ``projects``, ``jobs``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
-``page_edits``, ``pagination_sections``, ``book_places``, ``recipes``, ``recipe_rules`` and ``recipe_profiles`` tables
-in the SQLAlchemy 2.0 declarative style: ``Mapped`` annotations, ``mapped_column`` and ``relationship`` with
-``back_populates``. Every table derives from advanced-alchemy's :class:`~advanced_alchemy.base.DefaultBase`, which is a
-``DeclarativeBase`` carrying the metadata shared with the account tables, the portable ``GUID``, ``DateTimeUTC`` and
-``JsonB`` column types for ``UUID``, ``datetime`` and ``dict`` annotations, and the naming convention of keys and
-constraints.
+``page_step_states``, ``page_step_changes``, ``pagination_sections``, ``book_places``, ``recipes``, ``recipe_rules``
+and ``recipe_profiles`` tables in the SQLAlchemy 2.0 declarative style: ``Mapped`` annotations, ``mapped_column`` and
+``relationship`` with ``back_populates``. Every table derives from advanced-alchemy's
+:class:`~advanced_alchemy.base.DefaultBase`, which is a ``DeclarativeBase`` carrying the metadata shared with the
+account tables, the portable ``GUID``, ``DateTimeUTC`` and ``JsonB`` column types for ``UUID``, ``datetime`` and
+``dict`` annotations, and the naming convention of keys and constraints.
 
 Rows never leave the adapter. The mappers in :mod:`bookreviver.adapters.persistence.sqlalchemy.mappers` turn them into
 frozen domain entities, so nothing outside this package depends on the shape of a table.
 
 A project owns its sources, scans, pages, recipes and jobs, a source owns its scans, and a page owns its versions,
-its stage records and its edits. The foreign keys carry ``ON DELETE CASCADE``, so the database removes them with their
-owner. An optional reference carries ``ON DELETE SET NULL`` instead: a page keeps its row when its scan is deleted, a
-source when its import job is, a version when its input version is, and a stage record when its head version or its
-recipe is, because a page of the book holds its own copy of its image. The relationships use
-``passive_deletes=True`` to leave that deletion to the database, and ``lazy="raise"`` because an ``AsyncSession``
-cannot load a relationship implicitly on attribute access. Unique keys are declared with their table, and the shared
-naming convention names them.
+its stage records, its step states and its history. The foreign keys carry ``ON DELETE CASCADE``, so the database
+removes them with their owner. An optional reference carries ``ON DELETE SET NULL`` instead: a page keeps its row
+when its scan is deleted, a source when its import job is, a version when its input version is, and a stage record
+when its head version or its recipe is, because a page of the book holds its own copy of its image. The relationships
+use ``passive_deletes=True`` to leave that deletion to the database, and ``lazy="raise"`` because an
+``AsyncSession`` cannot load a relationship implicitly on attribute access. Unique keys are declared with their table,
+and the shared naming convention names them.
 
 The owner of a project refers to the ``user`` table of fastapi-users with ``ON DELETE RESTRICT``. A cascade would
 remove the rows of the owner's projects but not their files, so an account is deleted only after its projects have
@@ -38,6 +38,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.domain.enums import (
+    ChangeSource,
     ColorMode,
     CompareMode,
     EditorKind,
@@ -60,6 +61,7 @@ from bookreviver.domain.enums import (
     SourceKind,
     Stage,
     StageState,
+    StepLayer,
     VersionScale,
     VersionState,
     ViewMode,
@@ -139,7 +141,8 @@ class Relation(enum.StrEnum):
     JOBS = 'jobs'
     RECIPES = 'recipes'
     STAGES = 'stages'
-    EDITS = 'edits'
+    STEP_STATES = 'step_states'
+    STEP_CHANGES = 'step_changes'
     PROJECT = 'project'
     SOURCE = 'source'
     PAGE = 'page'
@@ -523,7 +526,10 @@ class PageRow(DefaultBase):
     stages: Mapped[list[PageStageRow]] = relationship(
         back_populates=Relation.PAGE, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
-    edits: Mapped[list[PageEditRow]] = relationship(
+    step_states: Mapped[list[PageStepStateRow]] = relationship(
+        back_populates=Relation.PAGE, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
+    )
+    step_changes: Mapped[list[PageStepChangeRow]] = relationship(
         back_populates=Relation.PAGE, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
 
@@ -650,35 +656,83 @@ class PageStageRow(DefaultBase):
     page: Mapped[PageRow] = relationship(back_populates=Relation.STAGES, lazy=NO_IMPLICIT_LOAD)
 
 
-class PageEditRow(DefaultBase):
-    """Row of one manual edit, keyed by the page, the stage and the step of a recipe that reads it.
+class PageStepStateRow(DefaultBase):
+    """Row of what one page keeps for one step of a recipe, keyed by the page, the stage and the step.
 
     The step is named by the identifier its recipe gives it, with no foreign key: the steps are a JSON list in the row
-    of a recipe, and a step that is removed leaves its edit, which finds the step again if it is put back.
+    of a recipe, and a step that is removed leaves its state, which finds the step again if it is put back. The columns
+    of the manual edit are null while the page has no edit of the step, and the settings are an empty object while it
+    changes no field.
 
-    :ivar page_id: Page the edit belongs to.
+    :ivar page_id: Page the state belongs to.
     :ivar stage: Stage of the step, stored by value.
-    :ivar step_id: Identifier of the step reading the edit.
-    :ivar kind: Editor that made the edit, stored by value.
-    :ivar geometry: The shape the user drew, as JSON, or null for an edit that is only a mask.
+    :ivar step_id: Identifier of the step.
+    :ivar params: The fields of the parameters of the step that this page changes, as a JSON object.
+    :ivar kind: Editor that made the edit, stored by value, or null for a page without an edit.
+    :ivar geometry: The shape the user drew, as JSON, or null for an edit that is only a mask or for no edit.
     :ivar mask_key: Storage key of the painted mask, or null.
-    :ivar edit_hash: Hash of the geometry and the mask.
-    :ivar updated_at: Time the edit was last saved.
-    :ivar page: Page owning the edit, never loaded implicitly.
+    :ivar edit_hash: Hash of the geometry and the mask, or null for a page without an edit.
+    :ivar edit_saved_at: Time the edit was last saved, or null for a page without an edit.
+    :ivar updated_at: Time the state was last saved.
+    :ivar page: Page owning the state, never loaded implicitly.
     """
 
-    __tablename__ = 'page_edits'
+    __tablename__ = 'page_step_states'
 
     page_id: Mapped[UUID] = mapped_column(ForeignKey(PageRow.id, ondelete=CASCADE), primary_key=True)
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage), primary_key=True)
     step_id: Mapped[UUID] = mapped_column(primary_key=True)
-    kind: Mapped[EditorKind] = mapped_column(enum_by_value(EditorKind))
+    params: Mapped[dict[str, Any]] = mapped_column(JsonB, server_default=EMPTY_OBJECT)
+    kind: Mapped[EditorKind | None] = mapped_column(enum_by_value(EditorKind))
     geometry: Mapped[dict[str, Any] | None] = mapped_column(JsonB)
     mask_key: Mapped[str | None]
-    edit_hash: Mapped[str]
+    edit_hash: Mapped[str | None]
+    edit_saved_at: Mapped[datetime | None]
     updated_at: Mapped[datetime]
 
-    page: Mapped[PageRow] = relationship(back_populates=Relation.EDITS, lazy=NO_IMPLICIT_LOAD)
+    page: Mapped[PageRow] = relationship(back_populates=Relation.STEP_STATES, lazy=NO_IMPLICIT_LOAD)
+
+
+class PageStepChangeRow(DefaultBase):
+    """Row of one change of a layer of a step on a page, which the history of the page keeps and never rewrites.
+
+    The step is named by its identifier with no foreign key, as in ``page_step_states``, since a change outlives a step
+    that is removed from its recipe. The values are the whole layer before and after the change, as JSON objects.
+
+    :ivar id: Change identifier, assigned by the domain.
+    :ivar page_id: Page the change was made on.
+    :ivar stage: Stage of the step, stored by value.
+    :ivar step_id: Identifier of the step.
+    :ivar layer: The layer that changed, stored by value.
+    :ivar before: Content of the layer before the change, or null for an empty layer.
+    :ivar after: Content of the layer after the change, or null when it is emptied.
+    :ivar source: What made the change, stored by value.
+    :ivar batch_id: Identifier shared by the changes of one batch, or null.
+    :ivar created_at: Time the change was made.
+    :ivar sequence: Place of the change in the history of its page, from one, unique within the page.
+    :ivar page: Page owning the change, never loaded implicitly.
+    """
+
+    __tablename__ = 'page_step_changes'
+    __table_args__ = (
+        Index(None, 'page_id', 'stage'),
+        Index(None, 'batch_id'),
+        UniqueConstraint('page_id', 'sequence'),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    page_id: Mapped[UUID] = mapped_column(ForeignKey(PageRow.id, ondelete=CASCADE))
+    stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
+    step_id: Mapped[UUID]
+    layer: Mapped[StepLayer] = mapped_column(enum_by_value(StepLayer))
+    before: Mapped[dict[str, Any] | None] = mapped_column(JsonB)
+    after: Mapped[dict[str, Any] | None] = mapped_column(JsonB)
+    source: Mapped[ChangeSource] = mapped_column(enum_by_value(ChangeSource))
+    batch_id: Mapped[UUID | None]
+    created_at: Mapped[datetime]
+    sequence: Mapped[int]
+
+    page: Mapped[PageRow] = relationship(back_populates=Relation.STEP_CHANGES, lazy=NO_IMPLICIT_LOAD)
 
 
 class BookPlaceRow(DefaultBase):

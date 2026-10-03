@@ -40,7 +40,7 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import COLOR_MODE_KEY, PageEditKey, PageSize, PageStageKey, Step
+from bookreviver.domain.values import COLOR_MODE_KEY, PageSize, PageStageKey, PageStepKey, Step
 from bookreviver.services.spread_splits import SpreadSplit
 from bookreviver.services.steps import StepRun
 
@@ -297,9 +297,12 @@ class StageWork:
 
         A version that is ready and has its files is returned as it is. One that is new, or failed or left running by a
         crash, or whose files a collection removed, is run, and returned as ready or failed. The one whose files were
-        removed keeps its row, its identifier and its creation time. A page that does not meet the condition of the step
-        is not run through the processor: its version holds the image of the source as it is, with no parameters and no
-        edit, so every step that skips the same input shares it.
+        removed keeps its row, its identifier and its creation time. The fields the page changes for the step are laid
+        over the parameters of the step first, so the version holds the parameters the step ran with, and the settings
+        of the page reach the identifier through them, except when the version is made again from its stored parameters.
+        A page that does not meet the condition of the step is not run through the processor: its version holds the
+        image of the source as it is, with no parameters, no settings and no edit, so every step that skips the same
+        input shares it.
 
         :param page: Page being processed.
         :type page: Page
@@ -324,9 +327,14 @@ class StageWork:
         if processor.spec.scope is ProcessorScope.SPLIT:
             raise ConflictError(SPLIT_NOT_AVAILABLE.format(key=step.processor_key))
         skipped = not step.applies_to.matches(page.kind, source.stage_color or source.color_mode)
-        checked = processor.validate_params(step.params)
+        state = None if skipped else await self._uow.page_step_states.find(PageStepKey(page.id, stage, step.step_id))
+        # The settings of the page are laid over the parameters of the step before they are checked, so the identifier
+        # of the version hashes the parameters the step runs with, and two pages that end up with equal ones share it.
+        # A version that is made again ran with the parameters it stored, which already hold the settings of its time
+        laid = step.params if state is None or expected is not None else state.apply_to(step.params)
+        checked = processor.validate_params(laid)
         params = {} if skipped else checked
-        edit = None if skipped else await self._uow.page_edits.find(PageEditKey(page.id, stage, step.step_id))
+        edit = None if state is None else state.edit
         # The side is part of what a step depends on, so a page moved to the other side of the book is made again
         side = (
             PageSide.of_position(await self._uow.pages.count_before(page) + 1)
@@ -484,7 +492,9 @@ class RecipeRun(StageWork):
         current version of the earlier stage. Every version of the chain is found under the identifier it has and given
         its files, so no row is added. The chain must read what the earlier stage has now, and its processors, edits
         and page side must be what they were, since otherwise the identifier would differ and another result would be
-        made in its place.
+        made in its place. The steps are run with the parameters the versions stored, which already hold the settings
+        the page had when they were made, so a setting that was changed or taken back since does not prevent it, and the
+        settings of the page are not laid over them again.
 
         :param page: Page owning the version.
         :type page: Page

@@ -1,9 +1,9 @@
 """Building the processing services of a test over in-memory persistence, the local asset store and fake processors.
 
-``ProcessingKit`` holds what the services of one test share, and builds a service, the jobs of the workers or the edit
-service over a new unit of work, as a new request or job would get one. The processors are fakes that copy their input,
-and the writer of renditions copies the image it is given and writes token files, so no image library is needed to
-tell which files a version has and in which format its ``full`` was asked for.
+``ProcessingKit`` holds what the services of one test share, and builds a service, the jobs of the workers, the edit
+service or the page settings service over a new unit of work, as a new request or job would get one. The processors
+are fakes that copy their input, and the writer of renditions copies the image it is given and writes token files, so
+no image library is needed to tell which files a version has and in which format its ``full`` was asked for.
 """
 
 from datetime import timedelta
@@ -28,10 +28,11 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PageEditKey, RecipeKey, Renditions
+from bookreviver.domain.values import PageStepKey, RecipeKey, Renditions
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.services.edits import EditService
+from bookreviver.services.page_settings import PageSettingsService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
@@ -259,7 +260,16 @@ class ProcessingKit:
             uow=uow, assets=self.assets, catalogue=self.catalogue, records=self.parts(uow).records, clock=self.clock
         )
 
-    async def edit_key(self, page: Page, stage: Stage, processor_key: str) -> PageEditKey:
+    def page_settings(self) -> PageSettingsService:
+        """Build the page settings service over a new unit of work.
+
+        :returns: The service.
+        :rtype: PageSettingsService
+        """
+        uow = InMemoryUnitOfWork(self.database)
+        return PageSettingsService(uow=uow, catalogue=self.catalogue, records=self.parts(uow).records, clock=self.clock)
+
+    async def edit_key(self, page: Page, stage: Stage, processor_key: str) -> PageStepKey:
         """Give the key of the edit of a step of the active recipe of a stage on a page, found by its processor.
 
         :param page: Page the edit belongs to.
@@ -269,11 +279,11 @@ class ProcessingKit:
         :param processor_key: Key of the processor of the step, whose first step in the recipe is the one named.
         :type processor_key: str
         :returns: The key of the edit of that step.
-        :rtype: PageEditKey
+        :rtype: PageStepKey
         """
         recipe = await self.parts(self.uow()).recipes.active(page.project_id, stage)
         step = next(step for step in recipe.steps if step.processor_key == processor_key)
-        return PageEditKey(page.id, stage, step.step_id)
+        return PageStepKey(page.id, stage, step.step_id)
 
     def uow(self) -> InMemoryUnitOfWork:
         """Open a unit of work to read what was committed.

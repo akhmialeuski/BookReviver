@@ -13,7 +13,7 @@ from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.geometry import BrushStrokes, Line, Point, Rect, Rotation, Stroke
 from bookreviver.domain.ids import StepId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import NewPageEdit, PageEditKey, PageStageKey, StageRun, Step
+from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, StageRun, Step
 from tests.helpers.builders import make_page_stage
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
 from tests.helpers.storage import upload
@@ -162,7 +162,7 @@ class TestSave:
         """
         actor, project, page = await prepared(fx_kit)
         geometry_key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
-        for key in (PageEditKey(page.id, Stage.GEOMETRY, StepId(uuid4())), evolve(geometry_key, stage=Stage.CLEANUP)):
+        for key in (PageStepKey(page.id, Stage.GEOMETRY, StepId(uuid4())), evolve(geometry_key, stage=Stage.CLEANUP)):
             with pytest.raises(NotFoundError):
                 await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
 
@@ -175,10 +175,10 @@ class TestSave:
         actor, project, page = await prepared(fx_kit)
         first, second = Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)
         await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, 'Twice', [first, second])
-        key = PageEditKey(page.id, Stage.GEOMETRY, first.step_id)
+        key = PageStepKey(page.id, Stage.GEOMETRY, first.step_id)
         saved = await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
         listed = await fx_kit.edits().list(actor, project.id, page.id, Stage.GEOMETRY)
-        found = await fx_kit.uow().page_edits.find(PageEditKey(page.id, Stage.GEOMETRY, second.step_id))
+        found = await fx_kit.uow().page_step_states.find(PageStepKey(page.id, Stage.GEOMETRY, second.step_id))
         expect(listed == [saved])
         expect(found is None)
         assert_expectations()

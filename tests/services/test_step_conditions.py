@@ -12,7 +12,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import AppliesTo, EditorKind, PageKind, Stage, TransformKind, VersionData
 from bookreviver.domain.geometry import Rotation
-from bookreviver.domain.values import NewPageEdit, PageEditKey, StageRun, Step
+from bookreviver.domain.values import NewPageEdit, PageStepKey, StageRun, Step
 from tests.helpers.processors import RAN_KEY, STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.spreads import head_of, run_stage
 
@@ -171,7 +171,7 @@ class TestIdentity:
         second = Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2})
         await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, TWO_STEPS, [first, second])
         await fx_kit.edits().save(
-            actor, project.id, PageEditKey(text.id, Stage.GEOMETRY, second.step_id), ROTATION, None
+            actor, project.id, PageStepKey(text.id, Stage.GEOMETRY, second.step_id), ROTATION, None
         )
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         last = await head_of(fx_kit, text, Stage.GEOMETRY)

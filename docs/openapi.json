@@ -5822,6 +5822,378 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/pages/{page_id}/settings/{stage}": {
+      "get": {
+        "tags": [
+          "page-settings"
+        ],
+        "summary": "List Settings",
+        "description": "List the steps of one stage of a page that have settings of the page, with the fields the page changes.",
+        "operationId": "list_settings_api_v1_projects__project_id__pages__page_id__settings__stage__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the step the settings are for"
+            },
+            "description": "Stage of the step the settings are for"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PageStepSettingsSchema_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pages/{page_id}/settings/{stage}/{step_id}/{name}": {
+      "put": {
+        "tags": [
+          "page-settings"
+        ],
+        "summary": "Put Setting",
+        "description": "Set the value one page uses for one field of a step, and mark the stage of the page stale.\n\nThe other pages keep the value of the step of the recipe, and so does this page for every other field. The answer is\n422 for a field the processor of the step does not have and for a value out of its range, and nothing is processed\nby this request.",
+        "operationId": "put_setting_api_v1_projects__project_id__pages__page_id__settings__stage___step_id___name__put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the step the settings are for"
+            },
+            "description": "Stage of the step the settings are for"
+          },
+          {
+            "name": "step_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the step of a recipe",
+              "title": "Step Id"
+            },
+            "description": "Identifier of the step of a recipe"
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Name of the field in the parameters of the step",
+              "title": "Name"
+            },
+            "description": "Name of the field in the parameters of the step"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PageSettingForm"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageStepSettingsSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "page-settings"
+        ],
+        "summary": "Delete Setting",
+        "description": "Take a field back from the page, so it runs with the value of the step of the recipe, and mark the stage stale.",
+        "operationId": "delete_setting_api_v1_projects__project_id__pages__page_id__settings__stage___step_id___name__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the step the settings are for"
+            },
+            "description": "Stage of the step the settings are for"
+          },
+          {
+            "name": "step_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the step of a recipe",
+              "title": "Step Id"
+            },
+            "description": "Identifier of the step of a recipe"
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Name of the field in the parameters of the step",
+              "title": "Name"
+            },
+            "description": "Name of the field in the parameters of the step"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/processors": {
       "get": {
         "tags": [
@@ -9221,6 +9593,21 @@
         "title": "PageSchema",
         "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except\n                in a manifest listing only the included pages, which numbers those.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar label_manual: Whether the label is an exception to the pagination sections: written by hand, or taken from\n                    the source of the scan, and so never changed when the numbers of the book are computed again.\n:ivar kind: Role of the page in the book.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar group_label: Label of the group the user put the page in, or empty for no group.\n:ivar images: Paths of the images of the page's current version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
       },
+      "PageSettingForm": {
+        "properties": {
+          "value": {
+            "title": "Value",
+            "description": "The value the page uses for the field"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "PageSettingForm",
+        "description": "The value one page uses for one field of the parameters of a step.\n\n:ivar value: The value, as JSON, which the processor of the step checks against the field."
+      },
       "PageStageSchema": {
         "properties": {
           "page_id": {
@@ -9302,6 +9689,43 @@
         ],
         "title": "PageStageStatus",
         "description": "Where one page stands in one stage: the state of its record, or that the stage has not run on it yet."
+      },
+      "PageStepSettingsSchema": {
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Page Id"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "step_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Step Id"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_id",
+          "stage",
+          "step_id",
+          "params",
+          "updated_at"
+        ],
+        "title": "PageStepSettingsSchema",
+        "description": "The fields of the parameters of a step that one page changes.\n\n:ivar page_id: Page the settings belong to.\n:ivar stage: Stage of the step.\n:ivar step_id: Identifier of the step.\n:ivar params: The fields the page changes, by name, each with the value the page uses. The others come from the\n              step of the recipe.\n:ivar updated_at: When the settings were last saved."
       },
       "PageUpdate": {
         "properties": {
@@ -9611,6 +10035,46 @@
           "pages"
         ],
         "title": "Page[PageStageSchema]"
+      },
+      "Page_PageStepSettingsSchema_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PageStepSettingsSchema"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[PageStepSettingsSchema]"
       },
       "Page_PageVersionSchema_": {
         "properties": {

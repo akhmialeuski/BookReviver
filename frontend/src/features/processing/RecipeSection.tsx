@@ -2,9 +2,12 @@ import { CopyPlusIcon, PlusIcon } from 'lucide-react';
 import type { StagePageSchema } from '@/api';
 import { isPlacement } from '@/features/editors/placement';
 import { MeasureBook } from '@/features/processing/MeasureBook';
+import { PageStepSettings } from '@/features/processing/PageStepSettings';
+import { pageValuesOf } from '@/features/processing/pageSettings';
 import {
   useActivateRecipe,
   useCreateVariant,
+  usePageSettings,
   useRules,
   useSaveRecipe,
 } from '@/features/processing/queries';
@@ -37,6 +40,9 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  *
  * Nothing is saved while a step is edited. The draft lives in the state of the screen, so a preview can use it, and the
  * recipe is written only by the button, which says first how many pages the save makes out of date.
+ *
+ * When a page is open, a step that is open also shows what that page changes for the step, and marks those fields in
+ * its form.
  */
 
 const labels = MESSAGES.processing;
@@ -45,11 +51,14 @@ export function RecipeSection({
   processing,
   rows,
   run,
+  pageId,
 }: {
   processing: Processing;
   rows: readonly StagePageSchema[];
   /** The run of the stage, which the steps use to run the recipe up to one of them. Absent for steps that only edit. */
   run?: StageRun;
+  /** The page that is open, whose own settings of the steps are shown, or absent when none is. */
+  pageId?: string;
 }): React.JSX.Element | null {
   const { projectId, stage, recipe, steps, catalogue } = processing;
   const save = useSaveRecipe(projectId, stage);
@@ -57,6 +66,7 @@ export function RecipeSection({
   const activate = useActivateRecipe(projectId, stage);
   const rules = useRules(projectId, stage, recipe !== undefined);
   const summaries = useStageSummaries(projectId);
+  const pageSettings = usePageSettings(projectId, pageId, stage);
   if (recipe === undefined) {
     return null;
   }
@@ -170,10 +180,24 @@ export function RecipeSection({
         steps={steps}
         catalogue={catalogue}
         openId={processing.openId}
-        extraOf={(step) =>
-          isPlacement(step.processorKey) ? (
-            <MeasureBook processing={processing} step={step} />
-          ) : null
+        extraOf={(step) => (
+          <>
+            {isPlacement(step.processorKey) ? (
+              <MeasureBook processing={processing} step={step} />
+            ) : null}
+            {pageId === undefined ? null : (
+              <PageStepSettings
+                processing={processing}
+                step={step}
+                processor={catalogue.find((processor) => processor.key === step.processorKey)}
+                pageId={pageId}
+                pageValues={pageValuesOf(pageSettings.data, step.stepId)}
+              />
+            )}
+          </>
+        )}
+        pageValuesOf={
+          pageId === undefined ? undefined : (step) => pageValuesOf(pageSettings.data, step.stepId)
         }
         run={stepRun}
         onOpen={processing.open}

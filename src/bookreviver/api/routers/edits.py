@@ -18,7 +18,7 @@ from bookreviver.api.schemas.edits import EditForm, PageEditSchema
 from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import PageId, ProjectId, StepId
-from bookreviver.domain.values import PageEditKey, Slice
+from bookreviver.domain.values import PageStepKey, Slice
 from bookreviver.services.edits import EditService
 
 router = APIRouter(prefix='/projects', tags=['edits'], route_class=DishkaRoute)
@@ -51,9 +51,9 @@ class StepEditPath(EditPath):
     step_id: Annotated[StepId, Path(description='Identifier of the step of a recipe that reads the edit')]
 
     @property
-    def key(self) -> PageEditKey:
+    def key(self) -> PageStepKey:
         """The key the edit is stored under."""
-        return PageEditKey(self.page_id, self.stage, self.step_id)
+        return PageStepKey(self.page_id, self.stage, self.step_id)
 
 
 @router.get('/{project_id}/pages/{page_id}/edits/{stage}')

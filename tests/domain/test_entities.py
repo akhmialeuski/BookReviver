@@ -30,6 +30,8 @@ from tests.helpers.builders import (
     SPLIT_NONE,
     make_job,
     make_page,
+    make_page_edit,
+    make_page_step_state,
     make_page_version,
     make_project,
     make_recipe,
@@ -298,6 +300,34 @@ class TestPageEditHashOf:
         :type mask_sha256: str | None
         """
         assert PageEdit.hash_of(geometry, mask_sha256) != PageEdit.hash_of(Rotation(degrees=1.0), None)
+
+
+class TestPageStepState:
+    """Tests for the settings and the edit a page keeps for a step."""
+
+    def test_settings_are_laid_over_the_parameters_and_the_rest_stays(self) -> None:
+        """Verify a field the page changes wins, a field it does not change is the recipe's, and nothing is mutated."""
+        recipe_params = {'max_angle': 5, 'min_confidence': 0.3}
+        state = make_page_step_state(page_id=PAGE_ID, params={'max_angle': 3})
+        assert (state.apply_to(recipe_params), recipe_params) == (
+            {'max_angle': 3, 'min_confidence': 0.3},
+            {'max_angle': 5, 'min_confidence': 0.3},
+        )
+
+    def test_a_state_with_no_setting_and_no_edit_is_empty(self) -> None:
+        """Verify a state is empty only while it holds neither of its two layers."""
+        edit = make_page_edit(page_id=PAGE_ID)
+        states = [
+            make_page_step_state(page_id=PAGE_ID),
+            make_page_step_state(page_id=PAGE_ID, params={'max_angle': 3}),
+            make_page_step_state(page_id=PAGE_ID, edit=edit),
+        ]
+        assert [state.is_empty for state in states] == [True, False, False]
+
+    def test_key_names_the_page_the_stage_and_the_step(self) -> None:
+        """Verify the key a repository stores the state under is the one of its page, stage and step."""
+        state = make_page_step_state(page_id=PAGE_ID)
+        assert (state.key.page_id, state.key.stage, state.key.step_id) == (PAGE_ID, state.stage, state.step_id)
 
 
 class TestBookDetails:

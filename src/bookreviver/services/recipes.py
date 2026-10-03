@@ -36,8 +36,8 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.domain.ids import ProjectId
-    from bookreviver.domain.values import MetadataMap
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.domain.values import MetadataMap, PageStepKey
+    from bookreviver.ports.persistence import RecipeRepository, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
 
@@ -54,6 +54,26 @@ GEOMETRY_STEPS: tuple[str, ...] = (
     'geometry.crop',
     'geometry.normalize',
 )
+
+
+async def find_step(recipes: RecipeRepository, project_id: ProjectId, key: PageStepKey) -> Step:
+    """Find a step by its identifier in the recipes of its stage, where a copy of a step keeps the identifier.
+
+    :param recipes: Repository to read the recipes from.
+    :type recipes: RecipeRepository
+    :param project_id: Project owning the recipes.
+    :type project_id: ProjectId
+    :param key: The page, the stage and the step.
+    :type key: PageStepKey
+    :returns: The step as the first recipe of the stage that has it, the active one first, holds it.
+    :rtype: Step
+    :raises NotFoundError: If no recipe of the stage has the step.
+    """
+    for recipe in await recipes.list_for_stage(project_id, key.stage):
+        for step in recipe.steps:
+            if step.step_id == key.step_id:
+                return step
+    raise NotFoundError(key.step_id)
 
 
 @frozen(kw_only=True)

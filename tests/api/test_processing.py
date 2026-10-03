@@ -618,6 +618,81 @@ class TestEdits:
         assert_expectations()
 
 
+class TestPageSettings:
+    """Tests for the endpoints of the settings a page has for a step of a recipe."""
+
+    async def test_field_is_set_listed_and_taken_back(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify a field is stored for the page with the value the processor returns, listed, and removed with a 204.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        path = f'{fx_book.page_path}/settings/geometry/{step_id}/strength'
+        saved = await fx_client.put(path, json={'value': 2})
+        listed = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
+        deleted = await fx_client.delete(path)
+        after = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
+        expect(saved.status_code == status.HTTP_200_OK)
+        expect(saved.json()['params'] == {'strength': 2})
+        expect(saved.json()['step_id'] == step_id)
+        expect([item['params'] for item in listed.json()[ITEMS]] == [{'strength': 2}])
+        expect((deleted.status_code, after.json()['total']) == (status.HTTP_204_NO_CONTENT, 0))
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        ('name', 'body'),
+        [('no_such_field', {'value': 1}), ('strength', {})],
+        ids=['unknown-field', 'no-value'],
+    )
+    async def test_setting_that_does_not_fit_is_a_422(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, name: str, body: dict[str, int]
+    ) -> None:
+        """Verify a field the processor does not have, and a request with no value, answer 422.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param name: Name of the field in the address.
+        :type name: str
+        :param body: Body under test.
+        :type body: dict[str, int]
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/{name}', json=body)
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    async def test_setting_of_a_step_that_no_recipe_has_is_a_404(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a field addressed to an identifier that is the step of no recipe of the stage answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.put(f'{fx_book.page_path}/settings/geometry/{uuid4()}/strength', json={'value': 2})
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_taking_back_a_field_the_page_does_not_change_is_a_404(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify taking back a field that was never set answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.delete(f'{fx_book.page_path}/settings/geometry/{step_id}/strength')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
 class TestEditForm:
     """Tests for the form of an edit, for the shapes the split editor draws."""
 

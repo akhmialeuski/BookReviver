@@ -12,7 +12,7 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import NewPageEdit, PageEditKey, PageStageKey, SliceRequest, StageRun, Step
+from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, SliceRequest, StageRun, Step
 from bookreviver.services.stage_runs import REMAKE_INPUT_CHANGED
 from tests.helpers.builders import EPOCH
 from tests.helpers.processors import STRENGTH_PARAMETER
@@ -187,7 +187,7 @@ class TestRemake:
         await fx_kit.seed_base_version(page)
         step = Step(processor_key=fx_kit.fake.spec.key, params={STRENGTH_PARAMETER: 1})
         await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, EDITED_RECIPE, [step])
-        await fx_kit.edits().save(actor, project.id, PageEditKey(page.id, Stage.GEOMETRY, step.step_id), ROTATION, None)
+        await fx_kit.edits().save(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step.step_id), ROTATION, None)
         await run_geometry(fx_kit, actor, project)
         first = await head_of(fx_kit, page, Stage.GEOMETRY)
         # The same step with another parameter, as the settings of a step are changed in the interface

@@ -12,8 +12,9 @@ from bookreviver.domain.entities import (
     BookPlace,
     Job,
     Page,
-    PageEdit,
     PageStage,
+    PageStepChange,
+    PageStepState,
     PageVersion,
     PaginationSection,
     Project,
@@ -26,6 +27,7 @@ from bookreviver.domain.entities import (
 from bookreviver.domain.ids import (
     JobId,
     PageId,
+    PageStepChangeId,
     PageVersionId,
     PaginationSectionId,
     ProjectId,
@@ -35,7 +37,7 @@ from bookreviver.domain.ids import (
     ScanId,
     SourceId,
 )
-from bookreviver.domain.values import BookPlaceKey, PageEditKey, PageStageKey
+from bookreviver.domain.values import BookPlaceKey, PageStageKey, PageStepKey
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
@@ -625,40 +627,60 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """
 
 
-class PageEditRepository(Repository[PageEdit, PageEditKey]):
-    """Manual edits, one for each step on each stage of each page; deleting a page removes its edits."""
+class PageStepStateRepository(Repository[PageStepState, PageStepKey]):
+    """The settings and the manual edit of each step on each page; deleting a page removes its states."""
 
     @abstractmethod
-    async def save(self, edit: PageEdit) -> PageEdit:
-        """Store an edit, replacing the one the same step reads on the same page and stage.
+    async def save(self, state: PageStepState) -> PageStepState:
+        """Store a state, replacing the one the same step has on the same page and stage.
 
-        :param edit: Edit to store.
-        :type edit: PageEdit
-        :returns: The edit as stored.
-        :rtype: PageEdit
+        :param state: State to store.
+        :type state: PageStepState
+        :returns: The state as stored.
+        :rtype: PageStepState
         :raises NotFoundError: If the page is not stored.
         """
 
     @abstractmethod
-    async def find(self, key: PageEditKey) -> PageEdit | None:
-        """Return one edit.
+    async def find(self, key: PageStepKey) -> PageStepState | None:
+        """Return the state of one step on one page.
 
         :param key: Page, stage and step.
-        :type key: PageEditKey
-        :returns: The edit, or None when the user made none.
-        :rtype: PageEdit | None
+        :type key: PageStepKey
+        :returns: The state, or None when the page has neither a setting nor an edit for the step.
+        :rtype: PageStepState | None
         """
 
     @abstractmethod
-    async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageEdit]:
-        """Return the edits of one page, those of one stage or of all, by stage and step.
+    async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepState]:
+        """Return the states of one page, those of one stage or of all, by stage and step.
 
-        :param page_id: Page owning the edits.
+        :param page_id: Page owning the states.
         :type page_id: PageId
-        :param stage: Stage whose edits are listed, or None for every stage.
+        :param stage: Stage whose states are listed, or None for every stage.
         :type stage: Stage | None
-        :returns: The edits of the page.
-        :rtype: Sequence[PageEdit]
+        :returns: The states of the page.
+        :rtype: Sequence[PageStepState]
+        """
+
+
+class PageStepChangeRepository(Repository[PageStepChange, PageStepChangeId]):
+    """The history of the layers of the steps of each page. A change is added once and never rewritten.
+
+    Deleting a page removes its history. ``add`` and ``add_many`` number the changes of a page from one in the order
+    they are written, whatever their ``sequence``, and return them as stored.
+    """
+
+    @abstractmethod
+    async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepChange]:
+        """Return the changes of one page, those of one stage or of all, in the order they were written (by sequence).
+
+        :param page_id: Page the changes were made on.
+        :type page_id: PageId
+        :param stage: Stage whose changes are listed, or None for every stage.
+        :type stage: Stage | None
+        :returns: The changes of the page.
+        :rtype: Sequence[PageStepChange]
         """
 
 
@@ -851,7 +873,8 @@ class UnitOfWork(ABC):
     :ivar pagination_sections: Repository of the pagination sections of the books, of this transaction.
     :ivar page_versions: Page version repository of this transaction.
     :ivar page_stages: Page stage repository of this transaction.
-    :ivar page_edits: Page edit repository of this transaction.
+    :ivar page_step_states: Repository of the settings and manual edits of the steps of the pages, of this transaction.
+    :ivar page_step_changes: Repository of the history of the steps of the pages, of this transaction.
     :ivar recipes: Recipe repository of this transaction.
     :ivar recipe_rules: Repository of the rules that send pages to recipes, of this transaction.
     :ivar recipe_profiles: Repository of the recipe profiles of the accounts, of this transaction.
@@ -866,7 +889,8 @@ class UnitOfWork(ABC):
     pagination_sections: PaginationSectionRepository
     page_versions: PageVersionRepository
     page_stages: PageStageRepository
-    page_edits: PageEditRepository
+    page_step_states: PageStepStateRepository
+    page_step_changes: PageStepChangeRepository
     recipes: RecipeRepository
     recipe_rules: RecipeRuleRepository
     recipe_profiles: RecipeProfileRepository
