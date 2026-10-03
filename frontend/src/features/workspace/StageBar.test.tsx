@@ -151,6 +151,45 @@ describe('StageBar, the Import stage', () => {
       expect(container.querySelector('[data-testid="stage-menu"]')).not.toBeNull();
     });
 
+    it('opens the menu again while the list of the last pick is still fading out', async () => {
+      // jsdom runs no animation, so the closed list is given one, which Radix waits out before it unmounts the list
+      const computedStyle = window.getComputedStyle.bind(window);
+      const fade = vi.spyOn(window, 'getComputedStyle').mockImplementation(
+        (element, pseudo) =>
+          new Proxy(computedStyle(element, pseudo), {
+            get: (style, key) =>
+              key === 'animationName'
+                ? element.getAttribute('data-state') === 'closed'
+                  ? 'fade-out'
+                  : 'none'
+                : Reflect.get(style, key, style),
+          }),
+      );
+      await render({ files: 3, scans: 122 }, [], IMPORT_PATH);
+      const trigger = container.querySelector('[data-testid="stage-menu"]');
+      const list = (): Element | null => document.querySelector('[data-testid="stage-menu-list"]');
+      const press = async (target: Element | null): Promise<void> => {
+        await act(async () => {
+          target?.dispatchEvent(
+            new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }),
+          );
+          await new Promise((resolve) => setTimeout(resolve));
+        });
+      };
+
+      await press(trigger);
+      expect(list()?.getAttribute('data-state')).toBe('open');
+      await act(async () => {
+        list()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      });
+      expect(list()?.getAttribute('data-state')).toBe('closed');
+
+      await press(trigger);
+
+      expect(list()?.getAttribute('data-state')).toBe('open');
+      fade.mockRestore();
+    });
+
     it('keeps the ten stages in a row in a wide window', async () => {
       vi.stubGlobal('matchMedia', undefined);
       await render({ files: 3, scans: 122 }, [], IMPORT_PATH);

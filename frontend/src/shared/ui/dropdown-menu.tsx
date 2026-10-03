@@ -1,5 +1,6 @@
 import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui';
 import type * as React from 'react';
+import { useRef } from 'react';
 import { cn } from '@/shared/lib/utils';
 
 /**
@@ -22,13 +23,35 @@ function DropdownMenuContent({
   className,
   align = 'end',
   sideOffset = 6,
+  onPointerDownOutside,
+  ref,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>): React.JSX.Element {
+  const content = useRef<HTMLDivElement | null>(null);
   return (
     <DropdownMenuPrimitive.Portal>
       <DropdownMenuPrimitive.Content
+        ref={(node) => {
+          content.current = node;
+          if (typeof ref === 'function') {
+            ref(node);
+          } else if (ref) {
+            ref.current = node;
+          }
+        }}
         align={align}
         sideOffset={sideOffset}
+        onPointerDownOutside={(event) => {
+          onPointerDownOutside?.(event);
+          // The list of a menu that has just closed stays mounted while it fades out and still dismisses on a press
+          // outside, so a press on its own trigger, which opens the menu again, would close it in the same breath.
+          // The trigger of another menu still dismisses it.
+          const trigger =
+            event.target instanceof Element ? event.target.closest('[aria-haspopup="menu"]') : null;
+          if (trigger !== null && trigger.id === content.current?.getAttribute('aria-labelledby')) {
+            event.preventDefault();
+          }
+        }}
         className={cn(
           'z-50 min-w-48 overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
           className,
