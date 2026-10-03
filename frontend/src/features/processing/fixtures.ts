@@ -173,6 +173,92 @@ export const SPREAD_PARAMETERS = {
   type: 'object',
 };
 
+const BINARIZE_COMMON = {
+  mode: {
+    default: 'bw',
+    description: 'What the page is made into',
+    enum: ['bw', 'gray', 'color', 'mixed'],
+    title: 'Output',
+    type: 'string',
+  },
+  thickness: {
+    default: 0,
+    description: 'Thinner strokes below zero, thicker above',
+    maximum: 50,
+    minimum: -50,
+    title: 'Stroke thickness',
+    type: 'integer',
+  },
+  smooth: {
+    default: false,
+    description: 'Round the staircase of the edges of letters',
+    title: 'Smooth edges',
+    type: 'boolean',
+  },
+};
+
+const BINARIZE_WINDOW = {
+  default: 41,
+  description: 'Side of the neighbourhood the threshold is worked out in, in pixels of the scan',
+  maximum: 301,
+  minimum: 3,
+  title: 'Window, px',
+  type: 'integer',
+};
+
+/**
+ * The JSON Schema of `cleanup.binarize` as its parameter model writes it, cut to three of its eight methods: a `oneOf` over
+ * the method, with the fields of each method in its own definition.
+ */
+export const BINARIZE_PARAMETERS = {
+  $defs: {
+    OtsuParams: {
+      additionalProperties: false,
+      properties: {
+        ...BINARIZE_COMMON,
+        method: { const: 'otsu', default: 'otsu', title: 'Method', type: 'string' },
+      },
+      title: 'Otsu',
+      type: 'object',
+    },
+    SauvolaParams: {
+      additionalProperties: false,
+      properties: {
+        ...BINARIZE_COMMON,
+        window: BINARIZE_WINDOW,
+        k: {
+          default: 0.2,
+          description: 'How far under the mean of the neighbourhood the threshold lies',
+          maximum: 1,
+          minimum: -1,
+          title: 'Coefficient k',
+          type: 'number',
+        },
+        method: { const: 'sauvola', default: 'sauvola', title: 'Method', type: 'string' },
+      },
+      title: 'Sauvola',
+      type: 'object',
+    },
+    SuParams: {
+      additionalProperties: false,
+      properties: {
+        ...BINARIZE_COMMON,
+        window: BINARIZE_WINDOW,
+        method: { const: 'su', default: 'su', title: 'Method', type: 'string' },
+      },
+      title: 'Su',
+      type: 'object',
+    },
+  },
+  description: 'The method of the binarization and its parameters, Sauvola when none is named.',
+  oneOf: [
+    { $ref: '#/$defs/OtsuParams' },
+    { $ref: '#/$defs/SauvolaParams' },
+    { $ref: '#/$defs/SuParams' },
+  ],
+  title: 'BinarizeParams',
+};
+
 /** A processor of the catalogue. */
 export function processor(key: string, overrides: Partial<ProcessorSchema> = {}): ProcessorSchema {
   return {
@@ -202,6 +288,17 @@ export function deskew(overrides: Partial<ProcessorSchema> = {}): ProcessorSchem
 /** `geometry.deskew` with the methods the processor offers. */
 export function deskewMethods(overrides: Partial<ProcessorSchema> = {}): ProcessorSchema {
   return deskew({ parameters: DESKEW_METHODS_PARAMETERS, ...overrides });
+}
+
+/** `cleanup.binarize`, whose form shows the fields of the method that is chosen. */
+export function binarize(overrides: Partial<ProcessorSchema> = {}): ProcessorSchema {
+  return processor('cleanup.binarize', {
+    title: 'Binarize',
+    stage: 'cleanup',
+    parameters: BINARIZE_PARAMETERS,
+    editor: 'regions',
+    ...overrides,
+  });
 }
 
 /** `split.spread`. */

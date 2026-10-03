@@ -505,6 +505,47 @@ class DewarpMethod(LabeledStrEnum):
     DOCRES = 'docres', 'By the DocRes neural network'
 
 
+class OutputMode(LabeledStrEnum):
+    """What the page looks like after ``cleanup.binarize``."""
+
+    BW = 'bw', 'Black and white'
+    GRAY = 'gray', 'Grayscale with even light'
+    COLOR = 'color', 'Colour with even light'
+    MIXED = 'mixed', 'Black and white text, pictures in tones'
+
+
+class BinarizationMethod(LabeledStrEnum):
+    """How ``cleanup.binarize`` parts the ink of a page from its paper.
+
+    ``NEURAL`` is declared for the plugin of a model that comes in the ``gpu`` group, and no step offers it yet.
+    """
+
+    OTSU = 'otsu', 'Otsu, one threshold for the page'
+    SAUVOLA = 'sauvola', 'Sauvola, a threshold for each neighbourhood'
+    WOLF = 'wolf', 'Wolf, Sauvola with the contrast of the page'
+    ISAUVOLA = 'isauvola', 'ISauvola, Sauvola for a stained page'
+    SU = 'su', 'Su, the edges of the strokes'
+    GATOS = 'gatos', 'Gatos, a background surface under the ink'
+    NICK = 'nick', 'NICK, for pages of pale ink'
+    BRADLEY = 'bradley', 'Bradley, the mean of the neighbourhood'
+    NEURAL = 'neural', 'Neural network'
+
+
+class EraserFill(LabeledStrEnum):
+    """What ``cleanup.eraser`` paints the erased area with."""
+
+    WHITE = 'white', 'White'
+    BLACK = 'black', 'Black'
+    AROUND = 'around', 'The mean colour around the area'
+
+
+class ZoneMode(LabeledStrEnum):
+    """What a zone of the ``regions`` editor does to the picture zones a step found."""
+
+    ADD = 'add', 'Picture'
+    REMOVE = 'remove', 'Not a picture'
+
+
 class PlaceMode(LabeledStrEnum):
     """Where in the interface a reader left a book."""
 
@@ -591,6 +632,12 @@ class VersionData(LabeledStrEnum):
     BEND = 'bend', 'How far the lines of the page were bent, in pixels for each thousand of its width'
     RESIDUAL = 'residual', 'How far the lines still deviate from straight after dewarping, in pixels per thousand'
     MESH = 'mesh', 'The nodes of the curves a dewarping followed, in the pixels of the full image, for its editor'
+    CONTENT_FRAME = 'content_frame', 'Frame of the content in the pixels of the image of this version'
+    METHOD = 'method', 'Method that parted the ink from the paper'
+    MODE = 'mode', 'What the page was made into'
+    THRESHOLD = 'threshold', 'Threshold of the page when the method has one for the whole page'
+    ZONES = 'zones', 'Picture zones of the page in the pixels of the full image the step read'
+    SPECKS = 'specks', 'Number of specks the step removed'
 
 
 class VersionState(LabeledStrEnum):
@@ -713,6 +760,7 @@ class TransformKind(LabeledStrEnum):
     CROP = 'crop', 'Crop to a quadrilateral'
     ROTATE = 'rotate', 'Rotation by an angle'
     PERSPECTIVE = 'perspective', 'Perspective correction of a quadrilateral'
+    SCALE = 'scale', 'Scaling by a factor'
     MESH = 'mesh', 'Dewarping along a stored mesh'
     PLACE = 'place', 'Scaling and placing a block of text on a page'
 

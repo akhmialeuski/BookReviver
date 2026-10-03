@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { deskew, deskewMethods, spread, whole } from '@/features/processing/fixtures';
+import { binarize, deskew, deskewMethods, spread, whole } from '@/features/processing/fixtures';
 import { ParamsForm } from '@/features/processing/ParamsForm';
 
 /**
@@ -137,6 +137,60 @@ describe('ParamsForm', () => {
     const labels = [...container.querySelectorAll('label')].map((label) => label.textContent);
     expect(labels).toContain('Shortest line');
     expect(labels).not.toContain('Fewest lines');
+  });
+
+  describe('a step whose fields depend on a choice', () => {
+    const SAUVOLA = {
+      mode: 'bw',
+      thickness: 0,
+      smooth: false,
+      method: 'sauvola',
+      window: 41,
+      k: 0.2,
+    };
+
+    function labelsOf(): (string | null)[] {
+      return [...container.querySelectorAll('label')].map((label) => label.textContent);
+    }
+
+    it('shows the fields of the method that is chosen and not those of the others', () => {
+      render(binarize(), SAUVOLA);
+
+      expect(labelsOf()).toEqual(
+        expect.arrayContaining(['Output', 'Stroke thickness', 'Window, px', 'Coefficient k']),
+      );
+      expect(labelsOf()).not.toContain('Method');
+    });
+
+    it('shows no window and no coefficient for a method that has none', () => {
+      render(binarize(), { mode: 'bw', thickness: 0, smooth: false, method: 'otsu' });
+
+      expect(labelsOf()).not.toContain('Window, px');
+      expect(labelsOf()).not.toContain('Coefficient k');
+      expect(container.querySelector('form')).not.toBeNull();
+    });
+
+    it('shows the window and no coefficient for a method that has only a window', () => {
+      render(binarize(), { mode: 'bw', thickness: 0, smooth: false, method: 'su', window: 31 });
+
+      expect(labelsOf()).toContain('Window, px');
+      expect(labelsOf()).not.toContain('Coefficient k');
+    });
+
+    it('names the method that is chosen in the choice of the method', () => {
+      render(binarize(), SAUVOLA);
+
+      expect(container.querySelector('button[aria-haspopup="listbox"]')?.textContent).toBe(
+        'Sauvola',
+      );
+    });
+
+    it('draws the thickness as a slider with an input', () => {
+      render(binarize(), SAUVOLA);
+
+      const thumbs = [...container.querySelectorAll('[role="slider"]')];
+      expect(thumbs.map((thumb) => thumb.getAttribute('aria-label'))).toContain('Stroke thickness');
+    });
   });
 
   it('says so for a step that has no settings', () => {

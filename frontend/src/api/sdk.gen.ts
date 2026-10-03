@@ -657,11 +657,11 @@ export const deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDe
  * answer is 422 for an edit the processor does not read, and nothing is processed by this request.
  */
 export const putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPut = <ThrowOnError extends boolean = false>(options: Options<PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutData, ThrowOnError>): RequestResult<PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponses, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutErrors, ThrowOnError> => (options.client ?? client).put<PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponses, PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutErrors, ThrowOnError>({
-    ...urlSearchParamsBodySerializer,
+    ...formDataBodySerializer,
     url: '/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{processor_key}',
     ...options,
     headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Type': null,
         ...options.headers
     }
 });

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 from attrs import field, frozen, validators
 
-from bookreviver.domain.enums import EditorKind, TransformKind
+from bookreviver.domain.enums import EditorKind, TransformKind, ZoneMode
 from bookreviver.domain.errors import UnsupportedTransformError
 
 if TYPE_CHECKING:
@@ -346,16 +346,187 @@ class SplitChoice:
         return cls(pages=data[cls.PAGES_KEY], line=None if line is None else Line.from_data(line))
 
 
-type EditGeometry = Rect | Quad | Line | Rotation | SplitChoice | Mesh
+@frozen(kw_only=True)
+class Zone:
+    """A polygon the user drew on a page, such as a picture the search of the pictures missed or took for text.
+
+    A rectangle is a zone of four points.
+
+    :ivar mode: Whether the zone adds a picture or removes one.
+    :ivar points: The corners of the polygon in order, at least three.
+    """
+
+    MIN_POINTS: ClassVar[int] = 3
+    MODE_KEY: ClassVar[str] = 'mode'
+    POINTS_KEY: ClassVar[str] = 'points'
+
+    mode: ZoneMode
+    points: tuple[Point, ...]
+
+    def __attrs_post_init__(self) -> None:
+        """Check that the zone has an area to speak of.
+
+        :raises ValueError: If the zone has fewer than three points.
+        """
+        if len(self.points) < self.MIN_POINTS:
+            err_msg = f'A zone has at least {self.MIN_POINTS} points, not {len(self.points)}.'
+            raise ValueError(err_msg)
+
+    def scaled(self, factor: float) -> Self:
+        """Return the zone in the pixels of an image resized by a factor.
+
+        :param factor: Size of the new image over the size of the old one.
+        :type factor: float
+        :returns: The zone with every coordinate multiplied by the factor.
+        :rtype: Self
+        """
+        return type(self)(mode=self.mode, points=tuple(Point(x=p.x * factor, y=p.y * factor) for p in self.points))
+
+    def to_data(self) -> dict[str, Any]:
+        """Return the zone as JSON data.
+
+        :returns: The mode and the points.
+        :rtype: dict[str, Any]
+        """
+        return {self.MODE_KEY: self.mode.value, self.POINTS_KEY: [point.to_data() for point in self.points]}
+
+    @classmethod
+    def from_data(cls, data: Mapping[str, Any]) -> Self:
+        """Build a zone from the JSON data ``to_data`` wrote.
+
+        :param data: The mode and the points.
+        :type data: Mapping[str, Any]
+        :returns: The zone.
+        :rtype: Self
+        """
+        return cls(mode=ZoneMode(data[cls.MODE_KEY]), points=tuple(Point(**point) for point in data[cls.POINTS_KEY]))
+
+
+@frozen(kw_only=True)
+class Regions:
+    """The picture zones the user added to the ones a step found, or removed from them, in the order they drew them.
+
+    :ivar zones: The zones, each applied after the one before it.
+    """
+
+    ZONES_KEY: ClassVar[str] = 'zones'
+
+    editor: ClassVar[EditorKind] = EditorKind.REGIONS
+
+    zones: tuple[Zone, ...] = ()
+
+    def scaled(self, factor: float) -> Self:
+        """Return the zones in the pixels of an image resized by a factor.
+
+        :param factor: Size of the new image over the size of the old one.
+        :type factor: float
+        :returns: The regions with every zone scaled.
+        :rtype: Self
+        """
+        return type(self)(zones=tuple(zone.scaled(factor) for zone in self.zones))
+
+    def to_data(self) -> dict[str, Any]:
+        """Return the regions as JSON data.
+
+        :returns: The zones as a list.
+        :rtype: dict[str, Any]
+        """
+        return {self.ZONES_KEY: [zone.to_data() for zone in self.zones]}
+
+    @classmethod
+    def from_data(cls, data: Mapping[str, Any]) -> Self:
+        """Build the regions from the JSON data ``to_data`` wrote.
+
+        :param data: The zones as a list.
+        :type data: Mapping[str, Any]
+        :returns: The regions.
+        :rtype: Self
+        """
+        return cls(zones=tuple(Zone.from_data(zone) for zone in data[cls.ZONES_KEY]))
+
+
+@frozen(kw_only=True)
+class Stroke:
+    """One stroke of the brush of the eraser: a path of points and the radius it paints round them.
+
+    :ivar radius: Radius of the brush in pixels.
+    :ivar points: The path, at least one point, which a single click makes.
+    """
+
+    RADIUS_KEY: ClassVar[str] = 'radius'
+    POINTS_KEY: ClassVar[str] = 'points'
+
+    radius: float = field(validator=validators.gt(0))
+    points: tuple[Point, ...] = field(validator=validators.min_len(1))
+
+    def to_data(self) -> dict[str, Any]:
+        """Return the stroke as JSON data.
+
+        :returns: The radius and the points.
+        :rtype: dict[str, Any]
+        """
+        return {self.RADIUS_KEY: self.radius, self.POINTS_KEY: [point.to_data() for point in self.points]}
+
+    @classmethod
+    def from_data(cls, data: Mapping[str, Any]) -> Self:
+        """Build a stroke from the JSON data ``to_data`` wrote.
+
+        :param data: The radius and the points.
+        :type data: Mapping[str, Any]
+        :returns: The stroke.
+        :rtype: Self
+        """
+        return cls(radius=data[cls.RADIUS_KEY], points=tuple(Point(**point) for point in data[cls.POINTS_KEY]))
+
+
+@frozen(kw_only=True)
+class BrushStrokes:
+    """What the user brushed over a page, kept beside the mask that was painted from it.
+
+    The mask is what the eraser reads. The strokes are what the editor draws again when the page is opened, so the
+    brush can go on from where it was left and the last stroke can be taken back.
+
+    :ivar strokes: The strokes in the order they were made.
+    """
+
+    STROKES_KEY: ClassVar[str] = 'strokes'
+
+    editor: ClassVar[EditorKind] = EditorKind.BRUSH_MASK
+
+    strokes: tuple[Stroke, ...] = ()
+
+    def to_data(self) -> dict[str, Any]:
+        """Return the strokes as JSON data.
+
+        :returns: The strokes as a list.
+        :rtype: dict[str, Any]
+        """
+        return {self.STROKES_KEY: [stroke.to_data() for stroke in self.strokes]}
+
+    @classmethod
+    def from_data(cls, data: Mapping[str, Any]) -> Self:
+        """Build the strokes from the JSON data ``to_data`` wrote.
+
+        :param data: The strokes as a list.
+        :type data: Mapping[str, Any]
+        :returns: The strokes.
+        :rtype: Self
+        """
+        return cls(strokes=tuple(Stroke.from_data(stroke) for stroke in data[cls.STROKES_KEY]))
+
+
+type EditGeometry = Rect | Quad | Line | Rotation | SplitChoice | Mesh | Regions | BrushStrokes
 
 # The shape each editor draws, which a stored edit is rebuilt by
-EDIT_SHAPES: Mapping[EditorKind, type[Rect | Quad | Line | Rotation | SplitChoice | Mesh]] = {
+EDIT_SHAPES: Mapping[EditorKind, type[Rect | Quad | Line | Rotation | SplitChoice | Mesh | Regions | BrushStrokes]] = {
     EditorKind.RECT: Rect,
     EditorKind.QUAD: Quad,
     EditorKind.LINE: Line,
     EditorKind.ROTATION: Rotation,
     EditorKind.SPLIT: SplitChoice,
     EditorKind.MESH: Mesh,
+    EditorKind.REGIONS: Regions,
+    EditorKind.BRUSH_MASK: BrushStrokes,
 }
 
 
@@ -368,7 +539,7 @@ def geometry_from_data(kind: EditorKind, data: Mapping[str, Any]) -> EditGeometr
     :type data: Mapping[str, Any]
     :returns: The shape.
     :rtype: EditGeometry
-    :raises ValueError: If the editor draws no shape, such as the brush mask, which keeps a mask file instead.
+    :raises ValueError: If the editor draws no shape, such as the mesh editor, whose shape comes with a later step.
     """
     if (shape := EDIT_SHAPES.get(kind)) is None:
         err_msg = f'The {kind.label.lower()} editor draws no geometry.'
@@ -398,6 +569,7 @@ class Transform:
         TransformKind.CROP: frozenset({'quad', 'matrix'}),
         TransformKind.ROTATE: frozenset({'angle', 'matrix'}),
         TransformKind.PERSPECTIVE: frozenset({'quad', 'matrix'}),
+        TransformKind.SCALE: frozenset({'matrix'}),
         TransformKind.MESH: frozenset({'mesh_key'}),
         TransformKind.PLACE: frozenset({'matrix'}),
     }

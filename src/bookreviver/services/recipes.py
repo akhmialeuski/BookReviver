@@ -19,7 +19,14 @@ from uuid import uuid4
 from attrs import evolve, field, frozen
 
 from bookreviver.domain.entities import Recipe, RecipeRule
-from bookreviver.domain.enums import DeskewMethod, DewarpMethod, RuleCondition, Stage
+from bookreviver.domain.enums import (
+    BinarizationMethod,
+    DeskewMethod,
+    DewarpMethod,
+    OutputMode,
+    RuleCondition,
+    Stage,
+)
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import RecipeId, RecipeRuleId
 from bookreviver.domain.values import Step
@@ -69,6 +76,17 @@ class RecipeTemplate:
     condition: RuleCondition | None = None
 
 
+# The steps of the Cleanup stage in the order they run: the page is made black and white first, so that what is left
+# of the dust is separate small spots, which are then removed, and the user's eraser comes last
+BINARIZE_KEY: str = 'cleanup.binarize'
+DESPECKLE_KEY: str = 'cleanup.despeckle'
+ERASER_KEY: str = 'cleanup.eraser'
+# The parameters the templates of the stage set
+MODE_PARAM: str = 'mode'
+METHOD_PARAM: str = 'method'
+STRENGTH_PARAM: str = 'strength'
+
+
 class DefaultRecipes:
     """The recipes of each stage that a project starts with, the first of a stage being its active one."""
 
@@ -100,6 +118,31 @@ class DefaultRecipes:
                 name='Flat',
                 processor_keys=GEOMETRY_STEPS,
                 off=frozenset({'geometry.dewarp'}),
+            ),
+        ),
+        Stage.CLEANUP: (
+            RecipeTemplate(
+                name='Text',
+                processor_keys=(BINARIZE_KEY, DESPECKLE_KEY, ERASER_KEY),
+                params={
+                    BINARIZE_KEY: {MODE_PARAM: OutputMode.BW, METHOD_PARAM: BinarizationMethod.SAUVOLA},
+                    DESPECKLE_KEY: {STRENGTH_PARAM: 2},
+                },
+            ),
+            RecipeTemplate(
+                name='Plates',
+                processor_keys=(BINARIZE_KEY, ERASER_KEY),
+                params={BINARIZE_KEY: {MODE_PARAM: OutputMode.GRAY, METHOD_PARAM: BinarizationMethod.SAUVOLA}},
+                condition=RuleCondition.PLATES,
+            ),
+            RecipeTemplate(
+                name='Mixed',
+                processor_keys=(BINARIZE_KEY, DESPECKLE_KEY, ERASER_KEY),
+                params={
+                    BINARIZE_KEY: {MODE_PARAM: OutputMode.MIXED, METHOD_PARAM: BinarizationMethod.SAUVOLA},
+                    DESPECKLE_KEY: {STRENGTH_PARAM: 1},
+                },
+                condition=RuleCondition.ILLUSTRATED,
             ),
         ),
     }

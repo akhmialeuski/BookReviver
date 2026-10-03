@@ -66,6 +66,8 @@ export interface PanelProps<S> {
   processorKey: string;
   /** Whether a change cannot be made now, such as while the last one is being saved. */
   disabled: boolean;
+  /** The size of the picture in the pixels of the edit, or null when the editor counts in the picture's own. */
+  size: Size | null;
   onCommit: (shape: S) => void;
 }
 
@@ -86,6 +88,11 @@ export interface EditorDefinition<S> {
   fallback: (context: FallbackContext) => S;
   read: (geometry: Geometry | null) => S | null;
   write: (shape: S) => Geometry;
+  /**
+   * Paint the mask the server keeps beside the shape, for an editor whose edit is a mask, such as the brush: a white
+   * picture of the size of the edit's image where the reader brushed, and black elsewhere.
+   */
+  mask?: (shape: S, size: Size) => Promise<Blob>;
   Canvas: ComponentType<CanvasProps<S>>;
   Panel: ComponentType<PanelProps<S>>;
 }
@@ -105,6 +112,7 @@ export interface GeometryPanelProps {
   geometry: Geometry;
   processorKey: string;
   disabled: boolean;
+  size: Size | null;
   onCommit: (geometry: Geometry) => void;
 }
 
@@ -118,6 +126,8 @@ export interface RegisteredEditor {
   runsAfterEdit: (context: PageContext) => boolean;
   /** The geometry to start from when the page has no edit. */
   fallback: (context: FallbackContext) => Geometry;
+  /** Paint the mask that is saved with the geometry, for an editor whose edit is a mask; absent for the others. */
+  mask: ((geometry: Geometry, size: Size) => Promise<Blob>) | null;
   Canvas: ComponentType<GeometryCanvasProps>;
   Panel: ComponentType<GeometryPanelProps>;
 }

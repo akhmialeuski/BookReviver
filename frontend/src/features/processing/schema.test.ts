@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BINARIZE_PARAMETERS,
   DESKEW_METHODS_PARAMETERS,
   DESKEW_PARAMETERS,
   SPREAD_PARAMETERS,
@@ -196,5 +197,27 @@ describe('methods of a processor', () => {
   it('checks values that name no method as the first one, which is how the server reads them', () => {
     expect(fitsSchema(schema, { max_angle: 5, min_confidence: 0.3 })).toBe(true);
     expect(fitsSchema(schema, { max_angle: 50, min_confidence: 0.3 })).toBe(false);
+  });
+});
+
+describe('the methods of the binarization', () => {
+  const schema = formSchemaOf(BINARIZE_PARAMETERS);
+
+  it('lists a schema for each method and draws the sliders of each by its own widgets', () => {
+    const ui = uiSchemaOf(schema);
+
+    expect(methodsOf(schema).map((method) => method.title)).toEqual(['Otsu', 'Sauvola', 'Su']);
+    expect(hasSettings(schema)).toBe(true);
+    expect(ui.oneOf?.[1]?.window).toEqual({ 'ui:widget': BOUNDED_NUMBER_WIDGET });
+    expect(ui.oneOf?.[0]?.thickness).toEqual({ 'ui:widget': BOUNDED_NUMBER_WIDGET });
+  });
+
+  it('accepts the values of one method and refuses a field the chosen method does not have', () => {
+    const otsu = { mode: 'bw', thickness: 0, smooth: false, method: 'otsu' };
+
+    expect(fitsSchema(schema, otsu)).toBe(true);
+    expect(fitsSchema(schema, { ...otsu, window: 41 })).toBe(false);
+    expect(fitsSchema(schema, { ...otsu, method: 'sauvola', window: 41, k: 0.2 })).toBe(true);
+    expect(fitsSchema(schema, { ...otsu, method: 'sauvola', window: 2, k: 0.2 })).toBe(false);
   });
 });

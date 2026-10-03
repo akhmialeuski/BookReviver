@@ -131,14 +131,22 @@ const SHEET_SCAN_SIZE = { width: 420, height: 580 };
  * straighten and cut to the frame of its words, and return its path.
  *
  * @param count Number of scans.
+ * @param options `scale` makes the scans larger, with the words on them larger in step, and `dust` puts that many specks
+ * of dust on the paper of each.
  */
-export async function writeSheetsFolder(count: number): Promise<string> {
+export async function writeSheetsFolder(
+  count: number,
+  { scale = 1, dust = 0 }: { scale?: number; dust?: number } = {},
+): Promise<string> {
   const root = path.join(await mkdtemp(path.join(tmpdir(), 'bookreviver-')), 'sheets');
   await mkdir(root, { recursive: true });
   for (let number = 1; number <= count; number += 1) {
     await writeFile(
       path.join(root, `sheet-${String(number).padStart(2, '0')}.png`),
-      sheetPng(SHEET_SCAN_SIZE.width, SHEET_SCAN_SIZE.height, number * 7919),
+      sheetPng(SHEET_SCAN_SIZE.width * scale, SHEET_SCAN_SIZE.height * scale, number * 7919, {
+        textScale: scale,
+        dust,
+      }),
     );
   }
   return root;

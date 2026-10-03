@@ -84,6 +84,24 @@ export function ThisPageSection({
     } else if (result.angle !== null) {
       facts.push({ label: labels.thisPage.angle, value: labels.thisPage.degrees(result.angle) });
     }
+    if (result.method !== null) {
+      facts.push({
+        label: labels.thisPage.binarized,
+        value: labels.thisPage.methods[result.method] ?? result.method,
+      });
+    }
+    if (result.threshold !== null) {
+      facts.push({
+        label: labels.thisPage.threshold,
+        value: labels.thisPage.thresholdValue(result.threshold),
+      });
+    }
+    if (result.zones !== null) {
+      facts.push({ label: labels.thisPage.pictures, value: String(result.zones.length) });
+    }
+    if (result.specks !== null) {
+      facts.push({ label: labels.thisPage.specks, value: String(result.specks) });
+    }
     if (result.pages !== null) {
       facts.push({ label: labels.thisPage.pages, value: labels.thisPage.pagesValue(result.pages) });
     }

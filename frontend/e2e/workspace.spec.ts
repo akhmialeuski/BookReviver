@@ -61,7 +61,7 @@ test('a reader works through the stages of a book', async ({ page }) => {
     }
     await expect(bar.getByRole('link', { name: /^Order/ })).toHaveAttribute('aria-current', 'page');
     // A stage without a processor says so, and still opens
-    await expect(page.getByTestId('stage-cleanup')).toContainText('Soon');
+    await expect(page.getByTestId('stage-layout')).toContainText('Soon');
     await expect(page.getByTestId('stage-page-order')).toContainText('6 pages');
     await expect(page.getByTestId('stage-import')).toContainText('6 files');
   });
@@ -72,8 +72,8 @@ test('a reader works through the stages of a book', async ({ page }) => {
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
     await expect(page.getByTestId('stage-summary')).toContainText('Straighten each page');
 
-    await bar.getByRole('link', { name: /^Cleanup/ }).click();
-    await expect(page).toHaveURL(/\/stages\/cleanup$/);
+    await bar.getByRole('link', { name: /^Layout/ }).click();
+    await expect(page).toHaveURL(/\/stages\/layout$/);
     await expect(page.getByTestId('stage-panel')).toContainText('Soon');
 
     // Alt and a digit go to a stage by its place in the bar

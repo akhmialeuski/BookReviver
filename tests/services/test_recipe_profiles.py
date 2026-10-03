@@ -333,9 +333,7 @@ class TestDefaultProfileOfANewBook:
         :type fx_cv_kit: ProcessingKit
         """
         actor, _ = await fx_cv_kit.seed_project()
-        profile = await fx_cv_kit.profiles().save(
-            actor, Stage.GEOMETRY, PROFILE_NAME, [Step(processor_key=DESKEW_KEY)]
-        )
+        profile = await fx_cv_kit.profiles().save(actor, Stage.GEOMETRY, PROFILE_NAME, [Step(processor_key=DESKEW_KEY)])
         await fx_cv_kit.profiles().set_default(actor, profile.id, is_default=True)
         fresh = await second_project(fx_cv_kit, actor)
         await fx_cv_kit.service().recipe(actor, fresh.id, Stage.GEOMETRY)

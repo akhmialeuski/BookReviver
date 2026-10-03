@@ -65,6 +65,39 @@ export interface MeshShape {
   rows: Point[][];
 }
 
+/** What a zone of the regions editor does to the picture zones the step found. */
+export const ZoneMode = {
+  /** The zone is a picture the search missed. */
+  Add: 'add',
+  /** The zone is no picture, though the search took it for one. */
+  Remove: 'remove',
+} as const;
+
+/** One mode of a zone (derived from {@link ZoneMode}). */
+export type ZoneMode = (typeof ZoneMode)[keyof typeof ZoneMode];
+
+/** A polygon the reader drew, or the step found, on the page: a rectangle is one of four points. */
+export interface ZoneShape {
+  mode: ZoneMode;
+  points: Point[];
+}
+
+/** The picture zones the reader added to those the step found, or removed from them, in the order they were drawn. */
+export interface RegionsShape {
+  zones: ZoneShape[];
+}
+
+/** One stroke of the brush of the eraser: the path of its centre and the radius it paints round it, in image pixels. */
+export interface StrokeShape {
+  radius: number;
+  points: Point[];
+}
+
+/** What the reader brushed over the page, stroke by stroke; the server paints the mask from it and keeps both. */
+export interface BrushShape {
+  strokes: StrokeShape[];
+}
+
 /** The shape of each editor that has a component, by the name of its kind. */
 export interface EditorShapes {
   line: LineShape;
@@ -73,6 +106,8 @@ export interface EditorShapes {
   quad: QuadShape;
   rect: RectShape;
   mesh: MeshShape;
+  regions: RegionsShape;
+  'brush-mask': BrushShape;
 }
 
 /** The kinds of editor that have a component. */
@@ -220,6 +255,76 @@ export function readMesh(geometry: Geometry | null): MeshShape | null {
 /** Write a mesh the way the server reads it. */
 export function writeMesh(mesh: MeshShape): Geometry {
   return { rows: mesh.rows.map((row) => row.map((node) => ({ x: node.x, y: node.y }))) };
+}
+
+function pointsOf(value: unknown): Point[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const points = value.map(pointOf);
+  return points.every((point) => point !== null) ? points : null;
+}
+
+/** The fewest points a zone has, as the server holds it to. */
+export const MIN_ZONE_POINTS = 3;
+
+/** Read one zone, or null when it has no mode the editor knows or fewer than three points. */
+export function readZone(value: unknown): ZoneShape | null {
+  const record = recordOf(value);
+  const mode = Object.values(ZoneMode).find((candidate) => candidate === record?.mode);
+  const points = pointsOf(record?.points);
+  return mode === undefined || points === null || points.length < MIN_ZONE_POINTS
+    ? null
+    : { mode, points };
+}
+
+/** Read the zones of an edit, or null when the geometry holds no list of zones or one that does not fit. */
+export function readRegions(geometry: Geometry | null): RegionsShape | null {
+  const stored = geometry?.zones;
+  if (!Array.isArray(stored)) {
+    return null;
+  }
+  const zones = stored.map(readZone);
+  return zones.every((zone) => zone !== null) ? { zones } : null;
+}
+
+/** Write the zones the way the server reads them. */
+export function writeRegions(regions: RegionsShape): Geometry {
+  return {
+    zones: regions.zones.map((zone) => ({
+      mode: zone.mode,
+      points: zone.points.map((point) => ({ x: point.x, y: point.y })),
+    })),
+  };
+}
+
+/** Read the strokes of an edit, or null when the geometry holds no list of strokes or one that does not fit. */
+export function readBrush(geometry: Geometry | null): BrushShape | null {
+  const stored = geometry?.strokes;
+  if (!Array.isArray(stored)) {
+    return null;
+  }
+  const strokes: StrokeShape[] = [];
+  for (const entry of stored) {
+    const record = recordOf(entry);
+    const radius = numberOf(record?.radius);
+    const points = pointsOf(record?.points);
+    if (radius === null || radius <= 0 || points === null || points.length === 0) {
+      return null;
+    }
+    strokes.push({ radius, points });
+  }
+  return { strokes };
+}
+
+/** Write the strokes the way the server reads them. */
+export function writeBrush(brush: BrushShape): Geometry {
+  return {
+    strokes: brush.strokes.map((stroke) => ({
+      radius: stroke.radius,
+      points: stroke.points.map((point) => ({ x: point.x, y: point.y })),
+    })),
+  };
 }
 
 /** Write the name of a shape's part in the words of an attribute: `topLeft` as `top-left`. */

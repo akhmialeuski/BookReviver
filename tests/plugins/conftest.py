@@ -117,3 +117,39 @@ def fx_normalize() -> Processor:
     processor = pytest.importorskip('bookreviver.plugins.normalize', reason=CV_MISSING).Normalize()
     assert isinstance(processor, Processor)
     return processor
+
+
+@pytest.fixture
+def fx_binarize() -> Processor:
+    """Build the binarize processor, or skip the test where OpenCV and Doxa are not installed.
+
+    :returns: The processor ``cleanup.binarize``.
+    :rtype: Processor
+    """
+    processor = pytest.importorskip('bookreviver.plugins.binarize', reason=CV_MISSING).Binarize()
+    assert isinstance(processor, Processor)
+    return processor
+
+
+@pytest.fixture
+def fx_despeckle() -> Processor:
+    """Build the despeckle processor, or skip the test where OpenCV is not installed.
+
+    :returns: The processor ``cleanup.despeckle``.
+    :rtype: Processor
+    """
+    processor = pytest.importorskip('bookreviver.plugins.despeckle', reason=CV_MISSING).Despeckle()
+    assert isinstance(processor, Processor)
+    return processor
+
+
+@pytest.fixture
+def fx_eraser() -> Processor:
+    """Build the eraser processor, or skip the test where OpenCV is not installed.
+
+    :returns: The processor ``cleanup.eraser``.
+    :rtype: Processor
+    """
+    processor = pytest.importorskip('bookreviver.plugins.eraser', reason=CV_MISSING).Eraser()
+    assert isinstance(processor, Processor)
+    return processor

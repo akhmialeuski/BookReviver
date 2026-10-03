@@ -3,14 +3,16 @@
 from typing import TYPE_CHECKING
 
 import pytest
+from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import Actor
-from bookreviver.domain.enums import JobKind, JobState, RuleCondition, Stage, StageState
+from bookreviver.domain.enums import JobKind, JobState, PageKind, RuleCondition, Stage, StageState
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.ids import PageId, RecipeId
 from bookreviver.domain.values import PageStageKey, RecipeKey, SliceRequest, StageRun, Step, StepPreview
+from bookreviver.services.recipe_picks import RecipePicker
 from tests.helpers.builders import make_page_stage
 from tests.helpers.fake_processing import RefusingJobQueue
 from tests.helpers.processing import ProcessingKit
@@ -29,6 +31,10 @@ GEOMETRY_STEPS: tuple[str, ...] = (
     'geometry.crop',
     'geometry.normalize',
 )
+# The Cleanup steps in the order they run, and the strength of the despeckling of the two variants that have it
+CLEANUP_STEPS: tuple[str, ...] = ('cleanup.binarize', 'cleanup.despeckle', 'cleanup.eraser')
+TEXT_STRENGTH: int = 2
+MIXED_STRENGTH: int = 1
 EVERYTHING: SliceRequest = SliceRequest(limit=100)
 
 
@@ -110,6 +116,70 @@ class TestRecipe:
             [(rule.condition, rule.recipe_id, rule.order) for rule in rules.items]
             == [(RuleCondition.PLATES, plates.id, 0)]
         )
+        assert_expectations()
+
+    async def test_default_cleanup_recipes_are_text_plates_and_mixed_with_the_rules_that_send_pages_to_them(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify a new book gets the three variants of the Cleanup stage, the text one active, and their rules.
+
+        The steps run in the order binarize, despeckle, eraser. Plates are gray and not despeckled, the mixed variant
+        keeps pictures in tones and despeckles gently, and the rules send plates and frontispieces to Plates and the
+        pages with illustrations to Mixed.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        active = await fx_cv_kit.service().recipe(actor, project.id, Stage.CLEANUP)
+        listed = await fx_cv_kit.service().variants(actor, project.id, Stage.CLEANUP, EVERYTHING)
+        by_name = {recipe.name: recipe for recipe in listed.items}
+        rules = await fx_cv_kit.rules().rules(actor, project.id, Stage.CLEANUP, EVERYTHING)
+        expect(active.name == 'Text')
+        expect(sorted(by_name) == ['Mixed', 'Plates', 'Text'])
+        expect([step.processor_key for step in by_name['Text'].steps] == list(CLEANUP_STEPS))
+        expect([step.processor_key for step in by_name['Plates'].steps] == [CLEANUP_STEPS[0], CLEANUP_STEPS[2]])
+        expect([step.processor_key for step in by_name['Mixed'].steps] == list(CLEANUP_STEPS))
+        expect(
+            [(step.params.get('mode'), step.params.get('method')) for step in by_name['Text'].steps[:1]]
+            == [('bw', 'sauvola')]
+        )
+        expect(by_name['Text'].steps[1].params['strength'] == TEXT_STRENGTH)
+        expect(by_name['Plates'].steps[0].params['mode'] == 'gray')
+        expect(by_name['Mixed'].steps[0].params['mode'] == 'mixed')
+        expect(by_name['Mixed'].steps[1].params['strength'] == MIXED_STRENGTH)
+        expect(
+            [(rule.condition, rule.recipe_id, rule.order) for rule in rules.items]
+            == [
+                (RuleCondition.PLATES, by_name['Plates'].id, 0),
+                (RuleCondition.ILLUSTRATED, by_name['Mixed'].id, 1),
+            ]
+        )
+        assert_expectations()
+
+    async def test_a_plate_and_a_frontispiece_are_cleaned_by_plates_and_a_text_page_by_text(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify the default rules choose the recipe of each page of a run on all pages.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        pages = []
+        for index, kind in enumerate((PageKind.TEXT, PageKind.PLATE, PageKind.FRONTISPIECE)):
+            page, _ = await fx_cv_kit.seed_scan_page(project, order_key=f'a{index}')
+            uow = fx_cv_kit.uow()
+            await uow.pages.update(evolve(page, kind=kind))
+            await uow.commit()
+            pages.append(page)
+        active = await fx_cv_kit.service().recipe(actor, project.id, Stage.CLEANUP)
+        reader = fx_cv_kit.uow()
+        picker = RecipePicker(uow=reader, recipes=fx_cv_kit.parts(reader).recipes)
+        picked = await picker.pick(project.id, Stage.CLEANUP, [await reader.pages.get(page.id) for page in pages])
+        names = [picked[page.id].name for page in pages]
+        expect(names == ['Text', 'Plates', 'Plates'])
+        expect(picked[pages[0].id].id == active.id)
         assert_expectations()
 
     async def test_asking_again_returns_the_recipe_that_was_created(self, fx_kit: ProcessingKit) -> None:

@@ -43,10 +43,10 @@ UNKNOWN_PROCESSOR: str = 'There is no processor {key}.'
 WRONG_STAGE: str = 'The processor {key} belongs to the {actual} stage, not to the {expected} stage.'
 WRONG_EDITOR: str = 'The processor {key} reads an edit of the {expected} editor, not of the {actual} editor.'
 NEEDS_GEOMETRY: str = 'An edit of the {editor} editor needs its shape.'
-NEEDS_NO_GEOMETRY: str = 'An edit of the {editor} editor draws no shape.'
 NEEDS_NO_MASK: str = 'The {editor} editor keeps no mask.'
 NEEDS_MASK: str = 'An edit of the {editor} editor needs its mask.'
-# Editors whose edit is a mask the user painted, and not a shape the user drew
+# Editors whose edit is a mask the user painted, which may come with the strokes it was painted from, and not a shape
+# the user drew
 MASK_EDITORS: frozenset[EditorKind] = frozenset({EditorKind.BRUSH_MASK})
 
 
@@ -216,8 +216,6 @@ class EditService:
             raise InvalidParametersError(NEEDS_NO_MASK.format(editor=edit.kind.label))
         if not masked and edit.geometry is None:
             raise InvalidParametersError(NEEDS_GEOMETRY.format(editor=edit.kind.label))
-        if masked and edit.geometry is not None:
-            raise InvalidParametersError(NEEDS_NO_GEOMETRY.format(editor=edit.kind.label))
 
     async def _receive(self, keys: ProjectKeys, key: PageEditKey, mask: IncomingFile) -> tuple[str, StorageKey]:
         """Write an uploaded mask to a scratch key, and work out its digest while it streams in.
