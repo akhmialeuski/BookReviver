@@ -23,10 +23,15 @@ const DRAG_STEPS = 6;
 // A width measured twice may differ by the rounding of a fraction of a pixel
 const WIDTH_TOLERANCE_PX = 1;
 
-/** Take a screenshot once the sheets and menus have finished sliding or fading in, so it shows them at rest. */
+/**
+ * Take a screenshot once the sheets and menus have finished sliding or fading in, so it shows them at rest.
+ *
+ * An animation that is cancelled, such as the fade of a menu that closes meanwhile, rejects `finished` with an
+ * `AbortError`. It is at rest too, so the rejection settles the wait like a finish does.
+ */
 async function snapAtRest(page: Page, name: string): Promise<void> {
   await page.evaluate(() =>
-    Promise.all(
+    Promise.allSettled(
       document
         .getAnimations()
         .filter((animation) => animation.effect?.getComputedTiming().iterations !== Infinity)
