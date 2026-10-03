@@ -2,6 +2,7 @@ import type {
   AppliesTo,
   BlankFill,
   ContributorRole,
+  FigureState,
   FileType,
   IdentifierScheme,
   ImagePolicy,
@@ -27,6 +28,7 @@ import type { OAuthFailure } from '@/features/auth/oauth';
 import type { RoadmapKey } from '@/features/stages/roadmap';
 import type { Phase } from '@/features/stages/stages';
 import type { PageFilter } from '@/features/workspace/params';
+import type { ConditionMark } from '@/features/workspace/steps';
 import { ProblemCode } from '@/shared/http/codes';
 import { pluralize } from '@/shared/lib/format';
 
@@ -599,6 +601,52 @@ export const MESSAGES = {
       compareSoon: 'Comparing a page with the stage before it comes with processing',
       empty: 'This book has no pages yet. Add files on the Import stage to see them here.',
       chip: (label: string, kind: string) => (label === '' ? kind : `p. ${label} · ${kind}`),
+    },
+    steps: {
+      label: 'Steps of the stage',
+      recipe: 'Set of steps',
+      step: (number: number, title: string) => `${number} · ${title}`,
+      open: (number: number, title: string) => `Open step ${number}, ${title}`,
+      off: 'Off',
+      reading: 'Reading the page',
+      state: {
+        default: 'Default shape',
+        found: 'Found by the step',
+        'by-hand': 'Set by hand',
+        skipped: 'Skipped on this page',
+      } satisfies Record<FigureState, string>,
+      marks: { text: '¶', picture: '▣' } satisfies Record<ConditionMark, string>,
+      canvas: {
+        before: (number: number) => `Input of step ${number}`,
+        after: (number: number, title: string) => `Result of step ${number} · ${title}`,
+        input: (number: number, title: string) => `Input of step ${number} · ${title}`,
+      },
+    },
+    stepPanel: {
+      label: (number: number, title: string) => `Step ${number} · ${title}`,
+      settings: 'Settings of the step',
+      condition: (title: string) => `Pages the ${title} step processes, in its settings`,
+      off: 'This step is off, so a run and a preview skip it.',
+      thisPage: (label: string) => (label === '' ? 'This page' : `This page · ${label}`),
+      shape: 'Shape',
+      notReached:
+        'The page has not been through the earlier steps yet, so this step reads the page as it is.',
+      book: 'This step on the book',
+      counts: {
+        found: 'Found',
+        byHand: 'Set by hand',
+        check: 'To check',
+        skipped: 'Skipped by the condition',
+        notRun: 'Not run yet',
+      },
+      pages: (count: number) => `${count} ${pluralize(count, 'page', 'pages')}`,
+      auto: 'Auto on all pages',
+      autoHint:
+        'Run the recipe up to this step on every page. The steps before it come from the earlier run, and pages set by hand keep their shape.',
+      saveFirst: 'Save the recipe to run it.',
+      moves: 'Move between steps',
+      moveTo: (number: number, title: string) => `Go to step ${number}, ${title}`,
+      close: 'Close the step',
     },
   },
   order: {

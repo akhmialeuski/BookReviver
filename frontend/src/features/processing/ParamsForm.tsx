@@ -26,12 +26,15 @@ export function ParamsForm({
   processor,
   params,
   marked,
+  idPrefix,
   onChange,
 }: {
   processor: ProcessorSchema;
   params: Readonly<Record<string, unknown>>;
   /** The names of the fields the open page changes for itself, which the form marks. */
   marked?: ReadonlySet<string>;
+  /** What the ids of the fields start with, so two forms of one step on a screen keep their labels apart. */
+  idPrefix?: string;
   onChange: (params: Record<string, unknown>) => void;
 }): React.JSX.Element {
   const schema = useMemo(() => formSchemaOf(processor.parameters), [processor.parameters]);
@@ -56,6 +59,7 @@ export function ParamsForm({
       validator={validator}
       widgets={WIDGETS}
       formData={params}
+      idPrefix={idPrefix}
       liveValidate
       showErrorList={false}
       noHtml5Validate

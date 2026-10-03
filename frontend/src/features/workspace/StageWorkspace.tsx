@@ -20,7 +20,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/shared/ui/sheet';
  * it. In a narrower window the canvas takes the whole width, and the same two buttons open the strip and the panel as
  * sheets over it. The wide layout is a component of its own, so it reads the remembered widths again whenever the window
  * grows back, and the narrow layout never writes them. The row above the canvas holds the two buttons and, between
- * them, whatever the stage says about the open page.
+ * them, whatever the stage says about the open page; the bar of the steps of the stage stands under that row.
  */
 
 const PANEL_ID = { strip: 'strip', canvas: 'canvas', panel: 'panel' } as const;
@@ -35,6 +35,8 @@ interface WorkspaceParts {
   strip: React.ReactNode | null;
   /** What stands in the row above the canvas, between the two buttons. */
   canvasHeader?: React.ReactNode;
+  /** The row of the steps of the stage, under the row above the canvas, or nothing for a stage that has none. */
+  stepBar?: React.ReactNode;
   canvas: React.ReactNode;
   panel: React.ReactNode;
 }
@@ -43,12 +45,14 @@ interface WorkspaceParts {
 function CanvasColumn({
   hasStrip,
   canvasHeader,
+  stepBar,
   canvas,
   onToggleStrip,
   onTogglePanel,
 }: {
   hasStrip: boolean;
   canvasHeader: React.ReactNode;
+  stepBar: React.ReactNode;
   canvas: React.ReactNode;
   onToggleStrip: () => void;
   onTogglePanel: () => void;
@@ -80,12 +84,19 @@ function CanvasColumn({
           <PanelRightIcon />
         </Button>
       </div>
+      {stepBar}
       <div className="min-h-0 flex-1">{canvas}</div>
     </div>
   );
 }
 
-function WideWorkspace({ strip, canvasHeader, canvas, panel }: WorkspaceParts): React.JSX.Element {
+function WideWorkspace({
+  strip,
+  canvasHeader,
+  stepBar,
+  canvas,
+  panel,
+}: WorkspaceParts): React.JSX.Element {
   const hasStrip = strip !== null;
   const stripRef = usePanelRef();
   const panelRef = usePanelRef();
@@ -132,6 +143,7 @@ function WideWorkspace({ strip, canvasHeader, canvas, panel }: WorkspaceParts): 
         <CanvasColumn
           hasStrip={hasStrip}
           canvasHeader={canvasHeader}
+          stepBar={stepBar}
           canvas={canvas}
           onToggleStrip={() => toggle(stripRef)}
           onTogglePanel={() => toggle(panelRef)}
@@ -156,6 +168,7 @@ function WideWorkspace({ strip, canvasHeader, canvas, panel }: WorkspaceParts): 
 function NarrowWorkspace({
   strip,
   canvasHeader,
+  stepBar,
   canvas,
   panel,
 }: WorkspaceParts): React.JSX.Element {
@@ -167,6 +180,7 @@ function NarrowWorkspace({
       <CanvasColumn
         hasStrip={strip !== null}
         canvasHeader={canvasHeader}
+        stepBar={stepBar}
         canvas={canvas}
         onToggleStrip={() => setStripOpen((open) => !open)}
         onTogglePanel={() => setPanelOpen((open) => !open)}

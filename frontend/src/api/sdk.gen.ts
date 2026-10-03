@@ -384,7 +384,9 @@ export const listStagesApiV1ProjectsProjectIdStagesGet = <ThrowOnError extends b
  * List the pages of a book in book order, each with where it stands in a stage and the version that is its result.
  *
  * A page the stage has not run on has the status ``not-run`` and no version. A page holds up to a thousand rows, as
- * the page manifest does, so a strip of a whole book takes few requests.
+ * the page manifest does, so a strip of a whole book takes few requests. With ``step`` every row also says what that
+ * step read and made on its page and where the shape of the step comes from; a step no recipe of the stage has is a
+ * 404.
  */
 export const listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet = <ThrowOnError extends boolean = false>(options: Options<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData, ThrowOnError>): RequestResult<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponses, ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetErrors, ThrowOnError> => (options.client ?? client).get<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponses, ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetErrors, ThrowOnError>({ url: '/api/v1/projects/{project_id}/stages/{stage}/pages', ...options });
 

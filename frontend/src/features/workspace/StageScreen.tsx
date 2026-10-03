@@ -42,11 +42,13 @@ import { StageGrid } from '@/features/workspace/StageGrid';
 import { StagePanel } from '@/features/workspace/StagePanel';
 import { StageStrip } from '@/features/workspace/StageStrip';
 import { StageWorkspace } from '@/features/workspace/StageWorkspace';
+import { StepBar } from '@/features/workspace/StepBar';
 import {
   type ClickModifiers,
   type SelectionState,
   selectionAfterClick,
 } from '@/features/workspace/selection';
+import { hasStepBar } from '@/features/workspace/steps';
 import {
   applyFilter,
   applyStopped,
@@ -59,6 +61,7 @@ import {
   stopOptions,
   type VariantView,
 } from '@/features/workspace/strip';
+import { useStepWorkspace } from '@/features/workspace/useStepWorkspace';
 import { describeError } from '@/shared/http/problem';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
@@ -104,13 +107,19 @@ export function StageScreen({
   projectId,
   stage,
   search,
+  stepId,
   onSearchChange,
+  onStepChange,
 }: {
   projectId: string;
   stage: Stage;
   search: StageSearch;
+  /** The identifier of the step the address names, or undefined when no step is open. */
+  stepId?: string;
   /** Merge changes into the search params of the route; an undefined value takes the param out. */
   onSearchChange: (changes: Partial<StageSearch>) => void;
+  /** Open a step of the stage, which is a move to its address, or close the open one with undefined. */
+  onStepChange: (stepId: string | undefined) => void;
 }): React.JSX.Element {
   const project = useQuery(
     projectApiV1ProjectsProjectIdGetOptions({ path: { project_id: projectId } }),
@@ -164,12 +173,24 @@ export function StageScreen({
   // A stage built from processors adds its recipe, its preview and its before-and-after compare to the frame
   const compareChoice = search.compare ?? CompareMode.Off;
   const currentItem = items[currentIndex];
-  const processing = useProcessing(projectId, stage, currentItem, () => {
-    // A preview is drawn in the half after of the compare, so asking for one turns the compare on
-    if (compareChoice === CompareMode.Off) {
-      onSearchChange({ compare: CompareMode.Swipe });
-    }
-  });
+  const processing = useProcessing(
+    projectId,
+    stage,
+    currentItem,
+    () => {
+      // A preview is drawn in the half after of the compare, so asking for one turns the compare on
+      if (compareChoice === CompareMode.Off) {
+        onSearchChange({ compare: CompareMode.Swipe });
+      }
+    },
+    hasStepBar(stage) ? stepId : undefined,
+  );
+  const workspace = useStepWorkspace(
+    processing,
+    hasStepBar(stage) ? stepId : undefined,
+    currentItem,
+  );
+  const openStep = workspace.open;
   // The variants of the stage mark its pages and narrow the list to one of them; the choice belongs to one stage
   const [variantPick, setVariantPick] = useState<{ stage: Stage; id: string | null }>({
     stage,
@@ -231,6 +252,7 @@ export function StageScreen({
     items,
     scans: scans.data ?? NO_SCANS,
     before: beforeSource,
+    focusStepId: openStep?.stepId,
   });
 
   // The grid shows no open page, so the page keys and the strip have nothing to turn there
@@ -322,18 +344,30 @@ export function StageScreen({
   const resultUrl = currentItem === undefined ? null : canvasSourceOf(currentItem);
   // A step the reader chose is drawn from its own version, which has a pyramid only when it is the current one
   const stepSource = sourceOfResult(shownStep.version);
+  // An open step shows what it reads on the canvas, and what it made once the picture after is compared with it. A page
+  // that has not come as far as the step reads the page as the stage would
+  const stepInput =
+    openStep === null ? null : (sourceOfResult(workspace.page?.input_version) ?? beforeSource);
+  const stepOutput =
+    openStep === null
+      ? null
+      : (sourceOfPreview(previewShown) ?? sourceOfResult(workspace.page?.version));
   const afterSource: ImageSource | null =
-    sourceOfPreview(previewShown) ??
-    stepSource ??
-    (resultUrl === null ? null : { kind: SourceKind.Iiif, url: resultUrl });
+    openStep === null
+      ? (sourceOfPreview(previewShown) ??
+        stepSource ??
+        (resultUrl === null ? null : { kind: SourceKind.Iiif, url: resultUrl }))
+      : stepOutput;
+  const beforePicture = openStep === null ? beforeSource : stepInput;
   const compareBlocked = spread
     ? MESSAGES.processing.compare.spreadOnly
     : editing !== null
       ? MESSAGES.editors.compareOff
-      : beforeSource === null
+      : beforePicture === null || (openStep !== null && stepOutput === null)
         ? MESSAGES.processing.compare.none
         : null;
   const compareMode = compareBlocked === null ? compareChoice : CompareMode.Off;
+  const stepLabels = MESSAGES.workspace.steps.canvas;
   const stageName = MESSAGES.stages.names[stage];
   const stageBeforeThis = stageBefore(stage);
   const { preview } = processing;
@@ -361,20 +395,33 @@ export function StageScreen({
         {processed && !spread ? (
           <CompareCanvas
             pairs={
-              editing === null
-                ? { before: beforeSource, after: afterSource }
-                : { before: null, after: editing.picture }
+              editing !== null
+                ? { before: null, after: editing.picture }
+                : openStep === null
+                  ? { before: beforeSource, after: afterSource }
+                  : {
+                      before: stepInput,
+                      after: compareMode === CompareMode.Off ? stepInput : stepOutput,
+                    }
             }
             mode={compareMode}
-            beforeLabel={MESSAGES.processing.compare.before(
-              stageBeforeThis === null ? '' : MESSAGES.stages.names[stageBeforeThis],
-            )}
+            beforeLabel={
+              openStep === null
+                ? MESSAGES.processing.compare.before(
+                    stageBeforeThis === null ? '' : MESSAGES.stages.names[stageBeforeThis],
+                  )
+                : stepLabels.before(openStep.number)
+            }
             afterLabel={
               previewShown !== null
                 ? MESSAGES.processing.preview.after(stageName)
-                : stepSource !== null && shownStep.index !== null
-                  ? MESSAGES.processing.compare.afterStep(stageName, shownStep.index + 1)
-                  : MESSAGES.processing.compare.after(stageName)
+                : openStep !== null
+                  ? compareMode === CompareMode.Off
+                    ? stepLabels.input(openStep.number, openStep.title)
+                    : stepLabels.after(openStep.number, openStep.title)
+                  : stepSource !== null && shownStep.index !== null
+                    ? MESSAGES.processing.compare.afterStep(stageName, shownStep.index + 1)
+                    : MESSAGES.processing.compare.after(stageName)
             }
             notice={previewNotice}
             pageIds={shown.map((item) => item.page.id)}
@@ -443,6 +490,19 @@ export function StageScreen({
             )
           }
           canvasHeader={grid ? null : header}
+          stepBar={
+            grid || !hasStepBar(stage) || workspace.steps.length === 0 ? null : (
+              <StepBar
+                steps={workspace.steps}
+                openId={openStep?.stepId}
+                states={workspace.states}
+                recipes={processing.recipes}
+                recipeId={processing.recipe?.id}
+                onChooseRecipe={processing.chooseRecipe}
+                onOpen={onStepChange}
+              />
+            )
+          }
           canvas={
             grid ? (
               <StageGrid
@@ -478,6 +538,16 @@ export function StageScreen({
                 current={currentItem}
                 selected={selection.selected}
                 editor={editor}
+                step={
+                  openStep === null
+                    ? undefined
+                    : {
+                        workspace,
+                        step: openStep,
+                        pageLabel: currentItem?.page.label ?? '',
+                        onOpen: onStepChange,
+                      }
+                }
               />
             ) : (
               <StagePanel stage={stage} available={available} />

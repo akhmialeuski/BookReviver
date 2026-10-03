@@ -2,11 +2,14 @@ import type { EditorSession } from '@/features/editors/session';
 import { RecipeSection } from '@/features/processing/RecipeSection';
 import { RunControls } from '@/features/processing/RunControls';
 import { SplitSection } from '@/features/processing/SplitSection';
+import { StepPanel } from '@/features/processing/StepPanel';
 import { ThisPageSection } from '@/features/processing/ThisPageSection';
 import type { Processing } from '@/features/processing/useProcessing';
 import { useStageRun } from '@/features/processing/useStageRun';
 import { StagePanel } from '@/features/workspace/StagePanel';
+import type { BarStep } from '@/features/workspace/steps';
 import type { StripItem } from '@/features/workspace/strip';
+import type { StepWorkspace } from '@/features/workspace/useStepWorkspace';
 import { MESSAGES } from '@/shared/messages';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
@@ -24,6 +27,7 @@ export function ProcessingPanel({
   current,
   selected,
   editor,
+  step,
 }: {
   processing: Processing;
   items: readonly StripItem[];
@@ -31,6 +35,13 @@ export function ProcessingPanel({
   selected: ReadonlySet<string>;
   /** The page editor of the stage on the open page, or null when the stage has none. */
   editor: EditorSession | null;
+  /** The step that is open, whose section stands above the others, or nothing when no step is open. */
+  step?: {
+    workspace: StepWorkspace;
+    step: BarStep;
+    pageLabel: string;
+    onOpen: (stepId: string | undefined) => void;
+  };
 }): React.JSX.Element {
   const rows = items.flatMap((item) => (item.row === undefined ? [] : [item.row]));
   const run = useStageRun(processing, items, current, selected);
@@ -55,6 +66,17 @@ export function ProcessingPanel({
       footer={<RunControls processing={processing} items={items} run={run} />}
     >
       <div className="grid gap-6">
+        {step === undefined ? null : (
+          <StepPanel
+            processing={processing}
+            workspace={step.workspace}
+            step={step.step}
+            pageLabel={step.pageLabel}
+            run={run}
+            onOpen={step.onOpen}
+            onClose={() => step.onOpen(undefined)}
+          />
+        )}
         {processing.stage === 'page-split' && current !== undefined ? (
           <SplitSection processing={processing} items={items} current={current} />
         ) : null}
