@@ -1164,7 +1164,9 @@ indistinguishable to the application.
   than 60 rows, or with no peak, leaves `line_height_px` out. The idea comes from the `_clean_binary` and
   `detect_text_block` of an earlier script, and the code is the project's own. The method is `ink-blocks`.
 - `geometry.normalize` (`plugins/normalize.py`) reads the block `geometry.crop` cut and puts it on a blank page of
-  `page_width` by `page_height` pixels, so every page of a book has one size, one size of text and one layout. The block
+  `page_width` by `page_height` pixels, so every page of a book has one size, one size of text and one layout. Both are 0
+  until the book is measured, and a size of 0 makes the page the block and its margins, which `PagePlan` works out for
+  each page (for a `rect` edit, up to the edit and the margins past it). The block
   is scaled by `line_height` over its own line height, which comes from the data of the crop or else is measured here
   with `line_pitch`. A page whose line height is farther from the target than `max_scale_change` (25) percent of it is
   placed unscaled with the review reason `size-differs`, and a `line_height` of 0 keeps the size of every page. `PagePlan` works out the
