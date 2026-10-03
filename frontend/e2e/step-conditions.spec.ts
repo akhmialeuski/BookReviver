@@ -90,9 +90,12 @@ test('a second Deskew for the pictures skips the text pages, and the first Deske
     await uploadFolder(page, folder, PAGES);
     await waitForIdleJobs(page, openProjectId(page));
     await setKind(page, PLATE_POSITION, 'plate');
-    await removeRules(page);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
+    await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
+    // The rules of a stage are made with its recipes, when the stage is first opened, so they are taken away now
+    await removeRules(page);
+    await page.reload();
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
     await expect(page.getByTestId('page-strip').getByTestId('strip-page')).toHaveCount(PAGES);
     await expect(steps.first()).toBeVisible();

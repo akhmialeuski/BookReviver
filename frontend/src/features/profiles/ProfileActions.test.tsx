@@ -109,8 +109,20 @@ describe('ProfileActions', () => {
           stage: 'geometry',
           name: 'Clean flatbed scan',
           steps: [
-            { processor_key: 'geometry.crop', params: {}, enabled: false },
-            { processor_key: 'geometry.deskew', params: {}, enabled: true },
+            {
+              processor_key: 'geometry.crop',
+              params: {},
+              enabled: false,
+              step_id: 'id-geometry.crop',
+              applies_to: 'all',
+            },
+            {
+              processor_key: 'geometry.deskew',
+              params: {},
+              enabled: true,
+              step_id: 'id-geometry.deskew',
+              applies_to: 'all',
+            },
           ],
         },
       }),

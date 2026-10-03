@@ -241,8 +241,10 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
     await expect(layer).toHaveAttribute('data-strokes', '0');
     await expect(page.getByTestId('brush-size')).toContainText('% of the page width');
     await snap(page, 'cleanup-despeckled');
+    const [eraserStep] = await stepIdsOf(page, 'cleanup', 'cleanup.eraser');
     const putBody = page.waitForRequest(
-      (request) => request.method() === 'PUT' && request.url().includes('cleanup.eraser'),
+      (request) =>
+        request.method() === 'PUT' && request.url().includes(`/edits/cleanup/${eraserStep}`),
     );
     await dragFrom(page, layer, BRUSH_FROM, BRUSH_BY);
     await expect(layer).toHaveAttribute('data-strokes', '1');
