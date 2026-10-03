@@ -521,6 +521,22 @@ class TestRunAndVersions:
         assert_expectations()
 
 
+async def active_step_id(client: httpx.AsyncClient, book: Book, stage: Stage) -> str:
+    """Read the identifier of the only step of the active recipe of a stage, which an edit is addressed by.
+
+    :param client: Client of the running application.
+    :type client: httpx.AsyncClient
+    :param book: Book of the signed-in account.
+    :type book: Book
+    :param stage: The stage whose active recipe is read.
+    :type stage: Stage
+    :returns: The identifier of the step.
+    :rtype: str
+    """
+    recipe = RecipeSchema.model_validate_json((await client.get(f'{book.path}/stages/{stage}/recipe')).content)
+    return str(recipe.steps[0].step_id)
+
+
 class TestEdits:
     """Tests for the manual edit endpoints."""
 
@@ -532,13 +548,15 @@ class TestEdits:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        path = f'{fx_book.page_path}/edits/geometry/{FAKE_KEY}'
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        path = f'{fx_book.page_path}/edits/geometry/{step_id}'
         saved = await fx_client.put(path, data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'})
         listed = await fx_client.get(f'{fx_book.page_path}/edits/geometry')
         deleted = await fx_client.delete(path)
         after = await fx_client.get(f'{fx_book.page_path}/edits/geometry')
         expect(saved.status_code == status.HTTP_200_OK)
         expect(saved.json()['geometry'] == {'degrees': 1.5})
+        expect(saved.json()['step_id'] == step_id)
         expect([item['edit_hash'] for item in listed.json()[ITEMS]] == [saved.json()['edit_hash']])
         expect((deleted.status_code, after.json()['total']) == (status.HTTP_204_NO_CONTENT, 0))
         assert_expectations()
@@ -565,8 +583,24 @@ class TestEdits:
         :param data: Form under test.
         :type data: dict[str, str]
         """
-        response = await fx_client.put(f'{fx_book.page_path}/edits/geometry/{FAKE_KEY}', data=data)
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.put(f'{fx_book.page_path}/edits/geometry/{step_id}', data=data)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    async def test_edit_of_a_step_that_no_recipe_has_is_a_404(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify an edit addressed to an identifier that is the step of no recipe of the stage answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.put(
+            f'{fx_book.page_path}/edits/geometry/{uuid4()}', data={'kind': 'rotation', 'geometry': '{"degrees": 1}'}
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     async def test_brush_edit_takes_its_mask_as_a_file(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
         """Verify a mask sent with the form is stored and served from the path the edit names.
@@ -576,7 +610,7 @@ class TestEdits:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        path = f'{fx_book.page_path}/edits/cleanup/cleanup.fake'
+        path = f'{fx_book.page_path}/edits/cleanup/{await active_step_id(fx_client, fx_book, Stage.CLEANUP)}'
         saved = await fx_client.put(path, data={'kind': 'brush-mask'}, files={'mask': ('mask.png', b'mask-bytes')})
         served = await fx_client.get(saved.json()['mask'])
         expect(saved.status_code == status.HTTP_200_OK)

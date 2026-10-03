@@ -36,6 +36,7 @@ describe('StepList', () => {
     onToggle: vi.fn(),
     onRemove: vi.fn(),
     onChange: vi.fn(),
+    onCondition: vi.fn(),
   };
 
   function render(steps = STEPS, openId: string | undefined = undefined): void {
@@ -94,6 +95,41 @@ describe('StepList', () => {
       steps()[0]?.querySelector<HTMLElement>('[data-testid="step-toggle"]')?.click();
     });
     expect(handlers.onOpen).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it('offers the conditions of a step in its settings, and reports the one chosen', () => {
+    render(STEPS, 'step-0');
+    const select = steps()[0]?.querySelector<HTMLSelectElement>('[data-testid="step-condition"]');
+
+    expect(select?.value).toBe('all');
+    expect([...(select?.options ?? [])].map((option) => option.textContent)).toEqual([
+      'All pages',
+      'Text pages',
+      'Pictures',
+      'Colour pictures',
+      'Black-and-white pictures',
+    ]);
+    act(() => {
+      if (select !== null && select !== undefined) {
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(
+          select,
+          'pictures',
+        );
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    expect(handlers.onCondition).toHaveBeenCalledWith('step-0', 'pictures');
+  });
+
+  it('shows the condition a step was saved with', () => {
+    render(
+      STEPS.map((entry) => ({ ...entry, appliesTo: 'text' })),
+      'step-0',
+    );
+
+    expect(
+      steps()[0]?.querySelector<HTMLSelectElement>('[data-testid="step-condition"]')?.value,
+    ).toBe('text');
   });
 
   it('draws the settings of the open step only', () => {

@@ -1332,7 +1332,7 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
 
 
 class SqlAlchemyPageEditRepository(SqlAlchemyRepository[PageEdit, PageEditKey, PageEditRow], PageEditRepository):
-    """Manual edits, addressed by the page, the stage and the processor."""
+    """Manual edits, addressed by the page, the stage and the step."""
 
     def __init__(self, session: AsyncSession) -> None:
         """Create the repository over the ``page_edits`` table.
@@ -1346,28 +1346,28 @@ class SqlAlchemyPageEditRepository(SqlAlchemyRepository[PageEdit, PageEditKey, P
     async def get(self, entity_id: PageEditKey) -> PageEdit:
         """Return one edit.
 
-        :param entity_id: Page, stage and processor.
+        :param entity_id: Page, stage and step.
         :type entity_id: PageEditKey
         :returns: The stored edit.
         :rtype: PageEdit
-        :raises NotFoundError: If the processor has no edit on the page and stage.
+        :raises NotFoundError: If the step has no edit on the page and stage.
         """
-        row = await self._rows.get((entity_id.page_id, entity_id.stage, entity_id.processor_key))
+        row = await self._rows.get((entity_id.page_id, entity_id.stage, entity_id.step_id))
         return self._mapper.to_entity(row)
 
     @override
     async def delete(self, entity_id: PageEditKey) -> None:
         """Remove one edit.
 
-        :param entity_id: Page, stage and processor.
+        :param entity_id: Page, stage and step.
         :type entity_id: PageEditKey
-        :raises NotFoundError: If the processor has no edit on the page and stage.
+        :raises NotFoundError: If the step has no edit on the page and stage.
         """
-        await self._rows.delete((entity_id.page_id, entity_id.stage, entity_id.processor_key))
+        await self._rows.delete((entity_id.page_id, entity_id.stage, entity_id.step_id))
 
     @override
     async def save(self, edit: PageEdit) -> PageEdit:
-        """Store an edit, replacing the one of the same page, stage and processor.
+        """Store an edit, replacing the one of the same page, stage and step.
 
         :param edit: Edit to store.
         :type edit: PageEdit
@@ -1383,17 +1383,17 @@ class SqlAlchemyPageEditRepository(SqlAlchemyRepository[PageEdit, PageEditKey, P
     async def find(self, key: PageEditKey) -> PageEdit | None:
         """Return one edit.
 
-        :param key: Page, stage and processor.
+        :param key: Page, stage and step.
         :type key: PageEditKey
         :returns: The edit, or None.
         :rtype: PageEdit | None
         """
-        row = await self._rows.get_one_or_none(page_id=key.page_id, stage=key.stage, processor_key=key.processor_key)
+        row = await self._rows.get_one_or_none(page_id=key.page_id, stage=key.stage, step_id=key.step_id)
         return None if row is None else self._mapper.to_entity(row)
 
     @override
     async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageEdit]:
-        """Return the edits of one page, by stage and processor.
+        """Return the edits of one page, by stage and step.
 
         :param page_id: Page owning the edits.
         :type page_id: PageId
@@ -1407,7 +1407,7 @@ class SqlAlchemyPageEditRepository(SqlAlchemyRepository[PageEdit, PageEditKey, P
             filters['stage'] = stage
         order = list(Stage)
         edits = [self._mapper.to_entity(row) for row in await self._rows.get_many(**filters)]
-        return sorted(edits, key=lambda edit: (order.index(edit.stage), edit.processor_key))
+        return sorted(edits, key=lambda edit: (order.index(edit.stage), str(edit.step_id)))
 
 
 class SqlAlchemyBookPlaceRepository(SqlAlchemyRepository[BookPlace, BookPlaceKey, BookPlaceRow], BookPlaceRepository):

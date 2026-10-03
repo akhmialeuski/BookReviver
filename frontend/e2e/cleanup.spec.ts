@@ -1,12 +1,13 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
-import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../src/shared/http/csrf';
 import {
   createBook,
   openProjectId,
   registerAndSignIn,
+  setKind,
   snap,
+  stepIdsOf,
   uploadFolder,
   waitForIdleJobs,
   writeSheetsFolder,
@@ -30,30 +31,12 @@ const BRUSH_FROM = { x: 120, y: 150 };
 const BRUSH_BY = { x: 160, y: 40 };
 const METHODS = ['Otsu', 'Sauvola', 'Wolf', 'ISauvola', 'Su', 'Gatos', 'NICK', 'Bradley'];
 
-const BINARIZE = 'Binarize';
+const BINARIZE = 'Binarization';
 const ERASER = 'Eraser';
 const ZONES = 'Picture zones';
 
 // Tall enough for the pictures of the key states to show the form and the page together
 test.use({ viewport: { width: 1280, height: 1000 } });
-
-/** Change the kind of the page at a position of the open book, as the Order stage does, straight through the API. */
-async function setKind(page: Page, position: number, kind: string): Promise<void> {
-  const projectId = openProjectId(page);
-  const listed = await page.request.get(`/api/v1/projects/${projectId}/pages?size=100`);
-  const items = ((await listed.json()) as { items: { id: string; position: number }[] }).items;
-  const target = items.find((item) => item.position === position);
-  if (target === undefined) {
-    throw new Error(`The book has no page at position ${position}.`);
-  }
-  const cookies = await page.context().cookies();
-  const token = cookies.find((cookie) => cookie.name === CSRF_COOKIE_NAME)?.value ?? '';
-  const response = await page.request.patch(`/api/v1/projects/${projectId}/pages/${target.id}`, {
-    headers: { [CSRF_HEADER_NAME]: token },
-    data: { kind },
-  });
-  expect(response.ok()).toBe(true);
-}
 
 /** Count the runs of a stage that ended well in the open book, which tells that a run the reader started is over. */
 async function finishedRuns(page: Page): Promise<number> {
@@ -74,7 +57,7 @@ interface ListedVersion {
 
 /** A manual edit as the API lists it. */
 interface StoredEdit {
-  processor_key: string;
+  step_id: string;
   kind: string;
   geometry: { strokes?: unknown[] } | null;
   mask: string | null;
@@ -154,9 +137,9 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
     await expect(page.getByTestId('recipe-active')).toBeVisible();
     const recipeSteps = page.getByTestId('recipe-step');
     await expect(recipeSteps).toHaveCount(3);
-    await expect(recipeSteps.nth(0)).toContainText('1 · Binarize');
-    await expect(recipeSteps.nth(1)).toContainText('2 · Remove specks');
-    await expect(recipeSteps.nth(2)).toContainText('3 · Eraser');
+    await expect(recipeSteps.nth(0)).toContainText('1 · Binarization');
+    await expect(recipeSteps.nth(1)).toContainText('2 · Despeckle');
+    await expect(recipeSteps.nth(2)).toContainText('3 · Fill zones');
     const variants = await page.getByTestId('recipe-select').locator('option').allTextContents();
     // The options say how many pages each variant has processed, and the active one is named
     expect(variants.map((name) => name.split(' · ')[0]?.trim()).sort()).toEqual([
@@ -245,7 +228,7 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
     await expect(layer).toHaveAttribute('data-zones', '1');
     await expect(page.getByTestId('regions-list')).toContainText('Picture 1');
     await expect.poll(() => saves.length).toBe(1);
-    expect(saves[0]).toBe('cleanup.binarize');
+    expect(saves[0]).toBe((await stepIdsOf(page, 'cleanup', 'cleanup.binarize'))[0]);
     await settled();
     await page.getByTestId('editor-auto').click();
     await expect(layer).toHaveAttribute('data-zones', '0', { timeout: RUN_TIMEOUT_MS });
@@ -258,8 +241,10 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
     await expect(layer).toHaveAttribute('data-strokes', '0');
     await expect(page.getByTestId('brush-size')).toContainText('% of the page width');
     await snap(page, 'cleanup-despeckled');
+    const [eraserStep] = await stepIdsOf(page, 'cleanup', 'cleanup.eraser');
     const putBody = page.waitForRequest(
-      (request) => request.method() === 'PUT' && request.url().includes('cleanup.eraser'),
+      (request) =>
+        request.method() === 'PUT' && request.url().includes(`/edits/cleanup/${eraserStep}`),
     );
     await dragFrom(page, layer, BRUSH_FROM, BRUSH_BY);
     await expect(layer).toHaveAttribute('data-strokes', '1');
@@ -269,13 +254,14 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
       timeout: RUN_TIMEOUT_MS,
     });
     await settled();
-    expect(saves.at(-1)).toBe('cleanup.eraser');
+    const [eraser] = await stepIdsOf(page, 'cleanup', 'cleanup.eraser');
+    expect(saves.at(-1)).toBe(eraser);
     // The server kept the strokes beside the mask the browser painted from them
     const listed = await page.request.get(
       `/api/v1/projects/${openProjectId(page)}/pages/${await currentPageId(page)}/edits/cleanup`,
     );
     const edits = ((await listed.json()) as { items: StoredEdit[] }).items;
-    const stored = edits.find((edit) => edit.processor_key === 'cleanup.eraser');
+    const stored = edits.find((edit) => edit.step_id === eraser);
     expect(stored?.kind).toBe('brush-mask');
     expect(stored?.geometry?.strokes).toHaveLength(1);
     const mask = await page.request.get(stored?.mask ?? '');

@@ -3,7 +3,7 @@
 import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from attrs import evolve
 
@@ -58,6 +58,7 @@ from bookreviver.domain.ids import (
     RecipeRuleId,
     ScanId,
     SourceId,
+    StepId,
 )
 
 if TYPE_CHECKING:
@@ -123,6 +124,8 @@ SPLIT_NONE: ProcessorRef = ProcessorRef(key='split.none', version='1')
 VERSION_ID_DIGITS: int = 16
 # The deskew step of the geometry stage, which the processing tests run
 DESKEW: ProcessorRef = ProcessorRef(key='geometry.deskew', version='1')
+# The step of a recipe the manual rotation of ``make_page_edit`` is for
+DESKEW_STEP_ID: StepId = StepId(UUID('5a1f0000-0000-4000-8000-00000000d5ce'))
 # The parameters of the deskew step the builders give a recipe and a profile
 DESKEW_PARAMS: MetadataMap = {'max_angle_deg': 5}
 
@@ -352,7 +355,7 @@ def make_recipe(
         project_id=project_id,
         stage=stage,
         name=name,
-        steps=(Step(processor_key=DESKEW.key, params=DESKEW_PARAMS),),
+        steps=(Step(processor_key=DESKEW.key, params=DESKEW_PARAMS, step_id=DESKEW_STEP_ID),),
         active=active,
         created_at=moment,
         updated_at=moment,
@@ -388,7 +391,7 @@ def make_recipe_profile(
         account_id=account_id,
         stage=stage,
         name='Photographed book',
-        steps=steps or (Step(processor_key=DESKEW.key, params=DESKEW_PARAMS),),
+        steps=steps or (Step(processor_key=DESKEW.key, params=DESKEW_PARAMS, step_id=DESKEW_STEP_ID),),
         is_default=is_default,
         created_at=moment,
         updated_at=moment,
@@ -510,38 +513,36 @@ def make_page_edit(*, page_id: PageId, stage: Stage = Stage.GEOMETRY, degrees: f
 
     :param page_id: Page the edit belongs to.
     :type page_id: PageId
-    :param stage: Stage of the processor.
+    :param stage: Stage of the step.
     :type stage: Stage
     :param degrees: Angle the user gave.
     :type degrees: float
     :returns: An edit saved at the epoch.
     :rtype: PageEdit
     """
-    return make_geometry_edit(
-        page_id=page_id, processor_key=DESKEW.key, geometry=Rotation(degrees=degrees), stage=stage
-    )
+    return make_geometry_edit(page_id=page_id, geometry=Rotation(degrees=degrees), stage=stage, step_id=DESKEW_STEP_ID)
 
 
 def make_geometry_edit(
-    *, page_id: PageId, processor_key: str, geometry: EditGeometry, stage: Stage = Stage.GEOMETRY
+    *, page_id: PageId, geometry: EditGeometry, stage: Stage = Stage.GEOMETRY, step_id: StepId | None = None
 ) -> PageEdit:
     """Build the manual edit of a page that a geometry processor reads.
 
     :param page_id: Page the edit belongs to.
     :type page_id: PageId
-    :param processor_key: Key of the processor the edit is for.
-    :type processor_key: str
     :param geometry: Shape the user drew.
     :type geometry: EditGeometry
-    :param stage: Stage of the processor.
+    :param stage: Stage of the step.
     :type stage: Stage
+    :param step_id: The step the edit is for, or None for a new identifier.
+    :type step_id: StepId | None
     :returns: An edit saved at the epoch.
     :rtype: PageEdit
     """
     return PageEdit(
         page_id=page_id,
         stage=stage,
-        processor_key=processor_key,
+        step_id=StepId(uuid4()) if step_id is None else step_id,
         kind=geometry.editor,
         geometry=geometry,
         edit_hash=PageEdit.hash_of(geometry, None),

@@ -134,12 +134,14 @@ export function choiceForm(choice: SplitChoice): { kind: 'split'; geometry: stri
  * Read the choice a reader made for a scan from the edits of its page.
  *
  * @param edits The edits of the Split stage on the page.
+ * @param stepId The identifier of the automatic split step of the recipe, which the choice is an edit of.
  * @returns The choice, or null when the reader left the scan to the automatic split.
  */
 export function chosenIn(
-  edits: readonly Pick<PageEditSchema, 'processor_key' | 'geometry'>[],
+  edits: readonly Pick<PageEditSchema, 'step_id' | 'geometry'>[],
+  stepId: string,
 ): SplitChoice | null {
-  const edit = edits.find((candidate) => candidate.processor_key === SPLIT_PROCESSOR.auto);
+  const edit = edits.find((candidate) => candidate.step_id === stepId);
   const pages = edit?.geometry?.pages;
   if (pages === PAGES_OF[SplitChoice.One]) {
     return SplitChoice.One;

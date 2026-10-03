@@ -11,7 +11,18 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import VERSION_ID_PATTERN, PageEdit, VersionInputs
-from bookreviver.domain.enums import JobKind, PageOrigin, PageSide, Rendition, Stage, StepField, VersionScale
+from bookreviver.domain.enums import (
+    AppliesTo,
+    ColorMode,
+    JobKind,
+    PageKind,
+    PageOrigin,
+    PageSide,
+    Rendition,
+    Stage,
+    StepField,
+    VersionScale,
+)
 from bookreviver.domain.geometry import Line, Point, Rotation
 from bookreviver.domain.ids import PageId, PageVersionId, ScanId
 from bookreviver.domain.values import BookDetails, ProcessorRef, Progress, Renditions, StageRun, Step
@@ -120,10 +131,55 @@ class TestStep:
         stored: dict[str, Any] = {StepField.PROCESSOR_KEY: DESKEW_KEY, StepField.PARAMS: {}}
         assert Step.from_map(stored).enabled is True
 
+    def test_step_stored_before_the_identifier_and_the_condition_existed_gets_both(self) -> None:
+        """Verify an old object gets a new identifier, and processes every page as it did."""
+        stored: dict[str, Any] = {StepField.PROCESSOR_KEY: DESKEW_KEY, StepField.PARAMS: {}}
+        first, second = Step.from_map(stored), Step.from_map(stored)
+        expect(first.applies_to is AppliesTo.ALL)
+        expect(first.step_id != second.step_id)
+        assert_expectations()
+
+    def test_identifier_and_condition_survive_a_copy_of_the_step(self) -> None:
+        """Verify a step moved or copied with ``evolve`` keeps its identifier, and a new step gets its own."""
+        step = Step(processor_key=DESKEW_KEY, applies_to=AppliesTo.PICTURES)
+        expect(evolve(step, enabled=False).step_id == step.step_id)
+        expect(Step(processor_key=DESKEW_KEY).step_id != step.step_id)
+        assert_expectations()
+
     def test_object_without_a_processor_key_is_refused(self) -> None:
         """Reject an object that names no processor, which the callers that read job parameters turn into an error."""
         with pytest.raises(KeyError):
             Step.from_map({StepField.PARAMS: {}})
+
+
+class TestAppliesTo:
+    """Tests for the condition of a step, which decides what a page is."""
+
+    @pytest.mark.parametrize(
+        ('kind', 'color_mode', 'matching'),
+        [
+            (PageKind.TEXT, ColorMode.GRAY, {AppliesTo.ALL, AppliesTo.TEXT}),
+            (PageKind.COVER, ColorMode.COLOR, {AppliesTo.ALL, AppliesTo.TEXT}),
+            (PageKind.PLATE, ColorMode.COLOR, {AppliesTo.ALL, AppliesTo.PICTURES, AppliesTo.COLOR_PICTURES}),
+            (PageKind.PLATE, ColorMode.GRAY, {AppliesTo.ALL, AppliesTo.PICTURES, AppliesTo.BW_PICTURES}),
+            (PageKind.FRONTISPIECE, ColorMode.BILEVEL, {AppliesTo.ALL, AppliesTo.PICTURES, AppliesTo.BW_PICTURES}),
+            (PageKind.PLATE, ColorMode.UNKNOWN, {AppliesTo.ALL, AppliesTo.PICTURES, AppliesTo.COLOR_PICTURES}),
+        ],
+        ids=['text', 'cover', 'colour-plate', 'gray-plate', 'bilevel-frontispiece', 'unknown-plate'],
+    )
+    def test_condition_matches_the_page_by_its_kind_and_its_colour(
+        self, kind: PageKind, color_mode: ColorMode, matching: set[AppliesTo]
+    ) -> None:
+        """Verify which of the conditions meet a page of a kind and a colour mode.
+
+        :param kind: Role of the page.
+        :type kind: PageKind
+        :param color_mode: Colour mode of the image the stage starts from.
+        :type color_mode: ColorMode
+        :param matching: The conditions the page meets.
+        :type matching: set[AppliesTo]
+        """
+        assert {condition for condition in AppliesTo if condition.matches(kind, color_mode)} == matching
 
 
 class TestRecipe:
@@ -185,8 +241,9 @@ class TestVersionInputsIdentify:
             {'edit_hash': '0123456789abcdef'},
             {'scale': VersionScale.PREVIEW},
             {'side': PageSide.RIGHT},
+            {'skipped': True},
         ],
-        ids=['page', 'processor-version', 'processor-key', 'params', 'input', 'edit', 'scale', 'side'],
+        ids=['page', 'processor-version', 'processor-key', 'params', 'input', 'edit', 'scale', 'side', 'skipped'],
     )
     def test_any_change_of_what_produced_the_version_changes_its_identifier(self, changed: dict[str, Any]) -> None:
         """Verify each ingredient of the hash moves the identifier, so different work never shares a directory.

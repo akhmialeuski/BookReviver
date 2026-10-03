@@ -6,6 +6,7 @@ import {
   openProjectId,
   registerAndSignIn,
   snap,
+  stepIdsOf,
   uploadFolder,
   waitForIdleJobs,
   writeSheetsFolder,
@@ -104,7 +105,8 @@ test('a reader corrects the sheet, the angle and the frame of a page, and the co
     });
     await expect(facts).toContainText('By hand', { timeout: RUN_TIMEOUT_MS });
     await settled();
-    expect(saves).toEqual(['geometry.perspective']);
+    const [perspective = ''] = await stepIdsOf(page, 'geometry', 'geometry.perspective');
+    expect(saves).toEqual([perspective]);
     sheet = await pairOf(layer, 'data-corner-top-left');
   });
 
@@ -118,7 +120,9 @@ test('a reader corrects the sheet, the angle and the frame of a page, and the co
     await expect(stepOf(ANGLE)).toHaveAttribute('data-manual', 'true', { timeout: RUN_TIMEOUT_MS });
     await expect(facts).toContainText(`${ANGLE_DEG}°`, { timeout: RUN_TIMEOUT_MS });
     await settled();
-    expect(saves).toEqual(['geometry.perspective', 'geometry.deskew']);
+    const [perspective = ''] = await stepIdsOf(page, 'geometry', 'geometry.perspective');
+    const [deskew = ''] = await stepIdsOf(page, 'geometry', 'geometry.deskew');
+    expect(saves).toEqual([perspective, deskew]);
   });
 
   await test.step('the frame is shown on the page after the first two steps, with a handle on each corner and side', async () => {
@@ -142,7 +146,7 @@ test('a reader corrects the sheet, the angle and the frame of a page, and the co
     const narrowed = await numbersOf(layer, 'data-rect');
     expect(narrowed[2] ?? 0).toBeLessThan(frame[2] ?? 0);
     await expect(stepOf(FRAME)).toHaveAttribute('data-manual', 'true', { timeout: RUN_TIMEOUT_MS });
-    expect(saves.at(-1)).toBe('geometry.crop');
+    expect(saves.at(-1)).toBe((await stepIdsOf(page, 'geometry', 'geometry.crop'))[0]);
     await settled();
 
     await layer.focus();

@@ -131,7 +131,7 @@ class Despeckle(ModelProcessor):
     spec = ProcessorSpec(
         key='cleanup.despeckle',
         version='1',
-        title='Remove specks',
+        title='Despeckle',
         stage=Stage.CLEANUP,
         scope=ProcessorScope.PAGE,
         outputs=frozenset({VersionOutput.IMAGE, VersionOutput.MASK}),

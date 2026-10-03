@@ -7,13 +7,16 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import JobKind, JobState, Rendition, Stage, VersionState
+from bookreviver.domain.enums import EditorKind, JobKind, JobState, Rendition, Stage, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
+from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PageStageKey, SliceRequest, StageRun, Step
+from bookreviver.domain.values import NewPageEdit, PageEditKey, PageStageKey, SliceRequest, StageRun, Step
 from bookreviver.services.stage_runs import REMAKE_INPUT_CHANGED
 from tests.helpers.builders import EPOCH
+from tests.helpers.processors import STRENGTH_PARAMETER
+from tests.helpers.spreads import head_of
 from tests.services.test_processing_versions import ran_geometry
 
 if TYPE_CHECKING:
@@ -25,6 +28,23 @@ pytestmark = pytest.mark.anyio
 EVERYTHING: SliceRequest = SliceRequest(limit=100)
 AFTER_RETENTION_DAYS: int = 40
 STRONGER: int = 2
+EDITED_RECIPE: str = 'Edited'
+ROTATION: NewPageEdit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=1.5))
+
+
+async def run_geometry(kit: ProcessingKit, actor: Actor, project: Project) -> None:
+    """Run the geometry stage on every page of the book and wait for the work it queues.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param actor: Owner of the book.
+    :type actor: Actor
+    :param project: The book.
+    :type project: Project
+    """
+    run = await kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+    await kit.jobs().run_stage(run.id)
+    await kit.work_queue()
 
 
 async def collected_book(kit: ProcessingKit) -> tuple[Actor, Project, Page, PageVersion, PageVersion]:
@@ -38,7 +58,7 @@ async def collected_book(kit: ProcessingKit) -> tuple[Actor, Project, Page, Page
     actor, project, page, first = await ran_geometry(kit)
     fake = kit.fake.spec.key
     await kit.service().save_recipe(
-        actor, project.id, Stage.GEOMETRY, 'Stronger', [Step(processor_key=fake, params={'strength': STRONGER})]
+        actor, project.id, Stage.GEOMETRY, 'Stronger', [Step(processor_key=fake, params={STRENGTH_PARAMETER: STRONGER})]
     )
     run = await kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
     await kit.jobs().run_stage(run.id)
@@ -149,4 +169,43 @@ class TestRemake:
         expect((stored.state, stored.error) == (JobState.FAILED, REMAKE_INPUT_CHANGED))
         expect(after == before)
         expect(record.head_version_id == current.id)
+        assert_expectations()
+
+    async def test_remake_of_a_version_with_a_manual_edit_reads_the_edit_of_its_step(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a version made with a manual edit is made again, since the run takes the step of the recipe.
+
+        The edit belongs to the identifier of the step, so a step made anew from the stored parameters would read no
+        edit, and its version would have another identifier than the one asked for.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project = await fx_kit.seed_project()
+        page, _ = await fx_kit.seed_scan_page(project)
+        await fx_kit.seed_base_version(page)
+        step = Step(processor_key=fx_kit.fake.spec.key, params={STRENGTH_PARAMETER: 1})
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, EDITED_RECIPE, [step])
+        await fx_kit.edits().save(actor, project.id, PageEditKey(page.id, Stage.GEOMETRY, step.step_id), ROTATION, None)
+        await run_geometry(fx_kit, actor, project)
+        first = await head_of(fx_kit, page, Stage.GEOMETRY)
+        # The same step with another parameter, as the settings of a step are changed in the interface
+        stronger = evolve(step, params={STRENGTH_PARAMETER: STRONGER})
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, EDITED_RECIPE, [stronger])
+        await run_geometry(fx_kit, actor, project)
+        fx_kit.clock.moment = EPOCH + timedelta(days=AFTER_RETENTION_DAYS)
+        collection = await fx_kit.service().start_collection(actor, project.id)
+        await fx_kit.jobs().collect_versions(collection.id)
+        assert (await fx_kit.uow().page_versions.get(first.id)).files_removed
+
+        job = await fx_kit.service().start_remake(actor, project.id, page.id, first.id)
+        await fx_kit.jobs().run_stage(job.id)
+
+        remade = await fx_kit.uow().page_versions.get(first.id)
+        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        expect(first.edit_hash != '')
+        expect((await fx_kit.uow().jobs.get(job.id)).state is JobState.SUCCEEDED)
+        expect((remade.files_removed, remade.edit_hash) == (False, first.edit_hash))
+        expect(record.head_version_id == first.id)
         assert_expectations()

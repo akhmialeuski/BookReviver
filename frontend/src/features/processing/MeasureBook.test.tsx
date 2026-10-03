@@ -36,7 +36,14 @@ describe('MeasureBook', () => {
     params: Record<string, unknown> = {},
     change: Processing['change'] = () => undefined,
   ): void {
-    const step: StepDraft = { id: 'step-0', processorKey: PLACEMENT_KEY, params, enabled: true };
+    const step: StepDraft = {
+      id: 'step-0',
+      stepId: 'id-normalize',
+      processorKey: PLACEMENT_KEY,
+      params,
+      enabled: true,
+      appliesTo: 'all',
+    };
     act(() =>
       root.render(
         <QueryClientProvider client={client}>

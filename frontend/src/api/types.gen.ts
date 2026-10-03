@@ -105,6 +105,18 @@ export type AppliedProfileSchema = {
 };
 
 /**
+ * AppliesTo
+ *
+ * The condition of a step of a recipe: which pages the step processes, the others passing it unchanged.
+ *
+ * What makes a page text or a picture is decided here and nowhere else. Until the content of a page is detected, the
+ * role the user gave the page decides: a plate or a frontispiece is a picture, and every other kind of page is text.
+ * The colour of a picture is the colour mode of the image the stage starts from, and an unknown mode counts as colour,
+ * since a step for black and white pictures must not touch a page that may be a colour plate.
+ */
+export type AppliesTo = 'all' | 'text' | 'pictures' | 'color-pictures' | 'bw-pictures';
+
+/**
  * ApplyProfileBody
  *
  * How to apply a profile to a book.
@@ -996,8 +1008,8 @@ export type PageCreate = {
  * A manual edit of a page.
  *
  * :ivar page_id: Page the edit belongs to.
- * :ivar stage: Stage of the processor that reads the edit.
- * :ivar processor_key: Key of that processor.
+ * :ivar stage: Stage of the step that reads the edit.
+ * :ivar step_id: Identifier of that step.
  * :ivar kind: Editor that drew the edit.
  * :ivar geometry: The shape as JSON, or None for an edit that is only a mask.
  * :ivar mask: Path of the mask on the IIIF route, or None.
@@ -1011,9 +1023,9 @@ export type PageEditSchema = {
     page_id: string;
     stage: Stage;
     /**
-     * Processor Key
+     * Step Id
      */
-    processor_key: string;
+    step_id: string;
     kind: EditorKind;
     /**
      * Geometry
@@ -2953,6 +2965,9 @@ export type StageSummarySchema = {
  * :ivar processor_key: Key of the processor.
  * :ivar params: Parameters of the step, which the processor checks and fills in.
  * :ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.
+ * :ivar step_id: Identifier of a step that already exists, which the interface sends back to keep its edits, or
+ * omitted for a step that is added, which gets a new one.
+ * :ivar applies_to: Which pages the step processes, all of them unless the interface says otherwise.
  */
 export type StepBody = {
     /**
@@ -2969,6 +2984,11 @@ export type StepBody = {
      * Enabled
      */
     enabled?: boolean;
+    /**
+     * Step Id
+     */
+    step_id?: string | null;
+    applies_to?: AppliesTo;
 };
 
 /**
@@ -3022,6 +3042,8 @@ export type StepPreviewBody = {
  * :ivar processor_key: Key of the processor.
  * :ivar params: Parameters of the step, with the defaults of the processor filled in.
  * :ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters.
+ * :ivar step_id: Identifier of the step, which stays as the step is moved and saved and which its manual edits name.
+ * :ivar applies_to: Which pages the step processes; the others pass it unchanged.
  */
 export type StepSchema = {
     /**
@@ -3038,6 +3060,11 @@ export type StepSchema = {
      * Enabled
      */
     enabled: boolean;
+    /**
+     * Step Id
+     */
+    step_id: string;
+    applies_to: AppliesTo;
 };
 
 /**
@@ -5850,7 +5877,7 @@ export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData = {
          */
         page_id: string;
         /**
-         * Stage of the processor that reads the edit
+         * Stage of the step that reads the edit
          */
         stage: Stage;
     };
@@ -5893,7 +5920,7 @@ export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponses = {
 
 export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponse = ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponses[keyof ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponses];
 
-export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteData = {
+export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteData = {
     body?: never;
     path: {
         /**
@@ -5909,21 +5936,21 @@ export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDel
          */
         page_id: string;
         /**
-         * Stage of the processor that reads the edit
+         * Stage of the step that reads the edit
          */
         stage: Stage;
         /**
-         * Processor Key
+         * Step Id
          *
-         * Key of the processor that reads the edit
+         * Identifier of the step of a recipe that reads the edit
          */
-        processor_key: string;
+        step_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{processor_key}';
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{step_id}';
 };
 
-export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteErrors = {
+export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteErrors = {
     /**
      * Validation Error
      */
@@ -5938,18 +5965,18 @@ export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDel
     '5XX': Problem;
 };
 
-export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteError = DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteErrors[keyof DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteErrors];
+export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteError = DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteErrors[keyof DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteErrors];
 
-export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteResponses = {
+export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteResponses = {
     /**
      * Successful Response
      */
     204: void;
 };
 
-export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteResponse = DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteResponses[keyof DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteResponses];
+export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteResponse = DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteResponses[keyof DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteResponses];
 
-export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutData = {
+export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutData = {
     body: EditForm;
     path: {
         /**
@@ -5965,21 +5992,21 @@ export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutDat
          */
         page_id: string;
         /**
-         * Stage of the processor that reads the edit
+         * Stage of the step that reads the edit
          */
         stage: Stage;
         /**
-         * Processor Key
+         * Step Id
          *
-         * Key of the processor that reads the edit
+         * Identifier of the step of a recipe that reads the edit
          */
-        processor_key: string;
+        step_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{processor_key}';
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{step_id}';
 };
 
-export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutErrors = {
+export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutErrors = {
     /**
      * Validation Error
      */
@@ -5994,16 +6021,16 @@ export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutErr
     '5XX': Problem;
 };
 
-export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutError = PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutErrors[keyof PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutErrors];
+export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutError = PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutErrors[keyof PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutErrors];
 
-export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponses = {
+export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutResponses = {
     /**
      * Successful Response
      */
     200: PageEditSchema;
 };
 
-export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponse = PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponses[keyof PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutResponses];
+export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutResponse = PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutResponses[keyof PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutResponses];
 
 export type ListProcessorsApiV1ProcessorsGetData = {
     body?: never;

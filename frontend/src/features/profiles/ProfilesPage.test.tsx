@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { deskew, processor } from '@/features/processing/fixtures';
+import { deskew, processor, step } from '@/features/processing/fixtures';
 import { profile, profilePage } from '@/features/profiles/fixtures';
 import { ProfilesPage } from '@/features/profiles/ProfilesPage';
 
@@ -31,7 +31,7 @@ const PROFILES = [
   profile('p3', {
     name: 'Plain split',
     stage: 'page-split',
-    steps: [{ processor_key: 'split.none', params: {}, enabled: true }],
+    steps: [step('split.none')],
   }),
   profile('p1', { name: 'Clean flatbed scan', is_default: true }),
   profile('p2', { name: 'Photographed book' }),

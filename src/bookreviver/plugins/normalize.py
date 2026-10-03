@@ -68,6 +68,8 @@ if TYPE_CHECKING:
     from bookreviver.ports.processing import StepInput
 
 NORMALIZED_IMAGE_NAME: str = 'normalized.png'
+# The name of the step and of the setting that says where its margins come from
+MARGINS_TITLE: str = 'Margins'
 PERCENT: float = 100.0
 HALF: float = 2.0
 # The bounds of the sizes in pixels, wide enough for a scan of a large page at a high resolution
@@ -101,7 +103,7 @@ class NormalizeParams(Params):
 
     margins_source: MarginsSource = Field(
         default=MarginsSource.MEASURED,
-        title='Margins',
+        title=MARGINS_TITLE,
         description='measured lets Measure the book fill in the four margins, manual keeps the margins you set '
         'and the measure leaves them as they are',
     )
@@ -285,7 +287,7 @@ class Normalize(ModelProcessor):
     spec = ProcessorSpec(
         key='geometry.normalize',
         version='1',
-        title='Normalize',
+        title=MARGINS_TITLE,
         stage=Stage.GEOMETRY,
         scope=ProcessorScope.PAGE,
         outputs=frozenset({VersionOutput.IMAGE}),

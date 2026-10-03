@@ -1,10 +1,10 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { PageEditSchema, Stage } from '@/api';
 import {
-  deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteMutation,
+  deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteMutation,
   listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetOptions,
   listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetQueryKey,
-  putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutMutation,
+  putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutMutation,
 } from '@/api/@tanstack/react-query.gen';
 
 /**
@@ -44,11 +44,11 @@ export function useEditChanges(projectId: string) {
   const scope = { id: `page-edits:${projectId}` };
   return {
     save: useMutation({
-      ...putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutMutation(),
+      ...putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutMutation(),
       scope,
     }),
     remove: useMutation({
-      ...deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteMutation(),
+      ...deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteMutation(),
       scope,
     }),
   };

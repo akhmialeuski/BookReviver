@@ -20,9 +20,9 @@ import {
   StepForwardIcon,
   Trash2Icon,
 } from 'lucide-react';
-import type { ProcessorSchema } from '@/api';
+import type { AppliesTo, ProcessorSchema } from '@/api';
 import { ParamsForm } from '@/features/processing/ParamsForm';
-import type { StepDraft } from '@/features/processing/recipe';
+import { CONDITIONS, type StepDraft } from '@/features/processing/recipe';
 import { fitsSchema, formSchemaOf } from '@/features/processing/schema';
 import type { RunScope, ScopeChoice } from '@/features/processing/scope';
 import { canRunThrough } from '@/features/processing/stepRuns';
@@ -78,6 +78,7 @@ function StepCard({
   onToggle,
   onRemove,
   onChange,
+  onCondition,
 }: {
   step: StepDraft;
   /** Its place in the recipe, from one. */
@@ -93,6 +94,7 @@ function StepCard({
   onToggle: () => void;
   onRemove: () => void;
   onChange: (params: Record<string, unknown>) => void;
+  onCondition: (appliesTo: AppliesTo) => void;
 }): React.JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: step.id,
@@ -200,6 +202,22 @@ function StepCard({
           {step.enabled ? null : (
             <p className="text-xs text-muted-foreground">{labels.switchedOff}</p>
           )}
+          <label className="grid gap-1 text-xs text-muted-foreground" title={labels.condition.hint}>
+            {labels.condition.label(title)}
+            <select
+              aria-label={labels.condition.label(title)}
+              data-testid="step-condition"
+              className="h-9 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              value={step.appliesTo}
+              onChange={(event) => onCondition(event.target.value as AppliesTo)}
+            >
+              {CONDITIONS.map((condition) => (
+                <option key={condition} value={condition}>
+                  {labels.condition.options[condition]}
+                </option>
+              ))}
+            </select>
+          </label>
           {processor === undefined ? (
             <p className="text-sm text-muted-foreground">{labels.unknownProcessor}</p>
           ) : (
@@ -223,6 +241,7 @@ export function StepList({
   onToggle,
   onRemove,
   onChange,
+  onCondition,
 }: {
   steps: readonly StepDraft[];
   catalogue: readonly ProcessorSchema[];
@@ -236,6 +255,7 @@ export function StepList({
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
   onChange: (id: string, params: Record<string, unknown>) => void;
+  onCondition: (id: string, appliesTo: AppliesTo) => void;
 }): React.JSX.Element {
   const sensors = useSensors(
     // A press that moves a little is a click on the handle, not the start of a drag
@@ -286,6 +306,7 @@ export function StepList({
               onToggle={() => onToggle(step.id)}
               onRemove={() => onRemove(step.id)}
               onChange={(params) => onChange(step.id, params)}
+              onCondition={(appliesTo) => onCondition(step.id, appliesTo)}
             />
           ))}
         </ol>

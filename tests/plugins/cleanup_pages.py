@@ -93,11 +93,7 @@ def run_step(
     :rtype: StepOutput
     """
     shape = extras.get('edit')
-    edit = (
-        None
-        if shape is None
-        else make_geometry_edit(page_id=PageId(uuid4()), processor_key=processor.spec.key, geometry=shape)
-    )
+    edit = None if shape is None else make_geometry_edit(page_id=PageId(uuid4()), geometry=shape)
     step_input = StepInput(
         image=image,
         params=processor.validate_params(params or {}),

@@ -60,6 +60,8 @@ test('a result whose picture was collected is made again when it is used', async
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
+    // The import leaves jobs behind it, and a run asked for while they last is refused
+    await waitForIdleJobs(page, projectId);
 
     await page.getByTestId('run-menu').click();
     await page.getByTestId('run-all').click();
@@ -69,7 +71,7 @@ test('a result whose picture was collected is made again when it is used', async
     await page.getByTestId('strip-page').first().click();
     await expect(entries).toHaveCount(1);
 
-    await page.getByRole('button', { name: 'Show the settings of the Normalize step' }).click();
+    await page.getByRole('button', { name: 'Show the settings of the Margins step' }).click();
     await page.getByRole('spinbutton', { name: 'Top margin', exact: true }).fill('160');
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);

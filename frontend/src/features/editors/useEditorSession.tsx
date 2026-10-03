@@ -6,7 +6,12 @@ import { popUndo, pushUndo, type UndoEntry } from '@/features/editors/history';
 import { pictureOf } from '@/features/editors/picture';
 import { isPlacement, pictureFor } from '@/features/editors/placement';
 import { editsKey, useEditChanges, useEdits } from '@/features/editors/queries';
-import { editableProcessorsOf, editorOf, hasEditor } from '@/features/editors/registry';
+import {
+  type EditableStep,
+  editableStepsOf,
+  editorOf,
+  hasEditor,
+} from '@/features/editors/registry';
 import type { EditorScene } from '@/features/editors/scene';
 import type { EditorSession, StepChoice } from '@/features/editors/session';
 import type { Geometry } from '@/features/editors/shapes';
@@ -72,11 +77,14 @@ export function useEditorSession({
   const { mutate: startRun } = run;
   const activeJobs = useActiveJobs(projectId);
 
-  // The processors are the ones the recipe runs by, since only its run reads an edit, and the reader works on one at a time
+  // The steps are the ones the recipe runs by, since only its run reads an edit, and the reader works on one at a time.
+  // An edit belongs to a step and not to its processor, so a recipe that runs one twice has two editors
   const recipe = processing.recipe;
-  const editable = editableProcessorsOf(recipe, catalogue);
+  const editable = editableStepsOf(recipe, catalogue);
   const [chosen, setChosen] = useState<string | null>(null);
-  const processor = editable.find((entry) => entry.key === chosen) ?? editable[0];
+  const entry = editable.find((candidate) => candidate.step.step_id === chosen) ?? editable[0];
+  const processor = entry?.processor;
+  const step = entry?.step;
   const kind = processor?.editor;
   const editor = kind !== undefined && hasEditor(kind) ? editorOf(kind) : undefined;
   const scan =
@@ -90,8 +98,12 @@ export function useEditorSession({
   const versions = useVersions(projectId, current?.page.id, stage);
   const chain = stepChain(versions.data ?? [], head);
   const found =
-    processor === undefined ? { made: null, read: null } : stepVersions(chain, processor.key);
-  const made = found.made ?? (editable.length === 1 ? head : null);
+    entry === undefined || recipe === undefined
+      ? { made: null, read: null }
+      : stepVersions(chain, recipe.steps, entry.index);
+  // A page that did not meet the condition of the step passed it as it was, so the step found nothing on it
+  const skipped = found.made?.data.skipped_by_condition === true;
+  const made = skipped ? null : (found.made ?? (editable.length === 1 ? head : null));
   const result = made === null ? null : readResult(made);
   const context: PageContext | undefined =
     current === undefined || processor === undefined
@@ -112,10 +124,11 @@ export function useEditorSession({
   const available =
     processor !== undefined &&
     picture !== null &&
+    !skipped &&
     (editor?.needsResult !== true || result !== null);
 
   const edits = useEdits(projectId, owner?.id, stage, available);
-  const saved = edits?.find((entry) => entry.processor_key === processor?.key);
+  const saved = edits?.find((candidate) => candidate.step_id === step?.step_id);
   const savedGeometry: Geometry | null = saved?.geometry ?? null;
   const savedText = JSON.stringify(savedGeometry);
 
@@ -127,7 +140,7 @@ export function useEditorSession({
   // What the server will hold once the writes in flight are done, which is what the next change replaces
   const written = useRef<{ key: string; geometry: Geometry | null } | null>(null);
 
-  const key = `${owner?.id}|${processor?.key}`;
+  const key = `${owner?.id}|${step?.step_id}`;
   const openKey = `${current?.page.id}|${stage}`;
   const active =
     editor !== undefined && picture !== null && (editor.alwaysOn || opened === openKey);
@@ -164,7 +177,8 @@ export function useEditorSession({
       editor === undefined ||
       context === undefined ||
       owner === undefined ||
-      processor === undefined
+      processor === undefined ||
+      step === undefined
     ) {
       return;
     }
@@ -172,7 +186,7 @@ export function useEditorSession({
       const previous = written.current?.key === key ? written.current.geometry : savedGeometry;
       undoStack.current = pushUndo(undoStack.current, {
         ownerId: owner.id,
-        processorKey: processor.key,
+        stepId: step.step_id,
         previous,
       });
     }
@@ -181,7 +195,7 @@ export function useEditorSession({
       project_id: projectId,
       page_id: owner.id,
       stage,
-      processor_key: processor.key,
+      step_id: step.step_id,
     };
     try {
       if (next === null) {
@@ -212,10 +226,10 @@ export function useEditorSession({
   };
 
   const undo = (): void => {
-    if (owner === undefined || processor === undefined) {
+    if (owner === undefined || step === undefined) {
       return;
     }
-    const taken = popUndo(undoStack.current, owner.id, processor.key);
+    const taken = popUndo(undoStack.current, owner.id, step.step_id);
     if (taken !== null) {
       undoStack.current = taken.rest;
       setDraft(null);
@@ -269,24 +283,32 @@ export function useEditorSession({
     void write(next, true);
   };
   const saving = save.isPending || remove.isPending;
-  const steps = editable.flatMap((entry): StepChoice[] => {
-    if (!hasEditor(entry.editor)) {
+  const titleOf = (candidate: EditableStep): string =>
+    isPlacement(candidate.processor.key)
+      ? MESSAGES.editors.steps.placement
+      : MESSAGES.editors.steps.kinds[candidate.kind];
+  const steps = editable.flatMap((candidate): StepChoice[] => {
+    if (recipe === undefined) {
       return [];
     }
-    const stepVersion = stepVersions(chain, entry.key).made;
-    const angle = stepVersion === null ? null : readResult(stepVersion).angle;
+    const stepVersion = stepVersions(chain, recipe.steps, candidate.index).made;
+    const angle =
+      stepVersion === null || stepVersion.data.skipped_by_condition === true
+        ? null
+        : readResult(stepVersion).angle;
+    const title = titleOf(candidate);
+    // Two steps of one kind of editor are told apart by their place in the recipe
+    const twin = editable.some((other) => other !== candidate && titleOf(other) === title);
     return [
       {
-        key: entry.key,
-        title: isPlacement(entry.key)
-          ? MESSAGES.editors.steps.placement
-          : MESSAGES.editors.steps.kinds[entry.editor],
-        manual: edits?.some((candidate) => candidate.processor_key === entry.key) ?? false,
+        key: candidate.step.step_id,
+        title: twin ? MESSAGES.editors.steps.numbered(candidate.index + 1, title) : title,
+        manual: edits?.some((saved) => saved.step_id === candidate.step.step_id) ?? false,
         detail:
-          entry.editor === 'rotation' && angle !== null
+          candidate.kind === 'rotation' && angle !== null
             ? MESSAGES.processing.thisPage.degrees(angle)
             : null,
-        chosen: entry.key === processor.key,
+        chosen: candidate.step.step_id === step?.step_id,
       },
     ];
   });

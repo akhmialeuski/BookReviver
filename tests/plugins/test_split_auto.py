@@ -13,7 +13,7 @@ from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import EditorKind, ProcessorScope, ReviewReason, Stage, TransformKind, VersionData
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Line, Point, SplitChoice
-from bookreviver.domain.ids import PageId
+from bookreviver.domain.ids import PageId, StepId
 from bookreviver.ports.processing import StepInput
 from tests.helpers.builders import EPOCH
 from tests.helpers.samples import save
@@ -46,7 +46,7 @@ def make_choice(choice: SplitChoice) -> PageEdit:
     return PageEdit(
         page_id=PageId(uuid4()),
         stage=Stage.PAGE_SPLIT,
-        processor_key='split.auto',
+        step_id=StepId(uuid4()),
         kind=choice.editor,
         geometry=choice,
         edit_hash=PageEdit.hash_of(choice, None),

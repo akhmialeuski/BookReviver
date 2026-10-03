@@ -1,5 +1,5 @@
 import { arrayMove } from '@dnd-kit/sortable';
-import type { ProcessorSchema, RecipeSchema, StagePageSchema, StepBody } from '@/api';
+import type { AppliesTo, ProcessorSchema, RecipeSchema, StagePageSchema, StepBody } from '@/api';
 import { withMarginsSource } from '@/features/processing/margins';
 import { defaultsOf, formSchemaOf } from '@/features/processing/schema';
 
@@ -7,32 +7,48 @@ import { defaultsOf, formSchemaOf } from '@/features/processing/schema';
  * The steps of a recipe as the panel edits them: a draft that the reader changes without saving, the operations on it,
  * and the questions the panel asks of it.
  *
- * A saved step has no identity of its own, and a recipe may name a processor twice, so a draft step carries an `id`
- * that the list can be dragged by. The ids are never sent to the server.
+ * A recipe may name a processor twice, so a draft step carries an `id` that the list can be dragged by. A saved step also
+ * has an identifier the server gave it, which its manual edits are kept under and which a save sends back, so the step
+ * keeps its edits as it is moved. A step added to the draft has none until the recipe is saved.
  */
 
 /** One step of the recipe being edited. */
 export interface StepDraft {
   /** Identity inside the draft, for the list to drag and to key by. */
   id: string;
+  /** The identifier of the saved step, or null for a step that was added to the draft. */
+  stepId: string | null;
   processorKey: string;
   params: Record<string, unknown>;
   enabled: boolean;
+  /** Which pages the step processes; the others pass it unchanged. */
+  appliesTo: AppliesTo;
 }
+
+/** The conditions a step can have, in the order the select of a step lists them. */
+export const CONDITIONS: readonly AppliesTo[] = [
+  'all',
+  'text',
+  'pictures',
+  'color-pictures',
+  'bw-pictures',
+];
 
 const ID_PREFIX = 'step-';
 
 function idNumber(id: string): number {
-  return Number(id.slice(ID_PREFIX.length));
+  return id.startsWith(ID_PREFIX) ? Number(id.slice(ID_PREFIX.length)) : -1;
 }
 
 /** Start a draft from the saved steps of a recipe. */
 export function draftOf(recipe: Pick<RecipeSchema, 'steps'>): StepDraft[] {
   return recipe.steps.map((step, index) => ({
     id: `${ID_PREFIX}${index}`,
+    stepId: step.step_id,
     processorKey: step.processor_key,
     params: { ...step.params },
     enabled: step.enabled,
+    appliesTo: step.applies_to,
   }));
 }
 
@@ -42,6 +58,8 @@ export function bodyOf(steps: readonly StepDraft[]): StepBody[] {
     processor_key: step.processorKey,
     params: step.params,
     enabled: step.enabled,
+    step_id: step.stepId,
+    applies_to: step.appliesTo,
   }));
 }
 
@@ -59,6 +77,15 @@ export function moveStep(
 /** Switch a step on or off, which keeps its parameters. */
 export function toggleStep(steps: readonly StepDraft[], id: string): StepDraft[] {
   return steps.map((step) => (step.id === id ? { ...step, enabled: !step.enabled } : step));
+}
+
+/** Change which pages a step processes, which keeps its parameters. */
+export function setStepCondition(
+  steps: readonly StepDraft[],
+  id: string,
+  appliesTo: AppliesTo,
+): StepDraft[] {
+  return steps.map((step) => (step.id === id ? { ...step, appliesTo } : step));
 }
 
 /** Take a step out of the draft. */
@@ -94,9 +121,11 @@ export function addStep(steps: readonly StepDraft[], processor: ProcessorSchema)
     ...steps,
     {
       id: `${ID_PREFIX}${next}`,
+      stepId: null,
       processorKey: processor.key,
       params: defaultsOf(formSchemaOf(processor.parameters)),
       enabled: true,
+      appliesTo: 'all',
     },
   ];
 }

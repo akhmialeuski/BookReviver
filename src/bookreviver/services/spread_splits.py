@@ -164,7 +164,7 @@ class SpreadSplit:
         step = recipe.enabled_steps[0]
         processor = self._catalogue.get(step.processor_key)
         params = processor.validate_params(step.params)
-        edit = await self._uow.page_edits.find(PageEditKey(page.id, Stage.PAGE_SPLIT, step.processor_key))
+        edit = await self._uow.page_edits.find(PageEditKey(page.id, Stage.PAGE_SPLIT, step.step_id))
         halves = await self._halves(page)
         templates = [self._template(half, processor, params, edit) for half in (halves.left, halves.right)]
         stored = [await self._uow.page_versions.find(template.id) for template in templates]

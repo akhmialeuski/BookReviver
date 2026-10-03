@@ -1,11 +1,11 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
-import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../src/shared/http/csrf';
 import {
   createBook,
   openProjectId,
   registerAndSignIn,
+  setKind,
   snap,
   uploadFolder,
   writePagesFolder,
@@ -30,24 +30,6 @@ const PLATES_INDEX = 1;
 
 // Tall enough for the pictures of the key states to show two pages of the strip and a section of the panel
 test.use({ viewport: { width: 1280, height: 1000 } });
-
-/** Change the kind of the page at a position of the open book, as the Order stage does, straight through the API. */
-async function setKind(page: Page, position: number, kind: string): Promise<void> {
-  const projectId = openProjectId(page);
-  const listed = await page.request.get(`/api/v1/projects/${projectId}/pages?size=100`);
-  const items = ((await listed.json()) as { items: { id: string; position: number }[] }).items;
-  const target = items.find((item) => item.position === position);
-  if (target === undefined) {
-    throw new Error(`The book has no page at position ${position}.`);
-  }
-  const cookies = await page.context().cookies();
-  const token = cookies.find((cookie) => cookie.name === CSRF_COOKIE_NAME)?.value ?? '';
-  const response = await page.request.patch(`/api/v1/projects/${projectId}/pages/${target.id}`, {
-    headers: { [CSRF_HEADER_NAME]: token },
-    data: { kind },
-  });
-  expect(response.ok()).toBe(true);
-}
 
 /** Read the name of the active recipe of a stage of the open book, which the API lists first. */
 async function activeRecipeName(page: Page, stage: string): Promise<string> {

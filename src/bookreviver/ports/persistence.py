@@ -626,11 +626,11 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
 
 
 class PageEditRepository(Repository[PageEdit, PageEditKey]):
-    """Manual edits, one for each processor on each stage of each page; deleting a page removes its edits."""
+    """Manual edits, one for each step on each stage of each page; deleting a page removes its edits."""
 
     @abstractmethod
     async def save(self, edit: PageEdit) -> PageEdit:
-        """Store an edit, replacing the one the same processor reads on the same page and stage.
+        """Store an edit, replacing the one the same step reads on the same page and stage.
 
         :param edit: Edit to store.
         :type edit: PageEdit
@@ -643,7 +643,7 @@ class PageEditRepository(Repository[PageEdit, PageEditKey]):
     async def find(self, key: PageEditKey) -> PageEdit | None:
         """Return one edit.
 
-        :param key: Page, stage and processor.
+        :param key: Page, stage and step.
         :type key: PageEditKey
         :returns: The edit, or None when the user made none.
         :rtype: PageEdit | None
@@ -651,7 +651,7 @@ class PageEditRepository(Repository[PageEdit, PageEditKey]):
 
     @abstractmethod
     async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageEdit]:
-        """Return the edits of one page, those of one stage or of all, by stage and processor.
+        """Return the edits of one page, those of one stage or of all, by stage and step.
 
         :param page_id: Page owning the edits.
         :type page_id: PageId

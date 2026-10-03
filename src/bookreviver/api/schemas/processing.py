@@ -10,6 +10,7 @@ which are those of the IIIF route as for every other image; a preview has only t
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Self
 
+from attrs import evolve
 from fastapi import Query
 from fastapi_pagination import Params
 from pydantic import Field, model_validator
@@ -25,6 +26,7 @@ from bookreviver.api.schemas.types import (
     VersionIdentifier,
 )
 from bookreviver.domain.enums import (
+    AppliesTo,
     EditorKind,
     ProcessorScope,
     Rendition,
@@ -38,7 +40,7 @@ from bookreviver.domain.enums import (
     VersionState,
     WorkerPool,
 )
-from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
+from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId, StepId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import PIN_NEEDS_RECIPE, StageRun, Step, StepPreview, VersionFilter
 
@@ -81,11 +83,15 @@ class StepSchema(ResponseModel):
     :ivar processor_key: Key of the processor.
     :ivar params: Parameters of the step, with the defaults of the processor filled in.
     :ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters.
+    :ivar step_id: Identifier of the step, which stays as the step is moved and saved and which its manual edits name.
+    :ivar applies_to: Which pages the step processes; the others pass it unchanged.
     """
 
     processor_key: str
     params: dict[str, Any]
     enabled: bool
+    step_id: StepId
+    applies_to: AppliesTo
 
 
 class RecipeSchema(ResponseModel):
@@ -117,19 +123,27 @@ class StepBody(RequestModel):
     :ivar processor_key: Key of the processor.
     :ivar params: Parameters of the step, which the processor checks and fills in.
     :ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.
+    :ivar step_id: Identifier of a step that already exists, which the interface sends back to keep its edits, or
+                   omitted for a step that is added, which gets a new one.
+    :ivar applies_to: Which pages the step processes, all of them unless the interface says otherwise.
     """
 
     processor_key: ProcessorKeyText
     params: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
+    step_id: StepId | None = None
+    applies_to: AppliesTo = AppliesTo.ALL
 
     def to_step(self) -> Step:
         """Return the step as the domain states it.
 
-        :returns: The step.
+        :returns: The step, with the identifier it came with or a new one.
         :rtype: Step
         """
-        return Step(processor_key=self.processor_key, params=self.params, enabled=self.enabled)
+        step = Step(
+            processor_key=self.processor_key, params=self.params, enabled=self.enabled, applies_to=self.applies_to
+        )
+        return step if self.step_id is None else evolve(step, step_id=self.step_id)
 
 
 class RecipeBody(RequestModel):
