@@ -10,9 +10,10 @@ from typing import TYPE_CHECKING, override
 from bookreviver.adapters.persistence.sqlalchemy.repositories import (
     SqlAlchemyBookPlaceRepository,
     SqlAlchemyJobRepository,
-    SqlAlchemyPageEditRepository,
     SqlAlchemyPageRepository,
     SqlAlchemyPageStageRepository,
+    SqlAlchemyPageStepChangeRepository,
+    SqlAlchemyPageStepStateRepository,
     SqlAlchemyPageVersionRepository,
     SqlAlchemyPaginationSectionRepository,
     SqlAlchemyProjectRepository,
@@ -38,7 +39,8 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     :ivar pagination_sections: Pagination section repository bound to the session.
     :ivar page_versions: Page version repository bound to the session.
     :ivar page_stages: Page stage repository bound to the session.
-    :ivar page_edits: Page edit repository bound to the session.
+    :ivar page_step_states: Page step state repository bound to the session.
+    :ivar page_step_changes: Page step change repository bound to the session.
     :ivar recipes: Recipe repository bound to the session.
     :ivar recipe_rules: Recipe rule repository bound to the session.
     :ivar recipe_profiles: Recipe profile repository bound to the session.
@@ -60,7 +62,8 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.pagination_sections = SqlAlchemyPaginationSectionRepository(session)
         self.page_versions = SqlAlchemyPageVersionRepository(session)
         self.page_stages = SqlAlchemyPageStageRepository(session)
-        self.page_edits = SqlAlchemyPageEditRepository(session)
+        self.page_step_states = SqlAlchemyPageStepStateRepository(session)
+        self.page_step_changes = SqlAlchemyPageStepChangeRepository(session)
         self.recipes = SqlAlchemyRecipeRepository(session)
         self.recipe_rules = SqlAlchemyRecipeRuleRepository(session)
         self.recipe_profiles = SqlAlchemyRecipeProfileRepository(session)

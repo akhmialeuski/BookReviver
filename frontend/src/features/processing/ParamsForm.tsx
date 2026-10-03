@@ -16,7 +16,8 @@ import { MESSAGES } from '@/shared/messages';
  *
  * The label of a field is its `title` in the schema and the hint under it its `description`, so a processor that is
  * installed later gets its form without a line of the interface being written. A number with both bounds is a slider
- * with an input, and the form checks every change against the schema as it is made.
+ * with an input, and the form checks every change against the schema as it is made. A field the open page changes for
+ * itself says so in its label.
  */
 
 const WIDGETS = { [BOUNDED_NUMBER_WIDGET]: BoundedNumberWidget };
@@ -24,14 +25,26 @@ const WIDGETS = { [BOUNDED_NUMBER_WIDGET]: BoundedNumberWidget };
 export function ParamsForm({
   processor,
   params,
+  marked,
   onChange,
 }: {
   processor: ProcessorSchema;
   params: Readonly<Record<string, unknown>>;
+  /** The names of the fields the open page changes for itself, which the form marks. */
+  marked?: ReadonlySet<string>;
   onChange: (params: Record<string, unknown>) => void;
 }): React.JSX.Element {
   const schema = useMemo(() => formSchemaOf(processor.parameters), [processor.parameters]);
-  const uiSchema = useMemo(() => uiSchemaOf(schema), [schema]);
+  const uiSchema = useMemo(
+    () =>
+      uiSchemaOf(schema, marked, (title) =>
+        MESSAGES.processing.steps.pageSettings.label(
+          title,
+          MESSAGES.processing.steps.pageSettings.changedMark,
+        ),
+      ),
+    [schema, marked],
+  );
 
   if (!hasSettings(schema)) {
     return <p className="text-sm text-muted-foreground">{MESSAGES.processing.steps.noSettings}</p>;

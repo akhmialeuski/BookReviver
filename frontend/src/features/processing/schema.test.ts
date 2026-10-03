@@ -8,6 +8,7 @@ import {
 import {
   BOUNDED_NUMBER_WIDGET,
   defaultsOf,
+  fieldTitleOf,
   fitsSchema,
   formSchemaOf,
   hasSettings,
@@ -108,6 +109,43 @@ describe('uiSchemaOf', () => {
 
   it('copes with a schema that has no fields', () => {
     expect(() => uiSchemaOf({ type: 'object' })).not.toThrow();
+  });
+
+  it('labels a field the page changes with its title and the mark, and leaves the others alone', () => {
+    const ui = uiSchemaOf(
+      formSchemaOf(DESKEW_PARAMETERS),
+      new Set(['max_angle']),
+      (title) => `${title} (page)`,
+    );
+
+    expect(ui.max_angle).toMatchObject({ 'ui:title': 'Largest slant (page)' });
+    expect(ui.min_confidence).not.toHaveProperty('ui:title');
+  });
+
+  it('keeps the widget of a marked field and marks a field of the chosen method too', () => {
+    const marked = new Set(['max_angle', 'min_lines']);
+    const ui = uiSchemaOf(formSchemaOf(DESKEW_METHODS_PARAMETERS), marked, (title) => `${title}!`);
+
+    expect(ui.max_angle).toMatchObject({ 'ui:widget': BOUNDED_NUMBER_WIDGET });
+    const titles = (ui.oneOf as Record<string, unknown>[]).flatMap((method) =>
+      Object.values(method).flatMap((entry) =>
+        typeof entry === 'object' && entry !== null && 'ui:title' in entry
+          ? [(entry as Record<string, unknown>)['ui:title']]
+          : [],
+      ),
+    );
+    expect(titles).toContain('Fewest lines!');
+  });
+});
+
+describe('fieldTitleOf', () => {
+  it('gives the title of a field of the schema and of a field of one of its methods', () => {
+    expect(fieldTitleOf(formSchemaOf(DESKEW_PARAMETERS), 'max_angle')).toBe('Largest slant');
+    expect(fieldTitleOf(formSchemaOf(DESKEW_METHODS_PARAMETERS), 'min_lines')).toBe('Fewest lines');
+  });
+
+  it('falls back to the name of a field the schema does not have', () => {
+    expect(fieldTitleOf(formSchemaOf(DESKEW_PARAMETERS), 'unknown')).toBe('unknown');
   });
 });
 

@@ -24,8 +24,8 @@ from sqlalchemy import func, inspect, select, text
 from bookreviver.adapters.persistence.sqlalchemy.database import MIGRATIONS_DIR, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     JobRow,
-    PageEditRow,
     PageRow,
+    PageStepStateRow,
     PageVersionRow,
     ProjectRow,
     RecipeRow,
@@ -37,7 +37,7 @@ from bookreviver.app.container import build_container
 from bookreviver.app.main import create_app
 from bookreviver.app.providers.database import MIGRATE_COMMAND, MIGRATE_DOWNGRADE_COMMAND
 from bookreviver.app.settings import PersistenceBackend
-from bookreviver.domain.enums import Rendition
+from bookreviver.domain.enums import EditorKind, Rendition
 from bookreviver.domain.values import Renditions
 from tests.helpers.builders import EPOCH, make_job, make_page, make_page_version, make_project, make_scan, make_source
 from tests.helpers.seeding import commit_account
@@ -82,6 +82,8 @@ TYPED_LABEL: str = 'vi'
 BRACKETED_LABEL: str = '[4]'
 # The revision before the one that names the manual edits by the step of a recipe
 BEFORE_STEPS_REVISION: str = '075dd13dca68'
+# The revision before the one that keeps the manual edits in the state of a step on a page
+BEFORE_STATES_REVISION: str = '5ab9b35523fe'
 PROCESSOR: str = 'processor_key'
 DESKEW: str = 'geometry.deskew'
 CROP: str = 'geometry.crop'
@@ -97,6 +99,15 @@ INSERT_STAGE: str = (
 INSERT_EDIT: str = (
     'INSERT INTO page_edits (page_id, stage, processor_key, kind, geometry, edit_hash, updated_at) '
     "VALUES (:page_id, 'geometry', :key, 'rotation', '{\"degrees\": 1}', 'abc', '2026-01-01 00:00:00')"
+)
+INSERT_STATE_EDIT: str = (
+    'INSERT INTO page_edits (page_id, stage, step_id, kind, geometry, mask_key, edit_hash, updated_at) '
+    "VALUES (:page_id, 'geometry', :step_id, :kind, :geometry, :mask_key, :edit_hash, '2026-01-01 00:00:00')"
+)
+# A state that has settings and no edit, which the upgrade never makes and a user does
+INSERT_SETTINGS_ONLY: str = (
+    'INSERT INTO page_step_states (page_id, stage, step_id, params, updated_at) '
+    "VALUES (:page_id, 'geometry', :step_id, :params, '2026-01-01 00:00:00')"
 )
 # The tables holding the rows of a book, each of which refers to the project or to a row that does
 BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (ProjectRow, SourceRow, ScanRow, PageRow, PageVersionRow, JobRow)
@@ -385,7 +396,7 @@ class TestStepIdentityRevision:
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
         async with fx_empty_database.sessions() as session:
             recipes = {row.name: row.steps for row in (await session.execute(select(RecipeRow))).scalars()}
-            edits = (await session.execute(select(PageEditRow))).scalars().all()
+            edits = (await session.execute(select(PageStepStateRow))).scalars().all()
         step_ids = {name: {step[PROCESSOR]: step['step_id'] for step in steps} for name, steps in recipes.items()}
         moved = sorted((edit.page_id.bytes, str(edit.step_id)) for edit in edits)
         expect(all(step['applies_to'] == 'all' for steps in recipes.values() for step in steps))
@@ -423,6 +434,106 @@ class TestStepIdentityRevision:
         expect(
             all('step_id' not in step and 'applies_to' not in step for stored in steps for step in json.loads(stored))
         )
+        assert_expectations()
+
+
+class TestStepStateRevision:
+    """Tests for the revision that keeps the manual edits in the state of a step on a page, with its settings."""
+
+    @staticmethod
+    async def _seed(database: SqlDatabase) -> tuple[bytes, bytes, bytes]:
+        """Store a page with two edits as the revision before left them: a rotation and a brush mask.
+
+        :param database: Database migrated to the revision before.
+        :type database: SqlDatabase
+        :returns: The identifier of the page, of the step of the rotation and of the step of the mask, as bytes.
+        :rtype: tuple[bytes, bytes, bytes]
+        """
+        project = make_project(owner_id=await commit_account(database))
+        page = make_page(project_id=project.id)
+        rotation, mask = uuid4().bytes, uuid4().bytes
+        async with database.sessions() as session:
+            uow = SqlAlchemyUnitOfWork(session)
+            await uow.projects.add(project)
+            await uow.pages.add(page)
+            await uow.commit()
+            await session.execute(
+                text(INSERT_STATE_EDIT),
+                {
+                    'page_id': page.id.bytes,
+                    'step_id': rotation,
+                    'kind': 'rotation',
+                    'geometry': '{"degrees": 1.5}',
+                    'mask_key': None,
+                    'edit_hash': 'abc',
+                },
+            )
+            await session.execute(
+                text(INSERT_STATE_EDIT),
+                {
+                    'page_id': page.id.bytes,
+                    'step_id': mask,
+                    'kind': 'brush-mask',
+                    'geometry': None,
+                    'mask_key': 'assets/mask.png',
+                    'edit_hash': 'def',
+                },
+            )
+            await session.commit()
+        return page.id.bytes, rotation, mask
+
+    async def test_edits_move_into_states_with_no_settings(self, fx_empty_database: SqlDatabase) -> None:
+        """Verify every edit becomes the manual layer of a state of its step, with its columns and no settings.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, BEFORE_STATES_REVISION)
+        page, rotation, mask = await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        async with fx_empty_database.sessions() as session:
+            states = {
+                row.step_id.bytes: row for row in (await session.execute(select(PageStepStateRow))).scalars().all()
+            }
+        async with fx_empty_database.engine.connect() as connection:
+            tables = await connection.run_sync(lambda sync: inspect(sync).get_table_names())
+        expect(sorted(states) == sorted([rotation, mask]))
+        expect(all(state.page_id.bytes == page and state.params == {} for state in states.values()))
+        expect(states[rotation].kind == EditorKind.ROTATION)
+        expect(states[rotation].geometry == {'degrees': 1.5})
+        expect(states[rotation].edit_hash == 'abc')
+        expect(states[mask].kind == EditorKind.BRUSH_MASK)
+        expect(states[mask].geometry is None)
+        expect(states[mask].mask_key == 'assets/mask.png')
+        expect(all(state.edit_saved_at == state.updated_at for state in states.values()))
+        expect('page_edits' not in tables)
+        assert_expectations()
+
+    async def test_downgrade_returns_the_edits_and_drops_the_settings_and_the_history(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify a downgrade keeps the edits of the states, and the states that have only settings are not kept.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, BEFORE_STATES_REVISION)
+        page, *_ = await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        async with fx_empty_database.sessions() as session:
+            await session.execute(
+                text(INSERT_SETTINGS_ONLY), {'page_id': page, 'step_id': uuid4().bytes, 'params': '{"method": "otsu"}'}
+            )
+            await session.commit()
+        await _migrate(fx_empty_database, migrations.downgrade, BEFORE_STATES_REVISION)
+        async with fx_empty_database.sessions() as session:
+            edits = (await session.execute(text('SELECT kind, edit_hash FROM page_edits ORDER BY edit_hash'))).all()
+        async with fx_empty_database.engine.connect() as connection:
+            tables = await connection.run_sync(lambda sync: inspect(sync).get_table_names())
+        expect([tuple(edit) for edit in edits] == [('rotation', 'abc'), ('brush-mask', 'def')])
+        expect('page_step_states' not in tables and 'page_step_changes' not in tables)
         assert_expectations()
 
 

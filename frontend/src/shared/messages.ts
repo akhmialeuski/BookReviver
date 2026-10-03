@@ -1114,6 +1114,20 @@ export const MESSAGES = {
         useMeasuredHint:
           'Let the next measure of the book fill in the margins again. Save the recipe, then measure the book.',
       },
+      pageSettings: {
+        title: 'This page only',
+        hint: 'A setting changed here is used by this page alone. The other pages keep the value of the recipe, and this page keeps its value when the recipe changes.',
+        none: 'This page uses the value of the recipe for every setting of this step.',
+        changedMark: 'changed for this page',
+        label: (title: string, mark: string) => `${title} · ${mark}`,
+        current: (title: string, value: string) => `${title}: ${value}`,
+        change: 'Change for this page',
+        done: 'Done',
+        takeBack: (title: string) => `Use the value of the recipe for ${title}`,
+        failed: 'The settings of this page could not be read.',
+        saveFirst:
+          'Save the recipe first, since a step that is not saved has no settings of a page.',
+      },
       drag: {
         instructions:
           'To pick up a step, press Space. Move it with the arrow keys, drop it with Space, and cancel with Escape.',

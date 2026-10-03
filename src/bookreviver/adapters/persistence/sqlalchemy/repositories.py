@@ -28,9 +28,10 @@ from sqlalchemy.orm.exc import StaleDataError
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     BookPlaceMapper,
     JobMapper,
-    PageEditMapper,
     PageMapper,
     PageStageMapper,
+    PageStepChangeMapper,
+    PageStepStateMapper,
     PageVersionMapper,
     PaginationSectionMapper,
     ProjectMapper,
@@ -43,9 +44,10 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import (
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     BookPlaceRow,
     JobRow,
-    PageEditRow,
     PageRow,
     PageStageRow,
+    PageStepChangeRow,
+    PageStepStateRow,
     PageVersionRow,
     PaginationSectionRow,
     ProjectRow,
@@ -59,8 +61,9 @@ from bookreviver.domain.entities import (
     BookPlace,
     Job,
     Page,
-    PageEdit,
     PageStage,
+    PageStepChange,
+    PageStepState,
     PageVersion,
     PaginationSection,
     Project,
@@ -76,6 +79,7 @@ from bookreviver.domain.errors import ConcurrentChangeError, ConflictError, NotF
 from bookreviver.domain.ids import (
     JobId,
     PageId,
+    PageStepChangeId,
     PageVersionId,
     PaginationSectionId,
     ProjectId,
@@ -86,14 +90,15 @@ from bookreviver.domain.ids import (
     SourceId,
 )
 from bookreviver.domain.stage_summaries import StageTally, StepTally, VariantTally
-from bookreviver.domain.values import BookPlaceKey, PageEditKey, PageSize, PageStageKey, Slice
+from bookreviver.domain.values import BookPlaceKey, PageSize, PageStageKey, PageStepKey, Slice
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
     BookPlaceRepository,
     JobRepository,
-    PageEditRepository,
     PageRepository,
     PageStageRepository,
+    PageStepChangeRepository,
+    PageStepStateRepository,
     PageVersionRepository,
     PaginationSectionRepository,
     ProjectRepository,
@@ -287,10 +292,16 @@ class PageStageRows(RowRepository[PageStageRow]):
     model_type = PageStageRow
 
 
-class PageEditRows(RowRepository[PageEditRow]):
-    """Rows of the ``page_edits`` table."""
+class PageStepStateRows(RowRepository[PageStepStateRow]):
+    """Rows of the ``page_step_states`` table."""
 
-    model_type = PageEditRow
+    model_type = PageStepStateRow
+
+
+class PageStepChangeRows(RowRepository[PageStepChangeRow]):
+    """Rows of the ``page_step_changes`` table."""
+
+    model_type = PageStepChangeRow
 
 
 class BookPlaceRows(RowRepository[BookPlaceRow]):
@@ -1331,83 +1342,118 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
         ]
 
 
-class SqlAlchemyPageEditRepository(SqlAlchemyRepository[PageEdit, PageEditKey, PageEditRow], PageEditRepository):
-    """Manual edits, addressed by the page, the stage and the step."""
+class SqlAlchemyPageStepStateRepository(
+    SqlAlchemyRepository[PageStepState, PageStepKey, PageStepStateRow], PageStepStateRepository
+):
+    """Settings and manual edits, addressed by the page, the stage and the step."""
 
     def __init__(self, session: AsyncSession) -> None:
-        """Create the repository over the ``page_edits`` table.
+        """Create the repository over the ``page_step_states`` table.
 
         :param session: Session of the unit of work.
         :type session: AsyncSession
         """
-        super().__init__(rows=PageEditRows(session=session), mapper=PageEditMapper())
+        super().__init__(rows=PageStepStateRows(session=session), mapper=PageStepStateMapper())
 
     @override
-    async def get(self, entity_id: PageEditKey) -> PageEdit:
-        """Return one edit.
+    async def get(self, entity_id: PageStepKey) -> PageStepState:
+        """Return the state of one step on one page.
 
         :param entity_id: Page, stage and step.
-        :type entity_id: PageEditKey
-        :returns: The stored edit.
-        :rtype: PageEdit
-        :raises NotFoundError: If the step has no edit on the page and stage.
+        :type entity_id: PageStepKey
+        :returns: The stored state.
+        :rtype: PageStepState
+        :raises NotFoundError: If the page has no state for the step.
         """
         row = await self._rows.get((entity_id.page_id, entity_id.stage, entity_id.step_id))
         return self._mapper.to_entity(row)
 
     @override
-    async def delete(self, entity_id: PageEditKey) -> None:
-        """Remove one edit.
+    async def delete(self, entity_id: PageStepKey) -> None:
+        """Remove the state of one step on one page.
 
         :param entity_id: Page, stage and step.
-        :type entity_id: PageEditKey
-        :raises NotFoundError: If the step has no edit on the page and stage.
+        :type entity_id: PageStepKey
+        :raises NotFoundError: If the page has no state for the step.
         """
         await self._rows.delete((entity_id.page_id, entity_id.stage, entity_id.step_id))
 
     @override
-    async def save(self, edit: PageEdit) -> PageEdit:
-        """Store an edit, replacing the one of the same page, stage and step.
+    async def save(self, state: PageStepState) -> PageStepState:
+        """Store a state, replacing the one of the same page, stage and step.
 
-        :param edit: Edit to store.
-        :type edit: PageEdit
-        :returns: The edit as stored.
-        :rtype: PageEdit
+        :param state: State to store.
+        :type state: PageStepState
+        :returns: The state as stored.
+        :rtype: PageStepState
         :raises NotFoundError: If the page is not stored.
         """
-        if await self.find(edit.key) is None:
-            return await self.add(edit)
-        return await self.update(edit)
+        if await self.find(state.key) is None:
+            return await self.add(state)
+        return await self.update(state)
 
     @override
-    async def find(self, key: PageEditKey) -> PageEdit | None:
-        """Return one edit.
+    async def find(self, key: PageStepKey) -> PageStepState | None:
+        """Return the state of one step on one page.
 
         :param key: Page, stage and step.
-        :type key: PageEditKey
-        :returns: The edit, or None.
-        :rtype: PageEdit | None
+        :type key: PageStepKey
+        :returns: The state, or None.
+        :rtype: PageStepState | None
         """
         row = await self._rows.get_one_or_none(page_id=key.page_id, stage=key.stage, step_id=key.step_id)
         return None if row is None else self._mapper.to_entity(row)
 
     @override
-    async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageEdit]:
-        """Return the edits of one page, by stage and step.
+    async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepState]:
+        """Return the states of one page, by stage and step.
 
-        :param page_id: Page owning the edits.
+        :param page_id: Page owning the states.
         :type page_id: PageId
         :param stage: Stage listed, or None for every stage.
         :type stage: Stage | None
-        :returns: The edits of the page.
-        :rtype: Sequence[PageEdit]
+        :returns: The states of the page.
+        :rtype: Sequence[PageStepState]
         """
         filters: dict[str, Any] = {'page_id': page_id}
         if stage is not None:
             filters['stage'] = stage
         order = list(Stage)
-        edits = [self._mapper.to_entity(row) for row in await self._rows.get_many(**filters)]
-        return sorted(edits, key=lambda edit: (order.index(edit.stage), str(edit.step_id)))
+        states = [self._mapper.to_entity(row) for row in await self._rows.get_many(**filters)]
+        return sorted(states, key=lambda state: (order.index(state.stage), str(state.step_id)))
+
+
+class SqlAlchemyPageStepChangeRepository(
+    SqlAlchemyRepository[PageStepChange, PageStepChangeId, PageStepChangeRow], PageStepChangeRepository
+):
+    """The history of the layers of the steps of the pages."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Create the repository over the ``page_step_changes`` table.
+
+        :param session: Session of the unit of work.
+        :type session: AsyncSession
+        """
+        super().__init__(rows=PageStepChangeRows(session=session), mapper=PageStepChangeMapper())
+
+    @override
+    async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepChange]:
+        """Return the changes of one page, the oldest first, ties by identifier.
+
+        :param page_id: Page the changes were made on.
+        :type page_id: PageId
+        :param stage: Stage listed, or None for every stage.
+        :type stage: Stage | None
+        :returns: The changes of the page.
+        :rtype: Sequence[PageStepChange]
+        """
+        filters: dict[str, Any] = {'page_id': page_id}
+        if stage is not None:
+            filters['stage'] = stage
+        rows = await self._rows.get_many(
+            order_by=[PageStepChangeRow.created_at.asc(), PageStepChangeRow.id.asc()], **filters
+        )
+        return [self._mapper.to_entity(row) for row in rows]
 
 
 class SqlAlchemyBookPlaceRepository(SqlAlchemyRepository[BookPlace, BookPlaceKey, BookPlaceRow], BookPlaceRepository):

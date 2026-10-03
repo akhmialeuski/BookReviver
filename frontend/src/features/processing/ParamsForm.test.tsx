@@ -40,9 +40,12 @@ describe('ParamsForm', () => {
     processor: Parameters<typeof ParamsForm>[0]['processor'],
     params: Record<string, unknown>,
     onChange = vi.fn(),
+    marked?: ReadonlySet<string>,
   ): ReturnType<typeof vi.fn> {
     act(() =>
-      root.render(<ParamsForm processor={processor} params={params} onChange={onChange} />),
+      root.render(
+        <ParamsForm processor={processor} params={params} marked={marked} onChange={onChange} />,
+      ),
     );
     return onChange;
   }
@@ -63,6 +66,19 @@ describe('ParamsForm', () => {
     expect(labels).toEqual(['Largest slant', 'Least confidence']);
     expect(container.textContent).not.toContain('max_angle');
     expect(container.textContent).not.toContain('DeskewParams');
+  });
+
+  it('marks the field the open page changes for itself in its label, and only that field', () => {
+    render(deskew(), { max_angle: 5, min_confidence: 0.3 }, vi.fn(), new Set(['max_angle']));
+
+    const labels = [...container.querySelectorAll('label')].map((label) => label.textContent);
+    expect(labels).toEqual(['Largest slant · changed for this page', 'Least confidence']);
+  });
+
+  it('draws no mark when the page changes nothing', () => {
+    render(deskew(), { max_angle: 5, min_confidence: 0.3 }, vi.fn(), new Set());
+
+    expect(container.textContent).not.toContain('changed for this page');
   });
 
   it('puts the description of a field under it as a hint', () => {

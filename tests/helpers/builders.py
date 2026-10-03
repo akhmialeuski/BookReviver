@@ -13,6 +13,8 @@ from bookreviver.domain.entities import (
     Page,
     PageEdit,
     PageStage,
+    PageStepChange,
+    PageStepState,
     PageVersion,
     PaginationSection,
     Project,
@@ -23,6 +25,7 @@ from bookreviver.domain.entities import (
     Source,
 )
 from bookreviver.domain.enums import (
+    ChangeSource,
     ColorMode,
     CompareMode,
     ContributorRole,
@@ -43,6 +46,7 @@ from bookreviver.domain.enums import (
     SourceKind,
     Stage,
     StageState,
+    StepLayer,
     ViewMode,
 )
 from bookreviver.domain.geometry import Rotation
@@ -50,6 +54,7 @@ from bookreviver.domain.ids import (
     AccountId,
     JobId,
     PageId,
+    PageStepChangeId,
     PageVersionId,
     PaginationSectionId,
     ProjectId,
@@ -547,4 +552,73 @@ def make_geometry_edit(
         geometry=geometry,
         edit_hash=PageEdit.hash_of(geometry, None),
         updated_at=EPOCH,
+    )
+
+
+def make_page_step_state(
+    *,
+    page_id: PageId,
+    stage: Stage = Stage.GEOMETRY,
+    step_id: StepId = DESKEW_STEP_ID,
+    params: MetadataMap | None = None,
+    edit: PageEdit | None = None,
+) -> PageStepState:
+    """Build the state of a step on a page, by default the deskew step with no setting and no edit.
+
+    :param page_id: Page the state belongs to.
+    :type page_id: PageId
+    :param stage: Stage of the step.
+    :type stage: Stage
+    :param step_id: The step of a recipe.
+    :type step_id: StepId
+    :param params: The fields the page changes, or None for none.
+    :type params: MetadataMap | None
+    :param edit: The manual edit of the step, or None.
+    :type edit: PageEdit | None
+    :returns: A state saved at the epoch.
+    :rtype: PageStepState
+    """
+    return PageStepState(
+        page_id=page_id,
+        stage=stage,
+        step_id=step_id,
+        params={} if params is None else params,
+        edit=edit,
+        updated_at=EPOCH,
+    )
+
+
+def make_page_step_change(
+    *,
+    page_id: PageId,
+    stage: Stage = Stage.GEOMETRY,
+    created_at: datetime = EPOCH,
+    before: MetadataMap | None = None,
+    after: MetadataMap | None = None,
+) -> PageStepChange:
+    """Build a change of the settings of the deskew step of a page made by the user.
+
+    :param page_id: Page the change was made on.
+    :type page_id: PageId
+    :param stage: Stage of the step.
+    :type stage: Stage
+    :param created_at: When the change was made.
+    :type created_at: datetime
+    :param before: The settings before the change, or None for none.
+    :type before: MetadataMap | None
+    :param after: The settings after the change, or None for none.
+    :type after: MetadataMap | None
+    :returns: A change with a new identifier.
+    :rtype: PageStepChange
+    """
+    return PageStepChange(
+        id=PageStepChangeId(uuid4()),
+        page_id=page_id,
+        stage=stage,
+        step_id=DESKEW_STEP_ID,
+        layer=StepLayer.SETTINGS,
+        before=before,
+        after=after,
+        source=ChangeSource.USER,
+        created_at=created_at,
     )

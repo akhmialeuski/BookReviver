@@ -47,7 +47,7 @@ from bookreviver.domain.events import PagesChanged, PageVersionReady
 from bookreviver.domain.geometry import SplitChoice
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PageEditKey, PageStageKey
+from bookreviver.domain.values import PageStageKey, PageStepKey
 from bookreviver.services.page_labels import PageLabels
 from bookreviver.services.steps import StepRun
 
@@ -163,8 +163,9 @@ class SpreadSplit:
         """
         step = recipe.enabled_steps[0]
         processor = self._catalogue.get(step.processor_key)
-        params = processor.validate_params(step.params)
-        edit = await self._uow.page_edits.find(PageEditKey(page.id, Stage.PAGE_SPLIT, step.step_id))
+        state = await self._uow.page_step_states.find(PageStepKey(page.id, Stage.PAGE_SPLIT, step.step_id))
+        params = processor.validate_params(step.params if state is None else state.apply_to(step.params))
+        edit = None if state is None else state.edit
         halves = await self._halves(page)
         templates = [self._template(half, processor, params, edit) for half in (halves.left, halves.right)]
         stored = [await self._uow.page_versions.find(template.id) for template in templates]

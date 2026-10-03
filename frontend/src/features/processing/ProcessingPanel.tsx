@@ -58,7 +58,7 @@ export function ProcessingPanel({
         {processing.stage === 'page-split' && current !== undefined ? (
           <SplitSection processing={processing} items={items} current={current} />
         ) : null}
-        <RecipeSection processing={processing} rows={rows} run={run} />
+        <RecipeSection processing={processing} rows={rows} run={run} pageId={current?.page.id} />
         {current === undefined ? null : (
           <ThisPageSection
             processing={processing}

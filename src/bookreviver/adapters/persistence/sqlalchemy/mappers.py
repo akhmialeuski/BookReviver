@@ -23,9 +23,10 @@ from attrs import asdict
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     BookPlaceRow,
     JobRow,
-    PageEditRow,
     PageRow,
     PageStageRow,
+    PageStepChangeRow,
+    PageStepStateRow,
     PageVersionRow,
     PaginationSectionRow,
     ProjectRow,
@@ -41,6 +42,8 @@ from bookreviver.domain.entities import (
     Page,
     PageEdit,
     PageStage,
+    PageStepChange,
+    PageStepState,
     PageVersion,
     PaginationSection,
     Project,
@@ -54,8 +57,10 @@ from bookreviver.domain.enums import ContributorRole, IdentifierScheme, PageKind
 from bookreviver.domain.geometry import Point, Quad, Transform, geometry_from_data
 from bookreviver.domain.ids import (
     AccountId,
+    ChangeBatchId,
     JobId,
     PageId,
+    PageStepChangeId,
     PageVersionId,
     PaginationSectionId,
     ProjectId,
@@ -715,47 +720,108 @@ class PageStageMapper(RowMapper[PageStage, PageStageRow]):
         )
 
 
-class PageEditMapper(RowMapper[PageEdit, PageEditRow]):
-    """Translation of a manual edit, whose shape is stored as JSON data of its own kind."""
+class PageStepStateMapper(RowMapper[PageStepState, PageStepStateRow]):
+    """Translation of the state of a step on a page, whose manual edit is spread over columns, its shape as JSON."""
 
     @override
-    def to_entity(self, row: PageEditRow) -> PageEdit:
-        """Build the edit stored in ``row``.
+    def to_entity(self, row: PageStepStateRow) -> PageStepState:
+        """Build the state stored in ``row``.
 
-        :param row: Page edit row loaded from the database.
-        :type row: PageEditRow
-        :returns: The edit with its shape rebuilt from its data.
-        :rtype: PageEdit
+        :param row: Page step state row loaded from the database.
+        :type row: PageStepStateRow
+        :returns: The state with the manual edit rebuilt from its columns, if the row has one.
+        :rtype: PageStepState
         """
-        return PageEdit(
+        edit = None
+        if row.kind is not None and row.edit_hash is not None and row.edit_saved_at is not None:
+            edit = PageEdit(
+                page_id=PageId(row.page_id),
+                stage=row.stage,
+                step_id=StepId(row.step_id),
+                kind=row.kind,
+                geometry=None if row.geometry is None else geometry_from_data(row.kind, row.geometry),
+                mask_key=None if row.mask_key is None else StorageKey(row.mask_key),
+                edit_hash=row.edit_hash,
+                updated_at=row.edit_saved_at,
+            )
+        return PageStepState(
             page_id=PageId(row.page_id),
             stage=row.stage,
             step_id=StepId(row.step_id),
-            kind=row.kind,
-            geometry=None if row.geometry is None else geometry_from_data(row.kind, row.geometry),
-            mask_key=None if row.mask_key is None else StorageKey(row.mask_key),
-            edit_hash=row.edit_hash,
+            params=row.params,
+            edit=edit,
             updated_at=row.updated_at,
         )
 
     @override
-    def to_row(self, entity: PageEdit) -> PageEditRow:
+    def to_row(self, entity: PageStepState) -> PageStepStateRow:
         """Build the row of ``entity``.
 
-        :param entity: Edit to store.
-        :type entity: PageEdit
-        :returns: Transient page edit row.
-        :rtype: PageEditRow
+        :param entity: State to store.
+        :type entity: PageStepState
+        :returns: Transient page step state row.
+        :rtype: PageStepStateRow
         """
-        return PageEditRow(
+        edit = entity.edit
+        return PageStepStateRow(
             page_id=entity.page_id,
             stage=entity.stage,
             step_id=entity.step_id,
-            kind=entity.kind,
-            geometry=None if entity.geometry is None else entity.geometry.to_data(),
-            mask_key=entity.mask_key,
-            edit_hash=entity.edit_hash,
+            params=dict(entity.params),
+            kind=None if edit is None else edit.kind,
+            geometry=None if edit is None or edit.geometry is None else edit.geometry.to_data(),
+            mask_key=None if edit is None else edit.mask_key,
+            edit_hash=None if edit is None else edit.edit_hash,
+            edit_saved_at=None if edit is None else edit.updated_at,
             updated_at=entity.updated_at,
+        )
+
+
+class PageStepChangeMapper(RowMapper[PageStepChange, PageStepChangeRow]):
+    """Translation of a change of a layer of a step, whose values are stored as JSON objects."""
+
+    @override
+    def to_entity(self, row: PageStepChangeRow) -> PageStepChange:
+        """Build the change stored in ``row``.
+
+        :param row: Page step change row loaded from the database.
+        :type row: PageStepChangeRow
+        :returns: The change.
+        :rtype: PageStepChange
+        """
+        return PageStepChange(
+            id=PageStepChangeId(row.id),
+            page_id=PageId(row.page_id),
+            stage=row.stage,
+            step_id=StepId(row.step_id),
+            layer=row.layer,
+            before=row.before,
+            after=row.after,
+            source=row.source,
+            batch_id=None if row.batch_id is None else ChangeBatchId(row.batch_id),
+            created_at=row.created_at,
+        )
+
+    @override
+    def to_row(self, entity: PageStepChange) -> PageStepChangeRow:
+        """Build the row of ``entity``.
+
+        :param entity: Change to store.
+        :type entity: PageStepChange
+        :returns: Transient page step change row.
+        :rtype: PageStepChangeRow
+        """
+        return PageStepChangeRow(
+            id=entity.id,
+            page_id=entity.page_id,
+            stage=entity.stage,
+            step_id=entity.step_id,
+            layer=entity.layer,
+            before=None if entity.before is None else dict(entity.before),
+            after=None if entity.after is None else dict(entity.after),
+            source=entity.source,
+            batch_id=entity.batch_id,
+            created_at=entity.created_at,
         )
 
 

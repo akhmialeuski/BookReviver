@@ -21,6 +21,7 @@ import {
   createVariantApiV1ProjectsProjectIdStagesStageVariantsPostMutation,
   deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteMutation,
   deleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteMutation,
+  deleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteMutation,
   getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey,
   listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetOptions,
   listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetQueryKey,
@@ -28,6 +29,8 @@ import {
   listRulesApiV1ProjectsProjectIdStagesStageRulesGetOptions,
   listRulesApiV1ProjectsProjectIdStagesStageRulesGetQueryKey,
   listScansApiV1ProjectsProjectIdScansGetQueryKey,
+  listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetOptions,
+  listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetQueryKey,
   listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetOptions,
   listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey,
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey,
@@ -35,6 +38,7 @@ import {
   previewStepApiV1ProjectsProjectIdStagesStagePreviewPostMutation,
   putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutMutation,
   putRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutMutation,
+  putSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutMutation,
   putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation,
   remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostMutation,
   runStageApiV1ProjectsProjectIdStagesStageRunPostMutation,
@@ -324,6 +328,63 @@ export function useDeleteEdit(projectId: string, stage: Stage) {
     ...deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteMutation(),
     onSettled: (_data, _error, variables) =>
       refreshEdits(queryClient, projectId, stage, variables.path.page_id),
+  });
+}
+
+/** Read the settings one stage holds for the steps of a page: the fields the page changes, by step. */
+export function usePageSettings(projectId: string, pageId: string | undefined, stage: Stage) {
+  return useQuery({
+    ...listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetOptions({
+      path: { project_id: projectId, page_id: pageId ?? '', stage },
+      query: { size: LIST_SIZE },
+    }),
+    select: (page) => page.items,
+    enabled: pageId !== undefined,
+  });
+}
+
+/** Mark stale what a change of a setting of a page changes: its settings, and the rows and the summary of the stage. */
+async function refreshSettings(
+  queryClient: QueryClient,
+  projectId: string,
+  stage: Stage,
+  pageId: string,
+): Promise<void> {
+  await Promise.all([
+    queryClient.invalidateQueries({
+      queryKey: listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetQueryKey({
+        path: { project_id: projectId, page_id: pageId, stage },
+      }),
+    }),
+    invalidateStageRows(queryClient, projectId, stage),
+    invalidateStageSummary(queryClient, projectId),
+  ]);
+}
+
+/**
+ * Set the value a page uses for one field of a step, which marks the stage of the page out of date.
+ *
+ * The changes of settings share one mutation scope per book, so they reach the server in the order they were made and
+ * an older value never lands over a newer one.
+ */
+export function useSetPageSetting(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...putSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutMutation(),
+    scope: { id: `page-settings:${projectId}` },
+    onSettled: (_data, _error, variables) =>
+      refreshSettings(queryClient, projectId, stage, variables.path.page_id),
+  });
+}
+
+/** Take a field back from a page, so it uses the value of the recipe again, which marks its stage out of date. */
+export function useResetPageSetting(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...deleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteMutation(),
+    scope: { id: `page-settings:${projectId}` },
+    onSettled: (_data, _error, variables) =>
+      refreshSettings(queryClient, projectId, stage, variables.path.page_id),
   });
 }
 
