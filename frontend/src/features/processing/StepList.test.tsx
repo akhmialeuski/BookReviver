@@ -1,9 +1,10 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { deskew, recipe, step, whole } from '@/features/processing/fixtures';
+import { deskew, processor, recipe, step, whole } from '@/features/processing/fixtures';
+import type { OrderIssue } from '@/features/processing/order';
 import { draftOf } from '@/features/processing/recipe';
-import { StepList } from '@/features/processing/StepList';
+import { OrderNotice, StepList, type StepOrder } from '@/features/processing/StepList';
 
 /**
  * The list of steps of a recipe: each one with its title, a switch, a way to remove it and its settings when it is open.
@@ -308,5 +309,112 @@ describe('StepList', () => {
 
     expect(steps()[0]?.className).toContain('border-destructive');
     expect(steps()[1]?.className).not.toContain('border-destructive');
+  });
+  describe('with the order guarded', () => {
+    const REASON =
+      'Deskew reads the slant of the lines on an upright sheet, so it usually comes after Perspective.';
+    const REQUIRED_REASON = 'Margins cannot come before Select content.';
+    const onRestore = vi.fn();
+
+    function issue(kind: 'usual' | 'required', reason: string): OrderIssue {
+      return { stepId: 'step-0', otherId: 'step-1', kind, reason };
+    }
+
+    function guarded(issues: OrderIssue[], openId: string | undefined = undefined): void {
+      const order: StepOrder = {
+        mode: 'usual',
+        issues: new Map(issues.length === 0 ? [] : [['step-0', issues]]),
+        refusalOf: () => undefined,
+        onRestore,
+      };
+      act(() =>
+        root.render(
+          <StepList
+            steps={STEPS}
+            catalogue={[deskew(), processor('x.gone')]}
+            openId={openId}
+            order={order}
+            {...handlers}
+          />,
+        ),
+      );
+    }
+
+    const mark = (index: number): HTMLElement | null | undefined =>
+      steps()[index]?.querySelector<HTMLElement>('[data-testid="step-order-mark"]');
+
+    beforeEach(() => onRestore.mockReset());
+
+    it('marks a step that is off its usual place, with the reason on the line below it', () => {
+      guarded([issue('usual', REASON)]);
+
+      expect(mark(0)?.textContent).toBe('Out of place');
+      expect(mark(0)?.dataset.kind).toBe('usual');
+      expect(mark(0)?.title).toBe(REASON);
+      expect(steps()[0]?.querySelector('[data-testid="step-order-reason"]')?.textContent).toBe(
+        REASON,
+      );
+      expect(mark(1)).toBeNull();
+      expect(steps()[1]?.querySelector('[data-testid="step-order-reason"]')).toBeNull();
+    });
+
+    it('marks a step that stands where it cannot work as such', () => {
+      guarded([issue('required', REQUIRED_REASON)]);
+
+      expect(mark(0)?.textContent).toBe('Cannot work here');
+      expect(mark(0)?.dataset.kind).toBe('required');
+    });
+
+    it('draws no mark for steps in their place, and none without a guard', () => {
+      guarded([]);
+      expect(container.querySelector('[data-testid="step-order-mark"]')).toBeNull();
+
+      render();
+      expect(container.querySelector('[data-testid="step-order-mark"]')).toBeNull();
+    });
+
+    it('gives every reason in the settings of the step, with the button that restores the usual order', () => {
+      guarded([issue('usual', REASON), issue('required', REQUIRED_REASON)], 'step-0');
+
+      const details = steps()[0]?.querySelector('[data-testid="step-order-details"]');
+      expect(details?.textContent).toContain(REASON);
+      expect(details?.textContent).toContain(REQUIRED_REASON);
+      expect(steps()[0]?.querySelector('[data-testid="step-order-reason"]')).toBeNull();
+      const restore = steps()[0]?.querySelector<HTMLButtonElement>(
+        '[data-testid="step-restore-order"]',
+      );
+      expect(restore?.textContent).toBe('Restore the usual order');
+      act(() => restore?.click());
+      expect(onRestore).toHaveBeenCalledTimes(1);
+    });
+
+    it('offers no button to restore the order for a step that is in its place', () => {
+      guarded([], 'step-0');
+
+      expect(container.querySelector('[data-testid="step-restore-order"]')).toBeNull();
+    });
+  });
+
+  describe('OrderNotice', () => {
+    it('refuses the place in the usual order, with the reason, as an alert', () => {
+      act(() =>
+        root.render(<OrderNotice mode="usual" issue={{ reason: 'Not before Select content.' }} />),
+      );
+
+      const notice = container.querySelector('[data-testid="order-refusal"]');
+      expect(notice?.getAttribute('role')).toBe('alert');
+      expect(notice?.textContent).toBe('This place is not allowed. Not before Select content.');
+      expect(notice?.className).toContain('text-destructive');
+    });
+
+    it('allows the place in the free order, and still gives the reason', () => {
+      act(() =>
+        root.render(<OrderNotice mode="free" issue={{ reason: 'Not before Select content.' }} />),
+      );
+
+      const notice = container.querySelector('[data-testid="order-refusal"]');
+      expect(notice?.textContent).toBe('Allowed in the free order. Not before Select content.');
+      expect(notice?.className).toContain('text-status-attention');
+    });
   });
 });

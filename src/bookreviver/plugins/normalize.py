@@ -46,7 +46,7 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Rect, Transform
-from bookreviver.domain.values import ProcessorSpec
+from bookreviver.domain.values import OrderRule, ProcessorSpec
 from bookreviver.plugins.base import ModelProcessor, Params
 from bookreviver.plugins.cv_image import (
     MANUAL_CONFIDENCE,
@@ -294,6 +294,37 @@ class Normalize(ModelProcessor):
         parameters=NormalizeParams.model_json_schema(),
         editor=Rect.editor,
         by_page_side=True,
+        after=(
+            OrderRule(
+                processor_key='geometry.perspective',
+                reason=(
+                    'Margins scales the block of text by the height of its lines, '
+                    'which is measured on an upright sheet, '
+                    'so it usually comes after Perspective.'
+                ),
+            ),
+            OrderRule(
+                processor_key='geometry.deskew',
+                reason='Margins puts the block of text on the page level, so it usually comes after Deskew.',
+            ),
+            OrderRule(
+                processor_key='geometry.dewarp',
+                reason=(
+                    'Margins scales the block of text by the height of its lines, '
+                    'which is measured on a flat page, '
+                    'so it usually comes after Dewarp.'
+                ),
+            ),
+        ),
+        requires_after=(
+            OrderRule(
+                processor_key='geometry.crop',
+                reason=(
+                    'Margins places on the page the block of text that Select content finds, '
+                    'so it cannot come before Select content.'
+                ),
+            ),
+        ),
     )
 
     @override

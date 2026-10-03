@@ -41,7 +41,7 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Point, Quad, Rect, Transform
-from bookreviver.domain.values import ProcessorSpec
+from bookreviver.domain.values import OrderRule, ProcessorSpec
 from bookreviver.plugins.base import METHOD_TITLE, ModelProcessor, Params
 from bookreviver.plugins.cv_image import (
     COLOR_PLANES,
@@ -281,6 +281,26 @@ class Crop(ModelProcessor):
         outputs=frozenset({VersionOutput.IMAGE}),
         parameters=CropParams.model_json_schema(),
         editor=Rect.editor,
+        after=(
+            OrderRule(
+                processor_key='geometry.perspective',
+                reason=(
+                    'Select content reads the sides of the sheet that Perspective records, '
+                    'so it usually comes after Perspective.'
+                ),
+            ),
+            OrderRule(
+                processor_key='geometry.deskew',
+                reason=(
+                    'Select content finds the frame of the text on a page that is turned level, '
+                    'so it usually comes after Deskew.'
+                ),
+            ),
+            OrderRule(
+                processor_key='geometry.dewarp',
+                reason='Select content finds the frame of the text on a flat page, so it usually comes after Dewarp.',
+            ),
+        ),
     )
 
     @override

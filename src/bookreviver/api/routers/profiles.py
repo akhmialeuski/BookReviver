@@ -15,6 +15,7 @@ from fastapi_pagination import Page
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
 from bookreviver.api.routers.processing import PROJECT_ID_DESCRIPTION
+from bookreviver.api.schemas.processing import RecipeSchema
 from bookreviver.api.schemas.profiles import (
     AppliedProfileSchema,
     ApplyProfileBody,
@@ -25,6 +26,7 @@ from bookreviver.api.schemas.profiles import (
 )
 from bookreviver.domain.entities import RecipeProfile
 from bookreviver.domain.ids import ProjectId, RecipeProfileId
+from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import RecipeProfiles
 
 PROFILE_ID_DESCRIPTION: str = 'Identifier of the recipe profile'
@@ -72,23 +74,31 @@ async def list_profiles(
 
 @router.post(PROFILES_PATH, status_code=status.HTTP_201_CREATED)
 async def create_profile(
-    body: RecipeProfileBody, actor: ActorDep, profiles: FromDishka[RecipeProfiles]
+    body: RecipeProfileBody,
+    actor: ActorDep,
+    profiles: FromDishka[RecipeProfiles],
+    order: FromDishka[RecipeOrder],
 ) -> RecipeProfileSchema:
     """Save the steps of a recipe as a profile, which is not the default until it is made one.
 
-    A step whose processor is unknown or of another stage, or whose parameters do not fit, answers 422.
+    A step whose processor is unknown or of another stage, or whose parameters do not fit, answers 422, and so does a
+    step that stands where it cannot work, unless the body asks for the free order.
 
     \N{FORM FEED}
-    :param body: The stage, the name and the steps.
+    :param body: The stage, the name, the steps and the order to keep.
     :type body: RecipeProfileBody
     :param actor: The signed-in account.
     :type actor: Actor
     :param profiles: Profiles service of the request.
     :type profiles: RecipeProfiles
+    :param order: Finder of the steps that stand off the place their processors ask for.
+    :type order: RecipeOrder
     :returns: The profile as stored.
     :rtype: RecipeProfileSchema
     """
-    profile = await profiles.save(actor, body.stage, body.name, body.to_steps())
+    steps = body.to_steps()
+    order.enforce(steps, body.order)
+    profile = await profiles.save(actor, body.stage, body.name, steps)
     return RecipeProfileSchema.model_validate(profile)
 
 
@@ -175,6 +185,7 @@ async def apply_profile(
     body: ApplyProfileBody,
     actor: ActorDep,
     profiles: FromDishka[RecipeProfiles],
+    order: FromDishka[RecipeOrder],
 ) -> AppliedProfileSchema:
     """Add the steps of a profile to a book as a variant of the profile's stage, and optionally make it the active one.
 
@@ -190,8 +201,13 @@ async def apply_profile(
     :type actor: Actor
     :param profiles: Profiles service of the request.
     :type profiles: RecipeProfiles
-    :returns: The recipe and the processors whose steps were left out.
+    :param order: Finder of the steps that stand off the place their processors ask for.
+    :type order: RecipeOrder
+    :returns: The recipe, with the steps that are out of their place, and the processors whose steps were left out.
     :rtype: AppliedProfileSchema
     """
     applied = await profiles.apply(actor, address.project_id, address.profile_id, activate=body.activate)
-    return AppliedProfileSchema.model_validate(applied)
+    return AppliedProfileSchema(
+        recipe=RecipeSchema.of(applied.recipe, order.issues(applied.recipe.steps)),
+        missing_processors=list(applied.missing_processors),
+    )

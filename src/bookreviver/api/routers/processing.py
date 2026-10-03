@@ -33,6 +33,7 @@ from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
 from bookreviver.domain.values import RecipeKey
 from bookreviver.services.processing import ProcessingService
+from bookreviver.services.recipe_order import RecipeOrder
 
 PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
 PAGE_ID_DESCRIPTION: str = 'Identifier of the page'
@@ -99,7 +100,10 @@ class VersionPath:
 
 @router.get('/{project_id}/stages/{stage}/recipe')
 async def get_recipe(
-    address: Annotated[StagePath, Depends()], actor: ActorDep, processing: FromDishka[ProcessingService]
+    address: Annotated[StagePath, Depends()],
+    actor: ActorDep,
+    processing: FromDishka[ProcessingService],
+    order: FromDishka[RecipeOrder],
 ) -> RecipeSchema:
     """Return the active recipe of a stage, which a project creates the first time the stage is asked for.
 
@@ -110,10 +114,13 @@ async def get_recipe(
     :type actor: Actor
     :param processing: Processing service of the request.
     :type processing: ProcessingService
-    :returns: The active recipe.
+    :param order: Finder of the steps that stand off the place their processors ask for.
+    :type order: RecipeOrder
+    :returns: The active recipe, with the steps that are out of their place.
     :rtype: RecipeSchema
     """
-    return RecipeSchema.model_validate(await processing.recipe(actor, address.project_id, address.stage))
+    recipe = await processing.recipe(actor, address.project_id, address.stage)
+    return RecipeSchema.of(recipe, order.issues(recipe.steps))
 
 
 @router.put('/{project_id}/stages/{stage}/recipe')
@@ -122,26 +129,34 @@ async def put_recipe(
     body: RecipeBody,
     actor: ActorDep,
     processing: FromDishka[ProcessingService],
+    order: FromDishka[RecipeOrder],
 ) -> RecipeSchema:
     """Replace the name and the steps of the active recipe, which marks the pages it processed stale.
 
     No page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown
-    or of another stage, or whose parameters do not fit, answers 422.
+    or of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it cannot
+    work, unless the body asks for the free order. A step that stands off its usual place is saved and named in the
+    answer.
 
     \N{FORM FEED}
     :param address: Identifiers of the project and the stage.
     :type address: StagePath
-    :param body: The name and the steps.
+    :param body: The name, the steps and the order to keep.
     :type body: RecipeBody
     :param actor: The signed-in account.
     :type actor: Actor
     :param processing: Processing service of the request.
     :type processing: ProcessingService
-    :returns: The recipe as stored, with the defaults of each processor filled in.
+    :param order: Finder of the steps that stand off the place their processors ask for.
+    :type order: RecipeOrder
+    :returns: The recipe as stored, with the defaults of each processor filled in, and the steps that are out of their
+              place.
     :rtype: RecipeSchema
     """
-    saved = await processing.save_recipe(actor, address.project_id, address.stage, body.name, body.to_steps())
-    return RecipeSchema.model_validate(saved)
+    steps = body.to_steps()
+    order.enforce(steps, body.order)
+    saved = await processing.save_recipe(actor, address.project_id, address.stage, body.name, steps)
+    return RecipeSchema.of(saved, order.issues(saved.steps))
 
 
 @router.get('/{project_id}/stages/{stage}/variants')
@@ -150,6 +165,7 @@ async def list_variants(
     params: Annotated[Params, Depends()],
     actor: ActorDep,
     processing: FromDishka[ProcessingService],
+    order: FromDishka[RecipeOrder],
 ) -> Page[RecipeSchema]:
     """List the recipes of a stage, the active one first and then the variants, oldest first.
 
@@ -162,10 +178,12 @@ async def list_variants(
     :type actor: Actor
     :param processing: Processing service of the request.
     :type processing: ProcessingService
+    :param order: Finder of the steps that stand off the place their processors ask for.
+    :type order: RecipeOrder
     :returns: One page of the recipes of the stage.
     :rtype: Page[RecipeSchema]
     """
-    pager = Pager[Recipe, RecipeSchema](params, RecipeSchema.model_validate)
+    pager = Pager[Recipe, RecipeSchema](params, lambda recipe: RecipeSchema.of(recipe, order.issues(recipe.steps)))
     return pager.page(await processing.variants(actor, address.project_id, address.stage, pager.request))
 
 
@@ -175,23 +193,30 @@ async def create_variant(
     body: RecipeBody,
     actor: ActorDep,
     processing: FromDishka[ProcessingService],
+    order: FromDishka[RecipeOrder],
 ) -> RecipeSchema:
     """Add a variant of a stage, which is not active until it is activated.
+
+    The order of the steps is kept as for ``PUT .../recipe``.
 
     \N{FORM FEED}
     :param address: Identifiers of the project and the stage.
     :type address: StagePath
-    :param body: The name and the steps.
+    :param body: The name, the steps and the order to keep.
     :type body: RecipeBody
     :param actor: The signed-in account.
     :type actor: Actor
     :param processing: Processing service of the request.
     :type processing: ProcessingService
-    :returns: The variant as stored.
+    :param order: Finder of the steps that stand off the place their processors ask for.
+    :type order: RecipeOrder
+    :returns: The variant as stored, with the steps that are out of their place.
     :rtype: RecipeSchema
     """
-    variant = await processing.add_variant(actor, address.project_id, address.stage, body.name, body.to_steps())
-    return RecipeSchema.model_validate(variant)
+    steps = body.to_steps()
+    order.enforce(steps, body.order)
+    variant = await processing.add_variant(actor, address.project_id, address.stage, body.name, steps)
+    return RecipeSchema.of(variant, order.issues(variant.steps))
 
 
 @router.put('/{project_id}/stages/{stage}/variants/{recipe_id}')
@@ -200,30 +225,40 @@ async def put_variant(
     body: RecipeBody,
     actor: ActorDep,
     processing: FromDishka[ProcessingService],
+    order: FromDishka[RecipeOrder],
 ) -> RecipeSchema:
     """Replace the name and the steps of a recipe of a stage, which marks the pages it processed stale.
+
+    The order of the steps is kept as for ``PUT .../recipe``.
 
     \N{FORM FEED}
     :param address: Identifiers of the project, the stage and the recipe.
     :type address: VariantPath
-    :param body: The name and the steps.
+    :param body: The name, the steps and the order to keep.
     :type body: RecipeBody
     :param actor: The signed-in account.
     :type actor: Actor
     :param processing: Processing service of the request.
     :type processing: ProcessingService
-    :returns: The recipe as stored.
+    :param order: Finder of the steps that stand off the place their processors ask for.
+    :type order: RecipeOrder
+    :returns: The recipe as stored, with the steps that are out of their place.
     :rtype: RecipeSchema
     """
+    steps = body.to_steps()
+    order.enforce(steps, body.order)
     saved = await processing.save_variant(
-        actor, address.project_id, RecipeKey(address.stage, address.recipe_id), body.name, body.to_steps()
+        actor, address.project_id, RecipeKey(address.stage, address.recipe_id), body.name, steps
     )
-    return RecipeSchema.model_validate(saved)
+    return RecipeSchema.of(saved, order.issues(saved.steps))
 
 
 @router.post('/{project_id}/stages/{stage}/variants/{recipe_id}/activate')
 async def activate_variant(
-    address: Annotated[VariantPath, Depends()], actor: ActorDep, processing: FromDishka[ProcessingService]
+    address: Annotated[VariantPath, Depends()],
+    actor: ActorDep,
+    processing: FromDishka[ProcessingService],
+    order: FromDishka[RecipeOrder],
 ) -> RecipeSchema:
     """Make a variant the active recipe of its stage, which marks the pages the old one processed stale.
 
@@ -234,11 +269,13 @@ async def activate_variant(
     :type actor: Actor
     :param processing: Processing service of the request.
     :type processing: ProcessingService
-    :returns: The recipe as active.
+    :param order: Finder of the steps that stand off the place their processors ask for.
+    :type order: RecipeOrder
+    :returns: The recipe as active, with the steps that are out of their place.
     :rtype: RecipeSchema
     """
     activated = await processing.activate(actor, address.project_id, address.stage, address.recipe_id)
-    return RecipeSchema.model_validate(activated)
+    return RecipeSchema.of(activated, order.issues(activated.steps))
 
 
 @router.post('/{project_id}/stages/{stage}/run', status_code=status.HTTP_202_ACCEPTED)

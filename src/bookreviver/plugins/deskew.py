@@ -48,7 +48,7 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Rotation, Transform
-from bookreviver.domain.values import ProcessorSpec
+from bookreviver.domain.values import OrderRule, ProcessorSpec
 from bookreviver.plugins.base import METHOD_TITLE, ModelProcessor, Params, method_discriminator
 from bookreviver.plugins.cv_image import (
     COLOR_PLANES,
@@ -204,6 +204,14 @@ class Deskew(ModelProcessor):
         outputs=frozenset({VersionOutput.IMAGE}),
         parameters=DeskewParams.model_json_schema(),
         editor=Rotation.editor,
+        after=(
+            OrderRule(
+                processor_key='geometry.perspective',
+                reason=(
+                    'Deskew reads the slant of the lines on an upright sheet, so it usually comes after Perspective.'
+                ),
+            ),
+        ),
     )
 
     @override

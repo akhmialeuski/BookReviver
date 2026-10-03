@@ -400,7 +400,9 @@ export const getRecipeApiV1ProjectsProjectIdStagesStageRecipeGet = <ThrowOnError
  * Replace the name and the steps of the active recipe, which marks the pages it processed stale.
  *
  * No page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown
- * or of another stage, or whose parameters do not fit, answers 422.
+ * or of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it cannot
+ * work, unless the body asks for the free order. A step that stands off its usual place is saved and named in the
+ * answer.
  */
 export const putRecipeApiV1ProjectsProjectIdStagesStageRecipePut = <ThrowOnError extends boolean = false>(options: Options<PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutData, ThrowOnError>): RequestResult<PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponses, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutErrors, ThrowOnError> => (options.client ?? client).put<PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponses, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutErrors, ThrowOnError>({
     url: '/api/v1/projects/{project_id}/stages/{stage}/recipe',
@@ -422,6 +424,8 @@ export const listVariantsApiV1ProjectsProjectIdStagesStageVariantsGet = <ThrowOn
  * Create Variant
  *
  * Add a variant of a stage, which is not active until it is activated.
+ *
+ * The order of the steps is kept as for ``PUT .../recipe``.
  */
 export const createVariantApiV1ProjectsProjectIdStagesStageVariantsPost = <ThrowOnError extends boolean = false>(options: Options<CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostData, ThrowOnError>): RequestResult<CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponses, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostErrors, ThrowOnError> => (options.client ?? client).post<CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponses, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostErrors, ThrowOnError>({
     url: '/api/v1/projects/{project_id}/stages/{stage}/variants',
@@ -436,6 +440,8 @@ export const createVariantApiV1ProjectsProjectIdStagesStageVariantsPost = <Throw
  * Put Variant
  *
  * Replace the name and the steps of a recipe of a stage, which marks the pages it processed stale.
+ *
+ * The order of the steps is kept as for ``PUT .../recipe``.
  */
 export const putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPut = <ThrowOnError extends boolean = false>(options: Options<PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutData, ThrowOnError>): RequestResult<PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponses, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutErrors, ThrowOnError> => (options.client ?? client).put<PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponses, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutErrors, ThrowOnError>({
     url: '/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}',
@@ -633,7 +639,8 @@ export const listProfilesApiV1RecipeProfilesGet = <ThrowOnError extends boolean 
  *
  * Save the steps of a recipe as a profile, which is not the default until it is made one.
  *
- * A step whose processor is unknown or of another stage, or whose parameters do not fit, answers 422.
+ * A step whose processor is unknown or of another stage, or whose parameters do not fit, answers 422, and so does a
+ * step that stands where it cannot work, unless the body asks for the free order.
  */
 export const createProfileApiV1RecipeProfilesPost = <ThrowOnError extends boolean = false>(options: Options<CreateProfileApiV1RecipeProfilesPostData, ThrowOnError>): RequestResult<CreateProfileApiV1RecipeProfilesPostResponses, CreateProfileApiV1RecipeProfilesPostErrors, ThrowOnError> => (options.client ?? client).post<CreateProfileApiV1RecipeProfilesPostResponses, CreateProfileApiV1RecipeProfilesPostErrors, ThrowOnError>({
     url: '/api/v1/recipe-profiles',

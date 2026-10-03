@@ -328,6 +328,24 @@ _KINDS_OF_CONDITION: Final[dict[RuleCondition, frozenset[PageKind]]] = {
 }
 
 
+class OrderMode(LabeledStrEnum):
+    """How strictly the order of the steps of a recipe is kept when the recipe is saved.
+
+    The usual order refuses a step that stands where it cannot work, and the free order lets it stand, with a warning.
+    A step that stands off its usual place is never refused, whatever the mode.
+    """
+
+    USUAL = 'usual', 'Usual order'
+    FREE = 'free', 'Free order'
+
+
+class OrderRuleKind(LabeledStrEnum):
+    """How firmly a processor asks for its place among the steps of a recipe."""
+
+    USUAL = 'usual', 'Usual place'
+    REQUIRED = 'required', 'Required place'
+
+
 class AppliesTo(LabeledStrEnum):
     """The condition of a step of a recipe: which pages the step processes, the others passing it unchanged.
 

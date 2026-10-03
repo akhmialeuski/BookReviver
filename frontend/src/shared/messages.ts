@@ -7,6 +7,7 @@ import type {
   JobKind,
   JobState,
   LabelStyle,
+  OrderRuleKind,
   Orthography,
   PageKind,
   PageStageStatus,
@@ -1135,6 +1136,22 @@ export const MESSAGES = {
         over: (name: string) => `Over the ${name} step.`,
         dropped: (name: string) => `Dropped the ${name} step.`,
         cancelled: 'Move cancelled. The steps stay in their order.',
+        refused: (reason: string) => `This place is not allowed. ${reason}`,
+        allowedInFree: (reason: string) => `Allowed in the free order. ${reason}`,
+      },
+      order: {
+        marks: {
+          usual: 'Out of place',
+          required: 'Cannot work here',
+        } satisfies Record<OrderRuleKind, string>,
+        restore: 'Restore the usual order',
+        restoreHint:
+          'Put the steps in their usual order. The settings of every step stay as they are.',
+        modeLabel: 'Free order',
+        modeHint:
+          'Let a step stand where it cannot work. The recipe is saved with a warning instead of being refused.',
+        blocked:
+          'A step stands where it cannot work, so the recipe cannot be saved. Restore the usual order, or switch to the free order.',
       },
     },
     soon: {

@@ -26,7 +26,7 @@ from pydantic import Field
 
 from bookreviver.domain.enums import ProcessorScope, Stage, VersionData, VersionOutput
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.values import ProcessorSpec
+from bookreviver.domain.values import OrderRule, ProcessorSpec
 from bookreviver.plugins.base import ModelProcessor, Params
 from bookreviver.plugins.cv_image import (
     BLACK,
@@ -136,6 +136,15 @@ class Despeckle(ModelProcessor):
         scope=ProcessorScope.PAGE,
         outputs=frozenset({VersionOutput.IMAGE, VersionOutput.MASK}),
         parameters=DespeckleParams.model_json_schema(),
+        requires_after=(
+            OrderRule(
+                processor_key='cleanup.binarize',
+                reason=(
+                    'Despeckle removes the black specks of a black and white page, '
+                    'so it cannot come before Binarization, which makes the page black and white.'
+                ),
+            ),
+        ),
     )
 
     @override

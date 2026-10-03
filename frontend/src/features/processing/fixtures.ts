@@ -271,6 +271,9 @@ export function processor(key: string, overrides: Partial<ProcessorSchema> = {})
     parameters: {},
     editor: 'none',
     pool: 'cpu',
+    after: [],
+    before: [],
+    requires_after: [],
     ...overrides,
   };
 }
@@ -426,6 +429,12 @@ export function processing(overrides: Partial<Processing> = {}): Processing {
     showStep: () => undefined,
     dirty: false,
     valid: true,
+    orderMode: 'usual',
+    setOrderMode: () => undefined,
+    orderIssues: new Map(),
+    refused: [],
+    refusalOf: () => undefined,
+    restoreOrder: () => undefined,
     move: () => undefined,
     toggle: () => undefined,
     remove: () => undefined,

@@ -108,6 +108,7 @@ describe('ProfileActions', () => {
         body: {
           stage: 'geometry',
           name: 'Clean flatbed scan',
+          order: 'usual',
           steps: [
             {
               processor_key: 'geometry.crop',

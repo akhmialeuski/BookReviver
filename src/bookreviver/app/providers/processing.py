@@ -25,6 +25,7 @@ from bookreviver.services.page_settings import PageSettingsService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
+from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import RecipeProfiles
 from bookreviver.services.recipe_rules import RecipeRules
 from bookreviver.services.recipes import DefaultRecipes
@@ -49,6 +50,17 @@ class ProcessingProvider(Provider):
             pools=settings.processing.worker_pools,
             settings=ProcessorSettings(models_dir=settings.processing.models_dir.resolve()),
         )
+
+    @provide(scope=Scope.APP)
+    def recipe_order(self, catalogue: ProcessorCatalog) -> RecipeOrder:
+        """Read the order the processors ask for from their specs.
+
+        :param catalogue: The processors the application can run.
+        :type catalogue: ProcessorCatalog
+        :returns: The finder of steps that stand off their place.
+        :rtype: RecipeOrder
+        """
+        return RecipeOrder(catalogue)
 
     @provide(scope=Scope.APP)
     def default_recipes(self) -> DefaultRecipes:

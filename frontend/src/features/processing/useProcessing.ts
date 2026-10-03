@@ -1,5 +1,12 @@
 import { useMemo, useState } from 'react';
-import type { AppliesTo, ProcessorSchema, RecipeSchema, Stage } from '@/api';
+import type { AppliesTo, OrderMode, ProcessorSchema, RecipeSchema, Stage } from '@/api';
+import {
+  issuesByStep,
+  type OrderIssue,
+  orderIssues,
+  refusalOf,
+  restoreUsualOrder,
+} from '@/features/processing/order';
 import type { PreviewRequest } from '@/features/processing/preview';
 import { useProcessors, useRecipes } from '@/features/processing/queries';
 import {
@@ -78,6 +85,17 @@ export interface Processing {
   dirty: boolean;
   /** Whether every value of the draft fits the schema of its processor. */
   valid: boolean;
+  /** The order the draft is saved in: the usual one refuses a step where it cannot work, the free one only warns. */
+  orderMode: OrderMode;
+  setOrderMode: (mode: OrderMode) => void;
+  /** The steps that stand off the place their processors ask for, by the identity of the step in the draft. */
+  orderIssues: ReadonlyMap<string, readonly OrderIssue[]>;
+  /** The places that keep the draft from being saved in the usual order, none in the free order. */
+  refused: readonly OrderIssue[];
+  /** The required place that dropping a step on another would break, if any. */
+  refusalOf: (activeId: string, overId: string) => OrderIssue | undefined;
+  /** Put the steps in their usual order, which keeps every setting. */
+  restoreOrder: () => void;
   move: (activeId: string, overId: string) => void;
   toggle: (id: string) => void;
   remove: (id: string) => void;
@@ -152,6 +170,22 @@ export function useProcessing(
     return schema === undefined || fitsSchema(schema, step.params);
   });
   const dirty = recipe !== undefined && !sameAsSaved(recipe, steps);
+  // A recipe that was saved in the free order, with a step where it cannot work, is opened in the free order, since the
+  // usual one would refuse the next save of it
+  const [modeChoice, setModeChoice] = useState<{
+    owner: string | undefined;
+    mode: OrderMode;
+  } | null>(null);
+  const savedFree = recipe?.order_issues?.some((issue) => issue.kind === 'required') ?? false;
+  const orderMode: OrderMode =
+    modeChoice !== null && modeChoice.owner === recipe?.id
+      ? modeChoice.mode
+      : savedFree
+        ? 'free'
+        : 'usual';
+  const issues = useMemo(() => orderIssues(steps, catalogue), [steps, catalogue]);
+  const issuesOf = useMemo(() => issuesByStep(issues), [issues]);
+  const refused = orderMode === 'free' ? [] : issues.filter((issue) => issue.kind === 'required');
 
   const [previewOn, setPreviewOn] = useState(false);
   const index = previewIndex(steps, openId);
@@ -196,6 +230,12 @@ export function useProcessing(
     showStep: (index) => setShownChoice({ owner: draftOwner, index }),
     dirty,
     valid,
+    orderMode,
+    setOrderMode: (mode) => setModeChoice({ owner: recipe?.id, mode }),
+    orderIssues: issuesOf,
+    refused,
+    refusalOf: (activeId, overId) => refusalOf(steps, catalogue, activeId, overId),
+    restoreOrder: () => write(restoreUsualOrder(steps, catalogue)),
     move: (activeId, overId) => write(moveStep(steps, activeId, overId)),
     toggle: (id) => write(toggleStep(steps, id)),
     remove: (id) => write(removeStep(steps, id)),
