@@ -465,6 +465,46 @@ class PaperFill(LabeledStrEnum):
     WHITE = 'white', 'White'
 
 
+class PerspectiveMethod(LabeledStrEnum):
+    """How ``geometry.perspective`` finds the sheet of paper on a scan."""
+
+    PAPER_COLOUR = 'paper-colour', 'By the colour of the paper'
+    EDGES = 'edges', 'By the edges of the sheet, for paper of the colour of its background'
+
+
+class DeskewMethod(LabeledStrEnum):
+    """How ``geometry.deskew`` finds the angle a page is turned by."""
+
+    PROJECTION = 'projection', 'By the projection of the ink on the rows'
+    HOUGH = 'hough', 'By the long straight lines, such as rules and frames'
+    BASELINES = 'baselines', 'By the median slope of the baselines of the text'
+
+
+class CropMethod(LabeledStrEnum):
+    """How ``geometry.crop`` finds the frame of the content of a page.
+
+    ``LAYOUT`` is declared so that recipes and clients can name it, but no processor offers it yet: it takes the frame
+    from the regions of the Layout stage, which does not exist, so there are no regions for it to read. The day that
+    stage records them, ``geometry.crop`` offers the method and nothing declared here changes.
+    """
+
+    INK_BLOCKS = 'ink-blocks', 'By the blocks of ink'
+    LAYOUT = 'layout', 'By the regions of the Layout stage'
+
+
+class DewarpMethod(LabeledStrEnum):
+    """How ``geometry.dewarp`` finds the bend of a page.
+
+    ``DOCRES`` is declared so that recipes and clients can name it, but no processor offers it: its model needs a
+    graphics card, which the plugin of the optional group ``gpu`` brings, and that plugin does not exist yet.
+    """
+
+    TEXT_LINES = 'text-lines', 'By the curves of the lines of text'
+    PAGE_EDGES = 'page-edges', 'By the top and bottom edges of the sheet, for pages with few lines'
+    UVDOC = 'uvdoc', 'By the UVDoc neural network'
+    DOCRES = 'docres', 'By the DocRes neural network'
+
+
 class PlaceMode(LabeledStrEnum):
     """Where in the interface a reader left a book."""
 
@@ -547,6 +587,10 @@ class VersionData(LabeledStrEnum):
     FRAME = 'frame', 'Frame of the content the step found in its input, in the pixels of the full image'
     CUT_EDGES = 'cut_edges', 'Sides of the sheet that lie on the edge of the scan, where the paper was cut'
     REVIEW = 'review', 'Reason an earlier step of the recipe marked the page for a second look'
+    LINES = 'lines', 'Number of lines of text or edges of the sheet a dewarping followed'
+    BEND = 'bend', 'How far the lines of the page were bent, in pixels for each thousand of its width'
+    RESIDUAL = 'residual', 'How far the lines still deviate from straight after dewarping, in pixels per thousand'
+    MESH = 'mesh', 'The nodes of the curves a dewarping followed, in the pixels of the full image, for its editor'
 
 
 class VersionState(LabeledStrEnum):
@@ -605,6 +649,8 @@ class ReviewReason(LabeledStrEnum):
     NARROW_GUTTER = 'narrow-gutter', 'Narrow scan with a gutter in the middle'
     CUT_BY_EDGE = 'cut-by-edge', 'Text may be cut by the edge of the scan'
     TEXT_SIZE = 'size-differs', 'The text of this page differs too much in size'
+    FEW_LINES = 'few-lines', 'Too few lines of text were found to tell how the page is bent'
+    HIGH_RESIDUAL = 'high-residual', 'The lines of the page are still bent after dewarping'
 
 
 class RunOutcome(LabeledStrEnum):
@@ -840,3 +886,4 @@ class Rendition(LabeledStrEnum):
     THUMBNAIL = 'thumb.jpg', 'Thumbnail'
     TILES = 'iiif', 'IIIF tile pyramid'
     MASK = 'mask.png', 'Mask of the areas a step removed'
+    MESH = 'mesh.json', 'Grid of the mesh a dewarping followed'

@@ -60,6 +60,23 @@ const LINE_PITCH_PX = 22;
 const LINE_HEIGHT_PX = 9;
 const WORD_GAP_PX = 10;
 const SHEET_MARGIN_SHARE = 0.12;
+// How much of the square of the share of the width is added to its cube in the shift of a bent column
+const BEND_QUADRATIC_WEIGHT = 0.3;
+
+/** How a sheet differs from a flat scan of text of the usual size. */
+export interface SheetShape {
+  /**
+   * How large the text is over its usual size, which a scan taken closer to the page or at a higher resolution shows:
+   * the lines stand farther apart and the words are larger, and the scan is made larger by the same factor by the caller
+   * so that the sheet stays in proportion.
+   */
+  textScale?: number;
+  /**
+   * How far the right edge of the scene is moved down, which bends the lines and the top and the bottom edge of the
+   * sheet as a page bends into a gutter, or 0 for a flat page.
+   */
+  bendPx?: number;
+}
 
 /** Tell whether a point lies inside a convex quadrilateral whose corners go round in order. */
 function inside(corners: readonly Corner[], x: number, y: number): boolean {
@@ -85,11 +102,14 @@ function inside(corners: readonly Corner[], x: number, y: number): boolean {
  * @param width Width of the scan in pixels.
  * @param height Height of the scan in pixels.
  * @param seed A number that decides the widths of the words.
- * @param textScale How large the text is over its usual size, which a scan taken closer to the page or at a higher
- * resolution shows: the lines stand farther apart and the words are larger, and the scan is made larger by the same factor
- * by the caller so that the sheet stays in proportion.
+ * @param shape How the text is sized and the sheet is bent, each left at its usual value when absent.
  */
-export function sheetPng(width: number, height: number, seed: number, textScale = 1): Buffer {
+export function sheetPng(
+  width: number,
+  height: number,
+  seed: number,
+  { textScale = 1, bendPx = 0 }: SheetShape = {},
+): Buffer {
   const pitch = LINE_PITCH_PX * textScale;
   const lineHeight = LINE_HEIGHT_PX * textScale;
   const gap = WORD_GAP_PX * textScale;
@@ -132,14 +152,23 @@ export function sheetPng(width: number, height: number, seed: number, textScale 
     words.set(Math.round(lineTop), runs);
   }
 
+  // A bend moves each column of the scene down by a shift that grows to the right edge, as a page bends into a gutter
+  const shifts = Array.from({ length: width }, (_, x) => {
+    const share = x / width;
+    return bendPx * (share ** 3 + BEND_QUADRATIC_WEIGHT * share ** 2);
+  });
+  const lines = [...words.entries()];
+
   const rows: Buffer[] = [];
   for (let y = 0; y < height; y += 1) {
     const row = Buffer.alloc(1 + width * 3);
     row[0] = FILTER_NONE;
-    const line = [...words.entries()].find(([lineTop]) => y >= lineTop && y < lineTop + lineHeight);
     for (let x = 0; x < width; x += 1) {
+      // The row of the flat scene that this pixel shows
+      const flatY = y - (shifts[x] ?? 0);
       let color: Color = BINDING;
-      if (inside(corners, x, y)) {
+      if (inside(corners, x, flatY)) {
+        const line = lines.find(([lineTop]) => flatY >= lineTop && flatY < lineTop + lineHeight);
         const onWord = line?.[1].some(([from, to]) => x >= from && x < to) ?? false;
         color = onWord ? INK : PAPER;
       }

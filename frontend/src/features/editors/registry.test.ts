@@ -21,14 +21,14 @@ import { page, row } from '@/features/workspace/fixtures';
 /** The registry of page editors: which kinds have a component, and what each one is built to do. */
 
 describe('hasEditor', () => {
-  it.each(['line', 'rotation', 'split', 'quad', 'rect'] as const)(
+  it.each(['line', 'rotation', 'split', 'quad', 'rect', 'mesh'] as const)(
     'has a component for %s',
     (kind) => {
       expect(hasEditor(kind)).toBe(true);
     },
   );
 
-  it.each(['none', 'mesh', 'brush-mask', 'regions'] as const)('has none yet for %s', (kind) => {
+  it.each(['none', 'brush-mask', 'regions'] as const)('has none yet for %s', (kind) => {
     expect(hasEditor(kind)).toBe(false);
   });
 });
@@ -147,6 +147,41 @@ describe('editorOf', () => {
       height: 150,
     });
     expect(editorOf('quad').size(context)).toEqual({ width: 100, height: 200 });
+  });
+
+  it('lays the curves on what the dewarping reads and starts them from the curves the step found', () => {
+    const current = { page: page('p'), row: row('p') };
+    const rows = [
+      [
+        { x: 0, y: 20 },
+        { x: 100, y: 30 },
+      ],
+      [
+        { x: 0, y: 160 },
+        { x: 100, y: 190 },
+      ],
+    ];
+    const result = readResult({
+      data: { mesh: { rows }, source_width_px: 100, source_height_px: 200 },
+    });
+    const context = {
+      current,
+      items: [current],
+      scan: null,
+      stepInput: null,
+      result,
+      processorKey: 'geometry.dewarp',
+      size: sourceSize(result),
+    };
+
+    expect(editorOf('mesh').picture).toBe(Picture.Input);
+    expect(editorOf('mesh').needsResult).toBe(true);
+    expect(editorOf('mesh').alwaysOn).toBe(false);
+    expect(editorOf('mesh').runsAfterEdit(context)).toBe(true);
+    expect(editorOf('mesh').fallback(context)).toEqual({ rows });
+    expect(editorOf('mesh').fallback({ ...context, result: null })).toEqual({
+      rows: [expect.arrayContaining([{ x: 0, y: 20 }]), expect.arrayContaining([{ x: 0, y: 180 }])],
+    });
   });
 });
 

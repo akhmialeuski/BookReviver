@@ -81,6 +81,12 @@ export function ThisPageSection({
         value: labels.thisPage.pixels(result.overlapPx),
       });
     }
+    if (result.bend !== null) {
+      facts.push({ label: labels.thisPage.bend, value: labels.thisPage.bendValue(result.bend) });
+    }
+    if (result.lines !== null) {
+      facts.push({ label: labels.thisPage.lines, value: String(result.lines) });
+    }
     if (result.confidence !== null) {
       facts.push({
         label: labels.thisPage.confidence,

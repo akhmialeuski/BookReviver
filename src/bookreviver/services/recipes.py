@@ -12,15 +12,16 @@ parameters, which are stored in the form ``validate_params`` returns, defaults f
 spelling alone are equal and give the same page versions.
 """
 
+from datetime import timedelta
 from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
-from attrs import evolve, frozen
+from attrs import evolve, field, frozen
 
-from bookreviver.domain.entities import Recipe
-from bookreviver.domain.enums import Stage
+from bookreviver.domain.entities import Recipe, RecipeRule
+from bookreviver.domain.enums import DeskewMethod, DewarpMethod, RuleCondition, Stage
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
-from bookreviver.domain.ids import RecipeId
+from bookreviver.domain.ids import RecipeId, RecipeRuleId
 from bookreviver.domain.values import Step
 
 if TYPE_CHECKING:
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
@@ -37,6 +39,14 @@ ALL_STEPS_OFF: str = 'A recipe needs at least one step that is switched on.'
 WRONG_STAGE: str = 'The processor {key} belongs to the {actual} stage, not to the {expected} stage.'
 UNKNOWN_PROCESSOR: str = 'There is no processor {key}.'
 NO_RECIPE: str = 'The {stage} stage has no recipe, since no processor for it is installed.'
+# The steps of every geometry recipe a project starts with, which its variants switch and tune differently
+GEOMETRY_STEPS: tuple[str, ...] = (
+    'geometry.perspective',
+    'geometry.deskew',
+    'geometry.dewarp',
+    'geometry.crop',
+    'geometry.normalize',
+)
 
 
 @frozen(kw_only=True)
@@ -44,11 +54,19 @@ class RecipeTemplate:
     """A recipe a stage starts with.
 
     :ivar name: Name the user sees.
-    :ivar processor_keys: Keys of the processors of the steps, which run with their default parameters.
+    :ivar processor_keys: Keys of the processors of the steps, which run with their default parameters unless the
+                          template gives others.
+    :ivar params: Parameters of some of the steps, by the key of the processor, which the defaults fill out.
+    :ivar off: Keys of the processors whose steps are in the recipe but switched off.
+    :ivar condition: The pages that are sent to this recipe from the start, by a rule of the stage, or None for a recipe
+                     no rule sends pages to.
     """
 
     name: str
     processor_keys: tuple[str, ...]
+    params: Mapping[str, MetadataMap] = field(factory=dict)
+    off: frozenset[str] = frozenset()
+    condition: RuleCondition | None = None
 
 
 class DefaultRecipes:
@@ -62,8 +80,26 @@ class DefaultRecipes:
         ),
         Stage.GEOMETRY: (
             RecipeTemplate(
-                name='Automatic',
-                processor_keys=('geometry.perspective', 'geometry.deskew', 'geometry.crop', 'geometry.normalize'),
+                name='Text',
+                processor_keys=GEOMETRY_STEPS,
+                params={
+                    'geometry.deskew': {'method': DeskewMethod.PROJECTION},
+                    'geometry.dewarp': {'method': DewarpMethod.TEXT_LINES},
+                },
+            ),
+            RecipeTemplate(
+                name='Plates',
+                processor_keys=GEOMETRY_STEPS,
+                params={
+                    'geometry.deskew': {'method': DeskewMethod.HOUGH},
+                    'geometry.dewarp': {'method': DewarpMethod.PAGE_EDGES},
+                },
+                condition=RuleCondition.PLATES,
+            ),
+            RecipeTemplate(
+                name='Flat',
+                processor_keys=GEOMETRY_STEPS,
+                off=frozenset({'geometry.dewarp'}),
             ),
         ),
     }
@@ -129,26 +165,46 @@ class RecipeBook:
         preferred = await self._default_profile_recipe(project_id, stage, moment)
         if not buildable and preferred is None:
             raise NotFoundError(NO_RECIPE.format(stage=stage.label))
-        recipes = [
+        built = [
             Recipe(
                 id=RecipeId(uuid4()),
                 project_id=project_id,
                 stage=stage,
                 name=template.name,
                 steps=tuple(
-                    Step(processor_key=key, params=self._catalogue.get(key).validate_params({}))
+                    Step(
+                        processor_key=key,
+                        params=self._catalogue.get(key).validate_params(template.params.get(key, {})),
+                        enabled=key not in template.off,
+                    )
                     for key in template.processor_keys
                 ),
                 active=index == 0 and preferred is None,
-                created_at=moment,
+                # A microsecond apart and after the recipe of a default profile, so the recipes are listed in the order
+                # of their templates
+                created_at=moment + timedelta(microseconds=index + 1),
                 updated_at=moment,
             )
             for index, template in enumerate(buildable)
         ]
-        if preferred is not None:
-            recipes.insert(0, preferred)
+        recipes = built if preferred is None else [preferred, *built]
         try:
             await self._uow.recipes.add_many(recipes)
+            targeted = [
+                (recipe, template.condition)
+                for recipe, template in zip(built, buildable, strict=True)
+                if template.condition is not None
+            ]
+            for order, (recipe, condition) in enumerate(targeted):
+                rule = RecipeRule(
+                    id=RecipeRuleId(uuid4()),
+                    project_id=project_id,
+                    stage=stage,
+                    condition=condition,
+                    recipe_id=recipe.id,
+                    order=order,
+                )
+                await self._uow.recipe_rules.add(rule)
             await self._uow.commit()
         except ConflictError:
             # A request that ran at the same time stored the recipes first, and its recipes are the ones to use

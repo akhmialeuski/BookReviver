@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   dashed,
   readLine,
+  readMesh,
   readQuad,
   readRect,
   readRotation,
   readSplit,
   writeLine,
+  writeMesh,
   writeQuad,
   writeRect,
   writeRotation,
@@ -14,6 +16,40 @@ import {
 } from '@/features/editors/shapes';
 
 /** Reading the shape of a stored edit, and writing it back as the server reads it. */
+
+describe('readMesh', () => {
+  const rows = [
+    [
+      { x: 0, y: 100 },
+      { x: 500, y: 120 },
+      { x: 1000, y: 160 },
+    ],
+    [
+      { x: 0, y: 900 },
+      { x: 500, y: 930 },
+      { x: 1000, y: 980 },
+    ],
+  ];
+
+  it('reads the rows of nodes of a stored mesh', () => {
+    expect(readMesh({ rows })).toEqual({ rows });
+  });
+
+  it.each([
+    ['no geometry', null],
+    ['a frame', { left: 0, top: 0, width: 1, height: 1 }],
+    ['a single row', { rows: [rows[0]] }],
+    ['rows of different lengths', { rows: [rows[0], rows[1]?.slice(1)] }],
+    ['a node that lacks a coordinate', { rows: [[{ x: 1 }, { x: 2, y: 3 }], rows[1]] }],
+    ['a row that is no list', { rows: [rows[0], 'row'] }],
+  ])('refuses %s', (_name, geometry) => {
+    expect(readMesh(geometry)).toBeNull();
+  });
+
+  it('is undone by writeMesh', () => {
+    expect(readMesh(writeMesh({ rows }))).toEqual({ rows });
+  });
+});
 
 describe('readLine', () => {
   it('reads the two points of a stored line', () => {

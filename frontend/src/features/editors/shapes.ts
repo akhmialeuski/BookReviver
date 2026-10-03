@@ -57,6 +57,14 @@ export interface RectShape {
   height: number;
 }
 
+/**
+ * The curves a page is dewarped along: rows of nodes from the top of the page, each row the nodes of one curve from the
+ * left. Two rows are the top curve and the bottom curve, and more are the full grid.
+ */
+export interface MeshShape {
+  rows: Point[][];
+}
+
 /** The shape of each editor that has a component, by the name of its kind. */
 export interface EditorShapes {
   line: LineShape;
@@ -64,6 +72,7 @@ export interface EditorShapes {
   split: SplitShape;
   quad: QuadShape;
   rect: RectShape;
+  mesh: MeshShape;
 }
 
 /** The kinds of editor that have a component. */
@@ -177,6 +186,40 @@ export function readRect(geometry: Geometry | null): RectShape | null {
 /** Write a frame the way the server reads it. */
 export function writeRect(rect: RectShape): Geometry {
   return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+}
+
+/** The fewest rows a mesh has, the top curve and the bottom curve, and the fewest nodes of a row. */
+const MESH_MIN_NODES = 2;
+
+/**
+ * Read a mesh from the geometry of an edit.
+ *
+ * @param geometry The geometry of the stored edit.
+ * @returns The mesh, or null when the geometry is not a grid of at least two rows of the same number of at least two
+ * nodes.
+ */
+export function readMesh(geometry: Geometry | null): MeshShape | null {
+  const stored = geometry?.rows;
+  if (!Array.isArray(stored) || stored.length < MESH_MIN_NODES) {
+    return null;
+  }
+  const rows: Point[][] = [];
+  for (const storedRow of stored) {
+    if (!Array.isArray(storedRow) || storedRow.length < MESH_MIN_NODES) {
+      return null;
+    }
+    const row = storedRow.map(pointOf);
+    if (row.some((node) => node === null) || row.length !== (rows[0]?.length ?? row.length)) {
+      return null;
+    }
+    rows.push(row as Point[]);
+  }
+  return { rows };
+}
+
+/** Write a mesh the way the server reads it. */
+export function writeMesh(mesh: MeshShape): Geometry {
+  return { rows: mesh.rows.map((row) => row.map((node) => ({ x: node.x, y: node.y }))) };
 }
 
 /** Write the name of a shape's part in the words of an attribute: `topLeft` as `top-left`. */

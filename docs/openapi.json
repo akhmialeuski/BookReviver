@@ -10590,7 +10590,9 @@
           "unsure-gutter",
           "narrow-gutter",
           "cut-by-edge",
-          "size-differs"
+          "size-differs",
+          "few-lines",
+          "high-residual"
         ],
         "title": "ReviewReason",
         "description": "Why a processed page is marked for a second look, though its step finished without an error."

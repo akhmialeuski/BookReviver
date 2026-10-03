@@ -4,9 +4,10 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
+from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import Actor
-from bookreviver.domain.enums import Stage
+from bookreviver.domain.enums import RuleCondition, Stage
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.values import SliceRequest, Step
 from tests.helpers.builders import make_project, make_recipe_profile, new_account_id
@@ -24,6 +25,8 @@ STRENGTH: str = 'strength'
 PROFILE_NAME: str = 'Photographed book'
 OTHER_NAME: str = 'Clean flatbed scan'
 BUILT_IN_NAME: str = 'Fake'
+DESKEW_KEY: str = 'geometry.deskew'
+PLATES_NAME: str = 'Plates'
 EVERYTHING: SliceRequest = SliceRequest(limit=100)
 # Two steps of one processor that tell their place by their strength, the first of them switched off
 REORDERED: tuple[Step, ...] = (
@@ -320,6 +323,31 @@ class TestDefaultProfileOfANewBook:
             (PROFILE_NAME, True),
             (BUILT_IN_NAME, False),
         ]
+
+    async def test_the_rule_of_a_built_in_variant_still_targets_it_after_a_default_profile(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify the built-in variants follow the default profile in their order, and the plates rule still names Plates.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, _ = await fx_cv_kit.seed_project()
+        profile = await fx_cv_kit.profiles().save(
+            actor, Stage.GEOMETRY, PROFILE_NAME, [Step(processor_key=DESKEW_KEY)]
+        )
+        await fx_cv_kit.profiles().set_default(actor, profile.id, is_default=True)
+        fresh = await second_project(fx_cv_kit, actor)
+        await fx_cv_kit.service().recipe(actor, fresh.id, Stage.GEOMETRY)
+        listed = await fx_cv_kit.service().variants(actor, fresh.id, Stage.GEOMETRY, EVERYTHING)
+        rules = await fx_cv_kit.rules().rules(actor, fresh.id, Stage.GEOMETRY, EVERYTHING)
+        plates = next(recipe for recipe in listed.items if recipe.name == PLATES_NAME)
+        expect(
+            [(recipe.name, recipe.active) for recipe in listed.items]
+            == [(PROFILE_NAME, True), ('Text', False), (PLATES_NAME, False), ('Flat', False)]
+        )
+        expect([(rule.condition, rule.recipe_id) for rule in rules.items] == [(RuleCondition.PLATES, plates.id)])
+        assert_expectations()
 
     async def test_without_a_default_the_built_in_recipe_is_used(self, fx_kit: ProcessingKit) -> None:
         """Verify a profile that is not the default changes nothing for a new book.

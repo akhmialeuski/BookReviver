@@ -24,8 +24,9 @@ import anyio
 from asyncer import asyncify
 from attrs import evolve, frozen
 
-from bookreviver.domain.enums import Rendition, VersionScale, VersionState
+from bookreviver.domain.enums import Rendition, TransformKind, VersionScale, VersionState
 from bookreviver.domain.errors import ConflictError
+from bookreviver.domain.geometry import Transform
 from bookreviver.domain.values import Renditions
 from bookreviver.ports.processing import StepInput
 
@@ -172,9 +173,15 @@ class StepRunner:
                 renditions = Renditions(ready=True, full=info.full)
             if output.mask is not None:
                 await asyncify(shutil.copyfile)(output.mask, target / Rendition.MASK)
+            if output.mesh is not None:
+                await asyncify(shutil.copyfile)(output.mesh, target / Rendition.MESH)
+        transform = output.transform
+        if output.mesh is not None:
+            # The step cannot know where its mesh is stored, so the transform that names the file is made here
+            transform = Transform(kind=TransformKind.MESH, mesh_key=keys.version_rendition(version, Rendition.MESH))
         stored = evolve(
             version,
-            transform=output.transform,
+            transform=transform,
             data=dict(output.data),
             review=output.review,
             renditions=renditions,

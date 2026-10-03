@@ -478,6 +478,8 @@ export const MESSAGES = {
       'narrow-gutter': 'Check: narrow scan with a gutter in the middle',
       'cut-by-edge': 'Check: text may be cut by the edge of the scan',
       'size-differs': 'Check: the text of this page differs too much in size',
+      'few-lines': 'Check: too few lines of text to tell how the page is bent',
+      'high-residual': 'Check: the lines are still bent after dewarping',
     } satisfies Record<ReviewReason, string>,
   },
   viewer: {
@@ -1166,6 +1168,9 @@ export const MESSAGES = {
       pages: 'Split into',
       pagesValue: (count: number) => (count === 1 ? 'One page' : 'Two pages'),
       overlap: 'Overlap',
+      bend: 'Bend of the lines',
+      bendValue: (perThousand: number) => `${perThousand.toFixed(1)} px per 1000 px of width`,
+      lines: 'Lines followed',
       degrees: (value: number) => `${value.toFixed(1)}°`,
       pixels: (value: number) => `${Math.round(value)} px`,
       sure: (value: number) => `${value.toFixed(2)} · sure`,
@@ -1182,6 +1187,10 @@ export const MESSAGES = {
           'The frame of the text comes to a side where the scanner cut the paper, so the margin on that side is not known and the text may be cut.',
         'size-differs':
           'The text of this page differs too much in size from the text of the book, so it was left at its own size.',
+        'few-lines':
+          'Too few lines of text were found to tell how this page is bent, so it was left as it was.',
+        'high-residual':
+          'The lines of this page are still bent after dewarping, so the result may be off.',
       },
       reviewHint: 'Set it by hand in the page editor, or change the settings and preview again.',
       how: 'Method',
@@ -1236,6 +1245,8 @@ export const MESSAGES = {
       narrowGutter: 'Narrow scan with a gutter in the middle',
       cutByEdge: 'Text may be cut by the edge of the scan',
       sizeDiffers: 'The text of this page differs too much in size',
+      fewLines: 'Too few lines to tell how the page is bent',
+      highResidual: 'Lines still bent after dewarping',
     },
     split: {
       banner: (wide: number, split: number, toCut: number) => {
@@ -1311,6 +1322,14 @@ export const MESSAGES = {
         hint: 'Drag the blue frame to where the block of text stands on the page, and its handles to change how large it is, or nudge it with the arrow keys. This page is placed again at once, and Auto goes back to the settings of the step.',
       },
     },
+    mesh: {
+      name: 'Curves of the lines',
+      node: (curve: number, node: number) => `Node ${node} of the curve ${curve}`,
+      valueText: (curves: number, nodes: number) => `${curves} curves of ${nodes} nodes each`,
+      hint: 'Lay the top curve on the first line of text and the bottom curve on the last, by dragging their nodes, or nudge the node you grabbed last with the arrow keys. The page is flattened between the curves again at once.',
+      moreControl: 'More control',
+      fewerControls: 'Fewer controls',
+    },
     steps: {
       title: 'Steps of this stage',
       kinds: {
@@ -1319,6 +1338,7 @@ export const MESSAGES = {
         split: 'Pages',
         quad: 'Sheet corners',
         rect: 'Content frame',
+        mesh: 'Page curves',
       },
       placement: 'Block on the page',
       auto: 'auto',

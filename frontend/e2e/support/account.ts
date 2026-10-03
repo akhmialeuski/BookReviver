@@ -161,8 +161,27 @@ export async function writeScaledSheetsFolder(scales: readonly number[]): Promis
         Math.round(SHEET_SCAN_SIZE.width * scale),
         Math.round(SHEET_SCAN_SIZE.height * scale),
         (index + 1) * 7919,
-        scale,
+        { textScale: scale },
       ),
+    );
+  }
+  return root;
+}
+
+/**
+ * Write a folder of scans of a sheet of paper whose lines are bent into the gutter, as a page of a thick book is, and
+ * return its path.
+ *
+ * @param count Number of scans.
+ * @param bendPx How far the right edge of the scene is moved down.
+ */
+export async function writeBentSheetsFolder(count: number, bendPx: number): Promise<string> {
+  const root = path.join(await mkdtemp(path.join(tmpdir(), 'bookreviver-')), 'bent');
+  await mkdir(root, { recursive: true });
+  for (let number = 1; number <= count; number += 1) {
+    await writeFile(
+      path.join(root, `bent-${String(number).padStart(2, '0')}.png`),
+      sheetPng(SHEET_SCAN_SIZE.width, SHEET_SCAN_SIZE.height, number * 7919, { bendPx }),
     );
   }
   return root;

@@ -6,7 +6,7 @@ import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import Actor
-from bookreviver.domain.enums import JobKind, JobState, Stage, StageState
+from bookreviver.domain.enums import JobKind, JobState, RuleCondition, Stage, StageState
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.ids import PageId, RecipeId
@@ -22,7 +22,13 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 FAKE_KEY: str = FakeProcessor.spec.key
-GEOMETRY_STEPS: tuple[str, ...] = ('geometry.perspective', 'geometry.deskew', 'geometry.crop', 'geometry.normalize')
+GEOMETRY_STEPS: tuple[str, ...] = (
+    'geometry.perspective',
+    'geometry.deskew',
+    'geometry.dewarp',
+    'geometry.crop',
+    'geometry.normalize',
+)
 EVERYTHING: SliceRequest = SliceRequest(limit=100)
 
 
@@ -44,19 +50,66 @@ class TestRecipe:
         )
         assert_expectations()
 
-    async def test_default_geometry_recipe_finds_the_sheet_levels_the_lines_cuts_the_frame_and_normalizes(
+    async def test_default_geometry_recipe_finds_the_sheet_levels_flattens_cuts_the_frame_and_normalizes(
         self, fx_cv_kit: ProcessingKit
     ) -> None:
-        """Verify a new book is straightened in four steps, the sheet first and the page of the book last.
+        """Verify a new book is straightened in five steps, the sheet first and the page of the book last.
+
+        The active recipe is Text, which turns the page by the projection of its ink and flattens it by the curves of
+        its lines of text.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
         actor, project = await fx_cv_kit.seed_project()
         recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        methods = {step.processor_key: step.params.get('method') for step in recipe.steps}
         expect(recipe.active)
+        expect(recipe.name == 'Text')
         expect([step.processor_key for step in recipe.steps] == list(GEOMETRY_STEPS))
         expect(all(step.enabled for step in recipe.steps))
+        expect(methods['geometry.deskew'] == 'projection')
+        expect(methods['geometry.dewarp'] == 'text-lines')
+        assert_expectations()
+
+    async def test_default_geometry_recipes_are_text_plates_and_flat(self, fx_cv_kit: ProcessingKit) -> None:
+        """Verify the variants a book starts with: Plates by Hough lines and the edges of the sheet, Flat with no dewarping.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        listed = await fx_cv_kit.service().variants(actor, project.id, Stage.GEOMETRY, EVERYTHING)
+        by_name = {recipe.name: recipe for recipe in listed.items}
+        plates = {step.processor_key: step for step in by_name['Plates'].steps}
+        flat = {step.processor_key: step for step in by_name['Flat'].steps}
+        expect(sorted(by_name) == ['Flat', 'Plates', 'Text'])
+        expect(
+            [recipe.active for recipe in (by_name['Text'], by_name['Plates'], by_name['Flat'])] == [True, False, False]
+        )
+        expect(plates['geometry.deskew'].params['method'] == 'hough')
+        expect(plates['geometry.dewarp'].params['method'] == 'page-edges')
+        expect(plates['geometry.dewarp'].enabled)
+        expect(flat['geometry.dewarp'].enabled is False)
+        expect(all(step.enabled for key, step in flat.items() if key != 'geometry.dewarp'))
+        assert_expectations()
+
+    async def test_the_plates_of_a_book_go_to_the_recipe_plates(self, fx_cv_kit: ProcessingKit) -> None:
+        """Verify a rule sends the plates and the frontispieces of a new book to Plates, the only rule it starts with.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        listed = await fx_cv_kit.service().variants(actor, project.id, Stage.GEOMETRY, EVERYTHING)
+        plates = next(recipe for recipe in listed.items if recipe.name == 'Plates')
+        rules = await fx_cv_kit.rules().rules(actor, project.id, Stage.GEOMETRY, EVERYTHING)
+        expect(
+            [(rule.condition, rule.recipe_id, rule.order) for rule in rules.items]
+            == [(RuleCondition.PLATES, plates.id, 0)]
+        )
         assert_expectations()
 
     async def test_asking_again_returns_the_recipe_that_was_created(self, fx_kit: ProcessingKit) -> None:

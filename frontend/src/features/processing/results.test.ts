@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { DESKEW_PARAMETERS, version } from '@/features/processing/fixtures';
+import {
+  DESKEW_METHODS_PARAMETERS,
+  DESKEW_PARAMETERS,
+  version,
+} from '@/features/processing/fixtures';
 import {
   describeParams,
   historyOf,
@@ -59,9 +63,30 @@ describe('readResult', () => {
       slantDeg: null,
       quad: null,
       frame: null,
+      mesh: null,
+      bend: null,
+      lines: null,
       sourceWidthPx: null,
       sourceHeightPx: null,
     });
+  });
+
+  it('reads the curves a dewarping followed, how bent the lines were and how many there were', () => {
+    const rows = [
+      [
+        { x: 0, y: 10 },
+        { x: 50, y: 14 },
+      ],
+      [
+        { x: 0, y: 90 },
+        { x: 50, y: 97 },
+      ],
+    ];
+    const result = readResult({ data: { mesh: { rows }, bend: 12.5, lines: 24 } });
+
+    expect(result.mesh).toEqual({ rows });
+    expect(result.bend).toBe(12.5);
+    expect(result.lines).toBe(24);
   });
 
   it('reads the sheet and the frame a step found, and the size of the image it read', () => {
@@ -182,5 +207,24 @@ describe('describeParams', () => {
     const parts = describeParams({ extra: 1, max_angle: 5 }, DESKEW_PARAMETERS);
 
     expect(parts.map((part) => part.label)).toEqual(['Largest slant', 'Extra']);
+  });
+
+  it('describes the parameters of a processor with methods by the method they name', () => {
+    const parts = describeParams(
+      { min_line_share: 0.3, method: 'hough', max_angle: 5 },
+      DESKEW_METHODS_PARAMETERS,
+    );
+
+    expect(parts).toEqual([
+      { label: 'Largest slant', value: '5' },
+      { label: 'Method', value: 'Long straight lines' },
+      { label: 'Shortest line', value: '0.3' },
+    ]);
+  });
+
+  it('describes parameters that name no method as the first one', () => {
+    const parts = describeParams({ max_angle: 5 }, DESKEW_METHODS_PARAMETERS);
+
+    expect(parts).toEqual([{ label: 'Largest slant', value: '5' }]);
   });
 });

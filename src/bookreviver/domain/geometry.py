@@ -27,6 +27,10 @@ if TYPE_CHECKING:
 MATRIX_SIZE: int = 9
 # A determinant this close to zero has no inverse worth using
 SINGULAR_LIMIT: float = 1e-12
+# The fewest rows a mesh has, the top curve and the bottom curve, and the fewest nodes of a row
+MESH_MIN_NODES: int = 2
+# The key of the rows of a mesh in its JSON data
+MESH_ROWS_KEY: str = 'rows'
 
 
 @frozen(kw_only=True)
@@ -167,6 +171,69 @@ class Quad:
         return cls(**{corner: Point(**data[corner]) for corner in cls.CORNERS})
 
 
+def _check_rows(_instance: object, _attribute: object, rows: tuple[tuple[Point, ...], ...]) -> None:
+    """Check that the rows of a mesh make a grid: at least two rows of the same number of at least two nodes.
+
+    :param _instance: The mesh being built.
+    :type _instance: object
+    :param _attribute: The attribute being checked.
+    :type _attribute: object
+    :param rows: The rows of the mesh.
+    :type rows: tuple[tuple[Point, ...], ...]
+    :raises ValueError: If the rows do not make a grid.
+    """
+    if len(rows) < MESH_MIN_NODES or any(len(row) != len(rows[0]) or len(row) < MESH_MIN_NODES for row in rows):
+        err_msg = f'A mesh has at least {MESH_MIN_NODES} rows of the same number of at least {MESH_MIN_NODES} nodes.'
+        raise ValueError(err_msg)
+
+
+@frozen(kw_only=True)
+class Mesh:
+    """The curves a page is dewarped along: a grid of nodes, each row of which lies on a line to be made straight.
+
+    A row is a curve through its nodes from left to right, such as the first line of text of a page that is bent at the
+    gutter. The step that reads the mesh makes every row a horizontal line at the height the row has at the middle of
+    the page, and moves what lies between the rows along. Two rows, the top curve and the bottom curve, are the simple
+    form of the editor, and more rows are the full grid.
+
+    :ivar rows: The rows from the top of the page, each the nodes from the left, in the pixels of the image the step
+                reads.
+    """
+
+    editor: ClassVar[EditorKind] = EditorKind.MESH
+
+    rows: tuple[tuple[Point, ...], ...] = field(validator=_check_rows)
+
+    def scaled(self, factor: float) -> Self:
+        """Return the mesh in the pixels of an image resized by a factor.
+
+        :param factor: Size of the new image over the size of the old one.
+        :type factor: float
+        :returns: The mesh with every coordinate multiplied by the factor.
+        :rtype: Self
+        """
+        return type(self)(rows=tuple(tuple(Point(x=p.x * factor, y=p.y * factor) for p in row) for row in self.rows))
+
+    def to_data(self) -> dict[str, list[list[dict[str, float]]]]:
+        """Return the mesh as JSON data.
+
+        :returns: The rows, each a list of the data of its nodes.
+        :rtype: dict[str, list[list[dict[str, float]]]]
+        """
+        return {MESH_ROWS_KEY: [[node.to_data() for node in row] for row in self.rows]}
+
+    @classmethod
+    def from_data(cls, data: Mapping[str, Sequence[Sequence[Mapping[str, float]]]]) -> Self:
+        """Build a mesh from the JSON data ``to_data`` wrote.
+
+        :param data: The rows, each a list of the data of its nodes.
+        :type data: Mapping[str, Sequence[Sequence[Mapping[str, float]]]]
+        :returns: The mesh.
+        :rtype: Self
+        """
+        return cls(rows=tuple(tuple(Point(**node) for node in row) for row in data[MESH_ROWS_KEY]))
+
+
 @frozen(kw_only=True)
 class Line:
     """A straight line through two points, such as the cut that splits a spread into two pages.
@@ -279,15 +346,16 @@ class SplitChoice:
         return cls(pages=data[cls.PAGES_KEY], line=None if line is None else Line.from_data(line))
 
 
-type EditGeometry = Rect | Quad | Line | Rotation | SplitChoice
+type EditGeometry = Rect | Quad | Line | Rotation | SplitChoice | Mesh
 
 # The shape each editor draws, which a stored edit is rebuilt by
-EDIT_SHAPES: Mapping[EditorKind, type[Rect | Quad | Line | Rotation | SplitChoice]] = {
+EDIT_SHAPES: Mapping[EditorKind, type[Rect | Quad | Line | Rotation | SplitChoice | Mesh]] = {
     EditorKind.RECT: Rect,
     EditorKind.QUAD: Quad,
     EditorKind.LINE: Line,
     EditorKind.ROTATION: Rotation,
     EditorKind.SPLIT: SplitChoice,
+    EditorKind.MESH: Mesh,
 }
 
 

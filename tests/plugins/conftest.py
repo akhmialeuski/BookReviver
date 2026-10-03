@@ -84,6 +84,18 @@ def fx_perspective() -> Processor:
 
 
 @pytest.fixture
+def fx_dewarp() -> Processor:
+    """Build the dewarping processor, or skip the test where OpenCV is not installed.
+
+    :returns: The processor ``geometry.dewarp``, which is not given a models directory.
+    :rtype: Processor
+    """
+    processor = pytest.importorskip('bookreviver.plugins.dewarp', reason=CV_MISSING).Dewarp()
+    assert isinstance(processor, Processor)
+    return processor
+
+
+@pytest.fixture
 def fx_crop() -> Processor:
     """Build the crop processor, or skip the test where OpenCV is not installed.
 

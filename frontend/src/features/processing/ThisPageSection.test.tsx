@@ -128,6 +128,14 @@ describe('ThisPageSection', () => {
     expect(text('this-page-facts')).toContain('Slant of the cut-2.3°');
   });
 
+  it('writes how bent the lines of the page were and how many of them the dewarping followed', async () => {
+    const dewarped = version('dewarped', { data: { bend: 12.34, lines: 24, confidence: 0.97 } });
+    await render({ page: page('page'), row: row('page', { version: dewarped }) });
+
+    expect(text('this-page-facts')).toContain('Bend of the lines12.3 px per 1000 px of width');
+    expect(text('this-page-facts')).toContain('Lines followed24');
+  });
+
   it('says why a spread was cut along a gutter that was not found for certain', async () => {
     const unsure = version('unsure', {
       data: { pages: 2, confidence: 0.04 },

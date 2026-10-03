@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw
 from bookreviver.domain.enums import (
     Binarization,
     ColorMode,
+    CropMethod,
     EditorKind,
     ProcessorScope,
     ReviewReason,
@@ -38,6 +39,7 @@ CLEAN_PAGE: Path = Path(__file__).parent / 'data' / 'book_clean_page.jpg'
 PAGE_NAME: str = 'page.png'
 HALF_NAME: str = 'half.png'
 KEY_PATTERN: str = r'geometry\.crop'
+METHOD: str = 'method'
 MARGIN: str = 'margin_percent'
 BINARIZATION: str = 'binarization'
 SPECK: str = 'noise_min_area'
@@ -477,7 +479,29 @@ class TestCrop:
         :type fx_crop: Processor
         """
         spec = fx_crop.spec
-        expect(fx_crop.validate_params({}) == {MARGIN: 0.0, BINARIZATION: Binarization.OTSU.value, SPECK: 4})
+        expect(
+            fx_crop.validate_params({})
+            == {METHOD: CropMethod.INK_BLOCKS, MARGIN: 0.0, BINARIZATION: Binarization.OTSU.value, SPECK: 4}
+        )
         expect((spec.key, spec.stage, spec.scope) == ('geometry.crop', Stage.GEOMETRY, ProcessorScope.PAGE))
         expect(spec.editor is EditorKind.RECT)
         assert_expectations()
+
+    def test_parameters_stored_before_the_methods_existed_keep_the_blocks_of_ink(self, fx_crop: Processor) -> None:
+        """Verify parameters that name no method are read as the blocks of ink, so an old recipe behaves as it did.
+
+        :param fx_crop: The processor under test.
+        :type fx_crop: Processor
+        """
+        checked = fx_crop.validate_params({MARGIN: 3.0})
+        assert checked[METHOD] == CropMethod.INK_BLOCKS
+
+    def test_the_method_layout_is_declared_and_not_offered(self, fx_crop: Processor) -> None:
+        """Verify the method that reads the regions of the Layout stage is refused while no such stage exists.
+
+        :param fx_crop: The processor under test.
+        :type fx_crop: Processor
+        """
+        assert CropMethod.LAYOUT in set(CropMethod)
+        with pytest.raises(InvalidParametersError, match=KEY_PATTERN):
+            fx_crop.validate_params({METHOD: CropMethod.LAYOUT})

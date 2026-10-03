@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.enums import WorkerPool
     from bookreviver.domain.values import ProcessorSpec
+    from bookreviver.ports.processing import ProcessorSettings
 
 # The entry point group the processors are registered in
 PROCESSOR_GROUP: str = 'bookreviver.processors'
@@ -35,13 +36,21 @@ logger = logging.getLogger(__name__)
 class EntryPointCatalog(ProcessorCatalog):
     """The processors registered as entry points, loaded once when the catalogue is built."""
 
-    def __init__(self, *, pools: Collection[WorkerPool], registered: Collection[EntryPoint] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        pools: Collection[WorkerPool],
+        registered: Collection[EntryPoint] | None = None,
+        settings: ProcessorSettings | None = None,
+    ) -> None:
         """Load the processors of the given pools.
 
         :param pools: Pools of workers this process serves; the processors of other pools are left out.
         :type pools: Collection[WorkerPool]
         :param registered: The entry points to load, or None for those of the group ``bookreviver.processors``.
         :type registered: Collection[EntryPoint] | None
+        :param settings: What every loaded processor is told about the machine, or None to tell it nothing.
+        :type settings: ProcessorSettings | None
         :raises ValueError: If a processor is registered under a name that is not its key.
         :raises TypeError: If an entry point registers something that is not a processor.
         """
@@ -64,6 +73,8 @@ class EntryPointCatalog(ProcessorCatalog):
                 err_msg = f'The entry point {entry_point.name} registers the processor {processor.spec.key}.'
                 raise ValueError(err_msg)
             if processor.spec.pool in pools:
+                if settings is not None:
+                    processor.configure(settings)
                 self._processors[entry_point.name] = processor
 
     @override

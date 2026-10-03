@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { DESKEW_PARAMETERS, SPREAD_PARAMETERS } from '@/features/processing/fixtures';
+import {
+  DESKEW_METHODS_PARAMETERS,
+  DESKEW_PARAMETERS,
+  SPREAD_PARAMETERS,
+} from '@/features/processing/fixtures';
 import {
   BOUNDED_NUMBER_WIDGET,
   defaultsOf,
   fitsSchema,
   formSchemaOf,
+  hasSettings,
+  methodsOf,
   sliderSpecOf,
   snapToSlider,
   uiSchemaOf,
@@ -136,5 +142,59 @@ describe('fitsSchema', () => {
 
   it('refuses a value of the wrong type', () => {
     expect(fitsSchema(schema, { max_angle: 'wide', min_confidence: 0.3 })).toBe(false);
+  });
+});
+
+describe('methods of a processor', () => {
+  const schema = formSchemaOf(DESKEW_METHODS_PARAMETERS);
+
+  it('lists the schema of each method, resolved from the definitions', () => {
+    expect(methodsOf(schema).map((method) => method.title)).toEqual([
+      'Projection of the ink',
+      'Long straight lines',
+      'Baselines of the text',
+    ]);
+  });
+
+  it('lists none for a processor with a single method', () => {
+    expect(methodsOf(formSchemaOf(DESKEW_PARAMETERS))).toEqual([]);
+  });
+
+  it('has settings to draw in the methods though it has no field of its own', () => {
+    expect(schema.properties).toBeUndefined();
+    expect(hasSettings(schema)).toBe(true);
+    expect(hasSettings({ type: 'object' })).toBe(false);
+  });
+
+  it('draws the fields of each method by its own widgets, with no heading and no field for the method', () => {
+    const ui = uiSchemaOf(schema);
+
+    expect(ui.oneOf).toHaveLength(3);
+    expect(ui.oneOf?.[0]).toEqual({
+      max_angle: { 'ui:widget': BOUNDED_NUMBER_WIDGET },
+      min_confidence: { 'ui:widget': BOUNDED_NUMBER_WIDGET },
+      method: { 'ui:widget': 'hidden' },
+      'ui:options': { label: false },
+    });
+    expect(ui.oneOf?.[1]?.min_line_share).toEqual({ 'ui:widget': BOUNDED_NUMBER_WIDGET });
+  });
+
+  it('starts a new step with the first method and its defaults', () => {
+    expect(defaultsOf(schema)).toEqual({
+      max_angle: 5,
+      min_confidence: 0.3,
+      method: 'projection',
+    });
+  });
+
+  it('checks the values against the schema of the method they name', () => {
+    expect(fitsSchema(schema, { method: 'hough', min_line_share: 0.5 })).toBe(true);
+    expect(fitsSchema(schema, { method: 'hough', min_line_share: 2 })).toBe(false);
+    expect(fitsSchema(schema, { method: 'baselines', min_line_share: 0.5 })).toBe(false);
+  });
+
+  it('checks values that name no method as the first one, which is how the server reads them', () => {
+    expect(fitsSchema(schema, { max_angle: 5, min_confidence: 0.3 })).toBe(true);
+    expect(fitsSchema(schema, { max_angle: 50, min_confidence: 0.3 })).toBe(false);
   });
 });

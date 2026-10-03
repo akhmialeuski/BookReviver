@@ -37,7 +37,7 @@ from bookreviver.domain.enums import (
     StageState,
     VersionScale,
 )
-from bookreviver.domain.geometry import Line, SplitChoice
+from bookreviver.domain.geometry import Line, Mesh, SplitChoice
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import Renditions, StageRun
 from tests.helpers.builders import make_page, make_project, make_scan, make_source, new_account_id
@@ -596,6 +596,31 @@ class TestEditForm:
         expect(plain.geometry == SplitChoice(pages=SplitChoice.TWO_PAGES))
         expect(isinstance(drawn.geometry, SplitChoice) and drawn.geometry.line == Line.from_data(line))
         assert_expectations()
+
+    def test_the_curves_of_the_mesh_editor_are_read_into_a_mesh(self) -> None:
+        """Verify the form of the mesh editor gives a mesh of the rows of nodes it was sent."""
+        rows = [[{'x': 0.0, 'y': 100.0}, {'x': 900.0, 'y': 140.0}], [{'x': 0.0, 'y': 800.0}, {'x': 900.0, 'y': 850.0}]]
+        edit = EditForm.model_validate({'kind': EditorKind.MESH, 'geometry': json.dumps({'rows': rows})}).to_edit()
+        assert edit.geometry == Mesh.from_data({'rows': rows})
+
+    @pytest.mark.parametrize(
+        'geometry',
+        [
+            '{"rows": []}',
+            '{"rows": [[{"x": 0, "y": 1}, {"x": 1, "y": 1}]]}',
+            '{"pages": 2}',
+            '{"rows": [[1, 2], [3, 4]]}',
+        ],
+        ids=['no-rows', 'one-row', 'a-split-choice', 'nodes-that-are-no-points'],
+    )
+    def test_curves_that_do_not_fit_are_refused(self, geometry: str) -> None:
+        """Reject no rows, a single row, the shape of another editor, and nodes that are not points.
+
+        :param geometry: The shape under test, as the form sends it.
+        :type geometry: str
+        """
+        with pytest.raises(ValidationError):
+            EditForm.model_validate({'kind': EditorKind.MESH, 'geometry': geometry})
 
     @pytest.mark.parametrize('geometry', ['{"pages": 3}', '{"line": null}', '{"pages": 1, "line": {"start": 1}}'])
     def test_a_choice_that_does_not_fit_is_refused(self, geometry: str) -> None:

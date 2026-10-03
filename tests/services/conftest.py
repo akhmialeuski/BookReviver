@@ -154,18 +154,19 @@ def fx_cv_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
 
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
-    :returns: The kit whose catalogue has ``split.none``, ``split.spread``, ``split.auto`` and the four geometry
-              processors, which the default recipe of the Geometry stage needs.
+    :returns: The kit whose catalogue has ``split.none``, ``split.spread``, ``split.auto`` and the five geometry
+              processors, which the default recipes of the Geometry stage need.
     :rtype: ProcessingKit
     """
     split = pytest.importorskip('bookreviver.plugins.split_spread', reason=CV_MISSING).SplitSpread()
     auto = pytest.importorskip('bookreviver.plugins.split_auto', reason=CV_MISSING).SplitAuto()
     perspective = pytest.importorskip('bookreviver.plugins.perspective', reason=CV_MISSING).Perspective()
     deskew = pytest.importorskip('bookreviver.plugins.deskew', reason=CV_MISSING).Deskew()
+    dewarp = pytest.importorskip('bookreviver.plugins.dewarp', reason=CV_MISSING).Dewarp()
     crop = pytest.importorskip('bookreviver.plugins.crop', reason=CV_MISSING).Crop()
     normalize = pytest.importorskip('bookreviver.plugins.normalize', reason=CV_MISSING).Normalize()
     return ProcessingKit(
         fx_asset_store,
-        processors=[SplitNone(), split, auto, perspective, deskew, crop, normalize],
+        processors=[SplitNone(), split, auto, perspective, deskew, dewarp, crop, normalize],
         defaults=CV_DEFAULTS,
     )

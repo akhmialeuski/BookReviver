@@ -13,10 +13,10 @@ import {
 import { dragFrom, numbersOf, pairOf } from './support/layer';
 
 /**
- * The Geometry stage on scans of a sheet of paper laid on a dark binding: the first three steps of the default recipe find
- * the sheet, level the lines and cut the page to the frame of its words, the fourth puts the block on a page of the book
- * (its editor is tested in `normalize.spec.ts`), and the reader corrects each of the first three on the
- * canvas of one page.
+ * The Geometry stage on scans of a sheet of paper laid on a dark binding: the steps of the default recipe find the sheet,
+ * level the lines, flatten them, cut the page to the frame of its words and put the block on a page of the book, and the
+ * reader corrects the sheet, the angle and the frame on the canvas of one page. The curves of the flattening have a
+ * scenario of their own in `dewarp.spec.ts`, and the block on the page in `normalize.spec.ts`.
  *
  * Each correction is saved when a handle is let go, the stage runs again on that page, and the panel names the step as set
  * by hand. The three corrections survive a run of the stage on all pages, and "Auto" takes them away one by one.
@@ -25,8 +25,8 @@ import { dragFrom, numbersOf, pairOf } from './support/layer';
 const SCENARIO_TIMEOUT_MS = 240_000;
 const RUN_TIMEOUT_MS = 90_000;
 const PAGES = 2;
-// The steps of the default recipe: the sheet, the angle, the frame and the block on the page
-const STEPS = 4;
+// The steps of the default recipe: the sheet, the angle, the curves, the frame and the block on the page
+const STEPS = 5;
 const SHEET_DRAG = { x: 24, y: 18 };
 const FRAME_DRAG_PX = 30;
 const ANGLE_DEG = '1.5';
