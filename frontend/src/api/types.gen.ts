@@ -2894,7 +2894,7 @@ export type StepSchema = {
  *
  * Kind of the coordinate transform a processing step applies from its input to its output.
  */
-export type TransformKind = 'identity' | 'crop' | 'rotate' | 'perspective' | 'mesh' | 'place';
+export type TransformKind = 'identity' | 'crop' | 'rotate' | 'perspective' | 'scale' | 'mesh' | 'place';
 
 /**
  * TransformSchema

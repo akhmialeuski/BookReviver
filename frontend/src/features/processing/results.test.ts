@@ -68,6 +68,10 @@ describe('readResult', () => {
       lines: null,
       sourceWidthPx: null,
       sourceHeightPx: null,
+      method: null,
+      threshold: null,
+      zones: null,
+      specks: null,
     });
   });
 
@@ -87,6 +91,22 @@ describe('readResult', () => {
     expect(result.mesh).toEqual({ rows });
     expect(result.bend).toBe(12.5);
     expect(result.lines).toBe(24);
+  });
+
+  it('reads the method, the threshold, the picture zones and the specks of the cleanup', () => {
+    const zone = {
+      mode: 'add',
+      points: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 10, y: 10 },
+      ],
+    };
+    const result = readResult({
+      data: { method: 'otsu', threshold: 127.5, zones: [zone, { mode: 'add' }], specks: 23 },
+    });
+
+    expect(result).toMatchObject({ method: 'otsu', threshold: 127.5, zones: [zone], specks: 23 });
   });
 
   it('reads the sheet and the frame a step found, and the size of the image it read', () => {

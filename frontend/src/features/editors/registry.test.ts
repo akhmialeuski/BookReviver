@@ -21,14 +21,14 @@ import { page, row } from '@/features/workspace/fixtures';
 /** The registry of page editors: which kinds have a component, and what each one is built to do. */
 
 describe('hasEditor', () => {
-  it.each(['line', 'rotation', 'split', 'quad', 'rect', 'mesh'] as const)(
+  it.each(['line', 'rotation', 'split', 'quad', 'rect', 'mesh', 'regions', 'brush-mask'] as const)(
     'has a component for %s',
     (kind) => {
       expect(hasEditor(kind)).toBe(true);
     },
   );
 
-  it.each(['none', 'brush-mask', 'regions'] as const)('has none yet for %s', (kind) => {
+  it.each(['none'] as const)('has none yet for %s', (kind) => {
     expect(hasEditor(kind)).toBe(false);
   });
 });
@@ -182,6 +182,65 @@ describe('editorOf', () => {
     expect(editorOf('mesh').fallback({ ...context, result: null })).toEqual({
       rows: [expect.arrayContaining([{ x: 0, y: 20 }]), expect.arrayContaining([{ x: 0, y: 180 }])],
     });
+  });
+});
+
+describe('the editors of the cleanup', () => {
+  const current = { page: page('p'), row: row('p') };
+  const result = readResult({ data: { source_width_px: 1000, source_height_px: 1500 } });
+  const context = {
+    current,
+    items: [current],
+    scan: null,
+    stepInput: null,
+    result,
+    processorKey: 'cleanup.binarize',
+    size: sourceSize(result),
+  };
+
+  it('lays both on what their step reads, offers them once their step has run, and keeps both behind Set by hand', () => {
+    for (const kind of ['regions', 'brush-mask'] as const) {
+      expect(editorOf(kind).picture).toBe(Picture.Input);
+      expect(editorOf(kind).needsResult).toBe(true);
+      expect(editorOf(kind).alwaysOn).toBe(false);
+      expect(editorOf(kind).runsAfterEdit(context)).toBe(true);
+      expect(editorOf(kind).size(context)).toEqual({ width: 1000, height: 1500 });
+    }
+  });
+
+  it('starts the zones and the strokes from none, so a page the reader has not touched is found again by the step', () => {
+    expect(editorOf('regions').fallback(context)).toEqual({ zones: [] });
+    expect(editorOf('brush-mask').fallback(context)).toEqual({ strokes: [] });
+  });
+
+  it('paints a mask for the brush and for no other editor', () => {
+    expect(editorOf('brush-mask').mask).not.toBeNull();
+    for (const kind of ['line', 'rotation', 'split', 'quad', 'rect', 'regions'] as const) {
+      expect(editorOf(kind).mask).toBeNull();
+    }
+  });
+
+  it('refuses to paint a mask from a geometry that holds no strokes', async () => {
+    await expect(
+      editorOf('brush-mask').mask?.({ left: 1 }, { width: 10, height: 10 }),
+    ).rejects.toThrow('does not fit');
+  });
+
+  it('offers the editor of the binarization and of the eraser from the recipe of the stage', () => {
+    const cleanup = [
+      processor('cleanup.binarize', { stage: 'cleanup', editor: 'regions' }),
+      processor('cleanup.despeckle', { stage: 'cleanup' }),
+      processor('cleanup.eraser', { stage: 'cleanup', editor: 'brush-mask' }),
+    ];
+    const text = recipe('t', {
+      stage: 'cleanup',
+      steps: [step('cleanup.binarize'), step('cleanup.despeckle'), step('cleanup.eraser')],
+    });
+
+    expect(editableProcessorsOf(text, cleanup).map((entry) => entry.editor)).toEqual([
+      'regions',
+      'brush-mask',
+    ]);
   });
 });
 

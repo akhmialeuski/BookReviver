@@ -7,7 +7,9 @@ import {
   readMesh,
   readQuad,
   readRect,
+  readZone,
   type Size,
+  type ZoneShape,
 } from '@/features/editors/shapes';
 import { methodsOf } from '@/features/processing/schema';
 
@@ -53,6 +55,14 @@ export interface PageResult {
   sourceWidthPx: number | null;
   /** The height in pixels of the full image the step read. */
   sourceHeightPx: number | null;
+  /** The method that parted the ink from the paper, as the server names it. */
+  method: string | null;
+  /** The threshold of the page, for a method that has one for the whole page. */
+  threshold: number | null;
+  /** The picture zones the step found, in the pixels of the full image it read, or null when it did not look for any. */
+  zones: ZoneShape[] | null;
+  /** How many specks the step removed. */
+  specks: number | null;
 }
 
 function numberOf(value: unknown): number | null {
@@ -95,6 +105,12 @@ export function readResult(version: Pick<PageVersionSchema, 'data'>): PageResult
     lines: numberOf(data.lines),
     sourceWidthPx: numberOf(data.source_width_px),
     sourceHeightPx: numberOf(data.source_height_px),
+    method: typeof data.method === 'string' ? data.method : null,
+    threshold: numberOf(data.threshold),
+    zones: Array.isArray(data.zones)
+      ? data.zones.map(readZone).filter((zone) => zone !== null)
+      : null,
+    specks: numberOf(data.specks),
   };
 }
 
@@ -143,6 +159,10 @@ export function readChainResult(
     lines: nearest('lines'),
     sourceWidthPx: last.sourceWidthPx,
     sourceHeightPx: last.sourceHeightPx,
+    method: nearest('method'),
+    threshold: nearest('threshold'),
+    zones: nearest('zones'),
+    specks: nearest('specks'),
   };
 }
 

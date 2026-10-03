@@ -42,6 +42,9 @@ interface Draft {
   geometry: Geometry;
 }
 
+/** The size an editor that paints a mask is given when the step has not said how large its picture is. */
+const EMPTY_SIZE = { width: 0, height: 0 };
+
 /** A run that waits for the book to be free. */
 interface WantedRun {
   recipeId: string;
@@ -184,9 +187,12 @@ export function useEditorSession({
       if (next === null) {
         await remove.mutateAsync({ path });
       } else {
+        // An editor whose edit is a mask paints it from the shape, and the server keeps both
+        const size = editor.size(context);
+        const mask = editor.mask === null ? undefined : await editor.mask(next, size ?? EMPTY_SIZE);
         await save.mutateAsync({
           path,
-          body: { kind: processor.editor, geometry: JSON.stringify(next) },
+          body: { kind: processor.editor, geometry: JSON.stringify(next), mask },
         });
       }
       setError(null);
@@ -321,6 +327,7 @@ export function useEditorSession({
         geometry={geometry}
         processorKey={processor.key}
         disabled={saving}
+        size={editor.size(context)}
         onCommit={commit}
       />
     ),

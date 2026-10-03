@@ -4,19 +4,24 @@ import math
 from typing import Any
 
 import pytest
+from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import PageEdit
-from bookreviver.domain.enums import EditorKind, TransformKind
+from bookreviver.domain.enums import EditorKind, TransformKind, ZoneMode
 from bookreviver.domain.errors import UnsupportedTransformError
 from bookreviver.domain.geometry import (
+    BrushStrokes,
     Line,
     Mesh,
     Point,
     Quad,
     Rect,
+    Regions,
     Rotation,
     SplitChoice,
+    Stroke,
     Transform,
+    Zone,
     geometry_from_data,
 )
 from bookreviver.domain.ids import StorageKey
@@ -29,6 +34,13 @@ QUAD: Quad = Quad(
     bottom_left=Point(x=0, y=1561),
 )
 IDENTITY_MATRIX: tuple[float, ...] = (1, 0, 0, 0, 1, 0, 0, 0, 1)
+# A zone that adds a picture and one that removes it, drawn as triangles
+ZONE_ADD: Zone = Zone(mode=ZoneMode.ADD, points=(Point(x=0, y=0), Point(x=100, y=0), Point(x=100, y=100)))
+# A stroke of the brush of the eraser: a radius and a short path
+STROKE: Stroke = Stroke(radius=12.5, points=(Point(x=1, y=2), Point(x=30, y=40)))
+ZONE_REMOVE: Zone = Zone(mode=ZoneMode.REMOVE, points=(Point(x=10, y=10), Point(x=20, y=10), Point(x=20, y=20)))
+# Doubling the size, as a page is made at twice its resolution
+DOUBLING: tuple[float, ...] = (2, 0, 0, 0, 2, 0, 0, 0, 1)
 # The right half of the spread starts 1100 px from the left edge
 RIGHT_HALF: tuple[float, ...] = (1, 0, -1100, 0, 1, 0, 0, 0, 1)
 # A rotation by 30 degrees counter-clockwise about the origin of a canvas, then a shift of the canvas
@@ -68,9 +80,10 @@ class TestTransform:
             {'kind': TransformKind.CROP, 'quad': QUAD, 'matrix': RIGHT_HALF},
             {'kind': TransformKind.PERSPECTIVE, 'quad': QUAD, 'matrix': IDENTITY_MATRIX},
             {'kind': TransformKind.ROTATE, 'angle': 0.8, 'matrix': rotation_matrix(0.8)},
+            {'kind': TransformKind.SCALE, 'matrix': DOUBLING},
             {'kind': TransformKind.MESH, 'mesh_key': StorageKey('projects/book/assets/pages/1/mesh.json')},
         ],
-        ids=['identity', 'crop', 'perspective', 'rotate', 'mesh'],
+        ids=['identity', 'crop', 'perspective', 'rotate', 'scale', 'mesh'],
     )
     def test_kind_with_its_arguments_is_accepted(self, arguments: dict[str, Any]) -> None:
         """Verify every kind is built from exactly its own arguments, the identity from none.
@@ -115,6 +128,11 @@ class TestTransform:
         crop = Transform(kind=TransformKind.CROP, quad=QUAD, matrix=RIGHT_HALF)
         assert crop.to_input(Point(x=10, y=20)) == Point(x=1110, y=20)
 
+    def test_scale_maps_a_point_of_the_input_to_twice_the_distance(self) -> None:
+        """Verify a page made at twice its resolution puts a point at twice its distance from the corner."""
+        scale = Transform(kind=TransformKind.SCALE, matrix=DOUBLING)
+        assert scale.to_output(Point(x=10, y=20)) == Point(x=20, y=40)
+
     def test_rotation_maps_a_point_there_and_back_to_the_same_point(self) -> None:
         """Verify to_input undoes to_output, so the chain of transforms leads a point back to its scan."""
         rotate = Transform(
@@ -148,16 +166,33 @@ class TestGeometryFromData:
             SplitChoice(pages=SplitChoice.TWO_PAGES),
             SplitChoice(pages=SplitChoice.TWO_PAGES, line=Line(start=Point(x=1100, y=0), end=Point(x=1090, y=1561))),
             CURVES,
+            Regions(),
+            Regions(zones=(ZONE_ADD, ZONE_REMOVE)),
+            BrushStrokes(),
+            BrushStrokes(strokes=(STROKE, Stroke(radius=2, points=(Point(x=5, y=5),)))),
         ],
-        ids=['rect', 'quad', 'line', 'rotation', 'one-page', 'two-pages', 'two-pages-with-line', 'mesh'],
+        ids=[
+            'rect',
+            'quad',
+            'line',
+            'rotation',
+            'one-page',
+            'two-pages',
+            'two-pages-with-line',
+            'mesh',
+            'no-zones',
+            'zones',
+            'no-strokes',
+            'strokes',
+        ],
     )
     def test_shape_survives_a_round_trip_through_its_data(
-        self, shape: Rect | Quad | Line | Rotation | SplitChoice | Mesh
+        self, shape: Rect | Quad | Line | Rotation | SplitChoice | Mesh | Regions | BrushStrokes
     ) -> None:
         """Verify the data of a shape rebuilds an equal shape, which is what the database stores.
 
         :param shape: Shape under test.
-        :type shape: Rect | Quad | Line | Rotation | SplitChoice | Mesh
+        :type shape: Rect | Quad | Line | Rotation | SplitChoice | Mesh | Regions | BrushStrokes
         """
         assert geometry_from_data(shape.editor, shape.to_data()) == shape
 
@@ -208,6 +243,54 @@ class TestMesh:
         assert PageEdit.hash_of(CURVES, None) != PageEdit.hash_of(moved, None)
 
 
+class TestBrushStrokes:
+    """Tests for the strokes of the brush editor."""
+
+    def test_the_strokes_are_drawn_by_the_brush_editor(self) -> None:
+        """Verify the editor the shape belongs to, which the edit of the page is checked against."""
+        assert BrushStrokes.editor is EditorKind.BRUSH_MASK
+
+    @pytest.mark.parametrize('arguments', [{'radius': 0, 'points': (Point(x=1, y=1),)}, {'radius': 3, 'points': ()}])
+    def test_a_stroke_without_a_radius_or_a_point_is_rejected(self, arguments: dict[str, Any]) -> None:
+        """Reject a stroke that paints nothing.
+
+        :param arguments: Keyword arguments of the stroke.
+        :type arguments: dict[str, Any]
+        """
+        with pytest.raises(ValueError, match=r'radius|points'):
+            Stroke(**arguments)
+
+    def test_the_hash_of_the_edit_follows_the_strokes_and_the_mask(self) -> None:
+        """Verify a changed stroke or a changed mask gives a changed hash, so the page versions that read it differ."""
+        none, one = BrushStrokes(), BrushStrokes(strokes=(STROKE,))
+        expect(PageEdit.hash_of(none, 'a') != PageEdit.hash_of(one, 'a'))
+        expect(PageEdit.hash_of(one, 'a') != PageEdit.hash_of(one, 'b'))
+        assert_expectations()
+
+
+class TestRegions:
+    """Tests for the picture zones of the regions editor."""
+
+    def test_the_regions_are_drawn_by_the_regions_editor(self) -> None:
+        """Verify the editor the shape belongs to, which the edit of the page is checked against."""
+        assert Regions.editor is EditorKind.REGIONS
+
+    def test_a_zone_of_fewer_than_three_points_is_rejected(self) -> None:
+        """Reject a zone that has no area, which no polygon fills."""
+        with pytest.raises(ValueError, match='at least 3 points'):
+            Zone(mode=ZoneMode.ADD, points=(Point(x=0, y=0), Point(x=1, y=1)))
+
+    def test_scaling_the_regions_scales_every_point_of_every_zone(self) -> None:
+        """Verify an edit drawn on the full page is brought down to the pixels of a preview."""
+        half = Regions(zones=(ZONE_ADD,)).scaled(0.5)
+        assert [point.x for point in half.zones[0].points] == [0.0, 50.0, 50.0]
+
+    def test_the_hash_of_the_edit_follows_the_zones(self) -> None:
+        """Verify a changed zone gives a changed hash, so the page versions that read it differ."""
+        one, two = (PageEdit.hash_of(Regions(zones=zones), None) for zones in ((ZONE_ADD,), (ZONE_REMOVE,)))
+        assert one != two
+
+
 class TestSplitChoice:
     """Tests for the choice of one page or two."""
 
@@ -235,7 +318,7 @@ class TestSplitChoice:
         one, two = (PageEdit.hash_of(SplitChoice(pages=pages), None) for pages in (1, 2))
         assert one != two
 
-    @pytest.mark.parametrize('kind', [EditorKind.NONE, EditorKind.BRUSH_MASK, EditorKind.REGIONS])
+    @pytest.mark.parametrize('kind', [EditorKind.NONE])
     def test_editor_that_draws_no_shape_is_rejected(self, kind: EditorKind) -> None:
         """Reject an editor that stores a mask or no edit, or whose shape comes with a later step.
 

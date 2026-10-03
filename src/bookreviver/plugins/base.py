@@ -12,7 +12,7 @@ from abc import ABC
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, ClassVar, get_args, override
 
-from pydantic import BaseModel, ConfigDict, Discriminator, RootModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Discriminator, RootModel, ValidationError, WithJsonSchema
 
 from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.ports.processing import Processor
@@ -20,6 +20,7 @@ from bookreviver.ports.processing import Processor
 if TYPE_CHECKING:
     from enum import StrEnum
 
+    from bookreviver.domain.enums import LabeledStrEnum
     from bookreviver.domain.values import MetadataMap
 
 # The field of the parameters of a processor with several methods that names the method, and so the parameters it takes
@@ -38,6 +39,22 @@ def leave_out_description(schema: dict[str, Any]) -> None:
     :type schema: dict[str, Any]
     """
     schema.pop('description', None)
+
+
+def labelled(choices: type[LabeledStrEnum]) -> WithJsonSchema:
+    """Describe a closed set of choices in the JSON Schema of a field with the label of each, so a form offers words.
+
+    Pydantic writes an enum as a list of its values, which a form shows as they are stored, such as ``bw``. A ``oneOf``
+    of constants with titles is the form of the same set that a form draws with the label of each value.
+
+    :param choices: The enum the field takes a value of.
+    :type choices: type[LabeledStrEnum]
+    :returns: The metadata to put into the ``Annotated`` type of the field.
+    :rtype: WithJsonSchema
+    """
+    return WithJsonSchema(
+        {'type': 'string', 'oneOf': [{'const': member.value, 'title': member.label} for member in choices]}
+    )
 
 
 class Params(BaseModel):

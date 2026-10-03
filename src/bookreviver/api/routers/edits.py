@@ -24,6 +24,9 @@ from bookreviver.services.edits import EditService
 
 router = APIRouter(prefix='/projects', tags=['edits'], route_class=DishkaRoute)
 
+# The form may hold a file, so the schema says it is a multipart form, and the generated client sends it as one
+MULTIPART_FORM: str = 'multipart/form-data'
+
 
 @dataclass(frozen=True)
 class EditPath:
@@ -98,7 +101,7 @@ async def list_edits(
 @router.put('/{project_id}/pages/{page_id}/edits/{stage}/{processor_key}')
 async def put_edit(
     address: Annotated[ProcessorEditPath, Depends()],
-    form: Annotated[EditForm, Form()],
+    form: Annotated[EditForm, Form(media_type=MULTIPART_FORM)],
     actor: ActorDep,
     request: Request,
     edits: FromDishka[EditService],

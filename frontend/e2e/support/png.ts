@@ -60,6 +60,9 @@ const LINE_PITCH_PX = 22;
 const LINE_HEIGHT_PX = 9;
 const WORD_GAP_PX = 10;
 const SHEET_MARGIN_SHARE = 0.12;
+// A speck of dust is a square of this side, and the specks stand in the gaps of lines this many lines apart
+const DUST_SIDE_PX = 2;
+const DUST_LINE_STEP = 3;
 // How much of the square of the share of the width is added to its cube in the shift of a bent column
 const BEND_QUADRATIC_WEIGHT = 0.3;
 
@@ -76,6 +79,8 @@ export interface SheetShape {
    * sheet as a page bends into a gutter, or 0 for a flat page.
    */
   bendPx?: number;
+  /** How many specks of dust lie on the paper, in the gaps between the lines. */
+  dust?: number;
 }
 
 /** Tell whether a point lies inside a convex quadrilateral whose corners go round in order. */
@@ -108,7 +113,7 @@ export function sheetPng(
   width: number,
   height: number,
   seed: number,
-  { textScale = 1, bendPx = 0 }: SheetShape = {},
+  { textScale = 1, bendPx = 0, dust = 0 }: SheetShape = {},
 ): Buffer {
   const pitch = LINE_PITCH_PX * textScale;
   const lineHeight = LINE_HEIGHT_PX * textScale;
@@ -159,6 +164,16 @@ export function sheetPng(
   });
   const lines = [...words.entries()];
 
+  // Specks of dust in the middle of the gap between two lines, far from every letter and inside the block of text, so that
+  // the steps that cut the page to its text keep them
+  const gapMiddle = (lineHeight + (pitch - lineHeight) / 2 - DUST_SIDE_PX / 2) | 0;
+  const lineTops = [...words.keys()];
+  const specks = Array.from({ length: dust }, (_, index): Corner => {
+    const lineTop =
+      lineTops[(index * DUST_LINE_STEP + 1) % Math.max(lineTops.length - 1, 1)] ?? top;
+    return [Math.round(left + (0.2 + 0.6 * next()) * (right - left)), lineTop + gapMiddle];
+  });
+
   const rows: Buffer[] = [];
   for (let y = 0; y < height; y += 1) {
     const row = Buffer.alloc(1 + width * 3);
@@ -170,7 +185,11 @@ export function sheetPng(
       if (inside(corners, x, flatY)) {
         const line = lines.find(([lineTop]) => flatY >= lineTop && flatY < lineTop + lineHeight);
         const onWord = line?.[1].some(([from, to]) => x >= from && x < to) ?? false;
-        color = onWord ? INK : PAPER;
+        const onDust = specks.some(
+          ([at, from]) =>
+            x >= at && x < at + DUST_SIDE_PX && flatY >= from && flatY < from + DUST_SIDE_PX,
+        );
+        color = onWord || onDust ? INK : PAPER;
       }
       row.set(color, 1 + x * 3);
     }

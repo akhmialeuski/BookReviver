@@ -408,6 +408,7 @@ dependencies = [
 
 [package.optional-dependencies]
 cv = [
+    { name = "doxapy" },
     { name = "onnxruntime" },
     { name = "opencv-python-headless" },
 ]
@@ -424,6 +425,7 @@ requires-dist = [
     { name = "defusedxml", specifier = "==0.7.1" },
     { name = "delayed-assert", specifier = "==0.4.2" },
     { name = "dishka", specifier = "==1.10.1" },
+    { name = "doxapy", marker = "extra == 'cv'", specifier = ">=0.9.9" },
     { name = "email-validator", specifier = "==2.3.0" },
     { name = "fastapi", extras = ["standard"], specifier = "==0.141.1" },
     { name = "fastapi-pagination", specifier = "==0.16.0" },
@@ -663,6 +665,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/8c/8b/57666417c0f90f08bcafa776861060426765fdb422eb10212086fb811d26/dnspython-2.8.0.tar.gz", hash = "sha256:181d3c6996452cb1189c4046c61599b84a5a86e099562ffde77d26984ff26d0f", size = 368251, upload-time = "2025-09-07T18:58:00.022Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ba/5a/18ad964b0086c6e62e2e7500f7edc89e3faa45033c71c1893d34eed2b2de/dnspython-2.8.0-py3-none-any.whl", hash = "sha256:01d9bbc4a2d76bf0db7c1f729812ded6d912bd318d3b1cf81d30c0f845dbf3af", size = 331094, upload-time = "2025-09-07T18:57:58.071Z" },
+]
+
+[[package]]
+name = "doxapy"
+version = "0.9.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/45/cc/4fd21c99565e6803ecbebcda70f01f97fe56364549e2d963cb6927b583cc/doxapy-0.9.9.tar.gz", hash = "sha256:36389648ca759bc11a9543354819a06705e022d3ccfa007cc6fca2e37137d768", size = 78452, upload-time = "2026-07-17T04:10:08.12Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8f/09/2021d563f95f17bcaa65c34bc176bda573b121bd0456f5aafeddba230ba6/doxapy-0.9.9-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:b3f656b3b1f30022b6f54c5c314bf67af94acb43ff71ffadee4b893ed82c6367", size = 135650, upload-time = "2026-07-17T04:10:03.682Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/57/afd69ddb48d139765268a49f3c902eb0583d16baa54ff765b784132000fd/doxapy-0.9.9-cp312-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7bf615cd4c5eec89086e1f4a5a278684bfa7442872eea54e5f76185f53dacd74", size = 190480, upload-time = "2026-07-17T04:10:04.797Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/98/e06ae6ea5afb704a4a141cb076e80dbda318485b6526ef87f8968f92023d/doxapy-0.9.9-cp312-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:e6d9836ee423ffa815ae331b8d93f64c6f974be234dd0a311c5234bc0e646f6d", size = 612700, upload-time = "2026-07-17T04:10:05.973Z" },
+    { url = "https://files.pythonhosted.org/packages/09/d7/1f3ef8ee1728d1da865d9b562d2bc524633f3364c2fd66820800b6a71302/doxapy-0.9.9-cp312-abi3-win_amd64.whl", hash = "sha256:e0e367bd8bca2665330dd5ad611cfdaa3b060174b9a0257c19865c18e2c7d78d", size = 139886, upload-time = "2026-07-17T04:10:07.17Z" },
 ]
 
 [[package]]

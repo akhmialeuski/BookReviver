@@ -1,8 +1,10 @@
 import type { EditorKind, ProcessorSchema, RecipeSchema } from '@/api';
+import { brushEditor } from '@/features/editors/brushEditor';
 import { lineEditor } from '@/features/editors/lineEditor';
 import { meshEditor } from '@/features/editors/meshEditor';
 import { quadEditor } from '@/features/editors/quadEditor';
 import { rectEditor } from '@/features/editors/rectEditor';
+import { regionsEditor } from '@/features/editors/regionsEditor';
 import { rotationEditor } from '@/features/editors/rotationEditor';
 import type { EditableKind, EditorShapes } from '@/features/editors/shapes';
 import { splitEditor } from '@/features/editors/splitEditor';
@@ -12,6 +14,7 @@ import type {
   GeometryPanelProps,
   RegisteredEditor,
 } from '@/features/editors/types';
+import { MESSAGES } from '@/shared/messages';
 
 /**
  * The registry of page editors: for each kind of editor a processor offers, the component that edits it.
@@ -46,10 +49,12 @@ function register<K extends EditableKind>(
         shape={shape}
         processorKey={props.processorKey}
         disabled={props.disabled}
+        size={props.size}
         onCommit={(next) => props.onCommit(definition.write(next))}
       />
     );
   }
+  const { mask } = definition;
   return {
     picture: definition.picture,
     alwaysOn: definition.alwaysOn,
@@ -58,6 +63,16 @@ function register<K extends EditableKind>(
     size: definition.size,
     runsAfterEdit: definition.runsAfterEdit,
     fallback: (context) => definition.write(definition.fallback(context)),
+    mask:
+      mask === undefined
+        ? null
+        : async (geometry, size) => {
+            const shape = definition.read(geometry);
+            if (shape === null) {
+              throw new Error(MESSAGES.editors.unfit);
+            }
+            return mask(shape, size);
+          },
     Canvas,
     Panel,
   };
@@ -70,6 +85,8 @@ const EDITORS: Readonly<Record<EditableKind, RegisteredEditor>> = {
   quad: register<'quad'>(quadEditor),
   rect: register<'rect'>(rectEditor),
   mesh: register<'mesh'>(meshEditor),
+  regions: register<'regions'>(regionsEditor),
+  'brush-mask': register<'brush-mask'>(brushEditor),
 };
 
 /** Tell whether the kind of editor of a processor has a component. */

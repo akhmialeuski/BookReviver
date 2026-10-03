@@ -8,7 +8,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.enums import EditorKind, Rendition, Stage, StageState
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.events import PageStageChanged
-from bookreviver.domain.geometry import Line, Point, Rect, Rotation
+from bookreviver.domain.geometry import BrushStrokes, Line, Point, Rect, Rotation, Stroke
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import NewPageEdit, PageEditKey, PageStageKey, StageRun
 from tests.helpers.builders import make_page_stage
@@ -170,6 +170,24 @@ class TestSave:
         expect(stored.mask_key == f'{directory}/{Rendition.MASK}')
         async with fx_kit.assets.readable(ProjectKeys(project.id).page_edits(page.id, ERASER_KEY)) as folder:
             expect(sorted(entry.name for entry in folder.iterdir()) == [stored.edit_hash])
+        assert_expectations()
+
+    async def test_the_strokes_are_stored_with_the_mask_they_were_painted_into(self, fx_kit: ProcessingKit) -> None:
+        """Verify the brush edit keeps its strokes beside its mask, and a different stroke is a different edit.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page = await prepared(fx_kit)
+        key = PageEditKey(page.id, Stage.CLEANUP, ERASER_KEY)
+        strokes = BrushStrokes(strokes=(Stroke(radius=9, points=(Point(x=3, y=4),)),))
+        edit = NewPageEdit(kind=EditorKind.BRUSH_MASK, geometry=strokes)
+        stored = await fx_kit.edits().save(actor, project.id, key, edit, upload('mask.png', content=MASK_CONTENT))
+        other = NewPageEdit(kind=EditorKind.BRUSH_MASK, geometry=BrushStrokes())
+        changed = await fx_kit.edits().save(actor, project.id, key, other, upload('mask.png', content=MASK_CONTENT))
+        expect(stored.geometry == strokes)
+        expect(stored.mask_key is not None)
+        expect(changed.edit_hash != stored.edit_hash)
         assert_expectations()
 
     async def test_the_same_mask_saved_twice_keeps_one_copy(self, fx_kit: ProcessingKit) -> None:

@@ -66,12 +66,17 @@ bookreviver-openapi = "bookreviver.app.openapi:main"
 "geometry.dewarp" = "bookreviver.plugins.dewarp:Dewarp"
 "geometry.crop" = "bookreviver.plugins.crop:Crop"
 "geometry.normalize" = "bookreviver.plugins.normalize:Normalize"
+"cleanup.binarize" = "bookreviver.plugins.binarize:Binarize"
+"cleanup.despeckle" = "bookreviver.plugins.despeckle:Despeckle"
+"cleanup.eraser" = "bookreviver.plugins.eraser:Eraser"
 
 [project.optional-dependencies]
 cv = [
     "opencv-python-headless>=5.0.0.93",
     # Runs the UVDoc model of geometry.dewarp on the CPU
     "onnxruntime>=1.23.0",
+    # The local thresholds of the Doxa framework, which the step cleanup.binarize computes its black and white with
+    "doxapy>=0.9.9",
 ]
 
 [tool.fastapi]
@@ -140,11 +145,17 @@ ignore_missing_imports = true
 plugins = ["pydantic.mypy"]
 # `mypy .` would otherwise walk the uploaded books in data/ and the frontend dependencies looking for Python files
 exclude = ['^data/', '^frontend/', '^\.e2e-data/']
+# The type information of the libraries that ship none, kept in the repository
+mypy_path = "stubs"
 
 [tool.pyrefly]
 project-excludes = [
     "tests",
 ]
+search-path = ["stubs"]
+
+[tool.ty.environment]
+extra-paths = ["stubs"]
 
 [tool.ty.rules]
 # TY rules at https://docs.astral.sh/ty/reference/rules/

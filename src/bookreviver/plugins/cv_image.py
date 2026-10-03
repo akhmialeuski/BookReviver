@@ -18,6 +18,7 @@ from attrs import frozen
 
 from bookreviver.domain.enums import ColorMode, ReviewReason, VersionData
 from bookreviver.domain.errors import ConflictError
+from bookreviver.domain.geometry import Rect
 from bookreviver.domain.values import COLOR_MODE_KEY, PageSize
 
 if TYPE_CHECKING:
@@ -50,7 +51,7 @@ MIN_TONE_CONTRAST: float = 40.0
 # What a step hands on to the steps after it besides the size and the colour of its image: the sides of the sheet cut by
 # the scan, and the reason an earlier step wants the page looked at, so that the last step of a recipe, whose version is
 # the one the stage stands on, carries the reasons of all of them
-CARRIED_DATA: tuple[VersionData, ...] = (VersionData.CUT_EDGES, VersionData.REVIEW)
+CARRIED_DATA: tuple[VersionData, ...] = (VersionData.CUT_EDGES, VersionData.REVIEW, VersionData.CONTENT_FRAME)
 # The fewest rows a block has to be measured for the distance between its lines, which is about three lines of a page
 MIN_PITCH_ROWS: int = 60
 # A peak of the autocorrelation of the rows counts as the first line when it reaches this share of the strongest peak,
@@ -190,6 +191,35 @@ def image_data(image: Samples, facts: MetadataMap, color_mode: ColorMode) -> dic
     data: dict[str, object] = {**size.as_data(), COLOR_MODE_KEY: color_mode.value}
     data.update({key.value: facts[key] for key in CARRIED_DATA if key in facts})
     return data
+
+
+def content_frame_of(facts: MetadataMap) -> Rect | None:
+    """Give the frame of the content of a page in the pixels of its image, from what the steps before recorded.
+
+    A step of the cleanup carries the frame it is given. The first of them is given the data of ``geometry.crop``, whose
+    ``frame`` lies in the pixels of the image the crop read. The crop cuts the page at the frame plus the same margin on
+    both sides of an axis, so the margin of an axis is half of what the cropped image has over the frame, and the frame
+    lies that far from the corner of the cropped image.
+
+    :param facts: Data of the input version.
+    :type facts: MetadataMap
+    :returns: The frame in the pixels of the full image of the version, or None when no step found one.
+    :rtype: Rect | None
+    """
+    carried = facts.get(VersionData.CONTENT_FRAME)
+    if isinstance(carried, dict):
+        return Rect.from_data(carried)
+    found = facts.get(VersionData.FRAME)
+    size = PageSize.from_data(facts)
+    if not isinstance(found, dict) or size is None:
+        return None
+    frame = Rect.from_data(found)
+    return Rect(
+        left=(size.width_px - frame.width) / 2,
+        top=(size.height_px - frame.height) / 2,
+        width=frame.width,
+        height=frame.height,
+    )
 
 
 def source_size_data(image: Samples, scale: float) -> dict[str, object]:

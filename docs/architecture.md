@@ -60,7 +60,7 @@ What each concern reuses, and therefore what we do not write ourselves.
 | XMP metadata               | defusedxml                                                      | XML parsing safe against hostile documents       |
 | Page order                 | fractional-indexing                                             | Order keys that sort between two neighbours      |
 | Tiles                      | pyvips `dzsave` with the IIIF 3 layout                          | Tile pyramids and `info.json`                    |
-| Image processing plugins   | OpenCV, scikit-image                                            | Geometry, filtering, morphology                  |
+| Image processing plugins   | OpenCV, Doxa (`doxapy`), scikit-image                           | Geometry, filtering, local thresholds            |
 | Neural models on the CPU   | ONNX Runtime                                                    | UVDoc, the network of `geometry.dewarp`          |
 | Language and vision models | pydantic-ai                                                     | Provider clients, structured output validation   |
 | Plugin discovery           | `importlib.metadata.entry_points`                               | Plugin loading                                   |
@@ -133,6 +133,8 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Profiles     | `RecipeProfile` (an account, a stage, steps in order and a default flag), `RecipeProfileId`    |
 | Geometry     | `Point`, `Size`, `Rect`, `Quad`, `Line`, `Rotation`, `Mesh` and `Transform`, in `geometry.py` |
 | Edits        | `PageEdit`, `EditorKind`, a shape (`Rect`, `Quad`, `Line`, `Rotation`, `Mesh`) or a mask      |
+|              | `Zone` and `Regions` (picture zones), `Stroke` and `BrushStrokes` (the strokes of the eraser)  |
+|              | `BrushStrokes` are kept with the mask they were painted into                                  |
 | Events       | `JobChanged`, `SourceImported`, `ScanReady`, `PagesChanged`, `PageVersionReady`, and others   |
 | Jobs         | `Job`, `JobKind` (the import, the preparing of pages, the four processing jobs and the measure of the book, which is a processing job too), `JobState` |
 |              | `Progress`, `WorkerPool`                                                                      |
@@ -486,9 +488,9 @@ colour scan instead of the binarised page.
 | `geometry`    | `geometry.dewarp`      | `mesh(key)` or `identity`  | `bend`, `lines`, `residual`, curves for the editor (`mesh`) |
 | `geometry`    | `geometry.crop`        | `crop(quad)`               | `frame` of the content, `line_height_px`, confidence, size  |
 | `geometry`    | `geometry.normalize`   | `place`                    | `frame` of the block on the page, `line_height_px`, size    |
-| `cleanup`     | `cleanup.despeckle`    | `identity`                 | number of removed specks, key of the mask `mask.png`        |
-| `cleanup`     | `cleanup.binarize`     | `identity`                 | method (Otsu, Sauvola), threshold or window                 |
-| `cleanup`     | `cleanup.eraser`       | `identity`                 | key of the mask from the manual edit                        |
+| `cleanup`     | `cleanup.binarize`     | `identity` or `scale`      | `mode`, `method`, `threshold` of Otsu, `zones` of pictures  |
+| `cleanup`     | `cleanup.despeckle`    | `identity`                 | number of removed specks, the mask `mask.png`               |
+| `cleanup`     | `cleanup.eraser`       | `identity`                 | `content_frame`, size read, `skipped`                       |
 | `layout`      | `layout.regions`       | `identity`, no image       | text and illustration regions as polygons                   |
 | `recognition` | `recognition.ocr`      | `identity`, no image       | engine, model, confidence, key of the hOCR or ALTO text     |
 
@@ -503,8 +505,9 @@ flowchart TD
     P --> B["geometry: geometry.deskew<br/>rotate 0.8°"]
     B --> W["geometry: geometry.dewarp<br/>mesh(key), 45 by 31 grid"]
     W --> D["geometry: geometry.crop<br/>content frame"]
-    D --> E["cleanup: cleanup.despeckle<br/>mask.png of removed specks"]
-    E --> F["cleanup: cleanup.binarize<br/>Sauvola, window 31"]
+    D --> E["cleanup: cleanup.binarize<br/>Sauvola, window 41"]
+    E --> F["cleanup: cleanup.despeckle<br/>mask.png of removed specks"]
+    F --> H["cleanup: cleanup.eraser<br/>brush mask, margins outside the frame"]
     style C stroke:#1e7a4d,stroke-width:2px
 ```
 
@@ -1255,10 +1258,55 @@ indistinguishable to the application.
   worked out from the two ends of the cut.
 - `split.spread` takes the cut from the same search, or the `line` the user drew, and its version is 2 since the
   search and the slanting cut changed. The versions made by version 1 stay in the history of a page.
-- First plugins, in delivery order: page split, deskew, perspective crop by quad, dewarp by mesh, despeckle,
-  binarisation (a cleanup step of its own, so the despeckled and the binarised page are separate artifacts), eraser
-  mask, layout regions (text versus illustration), background separation, background unification (white, aged paper
-  texture, custom colour, consistent across the book), recognition, proofreading.
+- The Cleanup stage runs three independent steps, each of which can be switched off, moved in the recipe and previewed
+  on its own: `cleanup.binarize`, then `cleanup.despeckle`, then `cleanup.eraser`. The page is made black and white
+  first, because the dust that is left is then separate small spots that are easy to tell from letters. They need
+  OpenCV and Doxa (`doxapy`), so like the geometry steps they live in `bookreviver[cv]`, and a machine without it has no
+  Cleanup recipe at all.
+- `cleanup.binarize` (`plugins/binarize.py`) makes the page of its `mode`: `bw` (ink or paper), `gray` and `color` (the
+  tones kept and the light levelled so the paper is white in every corner), or `mixed` (the text ink or paper and the
+  pictures in tones). The `method` is a `BinarizationMethod`: `otsu`, `sauvola`, `wolf`, `isauvola`, `su`, `gatos`,
+  `nick` or `bradley`, whose thresholds `doxapy` computes, and `neural`, which is declared for a plugin that comes with
+  the `[gpu]` group and is not offered. The parameters are a `RootModel` of a union that Pydantic discriminates by
+  `method`, so the JSON Schema is a `oneOf` and the form of `react-jsonschema-form` shows only the fields of the method
+  chosen, `window` and `k`. A step made from the defaults alone is Sauvola with a window of 41 pixels and `k` of 0.2.
+  `thickness` (from -50 to 50) moves the level at which the blurred ink is cut, which is what a shifted threshold does
+  to a stroke whatever the method is, and `smooth` rounds the staircase of its edge. `output_dpi` makes a black and white
+  page at a higher resolution than the scan, so the data carry the new `dpi` and the transform is `scale(matrix)`. A
+  page of unknown resolution and a preview are not enlarged. The light is levelled in `plugins/pictures.py` by a surface
+  fitted to the paper alone: the text is closed away from a shrunk copy, a quadratic surface is fitted to the cells,
+  and the cells that lie below it, such as a plate, are left out of the next round of the fit, so a picture is not
+  mistaken for a shadow.
+- The pictures of a `mixed` page are found by their tones. Text is ink or paper with a thin edge between, so a
+  neighbourhood in which a large share of the pixels lies round the Otsu threshold and the tones vary is a picture, and
+  the neighbourhoods are joined into rectangles. The `regions` editor (`Regions`, a list of `Zone`, each a polygon that
+  adds a picture or removes one) is applied on top of what was found, in the order it was drawn, and the zones found go
+  into the data as `zones` in the pixels of the full image the step read, which the editor draws in blue.
+- `cleanup.despeckle` (`plugins/despeckle.py`) joins the black pixels into components and removes the small ones. The
+  size is a share of the height of a line, taken as the upper quartile of the heights of the components that are as tall
+  as a letter, so a `strength` of 1 to 3 does the same at any resolution. A speck is a component whose area is at most
+  `0.0025`, `0.008` or `0.02` of the square of the height of a line. With `protect_diacritics`, which is on by default,
+  a speck that has a letter within half a line height of it is kept, which saves the dots of і and ї, the two dots of ё,
+  an accent, a quotation mark and a full stop. Only pure black is ink, so the tones of a picture are never taken for
+  dust. The pixels removed are painted white and written to `mask.png`, and the number of specks goes into `specks`.
+- `cleanup.eraser` (`plugins/eraser.py`) reads the mask of a `brush-mask` edit and paints it with `fill`: white, black,
+  or the mean colour of a ring of pixels round each area. `fill_outside_frame`, which is on by default, makes everything
+  outside the frame of `geometry.crop` white. The frame is `content_frame` in the data, which `cleanup.binarize` works
+  out from the `frame` of the crop (the crop adds the same margin on both sides of an axis, so the frame lies half of
+  what the cropped page has over the frame from the corner) and every later step carries. A page with neither a mask nor
+  a frame is left as it is with the review reason `not-applied`. The edit of the brush is the `BrushStrokes` the user
+  drew and the mask the browser painted from them, which are stored together, so the editor draws the strokes again and
+  the last one can be taken back, while the step reads the mask alone.
+- The default Cleanup recipes of a new book are three variants, with the rules that send pages to them as in the next
+  section. **Text** is active and runs `bw` by Sauvola, despeckling of strength 2 and the eraser. **Plates** runs `gray`
+  by Sauvola and the eraser, with no despeckling, and a rule on the condition `plates` sends the plates and the
+  frontispieces to it. **Mixed** runs `mixed` by Sauvola, despeckling of strength 1 and the eraser, and a rule on the
+  condition `illustrated` sends to it the pages with illustrations, which matches no page until the Layout stage
+  records them. A `RecipeTemplate` carries the parameters of its steps and the condition of its rule, and `RecipeBook`
+  stores the rules in the same transaction as the recipes.
+- First plugins, in delivery order: page split, deskew, perspective crop by quad, dewarp by mesh, binarisation,
+  despeckle, eraser mask, layout regions (text versus illustration), background separation, background unification
+  (white, aged paper texture, custom colour, consistent across the book), recognition, proofreading.
 - Heavy plugins declare optional dependency groups (`bookreviver[cv]`, `[gpu]`, `[llm]`) installed only on the
   workers of their pool, and a worker loads only the plugins of its pool.
 
@@ -1474,14 +1522,18 @@ data/storage/
             │       │   └── geometry.crop/
             │       │       └── c3d1e8a04f77b2c6/…
             │       ├── cleanup/
+            │       │   ├── cleanup.binarize/
+            │       │   │   └── 2f60b7e9a15d8c07/
+            │       │   │       ├── full.png   bilevel, PNG under any image_policy
+            │       │   │       └── …
             │       │   ├── cleanup.despeckle/
             │       │   │   └── 9a4e61b2d0c3f845/
-            │       │   │       ├── full.jpg
+            │       │   │       ├── full.png
             │       │   │       ├── mask.png   removed specks
             │       │   │       └── …
-            │       │   └── cleanup.binarize/
-            │       │       └── 2f60b7e9a15d8c07/
-            │       │           ├── full.png   bilevel, PNG under any image_policy
+            │       │   └── cleanup.eraser/
+            │       │       └── 7c3d90a1e5b2f648/
+            │       │           ├── full.png
             │       │           └── …
             │       ├── recognition/
             │       │   └── recognition.ocr/
@@ -2106,8 +2158,8 @@ The project list counts in `page_count` the included pages of the book, and show
 - Editors are a react-konva layer kept in step with the OpenSeadragon viewport. An editor registry maps each
   `EditorKind` to a component: draggable frame, quad with corner handles, rotation handle, dewarp mesh, brush and
   eraser, region polygons labelled text or illustration. The split line, the choice of pages with its line, the
-  rotation, the quad of the sheet, the frame of the content and the curves of the dewarping exist so far
-  (`features/editors/`), and the others come with their plugins.
+  rotation, the quad of the sheet, the frame of the content, the curves of the dewarping, the picture zones and the
+  brush of the eraser exist so far (`features/editors/`), and the others come with their plugins.
   - The curves editor (`MeshCanvas.tsx`, `MeshPanel.tsx`, `mesh.ts`) lies on the picture the dewarping step read. It
     starts as two curves, the top and the bottom, of five nodes each, from the summary the step put in its data, or
     from two straight curves where the step found no lines. A node is dragged or moved by the arrow keys and saved when
@@ -2168,6 +2220,19 @@ The project list counts in `page_count` the included pages of the book, and show
     the four margins in the form switches `margins_source` to `manual` (`withMarginsSource` in `margins.ts`, called by
     `setStepParams`), and while it is `manual` the panel says so and offers "Use measured margins", which sets the
     source back to `measured` in the draft, so the next measure fills the margins in again.
+  - The `regions` editor (`RegionsCanvas.tsx`, `RegionsPanel.tsx`) belongs to `cleanup.binarize` and lies on the page the
+    step reads. It outlines in blue the `zones` the step found, and draws the zones of the reader in green where they add
+    a picture and in red where they remove one, each a polygon with a handle on every corner. Two buttons of the panel
+    put a new rectangle in the middle of the page, and the panel lists the zones with a button that deletes each. The
+    edit holds only the zones the reader drew, so a page the reader has not touched is found again by the step. The
+    `brush-mask` editor (`BrushCanvas.tsx`, `BrushPanel.tsx`) belongs to `cleanup.eraser`. A drag paints a translucent red
+    stroke over the whole page, so the page does not pan under the brush and the wheel still zooms, and the stroke is
+    saved when the pointer is let go. The size of the brush is a share of the width of the page, kept in a store of its
+    own for the session, so a stroke covers the same part of a page at any resolution. A definition with a `mask`
+    (`EditorDefinition.mask`, here `paintMask` of `brush.ts`) paints a black page of the size the step read with the
+    strokes in white, and `useEditorSession` sends the PNG as the `mask` of the form beside the strokes as `geometry`.
+    The step reports the size it read in `source_width_px` and `source_height_px`, and the editor is offered once it has
+    run on the page.
   - An edit is saved with `PUT .../pages/{page_id}/edits/{stage}/{processor_key}` when the handle is let go, the field is
     left or a pause follows the keys or the wheel, and then the stage is run on that one page with the recipe on screen, whose
     processor reads the edit. The run waits while another job of the book is going, or while a run sent from any control
