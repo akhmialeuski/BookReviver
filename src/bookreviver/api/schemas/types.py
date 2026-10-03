@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Annotated
 from pydantic import AfterValidator, Field, StringConstraints
 
 from bookreviver.domain.entities import VERSION_ID_PATTERN
+from bookreviver.domain.enums import PageKind
 from bookreviver.domain.ids import PageId, PageVersionId
 
 if TYPE_CHECKING:
@@ -81,6 +82,10 @@ LanguageList = Annotated[list[LanguageCode], Field(max_length=LANGUAGES_MAX_LENG
 SubjectList = Annotated[list[ListedText], Field(max_length=SUBJECTS_MAX_LENGTH)]
 # The printed number of a page, which is empty for a page that has none
 PageLabel = Annotated[str, StringConstraints(strip_whitespace=True, max_length=PAGE_LABEL_MAX_LENGTH)]
+# The name of a pagination section, which may be empty
+SectionName = Annotated[str, StringConstraints(strip_whitespace=True, max_length=TEXT_MAX_LENGTH)]
+# The text before every number of a pagination section, which keeps the space that separates it from the number
+NumberPrefix = Annotated[str, StringConstraints(strip_whitespace=False, max_length=PAGE_LABEL_MAX_LENGTH)]
 # The label of a group of pages the user made by hand, which is empty for a page in no group
 GroupLabel = Annotated[str, StringConstraints(strip_whitespace=True, max_length=GROUP_LABEL_MAX_LENGTH)]
 # The label of a group a rule names, which is never empty
@@ -97,6 +102,8 @@ PageIdList = Annotated[
     AfterValidator(_refuse_repeats),
 ]
 TitleList = Annotated[list[ListedText], Field(max_length=TITLES_MAX_LENGTH)]
+# The kinds of page a series by kind takes, each at most once
+PageKindList = Annotated[list[PageKind], AfterValidator(_refuse_repeats)]
 
 # The largest zoom of a canvas as a multiple of the fitted view, and the farthest a centre lies from the view in page
 # heights, which bound what a place can hold

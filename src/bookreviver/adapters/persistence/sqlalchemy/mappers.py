@@ -27,6 +27,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     PageRow,
     PageStageRow,
     PageVersionRow,
+    PaginationSectionRow,
     ProjectRow,
     RecipeProfileRow,
     RecipeRow,
@@ -41,6 +42,7 @@ from bookreviver.domain.entities import (
     PageEdit,
     PageStage,
     PageVersion,
+    PaginationSection,
     Project,
     Recipe,
     RecipeProfile,
@@ -48,13 +50,14 @@ from bookreviver.domain.entities import (
     Scan,
     Source,
 )
-from bookreviver.domain.enums import ContributorRole, IdentifierScheme, RejectionReason, TransformKind
+from bookreviver.domain.enums import ContributorRole, IdentifierScheme, PageKind, RejectionReason, TransformKind
 from bookreviver.domain.geometry import Point, Quad, Transform, geometry_from_data
 from bookreviver.domain.ids import (
     AccountId,
     JobId,
     PageId,
     PageVersionId,
+    PaginationSectionId,
     ProjectId,
     RecipeId,
     RecipeProfileId,
@@ -286,6 +289,7 @@ class PageMapper(RowMapper[Page, PageRow]):
             project_id=ProjectId(row.project_id),
             order_key=row.order_key,
             label=row.label,
+            label_manual=row.label_manual,
             kind=row.kind,
             origin=row.origin,
             scan_id=None if row.scan_id is None else ScanId(row.scan_id),
@@ -312,6 +316,7 @@ class PageMapper(RowMapper[Page, PageRow]):
             project_id=entity.project_id,
             order_key=entity.order_key,
             label=entity.label,
+            label_manual=entity.label_manual,
             kind=entity.kind,
             origin=entity.origin,
             scan_id=entity.scan_id,
@@ -322,6 +327,56 @@ class PageMapper(RowMapper[Page, PageRow]):
             created_at=entity.created_at,
             updated_at=entity.updated_at,
             revision=entity.revision,
+        )
+
+
+class PaginationSectionMapper(RowMapper[PaginationSection, PaginationSectionRow]):
+    """Translation of a pagination section, whose kinds are a JSON list of their values."""
+
+    @override
+    def to_entity(self, row: PaginationSectionRow) -> PaginationSection:
+        """Build the section stored in ``row``.
+
+        :param row: Section row loaded from the database.
+        :type row: PaginationSectionRow
+        :returns: The section with its first page, style, display and kinds.
+        :rtype: PaginationSection
+        """
+        return PaginationSection(
+            id=PaginationSectionId(row.id),
+            project_id=ProjectId(row.project_id),
+            first_page_id=PageId(row.first_page_id),
+            name=row.name,
+            style=row.style,
+            start=row.start,
+            prefix=row.prefix,
+            display=row.display,
+            kinds=frozenset(PageKind(kind) for kind in row.kinds),
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    @override
+    def to_row(self, entity: PaginationSection) -> PaginationSectionRow:
+        """Build the row of ``entity``, whose kinds are written in the order of the page kinds.
+
+        :param entity: Section to store.
+        :type entity: PaginationSection
+        :returns: Transient section row.
+        :rtype: PaginationSectionRow
+        """
+        return PaginationSectionRow(
+            id=entity.id,
+            project_id=entity.project_id,
+            first_page_id=entity.first_page_id,
+            name=entity.name,
+            style=entity.style,
+            start=entity.start,
+            prefix=entity.prefix,
+            display=entity.display,
+            kinds=[kind.value for kind in PageKind if kind in entity.kinds],
+            created_at=entity.created_at,
+            updated_at=entity.updated_at,
         )
 
 

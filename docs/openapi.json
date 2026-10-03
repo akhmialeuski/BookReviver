@@ -1639,7 +1639,7 @@
           "pages"
         ],
         "summary": "Number Pages",
-        "description": "Write the printed numbers of a range of pages into their labels, in the style and from the number given.\n\nPages kept out of the book, and pages of the kinds to skip, take no number and keep their label. The answer is 409\nwhen the range runs backwards. The new labels reach the browser as a ``pages-changed`` event.",
+        "description": "Make the pagination sections that number a range of pages, in the style and from the number given.\n\nThe range becomes a section of the main flow that starts at its first page, with a series that does not count for\nthe kinds to skip, and a section that does not count after the range, so the numbers follow the sections from then\non. Pages kept out of the book, and pages of the kinds to skip, take no number and keep their label. The pages the\nrange numbers give up the labels written by hand. The answer is 409 when the range runs backwards. The new labels\nreach the browser as a ``pages-changed`` event.",
         "operationId": "number_pages_api_v1_projects__project_id__pages_labels_post",
         "parameters": [
           {
@@ -1720,7 +1720,7 @@
           "pages"
         ],
         "summary": "Preview Page Numbers",
-        "description": "Return the labels a numbering of the same body would write, and write nothing.\n\nThe labels come from the rule the numbering applies, so the interface shows exactly what saving stores. The answer\nis 409 when the range runs backwards.",
+        "description": "Return the labels a numbering of the same body would write, and write nothing.\n\nThe labels come from the sections the numbering would make, so the interface shows exactly what saving stores. The\nanswer is 409 when the range runs backwards.",
         "operationId": "preview_page_numbers_api_v1_projects__project_id__pages_labels_preview_post",
         "parameters": [
           {
@@ -1958,6 +1958,374 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pagination-sections": {
+      "get": {
+        "tags": [
+          "pagination"
+        ],
+        "summary": "List Pagination Sections",
+        "description": "List the pagination sections of a project in book order, which is the order of the pages they start at.",
+        "operationId": "list_pagination_sections_api_v1_projects__project_id__pagination_sections_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PaginationSectionSchema_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "pagination"
+        ],
+        "summary": "Create Pagination Section",
+        "description": "Make a section that starts at a page, and renumber the pages it takes.\n\nThe answer is 404 when the page is not a page of the project, and 409 when another section that takes the same\npages starts at that page already, or when a number does not fit the style, such as 4000 in Roman numerals.",
+        "operationId": "create_pagination_section_api_v1_projects__project_id__pagination_sections_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaginationSectionBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginationSectionSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pagination-sections/{section_id}": {
+      "put": {
+        "tags": [
+          "pagination"
+        ],
+        "summary": "Put Pagination Section",
+        "description": "Replace the first page and the rule of a section, and renumber the pages.\n\nThe answer is 404 when the section or the page is not of the project, and 409 when another section that takes the\nsame pages starts at that page, or when a number does not fit the style.",
+        "operationId": "put_pagination_section_api_v1_projects__project_id__pagination_sections__section_id__put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "section_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the pagination section",
+              "title": "Section Id"
+            },
+            "description": "Identifier of the pagination section"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaginationSectionBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginationSectionSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "pagination"
+        ],
+        "summary": "Delete Pagination Section",
+        "description": "Remove a section, so its pages fall to the section before it, and renumber them.",
+        "operationId": "delete_pagination_section_api_v1_projects__project_id__pagination_sections__section_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "section_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the pagination section",
+              "title": "Section Id"
+            },
+            "description": "Identifier of the pagination section"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -8277,7 +8645,7 @@
           "style"
         ],
         "title": "LabelRange",
-        "description": "A range of pages to number, from one page to another in the order of the book.\n\n:ivar first_page_id: First page of the range.\n:ivar last_page_id: Last page of the range, which may be the first page but not stand before it.\n:ivar style: How the numbers are written; ``none`` erases the labels of the range.\n:ivar start: Number of the first numbered page, from 1, and at most 3999 in a Roman style.\n:ivar bracketed: Whether to enclose the label in square brackets.\n:ivar skip_kinds: Kinds of page that take no number and keep their label, such as plates."
+        "description": "A range of pages to number, from one page to another in the order of the book.\n\n:ivar first_page_id: First page of the range.\n:ivar last_page_id: Last page of the range, which may be the first page but not stand before it.\n:ivar style: How the numbers are written; ``none`` erases the labels of the range.\n:ivar start: Number of the first numbered page, from 1, and at most 3999 in a Roman style.\n:ivar bracketed: Whether the pages are counted and not printed, so their labels are in square brackets.\n:ivar skip_kinds: Kinds of page that take no number and keep their label, such as plates."
       },
       "LabelStyle": {
         "type": "string",
@@ -8285,6 +8653,8 @@
           "arabic",
           "roman-lower",
           "roman-upper",
+          "alpha-lower",
+          "alpha-upper",
           "none"
         ],
         "title": "LabelStyle",
@@ -8434,6 +8804,16 @@
         ],
         "title": "NewPageOrigin",
         "description": "Where the image of a page the user adds comes from.\n\nOnly a blank leaf and a placeholder are added by hand, since a page cut from a scan is made by the page split and\nby binding a scan to a placeholder."
+      },
+      "NumberDisplay": {
+        "type": "string",
+        "enum": [
+          "not-counted",
+          "counted",
+          "printed"
+        ],
+        "title": "NumberDisplay",
+        "description": "How the pages of a pagination section show their numbers, and whether they take part in the count.\n\nA page that is counted but not printed is shown with its number in square brackets, as a bibliographer writes a\nnumber the book implies and does not print, such as ``[iii]``."
       },
       "NumberedPageSchema": {
         "properties": {
@@ -8738,6 +9118,10 @@
             "type": "string",
             "title": "Label"
           },
+          "label_manual": {
+            "type": "boolean",
+            "title": "Label Manual"
+          },
           "kind": {
             "$ref": "#/components/schemas/PageKind"
           },
@@ -8810,6 +9194,7 @@
           "id",
           "position",
           "label",
+          "label_manual",
           "kind",
           "origin",
           "scan_id",
@@ -8823,7 +9208,7 @@
           "updated_at"
         ],
         "title": "PageSchema",
-        "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except\n                in a manifest listing only the included pages, which numbers those.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar kind: Role of the page in the book.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar group_label: Label of the group the user put the page in, or empty for no group.\n:ivar images: Paths of the images of the page's current version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
+        "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except\n                in a manifest listing only the included pages, which numbers those.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar label_manual: Whether the label is an exception to the pagination sections: written by hand, or taken from\n                    the source of the scan, and so never changed when the numbers of the book are computed again.\n:ivar kind: Role of the page in the book.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar group_label: Label of the group the user put the page in, or empty for no group.\n:ivar images: Paths of the images of the page's current version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
       },
       "PageStageSchema": {
         "properties": {
@@ -8957,7 +9342,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "PageUpdate",
-        "description": "A JSON Merge Patch of a page: an omitted field is kept, and a null label or note is cleared.\n\nThe kind and the inclusion of a page have no empty value, so they may be omitted but not null.\n\n:ivar label: New printed number, or None to clear it.\n:ivar kind: New role of the page in the book.\n:ivar included: New decision whether the page is part of the book.\n:ivar notes: New notes, or None to clear them.\n:ivar group_label: New label of the group of the page, or None to take the page out of its group."
+        "description": "A JSON Merge Patch of a page: an omitted field is kept, and a null label or note is cleared.\n\nThe kind and the inclusion of a page have no empty value, so they may be omitted but not null. A label that is not\nempty is written by hand, so it is an exception to the pagination sections, and clearing it gives the number of the\npage back to the sections.\n\n:ivar label: New printed number, or None to give the number back to the pagination sections.\n:ivar kind: New role of the page in the book.\n:ivar included: New decision whether the page is part of the book.\n:ivar notes: New notes, or None to clear them.\n:ivar group_label: New label of the group of the page, or None to take the page out of its group."
       },
       "PageVersionSchema": {
         "properties": {
@@ -9255,6 +9640,46 @@
           "pages"
         ],
         "title": "Page[PageVersionSchema]"
+      },
+      "Page_PaginationSectionSchema_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PaginationSectionSchema"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[PaginationSectionSchema]"
       },
       "Page_ProcessorSchema_": {
         "properties": {
@@ -9620,6 +10045,125 @@
         ],
         "title": "PagesMove",
         "description": "Where to put a group of pages, which keep their order in the book.\n\n:ivar page_ids: The pages to move, each at most once."
+      },
+      "PaginationSectionBody": {
+        "properties": {
+          "first_page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "First Page Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Name",
+            "default": ""
+          },
+          "style": {
+            "$ref": "#/components/schemas/LabelStyle"
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Start",
+            "default": 1
+          },
+          "prefix": {
+            "type": "string",
+            "maxLength": 50,
+            "title": "Prefix",
+            "default": ""
+          },
+          "display": {
+            "$ref": "#/components/schemas/NumberDisplay",
+            "default": "printed"
+          },
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/PageKind"
+            },
+            "type": "array",
+            "title": "Kinds"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "first_page_id",
+          "style"
+        ],
+        "title": "PaginationSectionBody",
+        "description": "A section to make, or the whole new state of a section that exists.\n\n:ivar first_page_id: The page the section starts at, which must be a page of the project.\n:ivar name: Name the user sees.\n:ivar style: How the numbers are written.\n:ivar start: Number of the first counted page, from 1, and at most 3999 in a Roman style.\n:ivar prefix: Text written before every number, such as ``Plate ``; it keeps its spaces.\n:ivar display: Whether the pages count, and whether their numbers are printed or only implied.\n:ivar kinds: Kinds of page a series by kind takes, each at most once; leave out for a section of the main flow."
+      },
+      "PaginationSectionSchema": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "first_page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "First Page Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "style": {
+            "$ref": "#/components/schemas/LabelStyle"
+          },
+          "start": {
+            "type": "integer",
+            "title": "Start"
+          },
+          "prefix": {
+            "type": "string",
+            "title": "Prefix"
+          },
+          "display": {
+            "$ref": "#/components/schemas/NumberDisplay"
+          },
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/PageKind"
+            },
+            "type": "array",
+            "title": "Kinds"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "first_page_id",
+          "name",
+          "style",
+          "start",
+          "prefix",
+          "display",
+          "kinds",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PaginationSectionSchema",
+        "description": "A pagination section of a book.\n\n:ivar id: Identifier of the section.\n:ivar project_id: Project owning the section.\n:ivar first_page_id: The page the section starts at, so the section follows the page when it is moved.\n:ivar name: Name the user sees.\n:ivar style: How the numbers of the section are written.\n:ivar start: Number of the first counted page of the section.\n:ivar prefix: Text written before every number, empty for none.\n:ivar display: Whether the pages count, and whether their numbers are printed or only implied.\n:ivar kinds: Kinds of page the section takes as a series by kind, empty for a section of the main flow.\n:ivar created_at: When the section was made.\n:ivar updated_at: When the section was last changed."
       },
       "PlaceMode": {
         "type": "string",

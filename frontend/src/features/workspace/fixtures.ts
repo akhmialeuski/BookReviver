@@ -20,6 +20,7 @@ export function page(id: string, overrides: Partial<PageSchema> = {}): PageSchem
     id,
     position: 0,
     label: '',
+    label_manual: false,
     kind: 'text',
     origin: 'scan',
     scan_id: null,

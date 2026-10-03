@@ -38,6 +38,7 @@ from bookreviver.domain.entities import (
     PageEdit,
     PageStage,
     PageVersion,
+    PaginationSection,
     Project,
     ProjectOverview,
     Recipe,
@@ -52,6 +53,7 @@ from bookreviver.domain.ids import (
     JobId,
     PageId,
     PageVersionId,
+    PaginationSectionId,
     ProjectId,
     RecipeId,
     RecipeProfileId,
@@ -69,6 +71,7 @@ from bookreviver.ports.persistence import (
     PageRepository,
     PageStageRepository,
     PageVersionRepository,
+    PaginationSectionRepository,
     ProjectRepository,
     RecipeProfileRepository,
     RecipeRepository,
@@ -109,6 +112,7 @@ class InMemoryTables:
     :ivar sources: Sources by identifier.
     :ivar scans: Scans by identifier.
     :ivar pages: Pages by identifier.
+    :ivar pagination_sections: Pagination sections by identifier.
     :ivar page_versions: Page versions by identifier.
     :ivar page_stages: Page stage records by page and stage.
     :ivar page_edits: Page edits by page, stage and processor.
@@ -123,6 +127,7 @@ class InMemoryTables:
     sources: dict[SourceId, Source] = field(factory=dict)
     scans: dict[ScanId, Scan] = field(factory=dict)
     pages: dict[PageId, Page] = field(factory=dict)
+    pagination_sections: dict[PaginationSectionId, PaginationSection] = field(factory=dict)
     page_versions: dict[PageVersionId, PageVersion] = field(factory=dict)
     page_stages: dict[PageStageKey, PageStage] = field(factory=dict)
     page_edits: dict[PageEditKey, PageEdit] = field(factory=dict)
@@ -333,6 +338,7 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
         remove_where(self._tables.page_versions, lambda version: version.page_id in doomed_pages)
         remove_where(self._tables.page_stages, lambda stage: stage.page_id in doomed_pages)
         remove_where(self._tables.page_edits, lambda edit: edit.page_id in doomed_pages)
+        remove_where(self._tables.pagination_sections, lambda section: section.project_id == entity.id)
         remove_where(self._tables.pages, lambda page: page.id in doomed_pages)
         remove_where(self._tables.recipe_rules, lambda rule: rule.project_id == entity.id)
         remove_where(self._tables.recipes, lambda recipe: recipe.project_id == entity.id)
@@ -542,24 +548,30 @@ class InMemoryScanRepository(InMemoryRepository[Scan, ScanId], ScanRepository):
 class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
     """Pages of the book, unique by project and order key and by scan and slot."""
 
-    def __init__(self, tables: InMemoryTables, *, committed: InMemoryTables) -> None:
+    def __init__(self, tables: InMemoryTables, *, snapshot: InMemoryTables, committed: InMemoryTables) -> None:
         """Work on the page table of the unit of work's copy, checking pages against projects and scans.
 
         :param tables: Every table of the working copy.
         :type tables: InMemoryTables
+        :param snapshot: The committed tables as they were when this unit of work began, which tell the revision a
+                         page was read at.
+        :type snapshot: InMemoryTables
         :param committed: The committed tables shared with every unit of work, whose page revisions another
                           transaction may have raised since this one began.
         :type committed: InMemoryTables
         """
         super().__init__(tables.pages, tables)
+        self._snapshot = snapshot
         self._committed = committed
 
     @override
     async def update(self, entity: Page) -> Page:
         """Replace the stored state of a page, raising its revision, as the version counter of the table does.
 
-        A database statement checks the revision against the committed row, so this does too, and not against the
-        working copy, which still holds the page as it was read.
+        A database refuses a write over a row that another transaction changed after it was read, and over a page
+        read before an earlier write of this transaction. A page this transaction wrote already carries the revision
+        of the working copy, which a committed row has not reached, so the committed row is compared with the
+        snapshot taken when the transaction began and not with the page.
 
         :param entity: Page with its new state and the revision it was read at.
         :type entity: Page
@@ -567,9 +579,14 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         :rtype: Page
         :raises NotFoundError: If the page, or a project or scan it refers to, is not stored.
         :raises ConflictError: If its new state takes a unique value of another page.
-        :raises ConcurrentChangeError: If a transaction that committed after this one began changed the page.
+        :raises ConcurrentChangeError: If a transaction that committed after this one began changed the page, or the
+                                       page was read before an earlier write of this transaction.
         """
-        if (current := self._committed.pages.get(entity.id)) is not None and current.revision != entity.revision:
+        working = self._rows.get(entity.id)
+        committed, seen = self._committed.pages.get(entity.id), self._snapshot.pages.get(entity.id)
+        if (working is not None and working.revision != entity.revision) or (
+            committed is not None and seen is not None and committed.revision != seen.revision
+        ):
             raise ConcurrentChangeError
         return await super().update(evolve(entity, revision=entity.revision + 1))
 
@@ -593,11 +610,12 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
 
     @override
     def _cascade(self, entity: Page) -> None:
-        """Remove the page's versions, stage records and edits, and leave a project it was the cover of without one.
+        """Remove the page's versions, records, edits and sections, and leave a project it covered without a cover.
 
         :param entity: Page just removed.
         :type entity: Page
         """
+        remove_where(self._tables.pagination_sections, lambda section: section.first_page_id == entity.id)
         remove_where(self._tables.page_versions, lambda version: version.page_id == entity.id)
         remove_where(self._tables.page_stages, lambda stage: stage.page_id == entity.id)
         remove_where(self._tables.page_edits, lambda edit: edit.page_id == entity.id)
@@ -772,6 +790,45 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         """
         keys = [page.order_key for page in self._rows.values() if page.project_id == project_id]
         return max(keys, key=str.encode, default=None)
+
+
+class InMemoryPaginationSectionRepository(
+    InMemoryRepository[PaginationSection, PaginationSectionId], PaginationSectionRepository
+):
+    """The pagination sections of the books."""
+
+    def __init__(self, tables: InMemoryTables) -> None:
+        """Work on the section table of the unit of work's copy, checking sections against projects and pages.
+
+        :param tables: Every table of the working copy.
+        :type tables: InMemoryTables
+        """
+        super().__init__(tables.pagination_sections, tables)
+
+    @override
+    def _check(self, entity: PaginationSection) -> None:
+        """Require the project of the section and the page it starts at, as its foreign keys do.
+
+        :param entity: Section about to be stored.
+        :type entity: PaginationSection
+        :raises NotFoundError: If the project or the first page is not stored.
+        """
+        require(self._tables.projects, entity.project_id)
+        require(self._tables.pages, entity.first_page_id)
+
+    @override
+    async def list_for_project(self, project_id: ProjectId) -> Sequence[PaginationSection]:
+        """Return the sections of a project in the order they were made, ties by identifier.
+
+        :param project_id: Project owning the sections.
+        :type project_id: ProjectId
+        :returns: Every section of the project.
+        :rtype: Sequence[PaginationSection]
+        """
+        return sorted(
+            (section for section in self._rows.values() if section.project_id == project_id),
+            key=lambda section: (section.created_at, section.id),
+        )
 
 
 class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionId], PageVersionRepository):
@@ -1669,6 +1726,7 @@ class InMemoryUnitOfWork(UnitOfWork):
     :ivar sources: Source repository over the working copy.
     :ivar scans: Scan repository over the working copy.
     :ivar pages: Page repository over the working copy.
+    :ivar pagination_sections: Pagination section repository over the working copy.
     :ivar page_versions: Page version repository over the working copy.
     :ivar page_stages: Page stage repository over the working copy.
     :ivar page_edits: Page edit repository over the working copy.
@@ -1707,7 +1765,8 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.projects = InMemoryProjectRepository(self._tables)
         self.sources = InMemorySourceRepository(self._tables)
         self.scans = InMemoryScanRepository(self._tables)
-        self.pages = InMemoryPageRepository(self._tables, committed=self._database.tables)
+        self.pages = InMemoryPageRepository(self._tables, snapshot=self._snapshot, committed=self._database.tables)
+        self.pagination_sections = InMemoryPaginationSectionRepository(self._tables)
         self.page_versions = InMemoryPageVersionRepository(
             self._tables, snapshot=self._snapshot, committed=self._database.tables
         )

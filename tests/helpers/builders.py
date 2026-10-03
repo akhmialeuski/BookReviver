@@ -14,6 +14,7 @@ from bookreviver.domain.entities import (
     PageEdit,
     PageStage,
     PageVersion,
+    PaginationSection,
     Project,
     Recipe,
     RecipeProfile,
@@ -29,6 +30,8 @@ from bookreviver.domain.enums import (
     IdentifierScheme,
     JobKind,
     JobState,
+    LabelStyle,
+    NumberDisplay,
     Orthography,
     PageFilter,
     PageKind,
@@ -48,6 +51,7 @@ from bookreviver.domain.ids import (
     JobId,
     PageId,
     PageVersionId,
+    PaginationSectionId,
     ProjectId,
     RecipeId,
     RecipeProfileId,
@@ -187,6 +191,42 @@ def make_page(
         group_label=group_label,
         created_at=EPOCH,
         updated_at=EPOCH,
+    )
+
+
+def make_section(
+    *,
+    page: Page,
+    style: LabelStyle = LabelStyle.ARABIC,
+    display: NumberDisplay = NumberDisplay.PRINTED,
+    kinds: frozenset[PageKind] = frozenset(),
+    minutes: int = 0,
+) -> PaginationSection:
+    """Build a pagination section that starts at a page, numbering from 1 with no prefix and no name.
+
+    :param page: Page the section starts at, whose project the section takes.
+    :type page: Page
+    :param style: How the numbers are written, Arabic unless given.
+    :type style: LabelStyle
+    :param display: Whether the pages count, and whether their numbers are printed.
+    :type display: NumberDisplay
+    :param kinds: Kinds of page a series by kind takes, none for a section of the main flow.
+    :type kinds: frozenset[PageKind]
+    :param minutes: Minutes after ``EPOCH`` the section was made, which orders the sections of a project.
+    :type minutes: int
+    :returns: A section with a fresh identifier, which a test changes with ``evolve`` for the rest of its fields.
+    :rtype: PaginationSection
+    """
+    moment = EPOCH + timedelta(minutes=minutes)
+    return PaginationSection(
+        id=PaginationSectionId(uuid4()),
+        project_id=page.project_id,
+        first_page_id=page.id,
+        style=style,
+        display=display,
+        kinds=kinds,
+        created_at=moment,
+        updated_at=moment,
     )
 
 

@@ -382,6 +382,8 @@ export const MESSAGES = {
       arabic: '1, 2, 3',
       'roman-lower': 'i, ii, iii',
       'roman-upper': 'I, II, III',
+      'alpha-lower': 'a, b, c',
+      'alpha-upper': 'A, B, C',
       none: 'No numbers (erase the labels)',
     } satisfies Record<LabelStyle, string>,
     edit: {
@@ -695,6 +697,8 @@ export const MESSAGES = {
         arabic: '1, 2, 3',
         'roman-lower': 'i, ii, iii',
         'roman-upper': 'I, II, III',
+        'alpha-lower': 'a, b, c',
+        'alpha-upper': 'A, B, C',
         none: 'None',
       } satisfies Record<LabelStyle, string>,
       bracketed: 'In brackets',

@@ -32,6 +32,7 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     PageMapper,
     PageStageMapper,
     PageVersionMapper,
+    PaginationSectionMapper,
     ProjectMapper,
     RecipeMapper,
     RecipeProfileMapper,
@@ -46,6 +47,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     PageRow,
     PageStageRow,
     PageVersionRow,
+    PaginationSectionRow,
     ProjectRow,
     RecipeProfileRow,
     RecipeRow,
@@ -60,6 +62,7 @@ from bookreviver.domain.entities import (
     PageEdit,
     PageStage,
     PageVersion,
+    PaginationSection,
     Project,
     ProjectOverview,
     Recipe,
@@ -74,6 +77,7 @@ from bookreviver.domain.ids import (
     JobId,
     PageId,
     PageVersionId,
+    PaginationSectionId,
     ProjectId,
     RecipeId,
     RecipeProfileId,
@@ -91,6 +95,7 @@ from bookreviver.ports.persistence import (
     PageRepository,
     PageStageRepository,
     PageVersionRepository,
+    PaginationSectionRepository,
     ProjectRepository,
     RecipeProfileRepository,
     RecipeRepository,
@@ -262,6 +267,12 @@ class PageRows(RowRepository[PageRow]):
     """Rows of the ``pages`` table."""
 
     model_type = PageRow
+
+
+class PaginationSectionRows(RowRepository[PaginationSectionRow]):
+    """Rows of the ``pagination_sections`` table."""
+
+    model_type = PaginationSectionRow
 
 
 class PageVersionRows(RowRepository[PageVersionRow]):
@@ -838,6 +849,34 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
         """
         statement = select(func.max(PageRow.order_key)).where(PageRow.project_id == project_id)
         return await self._rows.session.scalar(statement)
+
+
+class SqlAlchemyPaginationSectionRepository(
+    SqlAlchemyRepository[PaginationSection, PaginationSectionId, PaginationSectionRow], PaginationSectionRepository
+):
+    """The pagination sections of the books, listed per project in the order they were made."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Create the repository over the ``pagination_sections`` table.
+
+        :param session: Session of the unit of work.
+        :type session: AsyncSession
+        """
+        super().__init__(rows=PaginationSectionRows(session=session), mapper=PaginationSectionMapper())
+
+    @override
+    async def list_for_project(self, project_id: ProjectId) -> Sequence[PaginationSection]:
+        """Return the sections of a project in the order they were made, ties by identifier.
+
+        :param project_id: Project owning the sections.
+        :type project_id: ProjectId
+        :returns: Every section of the project.
+        :rtype: Sequence[PaginationSection]
+        """
+        rows = await self._rows.get_many(
+            order_by=[PaginationSectionRow.created_at.asc(), PaginationSectionRow.id.asc()], project_id=project_id
+        )
+        return [self._mapper.to_entity(row) for row in rows]
 
 
 class SqlAlchemyPageVersionRepository(

@@ -41,6 +41,7 @@ NUMBERS: list[StyleCase] = [
 ]
 BOOK_SIZE: int = 3
 ROMAN_LIMIT: int = 3999
+TYPED_LABEL: str = 'iv'
 FIRST_ID, LAST_ID = PageId(uuid4()), PageId(uuid4())
 
 
@@ -82,38 +83,39 @@ class TestFormat:
         with pytest.raises(ValueError, match='0'):
             LabelStyle.ARABIC.write(0)
 
+    @pytest.mark.parametrize(
+        ('number', 'letters'),
+        [(1, 'a'), (2, 'b'), (26, 'z'), (27, 'aa'), (28, 'bb'), (52, 'zz'), (53, 'aaa')],
+    )
+    def test_letters_repeat_after_z_as_the_page_labels_of_pdf_do(self, number: int, letters: str) -> None:
+        """Verify the letter styles write ``a`` to ``z`` and then repeat the letter, in both cases.
+
+        :param number: The page number.
+        :type number: int
+        :param letters: Its lower-case letter form.
+        :type letters: str
+        """
+        expect(LabelStyle.ALPHA_LOWER.write(number) == letters)
+        expect(LabelStyle.ALPHA_UPPER.write(number) == letters.upper())
+        assert_expectations()
+
+    def test_letters_may_pass_the_roman_limit(self) -> None:
+        """Verify only the Roman styles stop at 3999, so the letter styles write any positive number."""
+        assert LabelStyle.ALPHA_LOWER.write(ROMAN_LIMIT + 1) != ''
+
+    @pytest.mark.parametrize('style', [LabelStyle.ALPHA_LOWER, LabelStyle.ALPHA_UPPER])
+    def test_letters_do_not_write_zero(self, style: LabelStyle) -> None:
+        """Verify no letter form exists for a page number below 1.
+
+        :param style: A letter style.
+        :type style: LabelStyle
+        """
+        with pytest.raises(ValueError, match='0'):
+            style.write(0)
+
 
 class TestPageNumbering:
     """Tests for PageNumbering."""
-
-    @pytest.mark.parametrize(
-        ('style', 'bracketed', 'expected'),
-        [
-            (LabelStyle.ARABIC, False, '12'),
-            (LabelStyle.ARABIC, True, '[12]'),
-            (LabelStyle.ROMAN_LOWER, False, 'xii'),
-            (LabelStyle.ROMAN_LOWER, True, '[xii]'),
-            (LabelStyle.ROMAN_UPPER, False, 'XII'),
-            (LabelStyle.ROMAN_UPPER, True, '[XII]'),
-            (LabelStyle.NONE, False, ''),
-            (LabelStyle.NONE, True, ''),
-        ],
-    )
-    def test_label_writes_the_number_in_its_style_with_or_without_brackets(
-        self, *, style: LabelStyle, bracketed: bool, expected: str
-    ) -> None:
-        """Verify the brackets enclose a written number and never an empty label.
-
-        :param style: Style of the numbering.
-        :type style: LabelStyle
-        :param bracketed: Whether the numbering brackets its labels.
-        :type bracketed: bool
-        :param expected: The label of the number 12.
-        :type expected: str
-        """
-        numbering = PageNumbering(first_page_id=FIRST_ID, last_page_id=LAST_ID, style=style, bracketed=bracketed)
-
-        assert numbering.label(12) == expected
 
     def test_defaults_number_from_one_and_skip_no_kind(self) -> None:
         """Verify a numbering that names only its range starts at 1, without brackets, and skips nothing."""
@@ -150,6 +152,31 @@ class TestPageChanges:
         expect(changed.notes == 'Stamp')
         expect(evolve(changed, label='xii', kind=page.kind, included=True) == page)
         assert_expectations()
+
+    @pytest.mark.parametrize(('label', 'manual'), [('xii', True), ('', False)])
+    def test_a_label_that_is_given_is_an_exception_unless_it_is_empty(self, label: str, *, manual: bool) -> None:
+        """Verify a label written by hand is an exception to the sections, and an empty one gives the page back to them.
+
+        :param label: The label of the change.
+        :type label: str
+        :param manual: Whether the page is then labelled by hand.
+        :type manual: bool
+        """
+        page = evolve(
+            make_page(project_id=make_project(owner_id=new_account_id()).id), label=TYPED_LABEL, label_manual=True
+        )
+
+        changed = PageChanges(label=label).apply_to(page)
+
+        assert (changed.label, changed.label_manual) == (label, manual)
+
+    def test_other_fields_leave_the_label_exception_alone(self) -> None:
+        """Verify a change of the kind keeps a label written by hand."""
+        page = evolve(
+            make_page(project_id=make_project(owner_id=new_account_id()).id), label=TYPED_LABEL, label_manual=True
+        )
+
+        assert PageChanges(kind=PageKind.PLATE).apply_to(page).label_manual is True
 
     def test_changes_nothing_by_default(self) -> None:
         """Verify a change that names no field returns an equal page."""

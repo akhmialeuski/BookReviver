@@ -48,6 +48,7 @@ from bookreviver.domain.geometry import SplitChoice
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import PageEditKey, PageStageKey
+from bookreviver.services.page_labels import PageLabels
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
@@ -121,6 +122,7 @@ class SpreadSplit:
         self._clock = runtime.clock
         self._order_keys = runtime.order_keys
         self._records = records
+        self._labels = PageLabels(uow=uow, publisher=runtime.publisher, clock=runtime.clock)
         self._keys = ProjectKeys(project.id)
 
     def splits(self, recipe: Recipe) -> bool:
@@ -215,6 +217,7 @@ class SpreadSplit:
         :param undoing: What the undoing deletes.
         :type undoing: Unsplit
         """
+        await self._labels.recompute(self._project.id, leaving=[right.id for right in undoing.rights])
         for right in undoing.rights:
             await self._uow.pages.delete(right.id)
         await self._uow.pages.update(evolve(undoing.page, slot=Page.WHOLE_SCAN, updated_at=self._clock.now()))
@@ -235,6 +238,7 @@ class SpreadSplit:
                     change=PageChange.REMOVED,
                 )
             )
+        await self._labels.announce(self._project.id)
 
     async def _halves(self, page: Page) -> Halves:
         """Work out the two pages of the spread, without storing any of them.
@@ -393,6 +397,9 @@ class SpreadSplit:
             await self._uow.pages.add(halves.right)
         if len(made) > 1 and halves.left_changes:
             await self._uow.pages.update(halves.left)
+        if len(made) > 1 and halves.right_is_new:
+            # The new half takes its place in the numbering, which moves the pages after it on
+            await self._labels.recompute(self._project.id)
         for version, earlier in zip(made, stored, strict=False):
             await (self._uow.page_versions.add(version) if earlier is None else self._uow.page_versions.update(version))
         changed = [
@@ -433,3 +440,4 @@ class SpreadSplit:
             if earlier is None or earlier.state is not VersionState.READY:
                 await self._publisher.publish(PageVersionReady(project_id=self._project.id, version=version))
         await self._records.announce(self._project.id, changed)
+        await self._labels.announce(self._project.id)

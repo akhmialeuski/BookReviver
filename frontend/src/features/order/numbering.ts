@@ -57,7 +57,8 @@ export function newDraft(pages: readonly PageSchema[], firstId?: string): Number
 /** Keep the first number a whole number from 1, and within what a Roman numeral can write when the style is one. */
 export function clampStart(style: LabelStyle, value: number): number {
   const whole = Number.isFinite(value) ? Math.trunc(value) : FIRST_NUMBER;
-  const largest = style === 'arabic' || style === 'none' ? Number.MAX_SAFE_INTEGER : MAX_ROMAN;
+  const largest =
+    style === 'roman-lower' || style === 'roman-upper' ? MAX_ROMAN : Number.MAX_SAFE_INTEGER;
   return Math.min(Math.max(whole, FIRST_NUMBER), largest);
 }
 

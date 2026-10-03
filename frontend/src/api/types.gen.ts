@@ -745,7 +745,7 @@ export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelle
  * :ivar last_page_id: Last page of the range, which may be the first page but not stand before it.
  * :ivar style: How the numbers are written; ``none`` erases the labels of the range.
  * :ivar start: Number of the first numbered page, from 1, and at most 3999 in a Roman style.
- * :ivar bracketed: Whether to enclose the label in square brackets.
+ * :ivar bracketed: Whether the pages are counted and not printed, so their labels are in square brackets.
  * :ivar skip_kinds: Kinds of page that take no number and keep their label, such as plates.
  */
 export type LabelRange = {
@@ -780,7 +780,7 @@ export type LabelRange = {
  * The domain imports only the standard library, so the Roman numerals are written here and not taken from the
  * ``roman`` package, whose one function would be about a dozen lines of ours.
  */
-export type LabelStyle = 'arabic' | 'roman-lower' | 'roman-upper' | 'none';
+export type LabelStyle = 'arabic' | 'roman-lower' | 'roman-upper' | 'alpha-lower' | 'alpha-upper' | 'none';
 
 /**
  * ManifestPage[PageSchema]
@@ -887,6 +887,16 @@ export type MetadataSuggestionSchema = {
  * by binding a scan to a placeholder.
  */
 export type NewPageOrigin = 'blank' | 'placeholder';
+
+/**
+ * NumberDisplay
+ *
+ * How the pages of a pagination section show their numbers, and whether they take part in the count.
+ *
+ * A page that is counted but not printed is shown with its number in square brackets, as a bibliographer writes a
+ * number the book implies and does not print, such as ``[iii]``.
+ */
+export type NumberDisplay = 'not-counted' | 'counted' | 'printed';
 
 /**
  * NumberedPageSchema
@@ -1071,6 +1081,8 @@ export type PageOrigin = 'scan' | 'blank' | 'placeholder';
  * :ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except
  * in a manifest listing only the included pages, which numbers those.
  * :ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.
+ * :ivar label_manual: Whether the label is an exception to the pagination sections: written by hand, or taken from
+ * the source of the scan, and so never changed when the numbers of the book are computed again.
  * :ivar kind: Role of the page in the book.
  * :ivar origin: Where the image of the page comes from.
  * :ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was
@@ -1097,6 +1109,10 @@ export type PageSchema = {
      * Label
      */
     label: string;
+    /**
+     * Label Manual
+     */
+    label_manual: boolean;
     kind: PageKind;
     origin: PageOrigin;
     /**
@@ -1190,9 +1206,11 @@ export type PageStageStatus = 'not-run' | 'fresh' | 'stale' | 'failed';
  *
  * A JSON Merge Patch of a page: an omitted field is kept, and a null label or note is cleared.
  *
- * The kind and the inclusion of a page have no empty value, so they may be omitted but not null.
+ * The kind and the inclusion of a page have no empty value, so they may be omitted but not null. A label that is not
+ * empty is written by hand, so it is an exception to the pagination sections, and clearing it gives the number of the
+ * page back to the sections.
  *
- * :ivar label: New printed number, or None to clear it.
+ * :ivar label: New printed number, or None to give the number back to the pagination sections.
  * :ivar kind: New role of the page in the book.
  * :ivar included: New decision whether the page is part of the book.
  * :ivar notes: New notes, or None to clear them.
@@ -1395,6 +1413,32 @@ export type PagePageVersionSchema = {
      * Items
      */
     items: Array<PageVersionSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
+};
+
+/**
+ * Page[PaginationSectionSchema]
+ */
+export type PagePaginationSectionSchema = {
+    /**
+     * Items
+     */
+    items: Array<PaginationSectionSchema>;
     /**
      * Total
      */
@@ -1641,6 +1685,102 @@ export type PagesMove = {
      * Page Ids
      */
     page_ids: Array<string>;
+};
+
+/**
+ * PaginationSectionBody
+ *
+ * A section to make, or the whole new state of a section that exists.
+ *
+ * :ivar first_page_id: The page the section starts at, which must be a page of the project.
+ * :ivar name: Name the user sees.
+ * :ivar style: How the numbers are written.
+ * :ivar start: Number of the first counted page, from 1, and at most 3999 in a Roman style.
+ * :ivar prefix: Text written before every number, such as ``Plate ``; it keeps its spaces.
+ * :ivar display: Whether the pages count, and whether their numbers are printed or only implied.
+ * :ivar kinds: Kinds of page a series by kind takes, each at most once; leave out for a section of the main flow.
+ */
+export type PaginationSectionBody = {
+    /**
+     * First Page Id
+     */
+    first_page_id: string;
+    /**
+     * Name
+     */
+    name?: string;
+    style: LabelStyle;
+    /**
+     * Start
+     */
+    start?: number;
+    /**
+     * Prefix
+     */
+    prefix?: string;
+    display?: NumberDisplay;
+    /**
+     * Kinds
+     */
+    kinds?: Array<PageKind>;
+};
+
+/**
+ * PaginationSectionSchema
+ *
+ * A pagination section of a book.
+ *
+ * :ivar id: Identifier of the section.
+ * :ivar project_id: Project owning the section.
+ * :ivar first_page_id: The page the section starts at, so the section follows the page when it is moved.
+ * :ivar name: Name the user sees.
+ * :ivar style: How the numbers of the section are written.
+ * :ivar start: Number of the first counted page of the section.
+ * :ivar prefix: Text written before every number, empty for none.
+ * :ivar display: Whether the pages count, and whether their numbers are printed or only implied.
+ * :ivar kinds: Kinds of page the section takes as a series by kind, empty for a section of the main flow.
+ * :ivar created_at: When the section was made.
+ * :ivar updated_at: When the section was last changed.
+ */
+export type PaginationSectionSchema = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Project Id
+     */
+    project_id: string;
+    /**
+     * First Page Id
+     */
+    first_page_id: string;
+    /**
+     * Name
+     */
+    name: string;
+    style: LabelStyle;
+    /**
+     * Start
+     */
+    start: number;
+    /**
+     * Prefix
+     */
+    prefix: string;
+    display: NumberDisplay;
+    /**
+     * Kinds
+     */
+    kinds: Array<PageKind>;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
 };
 
 /**
@@ -4017,6 +4157,187 @@ export type AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponses = {
 };
 
 export type AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponse = AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponses[keyof AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponses];
+
+export type ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+    };
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Size
+         */
+        size?: number;
+    };
+    url: '/api/v1/projects/{project_id}/pagination-sections';
+};
+
+export type ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetError = ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetErrors[keyof ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetErrors];
+
+export type ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: PagePaginationSectionSchema;
+};
+
+export type ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetResponse = ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetResponses[keyof ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetResponses];
+
+export type CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostData = {
+    body: PaginationSectionBody;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pagination-sections';
+};
+
+export type CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostError = CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostErrors[keyof CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostErrors];
+
+export type CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostResponses = {
+    /**
+     * Successful Response
+     */
+    201: PaginationSectionSchema;
+};
+
+export type CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostResponse = CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostResponses[keyof CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostResponses];
+
+export type DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Section Id
+         *
+         * Identifier of the pagination section
+         */
+        section_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pagination-sections/{section_id}';
+};
+
+export type DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteError = DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteErrors[keyof DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteErrors];
+
+export type DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteResponse = DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteResponses[keyof DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteResponses];
+
+export type PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutData = {
+    body: PaginationSectionBody;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Section Id
+         *
+         * Identifier of the pagination section
+         */
+        section_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pagination-sections/{section_id}';
+};
+
+export type PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutError = PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutErrors[keyof PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutErrors];
+
+export type PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: PaginationSectionSchema;
+};
+
+export type PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutResponse = PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutResponses[keyof PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutResponses];
 
 export type ListStagesApiV1ProjectsProjectIdStagesGetData = {
     body?: never;

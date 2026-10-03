@@ -9,6 +9,7 @@ from bookreviver.adapters.jobs.recording import RecordingJobQueue
 from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUnitOfWork
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.plugins.split_none import SplitNone
+from bookreviver.services.pagination import PaginationService
 from tests.helpers.builders import EPOCH
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.page_services import make_page_service
@@ -134,6 +135,24 @@ def fx_service(
     :rtype: Callable[[], PageService]
     """
     return lambda: make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime)
+
+
+@pytest.fixture
+def fx_pagination(
+    fx_database: InMemoryDatabase, fx_events: RecordingEventBus, fx_clock: FixedClock
+) -> Callable[[], PaginationService]:
+    """Return a function building the pagination service for one request.
+
+    :param fx_database: In-memory database every request of the test shares.
+    :type fx_database: InMemoryDatabase
+    :param fx_events: Recording event bus the service publishes to.
+    :type fx_events: RecordingEventBus
+    :param fx_clock: Clock stopped at the epoch.
+    :type fx_clock: FixedClock
+    :returns: Function building a service over a new unit of work.
+    :rtype: Callable[[], PaginationService]
+    """
+    return lambda: PaginationService(uow=InMemoryUnitOfWork(fx_database), publisher=fx_events, clock=fx_clock)
 
 
 @pytest.fixture

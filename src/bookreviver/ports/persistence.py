@@ -15,6 +15,7 @@ from bookreviver.domain.entities import (
     PageEdit,
     PageStage,
     PageVersion,
+    PaginationSection,
     Project,
     Recipe,
     RecipeProfile,
@@ -26,6 +27,7 @@ from bookreviver.domain.ids import (
     JobId,
     PageId,
     PageVersionId,
+    PaginationSectionId,
     ProjectId,
     RecipeId,
     RecipeProfileId,
@@ -356,6 +358,26 @@ class PageRepository(Repository[Page, PageId]):
         :type project_id: ProjectId
         :returns: The greatest order key of the project's pages, or None for a book without pages.
         :rtype: str | None
+        """
+
+
+class PaginationSectionRepository(Repository[PaginationSection, PaginationSectionId]):
+    """The pagination sections of the books, which a page of the book is numbered from.
+
+    A section names the page it starts at. Deleting that page, or the project, removes the section with it, so a use
+    case that deletes pages hands the section to the next page first.
+    """
+
+    @abstractmethod
+    async def list_for_project(self, project_id: ProjectId) -> Sequence[PaginationSection]:
+        """Return the sections of a project in the order they were made, ties by identifier.
+
+        The sections are not in book order, since the order of the book is the order of the pages they start at.
+
+        :param project_id: Project owning the sections.
+        :type project_id: ProjectId
+        :returns: Every section of the project.
+        :rtype: Sequence[PaginationSection]
         """
 
 
@@ -826,6 +848,7 @@ class UnitOfWork(ABC):
     :ivar sources: Source repository of this transaction.
     :ivar scans: Scan repository of this transaction.
     :ivar pages: Page repository of this transaction.
+    :ivar pagination_sections: Repository of the pagination sections of the books, of this transaction.
     :ivar page_versions: Page version repository of this transaction.
     :ivar page_stages: Page stage repository of this transaction.
     :ivar page_edits: Page edit repository of this transaction.
@@ -840,6 +863,7 @@ class UnitOfWork(ABC):
     sources: SourceRepository
     scans: ScanRepository
     pages: PageRepository
+    pagination_sections: PaginationSectionRepository
     page_versions: PageVersionRepository
     page_stages: PageStageRepository
     page_edits: PageEditRepository

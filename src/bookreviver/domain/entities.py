@@ -12,6 +12,7 @@ from bookreviver.domain.enums import (
     ImagePolicy,
     JobKind,
     JobState,
+    NumberDisplay,
     PageFilter,
     PageKind,
     PageOrigin,
@@ -39,12 +40,22 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from bookreviver.domain.enums import EditorKind, FileType, PageSide, PlaceMode, ReviewReason, SourceKind, Stage
+    from bookreviver.domain.enums import (
+        EditorKind,
+        FileType,
+        LabelStyle,
+        PageSide,
+        PlaceMode,
+        ReviewReason,
+        SourceKind,
+        Stage,
+    )
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.ids import (
         AccountId,
         JobId,
         PageId,
+        PaginationSectionId,
         ProjectId,
         RecipeId,
         RecipeProfileId,
@@ -211,7 +222,10 @@ class Page:
     :ivar id: Identifier of the page, which names its storage directory.
     :ivar project_id: Project owning the page.
     :ivar order_key: Fractional index string whose byte order is the order of the pages in the book.
-    :ivar label: Printed number, such as ``xii``, ``12`` or ``[4]``, or empty for an unnumbered page.
+    :ivar label: Printed number, such as ``xii``, ``12`` or ``[4]``, or empty for an unnumbered page. It is computed
+                 from the pagination sections of the project, except when ``label_manual`` is set.
+    :ivar label_manual: Whether the label was written by hand, or came with the scan, which makes it an exception that
+                        a recompute of the numbers of the book never changes.
     :ivar kind: Role of the page in the book.
     :ivar origin: Where the image of the page comes from.
     :ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was
@@ -236,6 +250,7 @@ class Page:
     project_id: ProjectId
     order_key: str = field(validator=validators.min_len(1))
     label: str = ''
+    label_manual: bool = False
     kind: PageKind = PageKind.TEXT
     origin: PageOrigin
     scan_id: ScanId | None = None
@@ -255,6 +270,83 @@ class Page:
         if self.scan_id is not None and self.origin is not PageOrigin.SCAN:
             err_msg = f'A page of origin {self.origin} has no scan, but names scan {self.scan_id}.'
             raise ValueError(err_msg)
+
+
+@frozen(kw_only=True)
+class PaginationSection:
+    """A run of the pages of a book that is numbered by one rule, such as the Roman numbers of a preface.
+
+    A section starts at its first page and lasts until the next section of its own flow starts. A section that names
+    no kinds belongs to the main flow of the book, and a section with kinds is a series by kind: it takes the pages of
+    those kinds from its first page on, wherever they stand, and keeps its own count, so the plates of a book get
+    ``Plate I`` and ``Plate II`` without disturbing the numbers of the text.
+
+    :ivar id: Identifier of the section.
+    :ivar project_id: Project owning the section.
+    :ivar first_page_id: The page the section starts at, so the section follows the page when it is moved.
+    :ivar name: Name the user sees, such as ``Preface``.
+    :ivar style: How the numbers of the section are written.
+    :ivar start: Number of the first counted page of the section, from 1.
+    :ivar prefix: Text written before every number, such as ``Plate ``; empty for none.
+    :ivar display: Whether the pages count, and whether their numbers are printed or only implied.
+    :ivar kinds: Kinds of page the section takes as a series by kind; empty for a section of the main flow.
+    :ivar created_at: When the section was created.
+    :ivar updated_at: When the section was last changed.
+    """
+
+    id: PaginationSectionId
+    project_id: ProjectId
+    first_page_id: PageId
+    name: str = ''
+    style: LabelStyle
+    start: int = field(default=1, validator=validators.ge(1))
+    prefix: str = ''
+    display: NumberDisplay = NumberDisplay.PRINTED
+    kinds: frozenset[PageKind] = frozenset()
+    created_at: datetime
+    updated_at: datetime
+
+    def __attrs_post_init__(self) -> None:
+        """Check that the first number can be written in the style.
+
+        :raises ValueError: If the style is Roman and the first number is above 3999.
+        """
+        self.style.write(self.start)
+
+    @property
+    def is_series(self) -> bool:
+        """Whether the section is a series by kind, which does not interrupt the main flow."""
+        return bool(self.kinds)
+
+    def label(self, number: int) -> str:
+        """Write the label of the page that takes ``number`` in the section.
+
+        :param number: Number of the page, counted from ``start``.
+        :type number: int
+        :returns: The number in the style of the section after its prefix, in square brackets when the pages are counted
+                  and not printed, and empty when the pages are not counted or the style writes no number.
+        :rtype: str
+        :raises ValueError: If the style cannot write the number, such as 4000 in Roman numerals.
+        """
+        text = self.style.write(number)
+        if not text or not self.display.counts:
+            return ''
+        label = f'{self.prefix}{text}'
+        return f'[{label}]' if self.display is NumberDisplay.COUNTED else label
+
+    def clashes_with(self, other: PaginationSection) -> bool:
+        """Tell whether the two sections start at one page and would take the same pages, so the later one wins.
+
+        :param other: Another section of the project.
+        :type other: PaginationSection
+        :returns: True when both start at the same page and are both of the main flow, or are series that share a kind.
+        :rtype: bool
+        """
+        if self.id == other.id or self.first_page_id != other.first_page_id:
+            return False
+        if self.is_series and other.is_series:
+            return bool(self.kinds & other.kinds)
+        return self.is_series == other.is_series
 
 
 @frozen(kw_only=True)

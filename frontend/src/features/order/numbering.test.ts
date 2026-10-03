@@ -47,6 +47,11 @@ describe('clampStart', () => {
     expect(clampStart('roman-upper', 3999)).toBe(3999);
     expect(clampStart('arabic', 5000)).toBe(5000);
   });
+
+  it('lets the letter styles count past the Roman limit', () => {
+    expect(clampStart('alpha-lower', 5000)).toBe(5000);
+    expect(clampStart('alpha-upper', 5000)).toBe(5000);
+  });
 });
 
 function draftFrom(firstId: string): NumberingDraft {

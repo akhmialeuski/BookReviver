@@ -9,6 +9,7 @@ function pages(...ids: string[]): PageSchema[] {
         id,
         position,
         label: '',
+        label_manual: false,
         kind: 'text',
         origin: 'scan',
         scan_id: null,

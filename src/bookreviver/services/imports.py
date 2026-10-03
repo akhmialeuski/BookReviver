@@ -69,6 +69,7 @@ from bookreviver.domain.values import (
     UploadPath,
 )
 from bookreviver.services.base_versions import SPLIT_NONE, BaseVersions
+from bookreviver.services.page_labels import PageLabels
 from bookreviver.services.projects import owned_project
 from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.steps import StepRun
@@ -200,6 +201,7 @@ class ImportRun:
         self._rasterizer = imaging.rasterizer
         self._runner = imaging.runner
         self._records = StageRecords(uow=uow, publisher=runtime.publisher, clock=runtime.clock)
+        self._labels = PageLabels(uow=uow, publisher=runtime.publisher, clock=runtime.clock)
         self._base_versions = BaseVersions(
             assets=storage.assets, tiler=imaging.tiler, iiif_root=runtime.limits.iiif_root
         )
@@ -340,6 +342,7 @@ class ImportRun:
                 project_id=source.project_id,
                 order_key=order_key,
                 label=scan.source_label,
+                label_manual=bool(scan.source_label),
                 origin=PageOrigin.SCAN,
                 scan_id=scan.id,
                 created_at=moment,
@@ -351,6 +354,8 @@ class ImportRun:
         await self._uow.sources.add(source)
         await self._uow.scans.add_many(scans)
         await self._uow.pages.add_many(pages)
+        # A page without the label of its source takes the number its section gives it
+        await self._labels.recompute(source.project_id)
         described = await self._describe_book(analysis.suggestion)
         await self._commit()
         try:
@@ -370,6 +375,7 @@ class ImportRun:
         await self._publisher.publish(
             PagesChanged(project_id=source.project_id, page_ids=[page.id for page in pages], change=PageChange.ADDED)
         )
+        await self._labels.announce(source.project_id)
         if described:
             await self._publisher.publish(ProjectChanged(project_id=source.project_id))
 

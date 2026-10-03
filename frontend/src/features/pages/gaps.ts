@@ -10,8 +10,8 @@ import type { LabelStyle } from '@/api';
  * part of it and is read as if it were not there.
  */
 
-/** The styles a number is read in, which are the styles of a numbering that write a number. */
-export type NumberStyle = Exclude<LabelStyle, 'none'>;
+/** The styles a number is read in, which are the numbers a printed book counts its pages with. */
+export type NumberStyle = Extract<LabelStyle, 'arabic' | 'roman-lower' | 'roman-upper'>;
 
 /** What a label says: a number and the style it is written in. */
 export interface ParsedLabel {
