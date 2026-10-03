@@ -86,7 +86,8 @@ test('a recipe is saved as a profile, applied in another book, made the default,
     const handle = page
       .locator(`[data-testid="recipe-step"][data-processor="${CROP}"]`)
       .getByRole('button', { name: /^Move the/ });
-    const announced = (text: string) => expect(page.getByRole('status').filter({ hasText: text })).toHaveCount(1);
+    const announced = (text: string) =>
+      expect(page.getByRole('status').filter({ hasText: text })).toHaveCount(1);
     const drag = MESSAGES.processing.steps.drag;
     await handle.focus();
     await page.keyboard.press('Space');
