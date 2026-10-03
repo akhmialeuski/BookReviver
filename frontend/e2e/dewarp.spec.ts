@@ -112,7 +112,7 @@ test('a reader flattens a page bent into the gutter, lays its two curves by hand
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
-    await expect(page.getByTestId('recipe-step')).toHaveCount(4);
+    await expect(page.getByTestId('recipe-step')).toHaveCount(5);
     await expect(page.getByTestId('recipe-step').nth(2)).toContainText('3 · Dewarp');
     await snap(page, 'dewarp-bent-page');
   });
@@ -195,7 +195,8 @@ test('a reader flattens a page bent into the gutter, lays its two curves by hand
 
   await test.step('a run on all pages keeps the curves of the user on the page', async () => {
     await runAll(page);
-    await expect(steps).toHaveCount(4, { timeout: RUN_TIMEOUT_MS });
+    // The sheet, the angle, the curves, the frame and the block on the page
+    await expect(steps).toHaveCount(5, { timeout: RUN_TIMEOUT_MS });
     await expect(curvesStep).toHaveAttribute('data-manual', 'true');
     await expect(layer).toHaveAttribute('data-node-1-2', `${node.x},${node.y}`);
     expect((await dewarpVersion(page)).edit_hash).not.toBe('');
