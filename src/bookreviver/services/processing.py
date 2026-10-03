@@ -12,15 +12,16 @@ The one active recipe of a stage is kept by the service in one transaction and b
 index.
 
 Versions are not deleted when they stop being current, so going back to earlier parameters is instant. The job
-``collect-versions`` removes the old ones that nothing needs.
+``collect-versions`` removes the files of the old ones that nothing needs, and keeps their rows, so a version outlives
+its picture and a run makes the picture again under the same identifier. Only a preview loses its row.
 """
 
 import contextlib
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import JobKind, Stage, VersionScale, VersionState
+from bookreviver.domain.enums import JobKind, ProcessorScope, Stage, VersionScale, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.values import PageStageKey, Slice, StepPreview, TileCut
+from bookreviver.domain.values import PageStageKey, Slice, StageRun, StepPreview, TileCut
 from bookreviver.services.processing_parts import PROJECT_BUSY
 from bookreviver.services.projects import owned_project
 
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Job, Page, PageStage, PageVersion, Recipe
     from bookreviver.domain.geometry import Point
     from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
-    from bookreviver.domain.values import ProcessorSpec, RecipeKey, SliceRequest, StageRun, Step, VersionFilter
+    from bookreviver.domain.values import ProcessorSpec, RecipeKey, SliceRequest, Step, VersionFilter
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.services.processing_parts import ProcessingParts
@@ -39,6 +40,10 @@ NOT_CHOOSABLE: str = 'The version {version_id} cannot be made the current one: {
 NOT_READY: str = 'it is not ready'
 NOT_FULL: str = 'it is a preview'
 OTHER_STAGE: str = 'it belongs to another stage'
+FILES_REMOVED: str = 'its picture was removed, so it has to be made again first'
+NOT_REMAKABLE: str = 'The picture of the version {version_id} cannot be made again: {reason}.'
+HAS_FILES: str = 'it still has its picture'
+SPLITS_A_SCAN: str = 'it was made by a step that splits a scan, which only a run of the whole stage applies'
 NO_IMAGE: str = 'The version {version_id} has no image.'
 NO_STEP_TO_RUN_THROUGH: str = (
     'Step {index} of the recipe {name} does not exist, or it and every step before it are switched off.'
@@ -464,14 +469,50 @@ class ProcessingService:
         await owned_project(self._uow.projects, actor, project_id)
         await self._page(project_id, page_id)
         version = await self._version_of(page_id, version_id)
-        if version.renditions is None:
+        if version.renditions is None or version.files_removed:
             raise ConflictError(NO_IMAGE.format(version_id=version_id))
         if version.state is not VersionState.READY or version.scale is not VersionScale.FULL:
             raise ConflictError(NOT_CHOOSABLE.format(version_id=version_id, reason=NOT_READY))
         return await self._starter.enqueue(project_id, JobKind.CUT_TILES, TileCut(version_ids=(version_id,)).to_map())
 
+    async def start_remake(
+        self, actor: Actor, project_id: ProjectId, page_id: PageId, version_id: PageVersionId
+    ) -> Job:
+        """Record a job that makes the picture of a version again, whose files a collection removed, and queue it.
+
+        The job is a run of the stage over this page, with the parameters and the edit the version stored, over the
+        current version of the earlier stage, and it makes the version current when it ends. It finds the version under
+        the same identifier and gives its row the files again. When the earlier stage has another current version than
+        the one the version was made from, the job fails with that reason instead of making another version, since a
+        result that reads other pixels is not the result the user chose.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param page_id: Identifier of the page.
+        :type page_id: PageId
+        :param version_id: Identifier of the version.
+        :type version_id: PageVersionId
+        :returns: The queued job.
+        :rtype: Job
+        :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no such
+                               version.
+        :raises ConflictError: If the version has its files, is not ready, is a preview, or is made by a step that
+                               splits a scan.
+        """
+        await owned_project(self._uow.projects, actor, project_id)
+        await self._page(project_id, page_id)
+        version = await self._version_of(page_id, version_id)
+        if (reason := self._why_not_remakable(version)) is not None:
+            raise ConflictError(NOT_REMAKABLE.format(version_id=version_id, reason=reason))
+        if self._catalogue.get(version.processor.key).spec.scope is ProcessorScope.SPLIT:
+            raise ConflictError(NOT_REMAKABLE.format(version_id=version_id, reason=SPLITS_A_SCAN))
+        run = StageRun(stage=version.stage, page_ids=(page_id,), remake=version_id)
+        return await self._starter.enqueue(project_id, JobKind.RUN_STAGE, run.to_map())
+
     async def start_collection(self, actor: Actor, project_id: ProjectId) -> Job:
-        """Record a job that deletes the old versions nothing needs, and queue it.
+        """Record a job that removes the files of the old versions nothing needs, and queue it.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -594,4 +635,23 @@ class ProcessingService:
             return NOT_READY
         if version.scale is not VersionScale.FULL:
             return NOT_FULL
+        if version.files_removed:
+            return FILES_REMOVED
+        return None
+
+    @staticmethod
+    def _why_not_remakable(version: PageVersion) -> str | None:
+        """Say why the picture of a version cannot be made again, or None when it can.
+
+        :param version: The version.
+        :type version: PageVersion
+        :returns: The reason, or None.
+        :rtype: str | None
+        """
+        if version.scale is not VersionScale.FULL:
+            return NOT_FULL
+        if version.state is not VersionState.READY:
+            return NOT_READY
+        if not version.files_removed:
+            return HAS_FILES
         return None

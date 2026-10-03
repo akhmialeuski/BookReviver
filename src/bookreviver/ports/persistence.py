@@ -454,13 +454,14 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
     async def collectable(
         self, project_id: ProjectId, older_than: datetime, previews_older_than: datetime
     ) -> Sequence[PageVersion]:
-        """Return the versions a collection may delete: old, not base, and read by no version that stays.
+        """Return the versions a collection may clear: old, not base, with files, and read by no version that stays.
 
         A version stays when a stage record names it as its head, when it is a base version, which has no input, when
         it is too young to go, and when a version that stays reads it, directly or through the chain of inputs.
         Deleting an input would leave the version that reads it with no input, which the database allows and which
         would make it look like a base version for ever. A full run is old once it was created before ``older_than``,
-        and a preview once it was created before ``previews_older_than``.
+        and a preview once it was created before ``previews_older_than``. A version whose files were removed already is
+        not returned again, since there is nothing left to remove from it, but it still counts as a reader.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId

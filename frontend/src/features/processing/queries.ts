@@ -36,6 +36,7 @@ import {
   putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutMutation,
   putRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutMutation,
   putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation,
+  remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostMutation,
   runStageApiV1ProjectsProjectIdStagesStageRunPostMutation,
   unpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteMutation,
 } from '@/api/@tanstack/react-query.gen';
@@ -349,6 +350,20 @@ export function useChooseVersion(projectId: string, stage: Stage) {
           }),
         }),
       ]),
+  });
+}
+
+/**
+ * Make the picture of a result again, whose files a collection removed, in the background.
+ *
+ * The answer is the queued job, and the version becomes the current one of its stage when the job ends. The mutation
+ * settles after the job list is read again, so the job is in it when the caller looks for it.
+ */
+export function useRemakeVersion(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostMutation(),
+    onSettled: () => invalidateJobs(queryClient, projectId),
   });
 }
 

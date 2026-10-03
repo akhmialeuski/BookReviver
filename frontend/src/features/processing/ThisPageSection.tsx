@@ -2,10 +2,11 @@ import { TriangleAlertIcon } from 'lucide-react';
 import { EditorControls } from '@/features/editors/EditorControls';
 import type { EditorSession } from '@/features/editors/session';
 import { ApplyTo } from '@/features/processing/ApplyTo';
-import { useChooseVersion, useVersions } from '@/features/processing/queries';
+import { useChooseVersion, useRemakeVersion, useVersions } from '@/features/processing/queries';
 import { describeParams, historyOf, readChainResult } from '@/features/processing/results';
 import type { Processing } from '@/features/processing/useProcessing';
 import { useShownStep } from '@/features/processing/useShownStep';
+import { useActiveJobs } from '@/features/workspace/queries';
 import type { StripItem } from '@/features/workspace/strip';
 import { describeError } from '@/shared/http/problem';
 import { formatDateTime } from '@/shared/lib/format';
@@ -46,6 +47,14 @@ export function ThisPageSection({
   const version = row?.version ?? null;
   const versions = useVersions(projectId, page.id, stage);
   const choose = useChooseVersion(projectId, stage);
+  const remake = useRemakeVersion(projectId);
+  const activeJobs = useActiveJobs(projectId);
+  // The result whose picture is being made again, from the moment it was asked for until its job has ended
+  const remakingId =
+    remake.isPending ||
+    (remake.data !== undefined && activeJobs.data?.some((job) => job.id === remake.data.id))
+      ? remake.variables?.path.version_id
+      : undefined;
   const entries = historyOf(versions.data ?? [], version?.id);
   // A stage of several steps stands on the version of the last, so what the first ones found is read down the chain, up to
   // the step the reader chose to look at
@@ -239,6 +248,11 @@ export function ThisPageSection({
                   <span className="break-words">
                     {parts.map((part) => `${part.label} ${part.value}`).join(' · ')}
                   </span>
+                  {entry.files_removed ? (
+                    <span className="text-muted-foreground" data-testid="history-removed">
+                      {labels.history.pictureRemoved}
+                    </span>
+                  ) : null}
                 </div>
                 {current ? (
                   <Badge variant="secondary">{labels.history.current}</Badge>
@@ -246,16 +260,25 @@ export function ThisPageSection({
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={choose.isPending}
+                    disabled={choose.isPending || remakingId !== undefined}
                     data-testid="history-use"
                     onClick={() =>
-                      choose.mutate({
-                        path: { project_id: projectId, page_id: page.id, stage },
-                        body: { version_id: entry.id },
-                      })
+                      entry.files_removed
+                        ? remake.mutate({
+                            path: {
+                              project_id: projectId,
+                              page_id: page.id,
+                              version_id: entry.id,
+                            },
+                          })
+                        : choose.mutate({
+                            path: { project_id: projectId, page_id: page.id, stage },
+                            body: { version_id: entry.id },
+                          })
                     }
                   >
-                    {choose.isPending && choose.variables?.body.version_id === entry.id
+                    {(choose.isPending && choose.variables?.body.version_id === entry.id) ||
+                    remakingId === entry.id
                       ? labels.history.using
                       : labels.history.use}
                   </Button>
@@ -266,6 +289,7 @@ export function ThisPageSection({
         </ol>
       )}
       {choose.error === null ? null : <ErrorAlert message={describeError(choose.error)} />}
+      {remake.error === null ? null : <ErrorAlert message={describeError(remake.error)} />}
     </section>
   );
 }

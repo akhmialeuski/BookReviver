@@ -67,6 +67,8 @@ CONTROL_CHARACTERS: re.Pattern[str] = re.compile(r'[\x00-\x1f\x7f]')
 PIN_NEEDS_RECIPE: str = 'A run pins a recipe to its pages only when it names the recipe.'
 # Key of the last step to run in the stored parameters of a ``run-stage`` job
 THROUGH_STEP_KEY: str = 'through_step'
+REMAKE_KEY: str = 'remake'
+REMAKE_ONE_PAGE: str = 'A run that makes a version again names no recipe and exactly one page.'
 
 
 @frozen(kw_only=True)
@@ -938,6 +940,8 @@ class StageRun:
                run without a recipe chooses the recipe of each page and pins nothing.
     :ivar through_step: Index in the recipe of the last step to run, or None to run through the last step that is on.
                         The steps before it are found in the cache of versions when their inputs did not change.
+    :ivar remake: Version whose files a collection removed, which the run makes again by the steps its chain stored
+                  instead of by a recipe, over the one page named, and makes current. It names no recipe.
     """
 
     stage: Stage
@@ -946,14 +950,18 @@ class StageRun:
     confirm_unsplit: bool = False
     pin: bool = False
     through_step: int | None = field(default=None, validator=validators.optional(validators.ge(0)))
+    remake: PageVersionId | None = None
 
     def __attrs_post_init__(self) -> None:
-        """Check that only a run by a recipe pins.
+        """Check that only a run by a recipe pins, and that a run that makes a version again names one page.
 
-        :raises ValueError: If a run without a recipe asks to pin.
+        :raises ValueError: If a run without a recipe asks to pin, or a run that makes a version again names a recipe
+                            or not exactly one page.
         """
         if self.pin and self.recipe_id is None:
             raise ValueError(PIN_NEEDS_RECIPE)
+        if self.remake is not None and (self.recipe_id is not None or self.page_ids is None or len(self.page_ids) != 1):
+            raise ValueError(REMAKE_ONE_PAGE)
 
     def to_map(self) -> dict[str, Any]:
         """Return the value as the JSON object a job stores.
@@ -968,6 +976,7 @@ class StageRun:
             'confirm_unsplit': self.confirm_unsplit,
             'pin': self.pin,
             THROUGH_STEP_KEY: self.through_step,
+            REMAKE_KEY: self.remake,
         }
 
     @classmethod
@@ -989,6 +998,7 @@ class StageRun:
                 confirm_unsplit=bool(stored.get('confirm_unsplit', False)),
                 pin=bool(stored.get('pin', False)),
                 through_step=stored.get(THROUGH_STEP_KEY),
+                remake=None if stored.get(REMAKE_KEY) is None else PageVersionId(stored[REMAKE_KEY]),
             )
         except (KeyError, ValueError, TypeError) as error:
             raise _params_error(JobKind.RUN_STAGE, error) from error
