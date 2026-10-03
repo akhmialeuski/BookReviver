@@ -1260,6 +1260,7 @@ export const MESSAGES = {
       current: 'Current',
       use: 'Use this result',
       using: 'Using…',
+      pictureRemoved: 'Picture removed · made again on use',
       empty: 'Run the stage to make a result.',
       made: (time: string) => `Made ${time}`,
     },

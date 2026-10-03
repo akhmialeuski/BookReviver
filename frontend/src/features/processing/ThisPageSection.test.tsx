@@ -15,12 +15,19 @@ import { ProblemError } from '@/shared/http/problem';
  * of the results with the choice of an earlier one.
  */
 
-const sdk = vi.hoisted(() => ({ versions: vi.fn(), choose: vi.fn() }));
+const sdk = vi.hoisted(() => ({
+  versions: vi.fn(),
+  choose: vi.fn(),
+  remake: vi.fn(),
+  jobs: vi.fn(),
+}));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet: sdk.versions,
   chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePut: sdk.choose,
+  remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePost: sdk.remake,
+  listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
 }));
 
 const OLD = version('old', {
@@ -88,10 +95,14 @@ describe('ThisPageSection', () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     sdk.versions.mockReset();
     sdk.choose.mockReset();
+    sdk.remake.mockReset();
+    sdk.jobs.mockReset();
     sdk.versions.mockResolvedValue({
       data: { items: [OLD, NEW], total: 2, page: 1, size: 100, pages: 1 },
     });
     sdk.choose.mockResolvedValue({ data: {} });
+    sdk.remake.mockResolvedValue({ data: { id: 'job' } });
+    sdk.jobs.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 100, pages: 1 } });
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -245,6 +256,36 @@ describe('ThisPageSection', () => {
       path: { project_id: 'project', page_id: 'page', stage: 'geometry' },
       body: { version_id: 'old' },
     });
+  });
+
+  it('marks a result whose picture was removed, and makes it again instead of choosing it', async () => {
+    const removed = version('old', {
+      created_at: '2026-10-01T10:00:00Z',
+      files_removed: true,
+      files_removed_at: '2026-10-02T00:00:00Z',
+      images: null,
+    });
+    sdk.versions.mockResolvedValue({
+      data: { items: [removed, NEW], total: 2, page: 1, size: 100, pages: 1 },
+    });
+    await render({ page: page('page'), row: row('page', { version: NEW }) });
+
+    expect(text('history-removed')).toBe('Picture removed · made again on use');
+    await act(async () => {
+      container.querySelector<HTMLElement>('[data-testid="history-use"]')?.click();
+    });
+
+    expect(sdk.choose).not.toHaveBeenCalled();
+    expect(sdk.remake).toHaveBeenCalledTimes(1);
+    expect(sdk.remake.mock.calls[0]?.[0]).toMatchObject({
+      path: { project_id: 'project', page_id: 'page', version_id: 'old' },
+    });
+  });
+
+  it('says nothing about a picture on a result that has one', async () => {
+    await render({ page: page('page'), row: row('page', { version: NEW }) });
+
+    expect(container.querySelector('[data-testid="history-removed"]')).toBeNull();
   });
 
   it('offers no button on the current result', async () => {

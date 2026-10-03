@@ -986,6 +986,7 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
             version.id
             for version in versions.values()
             if version.input_id is not None
+            and version.files_removed_at is None
             and version.created_at < (previews_older_than if version.scale is VersionScale.PREVIEW else older_than)
         ]
         goes = collectable_versions(

@@ -483,16 +483,42 @@ async def cut_version_tiles(
     return JobSchema.model_validate(job)
 
 
+@router.post('/{project_id}/pages/{page_id}/versions/{version_id}/remake', status_code=status.HTTP_202_ACCEPTED)
+async def remake_version(
+    address: Annotated[VersionPath, Depends()], actor: ActorDep, processing: FromDishka[ProcessingService]
+) -> JobSchema:
+    """Make the picture of a version again, whose files a collection removed, and make the version current.
+
+    The job runs the step with the parameters and the edit the version stored, over the current version of the earlier
+    stage, and finds the version under its own identifier. It fails with its reason, and makes nothing, when the earlier
+    stage has another current version than the one this version was made from, or the edit changed. The answer is 409
+    for a version that has its files, is not ready or is a preview.
+
+    \N{FORM FEED}
+    :param address: Identifiers of the project, the page and the version.
+    :type address: VersionPath
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param processing: Processing service of the request.
+    :type processing: ProcessingService
+    :returns: The queued job; the end of the version is announced as ``page-version-ready``.
+    :rtype: JobSchema
+    """
+    job = await processing.start_remake(actor, address.project_id, address.page_id, address.version_id)
+    return JobSchema.model_validate(job)
+
+
 @router.post('/{project_id}/versions/collect', status_code=status.HTTP_202_ACCEPTED)
 async def collect_versions(
     project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
     actor: ActorDep,
     processing: FromDishka[ProcessingService],
 ) -> JobSchema:
-    """Delete the old versions nothing needs, in the background, and answer with the queued job.
+    """Remove the files of the old versions nothing needs, in the background, and answer with the queued job.
 
     A version goes when it is not current, not in the chain of inputs of a current version, not a base version, and
-    older than the retention period of its scale. A collection that is queued or running already is the answer.
+    older than the retention period of its scale. A preview loses its row, and any other version keeps its row and
+    loses its files, so it can be made again. A collection that is queued or running already is the answer.
 
     \N{FORM FEED}
     :param project_id: Identifier of the project.

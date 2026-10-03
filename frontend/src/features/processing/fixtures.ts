@@ -369,6 +369,8 @@ export function version(id: string, overrides: Partial<PageVersionSchema> = {}):
     images: images(`version-${id}`),
     preview: null,
     created_at: '2026-10-01T00:00:00Z',
+    files_removed: false,
+    files_removed_at: null,
     ...overrides,
   };
 }

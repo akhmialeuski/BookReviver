@@ -1008,6 +1008,7 @@ class SqlAlchemyPageVersionRepository(
         session = self._rows.session
         eligible_by_age = and_(
             PageVersionRow.input_id.is_not(None),
+            PageVersionRow.files_removed_at.is_(None),
             or_(
                 and_(PageVersionRow.scale == VersionScale.FULL, PageVersionRow.created_at < older_than),
                 and_(PageVersionRow.scale == VersionScale.PREVIEW, PageVersionRow.created_at < previews_older_than),

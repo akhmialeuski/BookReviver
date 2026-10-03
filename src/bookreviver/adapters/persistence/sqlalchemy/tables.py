@@ -546,6 +546,7 @@ class PageVersionRow(DefaultBase):
     :ivar edit_hash: Hash of the manual edit the step read, or empty.
     :ivar tiles_ready: Whether the IIIF pyramid of the version is cut.
     :ivar created_at: Time the version was created.
+    :ivar files_removed_at: Time a collection removed the files of the version, or null while it has them.
     :ivar page: Page owning the version, never loaded implicitly.
     """
 
@@ -570,6 +571,7 @@ class PageVersionRow(DefaultBase):
     edit_hash: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     tiles_ready: Mapped[bool] = mapped_column(server_default=false())
     created_at: Mapped[datetime]
+    files_removed_at: Mapped[datetime | None]
 
     page: Mapped[PageRow] = relationship(back_populates=Relation.VERSIONS, lazy=NO_IMPLICIT_LOAD)
 

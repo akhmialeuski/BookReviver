@@ -357,6 +357,7 @@ class PageVersionMapper(RowMapper[PageVersion, PageVersionRow]):
             edit_hash=row.edit_hash,
             tiles_ready=row.tiles_ready,
             created_at=row.created_at,
+            files_removed_at=row.files_removed_at,
         )
 
     @override
@@ -386,6 +387,7 @@ class PageVersionMapper(RowMapper[PageVersion, PageVersionRow]):
             edit_hash=entity.edit_hash,
             tiles_ready=entity.tiles_ready,
             created_at=entity.created_at,
+            files_removed_at=entity.files_removed_at,
         )
 
     @staticmethod

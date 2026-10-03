@@ -16,10 +16,14 @@ A measure of the book reads the versions of the crop of every page and writes th
 the active Geometry recipe, which marks the pages of that recipe stale.
 
 A project processes one thing at a time, so a collection never overlaps a run that may be reusing the versions it
-deletes. A collection chooses the versions, marks them failed so that none can be chosen or reused any more, removes
-their directories and then deletes their rows. A collection that stops on the way leaves the versions marked, which are
-old and read by nothing that stays, so the next collection chooses them again and finishes the work. Removing a
-directory that is gone is no error.
+clears. A collection chooses the versions, marks them failed so that none can be chosen or reused any more, removes
+their directories and then settles their rows: a preview loses its row, and a version of a full run keeps it with the
+time its files were removed, so its parameters, data and edit hash outlive its image. A collection that stops on the
+way leaves the versions marked, which are old and read by nothing that stays, so the next collection chooses them
+again and finishes the work. Removing a directory that is gone is no error.
+
+A run may be asked to make a version again whose files were removed (``StageRun.remake``), which goes through the same
+steps with the parameters the versions of its chain stored.
 """
 
 import logging
@@ -27,7 +31,7 @@ from typing import TYPE_CHECKING
 
 from attrs import evolve
 
-from bookreviver.domain.enums import JobState, PageOrigin, RunOutcome, VersionData, VersionState
+from bookreviver.domain.enums import JobState, PageOrigin, RunOutcome, VersionData, VersionScale, VersionState
 from bookreviver.domain.errors import DomainError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
@@ -204,14 +208,23 @@ class ProcessingJobs:
         run = StageRun.from_map(job.params)
         project = await self._uow.projects.get(job.project_id)
         pages = await self._pages_to_run(project.id, run)
+        executor = RecipeRun(
+            project=project, uow=self._uow, runtime=self._runtime, recipes=self._recipes, records=self._records
+        )
+        if run.remake is not None:
+            # A page without an image, such as a placeholder, has no version to make again
+            if not pages:
+                return 0, 1, 1
+            if await self._tracker.advance(job, done=0, total=1) is None:
+                return None
+            outcome = await executor.remake(pages[0], run.remake)
+            made = outcome is RunOutcome.DONE
+            return int(made), int(not made), 1
         if run.recipe_id is None:
             recipes = await self._picker.pick(project.id, run.stage, pages)
         else:
             named = await self._recipes.get(project.id, run.recipe_id, stage=run.stage)
             recipes = dict.fromkeys((page.id for page in pages), named)
-        executor = RecipeRun(
-            project=project, uow=self._uow, runtime=self._runtime, recipes=self._recipes, records=self._records
-        )
         outcomes: list[RunOutcome] = []
         for page in pages:
             if (saved := await self._tracker.advance(job, done=len(outcomes), total=len(pages))) is None:
@@ -311,11 +324,16 @@ class ProcessingJobs:
         return len(cut.version_ids)
 
     async def _collect(self, job: Job) -> int | None:
-        """Delete the old versions that nothing needs: mark them, remove their directories, and delete their rows.
+        """Clear the old versions that nothing needs: mark them, remove their directories, then settle their rows.
+
+        A preview loses its row. A version of a full run keeps its row, with its parameters, data and edit hash, and
+        loses its files, which a run makes again under the same identifier. The mark is a failed state that nothing can
+        choose or reuse, and the row is given back its own state only after its directory is gone, together with the
+        time the files were removed.
 
         :param job: The running job.
         :type job: Job
-        :returns: The number of versions deleted, or None when the job was cancelled before it deleted anything.
+        :returns: The number of versions cleared, or None when the job was cancelled before it cleared anything.
         :rtype: int | None
         :raises DomainError: If the parameters of the job are not valid.
         """
@@ -326,14 +344,30 @@ class ProcessingJobs:
         if await self._tracker.advance(job, done=0, total=len(old)) is None:
             return None
         for version in old:
-            marked = evolve(
-                version, state=VersionState.FAILED, data={**version.data, VersionData.ERROR: BEING_COLLECTED}
-            )
-            await self._uow.page_versions.update(marked)
+            if version.state is VersionState.READY:
+                marked = evolve(
+                    version, state=VersionState.FAILED, data={**version.data, VersionData.ERROR: BEING_COLLECTED}
+                )
+                await self._uow.page_versions.update(marked)
         await self._uow.commit()
         keys = ProjectKeys(job.project_id)
         for version in old:
             await self._assets.delete_prefix(keys.version_directory(version))
-        await self._uow.page_versions.delete_many([version.id for version in old])
+        await self._uow.page_versions.delete_many([v.id for v in old if v.scale is VersionScale.PREVIEW])
+        removed_at = self._runtime.clock.now()
+        for version in old:
+            if version.scale is VersionScale.FULL:
+                # A version marked by an earlier collection that stopped is READY again once its files are gone
+                own_mark = version.data.get(VersionData.ERROR) == BEING_COLLECTED
+                await self._uow.page_versions.update(
+                    evolve(
+                        version,
+                        state=VersionState.READY if own_mark else version.state,
+                        data={k: v for k, v in version.data.items() if not (own_mark and k == VersionData.ERROR)},
+                        renditions=None if version.renditions is None else evolve(version.renditions, ready=False),
+                        tiles_ready=False,
+                        files_removed_at=removed_at,
+                    )
+                )
         await self._uow.commit()
         return len(old)

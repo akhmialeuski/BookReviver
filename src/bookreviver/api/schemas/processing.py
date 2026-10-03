@@ -380,6 +380,9 @@ class PageVersionSchema(ResponseModel):
     :ivar images: Paths of the images of a ready full run that has an image, or None.
     :ivar preview: Path of the preview image of a preview run, or None.
     :ivar created_at: When the version was created.
+    :ivar files_removed: Whether a collection removed the files of the version, so it has no image until a run makes it
+                         again.
+    :ivar files_removed_at: When the files were removed, or None while the version has them.
     """
 
     id: PageVersionId
@@ -399,6 +402,8 @@ class PageVersionSchema(ResponseModel):
     images: ImagePathsSchema | None
     preview: str | None
     created_at: datetime
+    files_removed: bool
+    files_removed_at: datetime | None
 
     @classmethod
     def of(cls, version: PageVersion, project_id: ProjectId, request: Request) -> Self:
@@ -443,4 +448,6 @@ class PageVersionSchema(ResponseModel):
             images=images,
             preview=preview,
             created_at=version.created_at,
+            files_removed=version.files_removed,
+            files_removed_at=version.files_removed_at,
         )

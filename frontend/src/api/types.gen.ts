@@ -1243,6 +1243,9 @@ export type PageUpdate = {
  * :ivar images: Paths of the images of a ready full run that has an image, or None.
  * :ivar preview: Path of the preview image of a preview run, or None.
  * :ivar created_at: When the version was created.
+ * :ivar files_removed: Whether a collection removed the files of the version, so it has no image until a run makes it
+ * again.
+ * :ivar files_removed_at: When the files were removed, or None while the version has them.
  */
 export type PageVersionSchema = {
     /**
@@ -1296,6 +1299,14 @@ export type PageVersionSchema = {
      * Created At
      */
     created_at: string;
+    /**
+     * Files Removed
+     */
+    files_removed: boolean;
+    /**
+     * Files Removed At
+     */
+    files_removed_at: string | null;
 };
 
 /**
@@ -4927,6 +4938,58 @@ export type CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTil
 };
 
 export type CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponse = CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponses[keyof CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponses];
+
+export type RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Version Id
+         *
+         * Identifier of the page version
+         */
+        version_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}/remake';
+};
+
+export type RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostError = RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostErrors[keyof RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostErrors];
+
+export type RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostResponses = {
+    /**
+     * Successful Response
+     */
+    202: JobSchema;
+};
+
+export type RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostResponse = RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostResponses[keyof RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostResponses];
 
 export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostData = {
     body?: never;
