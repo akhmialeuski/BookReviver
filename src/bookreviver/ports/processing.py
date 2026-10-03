@@ -40,6 +40,8 @@ class StepInput:
     :ivar edit_mask: Path of the mask of the edit, or None.
     :ivar input_data: ``data`` of the input version, or the facts of the scan for a step that splits one.
     :ivar side: Side of the book the page lies on, given only to a step whose spec says ``by_page_side``.
+    :ivar references: ``full`` images of other pages that the step looks at without processing them, such as the
+                      neighbours a blank leaf takes the colour of its paper from, or none.
     :ivar workdir: Empty directory the step writes its output files into.
     """
 
@@ -50,6 +52,7 @@ class StepInput:
     edit_mask: Path | None = None
     input_data: MetadataMap = field(factory=dict)
     side: PageSide | None = None
+    references: Sequence[Path] = ()
     workdir: Path
 
 

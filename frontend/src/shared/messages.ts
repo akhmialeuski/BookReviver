@@ -1,5 +1,6 @@
 import type {
   AppliesTo,
+  BlankFill,
   ContributorRole,
   FileType,
   IdentifierScheme,
@@ -667,6 +668,28 @@ export const MESSAGES = {
       insert: 'Insert a page before / after…',
       attach: 'Attach a scan…',
       delete: (count: number) => `Delete ${count} ${pluralize(count, 'page', 'pages')}…`,
+      leaf: {
+        title: 'Image of the page',
+        options: {
+          scan: {
+            label: 'Keep the scan',
+            hint: 'The page goes through Geometry and Cleanup as it is.',
+          },
+          white: {
+            label: 'White leaf',
+            hint: 'A white page of the size of the book. Geometry and Cleanup skip it.',
+          },
+          paper: {
+            label: 'Paper of the book',
+            hint: 'Filled with the paper colour of the pages around it, later with the paper of Background.',
+          },
+        } satisfies Record<BlankFill, { label: string; hint: string }>,
+        applyAll: (count: number) =>
+          `Apply to all ${count} Blank ${pluralize(count, 'page', 'pages')}`,
+        applyHint: 'The scan is kept and comes back with “Keep the scan”.',
+        replaced: (count: number) =>
+          `${count} ${pluralize(count, 'page', 'pages')} now ${pluralize(count, 'shows', 'show')} the scan instead of the leaf.`,
+      },
       places: {
         title: (count: number) => `${count} ${pluralize(count, 'place', 'places')} to check.`,
         jump: (from: string, to: string) => `The numbers jump from ${from} to ${to}.`,

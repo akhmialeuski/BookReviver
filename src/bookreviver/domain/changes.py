@@ -12,9 +12,11 @@ from typing import TYPE_CHECKING
 
 from attrs import asdict, evolve, field, frozen
 
+from bookreviver.domain.enums import BlankFill, PageKind
+
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, Project
-    from bookreviver.domain.enums import ImagePolicy, Orthography, PageKind, RightsStatus, Script
+    from bookreviver.domain.enums import ImagePolicy, Orthography, RightsStatus, Script
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor
 
@@ -161,7 +163,8 @@ class PageChanges:
     sections.
 
     :ivar label: New printed number, or an empty string to leave the number to the pagination sections.
-    :ivar kind: New role of the page in the book.
+    :ivar kind: New role of the page in the book. A page that stops being a blank page gets its scan back in place of a
+                leaf.
     :ivar included: New decision whether the page is part of the book.
     :ivar notes: New notes of the user, or an empty string for none.
     :ivar group_label: New label of the group of the page, or an empty string for no group.
@@ -186,4 +189,7 @@ class PageChanges:
         given = {name: value for name, value in asdict(self, recurse=False).items() if value is not None}
         if self.label is not None:
             given['label_manual'] = bool(self.label)
+        # A leaf stands in place of the scan of a blank page only
+        if self.kind is not None and self.kind is not PageKind.BLANK:
+            given['blank_fill'] = BlankFill.SCAN
         return evolve(page, **given)

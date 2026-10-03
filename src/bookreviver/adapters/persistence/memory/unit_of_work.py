@@ -939,6 +939,8 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
     async def base_sizes(self, project_id: ProjectId) -> Sequence[PageSize]:
         """Return the recorded sizes of the base versions of the project's included pages cut from a scan.
 
+        A leaf drawn in place of a scan is a version of the page order, so it is not counted.
+
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
         :returns: The size of every such base version that records one.
@@ -952,7 +954,7 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
         sizes = (
             PageSize.from_data(version.data)
             for version in self._rows.values()
-            if version.page_id in shown and version.input_id is None
+            if version.page_id in shown and version.input_id is None and version.stage is Stage.PAGE_SPLIT
         )
         return [size for size in sizes if size is not None]
 

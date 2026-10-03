@@ -6,6 +6,7 @@ import { AttachDialog } from '@/features/order/AttachDialog';
 import { DeletePagesDialog } from '@/features/order/DeletePagesDialog';
 import { insertBody, missingPageBodies } from '@/features/order/insert';
 import { gapKey } from '@/features/order/layout';
+import { leafPages } from '@/features/order/leaf';
 import { NumberingPanel } from '@/features/order/NumberingPanel';
 import { type NumberingDraft, newDraft } from '@/features/order/numbering';
 import { type FocusRequest, OrderGrid } from '@/features/order/OrderGrid';
@@ -102,6 +103,7 @@ export function OrderScreen({
     [pages],
   );
   const places = useMemo(() => placesToCheck(pages, gaps), [pages, gaps]);
+  const blankPages = useMemo(() => leafPages(pages), [pages]);
   const preview = usePreviewLabels(projectId, pages, draft, manifest.dataUpdatedAt);
   // The grid is a step behind the server while a change is in flight or a read is on its way
   const busy = useIsMutating() > 0 || manifest.isFetching || preview.isFetching;
@@ -201,6 +203,7 @@ export function OrderScreen({
         gaps={gaps}
         missing={missing}
         places={places}
+        blankPages={blankPages}
         onClear={() => setPicked({ source: search.source, state: NOTHING_SELECTED })}
         onMove={() => setMoveTarget({ pageIds: selectedIds })}
         onNumber={() => numberFrom(selectedIds[0])}

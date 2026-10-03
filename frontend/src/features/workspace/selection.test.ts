@@ -18,6 +18,7 @@ function pages(...ids: string[]): PageSchema[] {
         included: true,
         notes: '',
         group_label: '',
+        blank_fill: 'scan',
         images: null,
         created_at: '',
         updated_at: '',

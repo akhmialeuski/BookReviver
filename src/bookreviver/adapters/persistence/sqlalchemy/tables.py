@@ -38,6 +38,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.domain.enums import (
+    BlankFill,
     ChangeSource,
     ColorMode,
     CompareMode,
@@ -483,6 +484,7 @@ class PageRow(DefaultBase):
     :ivar origin: Where the image of the page comes from, stored by value.
     :ivar scan_id: Scan the page was cut from, or null.
     :ivar slot: Part of the scan the page shows.
+    :ivar blank_fill: What the image of a blank page is, its scan or a leaf, stored by value.
     :ivar included: Whether the page is part of the book.
     :ivar notes: Notes of the user.
     :ivar group_label: Label of the group the user put the page in, or empty.
@@ -508,6 +510,7 @@ class PageRow(DefaultBase):
     origin: Mapped[PageOrigin] = mapped_column(enum_by_value(PageOrigin))
     scan_id: Mapped[UUID | None] = mapped_column(ForeignKey(ScanRow.id, ondelete=SET_NULL))
     slot: Mapped[int]
+    blank_fill: Mapped[BlankFill] = mapped_column(enum_by_value(BlankFill), server_default=BlankFill.SCAN.value)
     included: Mapped[bool]
     notes: Mapped[str]
     group_label: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)

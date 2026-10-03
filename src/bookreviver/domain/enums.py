@@ -397,6 +397,29 @@ class PageOrigin(LabeledStrEnum):
     PLACEHOLDER = 'placeholder', 'Placeholder waiting for a scan'
 
 
+class BlankFill(LabeledStrEnum):
+    """What the image of a page of kind blank is: the scan the page was cut from, or a leaf made in its place.
+
+    A leaf is a page the program draws, so the steps of the stages after the page order pass it unchanged. The scan of
+    the page is kept whatever the choice, so the choice can be undone.
+    """
+
+    SCAN = 'scan', 'Keep the scan'
+    WHITE = 'white', 'White leaf'
+    PAPER = 'paper', 'Paper of the book'
+
+    @property
+    def paper_fill(self) -> PaperFill:
+        """The fill ``pages.blank`` draws a leaf of this choice with.
+
+        :raises ValueError: If the choice is the scan, which no leaf is drawn for.
+        """
+        if self is BlankFill.SCAN:
+            err_msg = 'A page that keeps its scan has no leaf to fill.'
+            raise ValueError(err_msg)
+        return PaperFill(self.value)
+
+
 class LabelStyle(LabeledStrEnum):
     """How the number of a page is written, which the numbering of a range of pages applies to its numbers.
 
@@ -548,6 +571,13 @@ class NormalizeParam(LabeledStrEnum):
     MARGIN_BOTTOM = 'margin_bottom', 'Margin at the bottom, in pixels'
     MARGIN_INNER = 'margin_inner', 'Margin at the gutter, in pixels'
     MARGIN_OUTER = 'margin_outer', 'Margin at the outer edge, in pixels'
+
+
+class BlankParam(LabeledStrEnum):
+    """Names of the parameters of the step ``pages.blank`` beyond the size, which a use case writes into a leaf."""
+
+    FILL = 'fill', 'What fills the leaf'
+    PAPER_FROM = 'paper_from', 'Versions of the pages the paper is taken from'
 
 
 class PaperFill(LabeledStrEnum):

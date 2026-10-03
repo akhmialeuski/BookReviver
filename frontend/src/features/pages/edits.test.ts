@@ -30,6 +30,13 @@ describe('applyChanges', () => {
     expect(applyChanges(original, { kind: 'text', included: true, label: '12' })).toBe(original);
   });
 
+  it('gives the scan back to a page with a leaf that stops being blank', () => {
+    const leaf = page('b', { kind: 'blank', blank_fill: 'white' });
+    expect(applyChanges(leaf, { kind: 'text' }).blank_fill).toBe('scan');
+    expect(applyChanges(leaf, { kind: 'blank' })).toBe(leaf);
+    expect(applyChanges(leaf, { notes: 'x' }).blank_fill).toBe('white');
+  });
+
   it('leaves everything else of the page alone', () => {
     const changed = applyChanges(original, { label: 'iv' });
     expect({ ...changed, label: original.label }).toEqual(original);

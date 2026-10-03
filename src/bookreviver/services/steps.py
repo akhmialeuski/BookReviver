@@ -39,7 +39,7 @@ from bookreviver.domain.values import COLOR_MODE_KEY, Renditions
 from bookreviver.ports.processing import StepInput, StepOutput, StepResult
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Sequence
 
     from bookreviver.domain.entities import PageEdit, PageVersion
     from bookreviver.domain.enums import ImagePolicy, PageSide
@@ -65,6 +65,7 @@ class StepRun:
     :ivar scale: Whether the step runs on the full image or on the preview.
     :ivar ratio: Size of the image the step reads over the size of the full image, 1 for a full run.
     :ivar side: Side of the book the page lies on, for a step that reads it, or None.
+    :ivar references: Keys of the ``full`` images of other pages the step looks at without processing them, or none.
     :ivar skipped: Whether the page did not meet the condition of the step, so the processor is not run and the page
                    passes with its image and its data as they are.
     """
@@ -77,6 +78,7 @@ class StepRun:
     scale: VersionScale = VersionScale.FULL
     ratio: float = 1.0
     side: PageSide | None = None
+    references: Sequence[StorageKey] = ()
     skipped: bool = False
 
 
@@ -135,6 +137,7 @@ class StepRunner:
             mask = None
             if run.edit is not None and run.edit.mask_key is not None:
                 mask = await stack.enter_async_context(self._assets.readable(run.edit.mask_key))
+            references = [await stack.enter_async_context(self._assets.readable(key)) for key in run.references]
             workdir = stack.enter_context(tempfile.TemporaryDirectory())
             step_input = StepInput(
                 image=image,
@@ -144,6 +147,7 @@ class StepRunner:
                 edit_mask=mask,
                 input_data=run.input_data,
                 side=run.side,
+                references=references,
                 workdir=Path(workdir),
             )
             work = processor.run if run.scale is VersionScale.FULL else processor.preview

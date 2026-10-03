@@ -65,6 +65,7 @@ export function pageOf(id: string, kind: PageSchema['kind'] = 'text'): PageSchem
     included: true,
     notes: '',
     group_label: '',
+    blank_fill: 'scan',
     images: null,
     created_at: '2026-10-01T10:00:00Z',
     updated_at: '2026-10-01T10:00:00Z',

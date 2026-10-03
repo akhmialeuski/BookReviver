@@ -131,6 +131,33 @@ export type ApplyProfileBody = {
 };
 
 /**
+ * BlankFill
+ *
+ * What the image of a page of kind blank is: the scan the page was cut from, or a leaf made in its place.
+ *
+ * A leaf is a page the program draws, so the steps of the stages after the page order pass it unchanged. The scan of
+ * the page is kept whatever the choice, so the choice can be undone.
+ */
+export type BlankFill = 'scan' | 'white' | 'paper';
+
+/**
+ * BlankFillChange
+ *
+ * What the image of blank pages cut from a scan becomes: their scan, a white leaf or the paper of the book.
+ *
+ * :ivar page_ids: The pages to change, each at most once.
+ * :ivar blank_fill: The choice: ``scan`` keeps the scan, ``white`` draws a white leaf, ``paper`` draws a leaf of the
+ * colour of the paper of the neighbouring pages.
+ */
+export type BlankFillChange = {
+    /**
+     * Page Ids
+     */
+    page_ids: Array<string>;
+    blank_fill: BlankFill;
+};
+
+/**
  * Body_auth_cookie_login_api_v1_auth_login_post
  */
 export type BodyAuthCookieLoginApiV1AuthLoginPost = {
@@ -1173,6 +1200,8 @@ export type PageOrigin = 'scan' | 'blank' | 'placeholder';
  * deleted.
  * :ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.
  * :ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.
+ * :ivar blank_fill: What the image of a blank page is: its scan, or a white leaf or a leaf of the colour of the paper
+ * of the book drawn in its place. The scan stays linked either way.
  * :ivar included: Whether the page is part of the book.
  * :ivar notes: Notes of the user.
  * :ivar group_label: Label of the group the user put the page in, or empty for no group.
@@ -1211,6 +1240,7 @@ export type PageSchema = {
      * Slot
      */
     slot: number;
+    blank_fill: BlankFill;
     /**
      * Included
      */
@@ -4184,6 +4214,46 @@ export type MovePagesApiV1ProjectsProjectIdPagesMovePostResponses = {
 };
 
 export type MovePagesApiV1ProjectsProjectIdPagesMovePostResponse = MovePagesApiV1ProjectsProjectIdPagesMovePostResponses[keyof MovePagesApiV1ProjectsProjectIdPagesMovePostResponses];
+
+export type FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostData = {
+    body: BlankFillChange;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/blank-fill';
+};
+
+export type FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostError = FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostErrors[keyof FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostErrors];
+
+export type FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostResponse = FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostResponses[keyof FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostResponses];
 
 export type NumberPagesApiV1ProjectsProjectIdPagesLabelsPostData = {
     body: LabelRange;

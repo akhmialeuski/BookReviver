@@ -5,7 +5,8 @@ import type { PageSchema, PageUpdate } from '@/api';
  *
  * The panel of selected pages shows the change before the server has answered, as a move does, so the same rule is
  * applied to the cached manifest at once: a field left out keeps its value, and a label, notes or group sent as null
- * are cleared to the empty text.
+ * are cleared to the empty text. A page that stops being blank gets its scan back in place of a leaf, as the server
+ * does it.
  */
 
 /**
@@ -23,12 +24,14 @@ export function applyChanges(page: PageSchema, changes: PageUpdate): PageSchema 
     included: changes.included ?? page.included,
     notes: changes.notes === undefined ? page.notes : (changes.notes ?? ''),
     group_label: changes.group_label === undefined ? page.group_label : (changes.group_label ?? ''),
+    blank_fill: changes.kind === undefined || changes.kind === 'blank' ? page.blank_fill : 'scan',
   };
   const same =
     next.label === page.label &&
     next.kind === page.kind &&
     next.included === page.included &&
     next.notes === page.notes &&
-    next.group_label === page.group_label;
+    next.group_label === page.group_label &&
+    next.blank_fill === page.blank_fill;
   return same ? page : next;
 }

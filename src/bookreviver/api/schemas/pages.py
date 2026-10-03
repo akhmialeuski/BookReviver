@@ -19,7 +19,7 @@ from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.api.schemas.images import ImagePathsSchema
 from bookreviver.api.schemas.types import Dpi, GroupLabel, LongText, PageIdList, PageLabel, PagePixels
 from bookreviver.domain.changes import PageChanges
-from bookreviver.domain.enums import LabelStyle, NewPageOrigin, PageKind, PageOrigin, Side
+from bookreviver.domain.enums import BlankFill, LabelStyle, NewPageOrigin, PageKind, PageOrigin, Side
 from bookreviver.domain.ids import PageId, ScanId, SourceId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import NewPage, PageAnchor, PageNumbering, PageSize
@@ -115,6 +115,18 @@ class PagesMove(PageAnchorBody):
     """
 
     page_ids: PageIdList
+
+
+class BlankFillChange(RequestModel):
+    """What the image of blank pages cut from a scan becomes: their scan, a white leaf or the paper of the book.
+
+    :ivar page_ids: The pages to change, each at most once.
+    :ivar blank_fill: The choice: ``scan`` keeps the scan, ``white`` draws a white leaf, ``paper`` draws a leaf of the
+                      colour of the paper of the neighbouring pages.
+    """
+
+    page_ids: PageIdList
+    blank_fill: BlankFill
 
 
 class PageCreate(OptionalAnchor):
@@ -318,6 +330,8 @@ class PageSchema(ResponseModel):
                    deleted.
     :ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.
     :ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.
+    :ivar blank_fill: What the image of a blank page is: its scan, or a white leaf or a leaf of the colour of the paper
+                      of the book drawn in its place. The scan stays linked either way.
     :ivar included: Whether the page is part of the book.
     :ivar notes: Notes of the user.
     :ivar group_label: Label of the group the user put the page in, or empty for no group.
@@ -335,6 +349,7 @@ class PageSchema(ResponseModel):
     scan_id: ScanId | None
     source_id: SourceId | None
     slot: int
+    blank_fill: BlankFill
     included: bool
     notes: str
     group_label: str
@@ -370,6 +385,7 @@ class PageSchema(ResponseModel):
             scan_id=page.scan_id,
             source_id=overview.source_id,
             slot=page.slot,
+            blank_fill=page.blank_fill,
             included=page.included,
             notes=page.notes,
             group_label=page.group_label,

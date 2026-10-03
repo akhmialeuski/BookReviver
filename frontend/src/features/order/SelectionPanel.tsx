@@ -8,8 +8,10 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import type { PageKind, PageSchema, PageUpdate } from '@/api';
+import { BlankImageBlock } from '@/features/order/BlankImageBlock';
 import { InsertMenu } from '@/features/order/InsertMenu';
 import type { InsertSpec } from '@/features/order/insert';
+import { leafPages, leavesLost } from '@/features/order/leaf';
 import type { PlaceToCheck } from '@/features/order/places';
 import { commonOf, spanOf } from '@/features/order/summary';
 import { useUpdatePages } from '@/features/pages/actions';
@@ -33,7 +35,8 @@ import { TextareaField } from '@/shared/ui/textarea-field';
  *
  * Kind, inclusion and notes are written to every selected page at once, and a field that the pages disagree on says
  * so instead of showing one page's value. The printed number of a single page is edited here too, since a number
- * written by hand is the only way to number one page alone. The words for the places to check name the jumps in the
+ * written by hand is the only way to number one page alone. Blank pages cut from a scan get the choice of their image
+ * under the kind, and a change of kind that takes a leaf away says that the scan is back. The words for the places to check name the jumps in the
  * numbers and the pages that wait for a scan, and a button walks the grid from one to the next.
  */
 
@@ -89,6 +92,7 @@ export function SelectionPanel({
   gaps,
   missing,
   places,
+  blankPages,
   onClear,
   onMove,
   onNumber,
@@ -104,6 +108,8 @@ export function SelectionPanel({
   /** The pages of the book that wait for a scan. */
   missing: readonly PageSchema[];
   places: readonly PlaceToCheck[];
+  /** Every blank page of the book cut from a scan, which the choice of the image may be applied to together. */
+  blankPages: readonly PageSchema[];
   onClear: () => void;
   onMove: () => void;
   onNumber: () => void;
@@ -119,12 +125,16 @@ export function SelectionPanel({
   // The changes made and not yet settled, which the controls show at once, since a control that waits for the cache
   // to be read back jumps to its old value for a moment
   const [pending, setPending] = useState<PageUpdate>({});
+  // What a change of kind took away, said under the kind of the pages it was made on
+  const [notice, setNotice] = useState<{ ids: string; message: string } | null>(null);
   const ids = selected.map((page) => page.id);
   const kind = pending.kind ?? commonOf(selected.map((page) => page.kind));
   const included = pending.included ?? commonOf(selected.map((page) => page.included));
   const notes = commonOf(selected.map((page) => page.notes));
   const only = selected.length === 1 ? selected[0] : undefined;
   const save = (changes: PageUpdate): void => {
+    const lost = changes.kind === undefined ? 0 : leavesLost(selected, changes.kind);
+    setNotice(lost === 0 ? null : { ids: ids.join(','), message: text.leaf.replaced(lost) });
     setPending((current) => ({ ...current, ...changes }));
     update.mutate({ pageIds: ids, changes }, { onSettled: () => setPending({}) });
   };
@@ -234,6 +244,20 @@ export function SelectionPanel({
             </option>
           ))}
         </SelectField>
+
+        {notice?.ids === ids.join(',') ? (
+          <p
+            className="rounded-md border border-status-attention bg-status-attention/10 p-2 text-sm"
+            role="status"
+            data-testid="leaf-replaced"
+          >
+            {notice.message}
+          </p>
+        ) : null}
+
+        {leafPages(selected).length === selected.length ? (
+          <BlankImageBlock projectId={projectId} selected={selected} blankPages={blankPages} />
+        ) : null}
 
         <div className="grid gap-1">
           <CheckboxField
