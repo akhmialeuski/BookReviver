@@ -1,4 +1,4 @@
-"""Synthetic scans for the tests of the gutter search and of the search of the sheet, drawn with Pillow and NumPy alone.
+"""Synthetic scans for the tests of the gutter, the sheet and the dewarping, drawn with Pillow and NumPy alone.
 
 A spread is two columns of lines of words on paper, with or without the shadow the binding casts, laid on the glass at an
 angle. The truth the search is measured against is the line the middle of the book takes once the scan is turned, which
@@ -6,6 +6,9 @@ is known exactly because the scan is made by turning a flat spread.
 
 A sheet is one page of lines of words on paper laid on a dark binding, turned and seen from a slant. The truth is the
 four corners of the paper, which are known exactly because the scan is made by moving the corners of a flat page.
+
+A bent page is a flat one whose columns are moved up and down by a known shift, as a book bends a page at its gutter.
+The truth is the shift, so a dewarped page is measured by how straight its lines are.
 """
 
 import math
@@ -13,9 +16,17 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from attrs import frozen
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
-from tests.helpers.samples import PAPER, text_page
+from tests.helpers.samples import (
+    INK,
+    MARGIN_PX,
+    PAPER,
+    WORD_GAP_RANGE_PX,
+    WORD_HEIGHT_PX,
+    WORD_WIDTH_RANGE_PX,
+    text_page,
+)
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -126,6 +137,8 @@ def draw_single_page() -> Image.Image:
 SHEET_INK: tuple[int, int, int] = (35, 30, 28)
 SHEET_PAPER: tuple[int, int, int] = (228, 208, 164)
 SHEET_BACKGROUND: tuple[int, int, int] = (46, 42, 40)
+# The tone of the thin line along the edge of a sheet that parts from a background of its own colour
+SHEET_EDGE: tuple[int, int, int] = (150, 135, 105)
 # Grain of the background, as the standard deviation of its samples
 BACKGROUND_NOISE: float = 9.0
 # How much larger than the sheet the scan is, so the background shows on every side
@@ -182,8 +195,15 @@ def perspective_coefficients(
     return tuple(float(value) for value in np.linalg.solve(np.array(rows), np.array(targets)))
 
 
-def draw_sheet(*, rotation_deg: float = 0.0, perspective: float = 0.0, seed: int = 7) -> SyntheticSheet:
-    """Draw a page of text on paper laid on a dark background, turned and seen from a slant.
+def draw_sheet(
+    *,
+    rotation_deg: float = 0.0,
+    perspective: float = 0.0,
+    seed: int = 7,
+    background: tuple[int, int, int] = SHEET_BACKGROUND,
+    edge_px: int = 0,
+) -> SyntheticSheet:
+    """Draw a page of text on paper laid on a background, turned and seen from a slant.
 
     :param rotation_deg: Angle the sheet is turned by in degrees, counter-clockwise.
     :type rotation_deg: float
@@ -191,11 +211,18 @@ def draw_sheet(*, rotation_deg: float = 0.0, perspective: float = 0.0, seed: int
     :type perspective: float
     :param seed: Seed of the words of the page.
     :type seed: int
+    :param background: Colour of the background, which is dark unless a test asks for paper of its own colour.
+    :type background: tuple[int, int, int]
+    :param edge_px: Width of the thin dark line that runs along the edge of the paper, such as a shadow or a worn edge,
+                    or 0 for none.
+    :type edge_px: int
     :returns: The scan and the corners of the sheet.
     :rtype: SyntheticSheet
     """
     width, height = SHEET_SIZE_PX
     page = ImageOps.colorize(text_page(width, height, seed=seed), black=SHEET_INK, white=SHEET_PAPER)
+    if edge_px:
+        ImageDraw.Draw(page).rectangle((0, 0, width - 1, height - 1), outline=SHEET_EDGE, width=edge_px)
     scan_size = (round(width * SCAN_ROOM), round(height * SCAN_ROOM))
     flat = ((0.0, 0.0), (width, 0.0), (width, height), (0.0, height))
     angle = math.radians(rotation_deg)
@@ -216,5 +243,75 @@ def draw_sheet(*, rotation_deg: float = 0.0, perspective: float = 0.0, seed: int
         scan_size, Image.Transform.PERSPECTIVE, transform, Image.Resampling.BILINEAR
     )
     grain = np.random.default_rng(BACKGROUND_SEED).normal(0, BACKGROUND_NOISE, (scan_size[1], scan_size[0], 1))
-    background = Image.fromarray((np.array(SHEET_BACKGROUND) + grain).clip(0, 255).astype(np.uint8))
-    return SyntheticSheet(image=Image.composite(sheet, background, mask), corners=corners)
+    ground = Image.fromarray((np.array(background) + grain).clip(0, 255).astype(np.uint8))
+    return SyntheticSheet(image=Image.composite(sheet, ground, mask), corners=corners)
+
+
+# How a page bends at its gutter: a cubic and a quadratic of the share of the width, whose sum is the shift of a column
+BEND_CUBIC_WEIGHT: float = 1.0
+BEND_QUADRATIC_WEIGHT: float = 0.3
+# The deepest bend a drawn page is given, as pixels for each thousand of its width, and a bend too slight to matter
+GUTTER_BEND_PX: float = 30.0
+SLIGHT_BEND_PX: float = 0.5
+# The sheet of a page with a picture: its place on the scan, the picture on it, the lines under the picture, and tones
+SHEET_BOX: tuple[int, int, int, int] = (50, 70, 950, 1_130)
+PICTURE_BOX: tuple[int, int, int, int] = (150, 300, 850, 800)
+PICTURE_LINE_TOPS: tuple[int, ...] = (860, 900, 940)
+PICTURE_PAGE_SIZE_PX: tuple[int, int] = (1_000, 1_200)
+BACKGROUND_TONE: int = 40
+PICTURE_TONES: tuple[int, int] = (90, 170)
+PICTURE_SHEET_TONE: int = 235
+PICTURE_PAGE_SEED: int = 3
+
+
+def bend_columns(
+    image: NDArray[np.uint8], depth_px: float, fill: int = PAPER
+) -> tuple[NDArray[np.uint8], NDArray[np.float64]]:
+    """Bend a page as a book bends it at the gutter, by moving each column of it up or down.
+
+    The shift grows along the page as a cubic and a quadratic of the share of the width, from none at the left edge to
+    ``depth_px`` and a little more at the right edge, and does not depend on the row, so the lines of the page that was
+    flat become the curves ``y + shift(x)`` and the shift is the truth a dewarping is measured against.
+
+    :param image: The samples of a flat page, in gray.
+    :type image: NDArray[np.uint8]
+    :param depth_px: The shift of the right edge in pixels, for a page 1000 pixels wide, scaled with the width.
+    :type depth_px: float
+    :param fill: The tone of what a column that moves leaves uncovered at its top or its bottom.
+    :type fill: int
+    :returns: The bent page and the shift of each column in pixels, positive downwards.
+    :rtype: tuple[NDArray[np.uint8], NDArray[np.float64]]
+    """
+    height, width = image.shape
+    share = np.arange(width) / width
+    shifts = depth_px * width / 1_000 * (BEND_CUBIC_WEIGHT * share**3 + BEND_QUADRATIC_WEIGHT * share**2)
+    rows = np.arange(height, dtype=np.float64)
+    bent = np.empty_like(image)
+    for column in range(width):
+        values = np.interp(rows - shifts[column], rows, image[:, column].astype(np.float64), left=fill, right=fill)
+        bent[:, column] = np.round(values).astype(np.uint8)
+    return bent, shifts
+
+
+def draw_picture_page() -> NDArray[np.uint8]:
+    """Draw a sheet laid on a dark background with a picture on it and three lines of text under the picture.
+
+    :returns: The scan in gray: the sheet is light, the background dark and the picture of tones between them.
+    :rtype: NDArray[np.uint8]
+    """
+    width, height = PICTURE_PAGE_SIZE_PX
+    scan = np.full((height, width), BACKGROUND_TONE, dtype=np.uint8)
+    left, top, right, bottom = SHEET_BOX
+    scan[top:bottom, left:right] = PICTURE_SHEET_TONE
+    left, top, right, bottom = PICTURE_BOX
+    chance = np.random.default_rng(PICTURE_PAGE_SEED)
+    scan[top:bottom, left:right] = chance.integers(*PICTURE_TONES, size=(bottom - top, right - left))
+    image = Image.fromarray(scan)
+    words = ImageDraw.Draw(image)
+    for line_top in PICTURE_LINE_TOPS:
+        position = SHEET_BOX[0] + MARGIN_PX
+        while position < SHEET_BOX[2] - MARGIN_PX - WORD_WIDTH_RANGE_PX[1]:
+            word = int(chance.integers(*WORD_WIDTH_RANGE_PX))
+            words.rectangle((position, line_top, position + word, line_top + WORD_HEIGHT_PX), fill=INK)
+            position += word + int(chance.integers(*WORD_GAP_RANGE_PX))
+    return np.asarray(image, dtype=np.uint8)

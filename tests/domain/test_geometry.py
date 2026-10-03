@@ -10,6 +10,7 @@ from bookreviver.domain.enums import EditorKind, TransformKind
 from bookreviver.domain.errors import UnsupportedTransformError
 from bookreviver.domain.geometry import (
     Line,
+    Mesh,
     Point,
     Quad,
     Rect,
@@ -32,6 +33,13 @@ IDENTITY_MATRIX: tuple[float, ...] = (1, 0, 0, 0, 1, 0, 0, 0, 1)
 RIGHT_HALF: tuple[float, ...] = (1, 0, -1100, 0, 1, 0, 0, 0, 1)
 # A rotation by 30 degrees counter-clockwise about the origin of a canvas, then a shift of the canvas
 ANGLE: float = 30.0
+# The top curve and the bottom curve of a page, each of three nodes
+CURVES: Mesh = Mesh(
+    rows=(
+        (Point(x=0, y=100), Point(x=500, y=120), Point(x=1000, y=160)),
+        (Point(x=0, y=900), Point(x=500, y=930), Point(x=1000, y=980)),
+    )
+)
 
 
 def rotation_matrix(degrees: float, *, shift_x: float = 0.0, shift_y: float = 0.0) -> tuple[float, ...]:
@@ -139,18 +147,65 @@ class TestGeometryFromData:
             SplitChoice(pages=SplitChoice.ONE_PAGE),
             SplitChoice(pages=SplitChoice.TWO_PAGES),
             SplitChoice(pages=SplitChoice.TWO_PAGES, line=Line(start=Point(x=1100, y=0), end=Point(x=1090, y=1561))),
+            CURVES,
         ],
-        ids=['rect', 'quad', 'line', 'rotation', 'one-page', 'two-pages', 'two-pages-with-line'],
+        ids=['rect', 'quad', 'line', 'rotation', 'one-page', 'two-pages', 'two-pages-with-line', 'mesh'],
     )
     def test_shape_survives_a_round_trip_through_its_data(
-        self, shape: Rect | Quad | Line | Rotation | SplitChoice
+        self, shape: Rect | Quad | Line | Rotation | SplitChoice | Mesh
     ) -> None:
         """Verify the data of a shape rebuilds an equal shape, which is what the database stores.
 
         :param shape: Shape under test.
-        :type shape: Rect | Quad | Line | Rotation | SplitChoice
+        :type shape: Rect | Quad | Line | Rotation | SplitChoice | Mesh
         """
         assert geometry_from_data(shape.editor, shape.to_data()) == shape
+
+
+class TestMesh:
+    """Tests for the mesh of curves a dewarping follows."""
+
+    def test_the_mesh_is_drawn_by_the_mesh_editor(self) -> None:
+        """Verify the mesh names the editor that the processor ``geometry.dewarp`` offers."""
+        assert CURVES.editor is EditorKind.MESH
+
+    def test_the_data_of_a_mesh_are_its_rows_of_nodes(self) -> None:
+        """Verify the JSON of a mesh is a list of rows, each a list of the nodes by name."""
+        assert CURVES.to_data() == {
+            'rows': [
+                [{'x': 0.0, 'y': 100.0}, {'x': 500.0, 'y': 120.0}, {'x': 1000.0, 'y': 160.0}],
+                [{'x': 0.0, 'y': 900.0}, {'x': 500.0, 'y': 930.0}, {'x': 1000.0, 'y': 980.0}],
+            ]
+        }
+
+    def test_a_mesh_in_the_pixels_of_a_smaller_image_is_scaled(self) -> None:
+        """Verify scaling a mesh multiplies every coordinate, as it does for a preview at half the size."""
+        half = CURVES.scaled(0.5)
+        assert (half.rows[0][1], half.rows[1][2]) == (Point(x=250.0, y=60.0), Point(x=500.0, y=490.0))
+
+    @pytest.mark.parametrize(
+        'rows',
+        [
+            (),
+            ((Point(x=0, y=0), Point(x=1, y=0)),),
+            ((Point(x=0, y=0), Point(x=1, y=0)), (Point(x=0, y=1),)),
+            ((Point(x=0, y=0),), (Point(x=0, y=1),)),
+        ],
+        ids=['no-rows', 'one-row', 'rows-of-different-lengths', 'rows-of-one-node'],
+    )
+    def test_rows_that_do_not_make_a_grid_are_rejected(self, rows: tuple[tuple[Point, ...], ...]) -> None:
+        """Reject a mesh with fewer than two rows, rows of different lengths, and rows of fewer than two nodes.
+
+        :param rows: The rows under test.
+        :type rows: tuple[tuple[Point, ...], ...]
+        """
+        with pytest.raises(ValueError, match='at least 2 rows'):
+            Mesh(rows=rows)
+
+    def test_the_hash_of_the_edit_follows_the_nodes(self) -> None:
+        """Verify a moved node is another edit, so the page versions that read it differ."""
+        moved = Mesh(rows=(CURVES.rows[0], (*CURVES.rows[1][:-1], Point(x=1000.0, y=990.0))))
+        assert PageEdit.hash_of(CURVES, None) != PageEdit.hash_of(moved, None)
 
 
 class TestSplitChoice:
@@ -180,7 +235,7 @@ class TestSplitChoice:
         one, two = (PageEdit.hash_of(SplitChoice(pages=pages), None) for pages in (1, 2))
         assert one != two
 
-    @pytest.mark.parametrize('kind', [EditorKind.NONE, EditorKind.BRUSH_MASK, EditorKind.MESH, EditorKind.REGIONS])
+    @pytest.mark.parametrize('kind', [EditorKind.NONE, EditorKind.BRUSH_MASK, EditorKind.REGIONS])
     def test_editor_that_draws_no_shape_is_rejected(self, kind: EditorKind) -> None:
         """Reject an editor that stores a mask or no edit, or whose shape comes with a later step.
 

@@ -14,6 +14,7 @@ from PIL import Image
 from bookreviver.domain.enums import (
     ColorMode,
     EditorKind,
+    PerspectiveMethod,
     ProcessorScope,
     ReviewReason,
     SheetEdge,
@@ -26,7 +27,7 @@ from bookreviver.domain.geometry import Point, Quad
 from bookreviver.ports.processing import StepInput
 from tests.helpers.samples import save
 from tests.plugins.runner import run_on
-from tests.plugins.synthetic import SHEET_SIZE_PX, draw_sheet
+from tests.plugins.synthetic import SHEET_PAPER, SHEET_SIZE_PX, draw_sheet
 
 if TYPE_CHECKING:
     from bookreviver.domain.values import MetadataMap
@@ -35,6 +36,12 @@ if TYPE_CHECKING:
 
 SCAN_NAME: str = 'scan.png'
 MIN_SHEET: str = 'min_sheet_fraction'
+METHOD: str = 'method'
+EDGE_STRENGTH: str = 'edge_strength'
+# The width of the dark line along the edge of a drawn sheet that is the colour of its background, and the middle of the
+# confidence, below which a sheet is not believed
+EDGE_WIDTH_PX: int = 3
+HALF: float = 0.5
 KEY_PATTERN: str = r'geometry\.perspective'
 # The names of the arguments of a test that gets a drawn sheet
 SHEET_CASE: tuple[str, str] = ('rotation', 'slant')
@@ -350,7 +357,144 @@ class TestPerspective:
         :type fx_perspective: Processor
         """
         spec = fx_perspective.spec
-        expect(fx_perspective.validate_params({}) == {MIN_SHEET: 0.25})
+        expect(fx_perspective.validate_params({}) == {METHOD: PerspectiveMethod.PAPER_COLOUR, MIN_SHEET: 0.25})
         expect((spec.key, spec.stage, spec.scope) == ('geometry.perspective', Stage.GEOMETRY, ProcessorScope.PAGE))
         expect(spec.editor is EditorKind.QUAD)
+        assert_expectations()
+
+    def test_parameters_stored_before_the_methods_existed_keep_the_colour_of_the_paper(
+        self, fx_perspective: Processor
+    ) -> None:
+        """Verify parameters that name no method are read as the colour of the paper, so an old recipe behaves as it did.
+
+        :param fx_perspective: The processor under test.
+        :type fx_perspective: Processor
+        """
+        checked = fx_perspective.validate_params({MIN_SHEET: 0.4})
+        assert checked == {METHOD: PerspectiveMethod.PAPER_COLOUR, MIN_SHEET: 0.4}
+
+    def test_the_schema_offers_two_methods_as_a_one_of_with_the_fields_of_each(self, fx_perspective: Processor) -> None:
+        """Verify the form can show only the fields of the chosen method.
+
+        :param fx_perspective: The processor under test.
+        :type fx_perspective: Processor
+        """
+        schema = fx_perspective.spec.parameters
+        offered = [schema['$defs'][option['$ref'].rsplit('/', 1)[-1]] for option in schema['oneOf']]
+        expect(
+            [option['properties'][METHOD]['const'] for option in offered]
+            == [PerspectiveMethod.PAPER_COLOUR, PerspectiveMethod.EDGES]
+        )
+        expect('edge_strength' in offered[1]['properties'])
+        expect('edge_strength' not in offered[0]['properties'])
+        assert_expectations()
+
+    def test_a_field_of_the_edges_is_refused_by_the_colour_of_the_paper(self, fx_perspective: Processor) -> None:
+        """Verify the method paper-colour has no ``edge_strength`` and refuses it.
+
+        :param fx_perspective: The processor under test.
+        :type fx_perspective: Processor
+        """
+        with pytest.raises(InvalidParametersError, match=KEY_PATTERN):
+            fx_perspective.validate_params({METHOD: PerspectiveMethod.PAPER_COLOUR, 'edge_strength': 40})
+
+
+class TestPerspectiveEdges:
+    """Tests for Perspective with the method of the edges of the sheet, for paper of the colour of its background."""
+
+    @pytest.mark.parametrize(SHEET_CASE, SHEETS)
+    def test_finds_the_corners_of_a_sheet_that_is_the_colour_of_its_background(
+        self, fx_perspective: Processor, tmp_path: Path, rotation: float, slant: float
+    ) -> None:
+        """Verify the corners are within 1 percent of the diagonal of the true ones where the colour of the paper fails.
+
+        The colour of the paper is shown to fail on the same scan, which is what the method is for.
+
+        :param fx_perspective: The processor under test.
+        :type fx_perspective: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param rotation: Angle in degrees the drawn sheet is turned by.
+        :type rotation: float
+        :param slant: How much narrower the top of the drawn sheet is than its bottom.
+        :type slant: float
+        """
+        sheet = draw_sheet(rotation_deg=rotation, perspective=slant, background=SHEET_PAPER, edge_px=EDGE_WIDTH_PX)
+        image = save(sheet.image, tmp_path / SCAN_NAME)
+        output = run_on(fx_perspective, image, tmp_path, params={METHOD: PerspectiveMethod.EDGES})
+        by_colour = run_on(fx_perspective, image, tmp_path)
+        found = Quad.from_data(output.data[VersionData.QUAD])
+        wrong = by_colour.data.get(VersionData.QUAD)
+        expect(corner_error(found, sheet.corners, sheet.diagonal) < CORNER_TOLERANCE)
+        expect(wrong is None or corner_error(Quad.from_data(wrong), sheet.corners, sheet.diagonal) > CORNER_TOLERANCE)
+        expect(output.data[VersionData.SKIPPED] is False)
+        expect(output.data[VersionData.CONFIDENCE] > HALF)
+        expect(output.review is None)
+        expect(output.transform.kind is TransformKind.PERSPECTIVE)
+        assert_expectations()
+
+    def test_a_scan_with_no_edges_has_no_sheet(self, fx_perspective: Processor, tmp_path: Path) -> None:
+        """Verify a scan that is one flat tone, with nothing to part a sheet from its background, is left as it is.
+
+        :param fx_perspective: The processor under test.
+        :type fx_perspective: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        image = save(Image.new('RGB', SHEET_SIZE_PX, SHEET_PAPER), tmp_path / SCAN_NAME)
+        output = run_on(fx_perspective, image, tmp_path, params={METHOD: PerspectiveMethod.EDGES})
+        expect(output.review is ReviewReason.NOT_APPLIED)
+        expect(output.image == image)
+        expect(output.data[VersionData.SKIPPED] is True)
+        assert_expectations()
+
+    def test_a_sheet_cut_by_the_scanner_has_its_side_on_the_edge_of_the_scan(
+        self, fx_perspective: Processor, tmp_path: Path
+    ) -> None:
+        """Verify a side with no edge to be seen, where the scanner cut the paper, is the edge of the scan and is reported.
+
+        :param fx_perspective: The processor under test.
+        :type fx_perspective: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        sheet = draw_sheet(background=SHEET_PAPER, edge_px=EDGE_WIDTH_PX)
+        cut = sheet.image.crop((CUT_OFF_PX, 0, sheet.image.width, sheet.image.height))
+        output = run_on(
+            fx_perspective, save(cut, tmp_path / SCAN_NAME), tmp_path, params={METHOD: PerspectiveMethod.EDGES}
+        )
+        expect(SheetEdge.LEFT.value in output.data[VersionData.CUT_EDGES])
+        expect(output.data[VersionData.SKIPPED] is False)
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        'raw',
+        [{METHOD: PerspectiveMethod.EDGES, EDGE_STRENGTH: 0}, {METHOD: PerspectiveMethod.EDGES, EDGE_STRENGTH: 300}],
+        ids=['no-edges-seen', 'above-the-range-of-the-detector'],
+    )
+    def test_a_strength_outside_the_range_of_the_detector_is_rejected(
+        self, fx_perspective: Processor, raw: MetadataMap
+    ) -> None:
+        """Reject an edge strength of nothing and one beyond what the detector of Canny can tell.
+
+        :param fx_perspective: The processor under test.
+        :type fx_perspective: Processor
+        :param raw: Parameters under test.
+        :type raw: MetadataMap
+        """
+        with pytest.raises(InvalidParametersError, match=KEY_PATTERN):
+            fx_perspective.validate_params(raw)
+
+    def test_a_sheet_smaller_than_the_least_is_no_sheet(self, fx_perspective: Processor, tmp_path: Path) -> None:
+        """Verify the parameter ``min_sheet_fraction`` is kept by this method too.
+
+        :param fx_perspective: The processor under test.
+        :type fx_perspective: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        sheet = draw_sheet(background=SHEET_PAPER, edge_px=EDGE_WIDTH_PX)
+        image = save(sheet.image, tmp_path / SCAN_NAME)
+        output = run_on(fx_perspective, image, tmp_path, params={METHOD: PerspectiveMethod.EDGES, MIN_SHEET: 0.95})
+        expect(output.data[VersionData.SKIPPED] is True)
         assert_expectations()

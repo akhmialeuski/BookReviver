@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { deskew, spread, whole } from '@/features/processing/fixtures';
+import { deskew, deskewMethods, spread, whole } from '@/features/processing/fixtures';
 import { ParamsForm } from '@/features/processing/ParamsForm';
 
 /**
@@ -109,6 +109,34 @@ describe('ParamsForm', () => {
 
     expect(onChange).toHaveBeenLastCalledWith({ max_angle: 99, min_confidence: 0.3 });
     expect(first?.getAttribute('aria-invalid')).toBe('true');
+  });
+
+  it('offers the methods of a processor and shows only the fields of the method that is chosen', () => {
+    render(deskewMethods(), { method: 'projection', max_angle: 5, min_confidence: 0.3 });
+
+    const choice = container.querySelector('button[aria-haspopup="listbox"]');
+    expect(choice?.textContent).toBe('Projection of the ink');
+    // The name of the method is the choice, and its fields have no heading of the same words
+    expect(container.querySelector('h5')).toBeNull();
+    const labels = [...container.querySelectorAll('label')].map((label) => label.textContent);
+    expect(labels).toEqual(expect.arrayContaining(['Largest slant', 'Least confidence']));
+    expect(labels).not.toContain('Shortest line');
+    expect(labels).not.toContain('Fewest lines');
+    expect(container.textContent).not.toContain('projection');
+    expect(container.textContent).not.toContain('DeskewParams');
+  });
+
+  it('shows the fields of the method the parameters name, and not of the first', () => {
+    render(deskewMethods(), {
+      method: 'hough',
+      max_angle: 5,
+      min_confidence: 0.3,
+      min_line_share: 0.3,
+    });
+
+    const labels = [...container.querySelectorAll('label')].map((label) => label.textContent);
+    expect(labels).toContain('Shortest line');
+    expect(labels).not.toContain('Fewest lines');
   });
 
   it('says so for a step that has no settings', () => {

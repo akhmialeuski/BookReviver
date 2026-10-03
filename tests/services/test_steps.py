@@ -13,6 +13,7 @@ from bookreviver.domain.enums import (
     Rendition,
     ReviewReason,
     Stage,
+    TransformKind,
     VersionScale,
     VersionState,
 )
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 MASK_BYTES: bytes = b'mask'
+MESH_BYTES: bytes = b'{"grid":[]}'
 
 
 def _scan() -> Scan:
@@ -257,6 +259,53 @@ class TestStore:
         await fx_rig.runner.store(fx_rig.keys, fx_rig.version, output, policy=ImagePolicy.COMPACT, tiles=False)
         directory = fx_storage_root / fx_rig.keys.version_directory(fx_rig.version)
         assert directory.is_dir()
+
+    async def test_mesh_of_a_step_is_stored_and_named_by_the_transform_of_the_version(
+        self, fx_rig: Rig, fx_storage_root: Path, tmp_path: Path
+    ) -> None:
+        """Verify a mesh file is stored beside the image, and the transform names it by the key it is stored under.
+
+        The step cannot know where its mesh goes, so it leaves the transform to the runner.
+
+        :param fx_rig: The runner and what it works on.
+        :type fx_rig: Rig
+        :param fx_storage_root: Storage root of the test.
+        :type fx_storage_root: Path
+        :param tmp_path: Temporary directory of the test, where the step wrote its mesh.
+        :type tmp_path: Path
+        """
+        await fx_rig.store_scan()
+        mesh = tmp_path / 'mesh.json'
+        mesh.write_bytes(MESH_BYTES)
+        async with fx_rig.runner.execute(fx_rig.split_none()) as result:
+            ready = await fx_rig.runner.store(
+                fx_rig.keys,
+                fx_rig.version,
+                evolve(result.outputs[0], mesh=mesh),
+                policy=ImagePolicy.COMPACT,
+                tiles=False,
+            )
+        directory = fx_storage_root / fx_rig.keys.version_directory(ready)
+        expect((directory / Rendition.MESH).read_bytes() == MESH_BYTES)
+        expect(ready.transform.kind is TransformKind.MESH)
+        expect(ready.transform.mesh_key == fx_rig.keys.version_rendition(ready, Rendition.MESH))
+        assert_expectations()
+
+    async def test_a_version_without_a_mesh_keeps_the_transform_of_its_step(
+        self, fx_rig: Rig, fx_storage_root: Path
+    ) -> None:
+        """Verify a step that writes no mesh gets no mesh file and keeps its own transform.
+
+        :param fx_rig: The runner and what it works on.
+        :type fx_rig: Rig
+        :param fx_storage_root: Storage root of the test.
+        :type fx_storage_root: Path
+        """
+        await fx_rig.store_scan()
+        ready = await fx_rig.make()
+        expect(not (fx_storage_root / fx_rig.keys.version_directory(ready) / Rendition.MESH).exists())
+        expect(ready.transform.kind is TransformKind.IDENTITY)
+        assert_expectations()
 
     async def test_unknown_processor_is_not_found(self, fx_rig: Rig) -> None:
         """Reject a run of a processor the catalogue does not have.

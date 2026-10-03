@@ -17,7 +17,7 @@ from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import RenditionWriter, Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import UnitOfWork
-from bookreviver.ports.processing import ProcessorCatalog
+from bookreviver.ports.processing import ProcessorCatalog, ProcessorSettings
 from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
 from bookreviver.ports.storage import AssetStore
 from bookreviver.services.edits import EditService
@@ -38,12 +38,16 @@ class ProcessingProvider(Provider):
     def processor_catalog(self, settings: Settings) -> ProcessorCatalog:
         """Load the processors of the pools this process serves from the entry points.
 
-        :param settings: Application settings, of which ``processing.worker_pools`` is read.
+        :param settings: Application settings, of which ``processing.worker_pools`` and ``processing.models_dir`` are
+                         read.
         :type settings: Settings
         :returns: The catalogue of processors.
         :rtype: ProcessorCatalog
         """
-        return EntryPointCatalog(pools=settings.processing.worker_pools)
+        return EntryPointCatalog(
+            pools=settings.processing.worker_pools,
+            settings=ProcessorSettings(models_dir=settings.processing.models_dir.resolve()),
+        )
 
     @provide(scope=Scope.APP)
     def default_recipes(self) -> DefaultRecipes:

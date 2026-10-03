@@ -20,7 +20,19 @@ const PROFILE_NAME = 'Photographed book';
 const RENAMED = 'Photographed pages';
 const PERSPECTIVE = 'geometry.perspective';
 const DESKEW = 'geometry.deskew';
+const DEWARP = 'geometry.dewarp';
 const CROP = 'geometry.crop';
+const NORMALIZE = 'geometry.normalize';
+// The steps of the built-in recipe a new book starts the Geometry stage with, in their order, with the titles the list
+// announces while one of them is moved
+const BUILT_IN_STEPS = [
+  { processor: PERSPECTIVE, title: 'Perspective' },
+  { processor: DESKEW, title: 'Deskew' },
+  { processor: DEWARP, title: 'Dewarp' },
+  { processor: CROP, title: 'Crop' },
+  { processor: NORMALIZE, title: 'Normalize' },
+];
+const BUILT_IN = BUILT_IN_STEPS.map((step) => step.processor);
 
 // Tall enough for the pictures of the key states to show the recipe panel with its steps
 test.use({ viewport: { width: 1280, height: 1000 } });
@@ -68,23 +80,31 @@ test('a recipe is saved as a profile, applied in another book, made the default,
   await test.step('the steps of the first book are reordered and one is switched off', async () => {
     await registerAndSignIn(page);
     await openGeometry(page, await newBookWithPages(page, 'A photographed book', folder));
-    expect((await stepsOnScreen(page)).map((step) => step.processor)).toEqual([
-      PERSPECTIVE,
-      DESKEW,
-      CROP,
-    ]);
-    // The handle of the last step is lifted with Space, moved up twice with the arrow keys and dropped with Space
+    expect((await stepsOnScreen(page)).map((step) => step.processor)).toEqual(BUILT_IN);
+    // The handle of the crop is lifted with Space, moved up with the arrow keys and dropped with Space. Each key waits
+    // for what the list announces to a screen reader, since a key pressed before the list took the last one is lost
     const handle = page
       .locator(`[data-testid="recipe-step"][data-processor="${CROP}"]`)
       .getByRole('button', { name: /^Move the/ });
+    const announced = (text: string) => expect(page.getByRole('status').filter({ hasText: text })).toHaveCount(1);
+    const drag = MESSAGES.processing.steps.drag;
     await handle.focus();
     await page.keyboard.press('Space');
-    await page.keyboard.press('ArrowUp');
-    await page.keyboard.press('ArrowUp');
+    // The region keeps the last announcement only, and a step that is picked up is over its own place at once
+    await announced(drag.over('Crop'));
+    for (const over of BUILT_IN_STEPS.slice(0, BUILT_IN.indexOf(CROP)).toReversed()) {
+      await page.keyboard.press('ArrowUp');
+      await announced(drag.over(over.title));
+    }
     await page.keyboard.press('Space');
-    await expect
-      .poll(async () => (await stepsOnScreen(page)).map((step) => step.processor))
-      .toEqual([CROP, PERSPECTIVE, DESKEW]);
+    await announced(drag.dropped('Crop'));
+    expect((await stepsOnScreen(page)).map((step) => step.processor)).toEqual([
+      CROP,
+      PERSPECTIVE,
+      DESKEW,
+      DEWARP,
+      NORMALIZE,
+    ]);
     await page
       .locator(`[data-testid="recipe-step"][data-processor="${PERSPECTIVE}"]`)
       .getByTestId('step-enabled')
@@ -94,6 +114,8 @@ test('a recipe is saved as a profile, applied in another book, made the default,
       { processor: CROP, on: true },
       { processor: PERSPECTIVE, on: false },
       { processor: DESKEW, on: true },
+      { processor: DEWARP, on: true },
+      { processor: NORMALIZE, on: true },
     ]);
   });
 
@@ -110,11 +132,7 @@ test('a recipe is saved as a profile, applied in another book, made the default,
     secondBookPath = await newBookWithPages(page, 'A flatbed book', folder);
     await openGeometry(page, secondBookPath);
     // The built-in recipe is the active one and has the steps in their own order
-    expect((await stepsOnScreen(page)).map((step) => step.processor)).toEqual([
-      PERSPECTIVE,
-      DESKEW,
-      CROP,
-    ]);
+    expect((await stepsOnScreen(page)).map((step) => step.processor)).toEqual(BUILT_IN);
     await page.getByTestId('profile-apply-open').click();
     await expect(page.getByTestId('profile-apply-select')).toContainText(PROFILE_NAME);
     await snap(page, 'apply-profile-dialog');
@@ -132,7 +150,7 @@ test('a recipe is saved as a profile, applied in another book, made the default,
     await page.getByTestId('account-profiles').click();
     await expect(page.getByRole('heading', { name: 'Recipe profiles' })).toBeVisible();
     const row = page.locator(`[data-testid="profile-row"][data-name="${PROFILE_NAME}"]`);
-    await expect(row.getByTestId('profile-steps')).toContainText('3 steps');
+    await expect(row.getByTestId('profile-steps')).toContainText(`${BUILT_IN.length} steps`);
     await row.getByTestId('profile-make-default').click();
     await expect(row.getByTestId('profile-default-badge')).toBeVisible();
     await row.getByTestId('profile-rename').click();

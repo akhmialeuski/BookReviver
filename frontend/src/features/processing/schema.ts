@@ -35,6 +35,40 @@ function propertiesOf(schema: RJSFSchema): Properties {
 }
 
 /**
+ * Give the schemas of the methods of a processor that has several, each with the fields of its own.
+ *
+ * The parameters of such a processor are a `oneOf`, one schema for each method, so the form shows the fields of the
+ * method that is chosen and no others. Each is given as a reference to a definition of the schema, which is resolved
+ * here.
+ *
+ * @param schema The form schema.
+ * @returns The schema of each method in the order of the processor, none for a processor with a single method.
+ */
+export function methodsOf(schema: RJSFSchema): RJSFSchema[] {
+  const definitions = isRecord(schema.$defs) ? schema.$defs : {};
+  const found: RJSFSchema[] = [];
+  for (const option of schema.oneOf ?? []) {
+    if (!isRecord(option)) {
+      continue;
+    }
+    const reference = typeof option.$ref === 'string' ? option.$ref.split('/').at(-1) : undefined;
+    const resolved = reference === undefined ? option : definitions[reference];
+    if (isRecord(resolved)) {
+      found.push(resolved as RJSFSchema);
+    }
+  }
+  return found;
+}
+
+/** Tell whether the schema has a field to draw, in the schema itself or in one of its methods. */
+export function hasSettings(schema: RJSFSchema): boolean {
+  return (
+    Object.keys(propertiesOf(schema)).length > 0 ||
+    methodsOf(schema).some((method) => Object.keys(propertiesOf(method)).length > 0)
+  );
+}
+
+/**
  * Give the schema the form draws for the parameters of a processor.
  *
  * @param parameters The JSON Schema of the processor, as the catalogue gives it.
@@ -88,16 +122,14 @@ export function snapToSlider(value: number, spec: SliderSpec): number {
   return Math.min(Math.max(snapped, spec.min), spec.max);
 }
 
-/**
- * Choose the widget of every field of the schema: a slider with an input for a number with both bounds.
- *
- * @param schema The form schema.
- * @returns The `uiSchema` of the form.
- */
-export function uiSchemaOf(schema: RJSFSchema): UiSchema {
-  const ui: UiSchema = { 'ui:submitButtonOptions': { norender: true } };
+/** Choose the widget of each field of one schema. */
+function widgetsOf(schema: RJSFSchema): UiSchema {
+  const ui: UiSchema = {};
   for (const [name, property] of Object.entries(propertiesOf(schema))) {
-    if (sliderSpecOf(property) !== null) {
+    if (isRecord(property) && 'const' in property) {
+      // The method of a method's own schema is fixed by the choice of the method, which the form draws itself
+      ui[name] = { 'ui:widget': 'hidden' };
+    } else if (sliderSpecOf(property) !== null) {
       ui[name] = { 'ui:widget': BOUNDED_NUMBER_WIDGET };
     }
   }
@@ -105,14 +137,34 @@ export function uiSchemaOf(schema: RJSFSchema): UiSchema {
 }
 
 /**
+ * Choose the widget of every field of the schema: a slider with an input for a number with both bounds, and none for the
+ * name of a method that is fixed.
+ *
+ * @param schema The form schema.
+ * @returns The `uiSchema` of the form.
+ */
+export function uiSchemaOf(schema: RJSFSchema): UiSchema {
+  const ui: UiSchema = { 'ui:submitButtonOptions': { norender: true }, ...widgetsOf(schema) };
+  const methods = methodsOf(schema);
+  if (methods.length > 0) {
+    // The name of the method is in the choice above its fields, so the fields need no heading of the same words
+    ui.oneOf = methods.map((method) => ({ ...widgetsOf(method), 'ui:options': { label: false } }));
+  }
+  return ui;
+}
+
+/**
  * Collect the default of every field that has one, the parameters a new step starts with.
+ *
+ * A processor with several methods starts with its first, which is the one it ran before it had several.
  *
  * @param schema The form schema.
  * @returns The defaults by field name; a field without a default is left out for the processor to fill in.
  */
 export function defaultsOf(schema: RJSFSchema): Record<string, unknown> {
   const defaults: Record<string, unknown> = {};
-  for (const [name, property] of Object.entries(propertiesOf(schema))) {
+  const [first] = methodsOf(schema);
+  for (const [name, property] of Object.entries(propertiesOf(first ?? schema))) {
     if (isRecord(property) && 'default' in property) {
       defaults[name] = property.default;
     }
@@ -123,9 +175,15 @@ export function defaultsOf(schema: RJSFSchema): Record<string, unknown> {
 /**
  * Tell whether the values in a form fit the schema, so a value out of its bounds cannot be saved.
  *
+ * Parameters that name no method are the ones of a recipe saved before the processor had methods, and the server reads
+ * them as the first method, so they are checked as that.
+ *
  * @param schema The form schema.
  * @param params The values of the form.
  */
 export function fitsSchema(schema: RJSFSchema, params: Readonly<Record<string, unknown>>): boolean {
-  return validator.validateFormData({ ...params }, schema).errors.length === 0;
+  const first = defaultsOf(schema).method;
+  const named =
+    first !== undefined && !('method' in params) ? { ...params, method: first } : params;
+  return validator.validateFormData({ ...named }, schema).errors.length === 0;
 }

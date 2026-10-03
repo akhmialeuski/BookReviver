@@ -66,6 +66,13 @@ describe('reasonOf', () => {
     );
   });
 
+  it('says the lines of a page were too few to dewarp it, or are still bent after it', () => {
+    expect(reasonOf(item({ review: 'few-lines' }))).toBe(
+      'Too few lines to tell how the page is bent',
+    );
+    expect(reasonOf(item({ review: 'high-residual' }))).toBe('Lines still bent after dewarping');
+  });
+
   it('puts a failure before a mark of review, since a failed page has no result to doubt', () => {
     expect(reasonOf(item({ status: 'failed', review: 'low-confidence' }))).toBe('Failed');
   });

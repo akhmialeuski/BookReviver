@@ -1,11 +1,15 @@
+import type { RJSFSchema } from '@rjsf/utils';
 import type { PageVersionSchema } from '@/api';
 import {
+  type MeshShape,
   type QuadShape,
   type RectShape,
+  readMesh,
   readQuad,
   readRect,
   type Size,
 } from '@/features/editors/shapes';
+import { methodsOf } from '@/features/processing/schema';
 
 /**
  * What a step did to a page, read from the data of its version, and the history of the results a stage has made on a
@@ -39,6 +43,12 @@ export interface PageResult {
   quad: QuadShape | null;
   /** The frame of the content the step found, in the pixels of the full image it read. */
   frame: RectShape | null;
+  /** The curves along the first and the last lines the dewarping followed, in the pixels of the full image it read. */
+  mesh: MeshShape | null;
+  /** How far the lines were bent, in pixels for each thousand of the width of the page. */
+  bend: number | null;
+  /** How many lines of text or edges of the sheet the dewarping followed. */
+  lines: number | null;
   /** The width in pixels of the full image the step read, which its edit is drawn on. */
   sourceWidthPx: number | null;
   /** The height in pixels of the full image the step read. */
@@ -80,6 +90,9 @@ export function readResult(version: Pick<PageVersionSchema, 'data'>): PageResult
     ),
     quad: readQuad(recordOf(data.quad)),
     frame: readRect(recordOf(data.frame)),
+    mesh: readMesh(recordOf(data.mesh)),
+    bend: numberOf(data.bend),
+    lines: numberOf(data.lines),
     sourceWidthPx: numberOf(data.source_width_px),
     sourceHeightPx: numberOf(data.source_height_px),
   };
@@ -125,6 +138,9 @@ export function readChainResult(
     slantDeg: nearest('slantDeg'),
     quad: nearest('quad'),
     frame: nearest('frame'),
+    mesh: nearest('mesh'),
+    bend: nearest('bend'),
+    lines: nearest('lines'),
     sourceWidthPx: last.sourceWidthPx,
     sourceHeightPx: last.sourceHeightPx,
   };
@@ -198,7 +214,19 @@ export function describeParams(
   params: Readonly<Record<string, unknown>>,
   parameters: Readonly<Record<string, unknown>>,
 ): { label: string; value: string }[] {
-  const properties = parameters.properties;
+  // A processor with methods lists the fields of each method, and the parameters are described by the chosen one
+  const methods = methodsOf(parameters as RJSFSchema);
+  const chosen = methods.find((method) => {
+    const field = method.properties?.method;
+    return (
+      typeof field === 'object' &&
+      field !== null &&
+      'const' in field &&
+      field.const === params.method
+    );
+  });
+  const schema: Readonly<Record<string, unknown>> = chosen ?? methods[0] ?? parameters;
+  const properties = schema.properties;
   const order =
     typeof properties === 'object' && properties !== null ? Object.keys(properties) : [];
   const names = [...Object.keys(params)].sort((a, b) => {
@@ -209,7 +237,9 @@ export function describeParams(
     return rank(a) - rank(b);
   });
   return names.map((name) => ({
-    label: parameterLabel(name, parameters),
-    value: String(params[name]),
+    label: parameterLabel(name, schema),
+    // The method is told by the name of its schema, and not by the word the code calls it
+    value:
+      name === 'method' && typeof schema.title === 'string' ? schema.title : String(params[name]),
   }));
 }

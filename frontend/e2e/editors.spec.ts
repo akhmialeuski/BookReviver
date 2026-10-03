@@ -62,8 +62,8 @@ test('a reader turns a page by hand with the handle, the field and the wheel, ta
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });
-    // The sheet, the angle, the frame and the block on the page
-    await expect(page.getByTestId('editor-step')).toHaveCount(4);
+    // The sheet, the angle, the curves, the frame and the block on the page
+    await expect(page.getByTestId('editor-step')).toHaveCount(5);
     await expect(page.getByTestId('editor-auto')).toBeDisabled();
   });
 

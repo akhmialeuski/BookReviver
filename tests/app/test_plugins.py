@@ -51,17 +51,37 @@ class TestEntryPointCatalog:
 
         Pydantic fills a title in from the name of the field, such as ``Overlap Px``, so the JSON Schema alone cannot
         tell a title written for the form from one made of the name. The check reads the model, where a title that
-        nobody wrote is None. The processors that need OpenCV are checked where it is installed.
+        nobody wrote is None. A processor with several methods has a model for each, and each is checked. The
+        processors that need OpenCV are checked where it is installed.
         """
         catalog = EntryPointCatalog(pools=set(WorkerPool))
         unlabelled = [
             f'{spec.key}: {name}'
             for spec in catalog.specs()
             if isinstance(processor := catalog.get(spec.key), ModelProcessor)
-            for name, field in processor.params_model.model_fields.items()
+            for model in processor.parameter_models()
+            for name, field in model.model_fields.items()
             if not field.title or not field.description
         ]
         assert unlabelled == []
+
+    def test_every_method_of_a_built_in_processor_has_a_title_of_its_own(self) -> None:
+        """Verify the choice of a method in the form is labelled with the name of the method, not of the class.
+
+        The title of a model is its class name unless it is set, and the form lists the methods of a processor by the
+        titles of their models, so a title that is the name of the class would reach the reader.
+        """
+        pytest.importorskip('cv2', reason=CV_MISSING)
+        catalog = EntryPointCatalog(pools=set(WorkerPool))
+        untitled = [
+            f'{spec.key}: {model.__name__}'
+            for spec in catalog.specs()
+            if isinstance(processor := catalog.get(spec.key), ModelProcessor)
+            and len(models := processor.parameter_models()) > 1
+            for model in models
+            if model.model_config.get('title') is None
+        ]
+        assert untitled == []
 
     def test_specs_are_listed_by_key(self) -> None:
         """Verify the specs come ordered by key, whatever order the entry points were found in."""

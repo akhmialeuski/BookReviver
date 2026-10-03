@@ -29,6 +29,9 @@ describe('cutLine', () => {
     slantDeg: null,
     quad: null,
     frame: null,
+    mesh: null,
+    bend: null,
+    lines: null,
     sourceWidthPx: null,
     sourceHeightPx: null,
   };

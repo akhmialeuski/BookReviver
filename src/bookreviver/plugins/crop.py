@@ -21,7 +21,7 @@ area, which maps a point of the input to the output.
 """
 
 import math
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, Literal, override
 
 import cv2
 import numpy as np
@@ -30,6 +30,7 @@ from pydantic import Field
 
 from bookreviver.domain.enums import (
     Binarization,
+    CropMethod,
     ProcessorScope,
     ReviewReason,
     SheetEdge,
@@ -41,7 +42,7 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Point, Quad, Rect, Transform
 from bookreviver.domain.values import ProcessorSpec
-from bookreviver.plugins.base import ModelProcessor, Params
+from bookreviver.plugins.base import METHOD_TITLE, ModelProcessor, Params
 from bookreviver.plugins.cv_image import (
     COLOR_PLANES,
     MANUAL_CONFIDENCE,
@@ -92,11 +93,19 @@ PERCENT: float = 100.0
 class CropParams(Params):
     """How the content is found and how much margin is left round it.
 
+    ``CropMethod.LAYOUT`` is not accepted here while no Layout stage exists to give the regions it takes the frame from.
+
+    :ivar method: The blocks of ink, the one method offered.
     :ivar margin_percent: Margin on each side as a percent of the width of the frame, 0 to cut to the frame alone.
     :ivar binarization: How the page is made black and white to find its ink.
     :ivar noise_min_area: Ink smaller than this many pixels of the shrunk page is dust and is cleaned away.
     """
 
+    method: Literal[CropMethod.INK_BLOCKS] = Field(
+        default=CropMethod.INK_BLOCKS,
+        title=METHOD_TITLE,
+        description='The frame is the union of the dense blocks of ink',
+    )
     margin_percent: float = Field(
         default=0.0,
         ge=0,

@@ -50,20 +50,21 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
   });
 
   await test.step('the recipe is drawn from the processor and its schema', async () => {
-    await expect(page.getByTestId('recipe-select')).toContainText('Automatic');
+    await expect(page.getByTestId('recipe-select')).toContainText('Text');
     await expect(page.getByTestId('recipe-active')).toBeVisible();
-    // A new book is straightened in four steps, the sheet first and the page of the book last
-    await expect(page.getByTestId('recipe-step')).toHaveCount(4);
+    // A new book is straightened in five steps, the sheet first, the flattening after the turn and the page of the book
+    // last
+    await expect(page.getByTestId('recipe-step')).toHaveCount(5);
     await expect(page.getByTestId('recipe-step').nth(0)).toContainText('1 · Perspective');
     await expect(page.getByTestId('recipe-step').nth(1)).toContainText('2 · Deskew');
-    await expect(page.getByTestId('recipe-step').nth(2)).toContainText('3 · Crop');
-    await expect(page.getByTestId('recipe-step').nth(3)).toContainText('4 · Normalize');
+    await expect(page.getByTestId('recipe-step').nth(2)).toContainText('3 · Dewarp');
+    await expect(page.getByTestId('recipe-step').nth(3)).toContainText('4 · Crop');
+    await expect(page.getByTestId('recipe-step').nth(4)).toContainText('5 · Normalize');
     // The settings of the first step are open, with the titles of the schema and no name of the code
     await expect(page.getByRole('slider', { name: 'Smallest sheet' })).toBeVisible();
     await expect(page.getByTestId('stage-panel')).not.toContainText('min_sheet_fraction');
-    // The steps that are planned stand under the real ones
-    await expect(page.getByTestId('coming-steps')).toContainText('Dewarp by mesh');
-    await expect(page.getByTestId('coming-steps')).toContainText('Soon');
+    // Every step of the stage is built, so none is listed as coming
+    await expect(page.getByTestId('coming-steps')).toHaveCount(0);
   });
 
   await test.step('the settings of the last step are opened, and a value outside its limits cannot be saved', async () => {

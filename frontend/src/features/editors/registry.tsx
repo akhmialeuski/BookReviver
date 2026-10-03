@@ -1,5 +1,6 @@
 import type { EditorKind, ProcessorSchema, RecipeSchema } from '@/api';
 import { lineEditor } from '@/features/editors/lineEditor';
+import { meshEditor } from '@/features/editors/meshEditor';
 import { quadEditor } from '@/features/editors/quadEditor';
 import { rectEditor } from '@/features/editors/rectEditor';
 import { rotationEditor } from '@/features/editors/rotationEditor';
@@ -68,6 +69,7 @@ const EDITORS: Readonly<Record<EditableKind, RegisteredEditor>> = {
   split: register<'split'>(splitEditor),
   quad: register<'quad'>(quadEditor),
   rect: register<'rect'>(rectEditor),
+  mesh: register<'mesh'>(meshEditor),
 };
 
 /** Tell whether the kind of editor of a processor has a component. */

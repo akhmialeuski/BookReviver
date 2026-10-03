@@ -64,6 +64,8 @@ class StepOutput:
     :ivar review: Why the step wants the page looked at again though it finished, or None when it is sure. The service
                   stores it with the version as it is and reads nothing of ``data`` to find it.
     :ivar mask: Mask of the areas the step removed, in ``workdir``, or None.
+    :ivar mesh: File in ``workdir`` holding the mesh the step followed, or None. The runner stores it with the version
+                and gives the transform the key it is stored under, so the step leaves the transform of a mesh to it.
     """
 
     image: Path | None = None
@@ -72,6 +74,7 @@ class StepOutput:
     data: MetadataMap = field(factory=dict)
     review: ReviewReason | None = None
     mask: Path | None = None
+    mesh: Path | None = None
 
 
 @frozen(kw_only=True)
@@ -84,14 +87,37 @@ class StepResult:
     outputs: Sequence[StepOutput] = field(factory=tuple)
 
 
+@frozen(kw_only=True)
+class ProcessorSettings:
+    """What the application tells a processor about the machine it runs on.
+
+    :ivar models_dir: Directory the files of neural models are kept in, into which a processor downloads a model the
+                      first time it needs it.
+    """
+
+    models_dir: Path
+
+
 class Processor(ABC):
     """One step of a recipe, registered as a plugin.
 
     :ivar spec: What the processor says about itself, declared on its class so the catalogue lists it without running
                 it.
+    :ivar settings: What the application told the processor about the machine, or None while it has told nothing.
     """
 
     spec: ClassVar[ProcessorSpec]
+    settings: ProcessorSettings | None = None
+
+    def configure(self, settings: ProcessorSettings) -> None:
+        """Take the settings of the application, which the catalogue gives every processor it loads.
+
+        A processor that needs something of them reads ``settings`` or overrides this to prepare it.
+
+        :param settings: What the application tells the processor about the machine.
+        :type settings: ProcessorSettings
+        """
+        self.settings = settings
 
     @abstractmethod
     def validate_params(self, raw: MetadataMap) -> MetadataMap:

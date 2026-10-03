@@ -2,7 +2,6 @@ import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../src/shared/http/csrf';
-import { MESSAGES } from '../src/shared/messages';
 import {
   createBook,
   openProjectId,
@@ -14,9 +13,9 @@ import {
 } from './support/account';
 
 /**
- * A variant of a stage for a group of pages: a rule that sends the plates of the book to a variant of the Geometry recipe,
- * a run on all pages that gives each page its own variant, a variant pinned to one page that the run keeps, and the
- * strip that marks and filters the pages by variant.
+ * A variant of a stage for a group of pages: the rule a new book starts with, which sends its plates to the variant
+ * Plates of the Geometry recipe, a run on all pages that gives each page its own variant, a variant pinned to one page
+ * that the run keeps, and the strip that marks and filters the pages by variant.
  */
 
 const PAGES = 4;
@@ -24,6 +23,11 @@ const PLATE_POSITION = 2;
 const SCENARIO_TIMEOUT_MS = 240_000;
 const RUN_TIMEOUT_MS = 90_000;
 const DESKEW_PROCESSOR = 'geometry.deskew';
+// The recipes a new book starts with, and the places of the second of them in the list of the recipes
+const TEXT_VARIANT = 'Text';
+const PLATES_VARIANT = 'Plates';
+const DEFAULT_RECIPES = 3;
+const PLATES_INDEX = 1;
 
 // Tall enough for the pictures of the key states to show two pages of the strip and a section of the panel
 test.use({ viewport: { width: 1280, height: 1000 } });
@@ -88,7 +92,7 @@ test('plates get their own variant by a rule, a pinned variant survives a run on
   let bookPath = '';
   // The names of the two variants, read from the book once it is open: the active recipe, and the copy made of it
   let textVariant = '';
-  let platesVariant = '';
+  const platesVariant = PLATES_VARIANT;
 
   await test.step('a book with a plate among its pages opens on the Geometry stage', async () => {
     await registerAndSignIn(page);
@@ -99,34 +103,20 @@ test('plates get their own variant by a rule, a pinned variant survives a run on
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
     await expect(strip).toHaveCount(PAGES);
-    // One recipe has nothing to tell the pages apart by, so the strip marks none
-    await expect(marks).toHaveCount(0);
-    await expect(page.getByTestId('strip-variant-filter')).toHaveCount(0);
+    // A new book starts with the recipes Text, Plates and Flat, in the order of their templates, and the first is active
+    await expect(page.getByTestId('recipe-select').locator('option')).toHaveCount(DEFAULT_RECIPES);
     textVariant = await activeRecipeName(page, 'geometry');
-    platesVariant = MESSAGES.processing.recipe.copyName(textVariant);
+    expect(textVariant).toBe(TEXT_VARIANT);
   });
 
-  await test.step('a copy of the recipe with settings of its own is the variant for the plates', async () => {
-    await page.getByTestId('recipe-new').click();
-    // The list holds the copy as an option before the screen switches to it, so the chosen option is awaited
-    await expect(page.getByTestId('recipe-select').locator('option:checked')).toContainText(
-      platesVariant,
-    );
-    await expect(page.getByTestId('recipe-active')).toHaveCount(0);
-    // The recipe has several steps, closed at first, and only the deskew one has a largest slant
+  await test.step('the variant Plates has the settings of its own, and a rule sends the plates and frontispieces to it', async () => {
+    await page.getByTestId('recipe-select').selectOption({ index: PLATES_INDEX });
     const deskew = page.locator(
       `[data-testid="recipe-step"][data-processor="${DESKEW_PROCESSOR}"]`,
     );
     await deskew.getByTestId('step-toggle').click();
-    await deskew.getByRole('spinbutton', { name: 'Largest slant' }).fill('9');
-    await page.getByTestId('recipe-save').click();
-    await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
-  });
-
-  await test.step('a rule sends the plates and frontispieces to the variant, which the section lists', async () => {
-    await expect(page.getByTestId('used-for-empty')).toBeVisible();
-    await page.getByTestId('rule-add').click();
-    await page.getByTestId('rule-add-plates').click();
+    // The steps of a recipe are drawn by the method they name, and Plates levels the page by its long straight lines
+    await expect(deskew.getByRole('spinbutton', { name: 'Shortest line' })).toBeVisible();
     await expect(page.getByTestId('rule')).toHaveCount(1);
     await expect(page.getByTestId('rule')).toContainText('Plates and frontispieces');
     await page.getByTestId('used-for').scrollIntoViewIfNeeded();

@@ -61,6 +61,7 @@ What each concern reuses, and therefore what we do not write ourselves.
 | Page order                 | fractional-indexing                                             | Order keys that sort between two neighbours      |
 | Tiles                      | pyvips `dzsave` with the IIIF 3 layout                          | Tile pyramids and `info.json`                    |
 | Image processing plugins   | OpenCV, scikit-image                                            | Geometry, filtering, morphology                  |
+| Neural models on the CPU   | ONNX Runtime                                                    | UVDoc, the network of `geometry.dewarp`          |
 | Language and vision models | pydantic-ai                                                     | Provider clients, structured output validation   |
 | Plugin discovery           | `importlib.metadata.entry_points`                               | Plugin loading                                   |
 
@@ -130,8 +131,8 @@ every closed set of values is a `StrEnum` carrying its own label.
 | Processing   | `Stage`, `ProcessorRef`, `Recipe` (a variant is a recipe that is not active), `Step`          |
 | Rules        | `RecipeRule` (a stage, a `RuleCondition` and a recipe, in order), `RecipeRuleId`               |
 | Profiles     | `RecipeProfile` (an account, a stage, steps in order and a default flag), `RecipeProfileId`    |
-| Geometry     | `Point`, `Size`, `Rect`, `Quad`, `Line`, `Rotation` and `Transform` in `domain/geometry.py`   |
-| Edits        | `PageEdit` with its `EditorKind` and a shape (`Rect`, `Quad`, `Line`, `Rotation`) or a mask   |
+| Geometry     | `Point`, `Size`, `Rect`, `Quad`, `Line`, `Rotation`, `Mesh` and `Transform`, in `geometry.py` |
+| Edits        | `PageEdit`, `EditorKind`, a shape (`Rect`, `Quad`, `Line`, `Rotation`, `Mesh`) or a mask      |
 | Events       | `JobChanged`, `SourceImported`, `ScanReady`, `PagesChanged`, `PageVersionReady`, and others   |
 | Jobs         | `Job`, `JobKind` (the import, the preparing of pages, the four processing jobs and the measure of the book, which is a processing job too), `JobState` |
 |              | `Progress`, `WorkerPool`                                                                      |
@@ -482,7 +483,7 @@ colour scan instead of the binarised page.
 | `page-order`  | `pages.blank`          | `identity`                 | size of the generated blank leaf                            |
 | `geometry`    | `geometry.perspective` | `perspective(quad)`        | `quad` of the sheet, `cut_edges`, confidence, size read     |
 | `geometry`    | `geometry.deskew`      | `rotate(angle)`            | angle in degrees, confidence, whether it was skipped        |
-| `geometry`    | `geometry.dewarp`      | `mesh(key)`                | key of the mesh, root mean square error                     |
+| `geometry`    | `geometry.dewarp`      | `mesh(key)` or `identity`  | `bend`, `lines`, `residual`, curves for the editor (`mesh`) |
 | `geometry`    | `geometry.crop`        | `crop(quad)`               | `frame` of the content, `line_height_px`, confidence, size  |
 | `geometry`    | `geometry.normalize`   | `place`                    | `frame` of the block on the page, `line_height_px`, size    |
 | `cleanup`     | `cleanup.despeckle`    | `identity`                 | number of removed specks, key of the mask `mask.png`        |
@@ -492,7 +493,7 @@ colour scan instead of the binarised page.
 | `recognition` | `recognition.ocr`      | `identity`, no image       | engine, model, confidence, key of the hOCR or ALTO text     |
 
 The chain of versions of one page looks like this. The left half of a spread passes the split, the straightening of the
-sheet, deskewing, cropping and cleanup, and each step refers to the one before. Recognition continues the same chain with a version without an
+sheet, deskewing, dewarping, cropping and cleanup, and each step refers to the one before. Recognition continues the same chain with a version without an
 image.
 
 ```mermaid
@@ -500,7 +501,8 @@ flowchart TD
     C["Scan 12 of kniga-ch1.pdf<br/>full, preview, thumb, iiif"] --> A["page-split: split.spread<br/>slot 1, quad of the left half"]
     A --> P["geometry: geometry.perspective<br/>quad of the sheet"]
     P --> B["geometry: geometry.deskew<br/>rotate 0.8°"]
-    B --> D["geometry: geometry.crop<br/>content frame"]
+    B --> W["geometry: geometry.dewarp<br/>mesh(key), 45 by 31 grid"]
+    W --> D["geometry: geometry.crop<br/>content frame"]
     D --> E["cleanup: cleanup.despeckle<br/>mask.png of removed specks"]
     E --> F["cleanup: cleanup.binarize<br/>Sauvola, window 31"]
     style C stroke:#1e7a4d,stroke-width:2px
@@ -1095,15 +1097,31 @@ indistinguishable to the application.
   over SSE.
 - The base steps `split.none` and `pages.blank` are ordinary processors, and the import and the page order stage run
   them through the same `StepRunner` as a recipe.
-- `split.auto`, `split.spread`, `geometry.perspective`, `geometry.deskew` and `geometry.crop` need OpenCV, so they
-  live in the optional group `bookreviver[cv]`. A machine that lacks it starts without them, the catalogue leaves them
-  out, and a default recipe that names them is not made, so the Split stage then starts with `split.none`.
-  `geometry.deskew` takes the angle at which the ink of the page lies in the fewest rows, or the `rotation` the user
-  gave, and leaves a page whose lines it is not sure of, or whose tones do not part into ink and paper, as it is.
-- The default Geometry recipe of a new book is `geometry.perspective`, `geometry.deskew`, `geometry.crop`,
-  `geometry.normalize`: the sheet is straightened first because the lines are levelled better on a page with no
-  background, the frame of the content is searched on the level page, and the block is put on a page of the book last.
-  Every step of a recipe stores a version that reads the one before, and the version the stage stands on is the last.
+- `split.auto`, `split.spread`, `geometry.perspective`, `geometry.deskew`, `geometry.dewarp`, `geometry.crop` and
+  `geometry.normalize` need
+  OpenCV, so they live in the optional group `bookreviver[cv]`, which also installs ONNX Runtime for the network of
+  `geometry.dewarp`. A machine that lacks it starts without them, the catalogue leaves them out, and a default recipe
+  that names them is not made, so the Split stage then starts with `split.none`. `geometry.deskew` takes the angle at
+  which the ink of the page lies in the fewest rows, or the `rotation` the user gave, and leaves a page whose lines it
+  is not sure of, or whose tones do not part into ink and paper, as it is.
+- A processor with several methods names them in a closed `StrEnum` with labels (`PerspectiveMethod`, `DeskewMethod`,
+  `CropMethod`, `DewarpMethod`) and takes its parameters as a root model over a union with one model for each method,
+  tagged by the field `method`. The JSON Schema of the spec is then a `oneOf`, so the form draws a choice of the method
+  and the fields of the chosen one only (`methodsOf` in `features/processing/schema.ts`). The parameters of a recipe
+  saved before the processor had methods name none and are read as the first method, so they keep their behaviour. A
+  method that is declared and not offered has no model in the union, so a recipe that names it is refused:
+  `CropMethod.LAYOUT` waits for the Layout stage, and `DewarpMethod.DOCRES` for a plugin of the group `gpu`.
+  `geometry.crop` offers one method, and its model carries `method` as a fixed field that the form leaves out.
+  `ModelProcessor.parameter_models()` lists the models of the methods, which the tests of the labels read.
+- The default Geometry recipes of a new book are Text (active), Plates and Flat, each of `geometry.perspective`,
+  `geometry.deskew`, `geometry.dewarp`, `geometry.crop` and `geometry.normalize`. The sheet is straightened first
+  because the lines are levelled better on a page with no background, the page is flattened after it is levelled, the
+  frame of the content is searched on the flat page, and the block is put on a page of the book last. Text levels by the projection of the ink and flattens by the lines of text. Plates
+  levels by the long straight lines and flattens by the edges of the sheet, since a plate has few lines of text. Flat is
+  for thin books and loose sheets and has `geometry.dewarp` switched off. A `RecipeRule` on `plates` is made with the
+  recipes and sends the plates and frontispieces to Plates. Every step of a recipe stores a version that reads the one
+  before, and the version the stage stands on is the last. The recipes get creation times a microsecond apart, so they
+  are listed in the order of their templates.
 - `geometry.perspective` (`plugins/perspective.py`) finds the sheet by the colour of the paper. The scan is shrunk to
   600 pixels, the brightness (the HSV value) is split in two by Otsu, the holes of the lines of text are closed and the
   specks opened, and the convex hull of the largest region is thinned by `cv2.approxPolyDP`, with a tolerance that
@@ -1113,7 +1131,20 @@ indistinguishable to the application.
   times how well the hull fills its quadrilateral. The sheet is warped by `cv2.warpPerspective` into a rectangle with
   the longer of each pair of opposite sides, and the transform is `perspective(quad)` with the matrix. A side of the
   sheet within 1 % of the edge of the scan is written to `cut_edges`, which `geometry.crop` reads. A `quad` edit
-  replaces the search and has the confidence 1.
+  replaces the search and has the confidence 1. This is the method `paper-colour`.
+- The method `edges` of `geometry.perspective` is for paper of the colour of its background. `EdgeSearch` finds the
+  edges of the shrunk scan with `cv2.Canny` on each plane of colour (`edge_strength`, 40, is the high threshold and half
+  of it the low one), the long straight segments among them with `cv2.HoughLinesP` (`min_edge_share`, 0.3 of the longer
+  side), and takes the outermost line of each side, fitted through the segments that lie along it. A side with no
+  segment is the edge of the scan, where the scanner cut the paper, and at least three sides have to be seen. The
+  corners are the crossings of the lines, and the confidence is the mean over the four sides of the share of the side
+  that the segments cover, taken as the union of their stretches, since each edge of a thick line gives its own segment.
+- `geometry.deskew` has three methods. `projection` is the search of the angle described above. `hough` takes the angle
+  of the long straight lines of the page, rules and frames, which `cv2.HoughLinesP` finds in the ink itself and not in
+  its edges (`min_line_share`, 0.3 of the width), as the median of their slopes weighted by length, folded so that a
+  vertical line counts as a level one and averaged over the lines within a degree of the median. `baselines` takes the
+  median slope of the lines of text that `TextLineSearch` finds (`min_lines`, 3). A page with no line for the method, or
+  with a confidence below `min_confidence`, is left as it is.
 - `geometry.crop` (`plugins/crop.py`) shrinks the page to 1000 pixels and makes it black and white (`binarization`:
   `otsu` or `adaptive`), cleans the ink components smaller than `noise_min_area` and those that touch a side of the page
   that is not in `cut_edges`, smears the ink with a rectangle of 1.5 % by 0.6 % of the page (twice), keeps the blocks
@@ -1127,7 +1158,7 @@ indistinguishable to the application.
   strong peak, and fits the distance to the peaks at its multiples (up to 8 lines apart) with a parabola at each, which
   gives the pitch to a few hundredths of a pixel where the first peak alone would round to a whole one. A frame of fewer
   than 60 rows, or with no peak, leaves `line_height_px` out. The idea comes from the `_clean_binary` and
-  `detect_text_block` of an earlier script, and the code is the project's own.
+  `detect_text_block` of an earlier script, and the code is the project's own. The method is `ink-blocks`.
 - `geometry.normalize` (`plugins/normalize.py`) reads the block `geometry.crop` cut and puts it on a blank page of
   `page_width` by `page_height` pixels, so every page of a book has one size, one size of text and one layout. The block
   is scaled by `line_height` over its own line height, which comes from the data of the crop or else is measured here
@@ -1161,6 +1192,42 @@ indistinguishable to the application.
   `RecipeBook.rewrite`, so the bounds of the parameters are checked, and `StageRecords.mark_recipe_stale` marks the pages
   the recipe processed stale, which is what any change of a recipe does. A measure that finds the numbers the step has
   changes nothing. The job fails with the reason when the recipe has no normalize step or no page was cut yet.
+- `TextLineSearch` (`plugins/text_lines.py`) finds the lines of text for `baselines` and for the dewarping. It shrinks
+  the page to 1200 pixels of width, makes it black and white by Otsu, smears the ink sideways with a rectangle of 6 % of
+  the width so that the words of a line join, and keeps the blocks that are at least half as wide as the page and at
+  most 12 % of its height tall, which leaves out headings, the last lines of paragraphs and pictures. A block is cut
+  into bands of 20 pixels, and the middle of the ink in a band, weighted by darkness, is a point of the line. A line is
+  fitted by a polynomial that is fitted again without the points farther than three robust deviations (`LineSample.fit`).
+  The points are in the pixels of the page that was given, whatever its size.
+- `geometry.dewarp` (`plugins/dewarp.py`) flattens a page that is bent, as a page of a thick book is at the gutter.
+  Every method gives curves, which `CurveSet` fits as cubic polynomials, or a grid. `FlatteningField`
+  (`plugins/mesh_warp.py`) makes each curve straight at the height it has at the middle of the page and moves the rows
+  between the curves by the displacement interpolated linearly from curve to curve. Above the first and below the last
+  curve the page moves as that curve does. The image is remapped by `cv2.remap` in strips of 256 rows, so a page of
+  hundreds of megapixels needs the maps of one strip in memory. The methods are `text-lines` (a curve through every
+  line `TextLineSearch` finds, and a page with fewer than `min_lines`, 5, is left as it is with the review reason
+  `few-lines`), `page-edges` (the top and the bottom edge of the sheet, from the largest region brighter than its
+  background, as the mode `marginal` of ScanTailor does, for pages with a picture and few lines) and `uvdoc`.
+- The bend of a page is how far the displacement of a row departs from the straight line that fits it best, as the
+  median over the rows, in pixels for each thousand of the width. A page whose bend is below `min_bend` (2) is left as
+  it is with `not-applied`, and a manual edit is applied whatever the bend. The residual is the root mean square
+  distance of the points from their curves, in the same unit. A residual above `max_residual` (3) marks the page
+  `high-residual` though it is flattened. The data of the version hold `bend`, `lines`, `residual`, `confidence` and
+  `mesh`, five rows at most of five nodes on the curves in the pixels of the full image, from which the mesh editor
+  starts. The step writes `mesh.json`, a grid of 45 rows and 31 columns of the places of the bent page that the nodes
+  of an even grid over the flat page are taken from, and `StepRunner` stores it as the rendition `Rendition.MESH` and
+  gives the version the transform `mesh(key)` that names it, since the step cannot know where its file goes. The
+  application does not read the mesh back yet, so `Transform.to_input` still refuses to map through it.
+- The `mesh` edit is a `Mesh`, rows of nodes from the top of the page. Two rows are the top and the bottom curve of the
+  simple form of the editor, and more rows are the full grid. It replaces the search of every method.
+- `uvdoc` runs the UVDoc network (Verhoeven, Magne and Sorkine-Hornung, SIGGRAPH Asia 2023) with ONNX Runtime on the
+  CPU, in `plugins/uvdoc.py`. The page is shrunk to 496 by 720 pixels, the network gives a grid of 45 by 31 places, and
+  the grid becomes the same field. The model is an ONNX export of its weights in two files, `UVDoc_grid.onnx` and
+  `UVDoc_grid.onnx.data`, downloaded the first time the method runs into the directory of the setting
+  `processing.models_dir` (`BOOKREVIVER_PROCESSING__MODELS_DIR`, `data/models`) from a fixed revision of a repository
+  on Hugging Face, with the SHA-256 digest of each file checked. The catalogue gives the directory to every processor
+  it loads through `Processor.configure(ProcessorSettings)`. The tests of the method skip where the model is not in the
+  directory and never download it. `DewarpMethod.DOCRES` is declared for a later plugin of the group `gpu`.
 - The data of both steps give the shape they found (`quad`, `frame`) and the size of the full image they read
   (`source_width_px`, `source_height_px`) in the pixels of the full image, whatever the scale of a preview, which is
   what an editor draws on. `image_data` carries `cut_edges` and `review` through the steps after, and `settle_review`
@@ -1364,6 +1431,8 @@ data/storage/
             │       │   ├── geometry.deskew/
             │       │   │   ├── 71c2d09e5b44a0f3/  angle 0.8°
             │       │   │   └── 0b93a1f7c2e85d19/  angle 1.1° after a manual edit
+            │       │   ├── geometry.dewarp/
+            │       │   │   └── 4e7a90c1d2b3f658/  full.jpg and mesh.json, the grid of the flattening
             │       │   └── geometry.crop/
             │       │       └── c3d1e8a04f77b2c6/…
             │       ├── cleanup/
@@ -1679,9 +1748,11 @@ every page of which is up to date is `done`, and any other `waiting`. The book l
 window with the same number of queries for any number of books.
 
 A page version carries `review`, a `ReviewReason` its processor gave when it finished but was not sure:
-`not-applied` from `geometry.deskew`, `geometry.perspective` and `geometry.crop` for a page they left as it was,
-`cut-by-edge` from `geometry.crop` for a frame that comes to a side the scanner cut, `size-differs` from
-`geometry.normalize` for a page whose text is too far in size from the target, `low-confidence` from
+`not-applied` from `geometry.deskew`, `geometry.perspective`, `geometry.dewarp` and `geometry.crop` for a page they left
+as it was, `few-lines` from `geometry.dewarp` for a page with too few lines to tell its bend, `high-residual` from it for
+a page whose lines are still bent after the flattening, `cut-by-edge` from `geometry.crop` for a frame that comes to a
+side the scanner cut, `size-differs` from `geometry.normalize` for a page whose text is too far in size from the
+target, `low-confidence` from
 `geometry.perspective` for a sheet it is not sure of and from `split.spread` for a cut whose
 gutter confidence is below its `min_confidence`, and from `split.auto` `unsure-gutter` for the same and `narrow-gutter`
 for a scan narrower than a spread that has a strong gutter in its middle. A step of a recipe carries `enabled`. A step that is off keeps
@@ -1918,7 +1989,11 @@ The project list counts in `page_count` the included pages of the book, and show
     `description`, and the title and the docstring of the model are left out. A number with both bounds is a slider
     with an input (`BoundedNumberWidget.tsx`), the form validates as it changes, and a value outside its bounds keeps
     the recipe from being saved and a preview from being asked for. The classes of the theme are named to Tailwind by
-    an `@source` line of `index.css`, since Tailwind does not read `node_modules`.
+    an `@source` line of `index.css`, since Tailwind does not read `node_modules`. A processor with methods has a
+    `oneOf` in its schema, which the form draws as a choice of the method with the fields of the chosen one under it.
+    The title of the schema of a method is the name in the choice, the form draws no heading of the same words, and
+    the field `method`, which is fixed in each schema, is hidden. A new step starts as the first method, and values
+    that name no method are checked and described as that one.
   - A preview (`usePreview.ts`) asks `POST .../preview` for the steps of the draft on the open page once the form has
     stood still for 400 ms, and the version the server announces is shown in the half after of the compare. The
     `page-version-ready` event leaves the version in the cache (`versionReadyKey` of `features/projects/queries.ts`,
@@ -1980,8 +2055,15 @@ The project list counts in `page_count` the included pages of the book, and show
 - Editors are a react-konva layer kept in step with the OpenSeadragon viewport. An editor registry maps each
   `EditorKind` to a component: draggable frame, quad with corner handles, rotation handle, dewarp mesh, brush and
   eraser, region polygons labelled text or illustration. The split line, the choice of pages with its line, the
-  rotation, the quad of the sheet and the frame of the content exist so far (`features/editors/`), and the others come
-  with their plugins.
+  rotation, the quad of the sheet, the frame of the content and the curves of the dewarping exist so far
+  (`features/editors/`), and the others come with their plugins.
+  - The curves editor (`MeshCanvas.tsx`, `MeshPanel.tsx`, `mesh.ts`) lies on the picture the dewarping step read. It
+    starts as two curves, the top and the bottom, of five nodes each, from the summary the step put in its data, or
+    from two straight curves where the step found no lines. A node is dragged or moved by the arrow keys and saved when
+    it is let go. "More control" shows the whole grid of five rows, and its state is shared by the canvas and the panel
+    through `moreControl.ts`, since they stand in two places of the screen. A change made with only the two curves
+    shown saves the two curves, which the server turns into the page between them, and a change made on the grid saves
+    the grid. Saving, running the stage on the page, "Auto" and Ctrl+Z are those of the other editors.
   - The layer (`EditorLayer.tsx`) is a Konva `Stage` laid over the canvas of the compare. It follows the viewer through
     `viewport-change`, `resize` and `animation-finish` (`scene.ts`) and turns the pixels of an edit into pixels of the
     screen and back with `imageToViewerElementCoordinates` and `viewerElementToImageCoordinates` of the picture
@@ -1996,8 +2078,8 @@ The project list counts in `page_count` the included pages of the book, and show
     on screen, which is the active one unless the reader opened a variant: they are the editors of the enabled steps
     whose processors have an entry (`editableProcessorsOf` in `registry.tsx`), and never those of the catalogue, since
     the catalogue lists processors that read different edits. A book on `split.auto` gets the `split` editor and a book
-    on the older `split.spread` recipe gets `line`. The default Geometry recipe has three, `quad`, `rotation` and
-    `rect`, and the panel lists them as the steps of the stage with the word `auto` or `by hand` after each. Picking a
+    on the older `split.spread` recipe gets `line`. The default Geometry recipes have four, `quad`, `rotation`, `mesh`
+    and `rect`, and the panel lists them as the steps of the stage with the word `auto` or `by hand` after each. Picking a
     step opens its editor, and the one that is shown is the one "Auto", Ctrl+Z and the field of the panel act on.
   - Every step of a recipe stores a version that reads the one before, so an editor lies on the picture its own step
     read and starts from what its own step found. `stepChain` (`chain.ts`) follows `input_id` back from the current
@@ -2157,7 +2239,8 @@ The book model rests on these decisions, each with its reason.
 29. **OpenAPI schema.** It is the file `docs/openapi.json`, and a test checks that it equals `app.openapi()`, because
     the frontend client is generated from it and must not drift from the routes.
 30. **Processing.** A step preview runs as a background job with its result over SSE, because heavy work runs only
-    in jobs. OpenCV is the optional dependency group `bookreviver[cv]`, installed only where plugins need it. The
+    in jobs. OpenCV and ONNX Runtime are the optional dependency group `bookreviver[cv]`, installed only where plugins need
+    them. The
     split line is edited with `EditorKind.line`. Binding a scan to a placeholder takes the scan away from the page
     the import made of it with the flag `take_over`, since a pair of scan and slot belongs to one page.
 31. **Sign-in with X.** It is left out, and Google and Facebook remain. X returns in a task of its own with a fresh

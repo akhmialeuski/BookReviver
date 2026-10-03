@@ -40,6 +40,106 @@ export const DESKEW_PARAMETERS = {
   type: 'object',
 };
 
+const MAX_ANGLE_FIELD = {
+  default: 5.0,
+  description: 'Largest angle in degrees to look for, each way',
+  exclusiveMinimum: 0,
+  maximum: 45,
+  title: 'Largest slant',
+  type: 'number',
+};
+
+const MIN_CONFIDENCE_FIELD = {
+  default: 0.3,
+  description: 'Confidence below which the page is left as it is',
+  maximum: 1,
+  minimum: 0,
+  title: 'Least confidence',
+  type: 'number',
+};
+
+/**
+ * The JSON Schema of `geometry.deskew` with its methods, as its parameter model writes it: a `oneOf` of one schema for
+ * each method, which the form draws as a choice of the method and the fields of the chosen one.
+ */
+export const DESKEW_METHODS_PARAMETERS = {
+  $defs: {
+    BaselinesParams: {
+      additionalProperties: false,
+      properties: {
+        max_angle: MAX_ANGLE_FIELD,
+        min_confidence: MIN_CONFIDENCE_FIELD,
+        method: {
+          const: 'baselines',
+          default: 'baselines',
+          description: 'The median slope of the lines of text',
+          title: 'Method',
+          type: 'string',
+        },
+        min_lines: {
+          default: 3,
+          description: 'Fewest lines of text the angle is taken from, or the page is left as it is',
+          maximum: 100,
+          minimum: 1,
+          title: 'Fewest lines',
+          type: 'integer',
+        },
+      },
+      title: 'Baselines of the text',
+      type: 'object',
+    },
+    HoughParams: {
+      additionalProperties: false,
+      properties: {
+        max_angle: MAX_ANGLE_FIELD,
+        min_confidence: MIN_CONFIDENCE_FIELD,
+        method: {
+          const: 'hough',
+          default: 'hough',
+          description:
+            'The slope of the long straight lines, such as the rules and the frames of tables',
+          title: 'Method',
+          type: 'string',
+        },
+        min_line_share: {
+          default: 0.3,
+          description: 'Shortest line that counts, as a share of the width of the page',
+          exclusiveMinimum: 0,
+          maximum: 1,
+          title: 'Shortest line',
+          type: 'number',
+        },
+      },
+      title: 'Long straight lines',
+      type: 'object',
+    },
+    ProjectionParams: {
+      additionalProperties: false,
+      properties: {
+        max_angle: MAX_ANGLE_FIELD,
+        min_confidence: MIN_CONFIDENCE_FIELD,
+        method: {
+          const: 'projection',
+          default: 'projection',
+          description: 'The angle that piles the ink of the lines into the fewest rows',
+          title: 'Method',
+          type: 'string',
+        },
+      },
+      title: 'Projection of the ink',
+      type: 'object',
+    },
+  },
+  description:
+    'The method of the search and its parameters, the projection of the ink when none is named.',
+  oneOf: [
+    { $ref: '#/$defs/ProjectionParams' },
+    { $ref: '#/$defs/HoughParams' },
+    { $ref: '#/$defs/BaselinesParams' },
+  ],
+  title: 'DeskewParams',
+};
+
 /** The JSON Schema of `split.spread`, as its parameter model writes it. */
 export const SPREAD_PARAMETERS = {
   additionalProperties: false,
@@ -97,6 +197,11 @@ export function deskew(overrides: Partial<ProcessorSchema> = {}): ProcessorSchem
     editor: 'rotation',
     ...overrides,
   });
+}
+
+/** `geometry.deskew` with the methods the processor offers. */
+export function deskewMethods(overrides: Partial<ProcessorSchema> = {}): ProcessorSchema {
+  return deskew({ parameters: DESKEW_METHODS_PARAMETERS, ...overrides });
 }
 
 /** `split.spread`. */

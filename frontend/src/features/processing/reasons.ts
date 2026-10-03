@@ -35,6 +35,10 @@ export function reasonOf(item: StripItem): string | null {
       return words.cutByEdge;
     case 'size-differs':
       return words.sizeDiffers;
+    case 'few-lines':
+      return words.fewLines;
+    case 'high-residual':
+      return words.highResidual;
     default:
       return words.lowConfidence(confidence);
   }

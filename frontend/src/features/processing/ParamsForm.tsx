@@ -3,7 +3,12 @@ import validator from '@rjsf/validator-ajv8';
 import { useMemo } from 'react';
 import type { ProcessorSchema } from '@/api';
 import { BoundedNumberWidget } from '@/features/processing/BoundedNumberWidget';
-import { BOUNDED_NUMBER_WIDGET, formSchemaOf, uiSchemaOf } from '@/features/processing/schema';
+import {
+  BOUNDED_NUMBER_WIDGET,
+  formSchemaOf,
+  hasSettings,
+  uiSchemaOf,
+} from '@/features/processing/schema';
 import { MESSAGES } from '@/shared/messages';
 
 /**
@@ -28,7 +33,7 @@ export function ParamsForm({
   const schema = useMemo(() => formSchemaOf(processor.parameters), [processor.parameters]);
   const uiSchema = useMemo(() => uiSchemaOf(schema), [schema]);
 
-  if (Object.keys(schema.properties ?? {}).length === 0) {
+  if (!hasSettings(schema)) {
     return <p className="text-sm text-muted-foreground">{MESSAGES.processing.steps.noSettings}</p>;
   }
   return (
