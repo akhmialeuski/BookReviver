@@ -775,9 +775,38 @@ class TestPageStepChangeRepository:
             batch_id=ChangeBatchId(uuid4()),
         )
         uow = await fx_uow_factory()
-        await uow.page_step_changes.add(change)
+        stored = await uow.page_step_changes.add(change)
         await uow.commit()
-        assert await (await fx_uow_factory()).page_step_changes.get(change.id) == change
+        assert (await (await fx_uow_factory()).page_step_changes.get(change.id), stored) == (
+            stored,
+            evolve(change, sequence=1),
+        )
+
+    async def test_changes_made_at_the_same_instant_list_in_the_order_they_were_written(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the sequence, not the time or the identifier, orders the history, across transactions and a batch.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        written = [make_page_step_change(page_id=page_id, created_at=EPOCH) for _ in range(6)]
+        uow = await fx_uow_factory()
+        for change in written[:2]:
+            await uow.page_step_changes.add(change)
+        await uow.commit()
+        uow = await fx_uow_factory()
+        await uow.page_step_changes.add_many(written[2:5])
+        await uow.page_step_changes.add(written[5])
+        await uow.commit()
+        listed = await (await fx_uow_factory()).page_step_changes.list_for_page(page_id)
+        assert ([change.id for change in listed], [change.sequence for change in listed]) == (
+            [change.id for change in written],
+            [1, 2, 3, 4, 5, 6],
+        )
 
     async def test_list_for_page_is_oldest_first_and_filters_by_stage(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -794,11 +823,13 @@ class TestPageStepChangeRepository:
         earlier = make_page_step_change(page_id=page_id, created_at=EPOCH)
         cleanup = make_page_step_change(page_id=page_id, stage=Stage.CLEANUP, created_at=EPOCH + OLD)
         uow = await fx_uow_factory()
-        await uow.page_step_changes.add_many([later, cleanup, earlier])
-        assert (
-            await uow.page_step_changes.list_for_page(page_id),
-            await uow.page_step_changes.list_for_page(page_id, Stage.GEOMETRY),
-        ) == ([earlier, later, cleanup], [earlier, later])
+        await uow.page_step_changes.add_many([earlier, later, cleanup])
+        listed = await uow.page_step_changes.list_for_page(page_id)
+        in_stage = await uow.page_step_changes.list_for_page(page_id, Stage.GEOMETRY)
+        assert ([change.id for change in listed], [change.id for change in in_stage]) == (
+            [earlier.id, later.id, cleanup.id],
+            [earlier.id, later.id],
+        )
 
     async def test_change_of_a_missing_page_is_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
         """Reject a change whose page is not stored.

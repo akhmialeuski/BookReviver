@@ -709,11 +709,16 @@ class PageStepChangeRow(DefaultBase):
     :ivar source: What made the change, stored by value.
     :ivar batch_id: Identifier shared by the changes of one batch, or null.
     :ivar created_at: Time the change was made.
+    :ivar sequence: Place of the change in the history of its page, from one, unique within the page.
     :ivar page: Page owning the change, never loaded implicitly.
     """
 
     __tablename__ = 'page_step_changes'
-    __table_args__ = (Index(None, 'page_id', 'stage'), Index(None, 'batch_id'))
+    __table_args__ = (
+        Index(None, 'page_id', 'stage'),
+        Index(None, 'batch_id'),
+        UniqueConstraint('page_id', 'sequence'),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     page_id: Mapped[UUID] = mapped_column(ForeignKey(PageRow.id, ondelete=CASCADE))
@@ -725,6 +730,7 @@ class PageStepChangeRow(DefaultBase):
     source: Mapped[ChangeSource] = mapped_column(enum_by_value(ChangeSource))
     batch_id: Mapped[UUID | None]
     created_at: Mapped[datetime]
+    sequence: Mapped[int]
 
     page: Mapped[PageRow] = relationship(back_populates=Relation.STEP_CHANGES, lazy=NO_IMPLICIT_LOAD)
 

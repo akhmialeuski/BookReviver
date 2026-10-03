@@ -800,6 +800,7 @@ class PageStepChangeMapper(RowMapper[PageStepChange, PageStepChangeRow]):
             source=row.source,
             batch_id=None if row.batch_id is None else ChangeBatchId(row.batch_id),
             created_at=row.created_at,
+            sequence=row.sequence,
         )
 
     @override
@@ -822,6 +823,7 @@ class PageStepChangeMapper(RowMapper[PageStepChange, PageStepChangeRow]):
             source=entity.source,
             batch_id=entity.batch_id,
             created_at=entity.created_at,
+            sequence=entity.sequence,
         )
 
 

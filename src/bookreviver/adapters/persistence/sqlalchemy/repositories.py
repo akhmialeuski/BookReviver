@@ -22,6 +22,7 @@ from advanced_alchemy.exceptions import DuplicateKeyError, ForeignKeyError, Repo
 from advanced_alchemy.exceptions import NotFoundError as MissingRowError
 from advanced_alchemy.filters import CollectionFilter, LimitOffset
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
+from attrs import evolve
 from sqlalchemy import Table, UniqueConstraint, and_, case, delete, exists, func, inspect, or_, select, update
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -1437,8 +1438,45 @@ class SqlAlchemyPageStepChangeRepository(
         super().__init__(rows=PageStepChangeRows(session=session), mapper=PageStepChangeMapper())
 
     @override
+    async def add(self, entity: PageStepChange) -> PageStepChange:
+        """Store a change, numbering it after the last change of its page.
+
+        :param entity: Change to store.
+        :type entity: PageStepChange
+        :returns: The change as stored, with its sequence.
+        :rtype: PageStepChange
+        :raises ConflictError: If a change with this identifier is stored already.
+        :raises NotFoundError: If the page is not stored.
+        """
+        [stored] = await self.add_many([entity])
+        return stored
+
+    @override
+    async def add_many(self, entities: Sequence[PageStepChange]) -> Sequence[PageStepChange]:
+        """Store several changes, numbering each after the last change of its page in the order given.
+
+        :param entities: Changes to store.
+        :type entities: Sequence[PageStepChange]
+        :returns: The changes as stored, with their sequences.
+        :rtype: Sequence[PageStepChange]
+        :raises ConflictError: If an identifier is stored already or given twice.
+        :raises NotFoundError: If a page is not stored.
+        """
+        next_of: dict[PageId, int] = {}
+        numbered: list[PageStepChange] = []
+        for change in entities:
+            if change.page_id not in next_of:
+                last = await self._rows.session.scalar(
+                    select(func.max(PageStepChangeRow.sequence)).where(PageStepChangeRow.page_id == change.page_id)
+                )
+                next_of[change.page_id] = (last or 0) + 1
+            numbered.append(evolve(change, sequence=next_of[change.page_id]))
+            next_of[change.page_id] += 1
+        return await super().add_many(numbered)
+
+    @override
     async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepChange]:
-        """Return the changes of one page, the oldest first, ties by identifier.
+        """Return the changes of one page, by their sequence.
 
         :param page_id: Page the changes were made on.
         :type page_id: PageId
@@ -1450,9 +1488,7 @@ class SqlAlchemyPageStepChangeRepository(
         filters: dict[str, Any] = {'page_id': page_id}
         if stage is not None:
             filters['stage'] = stage
-        rows = await self._rows.get_many(
-            order_by=[PageStepChangeRow.created_at.asc(), PageStepChangeRow.id.asc()], **filters
-        )
+        rows = await self._rows.get_many(order_by=[PageStepChangeRow.sequence.asc()], **filters)
         return [self._mapper.to_entity(row) for row in rows]
 
 

@@ -667,12 +667,13 @@ class PageStepStateRepository(Repository[PageStepState, PageStepKey]):
 class PageStepChangeRepository(Repository[PageStepChange, PageStepChangeId]):
     """The history of the layers of the steps of each page. A change is added once and never rewritten.
 
-    Deleting a page removes its history.
+    Deleting a page removes its history. ``add`` and ``add_many`` number the changes of a page from one in the order
+    they are written, whatever their ``sequence``, and return them as stored.
     """
 
     @abstractmethod
     async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepChange]:
-        """Return the changes made on one page, those of one stage or of all, the oldest first, ties by identifier.
+        """Return the changes of one page, those of one stage or of all, in the order they were written (by sequence).
 
         :param page_id: Page the changes were made on.
         :type page_id: PageId

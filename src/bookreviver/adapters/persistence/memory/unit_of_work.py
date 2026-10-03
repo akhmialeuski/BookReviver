@@ -1361,6 +1361,20 @@ class InMemoryPageStepChangeRepository(InMemoryRepository[PageStepChange, PageSt
         super().__init__(tables.page_step_changes, tables)
 
     @override
+    async def add(self, entity: PageStepChange) -> PageStepChange:
+        """Store a change, numbering it after the last change of its page.
+
+        :param entity: Change to store.
+        :type entity: PageStepChange
+        :returns: The change as stored, with its sequence.
+        :rtype: PageStepChange
+        :raises ConflictError: If a change with this identifier is stored already.
+        :raises NotFoundError: If the page is not stored.
+        """
+        last = max((change.sequence for change in self._rows.values() if change.page_id == entity.page_id), default=0)
+        return await super().add(evolve(entity, sequence=last + 1))
+
+    @override
     def _check(self, entity: PageStepChange) -> None:
         """Require the page of the change.
 
@@ -1372,7 +1386,7 @@ class InMemoryPageStepChangeRepository(InMemoryRepository[PageStepChange, PageSt
 
     @override
     async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepChange]:
-        """Return the changes of one page, the oldest first, ties by identifier.
+        """Return the changes of one page, by their sequence.
 
         :param page_id: Page the changes were made on.
         :type page_id: PageId
@@ -1387,7 +1401,7 @@ class InMemoryPageStepChangeRepository(InMemoryRepository[PageStepChange, PageSt
                 for change in self._rows.values()
                 if change.page_id == page_id and (stage is None or change.stage == stage)
             ),
-            key=lambda change: (change.created_at, str(change.id)),
+            key=attrgetter('sequence'),
         )
 
 

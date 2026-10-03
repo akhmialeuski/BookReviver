@@ -883,6 +883,8 @@ class PageStepChange:
     :ivar source: What made the change.
     :ivar batch_id: Identifier shared by the changes of one batch, which are undone together, or None.
     :ivar created_at: When the change was made.
+    :ivar sequence: Place of the change in the history of its page, from one, which the repository gives it when it is
+                    added, so changes made at the same instant keep the order they were written in.
     """
 
     id: PageStepChangeId
@@ -895,3 +897,4 @@ class PageStepChange:
     source: ChangeSource
     batch_id: ChangeBatchId | None = None
     created_at: datetime
+    sequence: int = 0

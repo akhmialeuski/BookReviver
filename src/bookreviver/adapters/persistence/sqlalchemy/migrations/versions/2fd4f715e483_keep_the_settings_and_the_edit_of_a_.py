@@ -54,6 +54,7 @@ EDIT_HASH = 'edit_hash'
 UPDATED_AT = 'updated_at'
 SETTINGS = 'params'
 BATCH_ID = 'batch_id'
+SEQUENCE = 'sequence'
 EDIT_SAVED_AT = 'edit_saved_at'
 PAGES_ID = 'pages.id'
 CASCADE = 'CASCADE'
@@ -172,10 +173,12 @@ def schema_upgrades() -> None:
         ),
         sa.Column(BATCH_ID, GUID, nullable=True),
         sa.Column('created_at', DATETIME, nullable=False),
+        sa.Column(SEQUENCE, sa.Integer(), nullable=False),
         sa.ForeignKeyConstraint(
             [PAGE_ID], [PAGES_ID], name=op.f('fk_page_step_changes_page_id_pages'), ondelete=CASCADE
         ),
         sa.PrimaryKeyConstraint(ID, name=op.f('pk_page_step_changes')),
+        sa.UniqueConstraint(PAGE_ID, SEQUENCE, name=op.f('uq_page_step_changes_page_id')),
     )
     with op.batch_alter_table(CHANGES_TABLE, schema=None) as batch_op:
         batch_op.create_index(batch_op.f(CHANGE_BATCH_INDEX), [BATCH_ID], unique=False)
