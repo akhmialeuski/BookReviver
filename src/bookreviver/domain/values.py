@@ -35,7 +35,7 @@ from bookreviver.domain.errors import InvalidIdentifierError, InvalidParametersE
 from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StepId
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Sequence
 
     from attrs import Attribute
 
@@ -491,11 +491,14 @@ class PageStageKey:
     stage: Stage
 
 
-def _steps_tuple(steps: Iterable[Step]) -> tuple[Step, ...]:
+def _steps_tuple(steps: list[Step] | tuple[Step, ...]) -> tuple[Step, ...]:
     """Keep the steps of a draft as a tuple, whatever sequence they were given in.
 
+    attrs reads the signature of a converter when it builds the class, so the annotation names only types that exist
+    at runtime.
+
     :param steps: The steps.
-    :type steps: Iterable[Step]
+    :type steps: list[Step] | tuple[Step, ...]
     :returns: The steps as a tuple.
     :rtype: tuple[Step, ...]
     """
