@@ -135,16 +135,16 @@ describe('choiceForm and chosenIn', () => {
   });
 
   it('reads the choice back from the edits of a page', () => {
-    const edit = (pages: unknown) => ({ processor_key: 'split.auto', geometry: { pages } });
+    const edit = (pages: unknown) => ({ step_id: 'auto', geometry: { pages } });
 
-    expect(chosenIn([edit(1)])).toBe(SplitChoice.One);
-    expect(chosenIn([edit(2)])).toBe(SplitChoice.Two);
+    expect(chosenIn([edit(1)], 'auto')).toBe(SplitChoice.One);
+    expect(chosenIn([edit(2)], 'auto')).toBe(SplitChoice.Two);
   });
 
-  it('reads no choice from no edit, an edit of another processor, or a shape it does not know', () => {
-    expect(chosenIn([])).toBeNull();
-    expect(chosenIn([{ processor_key: 'split.spread', geometry: { pages: 2 } }])).toBeNull();
-    expect(chosenIn([{ processor_key: 'split.auto', geometry: { pages: 3 } }])).toBeNull();
-    expect(chosenIn([{ processor_key: 'split.auto', geometry: null }])).toBeNull();
+  it('reads no choice from no edit, an edit of another step, or a shape it does not know', () => {
+    expect(chosenIn([], 'auto')).toBeNull();
+    expect(chosenIn([{ step_id: 'spread', geometry: { pages: 2 } }], 'auto')).toBeNull();
+    expect(chosenIn([{ step_id: 'auto', geometry: { pages: 3 } }], 'auto')).toBeNull();
+    expect(chosenIn([{ step_id: 'auto', geometry: null }], 'auto')).toBeNull();
   });
 });

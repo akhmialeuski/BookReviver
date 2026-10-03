@@ -29,8 +29,8 @@ const BUILT_IN_STEPS = [
   { processor: PERSPECTIVE, title: 'Perspective' },
   { processor: DESKEW, title: 'Deskew' },
   { processor: DEWARP, title: 'Dewarp' },
-  { processor: CROP, title: 'Crop' },
-  { processor: NORMALIZE, title: 'Normalize' },
+  { processor: CROP, title: 'Select content' },
+  { processor: NORMALIZE, title: 'Margins' },
 ];
 const BUILT_IN = BUILT_IN_STEPS.map((step) => step.processor);
 
@@ -92,13 +92,13 @@ test('a recipe is saved as a profile, applied in another book, made the default,
     await handle.focus();
     await page.keyboard.press('Space');
     // The region keeps the last announcement only, and a step that is picked up is over its own place at once
-    await announced(drag.over('Crop'));
+    await announced(drag.over('Select content'));
     for (const over of BUILT_IN_STEPS.slice(0, BUILT_IN.indexOf(CROP)).toReversed()) {
       await page.keyboard.press('ArrowUp');
       await announced(drag.over(over.title));
     }
     await page.keyboard.press('Space');
-    await announced(drag.dropped('Crop'));
+    await announced(drag.dropped('Select content'));
     expect((await stepsOnScreen(page)).map((step) => step.processor)).toEqual([
       CROP,
       PERSPECTIVE,

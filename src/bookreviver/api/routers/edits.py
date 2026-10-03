@@ -1,8 +1,8 @@
 """The manual edits of a page: a frame, an angle, a split line or a mask that a processor reads as an input.
 
-An edit is saved for one processor on one stage of one page, replacing the one it had, and is sent as a form because it
-may come with a mask the user painted. Saving or deleting an edit marks the stage of the page stale and processes
-nothing. The shape is checked against the editor of the processor before the route runs.
+An edit is saved for one step of a recipe on one stage of one page, replacing the one it had, and is sent as a form
+because it may come with a mask the user painted. Saving or deleting an edit marks the stage of the page stale and
+processes nothing. The shape is checked against the editor of the processor before the route runs.
 """
 
 from dataclasses import dataclass
@@ -15,10 +15,9 @@ from fastapi_pagination import Page, Params
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.edits import EditForm, PageEditSchema
-from bookreviver.api.schemas.types import ProcessorKeyText
 from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import Stage
-from bookreviver.domain.ids import PageId, ProjectId
+from bookreviver.domain.ids import PageId, ProjectId, StepId
 from bookreviver.domain.values import PageEditKey, Slice
 from bookreviver.services.edits import EditService
 
@@ -39,22 +38,22 @@ class EditPath:
 
     project_id: Annotated[ProjectId, Path(description='Identifier of the project')]
     page_id: Annotated[PageId, Path(description='Identifier of the page')]
-    stage: Annotated[Stage, Path(description='Stage of the processor that reads the edit')]
+    stage: Annotated[Stage, Path(description='Stage of the step that reads the edit')]
 
 
 @dataclass(frozen=True)
-class ProcessorEditPath(EditPath):
-    """The identifiers in the address of the edit one processor reads.
+class StepEditPath(EditPath):
+    """The identifiers in the address of the edit one step of a recipe reads.
 
-    :ivar processor_key: Key of the processor.
+    :ivar step_id: Identifier of the step.
     """
 
-    processor_key: Annotated[ProcessorKeyText, Path(description='Key of the processor that reads the edit')]
+    step_id: Annotated[StepId, Path(description='Identifier of the step of a recipe that reads the edit')]
 
     @property
     def key(self) -> PageEditKey:
         """The key the edit is stored under."""
-        return PageEditKey(self.page_id, self.stage, self.processor_key)
+        return PageEditKey(self.page_id, self.stage, self.step_id)
 
 
 @router.get('/{project_id}/pages/{page_id}/edits/{stage}')
@@ -98,22 +97,22 @@ async def list_edits(
     return pager.page(Slice(items=window, total=len(found)))
 
 
-@router.put('/{project_id}/pages/{page_id}/edits/{stage}/{processor_key}')
+@router.put('/{project_id}/pages/{page_id}/edits/{stage}/{step_id}')
 async def put_edit(
-    address: Annotated[ProcessorEditPath, Depends()],
+    address: Annotated[StepEditPath, Depends()],
     form: Annotated[EditForm, Form(media_type=MULTIPART_FORM)],
     actor: ActorDep,
     request: Request,
     edits: FromDishka[EditService],
 ) -> PageEditSchema:
-    """Save the edit a processor reads, replacing the one it had, and mark the stage of the page stale.
+    """Save the edit a step of a recipe reads, replacing the one it had, and mark the stage of the page stale.
 
     The form carries the editor that drew the edit, its shape as JSON text, and the mask as a file for a brush edit. The
-    answer is 422 for an edit the processor does not read, and nothing is processed by this request.
+    answer is 422 for an edit the processor of the step does not read, and nothing is processed by this request.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page, the stage and the processor.
-    :type address: ProcessorEditPath
+    :param address: Identifiers of the project, the page, the stage and the step.
+    :type address: StepEditPath
     :param form: The editor, the shape and the mask.
     :type form: EditForm
     :param actor: The signed-in account.
@@ -129,15 +128,15 @@ async def put_edit(
     return PageEditSchema.of(stored, request)
 
 
-@router.delete('/{project_id}/pages/{page_id}/edits/{stage}/{processor_key}', status_code=status.HTTP_204_NO_CONTENT)
+@router.delete('/{project_id}/pages/{page_id}/edits/{stage}/{step_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_edit(
-    address: Annotated[ProcessorEditPath, Depends()], actor: ActorDep, edits: FromDishka[EditService]
+    address: Annotated[StepEditPath, Depends()], actor: ActorDep, edits: FromDishka[EditService]
 ) -> None:
-    """Delete the edit a processor reads, and mark the stage of the page stale.
+    """Delete the edit a step of a recipe reads, and mark the stage of the page stale.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page, the stage and the processor.
-    :type address: ProcessorEditPath
+    :param address: Identifiers of the project, the page, the stage and the step.
+    :type address: StepEditPath
     :param actor: The signed-in account.
     :type actor: Actor
     :param edits: Edit service of the request.

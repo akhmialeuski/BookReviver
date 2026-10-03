@@ -9,6 +9,7 @@ import {
   pagesToGoStale,
   removeStep,
   sameAsSaved,
+  setStepCondition,
   setStepParams,
   toggleStep,
 } from '@/features/processing/recipe';
@@ -22,13 +23,36 @@ const TWO_STEPS = recipe('r1', {
 });
 
 describe('draftOf and bodyOf', () => {
-  it('gives each step an identity of its own and sends none of them', () => {
+  it('gives each step a place in the draft, and sends the identifier and the condition the server gave it', () => {
     const draft = draftOf(TWO_STEPS);
 
     expect(draft.map((entry) => entry.id)).toEqual(['step-0', 'step-1']);
     expect(bodyOf(draft)).toEqual([
-      { processor_key: 'geometry.deskew', params: { max_angle: 5 }, enabled: true },
-      { processor_key: 'geometry.crop', params: {}, enabled: false },
+      {
+        processor_key: 'geometry.deskew',
+        params: { max_angle: 5 },
+        enabled: true,
+        step_id: 'id-geometry.deskew',
+        applies_to: 'all',
+      },
+      {
+        processor_key: 'geometry.crop',
+        params: {},
+        enabled: false,
+        step_id: 'id-geometry.crop',
+        applies_to: 'all',
+      },
+    ]);
+  });
+
+  it('keeps the identifier of a step as it is moved, and sends none for a step that was added', () => {
+    const moved = moveStep(draftOf(TWO_STEPS), 'step-0', 'step-1');
+    const added = addStep(moved, deskew());
+
+    expect(bodyOf(added).map((entry) => entry.step_id)).toEqual([
+      'id-geometry.crop',
+      'id-geometry.deskew',
+      null,
     ]);
   });
 
@@ -77,6 +101,22 @@ describe('toggleStep, removeStep and setStepParams', () => {
   });
 });
 
+describe('setStepCondition', () => {
+  it('changes which pages one step processes, and makes the draft differ from the saved recipe', () => {
+    const changed = setStepCondition(draftOf(TWO_STEPS), 'step-0', 'pictures');
+
+    expect(changed.map((entry) => entry.appliesTo)).toEqual(['pictures', 'all']);
+    expect(sameAsSaved(TWO_STEPS, changed)).toBe(false);
+  });
+
+  it('reads the condition a step was saved with', () => {
+    const saved = recipe('r', { steps: [step('geometry.deskew', { applies_to: 'text' })] });
+
+    expect(draftOf(saved)[0]?.appliesTo).toBe('text');
+    expect(sameAsSaved(saved, draftOf(saved))).toBe(true);
+  });
+});
+
 describe('addStep', () => {
   it('adds the step at the end with the defaults of its schema and an identity not yet used', () => {
     const draft = removeStep(draftOf(TWO_STEPS), 'step-0');
@@ -103,9 +143,7 @@ describe('sameAsSaved', () => {
 
   it('does not mind the order of the keys of the parameters', () => {
     const saved = recipe('r', { steps: [step('geometry.deskew', { params: { a: 1, b: 2 } })] });
-    const draft = [
-      { id: 'step-0', processorKey: 'geometry.deskew', params: { b: 2, a: 1 }, enabled: true },
-    ];
+    const draft = draftOf(saved).map((entry) => ({ ...entry, params: { b: 2, a: 1 } }));
 
     expect(sameAsSaved(saved, draft)).toBe(true);
   });

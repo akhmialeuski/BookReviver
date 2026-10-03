@@ -71,8 +71,9 @@ export function SplitSection({
     return null;
   }
   const recipe = autoRecipeOf(processing.recipes);
+  const autoStep = recipe?.steps.find((step) => step.processor_key === SPLIT_PROCESSOR.auto);
   const choice = choiceOf(scanPages);
-  const chosen = chosenIn(edits.data ?? []);
+  const chosen = autoStep === undefined ? null : chosenIn(edits.data ?? [], autoStep.step_id);
   // A run sent from another control of the screen counts too, since its job is not on the list for a moment
   const busy = runInFlight || saveEdit.isPending || deleteEdit.isPending;
   const idle = (activeJobs.data?.length ?? 0) === 0 && !busy && !processing.dirty;
@@ -80,7 +81,7 @@ export function SplitSection({
     project_id: projectId,
     page_id: driver.id,
     stage,
-    processor_key: SPLIT_PROCESSOR.auto,
+    step_id: autoStep?.step_id ?? '',
   };
 
   const recompute = (confirm: boolean): void => {

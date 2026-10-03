@@ -6,6 +6,7 @@ import {
   openProjectId,
   registerAndSignIn,
   snap,
+  stepIdsOf,
   uploadFolder,
   waitForIdleJobs,
   writeBentSheetsFolder,
@@ -168,7 +169,8 @@ test('a reader flattens a page bent into the gutter, lays its two curves by hand
     await expect(curvesStep).toHaveAttribute('data-manual', 'true', { timeout: RUN_TIMEOUT_MS });
     await expect(facts).toContainText('By hand', { timeout: RUN_TIMEOUT_MS });
     await settled();
-    expect(saves).toEqual(['geometry.dewarp']);
+    const [dewarp = ''] = await stepIdsOf(page, 'geometry', 'geometry.dewarp');
+    expect(saves).toEqual([dewarp]);
     // The page was flattened again by the curves of the user, so its bend is not the one the step found
     await expect.poll(factsText, { timeout: RUN_TIMEOUT_MS }).not.toBe(automaticFacts);
     expect((await dewarpVersion(page)).edit_hash).not.toBe('');
@@ -183,7 +185,8 @@ test('a reader flattens a page bent into the gutter, lays its two curves by hand
     await dragFrom(page, layer, handle, { x: 0, y: NODE_DRAG_PX });
     await expect(layer).not.toHaveAttribute('data-node-2-2', `${before.x},${before.y}`);
     await settled();
-    expect(saves).toEqual(['geometry.dewarp', 'geometry.dewarp']);
+    const [dewarp = ''] = await stepIdsOf(page, 'geometry', 'geometry.dewarp');
+    expect(saves).toEqual([dewarp, dewarp]);
 
     await layer.focus();
     await page.keyboard.press('Control+z');

@@ -1,4 +1,5 @@
-import type { PageVersionSchema } from '@/api';
+import type { PageVersionSchema, StepSchema } from '@/api';
+import { versionOfStep } from '@/features/processing/stepRuns';
 
 /**
  * The versions that made the current one of a stage on a page, one for each step of the recipe.
@@ -38,14 +39,26 @@ export interface StepVersions {
   read: PageVersionSchema | null;
 }
 
-/** Find the version of the step with a processor, and the version it read. */
+/**
+ * Find the version of a step of the recipe, and the version it read.
+ *
+ * A recipe may run one processor twice, so the step is found by its place in the recipe and not by its processor: the
+ * chain holds one version for each step that is on, and a version that is not of the processor of the step is the
+ * version of a step the recipe has since changed, which this step has not made yet.
+ *
+ * @param chain The versions of the stage that made the current one, the first step first.
+ * @param steps The steps of the recipe.
+ * @param index Index of the step in the recipe.
+ */
 export function stepVersions(
   chain: readonly PageVersionSchema[],
-  processorKey: string,
+  steps: readonly Pick<StepSchema, 'enabled' | 'processor_key'>[],
+  index: number,
 ): StepVersions {
-  const index = chain.findIndex((version) => version.processor.key === processorKey);
-  return {
-    made: chain[index] ?? null,
-    read: index > 0 ? (chain[index - 1] ?? null) : null,
-  };
+  const made = versionOfStep(chain, steps, index);
+  if (made === null || made.processor.key !== steps[index]?.processor_key) {
+    return { made: null, read: null };
+  }
+  const place = chain.indexOf(made);
+  return { made, read: place > 0 ? (chain[place - 1] ?? null) : null };
 }

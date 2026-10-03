@@ -1297,7 +1297,7 @@ class InMemoryPageEditRepository(InMemoryRepository[PageEdit, PageEditKey], Page
 
     @override
     async def save(self, edit: PageEdit) -> PageEdit:
-        """Store the edit, replacing the one of the same page, stage and processor.
+        """Store the edit, replacing the one of the same page, stage and step.
 
         :param edit: Edit to store.
         :type edit: PageEdit
@@ -1313,7 +1313,7 @@ class InMemoryPageEditRepository(InMemoryRepository[PageEdit, PageEditKey], Page
     async def find(self, key: PageEditKey) -> PageEdit | None:
         """Return one edit.
 
-        :param key: Page, stage and processor.
+        :param key: Page, stage and step.
         :type key: PageEditKey
         :returns: The edit, or None.
         :rtype: PageEdit | None
@@ -1322,7 +1322,7 @@ class InMemoryPageEditRepository(InMemoryRepository[PageEdit, PageEditKey], Page
 
     @override
     async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageEdit]:
-        """Return the edits of one page, by stage and processor.
+        """Return the edits of one page, by stage and step.
 
         :param page_id: Page owning the edits.
         :type page_id: PageId
@@ -1338,7 +1338,7 @@ class InMemoryPageEditRepository(InMemoryRepository[PageEdit, PageEditKey], Page
                 for edit in self._rows.values()
                 if edit.page_id == page_id and (stage is None or edit.stage == stage)
             ),
-            key=lambda edit: (order.index(edit.stage), edit.processor_key),
+            key=lambda edit: (order.index(edit.stage), str(edit.step_id)),
         )
 
 

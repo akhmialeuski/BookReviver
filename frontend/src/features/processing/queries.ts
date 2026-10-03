@@ -19,7 +19,7 @@ import {
   chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutMutation,
   createRuleApiV1ProjectsProjectIdStagesStageRulesPostMutation,
   createVariantApiV1ProjectsProjectIdStagesStageVariantsPostMutation,
-  deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteMutation,
+  deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteMutation,
   deleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteMutation,
   getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey,
   listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetOptions,
@@ -33,7 +33,7 @@ import {
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey,
   measureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostMutation,
   previewStepApiV1ProjectsProjectIdStagesStagePreviewPostMutation,
-  putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutMutation,
+  putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutMutation,
   putRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutMutation,
   putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation,
   remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostMutation,
@@ -307,21 +307,21 @@ async function refreshEdits(
   ]);
 }
 
-/** Save the edit a processor reads on a page, which marks the stage of the page out of date. */
+/** Save the edit a step of a recipe reads on a page, which marks the stage of the page out of date. */
 export function useSaveEdit(projectId: string, stage: Stage) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPutMutation(),
+    ...putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutMutation(),
     onSettled: (_data, _error, variables) =>
       refreshEdits(queryClient, projectId, stage, variables.path.page_id),
   });
 }
 
-/** Delete the edit a processor reads on a page, which marks the stage of the page out of date. */
+/** Delete the edit a step of a recipe reads on a page, which marks the stage of the page out of date. */
 export function useDeleteEdit(projectId: string, stage: Stage) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDeleteMutation(),
+    ...deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteMutation(),
     onSettled: (_data, _error, variables) =>
       refreshEdits(queryClient, projectId, stage, variables.path.page_id),
   });

@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  editableProcessorsOf,
-  editedProcessorOf,
-  editorOf,
-  hasEditor,
-} from '@/features/editors/registry';
+import { editableStepsOf, editorOf, hasEditor } from '@/features/editors/registry';
 import { Picture } from '@/features/editors/types';
 import {
   autoSplit,
@@ -237,14 +232,14 @@ describe('the editors of the cleanup', () => {
       steps: [step('cleanup.binarize'), step('cleanup.despeckle'), step('cleanup.eraser')],
     });
 
-    expect(editableProcessorsOf(text, cleanup).map((entry) => entry.editor)).toEqual([
+    expect(editableStepsOf(text, cleanup).map((entry) => entry.kind)).toEqual([
       'regions',
       'brush-mask',
     ]);
   });
 });
 
-describe('editableProcessorsOf', () => {
+describe('editableStepsOf', () => {
   const catalogue = [
     processor('geometry.perspective', { editor: 'quad' }),
     deskew(),
@@ -257,7 +252,7 @@ describe('editableProcessorsOf', () => {
       steps: [step('geometry.perspective'), step('geometry.deskew'), step('geometry.crop')],
     });
 
-    expect(editableProcessorsOf(geometry, catalogue).map((entry) => entry.editor)).toEqual([
+    expect(editableStepsOf(geometry, catalogue).map((entry) => entry.kind)).toEqual([
       'quad',
       'rotation',
       'rect',
@@ -269,32 +264,36 @@ describe('editableProcessorsOf', () => {
       steps: [step('geometry.perspective', { enabled: false }), step('geometry.crop')],
     });
 
-    expect(editableProcessorsOf(geometry, catalogue).map((entry) => entry.key)).toEqual([
-      'geometry.crop',
-    ]);
-    expect(editableProcessorsOf(undefined, catalogue)).toEqual([]);
+    expect(
+      editableStepsOf(geometry, catalogue).map((entry) => [entry.index, entry.processor.key]),
+    ).toEqual([[1, 'geometry.crop']]);
+    expect(editableStepsOf(undefined, catalogue)).toEqual([]);
   });
-});
 
-describe('editedProcessorOf', () => {
-  const catalogue = [spread(), autoSplit(), processor('geometry.crop'), deskew()];
+  it('gives both steps of a processor the recipe runs twice, each with its own identifier', () => {
+    const twice = recipe('t', {
+      steps: [
+        step('geometry.deskew', { step_id: 'first' }),
+        step('geometry.deskew', { step_id: 'second' }),
+      ],
+    });
 
-  it('gives the processor of the first step that has an editor, in the order of the recipe', () => {
-    const auto = recipe('a', { steps: [step('geometry.crop'), step('split.auto')] });
-
-    expect(editedProcessorOf(auto, catalogue)?.key).toBe('split.auto');
+    expect(editableStepsOf(twice, catalogue).map((entry) => entry.step.step_id)).toEqual([
+      'first',
+      'second',
+    ]);
   });
 
   it('does not take the first processor of the catalogue for the one the recipe uses', () => {
+    const splits = [spread(), autoSplit()];
     const auto = recipe('a', { steps: [step('split.auto')] });
     const cut = recipe('c', { steps: [step('split.spread')] });
 
-    expect(editedProcessorOf(auto, catalogue)?.editor).toBe('split');
-    expect(editedProcessorOf(cut, catalogue)?.editor).toBe('line');
+    expect(editableStepsOf(auto, splits).map((entry) => entry.kind)).toEqual(['split']);
+    expect(editableStepsOf(cut, splits).map((entry) => entry.kind)).toEqual(['line']);
   });
 
   it.each([
-    ['no recipe', undefined],
     ['a recipe whose steps offer no editor', recipe('n', { steps: [step('geometry.crop')] })],
     [
       'a recipe whose step is off',
@@ -302,6 +301,8 @@ describe('editedProcessorOf', () => {
     ],
     ['a step the catalogue does not know', recipe('u', { steps: [step('split.unknown')] })],
   ])('gives none for %s', (_name, shown) => {
-    expect(editedProcessorOf(shown, catalogue)).toBeUndefined();
+    const known = [spread(), autoSplit(), processor('geometry.crop'), deskew()];
+
+    expect(editableStepsOf(shown, known)).toEqual([]);
   });
 });

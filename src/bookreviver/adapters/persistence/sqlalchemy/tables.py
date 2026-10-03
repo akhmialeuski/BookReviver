@@ -651,11 +651,14 @@ class PageStageRow(DefaultBase):
 
 
 class PageEditRow(DefaultBase):
-    """Row of one manual edit, keyed by the page, the stage and the processor that reads it.
+    """Row of one manual edit, keyed by the page, the stage and the step of a recipe that reads it.
+
+    The step is named by the identifier its recipe gives it, with no foreign key: the steps are a JSON list in the row
+    of a recipe, and a step that is removed leaves its edit, which finds the step again if it is put back.
 
     :ivar page_id: Page the edit belongs to.
-    :ivar stage: Stage of the processor, stored by value.
-    :ivar processor_key: Key of the processor reading the edit.
+    :ivar stage: Stage of the step, stored by value.
+    :ivar step_id: Identifier of the step reading the edit.
     :ivar kind: Editor that made the edit, stored by value.
     :ivar geometry: The shape the user drew, as JSON, or null for an edit that is only a mask.
     :ivar mask_key: Storage key of the painted mask, or null.
@@ -668,7 +671,7 @@ class PageEditRow(DefaultBase):
 
     page_id: Mapped[UUID] = mapped_column(ForeignKey(PageRow.id, ondelete=CASCADE), primary_key=True)
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage), primary_key=True)
-    processor_key: Mapped[str] = mapped_column(primary_key=True)
+    step_id: Mapped[UUID] = mapped_column(primary_key=True)
     kind: Mapped[EditorKind] = mapped_column(enum_by_value(EditorKind))
     geometry: Mapped[dict[str, Any] | None] = mapped_column(JsonB)
     mask_key: Mapped[str | None]

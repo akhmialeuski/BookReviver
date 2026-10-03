@@ -1,4 +1,4 @@
-import type { EditorKind, ProcessorSchema, RecipeSchema } from '@/api';
+import type { EditorKind, ProcessorSchema, RecipeSchema, StepSchema } from '@/api';
 import { brushEditor } from '@/features/editors/brushEditor';
 import { lineEditor } from '@/features/editors/lineEditor';
 import { meshEditor } from '@/features/editors/meshEditor';
@@ -94,45 +94,40 @@ export function hasEditor(kind: EditorKind): kind is EditableKind {
   return Object.hasOwn(EDITORS, kind);
 }
 
+/** A step of the recipe that has an editor, with the processor it runs and its place in the recipe. */
+export interface EditableStep {
+  step: StepSchema;
+  /** Index of the step in the recipe, from zero. */
+  index: number;
+  processor: ProcessorSchema;
+  /** The kind of editor the processor offers, which has a component. */
+  kind: EditableKind;
+}
+
 /**
- * Find the processors whose editors a stage shows: the enabled steps of the recipe whose processor offers an editor that
- * has a component, in the order of the recipe.
+ * Find the steps whose editors a stage shows: the enabled steps of the recipe whose processor offers an editor that has
+ * a component, in the order of the recipe. A recipe that runs a processor twice gives both steps, and each has its own
+ * edits.
  *
  * The recipe decides, and not the catalogue, since the catalogue lists the processors a stage could use, such as the
  * cutting of a spread by a line and the automatic split, which read different edits and are not both in the recipe.
  *
  * @param recipe The recipe the stage runs by, or undefined while the recipes are being read.
  * @param catalogue The processors of the stage.
- * @returns The processors, none when the recipe has no step with an editor.
+ * @returns The steps, none when the recipe has no step with an editor.
  */
-export function editableProcessorsOf(
+export function editableStepsOf(
   recipe: Pick<RecipeSchema, 'steps'> | undefined,
   catalogue: readonly ProcessorSchema[],
-): ProcessorSchema[] {
-  const found: ProcessorSchema[] = [];
-  for (const step of recipe?.steps ?? []) {
-    const entry = step.enabled
+): EditableStep[] {
+  return (recipe?.steps ?? []).flatMap((step, index) => {
+    const processor = step.enabled
       ? catalogue.find((candidate) => candidate.key === step.processor_key)
       : undefined;
-    if (entry !== undefined && hasEditor(entry.editor) && !found.includes(entry)) {
-      found.push(entry);
-    }
-  }
-  return found;
-}
-
-/**
- * Find the first processor whose editor a stage shows.
- *
- * @param recipe The recipe the stage runs by, or undefined while the recipes are being read.
- * @param catalogue The processors of the stage.
- * @returns The processor, or undefined when the recipe has no step with an editor.
- */
-export function editedProcessorOf(
-  recipe: Pick<RecipeSchema, 'steps'> | undefined,
-  catalogue: readonly ProcessorSchema[],
-): ProcessorSchema | undefined {
-  return editableProcessorsOf(recipe, catalogue)[0];
+    return processor !== undefined && hasEditor(processor.editor)
+      ? [{ step, index, processor, kind: processor.editor }]
+      : [];
+  });
 }
 
 /** Give the editor of a kind that has a component. */

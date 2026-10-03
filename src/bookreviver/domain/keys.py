@@ -6,7 +6,7 @@ Every file of a project lives under ``projects/<project_id>/``, divided between 
 - ``sources/<source_id>/`` holds the files of one source exactly as uploaded.
 - ``assets/scans/<source_id>/<number>/v<version>/`` holds the renditions of one scan in one version.
 - ``assets/pages/<page_id>/<stage>/<processor>/<version_id>/`` holds one page version.
-- ``assets/pages/<page_id>/edits/<processor>/<edit_hash>/`` holds one manual edit of a page a step reads.
+- ``assets/pages/<page_id>/edits/<step_id>/<edit_hash>/`` holds one manual edit of a page a step reads.
 - ``assets/book/`` holds the results of whole-book steps, such as typesetting and export.
 
 The ``SourceStore`` owns ``incoming/`` and ``sources/`` and the ``AssetStore`` owns ``assets/``, so each port removes
@@ -26,7 +26,7 @@ from bookreviver.domain.ids import ProjectId, StorageKey
 if TYPE_CHECKING:
     from bookreviver.domain.entities import PageVersion, Scan
     from bookreviver.domain.enums import Rendition
-    from bookreviver.domain.ids import JobId, PageId, SourceId
+    from bookreviver.domain.ids import JobId, PageId, SourceId, StepId
 
 
 class KeySegment(LabeledStrEnum):
@@ -188,33 +188,35 @@ class ProjectKeys:
         """
         return StorageKey(f'{self.version_directory(version)}{self.SEPARATOR}{rendition}')
 
-    def page_edits(self, page_id: PageId, processor_key: str) -> StorageKey:
-        """Return the directory of the manual edits of one page that one processor reads.
+    def page_edits(self, page_id: PageId, step_id: StepId) -> StorageKey:
+        """Return the directory of the manual edits of one page that one step reads.
+
+        Masks stored before a step had an identifier lie in a directory named by the key of the processor, and the edit
+        keeps the key of its mask, so those stay where they are.
 
         :param page_id: Page the edits belong to.
         :type page_id: PageId
-        :param processor_key: Key of the processor reading the edits, such as ``cleanup.eraser``.
-        :type processor_key: str
-        :returns: Key of ``assets/pages/<page_id>/edits/<processor>``.
+        :param step_id: Step of a recipe reading the edits.
+        :type step_id: StepId
+        :returns: Key of ``assets/pages/<page_id>/edits/<step_id>``.
         :rtype: StorageKey
-        :raises ValueError: If the processor key is not a safe directory name.
         """
-        return self._key(KeySegment.ASSETS, KeySegment.PAGES, str(page_id), KeySegment.EDITS, processor_key)
+        return self._key(KeySegment.ASSETS, KeySegment.PAGES, str(page_id), KeySegment.EDITS, str(step_id))
 
-    def page_edit(self, page_id: PageId, processor_key: str, edit_hash: str) -> StorageKey:
+    def page_edit(self, page_id: PageId, step_id: StepId, edit_hash: str) -> StorageKey:
         """Return the directory of one manual edit, whose mask is stored there and never replaced by a later edit.
 
         :param page_id: Page the edit belongs to.
         :type page_id: PageId
-        :param processor_key: Key of the processor reading the edit.
-        :type processor_key: str
+        :param step_id: Step of a recipe reading the edit.
+        :type step_id: StepId
         :param edit_hash: Hash of the edit, which gives each edit a directory of its own.
         :type edit_hash: str
-        :returns: Key of ``assets/pages/<page_id>/edits/<processor>/<hash>``.
+        :returns: Key of ``assets/pages/<page_id>/edits/<step_id>/<hash>``.
         :rtype: StorageKey
-        :raises ValueError: If the processor key or the hash is not a safe directory name.
+        :raises ValueError: If the hash is not a safe directory name.
         """
-        return StorageKey(f'{self.page_edits(page_id, processor_key)}{self.SEPARATOR}{edit_hash}')
+        return StorageKey(f'{self.page_edits(page_id, step_id)}{self.SEPARATOR}{edit_hash}')
 
     @classmethod
     def owning(cls, key: StorageKey) -> Self | None:

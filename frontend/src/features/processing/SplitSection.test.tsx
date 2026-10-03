@@ -27,8 +27,8 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   runStageApiV1ProjectsProjectIdStagesStageRunPost: sdk.run,
   listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
   listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGet: sdk.edits,
-  putEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyPut: sdk.put,
-  deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageProcessorKeyDelete: sdk.remove,
+  putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPut: sdk.put,
+  deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDelete: sdk.remove,
 }));
 
 const AUTO = recipe('auto', { stage: 'page-split', steps: [step('split.auto')] });
@@ -40,7 +40,7 @@ function edit(pages: number) {
   return {
     page_id: 'w',
     stage: 'page-split',
-    processor_key: 'split.auto',
+    step_id: 'id-split.auto',
     kind: 'split',
     geometry: { pages, line: null },
     mask: null,
@@ -149,7 +149,7 @@ describe('SplitSection', () => {
 
     expect(dialog()).toBeNull();
     expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({
-      path: { page_id: 'w', stage: 'page-split', processor_key: 'split.auto' },
+      path: { page_id: 'w', stage: 'page-split', step_id: 'id-split.auto' },
       body: { kind: 'split', geometry: '{"pages":2}' },
     });
     expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ recipe_id: 'auto', page_ids: ['w'] });
@@ -196,7 +196,7 @@ describe('SplitSection', () => {
     await settle();
 
     expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({
-      path: { page_id: 'l', processor_key: 'split.auto' },
+      path: { page_id: 'l', step_id: 'id-split.auto' },
       body: { kind: 'split', geometry: '{"pages":1}' },
     });
     expect(sdk.run.mock.calls[0]?.[0].body).toEqual({
@@ -285,7 +285,7 @@ describe('SplitSection', () => {
 
     expect(dialog()).toBeNull();
     expect(sdk.remove.mock.calls[0]?.[0]).toMatchObject({
-      path: { page_id: 'w', stage: 'page-split', processor_key: 'split.auto' },
+      path: { page_id: 'w', stage: 'page-split', step_id: 'id-split.auto' },
     });
     expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ recipe_id: 'auto', page_ids: ['w'] });
   });

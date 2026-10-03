@@ -24,9 +24,11 @@ from sqlalchemy import func, inspect, select, text
 from bookreviver.adapters.persistence.sqlalchemy.database import MIGRATIONS_DIR, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     JobRow,
+    PageEditRow,
     PageRow,
     PageVersionRow,
     ProjectRow,
+    RecipeRow,
     ScanRow,
     SourceRow,
 )
@@ -56,10 +58,6 @@ pytestmark = pytest.mark.anyio
 DESCRIPTION_REVISION: str = '4f4f125a9583'
 # The revision the one that records the format of the full image follows
 PREVIOUS_REVISION: str = '6446f5ce697c'
-# The revision before the one that adds the pagination sections, and two labels a person might have typed
-BEFORE_SECTIONS_REVISION: str = 'dd065348e01a'
-TYPED_LABEL: str = 'vi'
-BRACKETED_LABEL: str = '[4]'
 # Identifier and message of the revision a test adds after the head of the shipped migrations
 TEST_REVISION: str = 'test_revision'
 TEST_REVISION_MESSAGE: str = 'A revision a test adds after the baseline.'
@@ -78,6 +76,28 @@ RETYPE_A_COLUMN: str = """    with op.batch_alter_table('projects') as batch_op:
         batch_op.alter_column({column!r}, type_=sa.{new_type}())"""
 # Changes nothing, standing for a revision of a branch that the checked-out code does not ship
 NO_CHANGE: str = ''
+# The revision before the one that adds the pagination sections, and two labels a person might have typed
+BEFORE_SECTIONS_REVISION: str = '84993c1e790e'
+TYPED_LABEL: str = 'vi'
+BRACKETED_LABEL: str = '[4]'
+# The revision before the one that names the manual edits by the step of a recipe
+BEFORE_STEPS_REVISION: str = '075dd13dca68'
+PROCESSOR: str = 'processor_key'
+DESKEW: str = 'geometry.deskew'
+CROP: str = 'geometry.crop'
+# Rows as the revision before the steps had identifiers wrote them
+INSERT_RECIPE: str = (
+    'INSERT INTO recipes (id, project_id, stage, name, steps, active, created_at, updated_at) '
+    "VALUES (:id, :project_id, 'geometry', :name, :steps, :active, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+)
+INSERT_STAGE: str = (
+    'INSERT INTO page_stages (page_id, stage, recipe_id, state, updated_at) '
+    "VALUES (:page_id, 'geometry', :recipe_id, 'fresh', '2026-01-01 00:00:00')"
+)
+INSERT_EDIT: str = (
+    'INSERT INTO page_edits (page_id, stage, processor_key, kind, geometry, edit_hash, updated_at) '
+    "VALUES (:page_id, 'geometry', :key, 'rotation', '{\"degrees\": 1}', 'abc', '2026-01-01 00:00:00')"
+)
 # The tables holding the rows of a book, each of which refers to the project or to a row that does
 BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (ProjectRow, SourceRow, ScanRow, PageRow, PageVersionRow, JobRow)
 
@@ -286,6 +306,122 @@ class TestPaginationSectionsRevision:
                 bracketed.id: (BRACKETED_LABEL, True),
                 bare.id: ('', False),
             }
+        )
+        assert_expectations()
+
+
+class TestStepIdentityRevision:
+    """Tests for the revision that names a manual edit by the step of a recipe and gives the steps identifiers."""
+
+    @staticmethod
+    async def _seed(database: SqlDatabase) -> tuple[dict[str, str], dict[str, bytes]]:
+        """Store a book as the revision before left it: edits named by processor, and steps with no identifier.
+
+        The active recipe has the steps deskew and crop. Page ``run`` was processed by a variant that has deskew alone,
+        and page ``fresh`` was not processed. Each page has an edit of deskew, the first two of crop too, and
+        the page ``fresh`` one of a processor no recipe has.
+
+        :param database: Database migrated to the revision before.
+        :type database: SqlDatabase
+        :returns: The identifier of each recipe by name, and the identifier of each page by name, as bytes.
+        :rtype: tuple[dict[str, str], dict[str, bytes]]
+        """
+        project = make_project(owner_id=await commit_account(database))
+        pages = {name: make_page(project_id=project.id, order_key=name) for name in ('active', 'run', 'fresh')}
+        recipes = {'Text': uuid4(), 'Deskew only': uuid4()}
+        steps = {
+            'Text': [
+                {PROCESSOR: DESKEW, 'params': {}, 'enabled': True},
+                {PROCESSOR: CROP, 'params': {}, 'enabled': True},
+            ],
+            'Deskew only': [{PROCESSOR: DESKEW, 'params': {}, 'enabled': True}],
+        }
+        edits = {
+            'active': (DESKEW, CROP),
+            'run': (DESKEW, CROP),
+            'fresh': (DESKEW, 'geometry.gone'),
+        }
+        async with database.sessions() as session:
+            uow = SqlAlchemyUnitOfWork(session)
+            await uow.projects.add(project)
+            await uow.pages.add_many(list(pages.values()))
+            await uow.commit()
+            for name, recipe_id in recipes.items():
+                await session.execute(
+                    text(INSERT_RECIPE),
+                    {
+                        'id': recipe_id.bytes,
+                        'project_id': project.id.bytes,
+                        'name': name,
+                        'steps': json.dumps(steps[name]),
+                        'active': name == 'Text',
+                    },
+                )
+            await session.execute(
+                text(INSERT_STAGE), {'page_id': pages['run'].id.bytes, 'recipe_id': recipes['Deskew only'].bytes}
+            )
+            for name, keys in edits.items():
+                for key in keys:
+                    await session.execute(text(INSERT_EDIT), {'page_id': pages[name].id.bytes, 'key': key})
+            await session.commit()
+        return {name: str(recipe_id) for name, recipe_id in recipes.items()}, {
+            name: page.id.bytes for name, page in pages.items()
+        }
+
+    async def test_edits_move_to_the_steps_of_their_processors_and_the_steps_get_identifiers(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify each edit follows the step of its processor in the recipe of its page, and the rest is dropped.
+
+        The page that was processed by a variant is read by the variant, so its edit of crop, which the variant has
+        no step for, is dropped, and an edit of a processor no recipe has is dropped too.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, BEFORE_STEPS_REVISION)
+        _, pages = await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        async with fx_empty_database.sessions() as session:
+            recipes = {row.name: row.steps for row in (await session.execute(select(RecipeRow))).scalars()}
+            edits = (await session.execute(select(PageEditRow))).scalars().all()
+        step_ids = {name: {step[PROCESSOR]: step['step_id'] for step in steps} for name, steps in recipes.items()}
+        moved = sorted((edit.page_id.bytes, str(edit.step_id)) for edit in edits)
+        expect(all(step['applies_to'] == 'all' for steps in recipes.values() for step in steps))
+        expect(len({step['step_id'] for steps in recipes.values() for step in steps}) == 3)
+        expect(
+            moved
+            == sorted(
+                [
+                    (pages['active'], step_ids['Text'][DESKEW]),
+                    (pages['active'], step_ids['Text'][CROP]),
+                    (pages['run'], step_ids['Deskew only'][DESKEW]),
+                    (pages['fresh'], step_ids['Text'][DESKEW]),
+                ]
+            )
+        )
+        assert_expectations()
+
+    async def test_downgrade_returns_the_edits_to_their_processors_and_takes_the_identifiers_out(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify a downgrade names each edit by the processor of its step again, and leaves the steps as they were.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, BEFORE_STEPS_REVISION)
+        await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        await _migrate(fx_empty_database, migrations.downgrade, BEFORE_STEPS_REVISION)
+        async with fx_empty_database.sessions() as session:
+            keys = (await session.execute(text('SELECT processor_key FROM page_edits'))).scalars().all()
+            steps = (await session.execute(text('SELECT steps FROM recipes'))).scalars().all()
+        expect(sorted(keys) == sorted([DESKEW, CROP, DESKEW, DESKEW]))
+        expect(
+            all('step_id' not in step and 'applies_to' not in step for stored in steps for step in json.loads(stored))
         )
         assert_expectations()
 

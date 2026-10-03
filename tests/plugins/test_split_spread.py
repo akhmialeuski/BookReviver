@@ -14,7 +14,7 @@ from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import EditorKind, ProcessorScope, ReviewReason, Stage, TransformKind, VersionData
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
 from bookreviver.domain.geometry import Line, Point, SplitChoice
-from bookreviver.domain.ids import PageId
+from bookreviver.domain.ids import PageId, StepId
 from bookreviver.ports.processing import StepInput
 from tests.helpers.builders import EPOCH
 from tests.helpers.samples import GUTTER_SHADE, PAPER, find_mark, mark, save, spread
@@ -52,7 +52,7 @@ def make_line_edit(start: Point, end: Point) -> PageEdit:
     return PageEdit(
         page_id=PageId(uuid4()),
         stage=Stage.PAGE_SPLIT,
-        processor_key='split.spread',
+        step_id=StepId(uuid4()),
         kind=geometry.editor,
         geometry=geometry,
         edit_hash=PageEdit.hash_of(geometry, None),

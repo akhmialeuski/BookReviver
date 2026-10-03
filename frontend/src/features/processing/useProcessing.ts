@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { ProcessorSchema, RecipeSchema, Stage } from '@/api';
+import type { AppliesTo, ProcessorSchema, RecipeSchema, Stage } from '@/api';
 import type { PreviewRequest } from '@/features/processing/preview';
 import { useProcessors, useRecipes } from '@/features/processing/queries';
 import {
@@ -11,6 +11,7 @@ import {
   removeStep,
   type StepDraft,
   sameAsSaved,
+  setStepCondition,
   setStepParams,
   toggleStep,
 } from '@/features/processing/recipe';
@@ -81,6 +82,8 @@ export interface Processing {
   toggle: (id: string) => void;
   remove: (id: string) => void;
   change: (id: string, params: Record<string, unknown>) => void;
+  /** Change which pages a step processes. */
+  condition: (id: string, appliesTo: AppliesTo) => void;
   add: (processor: ProcessorSchema) => void;
   discard: () => void;
   preview: PreviewControl;
@@ -197,6 +200,7 @@ export function useProcessing(
     toggle: (id) => write(toggleStep(steps, id)),
     remove: (id) => write(removeStep(steps, id)),
     change: (id, params) => write(setStepParams(steps, id, params)),
+    condition: (id, appliesTo) => write(setStepCondition(steps, id, appliesTo)),
     add: (processor) => {
       const next = addStep(steps, processor);
       write(next);

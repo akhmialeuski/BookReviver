@@ -332,7 +332,7 @@ class Binarize(ModelProcessor):
     spec = ProcessorSpec(
         key='cleanup.binarize',
         version='1',
-        title='Binarize',
+        title='Binarization',
         stage=Stage.CLEANUP,
         scope=ProcessorScope.PAGE,
         outputs=frozenset({VersionOutput.IMAGE}),
