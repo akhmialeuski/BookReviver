@@ -479,8 +479,8 @@ class TestStepRows:
         """
         actor, project, text, _ = await seed_text_and_plate(fx_kit)
         first, second = await step_ids_of(fx_kit, project)
-        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         base = (await fx_kit.uow().page_versions.list_for_page(text.id))[0]
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         by_first = (await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)).items[0].step
         by_second = (await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), second)).items[0].step
         assert by_first is not None

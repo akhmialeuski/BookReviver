@@ -3,6 +3,7 @@ import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 import {
   createBook,
+  deleteAsReader,
   openProjectId,
   registerAndSignIn,
   setKind,
@@ -43,6 +44,16 @@ async function finishedRuns(page: Page): Promise<number> {
   return items.filter((job) => job.kind === 'run-stage' && job.state === 'succeeded').length;
 }
 
+/** Take away the rules of the Geometry stage, so that every page of the book is made by the one recipe that is shown. */
+async function removeRules(page: Page): Promise<void> {
+  const base = `/api/v1/projects/${openProjectId(page)}/stages/geometry/rules`;
+  const listed = await page.request.get(base);
+  const rules = ((await listed.json()) as { items: { id: string }[] }).items;
+  for (const rule of rules) {
+    expect(await deleteAsReader(page, `${base}/${rule.id}`)).toBeLessThan(400);
+  }
+}
+
 test('the steps of Geometry have a bar and a workspace each, on a link of their own, and nothing of the stage screen is gone', async ({
   page,
 }) => {
@@ -62,6 +73,12 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await setKind(page, PLATE_POSITION, 'plate');
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
+    await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
+    // The rules of a stage are made with its recipes, when the stage is first opened, so they are taken away once the
+    // recipe is on screen, which is when they exist
+    await expect(recipeSteps.first()).toBeVisible();
+    await removeRules(page);
+    await page.reload();
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
     await expect(page.getByTestId('page-strip').getByTestId('strip-page')).toHaveCount(PAGES);
     await expect(recipeSteps.first()).toBeVisible();
