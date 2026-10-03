@@ -7,12 +7,21 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import JobKind, JobState, NormalizeParam, Stage, StageState, VersionData, VersionState
-from bookreviver.domain.errors import NotFoundError
+from bookreviver.domain.enums import (
+    JobKind,
+    JobState,
+    MarginsSource,
+    NormalizeParam,
+    Stage,
+    StageState,
+    VersionData,
+    VersionState,
+)
+from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.geometry import Rect
 from bookreviver.domain.ids import PageVersionId
-from bookreviver.domain.values import PageStageKey, ProcessorRef, Step
+from bookreviver.domain.values import PageStageKey, ProcessorRef, StageRun, Step
 from tests.helpers.builders import make_page_stage, make_page_version
 
 if TYPE_CHECKING:
@@ -25,6 +34,7 @@ CROP_KEY: str = 'geometry.crop'
 NORMALIZE_KEY: str = 'geometry.normalize'
 VERSION_ID_DIGITS: int = 16
 FIRST_KEY: str = 'a0'
+BUSY_MESSAGE: str = 'processing something'
 # The pages of the first test: a block and a line height each, the block being the same size when the lines are brought
 # to the median one, which is 30 pixels, so the median block is 300 by 600
 BLOCKS: tuple[tuple[float, float, float], ...] = ((200, 400, 20), (300, 600, 30), (400, 800, 40))
@@ -150,6 +160,26 @@ async def normalize_params(kit: ProcessingKit, actor: Actor, project: Project) -
     recipe = await kit.service().recipe(actor, project.id, Stage.GEOMETRY)
     [step] = [step for step in recipe.steps if step.processor_key == NORMALIZE_KEY]
     return dict(step.params)
+
+
+async def set_normalize_params(kit: ProcessingKit, actor: Actor, project: Project, changes: dict[str, object]) -> None:
+    """Save the active Geometry recipe with some parameters of its normalize step changed, as the form does.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param actor: Account owning the project.
+    :type actor: Actor
+    :param project: The project.
+    :type project: Project
+    :param changes: The parameters to set.
+    :type changes: dict[str, object]
+    """
+    recipe = await kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+    steps = [
+        evolve(step, params={**step.params, **changes}) if step.processor_key == NORMALIZE_KEY else step
+        for step in recipe.steps
+    ]
+    await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, recipe.name, steps)
 
 
 class TestMeasureBook:
@@ -310,3 +340,112 @@ class TestMeasureBook:
         stranger, _ = await fx_cv_kit.seed_project()
         with pytest.raises(NotFoundError):
             await fx_cv_kit.service().start_measure(stranger, project.id)
+
+
+class TestMarginsSource:
+    """Tests for the margins that the user set, which a measure leaves as they are."""
+
+    async def test_a_book_starts_with_measured_margins(self, fx_cv_kit: ProcessingKit) -> None:
+        """Verify the normalize step of a new book lets the measure set the margins.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        params = await normalize_params(fx_cv_kit, actor, project)
+        expect(params[NormalizeParam.MARGINS_SOURCE] == MarginsSource.MEASURED)
+
+    async def test_manual_margins_survive_a_measure_while_the_line_height_and_the_page_follow(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify a measure keeps the four margins, and makes the page the median block plus those margins.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        for index, (width, height, line_height) in enumerate(BLOCKS):
+            await crop_page(fx_cv_kit, project, recipe, f'a{index}', crop_data(width, height, line_height))
+        margins: dict[str, object] = {
+            NormalizeParam.MARGIN_TOP: 11,
+            NormalizeParam.MARGIN_BOTTOM: 22,
+            NormalizeParam.MARGIN_INNER: 33,
+            NormalizeParam.MARGIN_OUTER: 44,
+        }
+        await set_normalize_params(
+            fx_cv_kit, actor, project, {NormalizeParam.MARGINS_SOURCE: MarginsSource.MANUAL, **margins}
+        )
+        job = await measure(fx_cv_kit, actor, project)
+        after = await normalize_params(fx_cv_kit, actor, project)
+        expect(job.state is JobState.SUCCEEDED)
+        expect({name: after[name] for name in margins} == margins)
+        expect(after[NormalizeParam.MARGINS_SOURCE] == MarginsSource.MANUAL)
+        expect(after[NormalizeParam.LINE_HEIGHT] == pytest.approx(MEDIAN_LINE_HEIGHT_PX))
+        # The median block is 300 by 600
+        expect(after[NormalizeParam.PAGE_WIDTH] == 300 + 33 + 44)
+        expect(after[NormalizeParam.PAGE_HEIGHT] == 600 + 11 + 22)
+        assert_expectations()
+
+    async def test_measured_margins_are_written_again_once_the_source_is_switched_back(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify the measure sets the margins of a step that was manual and is measured again.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        for index, (width, height, line_height) in enumerate(BLOCKS):
+            await crop_page(fx_cv_kit, project, recipe, f'a{index}', crop_data(width, height, line_height))
+        await set_normalize_params(
+            fx_cv_kit,
+            actor,
+            project,
+            {NormalizeParam.MARGINS_SOURCE: MarginsSource.MANUAL, NormalizeParam.MARGIN_TOP: 11},
+        )
+        await measure(fx_cv_kit, actor, project)
+        await set_normalize_params(fx_cv_kit, actor, project, {NormalizeParam.MARGINS_SOURCE: MarginsSource.MEASURED})
+        await measure(fx_cv_kit, actor, project)
+        after = await normalize_params(fx_cv_kit, actor, project)
+        expect({name: after[name] for name in EXPECTED_PAGE} == EXPECTED_PAGE)
+        expect(after[NormalizeParam.MARGINS_SOURCE] == MarginsSource.MEASURED)
+        assert_expectations()
+
+
+class TestMeasureIsProcessing:
+    """Tests for the measure of the book being one of the jobs a project runs one at a time."""
+
+    async def test_a_run_is_refused_while_a_measure_is_queued(self, fx_cv_kit: ProcessingKit) -> None:
+        """Verify a run cannot start while a measure is queued, since the measure rewrites the parameters it reads.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        await fx_cv_kit.service().start_measure(actor, project.id)
+        with pytest.raises(ConflictError, match='measure of the book'):
+            await fx_cv_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+
+    async def test_a_measure_is_refused_while_a_run_is_queued(self, fx_cv_kit: ProcessingKit) -> None:
+        """Verify a measure cannot start while a run is queued, since the run writes the versions that are measured.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        await fx_cv_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        with pytest.raises(ConflictError, match=BUSY_MESSAGE):
+            await fx_cv_kit.service().start_measure(actor, project.id)
+
+    async def test_a_second_measure_is_refused_while_one_is_queued(self, fx_cv_kit: ProcessingKit) -> None:
+        """Verify two measures never overlap.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        await fx_cv_kit.service().start_measure(actor, project.id)
+        with pytest.raises(ConflictError, match=BUSY_MESSAGE):
+            await fx_cv_kit.service().start_measure(actor, project.id)

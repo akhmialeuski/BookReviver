@@ -1,5 +1,7 @@
-import { RulerIcon } from 'lucide-react';
+import { RulerIcon, UndoIcon } from 'lucide-react';
+import { hasManualMargins, MARGINS_SOURCE, MarginsSource } from '@/features/processing/margins';
 import { useMeasureBook, useRunInFlight } from '@/features/processing/queries';
+import type { StepDraft } from '@/features/processing/recipe';
 import type { Processing } from '@/features/processing/useProcessing';
 import { useActiveJobs } from '@/features/workspace/queries';
 import { describeError } from '@/shared/http/problem';
@@ -18,7 +20,13 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 
 const labels = MESSAGES.processing.steps.measure;
 
-export function MeasureBook({ processing }: { processing: Processing }): React.JSX.Element {
+export function MeasureBook({
+  processing,
+  step,
+}: {
+  processing: Processing;
+  step: StepDraft;
+}): React.JSX.Element {
   const { projectId, dirty } = processing;
   const measure = useMeasureBook(projectId);
   const activeJobs = useActiveJobs(projectId);
@@ -40,6 +48,27 @@ export function MeasureBook({ processing }: { processing: Processing }): React.J
         {busy ? labels.working : labels.button}
       </Button>
       <p className="text-xs text-muted-foreground">{dirty ? labels.saveFirst : labels.hint}</p>
+      {hasManualMargins(step.params) ? (
+        <div className="grid gap-2" data-testid="manual-margins">
+          <p className="text-xs text-muted-foreground">{labels.manualMargins}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-fit"
+            title={labels.useMeasuredHint}
+            data-testid="use-measured-margins"
+            onClick={() =>
+              processing.change(step.id, {
+                ...step.params,
+                [MARGINS_SOURCE]: MarginsSource.Measured,
+              })
+            }
+          >
+            <UndoIcon />
+            {labels.useMeasured}
+          </Button>
+        </div>
+      ) : null}
       {measure.error === null ? null : <ErrorAlert message={describeError(measure.error)} />}
     </div>
   );

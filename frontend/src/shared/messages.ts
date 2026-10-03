@@ -1009,9 +1009,14 @@ export const MESSAGES = {
       outOfLimits: 'A value is outside its limits, so the recipe cannot be saved.',
       measure: {
         button: 'Measure the book',
-        hint: 'Read the text block and the line height the crop found on every page, and fill in the line height, the page size and the margins from their medians. The pages of this recipe go out of date.',
+        hint: 'Read the text block and the line height the crop found on every page, and fill in the line height and the page size from their medians, and the margins too while they are measured. The pages of this recipe go out of date.',
         working: 'Measuring…',
         saveFirst: 'Save the recipe before measuring the book.',
+        manualMargins:
+          'The margins are set by hand, so measuring the book leaves them as they are and sizes the page to hold the median block with them.',
+        useMeasured: 'Use measured margins',
+        useMeasuredHint:
+          'Let the next measure of the book fill in the margins again. Save the recipe, then measure the book.',
       },
       drag: {
         instructions:

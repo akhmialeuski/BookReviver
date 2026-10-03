@@ -8,7 +8,9 @@ change them.
 
 A page whose lines were photographed larger than another's has a larger block too, so each block is brought to the
 median line height before the blocks are compared, as the normalize step will bring it. The page is that median block
-with the margins round it, which are shares of the block, written in pixels. Changing the parameters of a recipe marks
+with the margins round it. While the margins are measured they are shares of the block, written in pixels; once the
+user sets one by hand the margins are left as they are, and the page is the median block with the margins the step has.
+The line height and the page size are written either way. Changing the parameters of a recipe marks
 the pages it processed stale by the rules every change of a recipe follows, and runs nothing.
 """
 
@@ -18,7 +20,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from attrs import evolve, frozen
 
-from bookreviver.domain.enums import NormalizeParam, Stage, VersionData, VersionState
+from bookreviver.domain.enums import MarginsSource, NormalizeParam, Stage, VersionData, VersionState
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Rect
 
@@ -97,7 +99,7 @@ class BookMeasure:
         if not measures:
             raise ConflictError(NOTHING_TO_MEASURE)
         step = recipe.steps[position]
-        measured = evolve(step, params={**step.params, **self._parameters(measures)})
+        measured = evolve(step, params={**step.params, **self._parameters(measures, step.params)})
         if measured.params != step.params:
             await self._write(recipe, position, measured)
         return len(measures)
@@ -142,12 +144,15 @@ class BookMeasure:
             line_height=float(line_height) if isinstance(line_height, int | float) and line_height > 0 else None,
         )
 
-    def _parameters(self, measures: Sequence[BlockMeasure]) -> MetadataMap:
+    def _parameters(self, measures: Sequence[BlockMeasure], current: MetadataMap) -> MetadataMap:
         """Work out the parameters of the normalize step from the measures of the pages.
 
         :param measures: The measures of the pages.
         :type measures: Sequence[BlockMeasure]
-        :returns: The line height when any page has one, and the size of the page and its margins.
+        :param current: The parameters the step has now, whose margins are kept when the user set them.
+        :type current: MetadataMap
+        :returns: The line height when any page has one, the size of the page, and the margins when the measure sets
+                  them.
         :rtype: MetadataMap
         """
         heights = [measure.line_height for measure in measures if measure.line_height is not None]
@@ -169,6 +174,12 @@ class BookMeasure:
             NormalizeParam.MARGIN_INNER: math.ceil(block_width * self.MARGIN_INNER_PERCENT / PERCENT),
             NormalizeParam.MARGIN_OUTER: math.ceil(block_width * self.MARGIN_OUTER_PERCENT / PERCENT),
         }
+        # The margins the user set stay, and the page is the median block with them
+        if current.get(NormalizeParam.MARGINS_SOURCE) == MarginsSource.MANUAL:
+            margins = {name: int(current[name]) for name in margins}
+            written: dict[str, int] = {}
+        else:
+            written = margins
         parameters: dict[str, object] = {
             NormalizeParam.PAGE_WIDTH: math.ceil(
                 block_width + margins[NormalizeParam.MARGIN_INNER] + margins[NormalizeParam.MARGIN_OUTER]
@@ -176,7 +187,7 @@ class BookMeasure:
             NormalizeParam.PAGE_HEIGHT: math.ceil(
                 block_height + margins[NormalizeParam.MARGIN_TOP] + margins[NormalizeParam.MARGIN_BOTTOM]
             ),
-            **margins,
+            **written,
         }
         if line_height is not None:
             parameters[NormalizeParam.LINE_HEIGHT] = round(line_height, 1)

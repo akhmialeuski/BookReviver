@@ -6,9 +6,9 @@ and are built the same way.
 
 A job is recorded and committed before it is queued, so the worker finds it. A queue that refuses it leaves the job
 stored as failed and announced, which tells the client it never ran, and the request that asked for it still answers,
-since the rows it wrote are committed. A project processes one thing at a time, a run, a preview, a tile cutting or a
-collection of its old versions, so a request for a second is refused and the collection that every run queues when it
-ends is left out while something else is processing the project.
+since the rows it wrote are committed. A project processes one thing at a time, a run, a preview, a tile cutting, a
+collection of its old versions or a measure of the book, so a request for a second is refused and the collection that
+every run queues when it ends is left out while something else is processing the project.
 """
 
 import logging
@@ -39,8 +39,8 @@ if TYPE_CHECKING:
 
 NOT_QUEUED: str = 'The job could not be queued.'
 PROJECT_BUSY: str = (
-    'The project is processing something. Wait for the run, preview, tile cutting or collection that is queued or '
-    'running to end, or cancel it.'
+    'The project is processing something. Wait for the run, preview, tile cutting, collection or measure of the book '
+    'that is queued or running to end, or cancel it.'
 )
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ class JobStarter:
 
         :param project_id: Project whose jobs are read.
         :type project_id: ProjectId
-        :returns: The newest queued or running run, preview, tile cutting or collection, or None.
+        :returns: The newest queued or running run, preview, tile cutting, collection or measure, or None.
         :rtype: Job | None
         """
         active = await self._uow.jobs.list_for_project(project_id, JobState.active())
@@ -119,7 +119,8 @@ class JobStarter:
         :type params: MetadataMap
         :returns: The job as stored, queued or failed.
         :rtype: Job
-        :raises ConflictError: If a run, a preview, a tile cutting or a collection of the project is queued or running.
+        :raises ConflictError: If a run, a preview, a tile cutting, a collection or a measure of the project is queued
+                               or running.
         """
         if await self.busy(project_id) is not None:
             raise ConflictError(PROJECT_BUSY)

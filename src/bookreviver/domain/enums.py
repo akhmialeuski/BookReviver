@@ -438,9 +438,17 @@ class MarginsBy(LabeledStrEnum):
     LEFT_RIGHT = 'left-right', 'Left and right, the same on every page'
 
 
-class NormalizeParam(LabeledStrEnum):
-    """Names of the parameters of the step ``geometry.normalize`` that measuring the book writes."""
+class MarginsSource(LabeledStrEnum):
+    """Who sets the margins of the step ``geometry.normalize``: the measure of the book or the user."""
 
+    MEASURED = 'measured', 'Measured from the pages of the book'
+    MANUAL = 'manual', 'Set by hand'
+
+
+class NormalizeParam(LabeledStrEnum):
+    """Names of the parameters of the step ``geometry.normalize`` that measuring the book reads or writes."""
+
+    MARGINS_SOURCE = 'margins_source', 'Who sets the margins'
     LINE_HEIGHT = 'line_height', 'Distance between the lines of text, in pixels'
     PAGE_WIDTH = 'page_width', 'Width of the page, in pixels'
     PAGE_HEIGHT = 'page_height', 'Height of the page, in pixels'
@@ -679,12 +687,14 @@ class JobKind(LabeledStrEnum):
         """Return the kinds of job that read and write the versions of pages, of which a project runs one at a time.
 
         A run, a preview and a tile cutting write the files of versions they may have found made already, and a
-        collection deletes them, so no two of them may overlap, and two of one kind would write the same files.
+        collection deletes them, so no two of them may overlap, and two of one kind would write the same files. A
+        measure of the book reads the versions a run writes and rewrites the parameters a run reads, so it is one of
+        them.
 
         :returns: The kinds of the processing jobs.
         :rtype: frozenset[JobKind]
         """
-        return frozenset({cls.RUN_STAGE, cls.PREVIEW_STEP, cls.CUT_TILES, cls.COLLECT_VERSIONS})
+        return frozenset({cls.RUN_STAGE, cls.PREVIEW_STEP, cls.CUT_TILES, cls.COLLECT_VERSIONS, cls.MEASURE_BOOK})
 
 
 class JobState(LabeledStrEnum):

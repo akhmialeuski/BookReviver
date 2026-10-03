@@ -30,6 +30,8 @@ const PAGES = SCALES.length;
 const DEFAULT_PAGE_WIDTH = '1800';
 const NUDGE_KEYS = 2;
 const LINE_TOLERANCE = 0.02;
+// How many pixels the top margin is made larger than the measured one, to tell it from a measured value
+const HAND_MARGIN_GROWTH = 25;
 const PLACEMENT = 'Block on the page';
 const NORMALIZE = '[data-testid="recipe-step"][data-processor="geometry.normalize"]';
 
@@ -130,6 +132,46 @@ test('the book is measured, its pages come out of one size, and the block of a p
     // The recipe changed, so the pages made by the old settings are out of date
     await expect(page.getByTestId('run-summary')).toContainText('out of date');
     await snap(page, 'normalize-measured-settings');
+  });
+
+  await test.step('a margin set by hand outlives measuring the book, and measured margins can be asked for again', async () => {
+    const saveRecipe = async (): Promise<void> => {
+      await page.getByTestId('recipe-save').click();
+      await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
+    };
+    const measureAgain = async (): Promise<void> => {
+      await waitForIdleJobs(page, projectId);
+      await normalize.getByTestId('measure-book-button').click();
+      await waitForIdleJobs(page, projectId);
+    };
+    const measuredTop = Number(await field('margin_top').inputValue());
+    const handTop = measuredTop + HAND_MARGIN_GROWTH;
+    // Typing a margin switches the step to margins set by hand, and the form says so
+    await expect(normalize.getByTestId('manual-margins')).toHaveCount(0);
+    await field('margin_top').fill(String(handTop));
+    await expect(normalize.getByTestId('manual-margins')).toBeVisible();
+    await saveRecipe();
+    await measureAgain();
+    // The page is the median block with the margin that was typed, which is higher by what the margin grew
+    await expect(field('page_height')).toHaveValue(String(pageHeight + HAND_MARGIN_GROWTH), {
+      timeout: RUN_TIMEOUT_MS,
+    });
+    await expect(field('margin_top')).toHaveValue(String(handTop));
+    await expect(field('page_width')).toHaveValue(String(pageWidth));
+    await expect(field('line_height')).toHaveValue(String(lineHeight));
+    await normalize.getByTestId('use-measured-margins').scrollIntoViewIfNeeded();
+    await snap(page, 'normalize-manual-margin-kept');
+    // Asking for the measured margins again and measuring puts the measured margin back
+    await normalize.getByTestId('use-measured-margins').click();
+    await expect(normalize.getByTestId('manual-margins')).toHaveCount(0);
+    await saveRecipe();
+    await measureAgain();
+    await expect(field('margin_top')).toHaveValue(String(measuredTop), {
+      timeout: RUN_TIMEOUT_MS,
+    });
+    await expect(field('page_height')).toHaveValue(String(pageHeight));
+    await field('margin_top').scrollIntoViewIfNeeded();
+    await snap(page, 'normalize-measured-margins-back');
   });
 
   await test.step('a run on all pages gives every page one size and the lines one distance', async () => {

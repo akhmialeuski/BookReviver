@@ -152,7 +152,9 @@ export function RecipeSection({
         catalogue={catalogue}
         openId={processing.openId}
         extraOf={(step) =>
-          isPlacement(step.processorKey) ? <MeasureBook processing={processing} /> : null
+          isPlacement(step.processorKey) ? (
+            <MeasureBook processing={processing} step={step} />
+          ) : null
         }
         onOpen={processing.open}
         onMove={processing.move}
