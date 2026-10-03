@@ -4,7 +4,7 @@ A workbench for digitising old printed books, with a focus on pre-reform Russian
 book is a project that moves through stages: import, page split, cleanup, alignment, recognition and layout of a new
 printed edition. Every stage stays viewable at any time, so an earlier stage can be corrected and the later ones rerun.
 
-The application is a JSON API with a React frontend. `docs/architecture.md` describes the design and the delivery plan.
+The application is a JSON API with a React frontend. `docs/openapi.json` describes the API.
 
 ## What to install
 
