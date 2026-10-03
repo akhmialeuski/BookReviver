@@ -1681,7 +1681,9 @@ class TestJobRepository:
     async def test_a_project_stores_one_active_job_that_processes_its_versions(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory, first: JobKind, second: JobKind
     ) -> None:
-        """Verify a run, a preview, a tile cutting and a collection exclude each other, and themselves.
+        """Verify a project has one run, preview or measure and one tile cutting or collection, each queued or running.
+
+        A job of the other group is stored beside the running one, and waits as queued.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -1689,7 +1691,40 @@ class TestJobRepository:
         :type fx_new_owner: OwnerFactory
         :param first: Kind of the job already stored.
         :type first: JobKind
-        :param second: Kind of the job that is refused.
+        :param second: Kind of the job that is queued after it.
+        :type second: JobKind
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        setup = await fx_uow_factory()
+        await setup.projects.add(project)
+        await setup.jobs.add(evolve(make_job(project_id=project.id, state=JobState.RUNNING), kind=first))
+        await setup.commit()
+        uow = await fx_uow_factory()
+        queued = evolve(make_job(project_id=project.id), kind=second)
+        if (first in JobKind.requested()) == (second in JobKind.requested()):
+            with pytest.raises(ConflictError):
+                await uow.jobs.add(queued)
+        else:
+            await uow.jobs.add(queued)
+            await uow.commit()
+
+    @pytest.mark.parametrize(
+        ('first', 'second'),
+        [(JobKind.RUN_STAGE, JobKind.CUT_TILES), (JobKind.COLLECT_VERSIONS, JobKind.MEASURE_BOOK)],
+        ids=str,
+    )
+    async def test_a_project_never_has_two_processing_jobs_running(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory, first: JobKind, second: JobKind
+    ) -> None:
+        """Verify a request and a housekeeping job of one project are not stored as running together.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        :param first: Kind of the job already running.
+        :type first: JobKind
+        :param second: Kind of the job of the other group that is refused as running.
         :type second: JobKind
         """
         project = make_project(owner_id=await fx_new_owner())
@@ -1699,7 +1734,7 @@ class TestJobRepository:
         await setup.commit()
         uow = await fx_uow_factory()
         with pytest.raises(ConflictError):
-            await uow.jobs.add(evolve(make_job(project_id=project.id), kind=second))
+            await uow.jobs.add(evolve(make_job(project_id=project.id, state=JobState.RUNNING), kind=second))
 
     async def test_processing_jobs_leave_room_for_other_jobs_of_the_project_and_for_other_projects(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory

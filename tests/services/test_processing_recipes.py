@@ -452,7 +452,7 @@ class TestStartRun:
         """
         actor, project = await fx_kit.seed_project()
         await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        with pytest.raises(ConflictError, match='processing something'):
+        with pytest.raises(ConflictError, match='project is busy'):
             await fx_kit.service().start_run(actor, project.id, Stage.CLEANUP, StageRun(stage=Stage.CLEANUP))
 
     async def test_preview_and_collection_are_refused_while_a_run_is_active(self, fx_kit: ProcessingKit) -> None:
@@ -467,21 +467,23 @@ class TestStartRun:
         preview = StepPreview(
             page_id=page.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=FAKE_KEY),), step_index=0
         )
-        with pytest.raises(ConflictError, match='processing something'):
+        with pytest.raises(ConflictError, match='project is busy'):
             await fx_kit.service().start_preview(actor, project.id, preview)
-        with pytest.raises(ConflictError, match='processing something'):
+        with pytest.raises(ConflictError, match='project is busy'):
             await fx_kit.service().start_collection(actor, project.id)
 
-    async def test_run_is_refused_while_a_collection_is_active(self, fx_kit: ProcessingKit) -> None:
-        """Reject a run while a collection is queued, which may delete the versions the run would reuse.
+    async def test_run_waits_while_a_collection_is_active(self, fx_kit: ProcessingKit) -> None:
+        """Store a run asked for during a collection as queued without handing it to a worker, which starts it later.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
         actor, project = await fx_kit.seed_project()
-        await fx_kit.service().start_collection(actor, project.id)
-        with pytest.raises(ConflictError, match='processing something'):
-            await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        collection = await fx_kit.service().start_collection(actor, project.id)
+        run = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        expect(run.state is JobState.QUEUED)
+        expect(fx_kit.recording.enqueued == [collection])
+        assert_expectations()
 
     async def test_collection_that_a_run_queues_is_left_out_while_another_job_processes_the_project(
         self, fx_kit: ProcessingKit

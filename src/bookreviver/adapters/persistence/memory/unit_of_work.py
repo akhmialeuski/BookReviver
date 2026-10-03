@@ -25,6 +25,7 @@ Each repository states its table's keys in two hooks of the generic repository, 
 """
 
 from collections import Counter
+from functools import partial
 from operator import attrgetter
 from typing import TYPE_CHECKING, override
 
@@ -88,12 +89,15 @@ if TYPE_CHECKING:
 ID_ATTRIBUTE: str = 'id'
 # Property holding the composite key of an entity that is addressed by one
 KEY_ATTRIBUTE: str = 'key'
-# The groups of kinds of job of which a project runs one at a time, each the rows of a partial unique index of the
-# ``jobs`` table: the imports, the writing of page images, and the jobs that process the versions of pages
-ONE_ACTIVE_AT_A_TIME: tuple[frozenset[JobKind], ...] = (
-    frozenset({JobKind.IMPORT_SOURCE}),
-    frozenset({JobKind.PREPARE_PAGES}),
-    JobKind.processing(),
+# The kinds and states of the jobs of which a project has at most one, each the rows of a partial unique index of the
+# ``jobs`` table: the imports, the writing of page images, the jobs the user asks to process the versions of pages, the
+# housekeeping jobs on them, and the one of all of these that is running
+AT_MOST_ONE_JOB: tuple[tuple[frozenset[JobKind], frozenset[JobState]], ...] = (
+    (frozenset({JobKind.IMPORT_SOURCE}), frozenset(JobState.active())),
+    (frozenset({JobKind.PREPARE_PAGES}), frozenset(JobState.active())),
+    (JobKind.requested(), frozenset(JobState.active())),
+    (JobKind.housekeeping(), frozenset(JobState.active())),
+    (JobKind.processing(), frozenset({JobState.RUNNING})),
 )
 
 
@@ -1564,27 +1568,27 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
                                processing versions, and the project has another active job of the same group.
         """
         require(self._tables.projects, entity.project_id)
-        if self._group_of(entity) is not None and entity.state in JobState.active():
-            # Every other job gets its own identifier as its value, so only an active job of the same group can match
-            self._require_unique(
-                entity,
-                lambda job: (
-                    (job.project_id, self._group_of(job))
-                    if self._group_of(job) is not None and job.state in JobState.active()
-                    else job.id
-                ),
-            )
+        for position, (kinds, states) in enumerate(AT_MOST_ONE_JOB):
+            if entity.kind in kinds and entity.state in states:
+                # Every other job gets its own identifier as its value, so only a job of the same limit can match
+                self._require_unique(entity, partial(self._limit_key, position=position, kinds=kinds, states=states))
 
     @staticmethod
-    def _group_of(job: Job) -> int | None:
-        """Find the group of kinds a job belongs to, of which a project runs one at a time.
+    def _limit_key(job: Job, *, position: int, kinds: frozenset[JobKind], states: frozenset[JobState]) -> Hashable:
+        """Key a job by the project when it is one the limit counts, and by its own identifier otherwise.
 
         :param job: The job.
         :type job: Job
-        :returns: The index of the group in ``ONE_ACTIVE_AT_A_TIME``, or None for a job that has no such limit.
-        :rtype: int | None
+        :param position: Position of the limit in ``AT_MOST_ONE_JOB``.
+        :type position: int
+        :param kinds: The kinds of job the limit counts.
+        :type kinds: frozenset[JobKind]
+        :param states: The states of job the limit counts.
+        :type states: frozenset[JobState]
+        :returns: The key, which equals another job's only when both are counted by the limit in one project.
+        :rtype: Hashable
         """
-        return next((index for index, group in enumerate(ONE_ACTIVE_AT_A_TIME) if job.kind in group), None)
+        return (job.project_id, position) if job.kind in kinds and job.state in states else job.id
 
     @override
     def _cascade(self, entity: Job) -> None:

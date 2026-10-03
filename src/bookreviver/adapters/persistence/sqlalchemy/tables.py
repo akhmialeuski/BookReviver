@@ -105,11 +105,23 @@ ACTIVE_IMPORT: Final = text(
 ACTIVE_PREPARE: Final = text(
     f"kind = '{JobKind.PREPARE_PAGES}' AND state IN ('{JobState.QUEUED}', '{JobState.RUNNING}')"
 )
-# The rows of the partial unique index that keeps a project to one job processing the versions of its pages
-ACTIVE_PROCESSING: Final = text(
+# The rows of the partial unique index that keeps a project to one run, preview or measure that is queued or running
+ACTIVE_REQUESTED: Final = text(
+    'kind IN ('
+    + ', '.join(f"'{kind}'" for kind in sorted(JobKind.requested()))
+    + f") AND state IN ('{JobState.QUEUED}', '{JobState.RUNNING}')"
+)
+# The rows of the partial unique index that keeps a project to one tile cutting or collection that is queued or running
+ACTIVE_HOUSEKEEPING: Final = text(
+    'kind IN ('
+    + ', '.join(f"'{kind}'" for kind in sorted(JobKind.housekeeping()))
+    + f") AND state IN ('{JobState.QUEUED}', '{JobState.RUNNING}')"
+)
+# The rows of the partial unique index that keeps a project to one job processing its versions at a time: the running
+RUNNING_PROCESSING: Final = text(
     'kind IN ('
     + ', '.join(f"'{kind}'" for kind in sorted(JobKind.processing()))
-    + f") AND state IN ('{JobState.QUEUED}', '{JobState.RUNNING}')"
+    + f") AND state = '{JobState.RUNNING}'"
 )
 
 
@@ -309,11 +321,25 @@ class JobRow(DefaultBase):
             postgresql_where=ACTIVE_PREPARE,
         ),
         Index(
-            'ix_jobs_one_active_processing',
+            'ix_jobs_one_active_requested',
             'project_id',
             unique=True,
-            sqlite_where=ACTIVE_PROCESSING,
-            postgresql_where=ACTIVE_PROCESSING,
+            sqlite_where=ACTIVE_REQUESTED,
+            postgresql_where=ACTIVE_REQUESTED,
+        ),
+        Index(
+            'ix_jobs_one_active_housekeeping',
+            'project_id',
+            unique=True,
+            sqlite_where=ACTIVE_HOUSEKEEPING,
+            postgresql_where=ACTIVE_HOUSEKEEPING,
+        ),
+        Index(
+            'ix_jobs_one_running_processing',
+            'project_id',
+            unique=True,
+            sqlite_where=RUNNING_PROCESSING,
+            postgresql_where=RUNNING_PROCESSING,
         ),
     )
 
