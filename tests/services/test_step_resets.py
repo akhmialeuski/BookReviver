@@ -82,12 +82,11 @@ async def worked_book(kit: ProcessingKit) -> WorkedBook:
     )
     saved = await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, draft)
     book = WorkedBook(actor, project, pages, saved.steps[0].step_id, saved.steps[1].step_id)
-    settings, edits = kit.page_settings(), kit.edits()
-    await settings.change(actor, project.id, book.key(0, book.first), STRENGTH_PARAMETER, STRONGER)
-    await settings.change(actor, project.id, book.key(0, book.second), STRENGTH_PARAMETER, STRONGER)
-    await settings.change(actor, project.id, book.key(1, book.first), STRENGTH_PARAMETER, STRONGER)
-    await edits.save(actor, project.id, book.key(0, book.first), ROTATION, None)
-    await edits.save(actor, project.id, book.key(2, book.second), ROTATION, None)
+    # Each call gets its own unit of work, as each request does, so an edit reads the settings saved before it
+    for page_index, step in ((0, book.first), (0, book.second), (1, book.first)):
+        await kit.page_settings().change(actor, project.id, book.key(page_index, step), STRENGTH_PARAMETER, STRONGER)
+    for page_index, step in ((0, book.first), (2, book.second)):
+        await kit.edits().save(actor, project.id, book.key(page_index, step), ROTATION, None)
     return book
 
 
