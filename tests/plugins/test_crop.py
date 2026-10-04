@@ -4,7 +4,7 @@ The tests need OpenCV, and are skipped with the reason where the optional group 
 """
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pytest
@@ -26,12 +26,17 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
 from bookreviver.domain.geometry import Point, Rect
 from bookreviver.ports.processing import StepInput
-from tests.helpers.samples import LINE_PITCH_PX, PAPER, save, text_page
+from tests.helpers.samples import CV_MISSING, LINE_PITCH_PX, PAPER, save, text_page
 from tests.plugins.runner import run_on
 from tests.plugins.synthetic import SHEET_PAPER, SHEET_SIZE_PX, draw_sheet
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from numpy.typing import NDArray
+
     from bookreviver.domain.values import MetadataMap
+    from bookreviver.plugins.crop import FrameSearch
     from bookreviver.ports.processing import Processor
 
 SCAN_ON_BINDING: Path = Path(__file__).parent / 'data' / 'book_scan_on_binding.jpg'
@@ -64,6 +69,30 @@ COLOUR_PAGE_PX: tuple[int, int] = (600, 800)
 WORDS_LEFT_PX: int = 12
 TONE_TOLERANCE: int = 3
 NOISE_SPREAD: float = 3.0
+# The page drawn with the borders of a scan: its size, the tones of the paper, of the text and of the borders, and where
+# the text, the header and the borders lie
+EDGE_PAGE_PX: tuple[int, int] = (600, 1000)
+EDGE_PAPER: int = 235
+EDGE_TEXT: int = 25
+EDGE_BORDER: int = 70
+TEXT_LEFT_PX: int = 80
+TEXT_RIGHT_PX: int = 520
+TEXT_TOP_PX: int = 140
+TEXT_PITCH_PX: int = 36
+TEXT_LINES: int = 22
+GLYPH_HEIGHT_PX: int = 14
+HEADER_TOP_PX: int = 50
+STRIP_WIDTH_PX: int = 25
+BAND_WIDTH_PX: int = 10
+SPECKS_LEFT_PX: int = 575
+SPECKS_WIDTH_PX: int = 6
+SPECK_HEIGHT_PX: int = 10
+SPECK_PITCH_PX: int = 16
+WORD_WIDTHS_PX: tuple[int, ...] = (30, 52, 41, 75, 36, 63)
+WORD_GAP_PX: int = 10
+FRAME_SLACK_PX: float = 5.0
+ALL_SIDES: frozenset[SheetEdge] = frozenset(SheetEdge)
+NO_SIDES: frozenset[SheetEdge] = frozenset[SheetEdge]()
 
 
 def ink_count(path: Path, inset: int = 0) -> int:
@@ -103,6 +132,214 @@ def upright_sheet(perspective: Processor, workdir: Path, rotation: float, slant:
     output = run_on(perspective, scan, warped)
     assert output.image is not None
     return output.image
+
+
+def edge_page(*, text_right: int = TEXT_RIGHT_PX, borders: bool = True) -> NDArray[np.uint8]:
+    """Draw a page of lines of words under a header, with the dark strip, the shadow and the specks of a scan.
+
+    The words are blocks one glyph high. The header is two dashes round a digit. The strip is a solid column along the
+    whole left side, the shadow a solid band along the right side with a column of specks short of it.
+
+    :param text_right: Column where the lines of text end, where a line that is longer is cut by the edge of the page.
+    :type text_right: int
+    :param borders: Whether the strip, the shadow and the specks are drawn.
+    :type borders: bool
+    :returns: The gray samples of the page.
+    :rtype: NDArray[np.uint8]
+    """
+    width, height = EDGE_PAGE_PX
+    page = np.full((height, width), EDGE_PAPER, dtype=np.uint8)
+    for line in range(TEXT_LINES):
+        top, left, word = TEXT_TOP_PX + line * TEXT_PITCH_PX, TEXT_LEFT_PX, line
+        while left < text_right:
+            right = min(left + WORD_WIDTHS_PX[word % len(WORD_WIDTHS_PX)], text_right)
+            page[top : top + GLYPH_HEIGHT_PX, left:right] = EDGE_TEXT
+            left, word = right + WORD_GAP_PX, word + 1
+    header = HEADER_TOP_PX
+    page[header + 5 : header + 9, 220:260] = EDGE_TEXT
+    page[header : header + GLYPH_HEIGHT_PX, 290:302] = EDGE_TEXT
+    page[header + 5 : header + 9, 340:380] = EDGE_TEXT
+    if borders:
+        page[:, :STRIP_WIDTH_PX] = EDGE_BORDER
+        page[:, width - BAND_WIDTH_PX :] = EDGE_BORDER
+        for top in range(0, height, SPECK_PITCH_PX):
+            page[top : top + SPECK_HEIGHT_PX, SPECKS_LEFT_PX : SPECKS_LEFT_PX + SPECKS_WIDTH_PX] = EDGE_BORDER
+    return page
+
+
+def text_box() -> tuple[int, int, int, int]:
+    """Give the box of the text and the header of the page that ``edge_page`` draws.
+
+    :returns: Left, top, right and bottom in pixels.
+    :rtype: tuple[int, int, int, int]
+    """
+    bottom = TEXT_TOP_PX + (TEXT_LINES - 1) * TEXT_PITCH_PX + GLYPH_HEIGHT_PX
+    return TEXT_LEFT_PX, HEADER_TOP_PX, TEXT_RIGHT_PX, bottom
+
+
+@pytest.fixture
+def fx_frame_search() -> Callable[..., FrameSearch]:
+    """Offer a builder of the search of the content frame, or skip the test where OpenCV is not installed.
+
+    :returns: A function that builds a ``FrameSearch`` with the default parameters of the step, from the samples of a
+              page and the sides of the sheet that lie on the edge of the scan.
+    :rtype: Callable[..., FrameSearch]
+    """
+    crop = pytest.importorskip('bookreviver.plugins.crop', reason=CV_MISSING)
+
+    def build(image: NDArray[np.uint8], cut_edges: frozenset[SheetEdge]) -> FrameSearch:
+        """Build a search of the frame.
+
+        :param image: The samples of the page.
+        :type image: NDArray[np.uint8]
+        :param cut_edges: Sides of the sheet that lie on the edge of the scan.
+        :type cut_edges: frozenset[SheetEdge]
+        :returns: The search.
+        :rtype: FrameSearch
+        """
+        return cast('FrameSearch', crop.FrameSearch(image, crop.CropParams(), cut_edges))
+
+    return build
+
+
+def box_of(frame: Rect) -> tuple[float, float, float, float]:
+    """Give the left, top, right and bottom of a frame.
+
+    :param frame: The frame.
+    :type frame: Rect
+    :returns: The four sides.
+    :rtype: tuple[float, float, float, float]
+    """
+    return frame.left, frame.top, frame.left + frame.width, frame.top + frame.height
+
+
+class TestFrameSearchOnTheEdgesOfAScan:
+    """Tests for the frame that FrameSearch finds on a page with the borders and the shadows of a scan."""
+
+    @pytest.mark.parametrize('cut_edges', [ALL_SIDES, NO_SIDES], ids=['every-side-cut', 'no-side-cut'])
+    def test_the_frame_holds_the_text_and_the_header_and_not_the_borders(
+        self, fx_frame_search: Callable[..., FrameSearch], cut_edges: frozenset[SheetEdge]
+    ) -> None:
+        """Verify the strip, the shadow and the specks along the sides give no ink to the frame, cut sides or not.
+
+        :param fx_frame_search: The builder of the search under test.
+        :type fx_frame_search: Callable[..., FrameSearch]
+        :param cut_edges: Sides of the sheet that lie on the edge of the scan.
+        :type cut_edges: frozenset[SheetEdge]
+        """
+        found = fx_frame_search(edge_page(), cut_edges).find()
+        assert found is not None
+        for side, truth in zip(box_of(found.rect), text_box(), strict=True):
+            expect(side == pytest.approx(truth, abs=FRAME_SLACK_PX))
+        assert_expectations()
+
+    def test_the_borders_are_cleaned_where_every_side_is_cut_as_where_none_is(
+        self, fx_frame_search: Callable[..., FrameSearch]
+    ) -> None:
+        """Verify a page of a sheet that fills the scan gets the frame of the page that has no cut side.
+
+        :param fx_frame_search: The builder of the search under test.
+        :type fx_frame_search: Callable[..., FrameSearch]
+        """
+        cut = fx_frame_search(edge_page(), ALL_SIDES).find()
+        uncut = fx_frame_search(edge_page(), NO_SIDES).find()
+        assert cut is not None
+        assert uncut is not None
+        assert cut.rect == uncut.rect
+
+    def test_text_that_the_scanner_cut_at_a_side_keeps_the_frame_at_the_edge(
+        self, fx_frame_search: Callable[..., FrameSearch]
+    ) -> None:
+        """Verify lines that run on to the right edge, a side that was cut, are kept, and the frame comes to the edge.
+
+        :param fx_frame_search: The builder of the search under test.
+        :type fx_frame_search: Callable[..., FrameSearch]
+        """
+        found = fx_frame_search(
+            edge_page(text_right=EDGE_PAGE_PX[0], borders=False), frozenset({SheetEdge.RIGHT})
+        ).find()
+        assert found is not None
+        expect(found.rect.left + found.rect.width == pytest.approx(EDGE_PAGE_PX[0], abs=FRAME_SLACK_PX))
+        expect(found.rect.left == pytest.approx(TEXT_LEFT_PX, abs=FRAME_SLACK_PX))
+        assert_expectations()
+
+    def test_a_page_with_no_ink_has_no_frame(self, fx_frame_search: Callable[..., FrameSearch]) -> None:
+        """Verify a blank page and one with a few specks of dust give no frame, with every side cut or none.
+
+        :param fx_frame_search: The builder of the search under test.
+        :type fx_frame_search: Callable[..., FrameSearch]
+        """
+        blank = np.full((EDGE_PAGE_PX[1], EDGE_PAGE_PX[0]), EDGE_PAPER, dtype=np.uint8)
+        dusty = blank.copy()
+        dusty[200:202, 100:102] = EDGE_TEXT
+        dusty[700:702, 400:402] = EDGE_TEXT
+        for page in (blank, dusty):
+            for cut_edges in (ALL_SIDES, NO_SIDES):
+                expect(fx_frame_search(page, cut_edges).find() is None)
+        assert_expectations()
+
+
+class TestCropOnTheEdgesOfAScan:
+    """Tests for the Crop step on a page with the borders and the shadows of a scan."""
+
+    @pytest.mark.parametrize('cut_edges', [ALL_SIDES, NO_SIDES], ids=['every-side-cut', 'no-side-cut'])
+    def test_the_page_is_cut_to_the_text_and_the_header_and_is_not_marked(
+        self, fx_crop: Processor, tmp_path: Path, cut_edges: frozenset[SheetEdge]
+    ) -> None:
+        """Verify the frame holds the text and the header, leaves the borders out, and raises no review on cut sides.
+
+        :param fx_crop: The processor under test.
+        :type fx_crop: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param cut_edges: Sides of the sheet that lie on the edge of the scan.
+        :type cut_edges: frozenset[SheetEdge]
+        """
+        image = save(Image.fromarray(edge_page()), tmp_path / PAGE_NAME)
+        edges = sorted(edge.value for edge in cut_edges)
+        output = run_on(fx_crop, image, tmp_path, facts={VersionData.CUT_EDGES: edges})
+        frame = Rect.from_data(output.data[VersionData.FRAME])
+        for side, truth in zip(box_of(frame), text_box(), strict=True):
+            expect(side == pytest.approx(truth, abs=FRAME_SLACK_PX))
+        expect(output.review is None)
+        assert_expectations()
+
+    def test_text_cut_at_a_cut_side_raises_the_review_and_keeps_the_edge(
+        self, fx_crop: Processor, tmp_path: Path
+    ) -> None:
+        """Verify text that runs on to a cut right side keeps the frame at the edge and marks the page for review.
+
+        :param fx_crop: The processor under test.
+        :type fx_crop: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        page = edge_page(text_right=EDGE_PAGE_PX[0], borders=False)
+        image = save(Image.fromarray(page), tmp_path / PAGE_NAME)
+        output = run_on(fx_crop, image, tmp_path, facts={VersionData.CUT_EDGES: [SheetEdge.RIGHT.value]})
+        frame = Rect.from_data(output.data[VersionData.FRAME])
+        expect(frame.left + frame.width == pytest.approx(EDGE_PAGE_PX[0], abs=FRAME_SLACK_PX))
+        expect(output.review is ReviewReason.CUT_BY_EDGE)
+        assert_expectations()
+
+    def test_a_page_with_no_ink_but_the_borders_of_the_scan_is_left_as_it_is(
+        self, fx_crop: Processor, tmp_path: Path
+    ) -> None:
+        """Verify a page of dust is left as it is and marked, with every side cut.
+
+        :param fx_crop: The processor under test.
+        :type fx_crop: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        page = np.full((EDGE_PAGE_PX[1], EDGE_PAGE_PX[0]), EDGE_PAPER, dtype=np.uint8)
+        page[300:302, 200:202] = EDGE_TEXT
+        image = save(Image.fromarray(page), tmp_path / PAGE_NAME)
+        output = run_on(fx_crop, image, tmp_path, facts={VersionData.CUT_EDGES: [edge.value for edge in SheetEdge]})
+        expect(output.data[VersionData.SKIPPED] is True)
+        expect(VersionData.FRAME not in output.data)
+        expect(output.review is ReviewReason.NOT_APPLIED)
+        assert_expectations()
 
 
 class TestCrop:
