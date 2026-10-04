@@ -179,7 +179,7 @@ class TestLeaf:
         await uow.pages.update(evolve(await uow.pages.get(page.id), blank_fill=BlankFill.WHITE))
         await uow.commit()
         steps = [Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: strength}) for strength in (4, 5)]
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, ALL_PAGES, steps)
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, RecipeDraft(name=ALL_PAGES, steps=steps))
 
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
 
@@ -206,7 +206,7 @@ class TestLeaf:
         await uow.pages.update(evolve(await uow.pages.get(page.id), blank_fill=BlankFill.WHITE))
         await uow.commit()
         step = Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 4})
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, ALL_PAGES, [step])
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, RecipeDraft(name=ALL_PAGES, steps=[step]))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         passed = await head_of(fx_kit, page, Stage.GEOMETRY)
         uow = fx_kit.uow()
