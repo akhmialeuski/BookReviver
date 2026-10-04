@@ -40,7 +40,7 @@ from bookreviver.domain.ids import (
 from bookreviver.domain.values import BookPlaceKey, PageStageKey, PageStepKey
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Sequence
+    from collections.abc import Collection, Mapping, Sequence
     from datetime import datetime
 
     from bookreviver.domain.entities import ProjectOverview
@@ -781,8 +781,8 @@ class RecipeRuleRepository(Repository[RecipeRule, RecipeRuleId]):
 class RecipeProfileRepository(Repository[RecipeProfile, RecipeProfileId]):
     """The recipe profiles of the accounts; an account has at most one default profile for each stage.
 
-    Deleting an account removes its profiles. Nothing in a book refers to a profile, so deleting one leaves the recipes
-    made from it as they are.
+    Deleting an account removes its profiles. A recipe of a book may refer to the profile it was made from, and
+    deleting the profile only empties that reference and leaves the recipe as it is.
     """
 
     @abstractmethod
@@ -807,6 +807,18 @@ class RecipeProfileRepository(Repository[RecipeProfile, RecipeProfileId]):
         :type stage: Stage
         :returns: The default profile of the stage, or None when the account has not chosen one.
         :rtype: RecipeProfile | None
+        """
+
+    @abstractmethod
+    async def count_books(self, profile_ids: Collection[RecipeProfileId]) -> Mapping[RecipeProfileId, int]:
+        """Count the books that have a recipe made from each of the given profiles, in one read for all of them.
+
+        A book counts once for a profile however many of its recipes were made from it.
+
+        :param profile_ids: Profiles to count the books of.
+        :type profile_ids: Collection[RecipeProfileId]
+        :returns: The number of books by profile, which has no entry for a profile that no book uses.
+        :rtype: Mapping[RecipeProfileId, int]
         """
 
 

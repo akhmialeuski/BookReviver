@@ -8,10 +8,15 @@ from fastapi import status
 
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.api.schemas.processing import RecipeSchema
-from bookreviver.api.schemas.profiles import AppliedProfileSchema, RecipeProfileSchema
-from bookreviver.domain.enums import Stage
+from bookreviver.api.schemas.profiles import (
+    AppliedProfileSchema,
+    LibraryProfileSchema,
+    ProfileFileSchema,
+    RecipeProfileSchema,
+)
+from bookreviver.domain.enums import JobKind, JobState, Stage
 from bookreviver.domain.values import Step
-from tests.helpers.builders import make_project, make_recipe_profile, new_account_id
+from tests.helpers.builders import make_page, make_project, make_recipe_profile, new_account_id
 from tests.helpers.processing import ProcessingFakesProvider
 from tests.helpers.seeding import commit_project
 
@@ -43,6 +48,13 @@ PARAMS_FIELD: str = 'params'
 ORDER_FIELD: str = 'order'
 PROFILE_ID_FIELD: str = 'profile_id'
 FREE_ORDER: str = 'free'
+VERSION_FIELD: str = 'version'
+BOOKS_FIELD: str = 'books'
+FILE_VERSION: int = 1
+COPY_NAME: str = 'Photographed book (copy)'
+MANY_BOOKS: int = 2
+EXPORT_SUFFIX: str = 'export'
+IMPORT_PATH: str = f'{PROFILES_PATH}/import'
 
 
 def _default_path(profile_id: object) -> str:
@@ -504,3 +516,213 @@ class TestLinkRecipeToProfile:
         await fx_client.delete(f'{PROFILES_PATH}/{profile.id}')
         response = await fx_client.get(_recipe_path(fx_project))
         assert (response.status_code, response.json()[PROFILE_ID_FIELD]) == (status.HTTP_200_OK, None)
+
+
+def _file(**overrides: object) -> dict[str, object]:
+    """Build the content of a profile file of the geometry stage, with two steps, the first of them switched off.
+
+    :param overrides: Fields of the file to replace.
+    :type overrides: object
+    :returns: The JSON body of an import.
+    :rtype: dict[str, object]
+    """
+    return {
+        VERSION_FIELD: FILE_VERSION,
+        STAGE_FIELD: Stage.GEOMETRY,
+        NAME_FIELD: PROFILE_NAME,
+        STEPS_FIELD: [
+            {PROCESSOR_FIELD: FAKE_KEY, PARAMS_FIELD: {STRENGTH: 3}, 'enabled': False},
+            {PROCESSOR_FIELD: FAKE_KEY, PARAMS_FIELD: {STRENGTH: 2}},
+        ],
+    } | overrides
+
+
+class TestLibrary:
+    """Tests for the books of a profile, the copy of a profile and the file a profile is exchanged by."""
+
+    async def test_the_listing_counts_the_books_that_use_each_profile(
+        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor, fx_project: Project
+    ) -> None:
+        """Verify applying a profile to two books makes the listing say two, and a profile never applied says none.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        :param fx_project: A book of the signed-in account.
+        :type fx_project: Project
+        """
+        used = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
+        await fx_client.post(PROFILES_PATH, json=_body(OTHER_NAME))
+        other = make_project(owner_id=fx_actor.account_id, title='Another book')
+        await commit_project(fx_database, other)
+        for book in (fx_project, other, fx_project):
+            await fx_client.post(_apply_path(book, used.id), json={})
+        listed = await fx_client.get(PROFILES_PATH)
+        assert [(item[NAME_FIELD], item[BOOKS_FIELD]) for item in listed.json()[ITEMS]] == [
+            (PROFILE_NAME, MANY_BOOKS),
+            (OTHER_NAME, 0),
+        ]
+
+    async def test_a_profile_is_duplicated_with_a_201_and_a_copy_name(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify the copy has the steps of the profile, is not the default and is listed beside it.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
+        await fx_client.put(_default_path(profile.id))
+        response = await fx_client.post(f'{PROFILES_PATH}/{profile.id}/duplicate')
+        copy = RecipeProfileSchema.model_validate_json(response.content)
+        listed = LibraryProfileSchema.model_validate((await fx_client.get(PROFILES_PATH)).json()[ITEMS][1])
+        expect(response.status_code == status.HTTP_201_CREATED)
+        expect((copy.name, copy.is_default, copy.stage) == (COPY_NAME, False, Stage.GEOMETRY))
+        expect(
+            [(step.params, step.enabled) for step in copy.steps]
+            == [(step.params, step.enabled) for step in profile.steps]
+        )
+        expect(listed.id == copy.id)
+        assert_expectations()
+
+    async def test_a_profile_is_exported_as_a_versioned_file_without_identifiers(
+        self, fx_client: httpx.AsyncClient
+    ) -> None:
+        """Verify the file carries the version, the stage, the name, the order and the steps, and no identifier.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
+        response = await fx_client.get(f'{PROFILES_PATH}/{profile.id}/{EXPORT_SUFFIX}')
+        exported = ProfileFileSchema.model_validate_json(response.content)
+        expect(response.status_code == status.HTTP_200_OK)
+        expect(response.json()[VERSION_FIELD] == FILE_VERSION)
+        expect((exported.name, exported.stage, exported.order) == (PROFILE_NAME, Stage.GEOMETRY, 'usual'))
+        expect(
+            [(step.params, step.enabled) for step in exported.steps] == [({STRENGTH: 3}, False), ({STRENGTH: 2}, True)]
+        )
+        expect(all('step_id' not in step for step in response.json()[STEPS_FIELD]))
+        assert_expectations()
+
+    async def test_an_exported_file_imports_as_a_profile_with_the_same_steps(
+        self, fx_client: httpx.AsyncClient
+    ) -> None:
+        """Verify the export of a profile is accepted by the import, which makes a profile of its own.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
+        exported = await fx_client.get(f'{PROFILES_PATH}/{profile.id}/{EXPORT_SUFFIX}')
+        response = await fx_client.post(IMPORT_PATH, json=exported.json())
+        imported = RecipeProfileSchema.model_validate_json(response.content)
+        expect(response.status_code == status.HTTP_201_CREATED)
+        expect(imported.id != profile.id)
+        expect(
+            [(step.params, step.enabled) for step in imported.steps]
+            == [(step.params, step.enabled) for step in profile.steps]
+        )
+        expect({step.step_id for step in imported.steps}.isdisjoint({step.step_id for step in profile.steps}))
+        assert_expectations()
+
+    async def test_a_file_that_does_not_validate_is_a_422_problem(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify a wrong version, an unknown field, a missing processor and bad parameters all answer 422.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        steps_of = {STEPS_FIELD: [{PROCESSOR_FIELD: FAKE_KEY, PARAMS_FIELD: {'unknown': 1}}]}
+        missing = {STEPS_FIELD: [{PROCESSOR_FIELD: MISSING_KEY}]}
+        responses = [
+            await fx_client.post(IMPORT_PATH, json=_file(**{VERSION_FIELD: FILE_VERSION + 1})),
+            await fx_client.post(IMPORT_PATH, json=_file(extra=1)),
+            await fx_client.post(IMPORT_PATH, json=_file(**missing)),
+            await fx_client.post(IMPORT_PATH, json=_file(**steps_of)),
+            await fx_client.post(IMPORT_PATH, json=_file(**{STEPS_FIELD: []})),
+        ]
+        listed = await fx_client.get(PROFILES_PATH)
+        expect(
+            [response.status_code for response in responses] == [status.HTTP_422_UNPROCESSABLE_CONTENT] * len(responses)
+        )
+        expect(MISSING_KEY in responses[2].text)
+        expect(listed.json()[TOTAL_FIELD] == 0)
+        assert_expectations()
+
+    async def test_a_profile_of_another_account_cannot_be_exported_or_copied(
+        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase
+    ) -> None:
+        """Verify another account's profile answers 404 to the export and to the copy.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        """
+        foreign = await _store(fx_database, make_recipe_profile(account_id=new_account_id(), steps=(_step(FAKE_KEY),)))
+        responses = [
+            await fx_client.get(f'{PROFILES_PATH}/{foreign.id}/{EXPORT_SUFFIX}'),
+            await fx_client.post(f'{PROFILES_PATH}/{foreign.id}/duplicate'),
+        ]
+        assert [response.status_code for response in responses] == [status.HTTP_404_NOT_FOUND] * len(responses)
+
+
+class TestApplyProfileToPages:
+    """Tests for applying a profile to some pages of a book through the apply route."""
+
+    async def test_apply_to_pages_answers_the_queued_run(
+        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
+    ) -> None:
+        """Verify the answer holds the variant, which stays inactive, and the queued run of the stage on the pages.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=fx_actor.account_id, title='With pages')
+        page = make_page(project_id=project.id)
+        await commit_project(fx_database, project, page)
+        profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
+        response = await fx_client.post(_apply_path(project, profile.id), json={'page_ids': [str(page.id)]})
+        applied = AppliedProfileSchema.model_validate_json(response.content)
+        expect(response.status_code == status.HTTP_201_CREATED)
+        expect(applied.recipe.active is False)
+        assert applied.job is not None
+        expect((applied.job.kind, applied.job.state) == (JobKind.RUN_STAGE, JobState.QUEUED))
+        expect(applied.job.stage is Stage.GEOMETRY)
+        assert_expectations()
+
+    async def test_apply_without_pages_answers_no_job(self, fx_client: httpx.AsyncClient, fx_project: Project) -> None:
+        """Verify applying to the book alone answers a null job.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_project: A book of the signed-in account.
+        :type fx_project: Project
+        """
+        profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
+        response = await fx_client.post(_apply_path(fx_project, profile.id), json={})
+        assert response.json()['job'] is None
+
+    async def test_a_page_that_is_not_in_the_book_is_a_404_problem(
+        self, fx_client: httpx.AsyncClient, fx_project: Project
+    ) -> None:
+        """Verify pages of no book of the account answer 404, and an empty list of pages answers 422.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_project: A book of the signed-in account.
+        :type fx_project: Project
+        """
+        profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
+        stray = make_page(project_id=make_project(owner_id=new_account_id()).id)
+        missing = await fx_client.post(_apply_path(fx_project, profile.id), json={'page_ids': [str(stray.id)]})
+        empty = await fx_client.post(_apply_path(fx_project, profile.id), json={'page_ids': []})
+        assert (missing.status_code, empty.status_code) == (
+            status.HTTP_404_NOT_FOUND,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )

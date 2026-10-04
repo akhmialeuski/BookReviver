@@ -112,7 +112,7 @@ from bookreviver.ports.persistence import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Iterator, Sequence
+    from collections.abc import Collection, Iterator, Mapping, Sequence
     from datetime import datetime
     from uuid import UUID
 
@@ -1739,6 +1739,25 @@ class SqlAlchemyRecipeProfileRepository(
         """
         row = await self._rows.get_one_or_none(account_id=account_id, stage=stage, is_default=True)
         return None if row is None else self._mapper.to_entity(row)
+
+    @override
+    async def count_books(self, profile_ids: Collection[RecipeProfileId]) -> Mapping[RecipeProfileId, int]:
+        """Count the books that have a recipe made from each of the given profiles with one grouped statement.
+
+        :param profile_ids: Profiles to count the books of.
+        :type profile_ids: Collection[RecipeProfileId]
+        :returns: The number of books by profile, which has no entry for a profile that no book uses.
+        :rtype: Mapping[RecipeProfileId, int]
+        """
+        statement = (
+            select(RecipeRow.profile_id, func.count(RecipeRow.project_id.distinct()))
+            .where(RecipeRow.profile_id.in_(profile_ids))
+            .group_by(RecipeRow.profile_id)
+        )
+        counted: dict[RecipeProfileId, int] = {}
+        for profile_id, books in await self._rows.session.execute(statement):
+            counted[RecipeProfileId(profile_id)] = int(books)
+        return counted
 
 
 class SqlAlchemyJobRepository(SqlAlchemyRepository[Job, JobId, JobRow], JobRepository):

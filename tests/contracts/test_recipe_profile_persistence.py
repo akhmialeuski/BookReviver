@@ -27,6 +27,7 @@ CLEAN_SCAN_NAME: str = 'Clean flatbed scan'
 FIRST_MINUTE: int = 1
 SECOND_MINUTE: int = 2
 THIRD_MINUTE: int = 3
+BOOKS_OF_A_PROFILE: int = 2
 # The profiles of the account in the test of the defaults: two defaults of two stages and two that are not
 ACCOUNT_PROFILE_COUNT: int = 4
 STRENGTH: str = 'strength'
@@ -310,3 +311,42 @@ class TestRecipeProfileRepository:
         await deleting.recipe_profiles.delete(profile.id)
         await deleting.commit()
         assert (await (await fx_uow_factory()).recipes.get(recipe.id)) == evolve(recipe, profile_id=None)
+
+    async def test_the_books_of_a_profile_are_counted_once_each(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a book with two recipes of a profile counts once, an unused profile has no entry, others are left out.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        used = make_recipe_profile(account_id=owner_id)
+        unused = make_recipe_profile(account_id=owner_id, minutes=FIRST_MINUTE)
+        other = make_recipe_profile(account_id=owner_id, minutes=SECOND_MINUTE)
+        first_book = make_project(owner_id=owner_id)
+        second_book = make_project(owner_id=owner_id, title='Second')
+        recipes = [
+            evolve(make_recipe(project_id=first_book.id, active=True), profile_id=used.id),
+            evolve(make_recipe(project_id=first_book.id, name='Variant'), profile_id=used.id),
+            evolve(make_recipe(project_id=second_book.id, active=True), profile_id=used.id),
+            evolve(make_recipe(project_id=second_book.id, name='Other', stage=Stage.CLEANUP), profile_id=other.id),
+            make_recipe(project_id=second_book.id, name='Unlinked', stage=Stage.PAGE_SPLIT, active=True),
+        ]
+        uow = await fx_uow_factory()
+        await uow.recipe_profiles.add_many([used, unused, other])
+        await uow.projects.add_many([first_book, second_book])
+        await uow.recipes.add_many(recipes)
+        await uow.commit()
+        counted = await (await fx_uow_factory()).recipe_profiles.count_books([used.id, unused.id])
+        assert dict(counted) == {used.id: BOOKS_OF_A_PROFILE}
+
+    async def test_counting_the_books_of_no_profile_gives_nothing(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify an empty request is answered with an empty count rather than an error.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        assert dict(await (await fx_uow_factory()).recipe_profiles.count_books([])) == {}

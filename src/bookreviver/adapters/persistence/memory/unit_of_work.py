@@ -1716,6 +1716,21 @@ class InMemoryRecipeProfileRepository(InMemoryRepository[RecipeProfile, RecipePr
             None,
         )
 
+    @override
+    async def count_books(self, profile_ids: Collection[RecipeProfileId]) -> Mapping[RecipeProfileId, int]:
+        """Count the books that have a recipe made from each of the given profiles.
+
+        :param profile_ids: Profiles to count the books of.
+        :type profile_ids: Collection[RecipeProfileId]
+        :returns: The number of books by profile, which has no entry for a profile that no book uses.
+        :rtype: Mapping[RecipeProfileId, int]
+        """
+        books: dict[RecipeProfileId, set[ProjectId]] = {}
+        for recipe in self._tables.recipes.values():
+            if (profile_id := recipe.profile_id) is not None and profile_id in profile_ids:
+                books.setdefault(profile_id, set()).add(recipe.project_id)
+        return {profile_id: len(projects) for profile_id, projects in books.items()}
+
 
 class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
     """Jobs of every project."""
