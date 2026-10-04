@@ -8,6 +8,7 @@ import {
   canvasSourceOf,
   countFilters,
   isLeftOut,
+  isMarkedBad,
   joinRows,
   needsCheck,
   type StripItem,
@@ -82,7 +83,7 @@ describe('filters', () => {
     [
       row('a'),
       row('b', { status: 'failed' }),
-      row('c', { status: 'stale' }),
+      row('c', { status: 'stale', marked_bad: true }),
       row('d', { review: 'not-applied' }),
     ],
   );
@@ -97,6 +98,15 @@ describe('filters', () => {
       'c',
       'd',
     ]);
+  });
+
+  it('lists the pages whose result is marked bad for Marked bad, whatever else they are', () => {
+    expect(applyFilter(items, PageFilter.Bad).map((item) => item.page.id)).toEqual(['c']);
+    expect(items.map(isMarkedBad)).toEqual([false, false, true, false]);
+  });
+
+  it('marks no page while the rows are loading', () => {
+    expect(isMarkedBad({ page: page('a'), row: undefined })).toBe(false);
   });
 
   it('lists the pages kept out of the book for Left out', () => {
@@ -120,7 +130,7 @@ describe('filters', () => {
   });
 
   it('counts what each filter lists', () => {
-    expect(countFilters(items)).toEqual({ all: 4, check: 3, 'left-out': 1, wide: 0 });
+    expect(countFilters(items)).toEqual({ all: 4, check: 3, bad: 1, 'left-out': 1, wide: 0 });
   });
 });
 

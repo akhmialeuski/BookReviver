@@ -97,6 +97,11 @@ export function needsCheck(item: StripItem): boolean {
   );
 }
 
+/** Tell whether the user marked bad the result the page stands on: of the open step, or of the stage when none is open. */
+export function isMarkedBad(item: StripItem): boolean {
+  return item.row?.marked_bad === true;
+}
+
 /** Tell whether the result of a page was made through some of the steps of its recipe only. */
 function stoppedAt(item: StripItem): number | null {
   const { row } = item;
@@ -136,6 +141,7 @@ export function isWide(item: StripItem): boolean {
 const FILTERS: Readonly<Record<PageFilter, (item: StripItem) => boolean>> = {
   [PageFilter.All]: () => true,
   [PageFilter.Check]: needsCheck,
+  [PageFilter.Bad]: isMarkedBad,
   [PageFilter.LeftOut]: isLeftOut,
   [PageFilter.Wide]: isWide,
 };
@@ -150,6 +156,7 @@ export function countFilters(items: readonly StripItem[]): FilterCounts {
   return {
     [PageFilter.All]: items.length,
     [PageFilter.Check]: items.filter(needsCheck).length,
+    [PageFilter.Bad]: items.filter(isMarkedBad).length,
     [PageFilter.LeftOut]: items.filter(isLeftOut).length,
     [PageFilter.Wide]: items.filter(isWide).length,
   };

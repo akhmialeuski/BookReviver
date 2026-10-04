@@ -5,7 +5,7 @@ import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 
 /**
- * The head of the strip and of the grid: the title with how many pages are listed, the three filters with the
+ * The head of the strip and of the grid: the title with how many pages are listed, the filters with the
  * number each would list, and the switch between the strip and the grid.
  */
 
@@ -63,6 +63,7 @@ export function StripToolbar({
       <div className="flex flex-wrap items-center gap-1">
         {filterButton(PageFilter.All, labels.filters.all)}
         {filterButton(PageFilter.Check, labels.filters.check(counts[PageFilter.Check]))}
+        {filterButton(PageFilter.Bad, labels.filters.bad(counts[PageFilter.Bad]))}
         {filterButton(PageFilter.LeftOut, labels.filters.leftOut(counts[PageFilter.LeftOut]))}
         {withWide
           ? filterButton(PageFilter.Wide, labels.filters.wide(counts[PageFilter.Wide]))

@@ -579,6 +579,7 @@ export const MESSAGES = {
       filters: {
         all: 'All',
         check: (count: number) => `Check ${count}`,
+        bad: (count: number) => `Marked bad ${count}`,
         leftOut: (count: number) => `Left out ${count}`,
         wide: (count: number) => `Wide ${count}`,
       },
@@ -605,9 +606,11 @@ export const MESSAGES = {
         >,
         mark: (type: string, source: string) => `${type} · ${source}`,
       },
+      markedBad: 'Result marked bad',
       empty: {
         all: 'This book has no pages yet.',
         check: 'No page needs a look in this stage.',
+        bad: 'No page has a result marked bad.',
         'left-out': 'No page is left out of the book.',
         wide: 'No scan of this book is wider than tall.',
       } satisfies Record<PageFilter, string>,

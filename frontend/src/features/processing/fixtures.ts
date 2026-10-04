@@ -376,6 +376,7 @@ export function version(id: string, overrides: Partial<PageVersionSchema> = {}):
     state: 'ready',
     scale: 'full',
     edit_hash: '',
+    origin: 'auto',
     tiles_ready: true,
     error: '',
     images: images(`version-${id}`),
