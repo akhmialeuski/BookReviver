@@ -110,24 +110,27 @@ export function setStepParams(
 }
 
 /**
- * Add a step of a processor at the end, with the defaults of its parameter schema.
+ * Add a step of a processor, with the defaults of its parameter schema.
  *
  * @param steps The draft.
  * @param processor The processor of the catalogue to add.
+ * @param index The place of the new step, from zero, which is the end when it is not given.
  */
-export function addStep(steps: readonly StepDraft[], processor: ProcessorSchema): StepDraft[] {
+export function addStep(
+  steps: readonly StepDraft[],
+  processor: ProcessorSchema,
+  index: number = steps.length,
+): StepDraft[] {
   const next = steps.reduce((highest, step) => Math.max(highest, idNumber(step.id)), -1) + 1;
-  return [
-    ...steps,
-    {
-      id: `${ID_PREFIX}${next}`,
-      stepId: null,
-      processorKey: processor.key,
-      params: defaultsOf(formSchemaOf(processor.parameters)),
-      enabled: true,
-      appliesTo: 'all',
-    },
-  ];
+  const added: StepDraft = {
+    id: `${ID_PREFIX}${next}`,
+    stepId: null,
+    processorKey: processor.key,
+    params: defaultsOf(formSchemaOf(processor.parameters)),
+    enabled: true,
+    appliesTo: 'all',
+  };
+  return [...steps.slice(0, index), added, ...steps.slice(index)];
 }
 
 /** Tell whether two JSON values are equal, whatever the order of the keys of the objects in them. */

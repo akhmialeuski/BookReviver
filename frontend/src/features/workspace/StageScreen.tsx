@@ -45,6 +45,8 @@ import { StagePanel } from '@/features/workspace/StagePanel';
 import { StageStrip } from '@/features/workspace/StageStrip';
 import { StageWorkspace } from '@/features/workspace/StageWorkspace';
 import { StepBar } from '@/features/workspace/StepBar';
+import { StepCatalogue } from '@/features/workspace/StepCatalogue';
+import { StepsWindow } from '@/features/workspace/StepsWindow';
 import {
   type ClickModifiers,
   type SelectionState,
@@ -195,6 +197,10 @@ export function StageScreen({
     currentItem,
   );
   const openStep = workspace.open;
+  const stageRows = useMemo(
+    () => items.flatMap((item) => (item.row === undefined ? [] : [item.row])),
+    [items],
+  );
   // The variants of the stage mark its pages and narrow the list to one of them; the choice belongs to one stage
   const [variantPick, setVariantPick] = useState<{ stage: Stage; id: string | null }>({
     stage,
@@ -516,6 +522,16 @@ export function StageScreen({
                 recipeId={processing.recipe?.id}
                 onChooseRecipe={processing.chooseRecipe}
                 onOpen={onStepChange}
+                actions={
+                  <>
+                    <StepCatalogue
+                      processing={processing}
+                      rows={stageRows}
+                      onAdded={onStepChange}
+                    />
+                    <StepsWindow processing={processing} rows={stageRows} />
+                  </>
+                }
               />
             )
           }

@@ -16,6 +16,7 @@ import {
 } from '@/api';
 import {
   activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostMutation,
+  carryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostMutation,
   carryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostMutation,
   chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutMutation,
   createRuleApiV1ProjectsProjectIdStagesStageRulesPostMutation,
@@ -404,6 +405,26 @@ export function useCarryOver(projectId: string, stage: Stage) {
   return useMutation({
     ...carryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostMutation(),
     scope: { id: `page-settings:${projectId}` },
+    onSettled: () =>
+      Promise.all([
+        invalidatePageLayers(queryClient),
+        invalidateStageRows(queryClient, projectId, stage),
+        invalidateStageSummary(queryClient, projectId),
+      ]),
+  });
+}
+
+/**
+ * Carry the shape the open page has set by hand for a step over to other pages, as one batch of the history.
+ *
+ * It shares the mutation scope of the edits of the book, so it reaches the server after the edit of the source page that
+ * was saved just before it. The edits and the histories of every page it reached are read again.
+ */
+export function useCarryShape(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...carryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostMutation(),
+    scope: { id: `page-edits:${projectId}` },
     onSettled: () =>
       Promise.all([
         invalidatePageLayers(queryClient),

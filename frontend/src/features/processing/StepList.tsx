@@ -1,18 +1,4 @@
-import {
-  type Announcements,
-  closestCenter,
-  DndContext,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core';
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
+import { useSortable } from '@dnd-kit/sortable';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -21,11 +7,12 @@ import {
   Trash2Icon,
   TriangleAlertIcon,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import type { AppliesTo, OrderMode, ProcessorSchema } from '@/api';
 import type { OrderIssue } from '@/features/processing/order';
 import { ParamsForm } from '@/features/processing/ParamsForm';
 import { CONDITIONS, type StepDraft } from '@/features/processing/recipe';
+import { OrderNotice, type StepOrder, StepSorter } from '@/features/processing/StepSorter';
 import { fitsSchema, formSchemaOf } from '@/features/processing/schema';
 import type { RunScope, ScopeChoice } from '@/features/processing/scope';
 import { canRunThrough } from '@/features/processing/stepRuns';
@@ -73,50 +60,7 @@ export interface StepRunControl {
   onRun: (index: number, scope: RunScope) => void;
 }
 
-/** What the list needs to mark the steps that are out of their place and to keep a step from a place it cannot work. */
-export interface StepOrder {
-  /** The order the recipe is saved in, which decides whether a place that breaks a required order is refused. */
-  mode: OrderMode;
-  /** The steps that stand off the place their processors ask for, by the identity of the step. */
-  issues: ReadonlyMap<string, readonly OrderIssue[]>;
-  /** The required place that dropping a step on another would break, if any. */
-  refusalOf: (activeId: string, overId: string) => OrderIssue | undefined;
-  /** Put the steps in their usual order. */
-  onRestore: () => void;
-}
-
-/** The place the dragged step is over, when it breaks a required order. */
-interface Hover {
-  overId: string;
-  issue: OrderIssue;
-}
-
-/** The line over the list that says why the place a step is held over is not allowed, or that the free order allows it. */
-export function OrderNotice({
-  mode,
-  issue,
-}: {
-  mode: OrderMode;
-  issue: Pick<OrderIssue, 'reason'>;
-}): React.JSX.Element {
-  return (
-    <p
-      role="alert"
-      className={cn(
-        'mb-2 rounded-md border px-3 py-2 text-xs',
-        mode === 'usual'
-          ? 'border-destructive text-destructive'
-          : 'border-status-attention text-status-attention',
-      )}
-      data-testid="order-refusal"
-      data-mode={mode}
-    >
-      {mode === 'usual'
-        ? labels.drag.refused(issue.reason)
-        : labels.drag.allowedInFree(issue.reason)}
-    </p>
-  );
-}
+export { OrderNotice, type StepOrder };
 
 function StepCard({
   step,
@@ -391,67 +335,12 @@ export function StepList({
   onChange: (id: string, params: Record<string, unknown>) => void;
   onCondition: (id: string, appliesTo: AppliesTo) => void;
 }): React.JSX.Element {
-  const sensors = useSensors(
-    // A press that moves a little is a click on the handle, not the start of a drag
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-  const nameOf = (id: string | number): string => {
-    const step = steps.find((entry) => entry.id === id);
-    return catalogue.find((entry) => entry.key === step?.processorKey)?.title ?? String(id);
-  };
-  const [hover, setHover] = useState<Hover | null>(null);
-  // A step dropped on a place that breaks a required order does not move, unless the order is free
-  const refused = (activeId: string | number, overId: string | number): OrderIssue | undefined =>
-    order?.refusalOf(String(activeId), String(overId));
-  const announcements: Announcements = {
-    onDragStart: ({ active }) => labels.drag.pickedUp(nameOf(active.id)),
-    onDragOver: ({ active, over }) => {
-      if (over === null) {
-        return undefined;
-      }
-      const issue = refused(active.id, over.id);
-      return issue !== undefined && order?.mode === 'usual'
-        ? labels.drag.refused(issue.reason)
-        : labels.drag.over(nameOf(over.id));
-    },
-    onDragEnd: ({ active, over }) =>
-      over !== null && order?.mode === 'usual' && refused(active.id, over.id) !== undefined
-        ? labels.drag.cancelled
-        : labels.drag.dropped(nameOf(active.id)),
-    onDragCancel: () => labels.drag.cancelled,
-  };
-
   if (steps.length === 0) {
     return <p className="text-sm text-muted-foreground">{labels.empty}</p>;
   }
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      accessibility={{
-        announcements,
-        screenReaderInstructions: { draggable: labels.drag.instructions },
-      }}
-      onDragOver={({ active, over }) => {
-        const issue = over === null ? undefined : refused(active.id, over.id);
-        setHover(over === null || issue === undefined ? null : { overId: String(over.id), issue });
-      }}
-      onDragCancel={() => setHover(null)}
-      onDragEnd={({ active, over }) => {
-        setHover(null);
-        if (
-          over !== null &&
-          !(order?.mode === 'usual' && refused(active.id, over.id) !== undefined)
-        ) {
-          onMove(String(active.id), String(over.id));
-        }
-      }}
-    >
-      {hover === null || order === undefined ? null : (
-        <OrderNotice mode={order.mode} issue={hover.issue} />
-      )}
-      <SortableContext items={steps.map((step) => step.id)} strategy={verticalListSortingStrategy}>
+    <StepSorter steps={steps} catalogue={catalogue} order={order} onMove={onMove}>
+      {(hoverOf) => (
         <ol aria-label={labels.title} className="grid grid-cols-1 gap-2" data-testid="recipe-steps">
           {steps.map((step, index) => (
             <StepCard
@@ -465,7 +354,7 @@ export function StepList({
               run={steps.length > 1 ? run : undefined}
               pageValues={pageValuesOf?.(step) ?? NO_PAGE_VALUES}
               issues={order?.issues.get(step.id) ?? []}
-              hover={hover?.overId === step.id ? (order?.mode ?? null) : null}
+              hover={hoverOf(step.id)}
               onRestore={order?.onRestore}
               onOpen={(open) => onOpen(open ? step.id : undefined)}
               onToggle={() => onToggle(step.id)}
@@ -475,7 +364,7 @@ export function StepList({
             />
           ))}
         </ol>
-      </SortableContext>
-    </DndContext>
+      )}
+    </StepSorter>
   );
 }

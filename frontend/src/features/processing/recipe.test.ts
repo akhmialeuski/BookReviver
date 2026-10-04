@@ -134,6 +134,17 @@ describe('addStep', () => {
   it('starts a draft that is empty', () => {
     expect(addStep([], deskew())[0]?.id).toBe('step-0');
   });
+
+  it('puts the step at the place asked for and keeps the steps on either side as they were', () => {
+    const draft = draftOf(TWO_STEPS);
+
+    const added = addStep(draft, deskew(), 1);
+
+    expect(added.map((entry) => entry.id)).toEqual(['step-0', 'step-2', 'step-1']);
+    expect(added[1]).toMatchObject({ processorKey: 'geometry.deskew', stepId: null });
+    expect(added[0]).toBe(draft[0]);
+    expect(added[2]).toBe(draft[1]);
+  });
 });
 
 describe('sameAsSaved', () => {

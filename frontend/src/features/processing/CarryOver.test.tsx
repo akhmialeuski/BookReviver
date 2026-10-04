@@ -9,11 +9,12 @@ import { CarryOver } from '@/features/processing/CarryOver';
  * it did with the pages it skipped, and the undo that takes the whole carry-over back.
  */
 
-const sdk = vi.hoisted(() => ({ carry: vi.fn(), undo: vi.fn() }));
+const sdk = vi.hoisted(() => ({ carry: vi.fn(), shape: vi.fn(), undo: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
   carryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPost: sdk.carry,
+  carryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPost: sdk.shape,
   undoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPost: sdk.undo,
 }));
 
@@ -34,6 +35,7 @@ describe('CarryOver', () => {
   function render(
     selected: ReadonlySet<string> = new Set(['page', 'x', 'y']),
     overwrite = false,
+    name: string | null = 'max_angle',
   ): void {
     act(() =>
       root.render(
@@ -42,8 +44,8 @@ describe('CarryOver', () => {
             processing={{ projectId: 'project', stage: 'geometry' }}
             pageId="page"
             stepId="step"
-            name="max_angle"
-            title="Largest slant"
+            name={name ?? undefined}
+            title={name === null ? 'the shape' : 'Largest slant'}
             selected={selected}
             overwrite={overwrite}
           >
@@ -73,8 +75,10 @@ describe('CarryOver', () => {
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     sdk.carry.mockReset();
+    sdk.shape.mockReset();
     sdk.undo.mockReset();
     sdk.carry.mockResolvedValue({ data: CARRIED });
+    sdk.shape.mockResolvedValue({ data: CARRIED });
     sdk.undo.mockResolvedValue({ data: { changes: [] } });
     container = document.createElement('div');
     document.body.append(container);
@@ -208,5 +212,39 @@ describe('CarryOver', () => {
       'Carried over to 0 pages',
     );
     expect(container.querySelector('[data-testid="carry-undo"]')).toBeNull();
+  });
+
+  describe('with no field named', () => {
+    it('carries the shape set by hand through the route of the edits, naming no field', async () => {
+      render(new Set(['page']), true, null);
+
+      await choose('carry-condition');
+
+      expect(sdk.carry).not.toHaveBeenCalled();
+      expect(sdk.shape).toHaveBeenCalledTimes(1);
+      expect(sdk.shape.mock.calls[0]?.[0]).toMatchObject({
+        path: { project_id: 'project', page_id: 'page', stage: 'geometry', step_id: 'step' },
+        body: { scope: 'condition', overwrite: true },
+      });
+      expect(sdk.shape.mock.calls[0]?.[0].path).not.toHaveProperty('name');
+    });
+
+    it('names the shape on the button and takes the whole batch back with one undo', async () => {
+      render(new Set(['page']), false, null);
+      expect(
+        container.querySelector('[data-testid="carry-menu"]')?.getAttribute('aria-label'),
+      ).toBe('Carry the shape over to other pages');
+
+      await choose('carry-following');
+      await act(async () => {
+        container.querySelector<HTMLElement>('[data-testid="carry-undo"]')?.click();
+      });
+
+      expect(sdk.undo).toHaveBeenCalledTimes(1);
+      expect(sdk.undo.mock.calls[0]?.[0]).toMatchObject({
+        path: { page_id: 'next-1', step_id: 'step' },
+        body: { change_id: 'change-1' },
+      });
+    });
   });
 });

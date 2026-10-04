@@ -10,9 +10,9 @@ import {
   useCreateVariant,
   usePageSettings,
   useRules,
-  useSaveRecipe,
 } from '@/features/processing/queries';
-import { bodyOf, pagesToGoStale } from '@/features/processing/recipe';
+import { RecipeSaveBar } from '@/features/processing/RecipeSaveBar';
+import { bodyOf } from '@/features/processing/recipe';
 import { StepList, type StepRunControl } from '@/features/processing/StepList';
 import { RunScope } from '@/features/processing/scope';
 import { passedPages } from '@/features/processing/stepRuns';
@@ -69,7 +69,6 @@ export function RecipeSection({
   selected?: ReadonlySet<string>;
 }): React.JSX.Element | null {
   const { projectId, stage, recipe, steps, catalogue } = processing;
-  const save = useSaveRecipe(projectId, stage);
   const create = useCreateVariant(projectId, stage);
   const activate = useActivateRecipe(projectId, stage);
   const rules = useRules(projectId, stage, recipe !== undefined);
@@ -87,7 +86,7 @@ export function RecipeSection({
   );
   const installed = new Set(catalogue.map((processor) => processor.key));
   const coming = roadmapOf(stage, installed);
-  const error = save.error ?? create.error ?? activate.error;
+  const error = create.error ?? activate.error;
   const stepRun: StepRunControl | undefined =
     run === undefined
       ? undefined
@@ -279,42 +278,7 @@ export function RecipeSection({
         </ul>
       )}
 
-      {processing.dirty ? (
-        <div className="grid gap-2 rounded-lg border bg-muted/40 p-3" data-testid="recipe-save-bar">
-          <p className="text-sm">{labels.save.unsaved}</p>
-          {pagesToGoStale(rows, recipe.id) > 0 ? (
-            <p className="text-sm text-status-attention" data-testid="recipe-stale-warning">
-              {labels.save.staleWarning(pagesToGoStale(rows, recipe.id))}
-            </p>
-          ) : null}
-          {processing.valid ? null : (
-            <p className="text-sm text-destructive">{labels.steps.outOfLimits}</p>
-          )}
-          {processing.refused.length === 0 ? null : (
-            <p className="text-sm text-destructive" data-testid="recipe-order-blocked">
-              {labels.steps.order.blocked}
-            </p>
-          )}
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              disabled={!processing.valid || processing.refused.length > 0 || save.isPending}
-              data-testid="recipe-save"
-              onClick={() =>
-                save.mutate({
-                  path: { project_id: projectId, stage, recipe_id: recipe.id },
-                  body: { name: recipe.name, steps: bodyOf(steps), order: processing.orderMode },
-                })
-              }
-            >
-              {save.isPending ? labels.save.saving : labels.save.save}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={processing.discard}>
-              {labels.save.discard}
-            </Button>
-          </div>
-        </div>
-      ) : null}
+      <RecipeSaveBar processing={processing} rows={rows} />
       {error === null ? null : <ErrorAlert message={describeError(error)} />}
     </section>
   );
