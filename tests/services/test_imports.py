@@ -22,6 +22,8 @@ from bookreviver.domain.enums import (
     ImagePolicy,
     JobKind,
     JobState,
+    LabelStyle,
+    NumberDisplay,
     PageChange,
     PageOrigin,
     RejectionReason,
@@ -74,6 +76,7 @@ from tests.helpers.fakes_imports import (
     MAX_BYTES,
     MAX_FILES,
     OVERLAP_SECONDS,
+    PAGE_WIDTH_PX,
     ImportRig,
     WorkerCrashError,
     djvu_uploads,
@@ -88,7 +91,7 @@ if TYPE_CHECKING:
 
     from fastapi import UploadFile
 
-    from bookreviver.domain.entities import Job, Page, Project, Scan, Source
+    from bookreviver.domain.entities import Job, Page, PaginationSection, Project, Scan, Source
     from bookreviver.domain.ids import JobId, ProjectId, StorageKey
     from bookreviver.ports.storage import AssetStore
 
@@ -269,6 +272,19 @@ async def _pages(rig: ImportRig, project_id: ProjectId) -> list[Page]:
     :rtype: list[Page]
     """
     return list((await rig.open_uow().pages.list_for_project(project_id, EVERY_SLICE)).items)
+
+
+async def _sections(rig: ImportRig, project_id: ProjectId) -> list[PaginationSection]:
+    """Read the pagination sections of a project as committed, in the order they were made.
+
+    :param rig: Adapters of the import.
+    :type rig: ImportRig
+    :param project_id: Project owning the sections.
+    :type project_id: ProjectId
+    :returns: The sections.
+    :rtype: list[PaginationSection]
+    """
+    return list(await rig.open_uow().pagination_sections.list_for_project(project_id))
 
 
 async def _is_stored(assets: AssetStore, key: StorageKey) -> bool:
@@ -762,7 +778,7 @@ class TestRunImport:
     ) -> None:
         """Verify a PDF with Roman numerals for its preface and Arabic ones after gives its scans and pages those labels.
 
-        An image file carries no labels, so its page stays unnumbered.
+        An image file carries no labels, so its page stays unnumbered, whether it comes before the PDF or after it.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
@@ -783,6 +799,148 @@ class TestRunImport:
         expected = [*ROMAN_THEN_ARABIC_LABELS, '']
         expect([scan.source_label for scan in scans] == expected)
         expect([page.label for page in pages] == expected)
+        assert_expectations()
+
+    async def test_makes_a_pagination_section_of_each_page_label_rule_of_a_pdf(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify the Roman and the Arabic rules become two printed sections that start at the pages the rules do.
+
+        The labels the sections give are the labels of the file, so no page keeps its label as an exception.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        pdf_upload(fx_samples, 'book.pdf', pages=len(ROMAN_THEN_ARABIC_LABELS))
+        labelled = add_page_labels(fx_samples / 'book.pdf', rules=ROMAN_THEN_ARABIC_RULES)
+
+        await _import(fx_rig, fx_owner, fx_project.id, [upload('book.pdf', content=labelled.read_bytes())])
+
+        pages, sections = await _pages(fx_rig, fx_project.id), await _sections(fx_rig, fx_project.id)
+        by_start = {section.first_page_id: section for section in sections}
+        expect(len(sections) == len(ROMAN_THEN_ARABIC_RULES))
+        expect(by_start[pages[0].id].style is LabelStyle.ROMAN_LOWER)
+        expect(by_start[pages[2].id].style is LabelStyle.ARABIC)
+        expect({section.display for section in sections} == {NumberDisplay.PRINTED})
+        expect([page.label_manual for page in pages] == [False] * len(pages))
+        assert_expectations()
+
+    async def test_keeps_a_page_label_no_section_gives_as_an_exception(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify a rule that writes a prefix and no number is a section that does not count, and its labels stay by hand.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        rules = [
+            {'startpage': 0, 'prefix': '', 'style': 'r', 'firstpagenum': 1},
+            {'startpage': 2, 'prefix': '12a', 'style': '', 'firstpagenum': 1},
+        ]
+        pdf_upload(fx_samples, 'book.pdf', pages=len(ROMAN_THEN_ARABIC_LABELS))
+        labelled = add_page_labels(fx_samples / 'book.pdf', rules=rules)
+
+        await _import(fx_rig, fx_owner, fx_project.id, [upload('book.pdf', content=labelled.read_bytes())])
+
+        pages, sections = await _pages(fx_rig, fx_project.id), await _sections(fx_rig, fx_project.id)
+        expect([page.label for page in pages] == ['i', 'ii', '12a', '12a'])
+        expect([page.label_manual for page in pages] == [False, False, True, True])
+        expect(
+            sorted(section.display for section in sections)
+            == sorted([NumberDisplay.PRINTED, NumberDisplay.NOT_COUNTED])
+        )
+        assert_expectations()
+
+    async def test_a_source_without_page_labels_does_not_continue_the_numbering_of_a_labelled_pdf(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify an image that follows a labelled PDF is outside the count, in a section of its own that does not count.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        pdf_upload(fx_samples, 'book.pdf', pages=len(ROMAN_THEN_ARABIC_LABELS))
+        labelled = add_page_labels(fx_samples / 'book.pdf', rules=ROMAN_THEN_ARABIC_RULES)
+        files = [upload('book.pdf', content=labelled.read_bytes()), image_upload(fx_samples, 'plate.jpg')]
+
+        await _import(fx_rig, fx_owner, fx_project.id, files)
+
+        pages, sections = await _pages(fx_rig, fx_project.id), await _sections(fx_rig, fx_project.id)
+        [stopper] = [section for section in sections if section.first_page_id == pages[-1].id]
+        expect([page.label for page in pages] == [*ROMAN_THEN_ARABIC_LABELS, ''])
+        expect(stopper.display is NumberDisplay.NOT_COUNTED)
+        expect(len(sections) == len(ROMAN_THEN_ARABIC_RULES) + 1)
+        assert_expectations()
+
+    async def test_a_book_without_sections_stays_without_them_when_a_source_has_no_page_labels(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify images alone make no section, so the book is numbered when the user adds its first one.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        files = [
+            image_upload(fx_samples, 'cover.jpg'),
+            image_upload(fx_samples, 'plate.jpg', width_px=PAGE_WIDTH_PX + 1),
+        ]
+
+        await _import(fx_rig, fx_owner, fx_project.id, files)
+
+        assert await _sections(fx_rig, fx_project.id) == []
+
+    async def test_a_later_source_with_page_labels_makes_sections_of_its_own(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    ) -> None:
+        """Verify a labelled PDF imported after another one gets its own sections, starting at its own first page.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        """
+        pdf_upload(fx_samples, 'one.pdf', pages=len(ROMAN_THEN_ARABIC_LABELS))
+        first = add_page_labels(fx_samples / 'one.pdf', rules=ROMAN_THEN_ARABIC_RULES)
+        pdf_upload(fx_samples, 'two.pdf', pages=len(ROMAN_THEN_ARABIC_LABELS), width_px=PAGE_WIDTH_PX + 1)
+        second = add_page_labels(fx_samples / 'two.pdf', rules=ROMAN_THEN_ARABIC_RULES)
+
+        await _import(fx_rig, fx_owner, fx_project.id, [upload('one.pdf', content=first.read_bytes())])
+        await _import(fx_rig, fx_owner, fx_project.id, [upload('two.pdf', content=second.read_bytes())])
+
+        pages, sections = await _pages(fx_rig, fx_project.id), await _sections(fx_rig, fx_project.id)
+        starts = {section.first_page_id for section in sections}
+        size = len(ROMAN_THEN_ARABIC_LABELS)
+        expect(len(sections) == 2 * len(ROMAN_THEN_ARABIC_RULES))
+        expect(starts == {pages[0].id, pages[2].id, pages[size].id, pages[size + 2].id})
+        expect([page.label for page in pages] == [*ROMAN_THEN_ARABIC_LABELS, *ROMAN_THEN_ARABIC_LABELS])
         assert_expectations()
 
     async def test_writes_the_renditions_of_every_scan_and_the_base_version_of_every_page(

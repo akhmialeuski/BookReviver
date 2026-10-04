@@ -6,6 +6,9 @@ so one unreadable file never stops the others. The ``PageRasterizer`` writes eac
 its native resolution, in the format the caller chose from the scan's colour and the project's image policy, and the
 ``Tiler`` cuts that image into the tile pyramid and the thumbnail the viewer shows. All three read and write local
 paths handed out by the storage ports.
+
+The ``PageLabelWriter`` is the port of the other direction: it puts the numbering of a book, which the pagination
+sections give, into a file of an output format, as the page labels of a PDF or the page list of an EPUB.
 """
 
 from abc import ABC, abstractmethod
@@ -16,6 +19,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.enums import ColorMode, Rendition, SourceKind
+    from bookreviver.domain.page_label_rules import BookLabeling
     from bookreviver.domain.values import RenditionInfo, SourceAnalysis, UploadedSource
 
 
@@ -144,4 +148,22 @@ class RenditionWriter(ABC):
         :returns: The size of the image and the format of its ``full`` file.
         :rtype: RenditionInfo
         :raises ValueError: If ``full`` is not a format of the ``full`` image.
+        """
+
+
+class PageLabelWriter(ABC):
+    """Writes the numbering of a book into a file of one output format, which keeps what it can of it."""
+
+    @abstractmethod
+    async def write(self, target: Path, labeling: BookLabeling) -> None:
+        """Replace the numbering the file keeps with the numbering of the book.
+
+        A PDF keeps the page label rules, and an EPUB the numbers the pages print, so each format writes its own part
+        of ``labeling`` and ignores the other. Writing again replaces what an earlier write left.
+
+        :param target: The file to change in place, whose pages are the pages of the book, in the same order.
+        :type target: Path
+        :param labeling: The numbering of the pages of the book that are in the output.
+        :type labeling: BookLabeling
+        :raises ValueError: If the numbering names a page the file does not have.
         """

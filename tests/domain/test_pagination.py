@@ -8,6 +8,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.domain.enums import LabelStyle, NumberDisplay, PageKind
+from bookreviver.domain.page_label_rules import PageLabelRule, PrintedNumber
 from bookreviver.domain.pagination import Pagination
 from tests.helpers.builders import make_page, make_project, make_section, new_account_id
 
@@ -338,3 +339,96 @@ class TestPaginationSectionIds:
         section = evolve(make_section(page=pages[0], style=LabelStyle.ROMAN_LOWER), start=ROMAN_LIMIT)
 
         assert _section_ids(pages, section) == [section.id, section.id]
+
+
+class TestLabeling:
+    """Tests for Pagination.labeling()."""
+
+    def test_roman_front_matter_and_arabic_text_are_two_rules(self) -> None:
+        """Verify a book numbered in two sections gives one rule for each, starting at the page its section does."""
+        pages = _book(*[PageKind.TEXT] * 4)
+        preface = make_section(page=pages[0], style=LabelStyle.ROMAN_LOWER)
+        text = make_section(page=pages[2])
+
+        labeling = Pagination([preface, text], pages).labeling()
+
+        expect(
+            list(labeling.rules)
+            == [
+                PageLabelRule(first_index=0, style=LabelStyle.ROMAN_LOWER),
+                PageLabelRule(first_index=2, style=LabelStyle.ARABIC),
+            ]
+        )
+        expect(
+            [(number.index, number.label) for number in labeling.printed] == [(0, 'i'), (1, 'ii'), (2, '1'), (3, '2')]
+        )
+        assert_expectations()
+
+    def test_a_label_by_hand_is_a_rule_of_its_own_and_the_section_goes_on_after_it(self) -> None:
+        """Verify an exception is written as a prefix with no number, and its section resumes at the number it reached."""
+        pages = _book(*[PageKind.TEXT] * 3)
+        pages[1] = evolve(pages[1], label=HAND_WRITTEN, label_manual=True)
+
+        labeling = Pagination([make_section(page=pages[0])], pages).labeling()
+
+        expect(
+            list(labeling.rules)
+            == [
+                PageLabelRule(first_index=0, style=LabelStyle.ARABIC),
+                PageLabelRule(first_index=1, style=LabelStyle.NONE, prefix=HAND_WRITTEN),
+                PageLabelRule(first_index=2, style=LabelStyle.ARABIC, start=3),
+            ]
+        )
+        expect([number.label for number in labeling.printed] == ['1', HAND_WRITTEN, '3'])
+        assert_expectations()
+
+    def test_a_page_kept_out_of_the_book_is_not_in_the_output(self) -> None:
+        """Verify positions count the pages that stay, so a page kept out neither breaks a run nor takes a position."""
+        pages = _book(*[PageKind.TEXT] * 3)
+        pages[1] = evolve(pages[1], included=False)
+
+        labeling = Pagination([make_section(page=pages[0])], pages).labeling()
+
+        expect(list(labeling.rules) == [PageLabelRule(first_index=0, style=LabelStyle.ARABIC)])
+        expect(list(labeling.printed) == [PrintedNumber(index=0, label='1'), PrintedNumber(index=1, label='2')])
+        assert_expectations()
+
+    def test_pages_that_count_without_printing_are_numbered_by_a_rule_and_print_nothing(self) -> None:
+        """Verify a section that counts and does not print gives a rule, and a section that does not count gives none."""
+        pages = _book(*[PageKind.TEXT] * 3)
+        counted = make_section(page=pages[0], style=LabelStyle.ROMAN_LOWER, display=NumberDisplay.COUNTED)
+        silent = make_section(page=pages[2], display=NumberDisplay.NOT_COUNTED)
+
+        labeling = Pagination([counted, silent], pages).labeling()
+
+        expect(
+            list(labeling.rules)
+            == [
+                PageLabelRule(first_index=0, style=LabelStyle.ROMAN_LOWER),
+                PageLabelRule(first_index=2, style=LabelStyle.NONE),
+            ]
+        )
+        expect(list(labeling.printed) == [])
+        assert_expectations()
+
+    def test_a_series_by_kind_interrupts_the_rule_of_the_text_and_the_text_resumes(self) -> None:
+        """Verify plates in the middle of the text are a rule with their prefix, after which the text goes on."""
+        pages = _book(PageKind.TEXT, PageKind.PLATE, PageKind.TEXT)
+        text = make_section(page=pages[0])
+        plates = evolve(make_section(page=pages[0], style=LabelStyle.ROMAN_UPPER, kinds=PLATES), prefix=PLATE_PREFIX)
+
+        labeling = Pagination([text, plates], pages).labeling()
+
+        assert list(labeling.rules) == [
+            PageLabelRule(first_index=0, style=LabelStyle.ARABIC),
+            PageLabelRule(first_index=1, style=LabelStyle.ROMAN_UPPER, prefix=PLATE_PREFIX),
+            PageLabelRule(first_index=2, style=LabelStyle.ARABIC, start=2),
+        ]
+
+    def test_a_book_without_sections_has_one_rule_that_writes_nothing(self) -> None:
+        """Verify every page of a book that is not paginated is covered by an empty label, and nothing is printed."""
+        labeling = Pagination([], _book(*[PageKind.TEXT] * 2)).labeling()
+
+        expect(list(labeling.rules) == [PageLabelRule(first_index=0, style=LabelStyle.NONE)])
+        expect(list(labeling.printed) == [])
+        assert_expectations()

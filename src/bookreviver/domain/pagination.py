@@ -10,6 +10,9 @@ does not move the pages around it.
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from bookreviver.domain.enums import LabelStyle, NumberDisplay
+from bookreviver.domain.page_label_rules import BookLabeling, PageLabelRule, PrintedNumber
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
 
@@ -47,17 +50,42 @@ class Pagination:
         :rtype: dict[PageId, str]
         :raises ValueError: If a section cannot write a number, such as 4000 in Roman numerals.
         """
-        next_number: dict[PaginationSectionId, int] = {}
         labels: dict[PageId, str] = {}
-        for page, governing, started in self._walk():
-            for section in started:
-                next_number[section.id] = section.start
-            computed = ''
-            if page.included and governing is not None and governing.display.counts:
-                computed = governing.label(next_number[governing.id])
-                next_number[governing.id] += 1
+        for page, section, number in self._numbered():
+            computed = section.label(number) if section is not None else ''
             labels[page.id] = page.label if page.label_manual else computed
         return labels
+
+    def labeling(self) -> BookLabeling:
+        """Write the numbering of the pages kept in the book as page label rules and printed numbers.
+
+        The pages kept out of the book are not in the output, so the positions count the pages that stay. A run of
+        pages that follow one another in one section is one rule, and a page with a label written by hand is a rule of
+        its own that writes the label as a prefix, after which its section goes on with a rule that starts at the
+        number it has reached. A page that takes no number, such as one of a section that does not count, has the empty
+        label. A page of a section that counts without printing is numbered by its rule and prints no number.
+
+        :returns: The rules, which start at the first page, and the numbers the pages print.
+        :rtype: BookLabeling
+        """
+        rules: list[PageLabelRule] = []
+        printed: list[PrintedNumber] = []
+        index = -1
+        for page, section, number in self._numbered():
+            if not page.included:
+                continue
+            index += 1
+            style, prefix, value = LabelStyle.NONE, '', 1
+            if page.label_manual and page.label:
+                prefix = page.label
+                printed.append(PrintedNumber(index=index, label=page.label))
+            elif section is not None and section.style is not LabelStyle.NONE:
+                style, prefix, value = section.style, section.prefix, number
+                if section.display is NumberDisplay.PRINTED:
+                    printed.append(PrintedNumber(index=index, label=section.label(number)))
+            if not rules or not rules[-1].continues(index, style=style, prefix=prefix, number=value):
+                rules.append(PageLabelRule(first_index=index, style=style, prefix=prefix, start=value))
+        return BookLabeling(rules=rules, printed=printed)
 
     def section_ids(self) -> dict[PageId, PaginationSectionId | None]:
         """Find the section that governs each page, by the same walk over the book that numbers it.
@@ -91,3 +119,21 @@ class Pagination:
                 else:
                     flow = section
             yield page, series.get(page.kind, flow), started
+
+    def _numbered(self) -> Iterator[tuple[Page, PaginationSection | None, int]]:
+        """Walk the book once, giving every page the section that numbers it and the number it takes there.
+
+        :returns: Iterator over the pages in book order, each with its section and number, or with no section and the
+                  number 0 for a page that takes none: one kept out of the book, one outside every section, and one of
+                  a section that does not count.
+        :rtype: Iterator[tuple[Page, PaginationSection | None, int]]
+        """
+        next_number: dict[PaginationSectionId, int] = {}
+        for page, governing, started in self._walk():
+            for section in started:
+                next_number[section.id] = section.start
+            if page.included and governing is not None and governing.display.counts:
+                yield page, governing, next_number[governing.id]
+                next_number[governing.id] += 1
+            else:
+                yield page, None, 0

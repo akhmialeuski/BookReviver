@@ -71,6 +71,7 @@ from bookreviver.domain.values import (
 from bookreviver.services.base_versions import SPLIT_NONE, BaseVersions
 from bookreviver.services.page_labels import PageLabels
 from bookreviver.services.projects import owned_project
+from bookreviver.services.source_labels import SourceLabels
 from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.steps import StepRun
 
@@ -350,10 +351,21 @@ class ImportRun:
             )
             for scan, order_key in zip(scans, order_keys, strict=True)
         ]
+        # The label rules of the file become sections, and only a label they do not give stays an exception. A source
+        # without rules is kept out of the numbering of a book that has sections, instead of continuing it
+        source_labels = SourceLabels(
+            rules=analysis.label_rules,
+            pages=pages,
+            moment=moment,
+            book_has_sections=bool(await self._uow.pagination_sections.list_for_project(source.project_id)),
+        )
+        pages = source_labels.pages
         await self._record_progress(total=len(scans))
         await self._uow.sources.add(source)
         await self._uow.scans.add_many(scans)
         await self._uow.pages.add_many(pages)
+        if source_labels.sections:
+            await self._uow.pagination_sections.add_many(source_labels.sections)
         # A page without the label of its source takes the number its section gives it
         await self._labels.recompute(source.project_id)
         described = await self._describe_book(analysis.suggestion)
