@@ -936,6 +936,15 @@ class CarryScope(LabeledStrEnum):
     CONDITION = 'condition', 'All pages of the condition of the step'
 
 
+class ResetScope(LabeledStrEnum):
+    """The pages and the steps a reset to the defaults goes over, which are the settings and the edits of the pages."""
+
+    PAGE_STEP = 'page-step', 'This step on this page'
+    PAGE = 'page', 'Every step of the stage on this page'
+    STEP = 'step', 'This step on every page'
+    STAGE = 'stage', 'Every step of the stage on every page'
+
+
 class TransformKind(LabeledStrEnum):
     """Kind of the coordinate transform a processing step applies from its input to its output."""
 

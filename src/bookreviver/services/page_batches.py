@@ -1,9 +1,9 @@
 """One batch of changes to a layer of the state of several pages, which the history takes back in one action.
 
-A run that takes the work of the pages away and a carry-over of a setting to other pages write the same thing: a layer
-of the state of a step on many pages, each change in the history with the same batch and the source that made it. A
-state with neither a setting nor an edit left is deleted. The batch commits nothing and marks no stage stale, which the
-use case that owns the transaction does once the batch is flushed.
+A run that takes the work of the pages away, a carry-over of a setting to other pages and a reset to the defaults write
+the same thing: a layer of the state of a step on many pages, each change in the history with the same batch and the
+source that made it. A state with neither a setting nor an edit left is deleted. The batch commits nothing and marks no
+stage stale, which the use case that owns the transaction does once the batch is flushed.
 """
 
 from typing import TYPE_CHECKING
@@ -46,8 +46,10 @@ class PageBatch:
         self._moment = moment
         self._changes: list[PageStepChange] = []
 
-    async def write(self, state: PageStepState, layer: StepLayer, content: MetadataMap | None) -> bool:
+    async def write(self, state: PageStepState, layer: StepLayer, content: MetadataMap | None) -> PageStepState:
         """Set a layer of the state of a step on a page, storing the state and keeping the change.
+
+        A use case that sets several layers of one state passes each call the state the call before returned.
 
         :param state: The state as it is stored, or an empty one for a page that has none yet.
         :type state: PageStepState
@@ -55,13 +57,14 @@ class PageBatch:
         :type layer: StepLayer
         :param content: The content the layer has from now on, or None to empty it.
         :type content: MetadataMap | None
-        :returns: Whether the layer changed, which is false when it already held the content and nothing is written.
-        :rtype: bool
+        :returns: The state with the layer set, which is ``state`` itself when the layer already held the content and
+                  nothing is written. A state with nothing left is deleted, and is returned empty.
+        :rtype: PageStepState
         :raises ConflictError: For the layer of what the automatic run found, which no state keeps yet.
         """
         changed = state.with_layer(layer, content, self._moment)
         if changed.layer(layer) == state.layer(layer):
-            return False
+            return state
         if changed.is_empty:
             await self._uow.page_step_states.delete(state.key)
         else:
@@ -69,7 +72,7 @@ class PageBatch:
         self._changes.append(
             evolve(PageStepChange.between(state, changed, layer, self._source), batch_id=self.batch_id)
         )
-        return True
+        return changed
 
     async def flush(self) -> Sequence[PageStepChange]:
         """Add the changes of the batch to the history, which numbers them, and forget them.
