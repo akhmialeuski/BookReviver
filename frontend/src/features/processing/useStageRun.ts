@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import type { StageRunBody } from '@/api';
-import { useRunInFlight, useRunStage } from '@/features/processing/queries';
+import type { RunImpactSchema, RunMode, StageRunBody } from '@/api';
+import { useRunImpact, useRunInFlight, useRunStage } from '@/features/processing/queries';
 import {
   describeScope,
   pageIdsFor,
@@ -41,8 +41,11 @@ export interface StageRun {
    *
    * @param scope The pages to run it on.
    * @param throughStep Index in the recipe of the last step to run, or undefined to run through the last step that is on.
+   * @param mode What the run does with the settings and the hand edits of the pages, which is to keep them unless it is
+   * asked to take them away. A mode that takes them away counts the pages that lose work first, and a run that would
+   * take some waits for the answer of the reader.
    */
-  start: (scope: RunScope, throughStep?: number) => void;
+  start: (scope: RunScope, throughStep?: number, mode?: RunMode) => void;
   /**
    * Run the saved recipe over the pages named, up to a step.
    *
@@ -54,6 +57,10 @@ export interface StageRun {
   confirming: boolean;
   confirm: () => void;
   cancel: () => void;
+  /** What a run in a mode that takes work away would take, while it waits for the answer of the reader, or null. */
+  overwriting: RunImpactSchema | null;
+  confirmOverwrite: () => void;
+  cancelOverwrite: () => void;
 }
 
 /**
@@ -74,14 +81,23 @@ export function useStageRun(
   const run = useRunStage(projectId, stage);
   const activeJobs = useActiveJobs(projectId);
   const runInFlight = useRunInFlight(projectId);
+  const impact = useRunImpact();
   const [confirming, setConfirming] = useState<StageRunBody | null>(null);
+  const [overwriting, setOverwriting] = useState<{
+    impact: RunImpactSchema;
+    proceed: () => void;
+  } | null>(null);
   const busy = (activeJobs.data?.length ?? 0) > 0 || runInFlight;
 
   const send = (body: StageRunBody): void =>
     run.mutate({ path: { project_id: projectId, stage }, body });
 
   // Pages are named by identifier, or by null for every page that has an image
-  const begin = (ids: readonly string[] | null, throughStep?: number): void => {
+  const begin = (
+    ids: readonly string[] | null,
+    throughStep?: number,
+    mode: RunMode = 'keep',
+  ): void => {
     if (recipe === undefined) {
       return;
     }
@@ -91,29 +107,52 @@ export function useStageRun(
       ...(recipe.active ? {} : { recipe_id: recipe.id }),
       ...(ids === null ? {} : { page_ids: [...ids] }),
       ...(throughStep === undefined ? {} : { through_step: throughStep }),
+      ...(mode === 'keep' ? {} : { mode }),
     };
     const affected =
       ids === null
         ? items.map((item) => item.page)
         : items.filter((item) => ids.includes(item.page.id)).map((item) => item.page);
-    if (undoesSplit(recipe, affected)) {
-      setConfirming(body);
-    } else {
-      send(body);
+    const proceed = (sent: StageRunBody): void => {
+      if (undoesSplit(recipe, affected)) {
+        setConfirming(sent);
+      } else {
+        send(sent);
+      }
+    };
+    if (mode === 'keep') {
+      proceed(body);
+      return;
     }
+    // A mode that takes work away asks first, with the number of pages it takes it from, unless it takes none
+    impact.mutate(
+      { path: { project_id: projectId, stage }, body },
+      {
+        onSuccess: (counted) => {
+          if (counted.affected === 0) {
+            proceed(body);
+          } else {
+            setOverwriting({
+              impact: counted,
+              proceed: () => proceed({ ...body, confirm_overwrite: true }),
+            });
+          }
+        },
+      },
+    );
   };
 
-  const start = (scope: RunScope, throughStep?: number): void =>
-    begin(pageIdsFor(scope, items, current?.page.id, selected), throughStep);
+  const start = (scope: RunScope, throughStep?: number, mode?: RunMode): void =>
+    begin(pageIdsFor(scope, items, current?.page.id, selected), throughStep, mode);
 
   return {
     choices: scopeChoices(items, current?.page.id, selected),
     describe: (scope, count) => describeScope(scope, count, current?.page.label ?? ''),
-    disabled: recipe === undefined || processing.dirty || run.isPending || busy,
+    disabled: recipe === undefined || processing.dirty || run.isPending || impact.isPending || busy,
     dirty: processing.dirty,
     busy,
     pending: run.isPending,
-    error: run.error,
+    error: run.error ?? impact.error,
     start,
     startPages: begin,
     confirming: confirming !== null,
@@ -124,5 +163,11 @@ export function useStageRun(
       setConfirming(null);
     },
     cancel: () => setConfirming(null),
+    overwriting: overwriting?.impact ?? null,
+    confirmOverwrite: () => {
+      overwriting?.proceed();
+      setOverwriting(null);
+    },
+    cancelOverwrite: () => setOverwriting(null),
   };
 }

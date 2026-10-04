@@ -23,7 +23,7 @@ const SETTINGS_QUERY: keyof typeof sdk =
   'listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGet';
 const EDITS_QUERY: keyof typeof sdk = 'listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGet';
 
-// What an undo changes: the histories, the settings and the edits of the pages
+// What an undo and a carry-over change: the histories, the settings and the edits of the pages
 const UNDONE_QUERIES: ReadonlySet<unknown> = new Set([HISTORY_QUERY, SETTINGS_QUERY, EDITS_QUERY]);
 
 function queryIdOf(key: readonly unknown[]): unknown {
@@ -35,6 +35,16 @@ function queryIdOf(key: readonly unknown[]): unknown {
 export function invalidateHistory(queryClient: QueryClient): Promise<void> {
   return queryClient.invalidateQueries({
     predicate: (query) => queryIdOf(query.queryKey) === HISTORY_QUERY,
+  });
+}
+
+/**
+ * Mark the settings, the edits and the histories of the pages out of date, which a change that reaches several pages
+ * writes to, so the ones on screen are read again.
+ */
+export function invalidatePageLayers(queryClient: QueryClient): Promise<void> {
+  return queryClient.invalidateQueries({
+    predicate: (query) => UNDONE_QUERIES.has(queryIdOf(query.queryKey)),
   });
 }
 
@@ -70,9 +80,7 @@ export function useUndo(projectId: string, stage: Stage) {
     scope: { id: `page-edits:${projectId}` },
     onSettled: () =>
       Promise.all([
-        queryClient.invalidateQueries({
-          predicate: (query) => UNDONE_QUERIES.has(queryIdOf(query.queryKey)),
-        }),
+        invalidatePageLayers(queryClient),
         invalidateStageRows(queryClient, projectId, stage),
         invalidateStageSummary(queryClient, projectId),
       ]),

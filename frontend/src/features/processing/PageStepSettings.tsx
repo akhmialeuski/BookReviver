@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ProcessorSchema } from '@/api';
+import { CarryOver } from '@/features/processing/CarryOver';
 import { ParamsForm } from '@/features/processing/ParamsForm';
 import { changedFields, effectiveParams, showValue } from '@/features/processing/pageSettings';
 import { useResetPageSetting, useSetPageSetting } from '@/features/processing/queries';
@@ -9,6 +10,7 @@ import type { Processing } from '@/features/processing/useProcessing';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
+import { CheckboxField } from '@/shared/ui/checkbox-field';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
@@ -22,12 +24,15 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 
 const labels = MESSAGES.processing.steps.pageSettings;
 
+const NO_PAGES: ReadonlySet<string> = new Set();
+
 export function PageStepSettings({
   processing,
   step,
   processor,
   pageId,
   pageValues,
+  selected = NO_PAGES,
 }: {
   processing: Pick<Processing, 'projectId' | 'stage'>;
   step: StepDraft;
@@ -35,11 +40,14 @@ export function PageStepSettings({
   pageId: string;
   /** The fields the page changes for this step, by name. */
   pageValues: Readonly<Record<string, unknown>>;
+  /** The pages selected in the grid, which a value of the open page can be carried over to. */
+  selected?: ReadonlySet<string>;
 }): React.JSX.Element {
   const { projectId, stage } = processing;
   const set = useSetPageSetting(projectId, stage);
   const reset = useResetPageSetting(projectId, stage);
   const [editing, setEditing] = useState(false);
+  const [overwrite, setOverwrite] = useState(false);
   const effective = useMemo(
     () => effectiveParams(step.params, pageValues),
     [step.params, pageValues],
@@ -89,22 +97,40 @@ export function PageStepSettings({
           {names.map((name) => {
             const title = schema === undefined ? name : fieldTitleOf(schema, name);
             return (
-              <li key={name} className="flex items-center justify-between gap-2 text-sm">
-                <span>{labels.current(title, showValue(pageValues[name]))}</span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-label={labels.takeBack(title)}
-                  disabled={reset.isPending}
-                  data-testid="page-settings-reset"
-                  onClick={() => reset.mutate({ path: { ...path, name } })}
+              <li key={name} className="flex flex-wrap items-start justify-between gap-2 text-sm">
+                <span className="py-1">{labels.current(title, showValue(pageValues[name]))}</span>
+                <CarryOver
+                  processing={processing}
+                  pageId={pageId}
+                  stepId={stepId}
+                  name={name}
+                  title={title}
+                  selected={selected}
+                  overwrite={overwrite}
                 >
-                  {labels.takeBack(title)}
-                </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={labels.takeBack(title)}
+                    disabled={reset.isPending}
+                    data-testid="page-settings-reset"
+                    onClick={() => reset.mutate({ path: { ...path, name } })}
+                  >
+                    {labels.takeBack(title)}
+                  </Button>
+                </CarryOver>
               </li>
             );
           })}
         </ul>
+      )}
+      {names.length === 0 ? null : (
+        <CheckboxField
+          label={labels.carry.overwrite}
+          checked={overwrite}
+          data-testid="carry-overwrite"
+          onChange={(event) => setOverwrite(event.target.checked)}
+        />
       )}
       {processor === undefined ? null : (
         <>

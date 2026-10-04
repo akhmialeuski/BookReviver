@@ -18,6 +18,7 @@ import type {
   ReviewReason,
   RightsStatus,
   RuleCondition,
+  RunMode,
   Script,
   Stage,
   StageStatus,
@@ -1342,6 +1343,20 @@ export const MESSAGES = {
         failed: 'The settings of this page could not be read.',
         saveFirst:
           'Save the recipe first, since a step that is not saved has no settings of a page.',
+        carry: {
+          label: 'Carry over',
+          ofField: (title: string) => `Carry ${title} over to other pages`,
+          following: 'To the following pages',
+          selected: (count: number) => `To the selected pages · ${count}`,
+          condition: 'To all pages of the step',
+          overwrite: 'Also write over pages that have a value of their own',
+          done: (changed: number, skipped: number) =>
+            `Carried over to ${changed} ${pluralize(changed, 'page', 'pages')}` +
+            (skipped === 0
+              ? '.'
+              : `, ${skipped} ${pluralize(skipped, 'page was', 'pages were')} skipped for a value of their own.`),
+          undo: 'Undo the carry-over',
+        },
       },
       pageHistory: {
         title: 'History of this page',
@@ -1429,6 +1444,26 @@ export const MESSAGES = {
       previewSplit: 'A cut of a scan into pages has no preview. Try it on a scan instead.',
       run: 'Run',
       busy: 'Another job of this book is still going.',
+    },
+    modes: {
+      label: 'Pages with work of their own',
+      hint: 'A run keeps the settings and the hand edits of each page. The other two take them away from the pages it goes over, after a warning, and one undo gives them back.',
+      options: {
+        keep: 'Keep hand settings',
+        'replace-hand': 'Replace hand settings',
+        'reset-page-settings': 'Reset page settings',
+      } satisfies Record<RunMode, string>,
+      warning: {
+        title: (mode: RunMode) =>
+          mode === 'replace-hand' ? 'Replace the hand settings?' : 'Reset the page settings?',
+        body: (mode: RunMode, pages: number) =>
+          mode === 'replace-hand'
+            ? `${pages} ${pluralize(pages, 'page loses', 'pages lose')} the shape set by hand on the steps of this run, and the run finds the shape again.`
+            : `${pages} ${pluralize(pages, 'page goes', 'pages go')} back to the settings of the recipe on the steps of this run.`,
+        undo: 'The change is written to the history of each page, and one undo gives it back.',
+        confirm: 'Run anyway',
+        cancel: 'Cancel',
+      },
     },
     scope: {
       menu: 'Run on',

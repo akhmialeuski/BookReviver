@@ -16,6 +16,7 @@ import {
 } from '@/api';
 import {
   activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostMutation,
+  carryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostMutation,
   chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutMutation,
   createRuleApiV1ProjectsProjectIdStagesStageRulesPostMutation,
   createVariantApiV1ProjectsProjectIdStagesStageVariantsPostMutation,
@@ -41,10 +42,11 @@ import {
   putSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutMutation,
   putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation,
   remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostMutation,
+  runImpactApiV1ProjectsProjectIdStagesStageRunImpactPostMutation,
   runStageApiV1ProjectsProjectIdStagesStageRunPostMutation,
   unpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteMutation,
 } from '@/api/@tanstack/react-query.gen';
-import { invalidateHistory } from '@/features/processing/historyQueries';
+import { invalidateHistory, invalidatePageLayers } from '@/features/processing/historyQueries';
 import {
   invalidateJobs,
   invalidateProject,
@@ -388,6 +390,32 @@ export function useResetPageSetting(projectId: string, stage: Stage) {
     onSettled: (_data, _error, variables) =>
       refreshSettings(queryClient, projectId, stage, variables.path.page_id),
   });
+}
+
+/**
+ * Carry the value a page has for a field of a step over to other pages, as one batch, which marks their stages out of
+ * date.
+ *
+ * It shares the mutation scope of the settings of the book, so it reaches the server after the change of the source
+ * page that was made just before it. The settings and the histories of every page it reached are read again.
+ */
+export function useCarryOver(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...carryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostMutation(),
+    scope: { id: `page-settings:${projectId}` },
+    onSettled: () =>
+      Promise.all([
+        invalidatePageLayers(queryClient),
+        invalidateStageRows(queryClient, projectId, stage),
+        invalidateStageSummary(queryClient, projectId),
+      ]),
+  });
+}
+
+/** Count the pages a mode of a run would take work from, which nothing is written for. */
+export function useRunImpact() {
+  return useMutation(runImpactApiV1ProjectsProjectIdStagesStageRunImpactPostMutation());
 }
 
 /** Take the pinned variant off a page, so a run of the stage chooses its variant by the rules again. */

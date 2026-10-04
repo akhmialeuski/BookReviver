@@ -14,11 +14,12 @@ import { joinRows } from '@/features/workspace/strip';
  * The generated client is replaced by a function the test reads, so the body of every run is seen as the server gets it.
  */
 
-const sdk = vi.hoisted(() => ({ run: vi.fn(), jobs: vi.fn(), stages: vi.fn() }));
+const sdk = vi.hoisted(() => ({ run: vi.fn(), impact: vi.fn(), jobs: vi.fn(), stages: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
   runStageApiV1ProjectsProjectIdStagesStageRunPost: sdk.run,
+  runImpactApiV1ProjectsProjectIdStagesStageRunImpactPost: sdk.impact,
   listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
   listStagesApiV1ProjectsProjectIdStagesGet: sdk.stages,
 }));
@@ -95,13 +96,34 @@ describe('RunControls', () => {
     });
   }
 
+  /** Choose what a run does with the pages that have work of their own, in the select above the run. */
+  function chooseMode(mode: string): void {
+    const select = container.querySelector<HTMLSelectElement>('[data-testid="run-mode"]');
+    act(() => {
+      if (select !== null) {
+        select.value = mode;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+  }
+
+  function counts(mode: string, affected: number): void {
+    sdk.impact.mockResolvedValue({
+      data: { mode, pages: 4, hand_pages: affected, settings_pages: affected, affected },
+    });
+  }
+
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     sdk.run.mockReset();
+    sdk.impact.mockReset();
     sdk.jobs.mockReset();
     sdk.stages.mockReset();
     sdk.stages.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 20, pages: 1 } });
     sdk.run.mockResolvedValue({ data: { id: 'job' } });
+    sdk.impact.mockResolvedValue({
+      data: { mode: 'replace-hand', pages: 4, hand_pages: 0, settings_pages: 0, affected: 0 },
+    });
     sdk.jobs.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 20, pages: 1 } });
     container = document.createElement('div');
     document.body.append(container);
@@ -345,6 +367,113 @@ describe('RunControls', () => {
 
       expect(document.body.querySelector('[role="dialog"]')).toBeNull();
       expect(sdk.run.mock.calls[0]?.[0].body).toEqual({});
+    });
+  });
+
+  describe('the mode of a run', () => {
+    it('keeps the work of the pages by default, which sends no mode and asks for no count', async () => {
+      render();
+
+      await choose('all');
+
+      expect(sdk.impact).not.toHaveBeenCalled();
+      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({});
+    });
+
+    it('offers the three modes, the usual one first', () => {
+      render();
+
+      const options = [
+        ...container.querySelectorAll<HTMLOptionElement>('[data-testid="run-mode"] option'),
+      ].map((option) => option.textContent);
+      expect(options).toEqual([
+        'Keep hand settings',
+        'Replace hand settings',
+        'Reset page settings',
+      ]);
+    });
+
+    it('counts the pages a mode takes work from with the pages of the run, before it sends anything', async () => {
+      counts('replace-hand', 3);
+      render();
+      chooseMode('replace-hand');
+
+      await choose('selected');
+
+      expect(sdk.impact.mock.calls[0]?.[0]).toMatchObject({
+        path: { project_id: 'project', stage: 'geometry' },
+        body: { mode: 'replace-hand', page_ids: ['c', 'd'] },
+      });
+      expect(sdk.run).not.toHaveBeenCalled();
+    });
+
+    it('warns with the number of pages that lose their hand settings', async () => {
+      counts('replace-hand', 3);
+      render();
+      chooseMode('replace-hand');
+
+      await choose('all');
+
+      const dialog = document.body.querySelector('[data-testid="overwrite-dialog"]');
+      expect(dialog?.textContent).toContain('Replace the hand settings?');
+      expect(dialog?.querySelector('[data-testid="overwrite-pages"]')?.textContent).toContain(
+        '3 pages lose the shape set by hand',
+      );
+      expect(dialog?.textContent).toContain('one undo gives it back');
+    });
+
+    it('warns with the number of pages that go back to the recipe when the settings are reset', async () => {
+      counts('reset-page-settings', 1);
+      render();
+      chooseMode('reset-page-settings');
+
+      await choose('all');
+
+      expect(document.body.querySelector('[data-testid="overwrite-pages"]')?.textContent).toContain(
+        '1 page goes back to the settings of the recipe',
+      );
+    });
+
+    it('sends the run with the mode and the confirmation once the warning is accepted', async () => {
+      counts('replace-hand', 3);
+      render();
+      chooseMode('replace-hand');
+      await choose('all');
+
+      await act(async () => {
+        document.body.querySelector<HTMLElement>('[data-testid="overwrite-confirm"]')?.click();
+      });
+
+      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({
+        mode: 'replace-hand',
+        confirm_overwrite: true,
+      });
+    });
+
+    it('sends nothing when the warning is declined', async () => {
+      counts('replace-hand', 3);
+      render();
+      chooseMode('replace-hand');
+      await choose('all');
+
+      await act(async () => {
+        const buttons = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"] button')];
+        buttons.find((button) => button.textContent === 'Cancel')?.click();
+      });
+
+      expect(sdk.run).not.toHaveBeenCalled();
+      expect(document.body.querySelector('[data-testid="overwrite-dialog"]')).toBeNull();
+    });
+
+    it('sends the run with the mode and no question when no page has anything to lose', async () => {
+      counts('replace-hand', 0);
+      render();
+      chooseMode('replace-hand');
+
+      await choose('all');
+
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ mode: 'replace-hand' });
     });
   });
 });

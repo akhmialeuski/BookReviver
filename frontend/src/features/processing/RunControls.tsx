@@ -1,4 +1,7 @@
 import { ChevronDownIcon, EyeIcon, LoaderCircleIcon, PlayIcon } from 'lucide-react';
+import { useState } from 'react';
+import type { RunMode } from '@/api';
+import { OverwriteDialog } from '@/features/processing/OverwriteDialog';
 import { troubleOf } from '@/features/processing/scope';
 import { UnsplitDialog, UnsplitQuestion } from '@/features/processing/UnsplitDialog';
 import { PreviewBlock, type Processing } from '@/features/processing/useProcessing';
@@ -27,9 +30,14 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * A run goes by the saved recipe, so while the draft has changes the run waits for them to be saved, and a preview, which
  * goes by the draft, is what to use to try them. A run that would send a scan back to one page asks first, and carries the
  * confirmation the server wants. The pages a run through some of the steps left short of the last say so, by the step.
+ *
+ * The run keeps the settings and the hand edits of the pages. The choice of a mode below the summary makes the next run
+ * replace the hand settings or reset the page settings instead, and such a run says how many pages lose work first.
  */
 
 const labels = MESSAGES.processing;
+
+const RUN_MODES: readonly RunMode[] = ['keep', 'replace-hand', 'reset-page-settings'];
 
 const PREVIEW_BLOCKED: Record<PreviewBlock, string> = {
   [PreviewBlock.NoPage]: labels.footer.previewNoPage,
@@ -51,6 +59,7 @@ export function RunControls({
   const summaries = useStageSummaries(projectId);
   const trouble = troubleOf(items);
   const stopped = summaries.data?.find((entry) => entry.stage === stage)?.stopped ?? [];
+  const [mode, setMode] = useState<RunMode>('keep');
 
   return (
     <div className="grid gap-3">
@@ -89,6 +98,21 @@ export function RunControls({
       ) : run.busy ? (
         <p className="text-xs text-muted-foreground">{labels.footer.busy}</p>
       ) : null}
+      <label className="grid gap-1 text-xs text-muted-foreground" title={labels.modes.hint}>
+        {labels.modes.label}
+        <select
+          data-testid="run-mode"
+          className="h-9 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          value={mode}
+          onChange={(event) => setMode(event.target.value as RunMode)}
+        >
+          {RUN_MODES.map((option) => (
+            <option key={option} value={option}>
+              {labels.modes.options[option]}
+            </option>
+          ))}
+        </select>
+      </label>
       <div className="flex gap-2">
         <Button
           variant={preview.on ? 'secondary' : 'outline'}
@@ -121,7 +145,7 @@ export function RunControls({
                 key={scope}
                 disabled={count === 0}
                 data-testid={`run-${scope}`}
-                onSelect={() => run.start(scope)}
+                onSelect={() => run.start(scope, undefined, mode)}
               >
                 {run.describe(scope, count)}
               </DropdownMenuItem>
@@ -130,6 +154,11 @@ export function RunControls({
         </DropdownMenu>
       </div>
       {run.error === null ? null : <ErrorAlert message={describeError(run.error)} />}
+      <OverwriteDialog
+        impact={run.overwriting}
+        onConfirm={run.confirmOverwrite}
+        onCancel={run.cancelOverwrite}
+      />
       <UnsplitDialog
         question={run.confirming ? UnsplitQuestion.One : null}
         onCancel={run.cancel}
