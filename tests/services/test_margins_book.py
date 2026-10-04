@@ -14,7 +14,7 @@ from PIL import Image
 
 from bookreviver.domain.enums import NormalizeParam, Stage, VersionData
 from bookreviver.domain.geometry import ContentBox, Rect
-from bookreviver.domain.values import NewPageEdit, StageRun
+from bookreviver.domain.values import NewPageEdit, RecipeDraft, StageRun, Step
 from tests.helpers.samples import PAPER, png_bytes, text_page
 from tests.helpers.spreads import book_of, head_of, run_stage, use_recipe
 
@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 NORMALIZE: str = 'geometry.normalize'
+CROP: str = 'geometry.crop'
 SPLIT_NONE: str = 'split.none'
 SHEET_SIZE_PX: tuple[int, int] = (900, 1_200)
 # The size of the text page each block is cut from, and where the block lies on its sheet, for the three pages
@@ -213,4 +214,37 @@ class TestWhatTheUserSetsOnAPage:
         largest = Rect.from_data(versions[LARGEST].data[VersionData.CONTENT_BOX])
         expect(len({size_of(version) for version in versions}) == 1)
         expect(size_of(versions[CHANGED])[0] > largest.width)
+        assert_expectations()
+
+
+class TestMarginsAfterSelectContent:
+    """Tests for Margins with a step before it, with the two steps run as a stage runs them."""
+
+    @staticmethod
+    async def seed_two_steps(kit: ProcessingKit) -> tuple[Actor, Project, list[Page]]:
+        """Seed the book of the sheets with Select content and Margins as the two steps of the Geometry recipe.
+
+        :param kit: What the processing services of the test share.
+        :type kit: ProcessingKit
+        :returns: The actor, the project and the pages in book order.
+        :rtype: tuple[Actor, Project, list[Page]]
+        """
+        actor, project, pages = await seed_book(kit)
+        draft = RecipeDraft(name='frame', steps=[Step(processor_key=CROP), Step(processor_key=NORMALIZE)])
+        await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, draft)
+        return actor, project, pages
+
+    async def test_a_step_before_margins_does_not_take_the_size_of_the_book(self, fx_cv_kit: ProcessingKit) -> None:
+        """Verify the size by the book is laid over Margins alone, so the step before it runs and the pages share a size.
+
+        The step before Margins has no field for a page size, and a run that laid the size over it would fail.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project, pages = await TestMarginsAfterSelectContent.seed_two_steps(fx_cv_kit)
+        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        versions = [await margins_of(fx_cv_kit, page) for page in pages]
+        expect(all(version.processor.key == NORMALIZE for version in versions))
+        expect(len({size_of(version) for version in versions}) == 1)
         assert_expectations()

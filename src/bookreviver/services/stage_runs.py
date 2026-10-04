@@ -448,7 +448,11 @@ class StageWork:
         # of the version hashes the parameters the step runs with, and two pages that end up with equal ones share it.
         # A version that is made again ran with the parameters it stored, which already hold the settings of its time
         # and the size of the book it had then
-        base = step.params if not source.book or expected is not None else {**step.params, **source.book}
+        base = (
+            {**step.params, **source.book}
+            if source.book and expected is None and step.processor_key == NORMALIZE_KEY
+            else step.params
+        )
         laid = base if state is None or expected is not None else state.apply_to(base)
         checked = processor.validate_params(laid)
         params = {} if skipped else checked
