@@ -480,7 +480,9 @@ class TestShapeSetByHand:
         await fx_kit.edits().save(actor, project.id, keys[SOURCE_INDEX], SHAPE, None)
         await fx_kit.edits().save(actor, project.id, keys[2], OWN_SHAPE, None)
         carried = await carry_over(fx_kit).carry(actor, project.id, shape_of(keys[SOURCE_INDEX], overwrite=True))
-        undone = await fx_kit.page_history().undo(actor, project.id, keys[3], carried.changes[0].id)
+        # The undo is asked on the last page, so it names the change written there
+        last = next(change for change in carried.changes if change.page_id == pages[3].id)
+        undone = await fx_kit.page_history().undo(actor, project.id, keys[3], last.id)
         expect(sorted(undo.page_id for undo in undone) == sorted(page.id for page in pages[2:]))
         expect([await angle_of(fx_kit, key) for key in keys] == [None, SHAPE_ANGLE, OWN_ANGLE, None])
         assert_expectations()
