@@ -3,6 +3,9 @@ import {
   beforeSourceOf,
   clampDivider,
   clipWidth,
+  innerRect,
+  placementOf,
+  Side,
   SourceKind,
   sourceOfPreview,
   sourceOfResult,
@@ -104,5 +107,120 @@ describe('clampDivider', () => {
     expect(clampDivider(-1)).toBe(0.02);
     expect(clampDivider(2)).toBe(0.98);
     expect(clampDivider(0.4)).toBe(0.4);
+  });
+});
+
+describe('placementOf', () => {
+  const none = { quad: null, angle: null, mesh_key: null };
+  // A block of 1276 by 2645 pixels that the margins put on a page of 1600 by 2800, 162 pixels from the left and 60 from the top
+  const block = version('block', { data: { width_px: 1276, height_px: 2645 } });
+  const margins = (overrides: Partial<Parameters<typeof version>[1]> = {}) =>
+    version('page', {
+      transform: { kind: 'place', ...none, matrix: [1, 0, 162, 0, 1, 60, 0, 0, 1] },
+      data: { width_px: 1600, height_px: 2800, source_width_px: 1600, source_height_px: 2800 },
+      ...overrides,
+    });
+
+  it('draws the page of the margins whole, and the block inside it where the matrix puts it', () => {
+    const placement = placementOf(margins(), block);
+
+    expect(placement?.base).toBe(Side.After);
+    expect(placement?.left).toBeCloseTo(162 / 1600);
+    expect(placement?.top).toBeCloseTo(60 / 2800);
+    expect(placement?.width).toBeCloseTo(1276 / 1600);
+    expect(placement?.height).toBeCloseTo(2645 / 2800);
+  });
+
+  it('follows the scale of the matrix, so a block that is shrunk lies smaller on the page', () => {
+    const shrunk = margins({
+      transform: { kind: 'place', ...none, matrix: [0.5, 0, 100, 0, 0.5, 200, 0, 0, 1] },
+    });
+    const placement = placementOf(shrunk, block);
+
+    expect(placement?.width).toBeCloseTo(638 / 1600);
+    expect(placement?.height).toBeCloseTo(1322.5 / 2800);
+    expect(placement?.top).toBeCloseTo(200 / 2800);
+  });
+
+  it('counts a preview of the margins in the pixels of the shrunk page, which the size of the full page gives', () => {
+    const preview = margins({
+      scale: 'preview',
+      transform: { kind: 'place', ...none, matrix: [1, 0, 81, 0, 1, 30, 0, 0, 1] },
+      data: { width_px: 800, height_px: 1400, source_width_px: 1600, source_height_px: 2800 },
+    });
+    const placement = placementOf(preview, block);
+
+    expect(placement?.left).toBeCloseTo(81 / 800);
+    expect(placement?.width).toBeCloseTo((1276 * 0.5) / 800);
+    expect(placement?.height).toBeCloseTo((2645 * 0.5) / 1400);
+  });
+
+  it('draws the input whole and the result inside it for a page that an old crop cut out', () => {
+    // Cut at 237 from the left and 150 from the top, from a page of 1695 by 2795 pixels
+    const cut = version('cut', {
+      transform: { kind: 'crop', ...none, matrix: [1, 0, -237, 0, 1, -150, 0, 0, 1] },
+      data: { width_px: 1277, height_px: 2645 },
+    });
+    const placement = placementOf(
+      cut,
+      version('page', { data: { width_px: 1695, height_px: 2795 } }),
+    );
+
+    expect(placement?.base).toBe(Side.Before);
+    expect(placement?.left).toBeCloseTo(237 / 1695);
+    expect(placement?.top).toBeCloseTo(150 / 2795);
+    expect(placement?.width).toBeCloseTo(1277 / 1695);
+    expect(placement?.height).toBeCloseTo(2645 / 2795);
+  });
+
+  it('gives no place to a result of the size of its input, so both are drawn as tall as each other', () => {
+    const same = version('same', {
+      transform: { kind: 'crop', ...none, matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] },
+      data: { width_px: 1695, height_px: 2795 },
+    });
+
+    expect(
+      placementOf(same, version('page', { data: { width_px: 1695, height_px: 2795 } })),
+    ).toBeNull();
+    expect(
+      placementOf(
+        version('identity', { transform: { kind: 'identity', ...none, matrix: null } }),
+        block,
+      ),
+    ).toBeNull();
+  });
+
+  it('gives no place to a turn, a bend or a version without what the matrix needs', () => {
+    const turned = version('turned', {
+      transform: { kind: 'rotate', ...none, angle: 1.5, matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] },
+      data: { width_px: 1600, height_px: 2800 },
+    });
+    const sheared = margins({
+      transform: { kind: 'place', ...none, matrix: [1, 0.2, 162, 0, 1, 60, 0, 0, 1] },
+    });
+
+    expect(placementOf(turned, block)).toBeNull();
+    expect(placementOf(sheared, block)).toBeNull();
+    expect(placementOf(margins(), version('blank'))).toBeNull();
+    expect(placementOf(margins(), null)).toBeNull();
+    expect(placementOf(null, block)).toBeNull();
+    // A preview of a step that does not record the size of the full page has no ratio to count by
+    expect(
+      placementOf(margins({ scale: 'preview', data: { width_px: 800, height_px: 1400 } }), block),
+    ).toBeNull();
+  });
+});
+
+describe('innerRect', () => {
+  it('turns the shares of the base picture into a rectangle of the world', () => {
+    const rect = innerRect(
+      { base: Side.After, left: 0.1, top: 0.05, width: 0.8, height: 0.9 },
+      { x: 0, y: 0, width: 0.6, height: 1 },
+    );
+
+    expect(rect.x).toBeCloseTo(0.06);
+    expect(rect.y).toBeCloseTo(0.05);
+    expect(rect.width).toBeCloseTo(0.48);
+    expect(rect.height).toBeCloseTo(0.9);
   });
 });
