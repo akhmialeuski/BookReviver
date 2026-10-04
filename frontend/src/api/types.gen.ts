@@ -1305,7 +1305,7 @@ export type PageEditSchema = {
  *
  * Which pages the strip and the grid of a stage list.
  */
-export type PageFilter = 'all' | 'check' | 'left-out' | 'wide';
+export type PageFilter = 'all' | 'check' | 'bad' | 'left-out' | 'wide';
 
 /**
  * PageKind
@@ -1662,6 +1662,7 @@ export type PageUpdate = {
  * :ivar state: Where the version is in its life cycle.
  * :ivar scale: Whether the step ran on the full image or on a preview.
  * :ivar edit_hash: Hash of the manual edit the step read, or empty.
+ * :ivar origin: How the result came about: made by the step, or set by hand through a manual edit.
  * :ivar tiles_ready: Whether the tile pyramid is cut, which a client asks for when it is not.
  * :ivar error: Why the version failed, or empty.
  * :ivar images: Paths of the images of a ready full run that has an image, or None.
@@ -1708,6 +1709,7 @@ export type PageVersionSchema = {
      * Edit Hash
      */
     edit_hash: string;
+    origin: VersionOrigin;
     /**
      * Tiles Ready
      */
@@ -3542,6 +3544,8 @@ export type Stage = 'import' | 'page-split' | 'page-order' | 'geometry' | 'clean
  * that is on, so the page is not ready for the next stage, or None.
  * :ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.
  * :ivar step: The page at the step the list was asked for, or None for a list of the stage alone.
+ * :ivar marked_bad: Whether the user marked bad the result the row stands on: the version of the step the list was
+ * asked for, else the current version of the stage.
  */
 export type StagePageSchema = {
     /**
@@ -3568,6 +3572,10 @@ export type StagePageSchema = {
      */
     review_processor: string | null;
     step: StepPageSchema | null;
+    /**
+     * Marked Bad
+     */
+    marked_bad: boolean;
 };
 
 /**
@@ -3991,6 +3999,13 @@ export type VariantPagesSchema = {
      */
     pages: number;
 };
+
+/**
+ * VersionOrigin
+ *
+ * How a result, a page version, came about, which a version tells from the inputs it was made from.
+ */
+export type VersionOrigin = 'auto' | 'hand';
 
 /**
  * VersionOutput
@@ -6173,9 +6188,17 @@ export type ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData = {
          */
         stage?: Stage | null;
         /**
+         * Step
+         */
+        step?: string | null;
+        /**
          * Scale
          */
         scale?: VersionScale | null;
+        /**
+         * Mark
+         */
+        mark?: ResultMark | null;
     };
     url: '/api/v1/projects/{project_id}/pages/{page_id}/versions';
 };

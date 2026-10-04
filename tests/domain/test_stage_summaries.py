@@ -12,6 +12,7 @@ from bookreviver.domain.entities import Recipe
 from bookreviver.domain.enums import (
     FigureState,
     PageStageStatus,
+    ResultMark,
     ReviewReason,
     Stage,
     StageState,
@@ -496,3 +497,34 @@ class TestStageManual:
     def test_only_the_import_and_the_page_order_are_done_by_hand(self) -> None:
         """Verify the stages that need no processor are the two the interface lets the user do alone."""
         assert {stage for stage in Stage if stage.manual} == {Stage.IMPORT, Stage.PAGE_ORDER}
+
+
+class TestStageRowMarkedBad:
+    """Tests for StageRow.marked_bad."""
+
+    BAD: PageVersion = evolve(make_page_version(page_id=PageId(uuid4())), mark=ResultMark.BAD)
+    GOOD: PageVersion = evolve(make_page_version(page_id=PageId(uuid4())), mark=ResultMark.GOOD)
+
+    def test_a_row_of_the_stage_stands_on_the_current_version(self) -> None:
+        """Verify the flag is set by a bad current version only, not by a good one or by none."""
+        page_id = PageId(uuid4())
+        expect(StageRow(page_id=page_id, head_version=self.BAD).marked_bad)
+        expect(not StageRow(page_id=page_id, head_version=self.GOOD).marked_bad)
+        expect(not StageRow(page_id=page_id).marked_bad)
+        assert_expectations()
+
+    def test_a_row_at_a_step_stands_on_the_version_of_the_step(self) -> None:
+        """Verify the version at the step decides, whatever the current version of the stage carries."""
+        page_id = PageId(uuid4())
+        step_id = Step(processor_key=DESKEW_KEY).step_id
+        marked_at_step = StageRow(
+            page_id=page_id, head_version=self.GOOD, step=StepRow(step_id=step_id, version=self.BAD)
+        )
+        marked_at_head = StageRow(
+            page_id=page_id, head_version=self.BAD, step=StepRow(step_id=step_id, version=self.GOOD)
+        )
+        not_reached = StageRow(page_id=page_id, head_version=self.BAD, step=StepRow(step_id=step_id))
+        expect(marked_at_step.marked_bad)
+        expect(not marked_at_head.marked_bad)
+        expect(not not_reached.marked_bad)
+        assert_expectations()

@@ -128,7 +128,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import QueryableAttribute
 
     from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
-    from bookreviver.domain.enums import JobState
+    from bookreviver.domain.enums import JobState, ResultMark
     from bookreviver.domain.ids import AccountId, ChangeBatchId, StepId
     from bookreviver.domain.values import SliceRequest
 
@@ -1024,9 +1024,14 @@ class SqlAlchemyPageVersionRepository(
 
     @override
     async def list_for_stage(
-        self, page_id: PageId, stage: Stage | None, scale: VersionScale | None, request: SliceRequest
+        self,
+        page_id: PageId,
+        stage: Stage | None,
+        scale: VersionScale | None,
+        request: SliceRequest,
+        mark: ResultMark | None = None,
     ) -> Slice[PageVersion]:
-        """Return a window of the versions of one page matching a stage and a scale, the earliest first.
+        """Return a window of the versions of one page matching a stage, a scale and a mark, the earliest first.
 
         :param page_id: Page owning the versions.
         :type page_id: PageId
@@ -1036,6 +1041,8 @@ class SqlAlchemyPageVersionRepository(
         :type scale: VersionScale | None
         :param request: Offset and limit of the window.
         :type request: SliceRequest
+        :param mark: Mark listed, or None for every version, marked or not.
+        :type mark: ResultMark | None
         :returns: The window and the number of versions that match.
         :rtype: Slice[PageVersion]
         """
@@ -1044,6 +1051,8 @@ class SqlAlchemyPageVersionRepository(
             filters['stage'] = stage
         if scale is not None:
             filters['scale'] = scale
+        if mark is not None:
+            filters['mark'] = mark
         rows, total = await self._rows.get_many_and_count(
             LimitOffset(limit=request.limit, offset=request.offset),
             order_by=[PageVersionRow.created_at.asc(), PageVersionRow.id.asc()],

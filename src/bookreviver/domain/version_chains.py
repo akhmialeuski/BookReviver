@@ -13,8 +13,9 @@ The rule is the same for every adapter of the persistence ports, so it is writte
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Mapping
+    from collections.abc import Collection, Mapping, Sequence
 
+    from bookreviver.domain.entities import PageVersion
     from bookreviver.domain.ids import PageVersionId
 
 
@@ -46,3 +47,30 @@ def collectable_versions(
         if (input_id := inputs.get(version_id)) is not None:
             stays.append(input_id)
     return may_go - reached
+
+
+def stage_depths(versions: Sequence[PageVersion]) -> dict[PageVersionId, int]:
+    """Count, for each version, how many versions of its own stage it reads, directly or through the chain.
+
+    A run makes one version for each step that is on and each reads the one before, so the depth of a version is the
+    place of its step in the chain of the stage. The first step reads a version of an earlier stage, or none, which
+    does not count.
+
+    :param versions: The versions of one page, of every stage.
+    :type versions: Sequence[PageVersion]
+    :returns: The depth of every version, from zero, by its identifier.
+    :rtype: dict[PageVersionId, int]
+    """
+    by_id = {version.id: version for version in versions}
+    depths: dict[PageVersionId, int] = {}
+    for version in versions:
+        depth = 0
+        cursor = version
+        while cursor.input_id is not None:
+            earlier = by_id.get(cursor.input_id)
+            if earlier is None or earlier.stage is not version.stage:
+                break
+            depth += 1
+            cursor = earlier
+        depths[version.id] = depth
+    return depths

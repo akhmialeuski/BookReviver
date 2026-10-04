@@ -727,6 +727,7 @@ class PageFilter(LabeledStrEnum):
 
     ALL = 'all', 'All pages'
     CHECK = 'check', 'Pages to check'
+    BAD = 'bad', 'Pages whose result is marked bad'
     LEFT_OUT = 'left-out', 'Pages left out of the book'
     WIDE = 'wide', 'Pages cut from a wide scan'
 
@@ -890,6 +891,13 @@ class ResultMark(LabeledStrEnum):
 
     GOOD = 'good', 'Good'
     BAD = 'bad', 'Bad'
+
+
+class VersionOrigin(LabeledStrEnum):
+    """How a result, a page version, came about, which a version tells from the inputs it was made from."""
+
+    AUTO = 'auto', 'Made by the step'
+    HAND = 'hand', 'Set by hand'
 
 
 class ProcessorScope(LabeledStrEnum):

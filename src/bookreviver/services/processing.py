@@ -20,8 +20,9 @@ import contextlib
 from typing import TYPE_CHECKING
 
 from bookreviver.domain.enums import JobKind, OrderMode, ProcessorScope, RunMode, Stage, VersionScale, VersionState
-from bookreviver.domain.errors import ConflictError, NotFoundError
+from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.values import PageStageKey, Slice, StageRun, StepPreview, TileCut
+from bookreviver.domain.version_chains import stage_depths
 from bookreviver.services.processing_parts import PROJECT_BUSY
 from bookreviver.services.projects import owned_project
 from bookreviver.services.run_plans import RunPlan
@@ -49,6 +50,7 @@ NO_IMAGE: str = 'The version {version_id} has no image.'
 NEEDS_CONFIRMATION: str = (
     'The mode {mode} takes the work of {pages} pages away, which the run does only when it is confirmed.'
 )
+STEP_NEEDS_STAGE: str = 'The versions of a step are listed with the stage of the step.'
 NO_STEP_TO_RUN_THROUGH: str = (
     'Step {index} of the recipe {name} does not exist, or it and every step before it are switched off.'
 )
@@ -418,7 +420,12 @@ class ProcessingService:
         version_filter: VersionFilter,
         request: SliceRequest,
     ) -> Slice[PageVersion]:
-        """List the versions of a page, the earliest first, of one stage and one scale or of all.
+        """List the versions of a page, the earliest first, of one stage, step, scale and mark or of all.
+
+        The versions of a step are the ones its place in a recipe of the stage gives: every step that is on stores one
+        version that reads the one before, so a version belongs to the step whose processor made it and whose place
+        among the steps that are on is the number of versions of its stage the version reads. A step that is switched
+        off in every recipe has none.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -426,19 +433,47 @@ class ProcessingService:
         :type project_id: ProjectId
         :param page_id: Identifier of the page.
         :type page_id: PageId
-        :param version_filter: The stage and the scale to list, each of them or all.
+        :param version_filter: The stage, the step, the scale and the mark to list, each of them or all.
         :type version_filter: VersionFilter
         :param request: Offset and limit of the window.
         :type request: SliceRequest
         :returns: The versions of the window and the number of all that match.
         :rtype: Slice[PageVersion]
-        :raises NotFoundError: If the actor has no such project, or the project has no such page.
+        :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the
+                               stage has the step.
+        :raises InvalidParametersError: If a step is asked for without its stage.
         """
         await owned_project(self._uow.projects, actor, project_id)
         await self._page(project_id, page_id)
-        return await self._uow.page_versions.list_for_stage(
-            page_id, version_filter.stage, version_filter.scale, request
-        )
+        step_id = version_filter.step_id
+        if step_id is None:
+            return await self._uow.page_versions.list_for_stage(
+                page_id, version_filter.stage, version_filter.scale, request, version_filter.mark
+            )
+        if version_filter.stage is None:
+            raise InvalidParametersError(STEP_NEEDS_STAGE)
+        holders = [
+            (recipe, step)
+            for recipe in await self._uow.recipes.list_for_stage(project_id, version_filter.stage)
+            for step in recipe.steps
+            if step.step_id == step_id
+        ]
+        if not holders:
+            raise NotFoundError(step_id)
+        places = {
+            (step.processor_key, place) for recipe, step in holders if (place := recipe.place_of(step_id)) is not None
+        }
+        found = await self._uow.page_versions.list_for_page(page_id)
+        depths = stage_depths(found)
+        matching = [
+            version
+            for version in found
+            if version.stage is version_filter.stage
+            and (version.processor.key, depths[version.id]) in places
+            and (version_filter.scale is None or version.scale is version_filter.scale)
+            and (version_filter.mark is None or version.mark is version_filter.mark)
+        ]
+        return Slice(items=matching[request.offset : request.offset + request.limit], total=len(matching))
 
     async def version(
         self, actor: Actor, project_id: ProjectId, page_id: PageId, version_id: PageVersionId

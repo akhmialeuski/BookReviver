@@ -130,6 +130,8 @@ class StagePageSchema(ResponseModel):
                         that is on, so the page is not ready for the next stage, or None.
     :ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.
     :ivar step: The page at the step the list was asked for, or None for a list of the stage alone.
+    :ivar marked_bad: Whether the user marked bad the result the row stands on: the version of the step the list was
+                      asked for, else the current version of the stage.
     """
 
     page_id: PageId
@@ -141,6 +143,7 @@ class StagePageSchema(ResponseModel):
     through_step: int | None
     review_processor: str | None
     step: StepPageSchema | None
+    marked_bad: bool
 
     @classmethod
     def of(cls, row: StageRow, project_id: ProjectId, request: Request) -> Self:
@@ -166,6 +169,7 @@ class StagePageSchema(ResponseModel):
             through_step=row.through_step,
             review_processor=row.review_processor,
             step=None if row.step is None else StepPageSchema.of(row.step, project_id, request),
+            marked_bad=row.marked_bad,
         )
 
 

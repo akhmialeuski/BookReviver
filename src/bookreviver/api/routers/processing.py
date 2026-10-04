@@ -500,12 +500,15 @@ async def list_versions(
     request: Request,
     processing: FromDishka[ProcessingService],
 ) -> Page[PageVersionSchema]:
-    """List the versions of a page, the earliest first, of one stage and one scale or of all.
+    """List the versions of a page, the earliest first, of one stage, step, scale and mark or of all.
+
+    With ``step`` the list holds the results of that step of the stage on the page, which needs ``stage``; a step no
+    recipe of the stage has is a 404. With ``mark`` it holds the versions carrying that mark only.
 
     \N{FORM FEED}
     :param address: Identifiers of the project and of the page.
     :type address: PagePath
-    :param query: Page number and size, and the stage and the scale to list.
+    :param query: Page number and size, and the stage, the step, the scale and the mark to list.
     :type query: VersionQuery
     :param actor: The signed-in account.
     :type actor: Actor

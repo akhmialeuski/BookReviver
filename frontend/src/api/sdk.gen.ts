@@ -619,7 +619,10 @@ export const unpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDelete = <
 /**
  * List Versions
  *
- * List the versions of a page, the earliest first, of one stage and one scale or of all.
+ * List the versions of a page, the earliest first, of one stage, step, scale and mark or of all.
+ *
+ * With ``step`` the list holds the results of that step of the stage on the page, which needs ``stage``; a step no
+ * recipe of the stage has is a 404. With ``mark`` it holds the versions carrying that mark only.
  */
 export const listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet = <ThrowOnError extends boolean = false>(options: Options<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData, ThrowOnError>): RequestResult<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponses, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetErrors, ThrowOnError> => (options.client ?? client).get<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponses, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetErrors, ThrowOnError>({ url: '/api/v1/projects/{project_id}/pages/{page_id}/versions', ...options });
 

@@ -28,6 +28,7 @@ from bookreviver.domain.enums import (
     Stage,
     StepField,
     StepLayer,
+    VersionOrigin,
     VersionScale,
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
@@ -184,6 +185,17 @@ class TestPageVersion:
         """Verify the inputs of the step, which the identifier hashes, have no place for a mark or a comment."""
         inputs = {field.name for field in fields(VersionInputs)}
         assert not inputs & {'mark', 'comment'}
+
+    def test_a_version_is_set_by_hand_only_when_its_step_read_a_manual_edit(self) -> None:
+        """Verify the origin follows the hash of the manual edit and nothing else."""
+        version = make_page_version(page_id=PageId(uuid4()))
+        expect(version.origin is VersionOrigin.AUTO)
+        expect(evolve(version, edit_hash='0123456789abcdef').origin is VersionOrigin.HAND)
+        expect(
+            [(origin.value, origin.label) for origin in VersionOrigin]
+            == [('auto', 'Made by the step'), ('hand', 'Set by hand')]
+        )
+        assert_expectations()
 
     def test_mark_has_a_value_and_a_label_for_each_judgement(self) -> None:
         """Verify the values stored and sent over the API, and the labels the interface can show."""
@@ -378,6 +390,14 @@ class TestRecipe:
         expect(recipe.indexed_steps_through(1) == ((0, self.ON),))
         expect(recipe.indexed_steps_through(9) == ((0, self.ON), (2, self.ON)))
         expect(self.recipe_of(self.OFF, self.ON).indexed_steps_through(0) == ())
+        assert_expectations()
+
+    def test_the_place_of_a_step_counts_the_steps_that_are_on_before_it(self) -> None:
+        """Verify a step that is off, and a step the recipe does not have, have no place."""
+        later = Step(processor_key='geometry.later')
+        recipe = self.recipe_of(self.OFF, self.ON, later)
+        expect([recipe.place_of(step.step_id) for step in recipe.steps] == [None, 0, 1])
+        expect(recipe.place_of(Step(processor_key='geometry.other').step_id) is None)
         assert_expectations()
 
     def test_a_run_stops_short_only_when_a_step_that_is_on_is_left(self) -> None:

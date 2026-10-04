@@ -27,6 +27,7 @@ from bookreviver.domain.enums import (
     RuleCondition,
     StageState,
     StepLayer,
+    VersionOrigin,
     VersionScale,
     VersionState,
     ViewMode,
@@ -550,6 +551,11 @@ class PageVersion:
         """
         return self.files_removed_at is not None
 
+    @property
+    def origin(self) -> VersionOrigin:
+        """How the result came about: set by hand when the step read a manual edit, else made by the step itself."""
+        return VersionOrigin.HAND if self.edit_hash else VersionOrigin.AUTO
+
     def __attrs_post_init__(self) -> None:
         """Check the identifier and the renditions, which place the version's files in storage.
 
@@ -666,6 +672,19 @@ class Recipe:
     def enabled_steps(self) -> tuple[Step, ...]:
         """The steps a run and a preview run, in order, which leaves out the ones switched off."""
         return tuple(step for step in self.steps if step.enabled)
+
+    def place_of(self, step_id: StepId) -> int | None:
+        """Give the place of a step among the steps that are on, which is where its version stands in a chain.
+
+        Every step that is on stores one version that reads the one before it, so the place of a step in the chain of a
+        page is the number of steps that are on before it.
+
+        :param step_id: The step.
+        :type step_id: StepId
+        :returns: The place, from zero, or None when the recipe has no such step or has it switched off.
+        :rtype: int | None
+        """
+        return next((place for place, step in enumerate(self.enabled_steps) if step.step_id == step_id), None)
 
     def indexed_steps_through(self, through_step: int | None) -> tuple[tuple[int, Step], ...]:
         """Give the steps that are on up to one of them, each with its index in the recipe.
