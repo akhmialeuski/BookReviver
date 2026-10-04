@@ -57,6 +57,7 @@ from bookreviver.domain.enums import (
     PageOrigin,
     PlaceMode,
     Rendition,
+    ResultMark,
     ReviewReason,
     RightsStatus,
     RuleCondition,
@@ -603,6 +604,8 @@ class PageVersionRow(DefaultBase):
     :ivar tiles_ready: Whether the IIIF pyramid of the version is cut.
     :ivar created_at: Time the version was created.
     :ivar files_removed_at: Time a collection removed the files of the version, or null while it has them.
+    :ivar mark: What the user judged of the result, stored by value, or null while it is not judged.
+    :ivar comment: What the user wrote about the result, or empty.
     :ivar page: Page owning the version, never loaded implicitly.
     """
 
@@ -628,6 +631,8 @@ class PageVersionRow(DefaultBase):
     tiles_ready: Mapped[bool] = mapped_column(server_default=false())
     created_at: Mapped[datetime]
     files_removed_at: Mapped[datetime | None]
+    mark: Mapped[ResultMark | None] = mapped_column(enum_by_value(ResultMark))
+    comment: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
 
     page: Mapped[PageRow] = relationship(back_populates=Relation.VERSIONS, lazy=NO_IMPLICIT_LOAD)
 
@@ -745,6 +750,32 @@ class PageStepChangeRow(DefaultBase):
     sequence: Mapped[int]
 
     page: Mapped[PageRow] = relationship(back_populates=Relation.STEP_CHANGES, lazy=NO_IMPLICIT_LOAD)
+
+
+class ResultMarkChangeRow(DefaultBase):
+    """Row of one change of the mark or the comment of a result, which the log of the result never rewrites.
+
+    :ivar id: Change identifier, assigned by the domain.
+    :ivar version_id: Version the change was made on, whose deletion removes the change.
+    :ivar mark_before: Mark before the change, stored by value, or null for a result that had none.
+    :ivar mark_after: Mark after the change, stored by value, or null when the change took it off.
+    :ivar comment_before: Comment before the change, or empty.
+    :ivar comment_after: Comment after the change, or empty.
+    :ivar created_at: Time the change was made.
+    :ivar sequence: Place of the change in the log of its version, from one, unique within the version.
+    """
+
+    __tablename__ = 'result_mark_changes'
+    __table_args__ = (UniqueConstraint('version_id', 'sequence'),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    version_id: Mapped[str] = mapped_column(ForeignKey(PageVersionRow.id, ondelete=CASCADE))
+    mark_before: Mapped[ResultMark | None] = mapped_column(enum_by_value(ResultMark))
+    mark_after: Mapped[ResultMark | None] = mapped_column(enum_by_value(ResultMark))
+    comment_before: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
+    comment_after: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
+    created_at: Mapped[datetime]
+    sequence: Mapped[int]
 
 
 class BookPlaceRow(DefaultBase):

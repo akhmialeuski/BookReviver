@@ -370,6 +370,8 @@ class StageWork:
             scale=scale,
             edit_hash=inputs.edit_hash,
             created_at=self._clock.now() if existing is None else existing.created_at,
+            mark=None if existing is None else existing.mark,
+            comment='' if existing is None else existing.comment,
         )
         await (self._uow.page_versions.add(version) if existing is None else self._uow.page_versions.update(version))
         await self._uow.commit()

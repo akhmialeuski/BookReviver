@@ -39,6 +39,7 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     RecipeMapper,
     RecipeProfileMapper,
     RecipeRuleMapper,
+    ResultMarkChangeMapper,
     ScanMapper,
     SourceMapper,
 )
@@ -55,6 +56,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     RecipeProfileRow,
     RecipeRow,
     RecipeRuleRow,
+    ResultMarkChangeRow,
     ScanRow,
     SourceRow,
 )
@@ -72,6 +74,7 @@ from bookreviver.domain.entities import (
     Recipe,
     RecipeProfile,
     RecipeRule,
+    ResultMarkChange,
     Scan,
     Source,
 )
@@ -87,6 +90,7 @@ from bookreviver.domain.ids import (
     RecipeId,
     RecipeProfileId,
     RecipeRuleId,
+    ResultMarkChangeId,
     ScanId,
     SourceId,
 )
@@ -107,6 +111,7 @@ from bookreviver.ports.persistence import (
     RecipeRepository,
     RecipeRuleRepository,
     Repository,
+    ResultMarkChangeRepository,
     ScanRepository,
     SourceRepository,
 )
@@ -303,6 +308,12 @@ class PageStepChangeRows(RowRepository[PageStepChangeRow]):
     """Rows of the ``page_step_changes`` table."""
 
     model_type = PageStepChangeRow
+
+
+class ResultMarkChangeRows(RowRepository[ResultMarkChangeRow]):
+    """Rows of the ``result_mark_changes`` table."""
+
+    model_type = ResultMarkChangeRow
 
 
 class BookPlaceRows(RowRepository[BookPlaceRow]):
@@ -1543,6 +1554,48 @@ class SqlAlchemyPageStepChangeRepository(
             CollectionFilter(field_name=PageStepChangeRow.undoes_id, values=set(change_ids)),
             order_by=[PageStepChangeRow.page_id.asc(), PageStepChangeRow.sequence.asc()],
         )
+        return [self._mapper.to_entity(row) for row in rows]
+
+
+class SqlAlchemyResultMarkChangeRepository(
+    SqlAlchemyRepository[ResultMarkChange, ResultMarkChangeId, ResultMarkChangeRow], ResultMarkChangeRepository
+):
+    """The log of the marks and comments of the results."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Create the repository over the ``result_mark_changes`` table.
+
+        :param session: Session of the unit of work.
+        :type session: AsyncSession
+        """
+        super().__init__(rows=ResultMarkChangeRows(session=session), mapper=ResultMarkChangeMapper())
+
+    @override
+    async def add(self, entity: ResultMarkChange) -> ResultMarkChange:
+        """Store a change, numbering it after the last change of its version.
+
+        :param entity: Change to store.
+        :type entity: ResultMarkChange
+        :returns: The change as stored, with its sequence.
+        :rtype: ResultMarkChange
+        :raises ConflictError: If a change with this identifier is stored already.
+        :raises NotFoundError: If the version is not stored.
+        """
+        last = await self._rows.session.scalar(
+            select(func.max(ResultMarkChangeRow.sequence)).where(ResultMarkChangeRow.version_id == entity.version_id)
+        )
+        return await super().add(evolve(entity, sequence=(last or 0) + 1))
+
+    @override
+    async def list_for_version(self, version_id: PageVersionId) -> Sequence[ResultMarkChange]:
+        """Return the changes of one version, by their sequence.
+
+        :param version_id: Version the changes were made on.
+        :type version_id: PageVersionId
+        :returns: The changes of the version.
+        :rtype: Sequence[ResultMarkChange]
+        """
+        rows = await self._rows.get_many(order_by=[ResultMarkChangeRow.sequence.asc()], version_id=version_id)
         return [self._mapper.to_entity(row) for row in rows]
 
 

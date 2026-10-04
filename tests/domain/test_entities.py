@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import pytest
-from attrs import evolve
+from attrs import evolve, fields
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import VERSION_ID_PATTERN, PageEdit, PageStepChange, VersionInputs
@@ -24,6 +24,7 @@ from bookreviver.domain.enums import (
     PageOrigin,
     PageSide,
     Rendition,
+    ResultMark,
     Stage,
     StepField,
     StepLayer,
@@ -173,6 +174,20 @@ class TestPageVersion:
         """
         with pytest.raises(ValueError, match='page version id'):
             evolve(make_page_version(page_id=PageId(uuid4())), id=PageVersionId(version_id))
+
+    def test_a_version_is_not_marked_until_the_user_marks_it(self) -> None:
+        """Verify a new version carries no mark and no comment, which the user's notes then fill in."""
+        version = make_page_version(page_id=PageId(uuid4()))
+        assert (version.mark, version.comment) == (None, '')
+
+    def test_mark_and_comment_are_no_input_of_the_step(self) -> None:
+        """Verify the inputs of the step, which the identifier hashes, have no place for a mark or a comment."""
+        inputs = {field.name for field in fields(VersionInputs)}
+        assert not inputs & {'mark', 'comment'}
+
+    def test_mark_has_a_value_and_a_label_for_each_judgement(self) -> None:
+        """Verify the values stored and sent over the API, and the labels the interface can show."""
+        assert [(mark.value, mark.label) for mark in ResultMark] == [('good', 'Good'), ('bad', 'Bad')]
 
 
 class TestStep:

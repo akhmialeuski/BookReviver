@@ -32,6 +32,7 @@ from bookreviver.domain.enums import (
     OrderRuleKind,
     ProcessorScope,
     Rendition,
+    ResultMark,
     ReviewReason,
     RunMode,
     Stage,
@@ -489,6 +490,8 @@ class PageVersionSchema(ResponseModel):
     :ivar files_removed: Whether a collection removed the files of the version, so it has no image until a run makes it
                          again.
     :ivar files_removed_at: When the files were removed, or None while the version has them.
+    :ivar mark: What the user judged of the result, or None while it is not judged.
+    :ivar comment: What the user wrote about the result, or empty.
     """
 
     id: PageVersionId
@@ -510,6 +513,8 @@ class PageVersionSchema(ResponseModel):
     created_at: datetime
     files_removed: bool
     files_removed_at: datetime | None
+    mark: ResultMark | None
+    comment: str
 
     @classmethod
     def of(cls, version: PageVersion, project_id: ProjectId, request: Request) -> Self:
@@ -556,4 +561,6 @@ class PageVersionSchema(ResponseModel):
             created_at=version.created_at,
             files_removed=version.files_removed,
             files_removed_at=version.files_removed_at,
+            mark=version.mark,
+            comment=version.comment,
         )

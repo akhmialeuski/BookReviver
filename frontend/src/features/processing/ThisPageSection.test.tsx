@@ -19,6 +19,7 @@ const sdk = vi.hoisted(() => ({
   versions: vi.fn(),
   choose: vi.fn(),
   remake: vi.fn(),
+  mark: vi.fn(),
   jobs: vi.fn(),
 }));
 
@@ -27,6 +28,7 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet: sdk.versions,
   chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePut: sdk.choose,
   remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePost: sdk.remake,
+  putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPut: sdk.mark,
   listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
 }));
 
@@ -98,12 +100,14 @@ describe('ThisPageSection', () => {
     sdk.versions.mockReset();
     sdk.choose.mockReset();
     sdk.remake.mockReset();
+    sdk.mark.mockReset();
     sdk.jobs.mockReset();
     sdk.versions.mockResolvedValue({
       data: { items: [OLD, NEW], total: 2, page: 1, size: 100, pages: 1 },
     });
     sdk.choose.mockResolvedValue({ data: {} });
     sdk.remake.mockResolvedValue({ data: { id: 'job' } });
+    sdk.mark.mockResolvedValue({ data: {} });
     sdk.jobs.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 100, pages: 1 } });
     container = document.createElement('div');
     document.body.append(container);
@@ -294,8 +298,139 @@ describe('ThisPageSection', () => {
     await render({ page: page('page'), row: row('page', { version: NEW }) });
 
     const current = container.querySelector('[data-testid="history-entry"][data-current="true"]');
-    expect(current?.querySelector('button')).toBeNull();
+    expect(current?.querySelector('[data-testid="history-use"]')).toBeNull();
     expect(current?.textContent).toContain('Current');
+  });
+
+  describe('the mark and the comment of a result', () => {
+    const entry = (id: string): HTMLElement | null =>
+      container.querySelector<HTMLElement>(
+        `[data-testid="history-entry"]:has([data-testid="result-mark-good"][data-version="${id}"])`,
+      );
+    const pressed = (id: string, mark: 'good' | 'bad'): string | null | undefined =>
+      container
+        .querySelector(`[data-version="${id}"][data-testid="result-mark-${mark}"]`)
+        ?.getAttribute('aria-pressed');
+    const click = async (id: string, testId: string): Promise<void> => {
+      await act(async () => {
+        container
+          .querySelector<HTMLElement>(`[data-version="${id}"][data-testid="${testId}"]`)
+          ?.click();
+      });
+    };
+
+    it('offers a mark and a comment on every result, the current one included', async () => {
+      await render({ page: page('page'), row: row('page', { version: NEW }) });
+
+      expect(container.querySelectorAll('[data-testid="result-note"]')).toHaveLength(2);
+      expect(entry('new')).not.toBeNull();
+    });
+
+    it('marks a result good, which sends the mark with the comment the result has', async () => {
+      sdk.versions.mockResolvedValue({
+        data: {
+          items: [version('old', { comment: 'Too tight' }), NEW],
+          total: 2,
+          page: 1,
+          size: 100,
+          pages: 1,
+        },
+      });
+      await render({ page: page('page'), row: row('page', { version: NEW }) });
+
+      await click('old', 'result-mark-good');
+
+      expect(sdk.mark).toHaveBeenCalledTimes(1);
+      expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({
+        path: { project_id: 'project', page_id: 'page', version_id: 'old' },
+        body: { mark: 'good', comment: 'Too tight' },
+      });
+    });
+
+    it('shows the mark a result has as pressed, and takes it off by pressing it again', async () => {
+      sdk.versions.mockResolvedValue({
+        data: {
+          items: [version('old', { mark: 'bad' }), NEW],
+          total: 2,
+          page: 1,
+          size: 100,
+          pages: 1,
+        },
+      });
+      await render({ page: page('page'), row: row('page', { version: NEW }) });
+
+      expect([pressed('old', 'bad'), pressed('old', 'good'), pressed('new', 'bad')]).toEqual([
+        'true',
+        'false',
+        'false',
+      ]);
+      await click('old', 'result-mark-bad');
+
+      expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({ body: { mark: null, comment: '' } });
+    });
+
+    it('writes a comment of several lines and keeps the mark', async () => {
+      sdk.versions.mockResolvedValue({
+        data: {
+          items: [version('old', { mark: 'good' }), NEW],
+          total: 2,
+          page: 1,
+          size: 100,
+          pages: 1,
+        },
+      });
+      await render({ page: page('page'), row: row('page', { version: NEW }) });
+
+      await click('old', 'result-comment-edit');
+      const input = container.querySelector<HTMLTextAreaElement>(
+        '[data-testid="result-comment-input"]',
+      );
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+        setter?.call(input, 'First try\nSecond try');
+        input?.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await act(async () => {
+        container.querySelector<HTMLElement>('[data-testid="result-comment-save"]')?.click();
+      });
+
+      expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({
+        path: { version_id: 'old' },
+        body: { mark: 'good', comment: 'First try\nSecond try' },
+      });
+    });
+
+    it('shows the comment a result has, and offers to add one to a result without', async () => {
+      sdk.versions.mockResolvedValue({
+        data: {
+          items: [version('old', { comment: 'Too tight' }), NEW],
+          total: 2,
+          page: 1,
+          size: 100,
+          pages: 1,
+        },
+      });
+      await render({ page: page('page'), row: row('page', { version: NEW }) });
+
+      // The history lists the newest result first, so each note is found by its version
+      const note = (id: string): string | null | undefined =>
+        container.querySelector(`[data-testid="result-note"][data-version="${id}"]`)?.textContent;
+      expect(note('old')).toContain('Too tight');
+      expect(note('old')).toContain('Edit comment');
+      expect(note('new')).toContain('Add a comment');
+    });
+
+    it('tells the reader when the notes could not be saved', async () => {
+      sdk.mark.mockRejectedValue(
+        new ProblemError('Another job of this book is running.', 409, null, []),
+      );
+      await render({ page: page('page'), row: row('page', { version: NEW }) });
+
+      await click('old', 'result-mark-good');
+
+      // The mutation reports its failure a few ticks after the click
+      await vi.waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
+    });
   });
 
   describe('a recipe of two steps', () => {

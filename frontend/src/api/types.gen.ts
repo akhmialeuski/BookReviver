@@ -1670,6 +1670,8 @@ export type PageUpdate = {
  * :ivar files_removed: Whether a collection removed the files of the version, so it has no image until a run makes it
  * again.
  * :ivar files_removed_at: When the files were removed, or None while the version has them.
+ * :ivar mark: What the user judged of the result, or None while it is not judged.
+ * :ivar comment: What the user wrote about the result, or empty.
  */
 export type PageVersionSchema = {
     /**
@@ -1731,6 +1733,11 @@ export type PageVersionSchema = {
      * Files Removed At
      */
     files_removed_at: string | null;
+    mark: ResultMark | null;
+    /**
+     * Comment
+     */
+    comment: string;
 };
 
 /**
@@ -2027,6 +2034,32 @@ export type PageRecipeSchema = {
      * Items
      */
     items: Array<RecipeSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
+};
+
+/**
+ * Page[ResultMarkChangeSchema]
+ */
+export type PageResultMarkChangeSchema = {
+    /**
+     * Items
+     */
+    items: Array<ResultMarkChangeSchema>;
     /**
      * Total
      */
@@ -3123,6 +3156,67 @@ export type ResetImpactSchema = {
  * The pages and the steps a reset to the defaults goes over, which are the settings and the edits of the pages.
  */
 export type ResetScope = 'page-step' | 'page' | 'step' | 'stage';
+
+/**
+ * ResultMark
+ *
+ * What the user judged of a result, a page version, which a result without a judgement does not have.
+ */
+export type ResultMark = 'good' | 'bad';
+
+/**
+ * ResultMarkChangeSchema
+ *
+ * One change of the mark or the comment of a result.
+ *
+ * :ivar version_id: Version the change was made on.
+ * :ivar sequence: Place of the change in the log of the version, from one.
+ * :ivar mark_before: Mark before the change, or None.
+ * :ivar mark_after: Mark after the change, or None.
+ * :ivar comment_before: Comment before the change, or empty.
+ * :ivar comment_after: Comment after the change, or empty.
+ * :ivar created_at: When the change was made.
+ */
+export type ResultMarkChangeSchema = {
+    /**
+     * Version Id
+     */
+    version_id: string;
+    /**
+     * Sequence
+     */
+    sequence: number;
+    mark_before: ResultMark | null;
+    mark_after: ResultMark | null;
+    /**
+     * Comment Before
+     */
+    comment_before: string;
+    /**
+     * Comment After
+     */
+    comment_after: string;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
+ * ResultMarkForm
+ *
+ * The mark and the comment of a result from now on, which replace both.
+ *
+ * :ivar mark: Good or bad, or None for a result without a mark.
+ * :ivar comment: The comment, one line or several, or empty for none.
+ */
+export type ResultMarkForm = {
+    mark: ResultMark | null;
+    /**
+     * Comment
+     */
+    comment?: string;
+};
 
 /**
  * ReviewReason
@@ -7673,6 +7767,119 @@ export type UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPos
 };
 
 export type UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostResponse = UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostResponses[keyof UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostResponses];
+
+export type PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutData = {
+    body: ResultMarkForm;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Version Id
+         *
+         * Identifier of the page version
+         */
+        version_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}/mark';
+};
+
+export type PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutError = PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutErrors[keyof PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutErrors];
+
+export type PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageVersionSchema;
+};
+
+export type PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutResponse = PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutResponses[keyof PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutResponses];
+
+export type ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Version Id
+         *
+         * Identifier of the page version
+         */
+        version_id: string;
+    };
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Size
+         */
+        size?: number;
+    };
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}/mark-changes';
+};
+
+export type ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetError = ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetErrors[keyof ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetErrors];
+
+export type ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: PageResultMarkChangeSchema;
+};
+
+export type ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetResponse = ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetResponses[keyof ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetResponses];
 
 export type ListProcessorsApiV1ProcessorsGetData = {
     body?: never;

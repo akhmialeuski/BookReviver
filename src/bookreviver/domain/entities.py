@@ -55,6 +55,7 @@ if TYPE_CHECKING:
         LabelStyle,
         PageSide,
         PlaceMode,
+        ResultMark,
         ReviewReason,
         SourceKind,
         Stage,
@@ -70,6 +71,7 @@ if TYPE_CHECKING:
         RecipeId,
         RecipeProfileId,
         RecipeRuleId,
+        ResultMarkChangeId,
         ScanId,
         SourceId,
         StepId,
@@ -515,6 +517,9 @@ class PageVersion:
     :ivar files_removed_at: When a collection removed the files of the version, or None while it has them. The row
                             stays with its parameters, data and edit hash, and a run makes the files again under the
                             same identifier.
+    :ivar mark: What the user judged of the result, or None while it is not judged. The mark and the comment are the
+                user's notes on the result, not an input of the step, so neither changes the identifier.
+    :ivar comment: What the user wrote about the result, or empty.
     """
 
     id: PageVersionId
@@ -533,6 +538,8 @@ class PageVersion:
     tiles_ready: bool = False
     created_at: datetime
     files_removed_at: datetime | None = None
+    mark: ResultMark | None = None
+    comment: str = ''
 
     @property
     def files_removed(self) -> bool:
@@ -1114,3 +1121,28 @@ class PageStepChange:
             source=source,
             created_at=after.updated_at,
         )
+
+
+@frozen(kw_only=True)
+class ResultMarkChange:
+    """One change of the mark or the comment of a result, which the log of the result keeps and never rewrites.
+
+    :ivar id: Identifier of the change.
+    :ivar version_id: Version the mark and the comment belong to.
+    :ivar mark_before: Mark before the change, or None when the result had none.
+    :ivar mark_after: Mark after the change, or None when the change took it off.
+    :ivar comment_before: Comment before the change, or empty.
+    :ivar comment_after: Comment after the change, or empty.
+    :ivar created_at: When the change was made.
+    :ivar sequence: Place of the change in the log of its version, from one, which the repository gives it when it is
+                    added, so changes made at the same instant keep the order they were written in.
+    """
+
+    id: ResultMarkChangeId
+    version_id: PageVersionId
+    mark_before: ResultMark | None = None
+    mark_after: ResultMark | None = None
+    comment_before: str = ''
+    comment_after: str = ''
+    created_at: datetime
+    sequence: int = 0
