@@ -5,6 +5,7 @@ import { ParamsForm } from '@/features/processing/ParamsForm';
 import { changedFields, effectiveParams, showValue } from '@/features/processing/pageSettings';
 import { useResetPageSetting, useSetPageSetting } from '@/features/processing/queries';
 import type { StepDraft } from '@/features/processing/recipe';
+import { StepReset } from '@/features/processing/StepReset';
 import { fieldTitleOf, formSchemaOf } from '@/features/processing/schema';
 import type { Processing } from '@/features/processing/useProcessing';
 import { describeError } from '@/shared/http/problem';
@@ -19,7 +20,8 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * It lists the fields the page changes, each with the way back to the value of the recipe, and opens the form of the
  * step to change more. Changing a field in the form sets it for this page alone: the other pages keep the value of the
  * recipe, and this page keeps its value when the recipe changes. A step that is not saved yet has no settings of a page,
- * since the server names a step by the identifier it gives it when the recipe is saved.
+ * since the server names a step by the identifier it gives it when the recipe is saved. Under them is the menu that resets
+ * the step to its defaults, on this page or on every page.
  */
 
 const labels = MESSAGES.processing.steps.pageSettings;
@@ -158,6 +160,12 @@ export function PageStepSettings({
           ) : null}
         </>
       )}
+      <StepReset
+        processing={processing}
+        pageId={pageId}
+        stepId={stepId}
+        title={processor?.title ?? step.processorKey}
+      />
       {error === null ? null : <ErrorAlert message={describeError(error)} />}
     </section>
   );

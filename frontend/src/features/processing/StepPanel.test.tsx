@@ -272,6 +272,12 @@ describe('StepPanel', () => {
     expect(text('step-count-check')).toContain('0 pages');
   });
 
+  it('offers the reset of the open step to its defaults, named by the step', () => {
+    render(1);
+
+    expect(find('reset-menu')?.getAttribute('aria-label')).toBe('Reset Deskew to the defaults');
+  });
+
   it('runs the recipe up to the step on every page', () => {
     render(1);
     act(() => find('step-auto')?.click());
