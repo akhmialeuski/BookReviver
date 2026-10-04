@@ -39,7 +39,7 @@ import { CanvasToolbar } from '@/features/workspace/CanvasToolbar';
 import { GridOverlay } from '@/features/workspace/GridOverlay';
 import { useGrid, useGridKey } from '@/features/workspace/grid';
 import { CompareMode, PageFilter, type StageSearch, ViewMode } from '@/features/workspace/params';
-import { useStageRows, useStageSummaries } from '@/features/workspace/queries';
+import { useStageRows, useStageSummaries, useStepRows } from '@/features/workspace/queries';
 import { StageGrid } from '@/features/workspace/StageGrid';
 import { StagePanel } from '@/features/workspace/StagePanel';
 import { StageStrip } from '@/features/workspace/StageStrip';
@@ -133,6 +133,9 @@ export function StageScreen({
   );
   const manifest = useManifest(projectId);
   const rows = useStageRows(projectId, stage);
+  // The rows at the open step say which pages have a bad result of that step, so they stand for the rows of the stage once
+  // read; the workspace of the step reads the same query
+  const stepRows = useStepRows(projectId, stage, hasStepBar(stage) ? stepId : undefined);
   const summaries = useStageSummaries(projectId);
   const [picked, setPicked] = useState({ stage, state: NOTHING_SELECTED });
   const canvas = useRef<PageCanvasHandle>(null);
@@ -147,8 +150,8 @@ export function StageScreen({
   // Only the Split stage looks at how wide a scan is
   const scans = useAllScans(projectId, stage === 'page-split');
   const items = useMemo(
-    () => joinRows(pages, rows.data ?? NO_ROWS, wideScanIds(scans.data ?? [])),
-    [pages, rows.data, scans.data],
+    () => joinRows(pages, stepRows.data ?? rows.data ?? NO_ROWS, wideScanIds(scans.data ?? [])),
+    [pages, stepRows.data, rows.data, scans.data],
   );
   const counts = useMemo(() => countFilters(items), [items]);
   const filter = search.filter ?? PageFilter.All;
