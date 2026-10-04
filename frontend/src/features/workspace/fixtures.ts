@@ -1,4 +1,11 @@
-import type { ImagePathsSchema, PageSchema, PaginationSectionSchema, StagePageSchema } from '@/api';
+import type {
+  FigureState,
+  ImagePathsSchema,
+  PageSchema,
+  PaginationSectionSchema,
+  StagePageSchema,
+  StepPageSchema,
+} from '@/api';
 
 /**
  * Pages and rows of a stage as the tests of the workspace build them, with every field filled and any of them changed.
@@ -79,4 +86,13 @@ export function row(id: string, overrides: Partial<StagePageSchema> = {}): Stage
     marked_bad: false,
     ...overrides,
   };
+}
+
+/** One page at a step, where the step found the shape and raised no flag, unless told otherwise. */
+export function stepPage(
+  stepId: string,
+  state: FigureState = 'found',
+  overrides: Partial<StepPageSchema> = {},
+): StepPageSchema {
+  return { step_id: stepId, state, input_version: null, version: null, flags: [], ...overrides };
 }

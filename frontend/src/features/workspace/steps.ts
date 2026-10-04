@@ -16,7 +16,7 @@ import type {
  */
 
 /** The stages whose steps have a bar and a workspace of their own. */
-const STAGES_WITH_STEP_BAR: ReadonlySet<Stage> = new Set<Stage>(['geometry']);
+const STAGES_WITH_STEP_BAR: ReadonlySet<Stage> = new Set<Stage>(['geometry', 'cleanup']);
 
 /** Tell whether a stage shows the bar of its steps. */
 export function hasStepBar(stage: Stage): boolean {
@@ -103,35 +103,35 @@ export function neighboursOf(steps: readonly BarStep[], open: BarStep): Neighbou
 export interface StepCounts {
   /** Pages whose shape the step found. */
   found: number;
-  /** Pages whose shape the reader set by hand. */
+  /** Pages with a setting of their own for the step or a shape the reader set by hand. */
   byHand: number;
   /** Pages the step passes by its condition. */
   skipped: number;
   /** Pages the step has not run on and that hold the default shape. */
   notRun: number;
-  /** Pages the step asked a second look at, which is the mark of this very processor. */
+  /** Pages the step was unsure of. */
   check: number;
+  /** Pages whose value at the step departs notably from the rest of the book. */
+  unusual: number;
 }
 
 /**
  * Count the pages of the book by what the step did on them.
  *
+ * The flags are the server's, which decides which page is unsure, unusual or set by hand, so the counts and the filters
+ * of the strip never disagree.
+ *
  * @param rows The rows of the stage asked for the step.
- * @param processorKey The key of the processor of the step, whose review marks are counted as the pages to check.
  */
-export function countStep(rows: readonly StagePageSchema[], processorKey: string): StepCounts {
-  const counts: StepCounts = { found: 0, byHand: 0, skipped: 0, notRun: 0, check: 0 };
+export function countStep(rows: readonly StagePageSchema[]): StepCounts {
+  const counts: StepCounts = { found: 0, byHand: 0, skipped: 0, notRun: 0, check: 0, unusual: 0 };
   for (const row of rows) {
-    const state = row.step?.state;
-    if (state === undefined) {
+    if (row.step === null) {
       continue;
     }
-    switch (state) {
+    switch (row.step.state) {
       case 'found':
         counts.found += 1;
-        break;
-      case 'by-hand':
-        counts.byHand += 1;
         break;
       case 'skipped':
         counts.skipped += 1;
@@ -140,9 +140,9 @@ export function countStep(rows: readonly StagePageSchema[], processorKey: string
         counts.notRun += 1;
         break;
     }
-    if (state !== 'skipped' && row.review !== null && row.review_processor === processorKey) {
-      counts.check += 1;
-    }
+    counts.byHand += row.step.flags.includes('by-hand') ? 1 : 0;
+    counts.check += row.step.flags.includes('unsure') ? 1 : 0;
+    counts.unusual += row.step.flags.includes('unusual') ? 1 : 0;
   }
   return counts;
 }

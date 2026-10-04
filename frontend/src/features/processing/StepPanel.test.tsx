@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FigureState, StepPageSchema } from '@/api';
+import type { FigureState, StagePageSchema, StepPageSchema } from '@/api';
 import type { EditorSession } from '@/features/editors/session';
 import { SourceKind } from '@/features/processing/compare';
 import {
@@ -15,7 +15,7 @@ import {
 } from '@/features/processing/fixtures';
 import { StepPanel } from '@/features/processing/StepPanel';
 import type { StageRun } from '@/features/processing/useStageRun';
-import { page as pageOf, row } from '@/features/workspace/fixtures';
+import { page as pageOf, row, stepPage } from '@/features/workspace/fixtures';
 import { barStepsOf, countStep, neighboursOf } from '@/features/workspace/steps';
 import { joinRows, type StripItem } from '@/features/workspace/strip';
 import type { StepWorkspace } from '@/features/workspace/useStepWorkspace';
@@ -84,12 +84,10 @@ function editorStub(overrides: Partial<EditorSession> = {}): EditorSession {
 }
 
 function placed(state: FigureState, found: Record<string, unknown> = {}): StepPageSchema {
-  return {
-    step_id: 'b',
-    state,
-    input_version: null,
+  return stepPage('b', state, {
     version: state === 'default' ? null : version('v', { data: found }),
-  };
+    flags: state === 'by-hand' ? ['by-hand'] : [],
+  });
 }
 
 describe('StepPanel', () => {
@@ -132,9 +130,10 @@ describe('StepPanel', () => {
       items?: readonly StripItem[];
       editor?: EditorSession | null;
       selected?: ReadonlySet<string>;
+      rows?: StagePageSchema[];
     } = {},
   ): void {
-    const rows = [
+    const rows = extra.rows ?? [
       row('1', { step: placed('found') }),
       row('2', { step: placed('by-hand') }),
       row('3', { step: placed('skipped') }),
@@ -149,7 +148,8 @@ describe('StepPanel', () => {
       open: opened,
       states: new Map(),
       page,
-      counts: countStep(rows, opened.processorKey),
+      counts: countStep(rows),
+      rows,
       neighbours: neighboursOf(BAR, opened),
     };
     const state = processing({
@@ -263,7 +263,7 @@ describe('StepPanel', () => {
   });
 
   it('says a page that has not been through the step holds the default shape', () => {
-    render(1, { step_id: 'b', state: 'default', input_version: null, version: null });
+    render(1, stepPage('b', 'default'));
 
     expect(text('step-panel-state')).toContain('Default shape');
     expect(find('step-panel-not-reached')).not.toBeNull();
@@ -283,6 +283,22 @@ describe('StepPanel', () => {
     render(1);
 
     expect(find('reset-menu')?.getAttribute('aria-label')).toBe('Reset Deskew to the defaults');
+  });
+
+  it('leaves out the pages that differ from the book while none does, and counts them when some do', () => {
+    render();
+    expect(find('step-count-unusual')).toBeNull();
+
+    render(1, undefined, undefined, {
+      rows: [
+        row('1', { step: stepPage('b', 'found', { flags: ['unusual'] }) }),
+        row('2', { step: stepPage('b', 'found', { flags: ['unusual'] }) }),
+        row('3', { step: stepPage('b', 'found', { flags: ['unsure'] }) }),
+      ],
+    });
+
+    expect(text('step-count-unusual')).toContain('2 pages');
+    expect(text('step-count-check')).toContain('1 page');
   });
 
   it('runs the recipe up to the step on every page', () => {

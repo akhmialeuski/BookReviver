@@ -1,4 +1,4 @@
-import type { PageSchema, StagePageSchema } from '@/api';
+import type { PageSchema, StagePageSchema, StepFlag } from '@/api';
 import { PageFilter } from '@/features/workspace/params';
 
 /**
@@ -66,6 +66,62 @@ export interface StopView {
   /** The step whose pages are listed, or null for every page. */
   selected: number | null;
   onSelect: (step: number | null) => void;
+}
+
+/**
+ * The reasons a page asks for a look at the open step, in the order the filter of the strip lists them. The record makes
+ * a flag the server adds a compile error here until it has a place in the list.
+ */
+const FLAGS_LISTED: Readonly<Record<StepFlag, true>> = {
+  unsure: true,
+  unusual: true,
+  'by-hand': true,
+  skipped: true,
+};
+
+/** What the strip lists of a flag: the flag and the number of pages that carry it. */
+export interface FlagOption {
+  flag: StepFlag;
+  pages: number;
+}
+
+/**
+ * The flags of the pages at the open step: the choice of one flag to list the pages of. The server says which flags a
+ * page carries, and the strip only filters by them.
+ */
+export interface FlagView {
+  options: readonly FlagOption[];
+  /** The flag whose pages are listed, or null for every page. */
+  selected: StepFlag | null;
+  onSelect: (flag: StepFlag | null) => void;
+}
+
+/** The flags each page carries at the open step, by the identifier of the page. */
+export type FlagsByPage = ReadonlyMap<string, readonly StepFlag[]>;
+
+/** Read the flags the server put on the rows of a stage that was asked for a step. */
+export function flagsOf(rows: readonly StagePageSchema[]): FlagsByPage {
+  return new Map(rows.flatMap((row) => (row.step === null ? [] : [[row.page_id, row.step.flags]])));
+}
+
+/** List every flag with the number of pages that carry it, in the order the filter shows them. */
+export function flagOptions(flags: FlagsByPage): FlagOption[] {
+  const listed = Object.keys(FLAGS_LISTED) as StepFlag[];
+  return listed.map((flag) => ({
+    flag,
+    pages: [...flags.values()].filter((carried) => carried.includes(flag)).length,
+  }));
+}
+
+/** Keep the pages that carry a flag, or every page for no flag. */
+export function applyFlag(
+  items: readonly StripItem[],
+  flags: FlagsByPage,
+  flag: StepFlag | null,
+): readonly StripItem[] {
+  return flag === null
+    ? items
+    : items.filter((item) => flags.get(item.page.id)?.includes(flag) === true);
 }
 
 /**

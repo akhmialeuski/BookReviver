@@ -2,7 +2,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FigureState } from '@/api';
-import { deskew, processor, recipe, step } from '@/features/processing/fixtures';
+import { binarize, deskew, processor, recipe, step } from '@/features/processing/fixtures';
 import { StepBar } from '@/features/workspace/StepBar';
 import { barStepsOf, type StepStates } from '@/features/workspace/steps';
 
@@ -164,5 +164,81 @@ describe('StepBar', () => {
     expect(action).not.toBeNull();
     expect(list?.contains(action)).toBe(false);
     expect(list?.nextElementSibling).toBe(action);
+  });
+
+  describe('for the steps of Cleanup', () => {
+    // The text recipe of Cleanup: the three steps that clean the pages of text, then the one the reader fills zones with
+    const CLEANUP = barStepsOf(
+      recipe('c', {
+        stage: 'cleanup',
+        steps: [
+          step('cleanup.binarize', { step_id: 'bin', applies_to: 'text' }),
+          step('cleanup.despeckle', { step_id: 'dust', applies_to: 'text' }),
+          step('cleanup.thickness', { step_id: 'thick', applies_to: 'text' }),
+          step('cleanup.eraser', { step_id: 'fill' }),
+        ],
+      }),
+      [
+        binarize({ title: 'Binarization' }),
+        processor('cleanup.despeckle', { title: 'Despeckle', stage: 'cleanup' }),
+        processor('cleanup.thickness', { title: 'Thickness', stage: 'cleanup' }),
+        processor('cleanup.eraser', { title: 'Fill zones', stage: 'cleanup' }),
+      ],
+    );
+
+    function renderCleanup(
+      openId: string | undefined,
+      states: Record<string, FigureState> = {},
+    ): void {
+      act(() =>
+        root.render(
+          <StepBar
+            steps={CLEANUP}
+            openId={openId}
+            states={new Map(Object.entries(states)) as StepStates}
+            recipes={[{ id: 'c', name: 'Text' }]}
+            recipeId="c"
+            onChooseRecipe={onChooseRecipe}
+            onOpen={onOpen}
+          />,
+        ),
+      );
+    }
+
+    it('lists the four steps in the order they run, with the text mark on the three that clean text', () => {
+      renderCleanup(undefined);
+
+      expect(buttons().map((button) => button.getAttribute('data-step-id'))).toEqual([
+        'bin',
+        'dust',
+        'thick',
+        'fill',
+      ]);
+      expect(buttons().map((button) => button.getAttribute('aria-label'))).toEqual([
+        'Open step 1, Binarization',
+        'Open step 2, Despeckle',
+        'Open step 3, Thickness',
+        'Open step 4, Fill zones',
+      ]);
+      expect(
+        [...container.querySelectorAll('[data-testid="bar-step-mark"]')].map(
+          (mark) => mark.textContent,
+        ),
+      ).toEqual(['¶', '¶', '¶']);
+    });
+
+    it('opens the step of Thickness that is pressed, and shows the state of each on the open page', () => {
+      renderCleanup('thick', { bin: 'found', dust: 'found', thick: 'by-hand', fill: 'default' });
+      act(() => buttons()[2]?.click());
+
+      expect(buttons().map((button) => button.getAttribute('data-state'))).toEqual([
+        'found',
+        'found',
+        'by-hand',
+        'default',
+      ]);
+      expect(buttons()[2]?.getAttribute('aria-current')).toBe('step');
+      expect(onOpen).toHaveBeenCalledWith(undefined);
+    });
   });
 });

@@ -6,6 +6,7 @@ import { PageFilter } from '@/features/workspace/params';
 import { StageStrip } from '@/features/workspace/StageStrip';
 import {
   countFilters,
+  type FlagView,
   joinRows,
   type StripItem,
   type VariantView,
@@ -49,6 +50,7 @@ describe('StageStrip', () => {
       reasonOf?: (item: StripItem) => string | null;
       withWide?: boolean;
       variants?: VariantView;
+      flagged?: FlagView;
     } = {},
   ): void {
     const pages = Array.from({ length }, (_, index) => page(`p-${index}`, { position: index }));
@@ -70,6 +72,7 @@ describe('StageStrip', () => {
           reasonOf={extra.reasonOf}
           withWide={extra.withWide}
           variants={extra.variants}
+          flagged={extra.flagged}
         />,
       ),
     );
@@ -223,6 +226,75 @@ describe('StageStrip', () => {
     expect(container.querySelector('[data-testid="strip-filter-bad"]')?.textContent).toBe(
       'Marked bad 1',
     );
+  });
+
+  describe('the flags of the pages at the open step', () => {
+    function flagView(overrides: Partial<FlagView> = {}): FlagView {
+      return {
+        options: [
+          { flag: 'unsure', pages: 2 },
+          { flag: 'unusual', pages: 0 },
+          { flag: 'by-hand', pages: 1 },
+          { flag: 'skipped', pages: 3 },
+        ],
+        selected: null,
+        onSelect: vi.fn(),
+        ...overrides,
+      };
+    }
+
+    const select = (): HTMLSelectElement | null =>
+      container.querySelector<HTMLSelectElement>('[data-testid="strip-step-filter"]');
+
+    it('offers every reason a page asks for a look, with the pages that carry it', () => {
+      render(2, { flagged: flagView() });
+
+      expect([...(select()?.options ?? [])].map((option) => option.textContent)).toEqual([
+        'Any page',
+        'Step unsure · 2',
+        'Differs from the book · 0',
+        'Set by hand · 1',
+        'Skipped by the condition · 3',
+      ]);
+    });
+
+    it('tells the screen which flag was chosen, and that every page was', () => {
+      const onSelect = vi.fn();
+      render(2, { flagged: flagView({ onSelect }) });
+      const choose = (value: string): void => {
+        act(() => {
+          const element = select();
+          if (element !== null) {
+            element.value = value;
+            element.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        });
+      };
+
+      choose('by-hand');
+      choose('');
+
+      expect(onSelect.mock.calls).toEqual([['by-hand'], [null]]);
+    });
+
+    it('shows the chosen flag', () => {
+      render(2, { flagged: flagView({ selected: 'unusual' }) });
+
+      expect(select()?.value).toBe('unusual');
+    });
+
+    it('says no page carries the reason, and not that the book has no pages, when the flag lists none', () => {
+      render(0, { flagged: flagView({ selected: 'by-hand' }) });
+
+      expect(container.textContent).toContain('No page of the book carries this reason');
+      expect(container.textContent).not.toContain('This book has no pages yet');
+    });
+
+    it('is not on the strip when no step is open', () => {
+      render(2);
+
+      expect(select()).toBeNull();
+    });
   });
 
   it('offers the Wide filter only when it is asked for', () => {

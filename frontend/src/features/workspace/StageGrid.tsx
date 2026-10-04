@@ -4,7 +4,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { PageTile } from '@/features/workspace/PageTile';
 import { PageFilter } from '@/features/workspace/params';
 import { StripToolbar } from '@/features/workspace/StripToolbar';
-import type { FilterCounts, StopView, StripItem, VariantView } from '@/features/workspace/strip';
+import type {
+  FilterCounts,
+  FlagView,
+  StopView,
+  StripItem,
+  VariantView,
+} from '@/features/workspace/strip';
 import { useStripPlace } from '@/features/workspace/useStripPlace';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
@@ -51,6 +57,7 @@ export function StageGrid({
   withWide = false,
   variants,
   stopped,
+  flagged,
 }: {
   items: readonly StripItem[];
   total: number;
@@ -72,6 +79,8 @@ export function StageGrid({
   variants?: VariantView;
   /** The steps a run stopped at, which narrow the pages to those stopped at one. Absent when no run stopped short. */
   stopped?: StopView;
+  /** The reasons a page asks for a look at the open step, which narrow the pages to those with one. Absent for no step. */
+  flagged?: FlagView;
 }): React.JSX.Element {
   const scroller = useRef<HTMLDivElement>(null);
   const width = useElementWidth(scroller);
@@ -97,6 +106,7 @@ export function StageGrid({
         withWide={withWide}
         variants={variants}
         stopped={stopped}
+        flagged={flagged}
         onFilter={onFilter}
         onSwitchView={onList}
       />
@@ -111,7 +121,9 @@ export function StageGrid({
       </div>
       {items.length === 0 ? (
         <p className="p-4 text-sm text-muted-foreground">
-          {MESSAGES.workspace.strip.empty[filter]}
+          {flagged?.selected == null
+            ? MESSAGES.workspace.strip.empty[filter]
+            : MESSAGES.workspace.strip.flag.empty}
         </p>
       ) : (
         <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto p-2">

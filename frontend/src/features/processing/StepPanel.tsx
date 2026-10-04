@@ -258,19 +258,23 @@ export function StepPanel({
                 ['found', counts.found],
                 ['byHand', counts.byHand],
                 ['check', counts.check],
+                ['unusual', counts.unusual],
                 ['skipped', counts.skipped],
                 ['notRun', counts.notRun],
               ] as const
-            ).map(([key, value]) => (
-              <div
-                key={key}
-                className="flex justify-between gap-4"
-                data-testid={`step-count-${key}`}
-              >
-                <dt className="text-muted-foreground">{labels.counts[key]}</dt>
-                <dd className="font-medium">{labels.pages(value)}</dd>
-              </div>
-            ))}
+            )
+              // A step that finds nothing to compare with the book has no pages that differ, so the line is left out
+              .filter(([key, value]) => key !== 'unusual' || value > 0)
+              .map(([key, value]) => (
+                <div
+                  key={key}
+                  className="flex justify-between gap-4"
+                  data-testid={`step-count-${key}`}
+                >
+                  <dt className="text-muted-foreground">{labels.counts[key]}</dt>
+                  <dd className="font-medium">{labels.pages(value)}</dd>
+                </div>
+              ))}
           </dl>
         )}
       </div>
