@@ -1161,25 +1161,6 @@ export const MESSAGES = {
         `Saved the profile “${name}”. Rename it or make it the default for new books in the profiles of your account.`,
     },
     apply: {
-      open: 'Apply profile',
-      hint: 'Add the steps of a saved profile to this book as a variant',
-      title: 'Apply a profile',
-      description:
-        'The profile becomes a variant of this stage. No page is processed again until the stage is run.',
-      choose: 'Profile',
-      option: (name: string, isDefault: boolean, steps: number) =>
-        `${name}${isDefault ? ' · default' : ''} · ${steps} ${pluralize(steps, 'step', 'steps')}`,
-      none: 'You have no profile for this stage yet. Save a recipe as a profile first.',
-      activate: 'Make it the active recipe',
-      activateHint:
-        'The stage runs by it from now on, and the pages the old recipe made go out of date',
-      submit: 'Apply the profile',
-      submitting: 'Applying…',
-      loadFailed: 'The profiles could not be read.',
-      applied: (name: string, active: boolean) =>
-        active
-          ? `Applied the profile “${name}”. It is the active recipe of this book now.`
-          : `Applied the profile “${name}” as a variant of this book.`,
       leftOut: (processors: readonly string[]) =>
         `Left out, since no such processor is installed on this machine: ${processors.join(', ')}.`,
     },
@@ -1203,7 +1184,10 @@ export const MESSAGES = {
       },
       applyBook: 'Apply to this book',
       applyBookHint:
-        'The profile becomes the active recipe of this book, and the pages the old recipe made go out of date',
+        'Add the profile to this book. Whether it becomes the active recipe is the choice above the list',
+      activate: 'Make it the active recipe',
+      activateHint:
+        'The stage runs by it from now on, and the pages the old recipe made go out of date. Left off, the profile is added as a variant and no page is processed again until the stage is run',
       applyPages: 'Apply to selected pages',
       applyPagesHint:
         'The profile becomes a variant of this book, pinned to the selected pages, and the stage runs on them',
@@ -1213,6 +1197,7 @@ export const MESSAGES = {
       applying: 'Applying…',
       appliedBook: (name: string) =>
         `Applied the profile “${name}”. It is the active recipe of this book now.`,
+      appliedVariant: (name: string) => `Applied the profile “${name}” as a variant of this book.`,
       appliedPages: (name: string, pages: number) =>
         `Applied the profile “${name}” to ${pages} ${pluralize(pages, 'page', 'pages')}. The stage is running on them.`,
       duplicate: 'Duplicate',

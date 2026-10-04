@@ -136,12 +136,19 @@ test('a recipe is saved as a profile, applied in another book, made the default,
     await openGeometry(page, secondBookPath);
     // The built-in recipe is the active one and has the steps in their own order
     expect((await stepsOnScreen(page)).map((step) => step.processor)).toEqual(BUILT_IN);
-    await page.getByTestId('profile-apply-open').click();
-    await expect(page.getByTestId('profile-apply-select')).toContainText(PROFILE_NAME);
-    await snap(page, 'apply-profile-dialog');
-    await page.getByTestId('profile-apply-submit').click();
-    await expect(page.getByTestId('profile-applied')).toContainText(PROFILE_NAME);
+    // The library is opened from the profile menu, and the profile is added as a variant, not made the active recipe
+    await page.getByTestId('profile-button').click();
+    await page.getByTestId('profile-manage').click();
+    await expect(page.getByTestId('profile-library-panel')).toBeVisible();
+    await page.getByTestId('profile-activate').uncheck();
+    const card = page.locator(`[data-testid="profile-row"][data-name="${PROFILE_NAME}"]`);
+    await expect(card).toHaveCount(1);
+    await snap(page, 'apply-profile-from-library');
+    await card.getByTestId('profile-apply-book').click();
+    await expect(card.getByTestId('profile-notice')).toContainText(PROFILE_NAME);
     await expect(page.getByTestId('profile-left-out')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('profile-library-panel')).toHaveCount(0);
     await expect(page.getByTestId('recipe-select')).toContainText(`${PROFILE_NAME} · 0 pages`);
     await expect.poll(() => stepsOnScreen(page)).toEqual(setUp);
     // Applied as a variant, the profile leaves the built-in recipe the active one

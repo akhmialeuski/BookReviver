@@ -10,6 +10,7 @@ import { describeError } from '@/shared/http/problem';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
+import { CheckboxField } from '@/shared/ui/checkbox-field';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
@@ -42,6 +43,7 @@ export function ProfileLibrary({ book }: { book?: LibraryBook }): React.JSX.Elem
   const importer = useImportProfile();
   const [tab, setTab] = useState<Tab>(book?.processing.stage ?? ALL);
   const [saveOpen, setSaveOpen] = useState(false);
+  const [activate, setActivate] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const [problem, setProblem] = useState<FileProblem | null>(null);
   const picker = useRef<HTMLInputElement | null>(null);
@@ -97,7 +99,13 @@ export function ProfileLibrary({ book }: { book?: LibraryBook }): React.JSX.Elem
               {shown
                 .filter((profile) => profile.stage === stage)
                 .map((profile) => (
-                  <ProfileCard key={profile.id} profile={profile} titles={titles} book={book} />
+                  <ProfileCard
+                    key={profile.id}
+                    profile={profile}
+                    titles={titles}
+                    book={book}
+                    activate={activate}
+                  />
                 ))}
             </ul>
           </section>
@@ -108,7 +116,13 @@ export function ProfileLibrary({ book }: { book?: LibraryBook }): React.JSX.Elem
     body = (
       <ul className="grid gap-2">
         {shown.map((profile) => (
-          <ProfileCard key={profile.id} profile={profile} titles={titles} book={book} />
+          <ProfileCard
+            key={profile.id}
+            profile={profile}
+            titles={titles}
+            book={book}
+            activate={activate}
+          />
         ))}
       </ul>
     );
@@ -135,6 +149,17 @@ export function ProfileLibrary({ book }: { book?: LibraryBook }): React.JSX.Elem
           </button>
         ))}
       </div>
+      {book === undefined ? null : (
+        <div className="grid gap-1">
+          <CheckboxField
+            label={labels.activate}
+            checked={activate}
+            data-testid="profile-activate"
+            onChange={(event) => setActivate(event.target.checked)}
+          />
+          <p className="text-xs text-muted-foreground">{labels.activateHint}</p>
+        </div>
+      )}
       {body}
       <div className="flex flex-wrap gap-2 border-t pt-3">
         {book === undefined ? null : (

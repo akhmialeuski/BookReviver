@@ -20,7 +20,6 @@ import { UsedFor } from '@/features/processing/UsedFor';
 import type { Processing } from '@/features/processing/useProcessing';
 import type { StageRun } from '@/features/processing/useStageRun';
 import { countsOf } from '@/features/processing/variants';
-import { ProfileActions } from '@/features/profiles/ProfileActions';
 import { ProfileMenu } from '@/features/profiles/ProfileMenu';
 import { roadmapOf } from '@/features/stages/roadmap';
 import { useStageSummaries } from '@/features/workspace/queries';
@@ -174,7 +173,6 @@ export function RecipeSection({
           </Button>
         )}
       </div>
-      <ProfileActions processing={processing} />
 
       <UsedFor
         projectId={projectId}

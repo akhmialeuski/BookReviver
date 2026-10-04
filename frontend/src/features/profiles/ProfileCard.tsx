@@ -69,10 +69,13 @@ type CardNotice = string | { applied: AppliedProfileSchema; pages: number | null
 function BookActions({
   profile,
   book,
+  activate,
   onApplied,
 }: {
   profile: LibraryProfileSchema;
   book: LibraryBook;
+  /** Whether applying to the book makes the profile the active recipe, or only a variant. */
+  activate: boolean;
   onApplied: (notice: CardNotice) => void;
 }): React.JSX.Element {
   const { processing } = book;
@@ -117,7 +120,7 @@ function BookActions({
         title={dirty ? labels.applyDirty : labels.applyBookHint}
         disabled={dirty || apply.isPending}
         data-testid="profile-apply-book"
-        onClick={() => applyTo(true, null)}
+        onClick={() => applyTo(activate, null)}
       >
         {apply.isPending ? labels.applying : labels.applyBook}
       </Button>
@@ -144,12 +147,15 @@ export function ProfileCard({
   profile,
   titles,
   book,
+  activate = true,
 }: {
   profile: LibraryProfileSchema;
   /** Titles of the installed processors by key, for the steps of the profile. */
   titles: ReadonlyMap<string, string>;
   /** The book the library is opened from, or nothing when it is opened from the account. */
   book?: LibraryBook;
+  /** Whether applying to the book makes the profile the active recipe, which the library lets the reader choose. */
+  activate?: boolean;
 }): React.JSX.Element {
   const duplicate = useDuplicateProfile();
   const exporter = useExportProfile();
@@ -190,7 +196,7 @@ export function ProfileCard({
       </p>
       <div className="flex flex-wrap gap-2">
         {book === undefined ? null : (
-          <BookActions profile={profile} book={book} onApplied={setNotice} />
+          <BookActions profile={profile} book={book} activate={activate} onApplied={setNotice} />
         )}
         <Button
           variant="outline"
@@ -283,7 +289,9 @@ function Notice({ notice }: { notice: CardNotice | null }): React.JSX.Element | 
     <div className="grid gap-1 text-xs text-muted-foreground" data-testid="profile-notice">
       <p>
         {pages === null
-          ? labels.appliedBook(applied.recipe.name)
+          ? (applied.recipe.active ? labels.appliedBook : labels.appliedVariant)(
+              applied.recipe.name,
+            )
           : labels.appliedPages(applied.recipe.name, pages)}
       </p>
       {applied.missing_processors.length === 0 ? null : (

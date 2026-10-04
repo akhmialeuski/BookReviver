@@ -284,6 +284,31 @@ describe('ProfileLibrary', () => {
       );
     });
 
+    it('adds the profile as a variant only, when the choice to make it the active recipe is off', async () => {
+      sdk.apply.mockResolvedValue({
+        data: {
+          recipe: recipe('made', { name: 'Clean flatbed scan', active: false }),
+          missing_processors: [],
+          job: null,
+        },
+      });
+
+      await render();
+      expect(byId('profile-activate')).toHaveProperty('checked', true);
+      await click(byId('profile-activate'));
+      await click(inCard('Clean flatbed scan', 'profile-apply-book'));
+
+      expect(sdk.apply).toHaveBeenCalledWith(
+        expect.objectContaining({
+          path: { project_id: 'project', profile_id: 'p1' },
+          body: { activate: false },
+        }),
+      );
+      expect(inCard('Clean flatbed scan', 'profile-notice')?.textContent).toContain(
+        'as a variant of this book',
+      );
+    });
+
     it('names the steps that were left out because their processor is not installed', async () => {
       sdk.apply.mockResolvedValue(applied('Clean flatbed scan', ['geometry.gone']));
 
