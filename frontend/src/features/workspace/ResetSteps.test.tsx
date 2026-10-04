@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { processing, recipe } from '@/features/processing/fixtures';
 import { row } from '@/features/workspace/fixtures';
 import { ResetSteps } from '@/features/workspace/ResetSteps';
+import { ProblemError } from '@/shared/http/problem';
 
 /**
  * The button that puts the default steps back and its confirmation, which names how many pages the reset makes out of
@@ -107,7 +108,9 @@ describe('ResetSteps', () => {
   });
 
   it('keeps the confirmation open and shows the answer when the server refuses', async () => {
-    sdk.reset.mockRejectedValue(new Error('refused'));
+    sdk.reset.mockRejectedValue(
+      new ProblemError('Another job of this book is running.', 409, null, []),
+    );
     render();
     await open();
     await act(async () => {
@@ -119,6 +122,8 @@ describe('ResetSteps', () => {
 
     expect(discard).not.toHaveBeenCalled();
     expect(byId('steps-reset-dialog')).not.toBeNull();
-    expect(byId('steps-reset-dialog')?.textContent).toContain('refused');
+    expect(byId('steps-reset-dialog')?.textContent).toContain(
+      'Another job of this book is running.',
+    );
   });
 });
