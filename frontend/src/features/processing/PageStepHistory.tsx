@@ -17,7 +17,8 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  *
  * Each row says what changed, who changed it, when, and what the layer held before and after. "Undo" and Ctrl+Z take
  * back the newest change that stands, and "Undo back to here" takes back a row and every change after it. An undo is
- * written to the history as a change of its own, so it is listed too and the rows it took back are marked. A change of
+ * written to the history as a change of its own, so it is listed too and the rows it took back are marked. A key pressed
+ * twice quickly takes back two changes, since the second undo waits for the first on the server. A change of
  * a batch is taken back with its whole batch, which the server does, so one press undoes it on every page it reached.
  * A step that is not saved yet has no history, since the server names a step by the identifier it gives it when the
  * recipe is saved.
@@ -49,8 +50,10 @@ export function PageStepHistory({
     [processor],
   );
 
+  // An undo of the newest change is never dropped while an earlier one settles: the requests of the book go to the server
+  // one at a time in the order they were made, and each takes back the newest change that stands by then
   const takeBack = (changeId: string | null): void => {
-    if (stepId !== null && !undo.isPending) {
+    if (stepId !== null) {
       undo.mutate({
         path: { project_id: projectId, page_id: pageId, stage, step_id: stepId },
         body: { change_id: changeId },
@@ -87,7 +90,7 @@ export function PageStepHistory({
           size="sm"
           title={labels.undoLast}
           aria-label={labels.undoLast}
-          disabled={last === undefined || undo.isPending}
+          disabled={last === undefined}
           data-testid="page-history-undo"
           onClick={() => takeBack(null)}
         >

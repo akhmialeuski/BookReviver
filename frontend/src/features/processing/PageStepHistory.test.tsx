@@ -208,6 +208,36 @@ describe('PageStepHistory', () => {
     expect(sdk.undo.mock.calls[0]?.[0]).toMatchObject({ body: { change_id: null } });
   });
 
+  it('takes back two changes when Ctrl+Z is pressed twice while the first undo is still settling', async () => {
+    let finishFirst: (value: { data: { changes: never[] } }) => void = () => {};
+    sdk.undo.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishFirst = resolve;
+      }),
+    );
+    await render();
+    const press = async (): Promise<void> => {
+      await act(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'z',
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+    };
+
+    await press();
+    await press();
+    await act(async () => finishFirst({ data: { changes: [] } }));
+    await settle();
+    await settle();
+
+    expect(sdk.undo).toHaveBeenCalledTimes(2);
+  });
+
   it('does nothing for Ctrl+Z when no change stands', async () => {
     sdk.history.mockResolvedValue(pageOf([]));
     await render();
