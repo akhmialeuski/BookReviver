@@ -3,6 +3,7 @@ import type { Stage } from '@/api';
 import {
   getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey,
   listPagesApiV1ProjectsProjectIdPagesGetQueryKey,
+  listPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetQueryKey,
   listProjectJobsApiV1ProjectsProjectIdJobsGetQueryKey,
   listProjectsApiV1ProjectsGetQueryKey,
   listScansApiV1ProjectsProjectIdScansGetQueryKey,
@@ -68,6 +69,15 @@ export function pageChangesInFlight(queryClient: QueryClient, projectId: string)
 export function invalidatePages(queryClient: QueryClient, projectId: string): Promise<void> {
   return queryClient.invalidateQueries({
     queryKey: listPagesApiV1ProjectsProjectIdPagesGetQueryKey({ path: { project_id: projectId } }),
+  });
+}
+
+/** Refresh the pagination sections of a book, which a change of its pages can move, hand over or renumber. */
+export function invalidateSections(queryClient: QueryClient, projectId: string): Promise<void> {
+  return queryClient.invalidateQueries({
+    queryKey: listPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetQueryKey({
+      path: { project_id: projectId },
+    }),
   });
 }
 
