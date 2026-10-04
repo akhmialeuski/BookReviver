@@ -1,3 +1,5 @@
+import type { AppliesTo } from '@/api';
+import { conditionOfKind } from '@/features/processing/variants';
 import type { StripItem } from '@/features/workspace/strip';
 import { MESSAGES } from '@/shared/messages';
 
@@ -76,6 +78,25 @@ export function pageIdsFor(
     case RunScope.All:
       return null;
   }
+}
+
+/**
+ * Give the pages a step with a condition goes over, which are the ones that have an image and may meet the condition.
+ *
+ * The server decides which pages a step processes and passes the rest unchanged. What it needs the colour of the image
+ * for, the pictures in colour and the pictures in black and white, is not known here, so those two conditions list every
+ * picture, and a run over them leaves the pictures of the other colour as they were.
+ *
+ * @param items Every page of the book with where it stands in the stage.
+ * @param condition The condition of the step.
+ */
+export function pagesOfCondition(items: readonly StripItem[], condition: AppliesTo): StripItem[] {
+  const processable = items.filter(hasImage);
+  if (condition === 'all') {
+    return processable;
+  }
+  const isPicture = (item: StripItem): boolean => conditionOfKind(item.page.kind) === 'plates';
+  return processable.filter((item) => isPicture(item) === (condition !== 'text'));
 }
 
 /**

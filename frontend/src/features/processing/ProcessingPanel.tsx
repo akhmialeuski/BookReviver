@@ -72,6 +72,9 @@ export function ProcessingPanel({
             workspace={step.workspace}
             step={step.step}
             pageLabel={step.pageLabel}
+            pageId={current?.page.id}
+            items={items}
+            editor={editor}
             run={run}
             onOpen={step.onOpen}
             onClose={() => step.onOpen(undefined)}
@@ -88,6 +91,7 @@ export function ProcessingPanel({
             item={current}
             selected={selected}
             editor={editor}
+            controls={step === undefined}
           />
         )}
       </div>

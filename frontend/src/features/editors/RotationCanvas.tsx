@@ -1,11 +1,14 @@
 import type { KonvaEventObject } from 'konva/lib/Node';
 import { useEffect, useRef } from 'react';
-import { Circle, Line } from 'react-konva';
+import { Circle, Line, Text } from 'react-konva';
 import { EditorLayer } from '@/features/editors/EditorLayer';
+import { FIGURE_STYLE } from '@/features/editors/figure';
 import {
   ANGLE_LIMIT,
-  angleFromPointer,
-  handleAt,
+  AxisEnd,
+  angleFromAxisPointer,
+  axisEndAt,
+  formatAngle,
   stepByKey,
   stepByWheel,
 } from '@/features/editors/rotation';
@@ -17,41 +20,46 @@ import { MESSAGES } from '@/shared/messages';
 
 /**
  * The rotation editor over the page: the picture turns with the angle, so the lines of text can be brought level with the
- * guides drawn over it, and a handle on the edge of the page sets the angle.
+ * grid the canvas draws over it, and the axis through the middle of the page has a round handle at each end to set the
+ * angle by.
  *
- * The handle is dragged round the middle of the page. `Alt` and the wheel, or the arrow keys, change the angle by a tenth
- * of a degree, and the save waits for a pause so that a run of notches or presses is saved once. The picture is turned back when the
- * editor closes, since the step turns the page itself.
+ * A handle is dragged round the middle of the page, and the axis turns with it, in the colour of the state the shape is
+ * in. `Alt` and the wheel change the angle by a tenth of a degree and the arrow keys by 0.05, and the save waits for a
+ * pause so that a run of notches or presses is saved once. The picture is turned back when the editor closes, since the
+ * step turns the page itself.
  */
 
 const labels = MESSAGES.editors.rotation;
 
-const GUIDE_COLOR = 'rgba(14, 165, 233, 0.5)';
-const GUIDE_WIDTH_PX = 1;
-/** How many bands the guides divide the page into. */
-const GUIDE_BANDS = 24;
-const AXIS_COLOR = '#0ea5e9';
-const AXIS_WIDTH_PX = 1;
-const AXIS_DASH_PX = [4, 4];
+const AXIS_WIDTH_PX = 2;
 const HANDLE_RADIUS_PX = 10;
-const HANDLE_BORDER_PX = 2;
-const HANDLE_BORDER_COLOR = '#ffffff';
+const HANDLE_BORDER_PX = 3;
+const HANDLE_FILL = '#ffffff';
 const HIT_EXTRA_PX = 8;
-/** How far the handle stands off the edge of the page. */
+/** How far a handle stands off the edge of the page. */
 const HANDLE_GAP_PX = 28;
-/** Quiet time after the last notch of the wheel before the angle is saved. */
-const WHEEL_SAVE_DELAY_MS = 600;
+/** The room kept between a handle and the edge of the canvas. */
+const EDGE_ROOM_PX = 4;
+/** Quiet time after the last notch of the wheel or press of a key before the angle is saved. */
+const SAVE_DELAY_MS = 600;
+const LABEL_FONT_PX = 14;
+const LABEL_RISE_PX = 32;
+const LABEL_WIDTH_PX = 80;
 const HALF = 2;
+
+const ENDS = [AxisEnd.Left, AxisEnd.Right] as const;
 
 export function RotationCanvas({
   scene,
   shape,
   size,
+  figure,
   onChange,
   onCommit,
 }: CanvasProps<RotationShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
-  const saveLater = useDebouncedCommit(onCommit, WHEEL_SAVE_DELAY_MS);
+  const saveLater = useDebouncedCommit(onCommit, SAVE_DELAY_MS);
+  const { stroke, dash } = FIGURE_STYLE[figure];
   const latest = useRef(shape);
   useEffect(() => {
     latest.current = shape;
@@ -73,28 +81,28 @@ export function RotationCanvas({
 
   const { mapping, viewRotation } = frame;
   const centre = mapping.toScreen({ x: frame.size.width / HALF, y: frame.size.height / HALF });
-  const half = {
-    width: (frame.size.width * mapping.pixelLength()) / HALF,
-    height: (frame.size.height * mapping.pixelLength()) / HALF,
+  const halfWidth = (frame.size.width * mapping.pixelLength()) / HALF;
+  // A handle stands off the page, in the margin, unless the page fills the canvas and there is no margin to stand in
+  const radius = Math.max(
+    Math.min(halfWidth + HANDLE_GAP_PX, frame.stage.width / HALF - HANDLE_RADIUS_PX - EDGE_ROOM_PX),
+    HANDLE_RADIUS_PX * HALF,
+  );
+  const handles = {
+    [AxisEnd.Left]: axisEndAt(centre, radius, shape.degrees, viewRotation, AxisEnd.Left),
+    [AxisEnd.Right]: axisEndAt(centre, radius, shape.degrees, viewRotation, AxisEnd.Right),
   };
-  const radius = half.height + HANDLE_GAP_PX;
-  const handle = handleAt(centre, radius, shape.degrees, viewRotation);
 
-  const guides = Array.from({ length: GUIDE_BANDS - 1 }, (_, index) => {
-    const y = centre.y - half.height + ((index + 1) * 2 * half.height) / GUIDE_BANDS;
-    return [centre.x - half.width, y, centre.x + half.width, y];
-  });
-
-  const drag = (event: KonvaEventObject<DragEvent>) => {
-    const degrees = angleFromPointer(
+  const drag = (end: AxisEnd) => (event: KonvaEventObject<DragEvent>) => {
+    const degrees = angleFromAxisPointer(
       centre,
       { x: event.target.x(), y: event.target.y() },
       viewRotation,
+      end,
     );
     const next = { degrees };
     latest.current = next;
     onChange(next);
-    event.target.position(handleAt(centre, radius, degrees, viewRotation));
+    event.target.position(axisEndAt(centre, radius, degrees, viewRotation, end));
   };
 
   const turnTo = (degrees: number): void => {
@@ -123,39 +131,49 @@ export function RotationCanvas({
         now: shape.degrees,
         text: MESSAGES.processing.thisPage.degrees(shape.degrees),
       }}
-      data={{ degrees: String(shape.degrees), 'handle-rotation': `${handle.x},${handle.y}` }}
+      data={{
+        figure,
+        degrees: String(shape.degrees),
+        'handle-rotation': `${handles.right.x},${handles.right.y}`,
+        'handle-rotation-left': `${handles.left.x},${handles.left.y}`,
+      }}
       onKeyDown={onKeyDown}
       onAltWheel={(deltaY) => turnTo(stepByWheel(latest.current.degrees, deltaY))}
     >
-      {guides.map((points) => (
-        <Line
-          key={points[1]}
-          points={points}
-          stroke={GUIDE_COLOR}
-          strokeWidth={GUIDE_WIDTH_PX}
-          listening={false}
-        />
-      ))}
       <Line
-        points={[centre.x, centre.y, handle.x, handle.y]}
-        stroke={AXIS_COLOR}
+        points={[handles.left.x, handles.left.y, handles.right.x, handles.right.y]}
+        stroke={stroke}
+        dash={dash}
         strokeWidth={AXIS_WIDTH_PX}
-        dash={AXIS_DASH_PX}
         listening={false}
       />
-      <Circle
-        x={handle.x}
-        y={handle.y}
-        radius={HANDLE_RADIUS_PX}
-        fill={AXIS_COLOR}
-        stroke={HANDLE_BORDER_COLOR}
-        strokeWidth={HANDLE_BORDER_PX}
-        hitStrokeWidth={HIT_EXTRA_PX}
-        draggable
-        name={labels.handle}
-        onDragMove={drag}
-        onDragEnd={() => onCommit(latest.current)}
+      <Text
+        x={handles.right.x - LABEL_WIDTH_PX / HALF}
+        y={handles.right.y - LABEL_RISE_PX}
+        width={LABEL_WIDTH_PX}
+        align="center"
+        text={`${formatAngle(shape.degrees)}°`}
+        fontSize={LABEL_FONT_PX}
+        fontStyle="bold"
+        fill={stroke}
+        listening={false}
       />
+      {ENDS.map((end) => (
+        <Circle
+          key={end}
+          x={handles[end].x}
+          y={handles[end].y}
+          radius={HANDLE_RADIUS_PX}
+          fill={HANDLE_FILL}
+          stroke={stroke}
+          strokeWidth={HANDLE_BORDER_PX}
+          hitStrokeWidth={HIT_EXTRA_PX}
+          draggable
+          name={`${labels.handle} ${end}`}
+          onDragMove={drag(end)}
+          onDragEnd={() => onCommit(latest.current)}
+        />
+      ))}
     </EditorLayer>
   );
 }

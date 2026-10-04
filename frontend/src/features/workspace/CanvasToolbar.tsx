@@ -5,6 +5,7 @@ import {
   ChevronRightIcon,
   FileIcon,
   GitCompareIcon,
+  Grid3x3Icon,
   MaximizeIcon,
   ZoomInIcon,
   ZoomOutIcon,
@@ -24,6 +25,9 @@ import {
 /**
  * The bar floating at the foot of the canvas: page turns, the number of the open page, one page or a spread, zoom,
  * and the place of the before-and-after mode.
+ *
+ * A stage whose steps are laid out against a grid adds the "Grid" button, which shows the grid over the page and hides it
+ * again, as the key G does.
  *
  * The compare button is drawn and disabled for a stage that does not process pages. A stage that does gives it the mode
  * and the way to change it, and it becomes a menu of the ways to compare.
@@ -46,6 +50,7 @@ export function CanvasToolbar({
   onFit,
   onZoomIn,
   onZoomOut,
+  grid,
   compare,
 }: {
   /** The label and place of the open page, such as `p. 14 · 18 of 126`. */
@@ -59,6 +64,11 @@ export function CanvasToolbar({
   onFit: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
+  /** The grid over the page of a stage that has one, or nothing for a stage that has none. */
+  grid?: {
+    on: boolean;
+    onToggle: () => void;
+  };
   /**
    * The before-and-after control of a stage that processes pages. Absent for a stage that does not, which draws the
    * button disabled.
@@ -145,6 +155,19 @@ export function CanvasToolbar({
         <ZoomInIcon />
       </Button>
       <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
+      {grid === undefined ? null : (
+        <Button
+          variant={grid.on ? 'secondary' : 'ghost'}
+          size="sm"
+          aria-pressed={grid.on}
+          title={labels.gridTitle}
+          data-testid="canvas-grid-toggle"
+          onClick={grid.onToggle}
+        >
+          <Grid3x3Icon />
+          {labels.grid}
+        </Button>
+      )}
       {compare === undefined ? (
         <Button variant="ghost" size="sm" disabled title={labels.compareSoon}>
           <GitCompareIcon />

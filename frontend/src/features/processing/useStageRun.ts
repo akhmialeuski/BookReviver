@@ -43,6 +43,13 @@ export interface StageRun {
    * @param throughStep Index in the recipe of the last step to run, or undefined to run through the last step that is on.
    */
   start: (scope: RunScope, throughStep?: number) => void;
+  /**
+   * Run the saved recipe over the pages named, up to a step.
+   *
+   * @param pageIds The pages to run it on.
+   * @param throughStep Index in the recipe of the last step to run.
+   */
+  startPages: (pageIds: readonly string[], throughStep: number) => void;
   /** Whether a run that would delete the right half of a spread waits for the answer of the reader. */
   confirming: boolean;
   confirm: () => void;
@@ -73,16 +80,16 @@ export function useStageRun(
   const send = (body: StageRunBody): void =>
     run.mutate({ path: { project_id: projectId, stage }, body });
 
-  const start = (scope: RunScope, throughStep?: number): void => {
+  // Pages are named by identifier, or by null for every page that has an image
+  const begin = (ids: readonly string[] | null, throughStep?: number): void => {
     if (recipe === undefined) {
       return;
     }
-    const ids = pageIdsFor(scope, items, current?.page.id, selected);
     // The active recipe is the book's own: each page then gets the variant it is pinned to or the rules choose. Any
     // other variant is a trial, and goes to every page of the scope
     const body: StageRunBody = {
       ...(recipe.active ? {} : { recipe_id: recipe.id }),
-      ...(ids === null ? {} : { page_ids: ids }),
+      ...(ids === null ? {} : { page_ids: [...ids] }),
       ...(throughStep === undefined ? {} : { through_step: throughStep }),
     };
     const affected =
@@ -96,6 +103,9 @@ export function useStageRun(
     }
   };
 
+  const start = (scope: RunScope, throughStep?: number): void =>
+    begin(pageIdsFor(scope, items, current?.page.id, selected), throughStep);
+
   return {
     choices: scopeChoices(items, current?.page.id, selected),
     describe: (scope, count) => describeScope(scope, count, current?.page.label ?? ''),
@@ -105,6 +115,7 @@ export function useStageRun(
     pending: run.isPending,
     error: run.error,
     start,
+    startPages: begin,
     confirming: confirming !== null,
     confirm: () => {
       if (confirming !== null) {

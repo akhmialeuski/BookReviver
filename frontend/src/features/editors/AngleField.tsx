@@ -1,6 +1,6 @@
 import { RotateCcwIcon } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { parseAngle } from '@/features/editors/rotation';
+import { formatAngle, parseAngle } from '@/features/editors/rotation';
 import { MESSAGES } from '@/shared/messages';
 import { Input } from '@/shared/ui/input';
 
@@ -55,7 +55,7 @@ export function AngleField({
         data-testid="angle-field"
         className="px-9"
         disabled={disabled}
-        value={typed ?? degrees.toFixed(1)}
+        value={typed ?? formatAngle(degrees)}
         onFocus={(event) => event.currentTarget.select()}
         onChange={(event) => setTyped(event.target.value)}
         onBlur={finish}

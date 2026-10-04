@@ -53,8 +53,10 @@ describe('the panels of the cleanup editors', () => {
           <RegionsPanel
             shape={{ zones: props.zones ?? [] }}
             processorKey="cleanup.binarize"
+            params={{}}
             disabled={props.disabled ?? false}
             size={props.size === undefined ? SIZE : props.size}
+            onChange={vi.fn()}
             onCommit={onCommit}
           />,
         ),
@@ -112,6 +114,7 @@ describe('the panels of the cleanup editors', () => {
         root.render(
           <BrushPanel
             processorKey="cleanup.eraser"
+            params={{}}
             shape={{
               strokes: Array.from({ length: strokes }, () => ({
                 radius: 5,
@@ -120,6 +123,7 @@ describe('the panels of the cleanup editors', () => {
             }}
             disabled={disabled}
             size={SIZE}
+            onChange={vi.fn()}
             onCommit={onCommit}
           />,
         ),

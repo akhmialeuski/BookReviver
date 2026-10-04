@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import type { PageSchema, PageVersionSchema, ScanSchema } from '@/api';
+import type { FigureState, PageSchema, PageVersionSchema, ScanSchema } from '@/api';
 import type { EditorScene } from '@/features/editors/scene';
 import type { Geometry, Size } from '@/features/editors/shapes';
 import type { PageResult } from '@/features/processing/results';
@@ -38,6 +38,11 @@ export interface PageContext {
   result: PageResult | null;
   /** The key of the processor of the step the editor sets. */
   processorKey: string;
+  /**
+   * The size in pixels of the picture the editor lies on, as the picture says it, or null when it is not known yet or the
+   * picture has no pyramid to say it. An editor whose step has not run starts from the whole picture, so it needs it.
+   */
+  pictureSize: Size | null;
 }
 
 /** What an editor needs to start from when the page has no edit. */
@@ -53,6 +58,8 @@ export interface CanvasProps<S> {
   /** The size of the picture in the pixels of the edit, or null when the editor counts in the picture's own. */
   size: Size | null;
   context: PageContext;
+  /** The state the shape is in on the page, which decides how it is drawn. */
+  figure: FigureState;
   /** The shape changed while the reader is still moving it. */
   onChange: (shape: S) => void;
   /** The reader let go of the shape, so it is to be saved. */
@@ -64,10 +71,14 @@ export interface PanelProps<S> {
   shape: S;
   /** The key of the processor of the step the editor sets. */
   processorKey: string;
+  /** The settings of the step the editor sets, as the recipe saved them. */
+  params: Readonly<Record<string, unknown>>;
   /** Whether a change cannot be made now, such as while the last one is being saved. */
   disabled: boolean;
   /** The size of the picture in the pixels of the edit, or null when the editor counts in the picture's own. */
   size: Size | null;
+  /** The shape changed while the reader is still moving it, such as a slider that has not been let go. */
+  onChange: (shape: S) => void;
   onCommit: (shape: S) => void;
 }
 
@@ -103,6 +114,7 @@ export interface GeometryCanvasProps {
   geometry: Geometry;
   size: Size | null;
   context: PageContext;
+  figure: FigureState;
   onChange: (geometry: Geometry) => void;
   onCommit: (geometry: Geometry) => void;
 }
@@ -111,8 +123,10 @@ export interface GeometryCanvasProps {
 export interface GeometryPanelProps {
   geometry: Geometry;
   processorKey: string;
+  params: Readonly<Record<string, unknown>>;
   disabled: boolean;
   size: Size | null;
+  onChange: (geometry: Geometry) => void;
   onCommit: (geometry: Geometry) => void;
 }
 

@@ -23,6 +23,7 @@ export function SplitCanvas({
   shape,
   size,
   context,
+  figure,
   onChange,
   onCommit,
 }: CanvasProps<SplitShape>): React.JSX.Element {
@@ -34,6 +35,7 @@ export function SplitCanvas({
       shape={shape.line ?? cutLine(found, size ?? NO_SIZE)}
       size={size}
       context={context}
+      figure={figure}
       onChange={(line) => onChange(chosen(line))}
       onCommit={(line) => onCommit(chosen(line))}
     />

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { pageIdsFor, RunScope, scopeChoices, troubleOf } from '@/features/processing/scope';
+import {
+  pageIdsFor,
+  pagesOfCondition,
+  RunScope,
+  scopeChoices,
+  troubleOf,
+} from '@/features/processing/scope';
 import { page, row } from '@/features/workspace/fixtures';
 import { joinRows } from '@/features/workspace/strip';
 
@@ -62,5 +68,37 @@ describe('scopeChoices', () => {
       { scope: 'attention', count: 2 },
       { scope: 'all', count: 4 },
     ]);
+  });
+});
+
+describe('pagesOfCondition', () => {
+  const MIXED = joinRows(
+    [
+      page('text', { position: 0 }),
+      page('cover', { position: 1, kind: 'cover' }),
+      page('plate', { position: 2, kind: 'plate' }),
+      page('front', { position: 3, kind: 'frontispiece' }),
+      page('hole', { position: 4, kind: 'plate', origin: 'placeholder', images: null }),
+    ],
+    [],
+  );
+  const idsOf = (condition: Parameters<typeof pagesOfCondition>[1]): string[] =>
+    pagesOfCondition(MIXED, condition).map((item) => item.page.id);
+
+  it('lists every page that has an image for a step with no condition', () => {
+    expect(idsOf('all')).toEqual(['text', 'cover', 'plate', 'front']);
+  });
+
+  it('lists the pages that are not pictures for the pages of text', () => {
+    expect(idsOf('text')).toEqual(['text', 'cover']);
+  });
+
+  it('lists the plates and the frontispieces for the pictures, and never a placeholder', () => {
+    expect(idsOf('pictures')).toEqual(['plate', 'front']);
+  });
+
+  it('lists every picture for the colour conditions, since the colour of the image is the server to tell', () => {
+    expect(idsOf('color-pictures')).toEqual(['plate', 'front']);
+    expect(idsOf('bw-pictures')).toEqual(['plate', 'front']);
   });
 });

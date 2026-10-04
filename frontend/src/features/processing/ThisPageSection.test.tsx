@@ -49,6 +49,8 @@ describe('ThisPageSection', () => {
     return {
       picture: { kind: SourceKind.Iiif, url: '/info.json' },
       alwaysOn: false,
+      focused: false,
+      figure: 'default',
       active: false,
       steps: [],
       choose: vi.fn(),

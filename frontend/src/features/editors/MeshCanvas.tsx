@@ -2,6 +2,7 @@ import type { KonvaEventObject } from 'konva/lib/Node';
 import { useEffect, useRef, useState } from 'react';
 import { Circle, Line } from 'react-konva';
 import { EditorLayer } from '@/features/editors/EditorLayer';
+import { FIGURE_STYLE } from '@/features/editors/figure';
 import { nudgeOfKey } from '@/features/editors/line';
 import { curvesOf, GRID_ROWS, gridOf, moveNode } from '@/features/editors/mesh';
 import { useMoreControl } from '@/features/editors/moreControl';
@@ -22,7 +23,6 @@ import { MESSAGES } from '@/shared/messages';
 
 const labels = MESSAGES.editors.mesh;
 
-const CURVE_COLOR = '#ea580c';
 const CURVE_WIDTH_PX = 2;
 /** How far a curve bends between its nodes, as Konva counts it. */
 const CURVE_TENSION = 0.4;
@@ -47,10 +47,12 @@ export function MeshCanvas({
   scene,
   shape,
   size,
+  figure,
   onChange,
   onCommit,
 }: CanvasProps<MeshShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
+  const { stroke, dash } = FIGURE_STYLE[figure];
   const saveLater = useDebouncedCommit(onCommit, KEY_SAVE_DELAY_MS);
   const showAll = useMoreControl();
   // What is on the screen: the grid, or the two curves of the shape
@@ -109,6 +111,7 @@ export function MeshCanvas({
     row.map((at, column) => ({ id: `node-${place}-${column}`, row: place, column, at })),
   );
   const data: Record<string, string> = {
+    figure,
     rows: String(shown.rows.length),
     columns: String(shown.rows[0]?.length ?? 0),
   };
@@ -136,7 +139,8 @@ export function MeshCanvas({
         <Line
           key={curve.id}
           points={curve.points}
-          stroke={CURVE_COLOR}
+          stroke={stroke}
+          dash={dash}
           strokeWidth={CURVE_WIDTH_PX}
           tension={CURVE_TENSION}
           listening={false}
@@ -148,7 +152,7 @@ export function MeshCanvas({
           x={handle.at.x}
           y={handle.at.y}
           radius={HANDLE_RADIUS_PX}
-          fill={CURVE_COLOR}
+          fill={stroke}
           stroke={HANDLE_BORDER_COLOR}
           strokeWidth={HANDLE_BORDER_PX}
           hitStrokeWidth={HIT_EXTRA_PX}

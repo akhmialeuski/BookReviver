@@ -11,6 +11,8 @@ function session(overrides: Partial<EditorSession> = {}): EditorSession {
   return {
     picture: { kind: SourceKind.Iiif, url: '/info.json' },
     alwaysOn: false,
+    focused: false,
+    figure: 'default',
     active: false,
     steps: [],
     choose: vi.fn(),
@@ -124,6 +126,22 @@ describe('EditorControls', () => {
     ]);
     act(() => button('Content frame')?.click());
     expect(picking.choose).toHaveBeenCalledWith('c');
+  });
+
+  it('draws no list of steps for the editor of a step that is open in the workspace, which names the step itself', () => {
+    render(
+      session({
+        focused: true,
+        alwaysOn: true,
+        steps: [
+          { key: 'a', title: 'Sheet corners', manual: false, detail: null, chosen: false },
+          { key: 'b', title: 'Angle', manual: false, detail: null, chosen: true },
+        ],
+      }),
+    );
+
+    expect(container.querySelector('[data-testid="editor-steps"]')).toBeNull();
+    expect(button('Set by hand')).toBeUndefined();
   });
 
   it('draws no list for a stage with one editor', () => {

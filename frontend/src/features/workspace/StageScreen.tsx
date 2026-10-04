@@ -36,6 +36,8 @@ import {
 import { FitMode, type StagePage } from '@/features/viewer/stage';
 import { useViewerKeys } from '@/features/viewer/useViewerKeys';
 import { CanvasToolbar } from '@/features/workspace/CanvasToolbar';
+import { GridOverlay } from '@/features/workspace/GridOverlay';
+import { useGrid, useGridKey } from '@/features/workspace/grid';
 import { CompareMode, PageFilter, type StageSearch, ViewMode } from '@/features/workspace/params';
 import { useStageRows, useStageSummaries } from '@/features/workspace/queries';
 import { StageGrid } from '@/features/workspace/StageGrid';
@@ -81,6 +83,8 @@ const NO_PAGES: readonly PageSchema[] = [];
 const NO_ROWS: readonly StagePageSchema[] = [];
 const NOTHING_SELECTED: SelectionState = { selected: new Set(), anchorId: null };
 const NO_SCANS: readonly ScanSchema[] = [];
+/** The processor whose step shows the grid before the reader has chosen. */
+const DESKEW_KEY = 'geometry.deskew';
 
 /** The place of the open page in the book as the toolbar writes it, such as `p. 14 · 18 of 126`. */
 function captionOf(shown: readonly StripItem[], count: number): string {
@@ -255,6 +259,12 @@ export function StageScreen({
     focusStepId: openStep?.stepId,
   });
 
+  // The grid over the page of the steps of Geometry, which the Deskew step shows until the reader chooses; it is not the
+  // grid of pages, which is a way to lay out the strip
+  const hasLevelGrid = hasStepBar(stage);
+  const [levelGridOn, toggleLevelGrid] = useGrid(projectId, openStep?.processorKey === DESKEW_KEY);
+  useGridKey(toggleLevelGrid, hasLevelGrid && !grid);
+
   // The grid shows no open page, so the page keys and the strip have nothing to turn there
   const openPage = (pageId: string | undefined): void => {
     if (pageId !== undefined && !grid) {
@@ -335,8 +345,9 @@ export function StageScreen({
 
   // The compare draws the picture before beside the picture after, which is the preview while one is on
   const processed = processing.available;
-  // While the editor is open the canvas shows the one picture it lies on, so nothing is compared
-  const editing = editor?.active ? editor : null;
+  // While an editor is open the canvas shows the one picture it lies on, so nothing is compared. The editor of an open
+  // step is always open, so it gives way to the compare once the reader asks for one, and comes back when it is off
+  const editorOpen = editor?.active === true;
   const previewShown =
     processing.preview.on && processing.preview.shown?.page_id === currentItem?.page.id
       ? processing.preview.shown
@@ -361,12 +372,14 @@ export function StageScreen({
   const beforePicture = openStep === null ? beforeSource : stepInput;
   const compareBlocked = spread
     ? MESSAGES.processing.compare.spreadOnly
-    : editing !== null
+    : editorOpen && editor?.focused !== true
       ? MESSAGES.editors.compareOff
       : beforePicture === null || (openStep !== null && stepOutput === null)
         ? MESSAGES.processing.compare.none
         : null;
   const compareMode = compareBlocked === null ? compareChoice : CompareMode.Off;
+  const editing =
+    editor?.active && (!editor.focused || compareMode === CompareMode.Off) ? editor : null;
   const stepLabels = MESSAGES.workspace.steps.canvas;
   const stageName = MESSAGES.stages.names[stage];
   const stageBeforeThis = stageBefore(stage);
@@ -437,7 +450,8 @@ export function StageScreen({
             {MESSAGES.viewer.unknownPage}
           </p>
         ) : null}
-        <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
+        {hasLevelGrid && levelGridOn ? <GridOverlay /> : null}
+        <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center">
           <div className="pointer-events-auto">
             <CanvasToolbar
               caption={captionOf(shown, count)}
@@ -450,6 +464,7 @@ export function StageScreen({
               onFit={() => canvas.current?.fit(FitMode.Page)}
               onZoomIn={() => canvas.current?.zoomIn()}
               onZoomOut={() => canvas.current?.zoomOut()}
+              grid={hasLevelGrid ? { on: levelGridOn, onToggle: toggleLevelGrid } : undefined}
               compare={
                 processed
                   ? {

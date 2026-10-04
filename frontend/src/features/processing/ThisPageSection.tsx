@@ -32,6 +32,7 @@ export function ThisPageSection({
   item,
   selected,
   editor = null,
+  controls = true,
 }: {
   processing: Processing;
   /** Every page of the book with where it stands in the stage, which "Apply to" counts the pages of. */
@@ -41,6 +42,8 @@ export function ThisPageSection({
   selected: ReadonlySet<string>;
   /** The page editor of the stage on this page, or null when the stage has none. */
   editor?: EditorSession | null;
+  /** Whether the controls of the editor stand here, which they do not while the section of an open step holds them. */
+  controls?: boolean;
 }): React.JSX.Element {
   const { projectId, stage, catalogue } = processing;
   const { page, row } = item;
@@ -221,7 +224,7 @@ export function ThisPageSection({
           <p className="text-muted-foreground">{labels.thisPage.reviewHint}</p>
         </div>
       )}
-      {editor === null ? null : <EditorControls session={editor} />}
+      {editor === null || !controls ? null : <EditorControls session={editor} />}
       <ApplyTo processing={processing} items={items} item={item} selected={selected} />
 
       <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
