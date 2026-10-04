@@ -3,7 +3,7 @@
 The history only grows. A change is taken back by a later change whose source is an undo and which names it, so the
 changes that still stand are those no undo names, and the undos themselves are never taken back. What can be undone is
 the newest change that stands, then the one before it, which is how a Ctrl+Z works, and a change of a batch is taken
-back together with the rest of its batch.
+back together with the rest of its batch. A carry-over of a setting to other pages is such a batch.
 """
 
 from typing import TYPE_CHECKING
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bookreviver.domain.entities import PageStepChange
-    from bookreviver.domain.ids import PageStepChangeId
+    from bookreviver.domain.ids import ChangeBatchId, PageId, PageStepChangeId
 
 
 @frozen
@@ -56,3 +56,18 @@ class StepHistory:
             if change.id == change_id:
                 return tuple(reversed(standing[index:]))
         raise NotFoundError(change_id)
+
+
+@frozen
+class CarryOver:
+    """What carrying a setting of one page over to other pages did, which is one batch of the history.
+
+    :ivar batch_id: The batch the changes share, so taking back one of them takes back all of them.
+    :ivar changes: The changes written, one on each page that took the value, which are none when every page already
+                   had it or was skipped.
+    :ivar skipped: The pages that were left as they were because they have a value of their own for the field.
+    """
+
+    batch_id: ChangeBatchId
+    changes: tuple[PageStepChange, ...]
+    skipped: tuple[PageId, ...]

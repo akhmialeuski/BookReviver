@@ -33,6 +33,7 @@ from bookreviver.domain.enums import (
     ProcessorScope,
     Rendition,
     ReviewReason,
+    RunMode,
     Stage,
     StageState,
     TransformKind,
@@ -241,6 +242,10 @@ class StageRunBody(RequestModel):
     :ivar through_step: Index in the recipe of the last step to run, from zero, or omitted to run through the last step
                         that is on. The steps before it come from the cache of versions when their inputs did not
                         change.
+    :ivar mode: What the run does with the settings the pages changed for its steps and with the manual edits they
+                read: it keeps them, which is the usual run, or takes the edits or the settings away first.
+    :ivar confirm_overwrite: Confirmation that a mode that takes work away does so on the pages it affects, without
+                             which such a run is refused with 409. A run that keeps the work needs none.
     """
 
     recipe_id: RecipeId | None = None
@@ -248,6 +253,8 @@ class StageRunBody(RequestModel):
     confirm_unsplit: bool = False
     pin: bool = False
     through_step: Annotated[int, Field(ge=0, lt=RECIPE_STEPS_MAX_LENGTH)] | None = None
+    mode: RunMode = RunMode.KEEP
+    confirm_overwrite: bool = False
 
     @model_validator(mode='after')
     def _pin_names_a_recipe(self) -> Self:
@@ -276,7 +283,26 @@ class StageRunBody(RequestModel):
             confirm_unsplit=self.confirm_unsplit,
             pin=self.pin,
             through_step=self.through_step,
+            mode=self.mode,
+            confirm_overwrite=self.confirm_overwrite,
         )
+
+
+class RunImpactSchema(ResponseModel):
+    """How many pages a run would take work from, by its mode.
+
+    :ivar mode: The mode of the run.
+    :ivar pages: How many pages the run goes over.
+    :ivar hand_pages: How many of them have a manual edit on a step the run goes over.
+    :ivar settings_pages: How many of them change at least one field of a step the run goes over.
+    :ivar affected: How many pages lose work to the mode, which is none for a run that keeps the work.
+    """
+
+    mode: RunMode
+    pages: int
+    hand_pages: int
+    settings_pages: int
+    affected: int
 
 
 class StepPreviewBody(RequestModel):

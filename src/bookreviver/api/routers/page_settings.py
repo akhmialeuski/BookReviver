@@ -2,7 +2,8 @@
 
 A field is set or taken back one at a time. Setting or taking back a field marks the stage of the page stale and
 processes nothing, and the value is checked against the parameters of the processor of the step before the route
-answers, so a field the processor does not have, or a value out of its range, is a 422.
+answers, so a field the processor does not have, or a value out of its range, is a 422. The value a page has for a
+field may be carried over to other pages in one batch, which one undo takes back from every page.
 """
 
 from dataclasses import dataclass
@@ -14,11 +15,13 @@ from fastapi_pagination import Page, Params
 
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
-from bookreviver.api.schemas.page_settings import PageSettingForm, PageStepSettingsSchema
+from bookreviver.api.schemas.page_history import PageStepChangeSchema
+from bookreviver.api.schemas.page_settings import CarryForm, CarryOverSchema, PageSettingForm, PageStepSettingsSchema
 from bookreviver.domain.entities import PageStepState
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import PageId, ProjectId, StepId
 from bookreviver.domain.values import PageStepKey, Slice
+from bookreviver.services.page_carry import CarryOverService
 from bookreviver.services.page_settings import PageSettingsService
 
 router = APIRouter(prefix='/projects', tags=['page-settings'], route_class=DishkaRoute)
@@ -139,3 +142,38 @@ async def delete_setting(
     :type settings: PageSettingsService
     """
     await settings.reset(actor, address.project_id, address.key, address.name)
+
+
+@router.post('/{project_id}/pages/{page_id}/settings/{stage}/{step_id}/{name}/carry-over')
+async def carry_over_setting(
+    address: Annotated[FieldPath, Depends()],
+    form: CarryForm,
+    actor: ActorDep,
+    carry: FromDishka[CarryOverService],
+) -> CarryOverSchema:
+    """Carry the value this page has for a field of a step over to other pages, as one batch, and mark them stale.
+
+    The pages are the following ones, the selected ones, or every page of the condition of the step. A page that has a
+    value of its own for the field is left as it is and listed as skipped, unless the form asks to write over it. Each
+    page that takes the value changes this one field and no other, and the changes share a batch, so one undo takes the
+    value back from every page. The answer is 404 when this page does not change the field, and 422 for a carry-over to
+    the selected pages that names none, or a value out of range for another field of a page.
+
+    \N{FORM FEED}
+    :param address: Identifiers of the project, the source page, the stage, the step and the field.
+    :type address: FieldPath
+    :param form: The pages to carry the value to, and whether to write over a value of their own.
+    :type form: CarryForm
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param carry: Carry-over service of the request.
+    :type carry: CarryOverService
+    :returns: The batch, the changes written and the pages skipped.
+    :rtype: CarryOverSchema
+    """
+    carried = await carry.carry(actor, address.project_id, form.to_request(address.key, address.name))
+    return CarryOverSchema(
+        batch_id=carried.batch_id,
+        changes=[PageStepChangeSchema.model_validate(change) for change in carried.changes],
+        skipped=list(carried.skipped),
+    )

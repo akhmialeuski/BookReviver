@@ -20,6 +20,7 @@ from bookreviver.domain.entities import Project, ProjectOverview
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import ProjectId
 from bookreviver.domain.values import Slice, SliceRequest
+from bookreviver.services.recipe_picks import PAGE_WINDOW
 
 if TYPE_CHECKING:
     from bookreviver.domain.changes import ProjectChanges
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import PageId, StepId
     from bookreviver.domain.stage_summaries import StageRow, StageSummary
     from bookreviver.domain.values import BookDetails
-    from bookreviver.ports.persistence import ProjectRepository, UnitOfWork
+    from bookreviver.ports.persistence import PageRepository, ProjectRepository, UnitOfWork
     from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore, SourceStore
     from bookreviver.services.stage_summaries import StageSummaries
@@ -73,6 +74,24 @@ async def owned_page(uow: UnitOfWork, actor: Actor, project_id: ProjectId, page_
     if page.project_id != project_id:
         raise NotFoundError(page_id)
     return page
+
+
+async def book_pages(pages: PageRepository, project_id: ProjectId) -> list[Page]:
+    """Read every page of a project in book order, window by window.
+
+    :param pages: Repository to read the pages from.
+    :type pages: PageRepository
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :returns: The pages of the book, the placeholders and the pages kept out of the book included.
+    :rtype: list[Page]
+    """
+    book: list[Page] = []
+    while True:
+        window = await pages.list_for_project(project_id, SliceRequest(offset=len(book), limit=PAGE_WINDOW))
+        book.extend(window.items)
+        if len(book) >= window.total or not window.items:
+            return book
 
 
 class ProjectService:

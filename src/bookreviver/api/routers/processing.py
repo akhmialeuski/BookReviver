@@ -24,6 +24,7 @@ from bookreviver.api.schemas.processing import (
     PageVersionSchema,
     RecipeBody,
     RecipeSchema,
+    RunImpactSchema,
     StageRunBody,
     StepPreviewBody,
     VersionQuery,
@@ -34,6 +35,7 @@ from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
 from bookreviver.domain.values import RecipeKey
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.recipe_order import RecipeOrder
+from bookreviver.services.run_plans import RunImpactService
 
 PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
 PAGE_ID_DESCRIPTION: str = 'Identifier of the page'
@@ -282,12 +284,14 @@ async def run_stage(
     """Run a stage over some pages by a recipe, in the background, and answer with the queued job.
 
     The job makes a version for every step on every page and reports one step of progress for each page. A project runs
-    one stage at a time, and another run while one is queued or running answers 409.
+    one stage at a time, and another run while one is queued or running answers 409. A run keeps the settings the pages
+    changed for its steps and the manual edits they read. A mode that takes the edits or the settings away answers 409
+    until the body confirms it, when it would take them from any page.
 
     \N{FORM FEED}
     :param address: Identifiers of the project and the stage.
     :type address: StagePath
-    :param body: The recipe, or the active one, and the pages, or every page with an image.
+    :param body: The recipe, or the active one, the pages, or every page with an image, and the mode.
     :type body: StageRunBody
     :param actor: The signed-in account.
     :type actor: Actor
@@ -298,6 +302,35 @@ async def run_stage(
     """
     job = await processing.start_run(actor, address.project_id, address.stage, body.to_run(address.stage))
     return JobSchema.model_validate(job)
+
+
+@router.post('/{project_id}/stages/{stage}/run-impact')
+async def run_impact(
+    address: Annotated[StagePath, Depends()],
+    body: StageRunBody,
+    actor: ActorDep,
+    impact: FromDishka[RunImpactService],
+) -> RunImpactSchema:
+    """Count the pages a run would take work from, so the user can confirm the run before it is sent.
+
+    The body is the one of the run. A run that keeps the settings and edits of the pages takes work from none. A run
+    that replaces the hand settings takes the manual edits of the steps it goes over, and a run that resets the page
+    settings takes the fields the pages changed for them. Nothing is written and nothing is queued.
+
+    \N{FORM FEED}
+    :param address: Identifiers of the project and the stage.
+    :type address: StagePath
+    :param body: The run, with its mode.
+    :type body: StageRunBody
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param impact: Run impact service of the request.
+    :type impact: RunImpactService
+    :returns: The pages the run goes over and the pages that lose work to its mode.
+    :rtype: RunImpactSchema
+    """
+    counted = await impact.impact(actor, address.project_id, body.to_run(address.stage))
+    return RunImpactSchema.model_validate(counted)
 
 
 @router.post('/{project_id}/stages/{stage}/preview', status_code=status.HTTP_202_ACCEPTED)

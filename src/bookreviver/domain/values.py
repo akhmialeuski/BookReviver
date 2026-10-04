@@ -22,6 +22,7 @@ from bookreviver.domain.enums import (
     ProcessorScope,
     Rendition,
     RightsStatus,
+    RunMode,
     Script,
     Stage,
     StepField,
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
     from attrs import Attribute
 
     from bookreviver.domain.enums import (
+        CarryScope,
         ColorMode,
         FileType,
         IdentifierScheme,
@@ -73,6 +75,10 @@ PIN_NEEDS_RECIPE: str = 'A run pins a recipe to its pages only when it names the
 THROUGH_STEP_KEY: str = 'through_step'
 REMAKE_KEY: str = 'remake'
 REMAKE_ONE_PAGE: str = 'A run that makes a version again names no recipe and exactly one page.'
+REMAKE_KEEPS: str = 'A run that makes a version again keeps the settings and edits of the page.'
+# Keys of the mode and of its confirmation in the stored parameters of a ``run-stage`` job
+MODE_KEY: str = 'mode'
+CONFIRM_OVERWRITE_KEY: str = 'confirm_overwrite'
 
 
 @frozen(kw_only=True)
@@ -546,6 +552,25 @@ class PageStepKey:
     page_id: PageId
     stage: Stage
     step_id: StepId
+
+
+@frozen(kw_only=True)
+class CarryRequest:
+    """What a carry-over of a setting asks for: the field of a step on a page, and the pages it goes to.
+
+    :ivar key: The source page, the stage and the step.
+    :ivar name: Name of the field in the parameters of the step.
+    :ivar scope: The pages the value goes to.
+    :ivar page_ids: The pages of a carry-over to the selected pages, which the other scopes ignore.
+    :ivar overwrite: Whether a page that has another value of its own for the field takes the value as well, instead of
+                     being skipped.
+    """
+
+    key: PageStepKey
+    name: str
+    scope: CarryScope
+    page_ids: tuple[PageId, ...] = ()
+    overwrite: bool = False
 
 
 @frozen
@@ -1052,6 +1077,10 @@ class StageRun:
                         The steps before it are found in the cache of versions when their inputs did not change.
     :ivar remake: Version whose files a collection removed, which the run makes again by the steps its chain stored
                   instead of by a recipe, over the one page named, and makes current. It names no recipe.
+    :ivar mode: What the run does with the settings the pages changed for its steps and with the manual edits they read:
+                keeps both, which is the usual run, or takes one of them away from every page it goes over first.
+    :ivar confirm_overwrite: Whether the user confirmed that a mode that takes work away does so on the pages it
+                             affects, which a request for such a run refuses without.
     """
 
     stage: Stage
@@ -1061,22 +1090,26 @@ class StageRun:
     pin: bool = False
     through_step: int | None = field(default=None, validator=validators.optional(validators.ge(0)))
     remake: PageVersionId | None = None
+    mode: RunMode = RunMode.KEEP
+    confirm_overwrite: bool = False
 
     def __attrs_post_init__(self) -> None:
         """Check that only a run by a recipe pins, and that a run that makes a version again names one page.
 
-        :raises ValueError: If a run without a recipe asks to pin, or a run that makes a version again names a recipe
-                            or not exactly one page.
+        :raises ValueError: If a run without a recipe asks to pin, a run that makes a version again names a recipe or
+                            not exactly one page, or takes the settings or the edits of the page away.
         """
         if self.pin and self.recipe_id is None:
             raise ValueError(PIN_NEEDS_RECIPE)
         if self.remake is not None and (self.recipe_id is not None or self.page_ids is None or len(self.page_ids) != 1):
             raise ValueError(REMAKE_ONE_PAGE)
+        if self.remake is not None and self.mode is not RunMode.KEEP:
+            raise ValueError(REMAKE_KEEPS)
 
     def to_map(self) -> dict[str, Any]:
         """Return the value as the JSON object a job stores.
 
-        :returns: The stage, the recipe, the pages as text, the confirmation, the pin and the last step.
+        :returns: The stage, the recipe, the pages as text, the confirmations, the pin, the last step and the mode.
         :rtype: dict[str, Any]
         """
         return {
@@ -1087,6 +1120,8 @@ class StageRun:
             'pin': self.pin,
             THROUGH_STEP_KEY: self.through_step,
             REMAKE_KEY: self.remake,
+            MODE_KEY: self.mode.value,
+            CONFIRM_OVERWRITE_KEY: self.confirm_overwrite,
         }
 
     @classmethod
@@ -1109,9 +1144,38 @@ class StageRun:
                 pin=bool(stored.get('pin', False)),
                 through_step=stored.get(THROUGH_STEP_KEY),
                 remake=None if stored.get(REMAKE_KEY) is None else PageVersionId(stored[REMAKE_KEY]),
+                mode=RunMode(stored.get(MODE_KEY, RunMode.KEEP)),
+                confirm_overwrite=bool(stored.get(CONFIRM_OVERWRITE_KEY, False)),
             )
         except (KeyError, ValueError, TypeError) as error:
             raise _params_error(JobKind.RUN_STAGE, error) from error
+
+
+@frozen(kw_only=True)
+class RunImpact:
+    """What a mode of a run would take away, counted over the pages and the steps the run goes over.
+
+    :ivar mode: The mode of the run.
+    :ivar pages: How many pages the run goes over.
+    :ivar hand_pages: How many of them have a manual edit on a step the run goes over.
+    :ivar settings_pages: How many of them change at least one field of a step the run goes over.
+    """
+
+    mode: RunMode
+    pages: int
+    hand_pages: int
+    settings_pages: int
+
+    @property
+    def affected(self) -> int:
+        """How many pages lose work to the mode, which is none for a run that keeps it."""
+        match self.mode:
+            case RunMode.KEEP:
+                return 0
+            case RunMode.REPLACE_HAND:
+                return self.hand_pages
+            case RunMode.RESET_SETTINGS:
+                return self.settings_pages
 
 
 @frozen(kw_only=True)
