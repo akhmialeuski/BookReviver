@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     )
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.ids import AccountId, ProjectId, RecipeProfileId, ScanId, SourceId
+    from bookreviver.domain.page_label_rules import PageLabelRule
 
 # JSON-compatible metadata as read from a source file
 type MetadataMap = Mapping[str, Any]
@@ -790,6 +791,8 @@ class SourceAnalysis:
     :ivar scans: Facts of every scan in the order of the source, which gives the scans their numbers.
     :ivar scan_labels: Page label the file gives each scan, such as the PDF page label ``xii``, aligned with ``scans``,
                        or empty for a format that carries no labels.
+    :ivar label_rules: Page label rules the file defines, which become the pagination sections of the book, in the
+                       order of the scans, or empty for a format that carries none.
     :ivar file_metadata: Technical metadata of the source's format, such as the document information of a PDF.
     :ivar suggestion: Description fields found in the source, offered to fill empty book details.
     """
@@ -797,16 +800,22 @@ class SourceAnalysis:
     kind: SourceKind
     scans: Sequence[ScanFacts]
     scan_labels: Sequence[str] = ()
+    label_rules: Sequence[PageLabelRule] = ()
     file_metadata: MetadataMap = field(factory=dict)
     suggestion: MetadataSuggestion = field(factory=MetadataSuggestion)
 
     def __attrs_post_init__(self) -> None:
-        """Check that the labels, when a format gives any, are one per scan.
+        """Check that the labels, when a format gives any, are one per scan, and the rules start in order at scans.
 
-        :raises ValueError: If there are labels, but not as many as scans.
+        :raises ValueError: If there are labels, but not as many as scans, or the rules do not start at increasing
+                            positions of the scans.
         """
         if self.scan_labels and len(self.scan_labels) != len(self.scans):
             err_msg = f'{len(self.scan_labels)} page labels do not fit {len(self.scans)} scans.'
+            raise ValueError(err_msg)
+        starts = [rule.first_index for rule in self.label_rules]
+        if starts != sorted(set(starts)) or any(start >= len(self.scans) for start in starts):
+            err_msg = f'Page label rules at {starts} do not start at increasing positions of {len(self.scans)} scans.'
             raise ValueError(err_msg)
 
     def label_of(self, number: int) -> str:
