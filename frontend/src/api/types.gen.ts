@@ -507,6 +507,13 @@ export type CanvasPositionSchema = {
 };
 
 /**
+ * ChangeSource
+ *
+ * What made a change of a layer of a step on a page.
+ */
+export type ChangeSource = 'user' | 'run' | 'carry-over' | 'reset' | 'undo';
+
+/**
  * ColorMode
  *
  * Colour depth of a page image as stored in the source.
@@ -1343,6 +1350,75 @@ export type PageStageSchema = {
 export type PageStageStatus = 'not-run' | 'fresh' | 'stale' | 'failed';
 
 /**
+ * PageStepChangeSchema
+ *
+ * One change of a layer of a step on a page.
+ *
+ * :ivar id: Identifier of the change.
+ * :ivar page_id: Page the change was made on.
+ * :ivar stage: Stage of the step.
+ * :ivar step_id: Identifier of the step.
+ * :ivar layer: The layer that changed.
+ * :ivar before: Content of the layer before the change, or None when it was empty.
+ * :ivar after: Content of the layer after the change, or None when the change emptied it.
+ * :ivar source: What made the change.
+ * :ivar batch_id: Identifier shared by the changes of one batch, which are undone together, or None.
+ * :ivar undoes: The change this one takes back, or None for a change that is not an undo.
+ * :ivar undone: Whether a later change took this one back, so it no longer stands.
+ * :ivar created_at: When the change was made.
+ * :ivar sequence: Place of the change in the history of its page.
+ */
+export type PageStepChangeSchema = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Page Id
+     */
+    page_id: string;
+    stage: Stage;
+    /**
+     * Step Id
+     */
+    step_id: string;
+    layer: StepLayer;
+    /**
+     * Before
+     */
+    before: {
+        [key: string]: unknown;
+    } | null;
+    /**
+     * After
+     */
+    after: {
+        [key: string]: unknown;
+    } | null;
+    source: ChangeSource;
+    /**
+     * Batch Id
+     */
+    batch_id: string | null;
+    /**
+     * Undoes
+     */
+    undoes: string | null;
+    /**
+     * Undone
+     */
+    undone?: boolean;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Sequence
+     */
+    sequence: number;
+};
+
+/**
  * PageStepSettingsSchema
  *
  * The fields of the parameters of a step that one page changes.
@@ -1562,6 +1638,32 @@ export type PagePageStageSchema = {
      * Items
      */
     items: Array<PageStageSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
+};
+
+/**
+ * Page[PageStepChangeSchema]
+ */
+export type PagePageStepChangeSchema = {
+    /**
+     * Items
+     */
+    items: Array<PageStepChangeSchema>;
     /**
      * Total
      */
@@ -3208,6 +3310,13 @@ export type StepBody = {
 };
 
 /**
+ * StepLayer
+ *
+ * One of the three layers a page keeps for a step, which a change of the history names.
+ */
+export type StepLayer = 'settings' | 'found' | 'hand';
+
+/**
  * StepPageSchema
  *
  * One page of a book at one step of a stage: what the step read and made, and where its shape comes from.
@@ -3338,6 +3447,37 @@ export type TransformSchema = {
      * Matrix
      */
     matrix: Array<number> | null;
+};
+
+/**
+ * UndoForm
+ *
+ * What an undo takes back.
+ *
+ * :ivar change_id: The oldest change to take back, which takes back every change after it as well, or omitted for the
+ * newest change alone.
+ */
+export type UndoForm = {
+    /**
+     * Change Id
+     *
+     * The oldest change to take back, with every later one, or none for the newest change
+     */
+    change_id?: string | null;
+};
+
+/**
+ * UndoneSchema
+ *
+ * What an undo wrote.
+ *
+ * :ivar changes: The undos that were written, which are none when the step had no change to take back.
+ */
+export type UndoneSchema = {
+    /**
+     * Changes
+     */
+    changes: Array<PageStepChangeSchema>;
 };
 
 /**
@@ -6498,6 +6638,127 @@ export type PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePu
 };
 
 export type PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutResponse = PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutResponses[keyof PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutResponses];
+
+export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Stage of the step
+         */
+        stage: Stage;
+        /**
+         * Step Id
+         *
+         * Identifier of the step of a recipe
+         */
+        step_id: string;
+    };
+    query?: {
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Size
+         */
+        size?: number;
+    };
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/history/{stage}/{step_id}';
+};
+
+export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetError = ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetErrors[keyof ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetErrors];
+
+export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: PagePageStepChangeSchema;
+};
+
+export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetResponse = ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetResponses[keyof ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetResponses];
+
+export type UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostData = {
+    body: UndoForm;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Stage of the step
+         */
+        stage: Stage;
+        /**
+         * Step Id
+         *
+         * Identifier of the step of a recipe
+         */
+        step_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/history/{stage}/{step_id}/undo';
+};
+
+export type UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostError = UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostErrors[keyof UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostErrors];
+
+export type UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: UndoneSchema;
+};
+
+export type UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostResponse = UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostResponses[keyof UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostResponses];
 
 export type ListProcessorsApiV1ProcessorsGetData = {
     body?: never;
