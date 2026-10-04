@@ -21,7 +21,7 @@ from dishka.integrations.taskiq import FromDishka, inject, setup_dishka
 from taskiq import InMemoryBroker
 
 from bookreviver.app.settings import JobBroker
-from bookreviver.domain.enums import JobKind
+from bookreviver.domain.enums import JobKind, Stage
 from bookreviver.domain.ids import JobId
 from bookreviver.services.imports import ImportService
 from bookreviver.services.pages import PageService
@@ -75,13 +75,18 @@ async def prepare_pages(job_id: str, container: FromDishka[AsyncContainer]) -> N
 async def run_stage(job_id: str, container: FromDishka[AsyncContainer]) -> None:
     """Run a stage over its pages: the entry point of ``JobKind.RUN_STAGE``.
 
+    A page split that made pages is followed by the detection of the content of the pages that have none, since the
+    split writes the images of the pages itself rather than through a ``prepare-pages`` job.
+
     :param job_id: Identifier of the job as text, the one argument the queue sends.
     :type job_id: str
     :param container: Request-scoped container of the task.
     :type container: AsyncContainer
     """
     jobs = await container.get(ProcessingJobs)
-    await jobs.run_stage(JobId(UUID(job_id)))
+    ran = await jobs.run_stage(JobId(UUID(job_id)))
+    if ran is not None and ran.stage is Stage.PAGE_SPLIT:
+        await (await container.get(PageService)).detect_new_pages(ran.project_id)
 
 
 async def preview_step(job_id: str, container: FromDishka[AsyncContainer]) -> None:

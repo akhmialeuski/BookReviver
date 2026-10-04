@@ -85,15 +85,18 @@ class ProcessingJobs:
         self._tracker = parts.tracker
         self._starter = parts.starter
 
-    async def run_stage(self, job_id: JobId) -> None:
+    async def run_stage(self, job_id: JobId) -> Job | None:
         """Run a ``run-stage`` job: the recipe over the pages, one page after the other.
 
         :param job_id: Identifier of the job.
         :type job_id: JobId
+        :returns: The job when the run made at least one page, which the worker follows with the detection of the
+                  content of new pages after the page split, or None when it made none or did not run.
+        :rtype: Job | None
         :raises NotFoundError: If there is no such job.
         """
         if (job := await self._tracker.start(job_id)) is None:
-            return
+            return None
         try:
             outcomes = await self._run_pages(job)
         except DomainError as error:
@@ -104,7 +107,7 @@ class ProcessingJobs:
             await self._tracker.finish(job, JobState.FAILED, error=UNEXPECTED_FAILURE)
         else:
             if outcomes is None:
-                return
+                return None
             done, failed, total = outcomes
             no_page = bool(failed) and not done
             # The collection is stored with the end of the run, so the project is never free in between
@@ -115,6 +118,8 @@ class ProcessingJobs:
                 total=total,
                 follow_up=self._starter.new_collection(job.project_id),
             )
+            return job if done else None
+        return None
 
     async def preview_step(self, job_id: JobId) -> None:
         """Run a ``preview-step`` job: the steps of a form on the previews of a page, up to one of them.
