@@ -9,8 +9,12 @@ into the frame. A block is kept by the ink it holds and by how full it is, never
 
 A side of the sheet that lies on the edge of the scan, which ``geometry.perspective`` records in ``cut_edges``, may hold
 text that the scanner cut, so the lines that touch it are kept, and a frame that comes to such a side is marked for
-review, because the margin on that side is not known. A page with no ink to speak of is left as it is and marked for
-review. A frame the user gave as a ``rect`` edit replaces the search.
+review, because the margin on that side is not known. Even there, ink that is not text is cleaned: a piece that runs
+along the side for many lines of text, or is a large dark area, is a border or a shadow of the scan. After the smear, a
+narrow tall strip in the outer margin at the left or the right of the page and a small stain in a corner are dropped as
+well, while the text lies elsewhere. How tall a line of text is, the page tells by its own glyphs, so the cleaning
+follows the size of the print. A page with no ink to speak of is left as it is and marked for review. A frame the user
+gave as a ``rect`` edit replaces the search.
 
 By default the page is cut to the frame alone, since the margins of the book page are set by ``geometry.normalize``. A
 recipe may still ask for a margin, a share of the width of the frame on each side, and what it reaches beyond the page
@@ -63,6 +67,8 @@ from bookreviver.plugins.cv_image import (
 from bookreviver.ports.processing import StepOutput, StepResult
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
     from bookreviver.domain.enums import ColorMode
     from bookreviver.plugins.cv_image import Indices, Samples
     from bookreviver.ports.processing import StepInput
@@ -83,6 +89,23 @@ MIN_BLOCK_FILL: float = 0.1
 ADAPTIVE_BLOCK_SHARE: float = 0.03
 MIN_ADAPTIVE_BLOCK: int = 3
 ADAPTIVE_OFFSET: int = 10
+# How many heights of a glyph a piece of ink that touches a side may run along it, and how many it may measure on both
+# its sides, before it is a border or a shadow of the scan and not text. A cut line of text is a few glyphs long and one
+# glyph high, so it stays
+EDGE_RUN_HEIGHTS: float = 10.0
+EDGE_BLOB_HEIGHTS: float = 3.0
+# The smallest area, in pixels of the shrunk page, of a piece of ink that counts as a glyph when the height of a line of
+# text is measured, which leaves the dust out of the median
+GLYPH_MIN_AREA_PX: int = 20
+# A block is a strip of a shadow or a border when it lies wholly in the outer share of the width of the page at the left
+# or the right side, is narrower than the second share, and is at least this many times as tall as it is wide: a line of
+# text is wide, and a number or a glyph of a margin is not taller than it is wide by this much
+STRIP_ZONE_SHARE: float = 0.1
+STRIP_WIDTH_SHARE: float = 0.08
+STRIP_MIN_ASPECT: float = 2.0
+# A block that touches two sides of the page is a stain of the corner, not text, when it is smaller than this share of
+# the page in both directions
+CORNER_BLOCK_SHARE: float = 0.25
 # Room the frame keeps round the blocks, in pixels of the shrunk page, since the edge of the ink of the full page falls
 # between two pixels of the shrunk one
 FRAME_ROOM_PX: int = 2
@@ -222,8 +245,35 @@ class FrameSearch:
         kept[0] = False  # Label 0 is the background
         if not kept.any():
             return None
+        strays = self._strays(np.asarray(stats, dtype=np.int_)) & kept
+        if (kept & ~strays).any():  # A stray block is dropped only while the text lies elsewhere
+            kept &= ~strays
         total = float((ink > 0).sum())
         return np.asarray(stats[kept], dtype=np.int_), float(ink_per_block[kept].sum()) / total
+
+    def _strays(self, stats: Indices) -> NDArray[np.bool_]:
+        """Tell which blocks are the shadow, the border or the stain of the edge of the sheet and not text.
+
+        Two kinds of block are told. A strip lies in the outer margin at the left or the right of the page, is narrow,
+        and is far taller than it is wide: a line of text is wide, so a tall sliver is no line. A corner block is small
+        and touches two sides of the page, where the dark corner of a sheet shows, and no text starts.
+
+        :param stats: The statistics of every smeared block, one row each as OpenCV gives them.
+        :type stats: Indices
+        :returns: One flag for each row, set for a block that is no text.
+        :rtype: NDArray[np.bool_]
+        """
+        height, width = self._ink.shape
+        left, top = stats[:, cv2.CC_STAT_LEFT], stats[:, cv2.CC_STAT_TOP]
+        wide, tall = stats[:, cv2.CC_STAT_WIDTH], stats[:, cv2.CC_STAT_HEIGHT]
+        zone = STRIP_ZONE_SHARE * width
+        in_zone = (left + wide <= zone) | (left >= width - zone)
+        strips = in_zone & (wide < STRIP_WIDTH_SHARE * width) & (tall >= STRIP_MIN_ASPECT * wide)
+        reach_x, reach_y = EDGE_TOLERANCE_SHARE * width, EDGE_TOLERANCE_SHARE * height
+        by_side = (left <= reach_x) | (left + wide >= width - reach_x)
+        by_end = (top <= reach_y) | (top + tall >= height - reach_y)
+        corners = by_side & by_end & (wide < CORNER_BLOCK_SHARE * width) & (tall < CORNER_BLOCK_SHARE * height)
+        return strips | corners
 
     def _binarize(self) -> Samples:
         """Make the shrunk page black and white.
@@ -240,18 +290,49 @@ class FrameSearch:
             ink = np.where(self._gray > self._split.threshold, 0, WHITE)
         return np.asarray(ink, dtype=np.uint8)
 
+    @staticmethod
+    def _borders(stats: Indices, touches: dict[SheetEdge, NDArray[np.bool_]]) -> NDArray[np.bool_]:
+        """Tell which pieces of ink that touch a side of the page are a border or a shadow of the scan and not text.
+
+        A line of text that the scanner cut is a few glyphs long and one glyph high. A piece that runs along the side
+        for many glyph heights, or measures several of them on both its sides, is no line of text. The height of a glyph
+        is the median of the pieces that lie clear of every side, so where there is none nothing is told.
+
+        :param stats: The statistics of every piece of ink, one row each as OpenCV gives them.
+        :type stats: Indices
+        :param touches: For each side of the page, which pieces touch it.
+        :type touches: dict[SheetEdge, NDArray[np.bool_]]
+        :returns: One flag for each piece, set for one that is a border or a shadow.
+        :rtype: NDArray[np.bool_]
+        """
+        wide, tall = stats[:, cv2.CC_STAT_WIDTH], stats[:, cv2.CC_STAT_HEIGHT]
+        on_edge = np.logical_or.reduce(list(touches.values()))
+        glyphs = ~on_edge & (stats[:, cv2.CC_STAT_AREA] >= GLYPH_MIN_AREA_PX)
+        glyphs[0] = False  # Label 0 is the background
+        if not glyphs.any():
+            return np.zeros(len(stats), dtype=np.bool_)
+        glyph_height = float(np.median(tall[glyphs]))
+        run, blob = EDGE_RUN_HEIGHTS * glyph_height, EDGE_BLOB_HEIGHTS * glyph_height
+        along_side = ((touches[SheetEdge.LEFT] | touches[SheetEdge.RIGHT]) & (tall > run)) | (
+            (touches[SheetEdge.TOP] | touches[SheetEdge.BOTTOM]) & (wide > run)
+        )
+        return on_edge & (along_side | ((wide > blob) & (tall > blob)))
+
     def _cleaned(self) -> Samples:
         """Clean the ink of specks and of the lines that lie on the edge of the sheet.
 
         A piece of ink that touches a side of the page is the edge of the paper, unless the scanner cut the paper at
-        that side, where it may be text and is kept.
+        that side, where it may be text and is kept. Even there it is cleaned when it is no text: when it runs along the
+        side for many glyph heights, or measures many of them on both its sides, the page is showing a border or a
+        shadow. The height of a glyph is the median of the pieces of ink that lie clear of every side.
 
         :returns: The ink as 255 on 0, without what was cleaned.
         :rtype: Samples
         """
         height, width = self._ink.shape
-        _, found, stats, _ = cv2.connectedComponentsWithStats(self._ink, connectivity=8)
+        _, found, measured, _ = cv2.connectedComponentsWithStats(self._ink, connectivity=8)
         labels = np.asarray(found, dtype=np.intp)
+        stats = np.asarray(measured, dtype=np.int_)
         left, top = stats[:, cv2.CC_STAT_LEFT], stats[:, cv2.CC_STAT_TOP]
         touches = {
             SheetEdge.TOP: top == 0,
@@ -263,6 +344,7 @@ class FrameSearch:
         for edge, touching in touches.items():
             if edge not in self._cut_edges:
                 remove |= touching
+        remove |= self._borders(stats, touches)
         remove[0] = False  # Label 0 is the background
         cleaned = self._ink.copy()
         cleaned[remove[labels]] = 0
