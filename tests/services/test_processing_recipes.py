@@ -7,7 +7,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import Actor
-from bookreviver.domain.enums import JobKind, JobState, PageKind, RuleCondition, Stage, StageState
+from bookreviver.domain.enums import AppliesTo, JobKind, JobState, PageKind, RuleCondition, Stage, StageState
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.ids import PageId, RecipeId
@@ -221,6 +221,70 @@ class TestRecipe:
         stranger = Actor(account_id=(await fx_kit.seed_project())[0].account_id)
         with pytest.raises(NotFoundError):
             await fx_kit.service().recipe(stranger, project.id, Stage.GEOMETRY)
+
+
+class TestDefaultConditions:
+    """Tests for the pages the steps of the recipes a book starts with process."""
+
+    async def test_the_text_recipe_of_geometry_leaves_the_lines_of_text_to_deskew_and_dewarp_only(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify the two steps that follow lines of text process text pages, and the other steps every page.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        conditions = {step.processor_key: step.applies_to for step in recipe.steps}
+        expect(conditions['geometry.deskew'] is AppliesTo.TEXT)
+        expect(conditions['geometry.dewarp'] is AppliesTo.TEXT)
+        expect(
+            {key for key, condition in conditions.items() if condition is AppliesTo.ALL}
+            == {
+                'geometry.perspective',
+                'geometry.crop',
+                'geometry.normalize',
+            }
+        )
+        assert_expectations()
+
+    async def test_the_text_recipe_of_cleanup_keeps_binarization_and_despeckling_off_the_pictures(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify binarization and despeckling process text pages, and the eraser of the user processes every page.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.CLEANUP)
+        assert {step.processor_key: step.applies_to for step in recipe.steps} == {
+            'cleanup.binarize': AppliesTo.TEXT,
+            'cleanup.despeckle': AppliesTo.TEXT,
+            'cleanup.eraser': AppliesTo.ALL,
+        }
+
+    async def test_the_variants_for_pictures_and_the_flat_book_process_every_page_with_every_step(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify only the active recipes hold conditions, since a page sent to a variant is the one it was made for.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        service = fx_cv_kit.service()
+        await service.recipe(actor, project.id, Stage.GEOMETRY)
+        await service.recipe(actor, project.id, Stage.CLEANUP)
+        variants = [
+            variant
+            for stage in (Stage.GEOMETRY, Stage.CLEANUP)
+            for variant in (await service.variants(actor, project.id, stage, EVERYTHING)).items
+            if not variant.active
+        ]
+        assert variants
+        assert all(step.applies_to is AppliesTo.ALL for variant in variants for step in variant.steps)
 
 
 class TestSaveRecipe:

@@ -17,6 +17,8 @@ from bookreviver.domain.enums import (
     BlankFill,
     ChangeSource,
     ColorMode,
+    ContentSource,
+    ContentType,
     JobKind,
     PageKind,
     PageOrigin,
@@ -213,33 +215,123 @@ class TestStep:
 
 
 class TestAppliesTo:
-    """Tests for the condition of a step, which decides what a page is."""
+    """Tests for the condition of a step, which reads what a page shows."""
 
     @pytest.mark.parametrize(
-        ('kind', 'color_mode', 'matching'),
+        ('content', 'matching'),
         [
-            (PageKind.TEXT, ColorMode.GRAY, {AppliesTo.ALL, AppliesTo.TEXT}),
-            (PageKind.COVER, ColorMode.COLOR, {AppliesTo.ALL, AppliesTo.TEXT}),
-            (PageKind.PLATE, ColorMode.COLOR, {AppliesTo.ALL, AppliesTo.PICTURES, AppliesTo.COLOR_PICTURES}),
-            (PageKind.PLATE, ColorMode.GRAY, {AppliesTo.ALL, AppliesTo.PICTURES, AppliesTo.BW_PICTURES}),
-            (PageKind.FRONTISPIECE, ColorMode.BILEVEL, {AppliesTo.ALL, AppliesTo.PICTURES, AppliesTo.BW_PICTURES}),
-            (PageKind.PLATE, ColorMode.UNKNOWN, {AppliesTo.ALL, AppliesTo.PICTURES, AppliesTo.COLOR_PICTURES}),
+            (ContentType.TEXT, {AppliesTo.ALL, AppliesTo.TEXT}),
+            (ContentType.COLOR_PICTURE, {AppliesTo.ALL, AppliesTo.PICTURES, AppliesTo.COLOR_PICTURES}),
+            (ContentType.BW_PICTURE, {AppliesTo.ALL, AppliesTo.PICTURES, AppliesTo.BW_PICTURES}),
+        ],
+        ids=['text', 'colour-picture', 'bw-picture'],
+    )
+    def test_condition_matches_a_page_by_what_it_shows(self, content: ContentType, matching: set[AppliesTo]) -> None:
+        """Verify which of the conditions meet a page that shows text, or a picture of a colour.
+
+        :param content: What the page shows.
+        :type content: ContentType
+        :param matching: The conditions the page meets.
+        :type matching: set[AppliesTo]
+        """
+        assert {condition for condition in AppliesTo if condition.matches(content)} == matching
+
+
+class TestPageContent:
+    """Tests for what a page shows, which comes from the user, from the detection, or from the kind of the page."""
+
+    @pytest.mark.parametrize(
+        ('kind', 'color_mode', 'expected'),
+        [
+            (PageKind.TEXT, ColorMode.GRAY, ContentType.TEXT),
+            (PageKind.COVER, ColorMode.COLOR, ContentType.TEXT),
+            (PageKind.PLATE, ColorMode.COLOR, ContentType.COLOR_PICTURE),
+            (PageKind.PLATE, ColorMode.GRAY, ContentType.BW_PICTURE),
+            (PageKind.FRONTISPIECE, ColorMode.BILEVEL, ContentType.BW_PICTURE),
+            (PageKind.PLATE, ColorMode.UNKNOWN, ContentType.COLOR_PICTURE),
         ],
         ids=['text', 'cover', 'colour-plate', 'gray-plate', 'bilevel-frontispiece', 'unknown-plate'],
     )
-    def test_condition_matches_the_page_by_its_kind_and_its_colour(
-        self, kind: PageKind, color_mode: ColorMode, matching: set[AppliesTo]
+    def test_a_page_not_detected_is_what_its_kind_and_the_colour_of_its_image_say(
+        self, kind: PageKind, color_mode: ColorMode, expected: ContentType
     ) -> None:
-        """Verify which of the conditions meet a page of a kind and a colour mode.
+        """Verify plates and frontispieces are pictures in the colour of the image, and every other kind is text.
 
         :param kind: Role of the page.
         :type kind: PageKind
         :param color_mode: Colour mode of the image the stage starts from.
         :type color_mode: ColorMode
-        :param matching: The conditions the page meets.
-        :type matching: set[AppliesTo]
+        :param expected: What the page shows.
+        :type expected: ContentType
         """
-        assert {condition for condition in AppliesTo if condition.matches(kind, color_mode)} == matching
+        page = make_page(project_id=make_project(owner_id=new_account_id()).id, kind=kind)
+        expect(page.content_of(color_mode) is expected)
+        expect(page.content_source is ContentSource.KIND)
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        ('kind', 'detected', 'color_mode', 'expected'),
+        [
+            (PageKind.TEXT, ContentType.COLOR_PICTURE, ColorMode.GRAY, ContentType.COLOR_PICTURE),
+            (PageKind.TEXT, ContentType.BW_PICTURE, ColorMode.COLOR, ContentType.BW_PICTURE),
+            (PageKind.TEXT, ContentType.TEXT, ColorMode.COLOR, ContentType.TEXT),
+            (PageKind.PLATE, ContentType.TEXT, ColorMode.GRAY, ContentType.BW_PICTURE),
+            (PageKind.PLATE, ContentType.COLOR_PICTURE, ColorMode.GRAY, ContentType.COLOR_PICTURE),
+        ],
+        ids=['picture-on-a-text-page', 'bw-picture-in-a-colour-scan', 'text', 'plate-found-as-text', 'colour-plate'],
+    )
+    def test_what_the_detection_found_decides_unless_the_kind_makes_the_page_a_picture(
+        self, kind: PageKind, detected: ContentType, color_mode: ColorMode, expected: ContentType
+    ) -> None:
+        """Verify a picture the detection found is one on any kind, and a plate it found no picture on stays one.
+
+        :param kind: Role of the page.
+        :type kind: PageKind
+        :param detected: What the detection found.
+        :type detected: ContentType
+        :param color_mode: Colour mode of the image the stage starts from.
+        :type color_mode: ColorMode
+        :param expected: What the page shows.
+        :type expected: ContentType
+        """
+        page = evolve(
+            make_page(project_id=make_project(owner_id=new_account_id()).id, kind=kind), content_type=detected
+        )
+        assert page.content_of(color_mode) is expected
+
+    @pytest.mark.parametrize('kind', [PageKind.TEXT, PageKind.PLATE])
+    @pytest.mark.parametrize('chosen', list(ContentType))
+    def test_what_the_user_set_decides_over_the_kind_and_the_detection(
+        self, kind: PageKind, chosen: ContentType
+    ) -> None:
+        """Verify a page the user set shows what they chose on any kind, and says it was set by hand.
+
+        :param kind: Role of the page.
+        :type kind: PageKind
+        :param chosen: What the user chose.
+        :type chosen: ContentType
+        """
+        page = evolve(
+            make_page(project_id=make_project(owner_id=new_account_id()).id, kind=kind),
+            content_type=chosen,
+            content_by_hand=True,
+        )
+        expect(page.is_picture is chosen.is_picture)
+        expect(page.content_of(ColorMode.UNKNOWN) is (chosen if chosen.is_picture else ContentType.TEXT))
+        expect(page.content_source is ContentSource.HAND)
+        assert_expectations()
+
+    def test_a_detected_page_says_it_was_found(self) -> None:
+        """Verify the source of a detected type on a page that is no plate is the detection."""
+        page = evolve(
+            make_page(project_id=make_project(owner_id=new_account_id()).id), content_type=ContentType.BW_PICTURE
+        )
+        assert page.content_source is ContentSource.DETECTED
+
+    def test_a_content_type_set_by_hand_has_to_be_given(self) -> None:
+        """Reject a page that is said to have its type set by hand and has none."""
+        with pytest.raises(ValueError, match='set by hand has to be given'):
+            evolve(make_page(project_id=make_project(owner_id=new_account_id()).id), content_by_hand=True)
 
 
 class TestRecipe:

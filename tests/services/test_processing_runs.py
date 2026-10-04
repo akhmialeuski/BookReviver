@@ -128,10 +128,13 @@ class TestRunStage:
         """
         actor, project, _ = await prepared_page(fx_kit)
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        await fx_kit.jobs().run_stage(job.id)
+        ran = await fx_kit.jobs().run_stage(job.id)
         stored = await fx_kit.uow().jobs.get(job.id)
         expect((stored.state, stored.progress.done, stored.progress.total) == (JobState.SUCCEEDED, 1, 1))
         expect([queued.kind.value for queued in fx_kit.recording.enqueued] == ['run-stage', 'collect-versions'])
+        # The worker reads the job it gets back to follow a page split with the detection of the content
+        expect(ran is not None and (ran.id, ran.stage) == (job.id, Stage.GEOMETRY))
+        expect(await fx_kit.jobs().run_stage(job.id) is None)
         assert_expectations()
 
     async def test_rerun_with_the_same_parameters_finds_the_version_it_made(self, fx_kit: ProcessingKit) -> None:

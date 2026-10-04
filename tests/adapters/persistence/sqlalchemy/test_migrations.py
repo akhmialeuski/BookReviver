@@ -585,8 +585,11 @@ class TestUndoRevision:
         async with fx_empty_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
             await uow.projects.add(project)
-            await uow.pages.add(page)
             await uow.commit()
+            # Plain SQL, since the page of the ORM has the columns later revisions add
+            await session.execute(
+                text(INSERT_PAGE), {'id': page.id.bytes, 'project_id': project.id.bytes, 'order_key': page.order_key}
+            )
             await session.execute(
                 text(INSERT_CHANGE), {'id': uuid4().bytes, 'page_id': page.id.bytes, 'step_id': uuid4().bytes}
             )

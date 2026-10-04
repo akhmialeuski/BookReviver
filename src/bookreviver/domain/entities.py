@@ -9,8 +9,12 @@ from uuid import uuid4
 from attrs import evolve, field, frozen, validators
 
 from bookreviver.domain.enums import (
+    PICTURE_KINDS,
     BlankFill,
+    ColorMode,
     CompareMode,
+    ContentSource,
+    ContentType,
     EditorKind,
     ImagePolicy,
     JobKind,
@@ -239,6 +243,11 @@ class Page:
     :ivar label_manual: Whether the label was written by hand, or came with the scan, which makes it an exception that
                         a recompute of the numbers of the book never changes.
     :ivar kind: Role of the page in the book.
+    :ivar content_type: What the image of the page shows as the program found it, or as the user set it when
+                        ``content_by_hand`` is set, or None while the content is not detected, which leaves it to the
+                        kind of the page.
+    :ivar content_by_hand: Whether the user set the content type, which makes it an exception that the detection of the
+                           content never changes.
     :ivar origin: Where the image of the page comes from.
     :ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was
                    deleted.
@@ -266,6 +275,8 @@ class Page:
     label: str = ''
     label_manual: bool = False
     kind: PageKind = PageKind.TEXT
+    content_type: ContentType | None = None
+    content_by_hand: bool = False
     origin: PageOrigin
     scan_id: ScanId | None = None
     slot: int = field(default=WHOLE_SCAN, validator=validators.ge(WHOLE_SCAN))
@@ -278,13 +289,20 @@ class Page:
     revision: int = field(default=0, validator=validators.ge(0))
 
     def __attrs_post_init__(self) -> None:
-        """Check that only a page cut from a scan names a scan, and that only a blank one of them has a leaf.
+        """Check the scan of the page, its leaf and its content type.
 
-        :raises ValueError: If a blank leaf or a placeholder names a scan, or a leaf stands in place of the scan of a
-                            page that is not a blank page cut from a scan.
+        Only a page cut from a scan names a scan, only a blank one of them has a leaf, and a content type said to be set
+        by hand has to be given.
+
+        :raises ValueError: If a blank leaf or a placeholder names a scan, a leaf stands in place of the scan of a page
+                            that is not a blank page cut from a scan, or the content type is said to be set by hand and
+                            is none.
         """
         if self.scan_id is not None and self.origin is not PageOrigin.SCAN:
             err_msg = f'A page of origin {self.origin} has no scan, but names scan {self.scan_id}.'
+            raise ValueError(err_msg)
+        if self.content_by_hand and self.content_type is None:
+            err_msg = 'A content type set by hand has to be given.'
             raise ValueError(err_msg)
         cut_blank = self.origin is PageOrigin.SCAN and self.kind is PageKind.BLANK
         if self.blank_fill is not BlankFill.SCAN and not cut_blank:
@@ -297,6 +315,46 @@ class Page:
     def is_leaf(self) -> bool:
         """Whether the image of the page is drawn by the program, so no step of a stage has anything to find in it."""
         return self.origin is PageOrigin.BLANK or self.blank_fill is not BlankFill.SCAN
+
+    @property
+    def is_picture(self) -> bool:
+        """Whether the page is a picture, which the conditions of the steps and the rule on plates read.
+
+        What the user set decides. Otherwise a plate or a frontispiece is a picture, since the user gave the page that
+        role, and any other page is a picture when the program found one on it.
+        """
+        if self.content_by_hand:
+            return self.content_type is not None and self.content_type.is_picture
+        return self.kind in PICTURE_KINDS or (self.content_type is not None and self.content_type.is_picture)
+
+    def content_of(self, color_mode: ColorMode) -> ContentType:
+        """Work out what the page shows, for the condition of a step.
+
+        A picture whose colour nobody set takes the colour of the image the stage starts from, and an unknown colour
+        mode counts as colour, since a step for black and white pictures must not touch a page that may be a colour
+        plate.
+
+        :param color_mode: Colour mode of the image the stage starts from.
+        :type color_mode: ColorMode
+        :returns: Text, or the picture in the colour it has.
+        :rtype: ContentType
+        """
+        if not self.is_picture:
+            return ContentType.TEXT
+        if self.content_type is not None and self.content_type.is_picture:
+            return self.content_type
+        return (
+            ContentType.COLOR_PICTURE if color_mode in {ColorMode.COLOR, ColorMode.UNKNOWN} else ContentType.BW_PICTURE
+        )
+
+    @property
+    def content_source(self) -> ContentSource:
+        """Where what the page shows comes from: the user, the detection, or the kind of the page."""
+        if self.content_by_hand:
+            return ContentSource.HAND
+        if self.kind not in PICTURE_KINDS and self.content_type is not None:
+            return ContentSource.DETECTED
+        return ContentSource.KIND
 
 
 @frozen(kw_only=True)
@@ -740,7 +798,9 @@ class RecipeRule:
     def matches(self, page: Page, position: int) -> bool:
         """Tell whether the page meets the condition of the rule.
 
-        The condition on illustrations matches no page, since the Layout stage that finds them does not exist yet.
+        The condition on illustrations matches no page, since the Layout stage that finds them does not exist yet. The
+        condition on plates matches the pictures, which are the plates and frontispieces and the pages whose content
+        type is a picture.
 
         :param page: The page.
         :type page: Page
@@ -758,6 +818,8 @@ class RecipeRule:
                 return page.group_label == self.group_label
             case RuleCondition.ILLUSTRATED:
                 return False
+            case RuleCondition.PLATES:
+                return page.is_picture
             case _:
                 return page.kind in self.condition.kinds
 

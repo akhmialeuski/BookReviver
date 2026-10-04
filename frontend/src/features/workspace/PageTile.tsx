@@ -1,6 +1,7 @@
-import { CircleXIcon, EyeOffIcon, PinIcon, TriangleAlertIcon } from 'lucide-react';
+import { CircleXIcon, EyeOffIcon, PencilIcon, PinIcon, TriangleAlertIcon } from 'lucide-react';
 import { PageThumbnail } from '@/features/pages/PageThumbnail';
 import { PAGE_STATUS_TONE } from '@/features/stages/stages';
+import { describeContent, markOfContent } from '@/features/workspace/content';
 import {
   isLeftOut,
   type StripItem,
@@ -11,8 +12,8 @@ import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 
 /**
- * One page of the strip or of the grid: the picture of the result of the stage, the page label, the dot of the state
- * and the mark of what asks for a look.
+ * One page of the strip or of the grid: the picture of the result of the stage, the page label, the dot of the state,
+ * the mark of what the page shows and the mark of what asks for a look.
  *
  * The dot has the colour of the state wherever the state is drawn, and the state is also a word that is read out
  * and a mark in the corner of the picture for a failure, a page to check and a page left out, so the colour is never
@@ -71,6 +72,25 @@ export function PageTile({
             {variant.pinned ? <PinIcon className="size-2.5 shrink-0" aria-hidden="true" /> : null}
           </span>
         )}
+        <span
+          className="absolute bottom-1 left-1 flex items-center gap-1 rounded-full bg-background/90 px-1.5 py-0.5 text-[10px] leading-none shadow-xs"
+          data-testid="strip-content"
+          data-content={page.content_type}
+          data-source={page.content_source}
+          title={describeContent(page)}
+        >
+          <span aria-hidden="true">
+            {MESSAGES.workspace.steps.marks[markOfContent(page.content_type)]}
+          </span>
+          {MESSAGES.workspace.strip.content.short[page.content_type] === '' ? null : (
+            <span aria-hidden="true">
+              {MESSAGES.workspace.strip.content.short[page.content_type]}
+            </span>
+          )}
+          {page.content_source === 'hand' ? (
+            <PencilIcon className="size-2.5 shrink-0" aria-hidden="true" />
+          ) : null}
+        </span>
         {row?.status === 'failed' ? (
           <CircleXIcon
             className="absolute top-1 right-1 size-4 rounded-full bg-background text-status-failed"
@@ -98,6 +118,7 @@ export function PageTile({
         <span className="truncate">{label}</span>
         {status === null ? null : <span className="sr-only">{status}</span>}
         {reason === null ? null : <span className="sr-only">{MESSAGES.stages.review[reason]}</span>}
+        <span className="sr-only">{describeContent(page)}</span>
         {isLeftOut(item) ? (
           <span className="sr-only">{MESSAGES.workspace.strip.leftOut}</span>
         ) : null}

@@ -21,7 +21,7 @@ from dishka.integrations.taskiq import FromDishka, inject, setup_dishka
 from taskiq import InMemoryBroker
 
 from bookreviver.app.settings import JobBroker
-from bookreviver.domain.enums import JobKind
+from bookreviver.domain.enums import JobKind, Stage
 from bookreviver.domain.ids import JobId
 from bookreviver.services.imports import ImportService
 from bookreviver.services.pages import PageService
@@ -58,17 +58,25 @@ async def import_source(job_id: str, container: FromDishka[AsyncContainer]) -> N
 async def prepare_pages(job_id: str, container: FromDishka[AsyncContainer]) -> None:
     """Run a job that writes the images of pending page versions: the entry point of ``JobKind.PREPARE_PAGES``.
 
+    A job that made images is followed by the detection of the content of the pages that have none, which reads the
+    images the job made.
+
     :param job_id: Identifier of the job as text, the one argument the queue sends.
     :type job_id: str
     :param container: Request-scoped container of the task.
     :type container: AsyncContainer
     """
     service = await container.get(PageService)
-    await service.prepare_images(JobId(UUID(job_id)))
+    prepared = await service.prepare_images(JobId(UUID(job_id)))
+    if prepared is not None and prepared.progress.total > 0:
+        await service.detect_new_pages(prepared.project_id)
 
 
 async def run_stage(job_id: str, container: FromDishka[AsyncContainer]) -> None:
     """Run a stage over its pages: the entry point of ``JobKind.RUN_STAGE``.
+
+    A page split that made pages is followed by the detection of the content of the pages that have none, since the
+    split writes the images of the pages itself rather than through a ``prepare-pages`` job.
 
     :param job_id: Identifier of the job as text, the one argument the queue sends.
     :type job_id: str
@@ -76,7 +84,9 @@ async def run_stage(job_id: str, container: FromDishka[AsyncContainer]) -> None:
     :type container: AsyncContainer
     """
     jobs = await container.get(ProcessingJobs)
-    await jobs.run_stage(JobId(UUID(job_id)))
+    ran = await jobs.run_stage(JobId(UUID(job_id)))
+    if ran is not None and ran.stage is Stage.PAGE_SPLIT:
+        await (await container.get(PageService)).detect_new_pages(ran.project_id)
 
 
 async def preview_step(job_id: str, container: FromDishka[AsyncContainer]) -> None:
@@ -127,6 +137,18 @@ async def measure_book(job_id: str, container: FromDishka[AsyncContainer]) -> No
     await jobs.measure_book(JobId(UUID(job_id)))
 
 
+async def detect_content(job_id: str, container: FromDishka[AsyncContainer]) -> None:
+    """Detect what the pages show and write it into them: the entry point of ``JobKind.DETECT_CONTENT``.
+
+    :param job_id: Identifier of the job as text, the one argument the queue sends.
+    :type job_id: str
+    :param container: Request-scoped container of the task.
+    :type container: AsyncContainer
+    """
+    jobs = await container.get(ProcessingJobs)
+    await jobs.detect_content(JobId(UUID(job_id)))
+
+
 JOB_TASKS: Mapping[JobKind, JobTask] = MappingProxyType(
     {
         JobKind.IMPORT_SOURCE: import_source,
@@ -136,6 +158,7 @@ JOB_TASKS: Mapping[JobKind, JobTask] = MappingProxyType(
         JobKind.CUT_TILES: cut_tiles,
         JobKind.COLLECT_VERSIONS: collect_versions,
         JobKind.MEASURE_BOOK: measure_book,
+        JobKind.DETECT_CONTENT: detect_content,
     }
 )
 

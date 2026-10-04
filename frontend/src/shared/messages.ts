@@ -1,6 +1,8 @@
 import type {
   AppliesTo,
   BlankFill,
+  ContentSource,
+  ContentType,
   ContributorRole,
   FigureState,
   FileType,
@@ -379,6 +381,16 @@ export const MESSAGES = {
       blank: 'Blank',
       other: 'Other',
     } satisfies Record<PageKind, string>,
+    contentTypes: {
+      text: 'Text',
+      'color-picture': 'Colour picture',
+      'bw-picture': 'Black-and-white picture',
+    } satisfies Record<ContentType, string>,
+    contentSources: {
+      detected: 'Found by the program',
+      hand: 'Set by hand',
+      kind: 'Given by the kind of the page',
+    } satisfies Record<ContentSource, string>,
     excluded: 'Excluded',
     position: (position: number) => `№ ${position}`,
     name: (position: number, label: string) =>
@@ -585,6 +597,14 @@ export const MESSAGES = {
       grid: 'Show the pages as a grid',
       list: 'Show the pages as a strip',
       leftOut: 'Left out',
+      content: {
+        // The word after the mark of a picture, which a page of text goes without
+        short: { text: '', 'color-picture': 'Colour', 'bw-picture': 'B/W' } satisfies Record<
+          ContentType,
+          string
+        >,
+        mark: (type: string, source: string) => `${type} · ${source}`,
+      },
       empty: {
         all: 'This book has no pages yet.',
         check: 'No page needs a look in this stage.',
@@ -944,6 +964,7 @@ export const MESSAGES = {
       'cut-tiles': 'Cutting tiles',
       'collect-versions': 'Clearing old results',
       'measure-book': 'Measuring the book',
+      'detect-content': 'Detecting what pages show',
     } satisfies Record<JobKind, string>,
     stageRun: (stage: string) => `${stage} run`,
     chip: (kind: string, progress: { done: number; total: number }) =>
@@ -1286,6 +1307,19 @@ export const MESSAGES = {
   processing: {
     loading: 'Loading the steps of this stage…',
     loadFailed: 'The steps of this stage could not be read.',
+    content: {
+      title: 'What the pages show',
+      hint: 'The steps for text and the steps for pictures process the pages that show that. The program proposes it from the share of the page that pictures cover, and the choice here is yours.',
+      pages: (count: number) => `${count} selected pages`,
+      picture: 'Picture',
+      label: 'Shows',
+      mixed: 'The pages differ',
+      sources: (found: number, hand: number) =>
+        `${found} found by the program · ${hand} set by hand`,
+      detect: 'Detect again',
+      detectHint: 'Let the program decide again, also for the pages set by hand',
+      detecting: 'Detecting…',
+    },
     recipe: {
       label: 'Recipe',
       active: 'Active',

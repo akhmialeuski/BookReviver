@@ -13,8 +13,9 @@ import { pageIdsFor, RunScope } from '@/features/processing/scope';
 import type { Processing } from '@/features/processing/useProcessing';
 import {
   conditionOfKind,
+  conditionOfPage,
   markOf,
-  pagesLikeKind,
+  pagesLikePage,
   ruleFor,
   toneOf,
 } from '@/features/processing/variants';
@@ -82,9 +83,13 @@ export function ApplyTo({
     (activeJobs.data?.length ?? 0) > 0 ||
     runInFlight;
   const blocked = processing.dirty || busy;
-  const condition = conditionOfKind(page.kind);
-  const kindPages = pagesLikeKind(items, page.kind);
-  const kindName = MESSAGES.pages.kinds[page.kind];
+  const condition = conditionOfPage(page);
+  const kindPages = pagesLikePage(items, page);
+  // A page of another kind that shows a picture is named by that, since the rule on plates sends every picture
+  const kindName =
+    page.content_type === 'text' || conditionOfKind(page.kind) === 'plates'
+      ? MESSAGES.pages.kinds[page.kind]
+      : MESSAGES.processing.content.picture;
 
   const send = (body: StageRunBody): void => {
     setFailure(null);

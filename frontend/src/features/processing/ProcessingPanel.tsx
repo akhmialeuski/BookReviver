@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { EditorSession } from '@/features/editors/session';
+import { ContentTypeSection } from '@/features/processing/ContentTypeSection';
 import { RecipeSection } from '@/features/processing/RecipeSection';
 import { RunControls } from '@/features/processing/RunControls';
 import { SplitSection } from '@/features/processing/SplitSection';
@@ -16,8 +17,8 @@ import { MESSAGES } from '@/shared/messages';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
- * The panel of a stage that is built from processors: its recipe with the steps and their settings, what the stage did
- * to the open page with the results it made before, and at the foot the preview and the run.
+ * The panel of a stage that is built from processors: its recipe with the steps and their settings, what the pages show,
+ * what the stage did to the open page with the results it made before, and at the foot the preview and the run.
  *
  * The frame, the name of the stage and its sentence are the `StagePanel` every stage has. Everything inside is read from
  * the catalogue and the recipe, so a stage with a new processor needs no change here.
@@ -95,6 +96,14 @@ export function ProcessingPanel({
           onManageProfiles={() => setLibraryOpen(true)}
           selected={selected}
         />
+        {processing.stage === 'page-split' ? null : (
+          <ContentTypeSection
+            projectId={processing.projectId}
+            items={items}
+            currentId={current?.page.id}
+            selected={selected}
+          />
+        )}
         {current === undefined ? null : (
           <ThisPageSection
             processing={processing}

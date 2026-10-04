@@ -76,9 +76,16 @@ describe('pagesOfCondition', () => {
     [
       page('text', { position: 0 }),
       page('cover', { position: 1, kind: 'cover' }),
-      page('plate', { position: 2, kind: 'plate' }),
-      page('front', { position: 3, kind: 'frontispiece' }),
-      page('hole', { position: 4, kind: 'plate', origin: 'placeholder', images: null }),
+      page('plate', { position: 2, kind: 'plate', content_type: 'color-picture' }),
+      page('found', { position: 3, content_type: 'bw-picture', content_source: 'detected' }),
+      page('set', { position: 4, kind: 'plate', content_type: 'text', content_source: 'hand' }),
+      page('hole', {
+        position: 5,
+        kind: 'plate',
+        content_type: 'color-picture',
+        origin: 'placeholder',
+        images: null,
+      }),
     ],
     [],
   );
@@ -86,19 +93,19 @@ describe('pagesOfCondition', () => {
     pagesOfCondition(MIXED, condition).map((item) => item.page.id);
 
   it('lists every page that has an image for a step with no condition', () => {
-    expect(idsOf('all')).toEqual(['text', 'cover', 'plate', 'front']);
+    expect(idsOf('all')).toEqual(['text', 'cover', 'plate', 'found', 'set']);
   });
 
-  it('lists the pages that are not pictures for the pages of text', () => {
-    expect(idsOf('text')).toEqual(['text', 'cover']);
+  it('lists the pages that show text, whatever their kind, for the pages of text', () => {
+    expect(idsOf('text')).toEqual(['text', 'cover', 'set']);
   });
 
-  it('lists the plates and the frontispieces for the pictures, and never a placeholder', () => {
-    expect(idsOf('pictures')).toEqual(['plate', 'front']);
+  it('lists the pages that show a picture for the pictures, and never a placeholder', () => {
+    expect(idsOf('pictures')).toEqual(['plate', 'found']);
   });
 
-  it('lists every picture for the colour conditions, since the colour of the image is the server to tell', () => {
-    expect(idsOf('color-pictures')).toEqual(['plate', 'front']);
-    expect(idsOf('bw-pictures')).toEqual(['plate', 'front']);
+  it('lists the pictures of one colour for the colour conditions', () => {
+    expect(idsOf('color-pictures')).toEqual(['plate']);
+    expect(idsOf('bw-pictures')).toEqual(['found']);
   });
 });

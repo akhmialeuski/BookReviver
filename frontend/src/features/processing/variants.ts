@@ -1,5 +1,6 @@
 import type {
   PageKind,
+  PageSchema,
   RecipeRuleSchema,
   RecipeSchema,
   RuleCondition,
@@ -103,14 +104,30 @@ export function conditionOfKind(kind: PageKind): RuleCondition | null {
   return CONDITION_OF_KIND[kind] ?? null;
 }
 
-/** Give the pages of the same group of kinds as a kind: every plate and frontispiece for a plate, and so on. */
-export function pagesLikeKind(items: readonly StripItem[], kind: PageKind): StripItem[] {
-  const condition = conditionOfKind(kind);
+/**
+ * Give the condition of the rule that names a page: the plates for a page that shows a picture, whatever its kind, and
+ * else the group of its kind, which is none for a plate the reader made text.
+ */
+export function conditionOfPage(
+  page: Pick<PageSchema, 'kind' | 'content_type'>,
+): RuleCondition | null {
+  if (page.content_type !== 'text') {
+    return 'plates';
+  }
+  const ofKind = conditionOfKind(page.kind);
+  return ofKind === 'plates' ? null : ofKind;
+}
+
+/** Give the pages the rule that names a page would send to its variant: every plate and every picture for a plate. */
+export function pagesLikePage(
+  items: readonly StripItem[],
+  page: Pick<PageSchema, 'kind' | 'content_type'>,
+): StripItem[] {
+  const condition = conditionOfPage(page);
   return condition === null
     ? []
     : items.filter(
-        (item) =>
-          conditionOfKind(item.page.kind) === condition && item.page.origin !== 'placeholder',
+        (item) => conditionOfPage(item.page) === condition && item.page.origin !== 'placeholder',
       );
 }
 

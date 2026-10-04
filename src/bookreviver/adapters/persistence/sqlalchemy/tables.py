@@ -42,6 +42,7 @@ from bookreviver.domain.enums import (
     ChangeSource,
     ColorMode,
     CompareMode,
+    ContentType,
     EditorKind,
     FileType,
     ImagePolicy,
@@ -482,6 +483,8 @@ class PageRow(DefaultBase):
     :ivar label: Printed number of the page, or empty.
     :ivar label_manual: Whether the label was written by hand, which a recompute of the numbers never changes.
     :ivar kind: Role of the page in the book, stored by value.
+    :ivar content_type: What the image of the page shows, stored by value, or null while it is not detected.
+    :ivar content_by_hand: Whether the user set the content type, which the detection never changes.
     :ivar origin: Where the image of the page comes from, stored by value.
     :ivar scan_id: Scan the page was cut from, or null.
     :ivar slot: Part of the scan the page shows.
@@ -508,6 +511,8 @@ class PageRow(DefaultBase):
     label: Mapped[str]
     label_manual: Mapped[bool] = mapped_column(server_default=false())
     kind: Mapped[PageKind] = mapped_column(enum_by_value(PageKind))
+    content_type: Mapped[ContentType | None] = mapped_column(enum_by_value(ContentType))
+    content_by_hand: Mapped[bool] = mapped_column(server_default=false())
     origin: Mapped[PageOrigin] = mapped_column(enum_by_value(PageOrigin))
     scan_id: Mapped[UUID | None] = mapped_column(ForeignKey(ScanRow.id, ondelete=SET_NULL))
     slot: Mapped[int]

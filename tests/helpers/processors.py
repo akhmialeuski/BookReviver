@@ -4,14 +4,24 @@ from typing import TYPE_CHECKING, override
 
 from attrs import evolve
 
-from bookreviver.domain.enums import ColorMode, EditorKind, ProcessorScope, Stage, VersionOutput, WorkerPool
+from bookreviver.domain.enums import (
+    ColorMode,
+    EditorKind,
+    ProcessorScope,
+    Stage,
+    VersionData,
+    VersionOutput,
+    WorkerPool,
+)
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
 from bookreviver.domain.values import OrderRule, ProcessorSpec
 from bookreviver.ports.processing import Processor, StepOutput, StepResult
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
+    from bookreviver.domain.enums import ContentType
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.processing import StepInput
 
@@ -155,6 +165,68 @@ class AutoSplitProcessor(FakeProcessor):
         outputs=frozenset({VersionOutput.IMAGE}),
         editor=EditorKind.SPLIT,
     )
+
+
+class FakeContentProbe(Processor):
+    """A stand-in for ``pages.content`` that answers what a test tells it to, one answer for each page it reads.
+
+    :ivar answers: What the next pages are found to show, in the order they are read, where None is a page the processor
+                   cannot read.
+    :ivar reads: How many pages it was asked about.
+    """
+
+    spec = ProcessorSpec(
+        key='pages.content',
+        version='1',
+        title='Content type',
+        stage=Stage.PAGE_ORDER,
+        scope=ProcessorScope.PAGE,
+        outputs=frozenset(),
+    )
+
+    def __init__(self, answers: Sequence[ContentType | None]) -> None:
+        """Start with the answers to give.
+
+        :param answers: What the pages are found to show, in the order they are read, or None for a page that cannot be
+                        read.
+        :type answers: Sequence[ContentType | None]
+        """
+        self.answers = list(answers)
+        self.reads = 0
+
+    @override
+    def validate_params(self, raw: MetadataMap) -> MetadataMap:
+        """Accept no parameter.
+
+        :param raw: Parameters to check.
+        :type raw: MetadataMap
+        :returns: The parameters.
+        :rtype: MetadataMap
+        :raises InvalidParametersError: If any parameter is given.
+        """
+        if raw:
+            err_msg = f'Unknown parameters {sorted(raw)}.'
+            raise InvalidParametersError(err_msg)
+        return {}
+
+    @override
+    def run(self, step_input: StepInput) -> StepResult:
+        """Give the next answer, or fail for a page that cannot be read.
+
+        :param step_input: What the step reads.
+        :type step_input: StepInput
+        :returns: One output without an image, whose data hold the content type.
+        :rtype: StepResult
+        :raises ConflictError: If the next answer is None.
+        """
+        self.reads += 1
+        answer = self.answers.pop(0)
+        if answer is None:
+            err_msg = 'The fake probe was told that the page cannot be read.'
+            raise ConflictError(err_msg)
+        return StepResult(
+            outputs=[StepOutput(color_mode=ColorMode.GRAY, data={VersionData.CONTENT_TYPE: answer.value})]
+        )
 
 
 # The processors of the tests of the order of steps: each declares one place relative to the one before it

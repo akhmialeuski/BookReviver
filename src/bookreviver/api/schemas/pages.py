@@ -19,7 +19,17 @@ from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.api.schemas.images import ImagePathsSchema
 from bookreviver.api.schemas.types import Dpi, GroupLabel, LongText, PageIdList, PageLabel, PagePixels
 from bookreviver.domain.changes import PageChanges
-from bookreviver.domain.enums import BlankFill, LabelStyle, NewPageOrigin, PageKind, PageOrigin, Side
+from bookreviver.domain.enums import (
+    BlankFill,
+    ColorMode,
+    ContentSource,
+    ContentType,
+    LabelStyle,
+    NewPageOrigin,
+    PageKind,
+    PageOrigin,
+    Side,
+)
 from bookreviver.domain.ids import PageId, PaginationSectionId, ScanId, SourceId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import NewPage, PageAnchor, PageNumbering, PageSize
@@ -36,7 +46,7 @@ SIZE_IS_A_PAIR: str = 'Give both width_px and height_px, or neither.'
 DPI_NEEDS_SIZE: str = 'A resolution is given with a size.'
 ONLY_BLANK_HAS_SIZE: str = 'Only a blank leaf has an image to give a size to.'
 # Fields of a page patch that have no empty value, so a null is refused
-NOT_CLEARABLE_FIELDS: tuple[str, ...] = ('kind', 'included')
+NOT_CLEARABLE_FIELDS: tuple[str, ...] = ('kind', 'content_type', 'included')
 
 
 class PageQuery(ManifestParams):
@@ -129,6 +139,16 @@ class BlankFillChange(RequestModel):
     blank_fill: BlankFill
 
 
+class ContentDetectionRequest(RequestModel):
+    """Which pages to detect the content of, which the job writes into the pages as a proposal.
+
+    :ivar page_ids: The pages to detect, each at most once, which gives a page the user set by hand back to the
+                    detection, or omitted for the pages of the book that have no content type yet.
+    """
+
+    page_ids: PageIdList | None = None
+
+
 class PageCreate(OptionalAnchor):
     """A page to add without a scan: a placeholder that waits for one, or a generated blank leaf.
 
@@ -216,6 +236,8 @@ class PageUpdate(RequestModel):
 
     :ivar label: New printed number, or None to give the number back to the pagination sections.
     :ivar kind: New role of the page in the book.
+    :ivar content_type: What the page shows, which the user sets by hand and the detection of the content then leaves
+                        alone. It cannot be cleared: a request to detect the page gives it back to the detection.
     :ivar included: New decision whether the page is part of the book.
     :ivar notes: New notes, or None to clear them.
     :ivar group_label: New label of the group of the page, or None to take the page out of its group.
@@ -223,17 +245,18 @@ class PageUpdate(RequestModel):
 
     label: PageLabel | None = None
     kind: PageKind | SkipJsonSchema[None] = None
+    content_type: ContentType | SkipJsonSchema[None] = None
     included: bool | SkipJsonSchema[None] = None
     notes: LongText | None = None
     group_label: GroupLabel | None = None
 
     @model_validator(mode='after')
-    def _kind_and_inclusion_are_not_cleared(self) -> Self:
-        """Refuse a kind or an inclusion that was sent, and sent as null.
+    def _kind_content_and_inclusion_are_not_cleared(self) -> Self:
+        """Refuse a kind, a content type or an inclusion that was sent, and sent as null.
 
         :returns: The body unchanged.
         :rtype: Self
-        :raises ValueError: If the client sent null for the kind or the inclusion.
+        :raises ValueError: If the client sent null for the kind, the content type or the inclusion.
         """
         if cleared := [
             name for name in NOT_CLEARABLE_FIELDS if name in self.model_fields_set and getattr(self, name) is None
@@ -252,6 +275,7 @@ class PageUpdate(RequestModel):
         return PageChanges(
             label=(self.label or '') if 'label' in sent else None,
             kind=self.kind,
+            content_type=self.content_type,
             included=self.included,
             notes=(self.notes or '') if 'notes' in sent else None,
             group_label=(self.group_label or '') if 'group_label' in sent else None,
@@ -328,6 +352,10 @@ class PageSchema(ResponseModel):
                       None for a page kept out of the book, a page before the first section and a book without
                       sections.
     :ivar kind: Role of the page in the book.
+    :ivar content_type: What the page shows for the conditions of the steps: text, or a picture in colour or in black
+                        and white. It is the one the user set, else the one the program found, else the one the kind
+                        of the page gives, which counts a plate or a frontispiece as a picture in colour.
+    :ivar content_source: Where ``content_type`` comes from, so the interface can say whether it was found or set.
     :ivar origin: Where the image of the page comes from.
     :ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was
                    deleted.
@@ -349,6 +377,8 @@ class PageSchema(ResponseModel):
     label_manual: bool
     section_id: PaginationSectionId | None
     kind: PageKind
+    content_type: ContentType
+    content_source: ContentSource
     origin: PageOrigin
     scan_id: ScanId | None
     source_id: SourceId | None
@@ -386,6 +416,8 @@ class PageSchema(ResponseModel):
             label_manual=page.label_manual,
             section_id=overview.section_id,
             kind=page.kind,
+            content_type=page.content_of(ColorMode.UNKNOWN),
+            content_source=page.content_source,
             origin=page.origin,
             scan_id=page.scan_id,
             source_id=overview.source_id,

@@ -11,12 +11,14 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from fastapi import status
+from fastapi_pagination import Page
 from PIL import Image
 from taskiq import AsyncBroker, InMemoryBroker
 
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
+from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.pages import PageSchema
-from bookreviver.domain.enums import BlankFill, PageKind, Rendition, Stage, VersionState
+from bookreviver.domain.enums import BlankFill, JobKind, JobState, PageKind, Rendition, Stage, VersionState
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import Renditions
 from bookreviver.services.base_versions import BaseVersions
@@ -207,6 +209,29 @@ class TestFillBlankPages:
         expect(back.status_code == status.HTTP_204_NO_CONTENT)
         expect(shown.blank_fill is BlankFill.SCAN)
         expect(shown.images is not None and SCAN_STAGE in shown.images.full)
+        assert_expectations()
+
+    async def test_the_job_that_drew_the_leaf_is_followed_by_the_detection_of_the_content_of_the_pages(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify a preparation of images that made a version asks for the detection, which ends well without OpenCV.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the job.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await fx_client.post(fx_book.fill_path, json={PAGE_IDS_FIELD: fx_book.ids(1), FILL_FIELD: WHITE})
+        # The worker queues the detection when the preparation ends, so the broker is waited for twice
+        await fx_broker.wait_all()
+        await fx_broker.wait_all()
+
+        listed = await fx_client.get(f'{PROJECTS_PATH}/{fx_book.project.id}/jobs?size=50')
+        jobs = Page[JobSchema].model_validate_json(listed.content).items
+        expect((JobKind.PREPARE_PAGES, JobState.SUCCEEDED) in {(job.kind, job.state) for job in jobs})
+        expect((JobKind.DETECT_CONTENT, JobState.SUCCEEDED) in {(job.kind, job.state) for job in jobs})
         assert_expectations()
 
     async def test_several_pages_get_the_paper_of_the_book_in_one_request(

@@ -22,6 +22,7 @@ from attrs import evolve, field, frozen
 
 from bookreviver.domain.entities import Recipe, RecipeRule
 from bookreviver.domain.enums import (
+    AppliesTo,
     BinarizationMethod,
     DeskewMethod,
     DewarpMethod,
@@ -90,6 +91,8 @@ class RecipeTemplate:
                           template gives others.
     :ivar params: Parameters of some of the steps, by the key of the processor, which the defaults fill out.
     :ivar off: Keys of the processors whose steps are in the recipe but switched off.
+    :ivar applies_to: The condition of some of the steps, by the key of the processor, which processes the pages it
+                      names and passes the others unchanged. A step with no entry processes every page.
     :ivar condition: The pages that are sent to this recipe from the start, by a rule of the stage, or None for a recipe
                      no rule sends pages to.
     """
@@ -98,6 +101,7 @@ class RecipeTemplate:
     processor_keys: tuple[str, ...]
     params: Mapping[str, MetadataMap] = field(factory=dict)
     off: frozenset[str] = frozenset()
+    applies_to: Mapping[str, AppliesTo] = field(factory=dict)
     condition: RuleCondition | None = None
 
 
@@ -129,6 +133,8 @@ class DefaultRecipes:
                     'geometry.deskew': {'method': DeskewMethod.PROJECTION},
                     'geometry.dewarp': {'method': DewarpMethod.TEXT_LINES},
                 },
+                # The lines of text are what these two follow, so a picture that meets this recipe passes them
+                applies_to={'geometry.deskew': AppliesTo.TEXT, 'geometry.dewarp': AppliesTo.TEXT},
             ),
             RecipeTemplate(
                 name='Plates',
@@ -153,6 +159,8 @@ class DefaultRecipes:
                     BINARIZE_KEY: {MODE_PARAM: OutputMode.BW, METHOD_PARAM: BinarizationMethod.SAUVOLA},
                     DESPECKLE_KEY: {STRENGTH_PARAM: 2},
                 },
+                # The two make a page black and white and clean it of specks, which a picture in tones must not meet
+                applies_to={BINARIZE_KEY: AppliesTo.TEXT, DESPECKLE_KEY: AppliesTo.TEXT},
             ),
             RecipeTemplate(
                 name='Plates',
@@ -485,6 +493,7 @@ class RecipeBook:
                 processor_key=key,
                 params=self._catalogue.get(key).validate_params(template.params.get(key, {})),
                 enabled=key not in template.off,
+                applies_to=template.applies_to.get(key, AppliesTo.ALL),
             )
             for key in template.processor_keys
         )

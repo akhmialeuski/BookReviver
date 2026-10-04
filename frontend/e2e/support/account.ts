@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../../src/shared/http/csrf';
 import { SERVER_LOG } from './env';
-import { sheetPng, solidPng } from './png';
+import { platePng, sheetPng, solidPng } from './png';
 
 /**
  * The steps every scenario starts with: a confirmed account that is signed in, a book, and a folder of page images
@@ -109,6 +109,28 @@ export async function writePagesFolder(count: number): Promise<string> {
       path.join(root, `page-${String(number).padStart(2, '0')}.png`),
       solidPng(PAGE_SIZE, PAGE_SIZE + number, color),
     );
+  }
+  return root;
+}
+
+const PLATE_SCAN_SIZE = { width: 420, height: 580 };
+
+/**
+ * Write a folder of four scans, a solid page, a plate in colour, a plate in black and white and another solid page, in
+ * that order, and return its path. The solid pages show no picture, and a plate is a picture of continuous tones that
+ * covers most of the page, which the detection of the content of the pages tells from text.
+ */
+export async function writeMixedFolder(): Promise<string> {
+  const root = path.join(await mkdtemp(path.join(tmpdir(), 'bookreviver-')), 'mixed');
+  await mkdir(root, { recursive: true });
+  const pages = [
+    solidPng(PAGE_SIZE, PAGE_SIZE + 1, [228, 208, 164]),
+    platePng(PLATE_SCAN_SIZE.width, PLATE_SCAN_SIZE.height, 5, true),
+    platePng(PLATE_SCAN_SIZE.width, PLATE_SCAN_SIZE.height, 3),
+    solidPng(PAGE_SIZE, PAGE_SIZE + 2, [220, 200, 150]),
+  ];
+  for (const [index, content] of pages.entries()) {
+    await writeFile(path.join(root, `page-${String(index + 1).padStart(2, '0')}.png`), content);
   }
   return root;
 }

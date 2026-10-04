@@ -23,6 +23,10 @@ export function page(id: string, overrides: Partial<PageSchema> = {}): PageSchem
     label_manual: false,
     section_id: null,
     kind: 'text',
+    // As the server works it out from the kind alone: a plate or a frontispiece shows a picture, in colour until known
+    content_type:
+      overrides.kind === 'plate' || overrides.kind === 'frontispiece' ? 'color-picture' : 'text',
+    content_source: 'kind',
     origin: 'scan',
     scan_id: null,
     source_id: null,

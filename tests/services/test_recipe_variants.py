@@ -6,7 +6,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import PageKind, RuleCondition, Stage, StageState
+from bookreviver.domain.enums import ContentType, PageKind, RuleCondition, Stage, StageState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.values import PageStageKey, RecipeDraft, RecipeKey, StageRun, Step
 from bookreviver.services.recipe_picks import RecipePicker
@@ -141,6 +141,34 @@ class TestRulesOfAStage:
         active = await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
         chosen = [(await record_of(fx_kit, page_id)).recipe_id for page_id in (text, plate, frontispiece)]
         assert chosen == [active.id, variant.id, variant.id]
+
+    async def test_the_rule_on_plates_follows_what_a_page_shows_and_not_only_its_kind(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a text page the detection found a picture on and one the user made a picture go to the plates variant.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, (found, by_hand, text, plate_as_text) = await seed_book(
+            fx_kit, [PageKind.TEXT, PageKind.TEXT, PageKind.TEXT, PageKind.PLATE]
+        )
+        uow = fx_kit.uow()
+        for page_id, fields in (
+            (found, {'content_type': ContentType.BW_PICTURE}),
+            (by_hand, {'content_type': ContentType.COLOR_PICTURE, 'content_by_hand': True}),
+            (plate_as_text, {'content_type': ContentType.TEXT, 'content_by_hand': True}),
+        ):
+            await uow.pages.update(evolve(await uow.pages.get(page_id), **fields))
+        await uow.commit()
+        variant = await add_variant(fx_kit, actor, project, PLATES_NAME, PLATES_STRENGTH)
+        await fx_kit.add_rule(actor, variant, RuleCondition.PLATES)
+
+        await run_all(fx_kit, actor, project)
+
+        active = await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        chosen = [(await record_of(fx_kit, page_id)).recipe_id for page_id in (found, by_hand, text, plate_as_text)]
+        assert chosen == [variant.id, variant.id, active.id, active.id]
 
     async def test_a_run_without_rules_uses_the_active_recipe_for_every_page(self, fx_kit: ProcessingKit) -> None:
         """Verify a stage without a rule is processed as before, by its active recipe.

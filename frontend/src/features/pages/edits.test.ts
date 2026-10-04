@@ -37,6 +37,22 @@ describe('applyChanges', () => {
     expect(applyChanges(leaf, { notes: 'x' }).blank_fill).toBe('white');
   });
 
+  it('shows a content type the reader sends as theirs, and keeps the type of a page it leaves out', () => {
+    expect(applyChanges(original, { content_type: 'bw-picture' })).toMatchObject({
+      content_type: 'bw-picture',
+      content_source: 'hand',
+    });
+    expect(applyChanges(original, { kind: 'plate' })).toMatchObject({
+      content_type: 'text',
+      content_source: 'kind',
+    });
+  });
+
+  it('gives back the same page when the type sent is the one the reader set already', () => {
+    const set = page('c', { content_type: 'color-picture', content_source: 'hand' });
+    expect(applyChanges(set, { content_type: 'color-picture' })).toBe(set);
+  });
+
   it('leaves everything else of the page alone', () => {
     const changed = applyChanges(original, { label: 'iv' });
     expect({ ...changed, label: original.label }).toEqual(original);

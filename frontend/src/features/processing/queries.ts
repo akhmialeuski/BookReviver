@@ -24,6 +24,7 @@ import {
   deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteMutation,
   deleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteMutation,
   deleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteMutation,
+  detectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostMutation,
   getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey,
   listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetOptions,
   listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetQueryKey,
@@ -43,9 +44,9 @@ import {
   putSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutMutation,
   putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation,
   remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostMutation,
-  resetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostMutation,
   resetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostMutation,
   resetStepsApiV1ProjectsProjectIdStagesStageResetPostMutation,
+  resetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostMutation,
   runImpactApiV1ProjectsProjectIdStagesStageRunImpactPostMutation,
   runStageApiV1ProjectsProjectIdStagesStageRunPostMutation,
   unpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteMutation,
@@ -287,6 +288,20 @@ export function useMeasureBook(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...measureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostMutation(),
+    onSettled: () => invalidateJobs(queryClient, projectId),
+  });
+}
+
+/**
+ * Detect what pages show in the background, for the pages named or for those that have no type yet.
+ *
+ * The job writes the type into the pages when it ends, which the event of the job tells the screen, so the manifest is
+ * read again then and the marks of the pages show what was found.
+ */
+export function useDetectContent(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...detectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostMutation(),
     onSettled: () => invalidateJobs(queryClient, projectId),
   });
 }

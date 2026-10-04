@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 from attrs import evolve
 
-from bookreviver.domain.enums import PageKind, RuleCondition, RunMode, Stage
+from bookreviver.domain.enums import ContentType, PageKind, RuleCondition, RunMode, Stage
 from bookreviver.domain.ids import PageId, PageVersionId, RecipeId
 from bookreviver.domain.values import THROUGH_STEP_KEY, RunImpact, StageRun
 from tests.helpers.builders import (
@@ -78,6 +78,35 @@ class TestRecipeRule:
         """
         rule = make_recipe_rule(recipe=RECIPE, condition=condition)
         assert rule.matches(make_page(project_id=PROJECT_ID, kind=kind), FIRST_POSITION) is expected
+
+    @pytest.mark.parametrize(
+        ('kind', 'content_type', 'by_hand', 'expected'),
+        [
+            (PageKind.TEXT, ContentType.COLOR_PICTURE, False, True),
+            (PageKind.TEXT, ContentType.BW_PICTURE, True, True),
+            (PageKind.TEXT, ContentType.TEXT, False, False),
+            (PageKind.PLATE, ContentType.TEXT, False, True),
+            (PageKind.PLATE, ContentType.TEXT, True, False),
+        ],
+        ids=['found-picture', 'picture-set-by-hand', 'found-text', 'plate-found-as-text', 'plate-set-to-text'],
+    )
+    def test_the_condition_on_plates_matches_the_pictures_by_what_they_show(
+        self, kind: PageKind, content_type: ContentType, *, by_hand: bool, expected: bool
+    ) -> None:
+        """Verify the rule on plates sends a page that shows a picture to the plates recipe, whatever its kind.
+
+        :param kind: Kind of the page.
+        :type kind: PageKind
+        :param content_type: What the page shows.
+        :type content_type: ContentType
+        :param by_hand: Whether the user set it.
+        :type by_hand: bool
+        :param expected: Whether the rule matches the page.
+        :type expected: bool
+        """
+        rule = make_recipe_rule(recipe=RECIPE, condition=RuleCondition.PLATES)
+        page = evolve(make_page(project_id=PROJECT_ID, kind=kind), content_type=content_type, content_by_hand=by_hand)
+        assert rule.matches(page, FIRST_POSITION) is expected
 
     @pytest.mark.parametrize(
         ('condition', 'position', 'expected'),

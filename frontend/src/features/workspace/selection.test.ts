@@ -12,6 +12,8 @@ function pages(...ids: string[]): PageSchema[] {
         label_manual: false,
         section_id: null,
         kind: 'text',
+        content_type: 'text',
+        content_source: 'kind',
         origin: 'scan',
         scan_id: null,
         source_id: null,

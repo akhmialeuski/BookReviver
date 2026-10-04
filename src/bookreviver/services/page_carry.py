@@ -212,6 +212,6 @@ class CarryOverService:
             candidates = [
                 page
                 for page in book
-                if not page.is_leaf and any(step.applies_to.matches(page.kind, color) for color in PICTURE_COLORS)
+                if not page.is_leaf and any(step.applies_to.matches(page.content_of(color)) for color in PICTURE_COLORS)
             ]
         return [page for page in candidates if page.id != key.page_id and page.origin is not PageOrigin.PLACEHOLDER]

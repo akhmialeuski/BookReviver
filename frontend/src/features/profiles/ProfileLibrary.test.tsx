@@ -389,7 +389,10 @@ describe('ProfileLibrary', () => {
 
       // The running jobs come with their own query, which may answer after the first render
       await vi.waitFor(() =>
-        expect(inCard('Clean flatbed scan', 'profile-apply-pages')).toHaveProperty('disabled', true),
+        expect(inCard('Clean flatbed scan', 'profile-apply-pages')).toHaveProperty(
+          'disabled',
+          true,
+        ),
       );
       expect(inCard('Clean flatbed scan', 'profile-apply-pages')?.title).toBe(
         'The book is busy with another job',

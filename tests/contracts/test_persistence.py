@@ -14,6 +14,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import (
     BlankFill,
+    ContentType,
     JobKind,
     JobState,
     PageKind,
@@ -1466,6 +1467,37 @@ class TestPageVersionRepository:
         expect(stored.blank_fill is BlankFill.SCAN)
         expect((leaf.blank_fill, leaf.scan_id) == (BlankFill.PAPER, scan.id))
         expect((await (await fx_uow_factory()).pages.get(page.id)).blank_fill is BlankFill.SCAN)
+        assert_expectations()
+
+    async def test_the_content_type_of_a_page_survives_the_store(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a page reads back with no content type, then with one found, then with one set by hand.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        page = make_page(project_id=project.id)
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.pages.add(page)
+        await uow.commit()
+        uow = await fx_uow_factory()
+        added = await uow.pages.get(page.id)
+        await uow.pages.update(evolve(added, content_type=ContentType.BW_PICTURE))
+        await uow.commit()
+        uow = await fx_uow_factory()
+        found = await uow.pages.get(page.id)
+        await uow.pages.update(evolve(found, content_type=ContentType.COLOR_PICTURE, content_by_hand=True))
+        await uow.commit()
+
+        by_hand = await (await fx_uow_factory()).pages.get(page.id)
+        expect((added.content_type, added.content_by_hand) == (None, False))
+        expect((found.content_type, found.content_by_hand) == (ContentType.BW_PICTURE, False))
+        expect((by_hand.content_type, by_hand.content_by_hand) == (ContentType.COLOR_PICTURE, True))
         assert_expectations()
 
     async def test_versions_read_back_in_creation_order(

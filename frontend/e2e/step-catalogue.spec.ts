@@ -87,7 +87,8 @@ test('a step is added from the catalogue twice, removed in the window of the gea
       'data-mark',
       'picture',
     );
-    await expect(deskews.nth(0).getByTestId('bar-step-mark')).toHaveCount(0);
+    // The Deskew of the first recipe straightens the pages of text only, which it keeps
+    await expect(deskews.nth(0).getByTestId('bar-step-mark')).toHaveAttribute('data-mark', 'text');
     await snap(page, 'second-deskew-for-pictures');
   });
 
@@ -142,7 +143,8 @@ test('a step is added from the catalogue twice, removed in the window of the gea
     await expect(barSteps).toHaveCount(stepsBefore);
     await expect(deskews).toHaveCount(1);
     await expect(page).not.toHaveURL(/\/steps\//);
-    await page.keyboard.press('Escape');
+    // The close button, since Escape pressed while the confirmation hands the focus back can land on neither
+    await windowOfSteps.getByRole('button', { name: 'Close' }).click();
     await expect(windowOfSteps).toHaveCount(0);
   });
 
