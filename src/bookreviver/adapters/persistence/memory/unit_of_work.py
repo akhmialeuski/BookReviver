@@ -92,6 +92,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Hashable, Iterable, Mapping, Sequence
     from datetime import datetime
 
+    from bookreviver.domain.enums import ResultMark
     from bookreviver.domain.ids import AccountId, ChangeBatchId, StepId
 
 # Attribute holding the identifier of every entity addressed by one
@@ -1011,9 +1012,14 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
 
     @override
     async def list_for_stage(
-        self, page_id: PageId, stage: Stage | None, scale: VersionScale | None, request: SliceRequest
+        self,
+        page_id: PageId,
+        stage: Stage | None,
+        scale: VersionScale | None,
+        request: SliceRequest,
+        mark: ResultMark | None = None,
     ) -> Slice[PageVersion]:
-        """Return a window of the versions of one page matching a stage and a scale, the earliest first.
+        """Return a window of the versions of one page matching a stage, a scale and a mark, the earliest first.
 
         :param page_id: Page owning the versions.
         :type page_id: PageId
@@ -1023,6 +1029,8 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
         :type scale: VersionScale | None
         :param request: Offset and limit of the window.
         :type request: SliceRequest
+        :param mark: Mark listed, or None for every version, marked or not.
+        :type mark: ResultMark | None
         :returns: The window and the number of versions that match.
         :rtype: Slice[PageVersion]
         """
@@ -1033,6 +1041,7 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
                 if version.page_id == page_id
                 and (stage is None or version.stage == stage)
                 and (scale is None or version.scale == scale)
+                and (mark is None or version.mark == mark)
             ),
             key=attrgetter('created_at', ID_ATTRIBUTE),
         )

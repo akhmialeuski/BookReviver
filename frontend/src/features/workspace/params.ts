@@ -31,12 +31,13 @@ export const CompareMode = {
 export type CompareMode = (typeof CompareMode)[keyof typeof CompareMode];
 
 /**
- * Which pages the strip lists: all of them, the ones to check, the ones left out of the book, or, on the Split stage,
- * the ones cut from a scan wider than tall.
+ * Which pages the strip lists: all of them, the ones to check, the ones whose result is marked bad, the ones left out of
+ * the book, or, on the Split stage, the ones cut from a scan wider than tall.
  */
 export const PageFilter = {
   All: 'all',
   Check: 'check',
+  Bad: 'bad',
   LeftOut: 'left-out',
   Wide: 'wide',
 } as const;

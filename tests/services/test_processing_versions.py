@@ -3,6 +3,7 @@
 from datetime import timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 from attrs import evolve
@@ -12,6 +13,7 @@ from bookreviver.domain.enums import (
     JobKind,
     JobState,
     Rendition,
+    ResultMark,
     Stage,
     StageState,
     TransformKind,
@@ -19,16 +21,18 @@ from bookreviver.domain.enums import (
     VersionScale,
     VersionState,
 )
-from bookreviver.domain.errors import ConflictError, NotFoundError
+from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.events import PageStageChanged, PageVersionReady
 from bookreviver.domain.geometry import Point, Quad, Transform
-from bookreviver.domain.ids import PageVersionId
+from bookreviver.domain.ids import PageVersionId, StepId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PageStageKey, SliceRequest, StageRun, TileCut, VersionFilter
+from bookreviver.domain.values import PageStageKey, RecipeDraft, SliceRequest, StageRun, Step, TileCut, VersionFilter
 from bookreviver.services.job_runs import JobTracker
 from bookreviver.services.processing_jobs import BEING_COLLECTED
 from tests.helpers.builders import EPOCH, make_page_stage
 from tests.helpers.processing import IMAGE_CONTENT
+from tests.helpers.processors import FakeProcessor
+from tests.helpers.spreads import run_stage
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -66,6 +70,47 @@ async def ran_geometry(kit: ProcessingKit) -> tuple[Actor, Project, Page, PageVe
     record = await kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
     assert record.head_version_id is not None
     return actor, project, page, await kit.stored_version(record.head_version_id)
+
+
+async def ran_two_steps(
+    kit: ProcessingKit, *, first_on: bool = True
+) -> tuple[Actor, Project, Page, list[StepId], list[PageVersion]]:
+    """Seed a page, save a geometry recipe of two steps of one processor, and run it.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param first_on: Whether the first step is switched on.
+    :type first_on: bool
+    :returns: The actor, the project, the page, the identifiers of the two steps, and the versions the run made in the
+              order of their steps.
+    :rtype: tuple[Actor, Project, Page, list[StepId], list[PageVersion]]
+    """
+    actor, project = await kit.seed_project()
+    page, _ = await kit.seed_scan_page(project)
+    await kit.seed_base_version(page)
+    steps = [Step(processor_key=FakeProcessor.spec.key, enabled=first_on), Step(processor_key=FakeProcessor.spec.key)]
+    recipe = await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, RecipeDraft(name='Two', steps=steps))
+    await run_stage(kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+    found = await kit.uow().page_versions.list_for_page(page.id)
+    made = sorted(
+        (version for version in found if version.stage is Stage.GEOMETRY), key=lambda version: version.created_at
+    )
+    return actor, project, page, [step.step_id for step in recipe.steps], made
+
+
+async def mark_version(kit: ProcessingKit, version: PageVersion, mark: ResultMark) -> None:
+    """Set the mark of a stored version.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param version: The version.
+    :type version: PageVersion
+    :param mark: The mark to set.
+    :type mark: ResultMark
+    """
+    uow = kit.uow()
+    await uow.page_versions.update(evolve(version, mark=mark))
+    await uow.commit()
 
 
 class TestChooseVersion:
@@ -193,6 +238,112 @@ class TestVersions:
         expect((everything.total, geometry.total, previews.total) == (2, 1, 0))
         expect(read == first)
         assert_expectations()
+
+
+class TestVersionsOfAStep:
+    """Tests for the step and mark filters of ProcessingService.versions."""
+
+    async def test_each_step_lists_the_version_its_place_in_the_chain_gives(self, fx_kit: ProcessingKit) -> None:
+        """Verify two steps of one processor are told apart by their place, and each lists its own version only.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, [first, second], [made_first, made_second] = await ran_two_steps(fx_kit)
+        service = fx_kit.service()
+        by_first = await service.versions(
+            actor, project.id, page.id, VersionFilter(stage=Stage.GEOMETRY, step_id=first), EVERYTHING
+        )
+        by_second = await service.versions(
+            actor, project.id, page.id, VersionFilter(stage=Stage.GEOMETRY, step_id=second), EVERYTHING
+        )
+        expect(list(by_first.items) == [made_first])
+        expect(list(by_second.items) == [made_second])
+        expect((by_first.total, by_second.total) == (1, 1))
+        assert_expectations()
+
+    async def test_a_step_switched_off_has_no_versions_and_the_next_one_takes_its_place(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a step that is off lists nothing, and the step after it stands first in the chain.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, [off, on], [made] = await ran_two_steps(fx_kit, first_on=False)
+        service = fx_kit.service()
+        of_off = await service.versions(
+            actor, project.id, page.id, VersionFilter(stage=Stage.GEOMETRY, step_id=off), EVERYTHING
+        )
+        of_on = await service.versions(
+            actor, project.id, page.id, VersionFilter(stage=Stage.GEOMETRY, step_id=on), EVERYTHING
+        )
+        expect(of_off.total == 0)
+        expect(list(of_on.items) == [made])
+        assert_expectations()
+
+    async def test_the_mark_narrows_the_list_of_a_step_and_of_a_stage(self, fx_kit: ProcessingKit) -> None:
+        """Verify only the versions that carry the mark are listed, with the step and without it.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, [first, _], [made_first, _] = await ran_two_steps(fx_kit)
+        await mark_version(fx_kit, made_first, ResultMark.BAD)
+        service = fx_kit.service()
+        bad_of_step = await service.versions(
+            actor,
+            project.id,
+            page.id,
+            VersionFilter(stage=Stage.GEOMETRY, step_id=first, mark=ResultMark.BAD),
+            EVERYTHING,
+        )
+        good_of_step = await service.versions(
+            actor,
+            project.id,
+            page.id,
+            VersionFilter(stage=Stage.GEOMETRY, step_id=first, mark=ResultMark.GOOD),
+            EVERYTHING,
+        )
+        bad_of_stage = await service.versions(
+            actor, project.id, page.id, VersionFilter(stage=Stage.GEOMETRY, mark=ResultMark.BAD), EVERYTHING
+        )
+        expect([version.id for version in bad_of_step.items] == [made_first.id])
+        expect(good_of_step.total == 0)
+        expect([version.id for version in bad_of_stage.items] == [made_first.id])
+        assert_expectations()
+
+    async def test_the_window_of_a_step_list_is_cut_and_its_total_is_the_whole(self, fx_kit: ProcessingKit) -> None:
+        """Verify the offset and the limit apply to the versions of the step and the total counts every one.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, [first, _], _ = await ran_two_steps(fx_kit)
+        window = await fx_kit.service().versions(
+            actor,
+            project.id,
+            page.id,
+            VersionFilter(stage=Stage.GEOMETRY, step_id=first),
+            SliceRequest(offset=1, limit=1),
+        )
+        assert (list(window.items), window.total) == ([], 1)
+
+    async def test_a_step_no_recipe_has_is_not_found_and_a_step_without_its_stage_is_refused(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify an unknown step is not an empty list, and a step needs the stage it belongs to.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, [first, _], _ = await ran_two_steps(fx_kit)
+        with pytest.raises(NotFoundError):
+            await fx_kit.service().versions(
+                actor, project.id, page.id, VersionFilter(stage=Stage.GEOMETRY, step_id=StepId(uuid4())), EVERYTHING
+            )
+        with pytest.raises(InvalidParametersError):
+            await fx_kit.service().versions(actor, project.id, page.id, VersionFilter(step_id=first), EVERYTHING)
 
 
 class TestStartTiles:

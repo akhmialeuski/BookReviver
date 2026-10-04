@@ -18,6 +18,7 @@ from bookreviver.domain.enums import (
     AppliesTo,
     ChangeSource,
     PageOrigin,
+    ResultMark,
     ReviewReason,
     Stage,
     StageState,
@@ -1031,6 +1032,34 @@ class TestPageVersionProcessing:
             [version.id for version in previews.items],
             ([version.id for version in window.items], window.total),
         ) == ([first.id, second.id], [preview.id], ([second.id, preview.id], 3))
+
+    async def test_list_for_stage_filters_the_versions_by_mark(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a mark narrows the versions to those that carry it, and no mark lists marked and unmarked alike.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        uow = await fx_uow_factory()
+        base = make_page_version(page_id=page_id)
+        bad = evolve(_version(base), mark=ResultMark.BAD, created_at=EPOCH + timedelta(minutes=1))
+        good = evolve(_version(base), mark=ResultMark.GOOD, created_at=EPOCH + timedelta(minutes=2))
+        unmarked = evolve(_version(base), created_at=EPOCH + timedelta(minutes=3))
+        await uow.page_versions.add_many([base, bad, good, unmarked])
+        repository = uow.page_versions
+        everything = SliceRequest(limit=10)
+        listed_bad = await repository.list_for_stage(page_id, Stage.GEOMETRY, None, everything, ResultMark.BAD)
+        listed_good = await repository.list_for_stage(page_id, None, VersionScale.FULL, everything, ResultMark.GOOD)
+        listed_all = await repository.list_for_stage(page_id, Stage.GEOMETRY, None, everything)
+        assert (
+            [version.id for version in listed_bad.items],
+            [version.id for version in listed_good.items],
+            [version.id for version in listed_all.items],
+        ) == ([bad.id], [good.id], [bad.id, good.id, unmarked.id])
 
     async def test_collectable_is_old_non_base_and_outside_the_current_chains(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory

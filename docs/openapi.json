@@ -4341,7 +4341,7 @@
           "processing"
         ],
         "summary": "List Versions",
-        "description": "List the versions of a page, the earliest first, of one stage and one scale or of all.",
+        "description": "List the versions of a page, the earliest first, of one stage, step, scale and mark or of all.\n\nWith ``step`` the list holds the results of that step of the stage on the page, which needs ``stage``; a step no\nrecipe of the stage has is a 404. With ``mark`` it holds the versions carrying that mark only.",
         "operationId": "list_versions_api_v1_projects__project_id__pages__page_id__versions_get",
         "parameters": [
           {
@@ -4408,6 +4408,23 @@
             }
           },
           {
+            "name": "step",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Step"
+            }
+          },
+          {
             "name": "scale",
             "in": "query",
             "required": false,
@@ -4421,6 +4438,22 @@
                 }
               ],
               "title": "Scale"
+            }
+          },
+          {
+            "name": "mark",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ResultMark"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mark"
             }
           }
         ],
@@ -11524,6 +11557,7 @@
         "enum": [
           "all",
           "check",
+          "bad",
           "left-out",
           "wide"
         ],
@@ -12078,6 +12112,9 @@
             "type": "string",
             "title": "Edit Hash"
           },
+          "origin": {
+            "$ref": "#/components/schemas/VersionOrigin"
+          },
           "tiles_ready": {
             "type": "boolean",
             "title": "Tiles Ready"
@@ -12157,6 +12194,7 @@
           "state",
           "scale",
           "edit_hash",
+          "origin",
           "tiles_ready",
           "error",
           "images",
@@ -12168,7 +12206,7 @@
           "comment"
         ],
         "title": "PageVersionSchema",
-        "description": "The result of one processing step on one page.\n\n:ivar id: Identifier of the version, the hash of what produced it.\n:ivar page_id: Page the version belongs to.\n:ivar stage: Stage of the step.\n:ivar processor: Processor that ran the step.\n:ivar input_id: Version the step read, or None for a base version.\n:ivar params: Parameters of the step.\n:ivar transform: Transform of coordinates from the input.\n:ivar data: Data the step found, such as an angle or a confidence.\n:ivar review: Why the step asks for a second look at the page though it finished, or None when it was sure.\n:ivar state: Where the version is in its life cycle.\n:ivar scale: Whether the step ran on the full image or on a preview.\n:ivar edit_hash: Hash of the manual edit the step read, or empty.\n:ivar tiles_ready: Whether the tile pyramid is cut, which a client asks for when it is not.\n:ivar error: Why the version failed, or empty.\n:ivar images: Paths of the images of a ready full run that has an image, or None.\n:ivar preview: Path of the preview image of a preview run, or None.\n:ivar created_at: When the version was created.\n:ivar files_removed: Whether a collection removed the files of the version, so it has no image until a run makes it\n                     again.\n:ivar files_removed_at: When the files were removed, or None while the version has them.\n:ivar mark: What the user judged of the result, or None while it is not judged.\n:ivar comment: What the user wrote about the result, or empty."
+        "description": "The result of one processing step on one page.\n\n:ivar id: Identifier of the version, the hash of what produced it.\n:ivar page_id: Page the version belongs to.\n:ivar stage: Stage of the step.\n:ivar processor: Processor that ran the step.\n:ivar input_id: Version the step read, or None for a base version.\n:ivar params: Parameters of the step.\n:ivar transform: Transform of coordinates from the input.\n:ivar data: Data the step found, such as an angle or a confidence.\n:ivar review: Why the step asks for a second look at the page though it finished, or None when it was sure.\n:ivar state: Where the version is in its life cycle.\n:ivar scale: Whether the step ran on the full image or on a preview.\n:ivar edit_hash: Hash of the manual edit the step read, or empty.\n:ivar origin: How the result came about: made by the step, or set by hand through a manual edit.\n:ivar tiles_ready: Whether the tile pyramid is cut, which a client asks for when it is not.\n:ivar error: Why the version failed, or empty.\n:ivar images: Paths of the images of a ready full run that has an image, or None.\n:ivar preview: Path of the preview image of a preview run, or None.\n:ivar created_at: When the version was created.\n:ivar files_removed: Whether a collection removed the files of the version, so it has no image until a run makes it\n                     again.\n:ivar files_removed_at: When the files were removed, or None while the version has them.\n:ivar mark: What the user judged of the result, or None while it is not judged.\n:ivar comment: What the user wrote about the result, or empty."
       },
       "Page_JobSchema_": {
         "properties": {
@@ -14883,6 +14921,10 @@
                 "type": "null"
               }
             ]
+          },
+          "marked_bad": {
+            "type": "boolean",
+            "title": "Marked Bad"
           }
         },
         "type": "object",
@@ -14895,10 +14937,11 @@
           "version",
           "through_step",
           "review_processor",
-          "step"
+          "step",
+          "marked_bad"
         ],
         "title": "StagePageSchema",
-        "description": "One page of a book in one stage: where it stands there and the version that is its result.\n\n:ivar page_id: The page.\n:ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.\n:ivar review: Why the result asks for a second look, or None.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar pinned: Whether the recipe is pinned to the page.\n:ivar version: The current version of the stage on the page with its data and images, or None.\n:ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step\n                    that is on, so the page is not ready for the next stage, or None.\n:ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.\n:ivar step: The page at the step the list was asked for, or None for a list of the stage alone."
+        "description": "One page of a book in one stage: where it stands there and the version that is its result.\n\n:ivar page_id: The page.\n:ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.\n:ivar review: Why the result asks for a second look, or None.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar pinned: Whether the recipe is pinned to the page.\n:ivar version: The current version of the stage on the page with its data and images, or None.\n:ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step\n                    that is on, so the page is not ready for the next stage, or None.\n:ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.\n:ivar step: The page at the step the list was asked for, or None for a list of the stage alone.\n:ivar marked_bad: Whether the user marked bad the result the row stands on: the version of the step the list was\n                  asked for, else the current version of the stage."
       },
       "StageProgressSchema": {
         "properties": {
@@ -15477,6 +15520,15 @@
         ],
         "title": "VariantPagesSchema",
         "description": "How many pages of a stage one recipe processed.\n\n:ivar recipe_id: The recipe.\n:ivar pages: Pages with an image whose result of the stage the recipe made."
+      },
+      "VersionOrigin": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "hand"
+        ],
+        "title": "VersionOrigin",
+        "description": "How a result, a page version, came about, which a version tells from the inputs it was made from."
       },
       "VersionOutput": {
         "type": "string",

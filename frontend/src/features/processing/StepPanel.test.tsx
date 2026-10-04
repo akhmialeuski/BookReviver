@@ -20,11 +20,13 @@ import { barStepsOf, countStep, neighboursOf } from '@/features/workspace/steps'
 import { joinRows, type StripItem } from '@/features/workspace/strip';
 import type { StepWorkspace } from '@/features/workspace/useStepWorkspace';
 
-const sdk = vi.hoisted(() => ({ carry: vi.fn() }));
+const sdk = vi.hoisted(() => ({ carry: vi.fn(), versions: vi.fn(), jobs: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
   carryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPost: sdk.carry,
+  listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet: sdk.versions,
+  listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
 }));
 
 /**
@@ -214,6 +216,11 @@ describe('StepPanel', () => {
     for (const mock of [onOpen, onClose, start, startPages, condition, change]) {
       mock.mockReset();
     }
+    sdk.versions.mockReset();
+    sdk.versions.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 100, pages: 1 } });
+    sdk.jobs.mockReset();
+    sdk.jobs.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 100, pages: 1 } });
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -420,6 +427,52 @@ describe('StepPanel', () => {
       expect(sdk.carry.mock.calls[0]?.[0]).toMatchObject({
         body: { scope: 'selected', page_ids: ['p2'] },
       });
+    });
+  });
+
+  describe('the results of the step on the open page', () => {
+    const settled = (): Promise<void> =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+    beforeEach(() => {
+      sdk.versions.mockResolvedValue({
+        data: {
+          items: [version('old', { created_at: '2026-10-01T10:00:00Z' }), version('v')],
+          total: 2,
+          page: 1,
+          size: 100,
+          pages: 1,
+        },
+      });
+    });
+
+    it('lists them from the server by the step, the current one marked', async () => {
+      render(1);
+      await settled();
+
+      expect(sdk.versions.mock.calls[0]?.[0]).toMatchObject({
+        path: { page_id: 'p1' },
+        query: { stage: 'geometry', step: 'b', scale: 'full' },
+      });
+      const entries = [...container.querySelectorAll('[data-testid="history-entry"]')];
+      expect(entries.map((entry) => entry.getAttribute('data-version'))).toEqual(['v', 'old']);
+      expect(entries[0]?.getAttribute('data-current')).toBe('true');
+    });
+
+    it('offers no earlier result as the result of the stage on a step that is not the last', async () => {
+      render(1);
+      await settled();
+
+      expect(find('history-use')).toBeNull();
+    });
+
+    it('offers an earlier result on the last step, whose results are the results of the stage', async () => {
+      render(2, placed('found'));
+      await settled();
+
+      expect(find('history-use')).not.toBeNull();
     });
   });
 });

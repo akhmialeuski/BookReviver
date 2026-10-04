@@ -13,6 +13,7 @@ from bookreviver.domain.enums import (
     FigureState,
     PageKind,
     PageStageStatus,
+    ResultMark,
     ReviewReason,
     Stage,
     StageState,
@@ -28,7 +29,7 @@ from tests.helpers.processors import FakeProcessor
 from tests.helpers.spreads import run_stage
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, Page, Project
+    from bookreviver.domain.entities import Actor, Page, PageVersion, Project
     from bookreviver.domain.stage_summaries import StageSummary
     from tests.helpers.processing import ProcessingKit
 
@@ -90,6 +91,21 @@ async def seed_geometry(
     await uow.page_versions.add(version)
     record = make_page_stage(page_id=page.id, stage=Stage.GEOMETRY, head_version_id=version.id, state=state)
     await uow.page_stages.save(evolve(record, through_step=through_step))
+    await uow.commit()
+
+
+async def mark_version(kit: ProcessingKit, version: PageVersion, mark: ResultMark) -> None:
+    """Commit the mark of a stored version.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param version: The version.
+    :type version: PageVersion
+    :param mark: The mark to set.
+    :type mark: ResultMark
+    """
+    uow = kit.uow()
+    await uow.page_versions.update(evolve(version, mark=mark))
     await uow.commit()
 
 
@@ -298,6 +314,28 @@ class TestRows:
         expect(rows.items[2].review_processor == make_page_version(page_id=pages[2].id).processor.key)
         assert_expectations()
 
+    async def test_a_row_is_marked_bad_when_its_current_version_is(self, fx_kit: ProcessingKit) -> None:
+        """Verify only the page whose current version carries the bad mark is flagged, and a good mark is not.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, project, pages = await seed_book(fx_kit)
+        for page in pages:
+            await seed_geometry(fx_kit, page, StageState.FRESH)
+        heads = [
+            next(
+                version
+                for version in await fx_kit.uow().page_versions.list_for_page(page.id)
+                if version.stage is Stage.GEOMETRY
+            )
+            for page in pages
+        ]
+        await mark_version(fx_kit, heads[0], ResultMark.BAD)
+        await mark_version(fx_kit, heads[1], ResultMark.GOOD)
+        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
+        assert [row.marked_bad for row in rows.items] == [True, False, False]
+
     async def test_a_mark_an_earlier_stage_made_names_no_step(self, fx_kit: ProcessingKit) -> None:
         """Verify a mark that leads back out of the stage is not put on a step of it.
 
@@ -505,6 +543,28 @@ class TestStepRows:
         by_second = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), second)
         expect([row.step.state for row in by_first.items if row.step] == [FigureState.BY_HAND, FigureState.DEFAULT])
         expect([row.step.state for row in by_second.items if row.step] == [FigureState.DEFAULT, FigureState.DEFAULT])
+        assert_expectations()
+
+    async def test_a_row_at_a_step_is_marked_bad_by_the_version_of_that_step(self, fx_kit: ProcessingKit) -> None:
+        """Verify the flag follows the version at the step asked for and not the current version of the stage.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, _, _ = await seed_text_and_plate(fx_kit)
+        first, second = await step_ids_of(fx_kit, project)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        at_first = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
+        made = at_first.items[0].step
+        assert made is not None
+        assert made.version is not None
+        await mark_version(fx_kit, made.version, ResultMark.BAD)
+        by_first = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
+        by_second = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), second)
+        of_stage = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
+        expect([row.marked_bad for row in by_first.items] == [True, False])
+        expect([row.marked_bad for row in by_second.items] == [False, False])
+        expect([row.marked_bad for row in of_stage.items] == [False, False])
         assert_expectations()
 
     async def test_a_step_no_recipe_of_the_stage_has_is_not_found(self, fx_kit: ProcessingKit) -> None:

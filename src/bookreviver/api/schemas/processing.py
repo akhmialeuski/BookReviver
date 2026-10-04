@@ -39,6 +39,7 @@ from bookreviver.domain.enums import (
     StageState,
     TransformKind,
     VersionData,
+    VersionOrigin,
     VersionOutput,
     VersionScale,
     VersionState,
@@ -393,24 +394,29 @@ class HeadChoice(RequestModel):
 
 
 class VersionQuery(Params):
-    """The query of the list of versions of a page: the page parameters, and the stage and the scale to list.
+    """The query of the list of versions of a page: the page parameters, and the stage, step, scale and mark to list.
 
     :ivar page: Number of the page of the list, from one.
     :ivar size: Number of versions in one page of the list.
     :ivar stage: Stage whose versions are listed, or omitted for every stage.
+    :ivar step: Step of a recipe of the stage whose versions are listed, which needs the stage, or omitted for every
+                step.
     :ivar scale: Whether to list full runs or previews, or omitted for both.
+    :ivar mark: List the versions with this mark only, or omitted for every version, marked or not.
     """
 
     stage: Stage | None = Query(default=None, description='List the versions of this stage only')
+    step: StepId | None = Query(default=None, description='List the versions of this step of the stage only')
     scale: VersionScale | None = Query(default=None, description='List full runs or previews only')
+    mark: ResultMark | None = Query(default=None, description='List the versions with this mark only')
 
     def to_filter(self) -> VersionFilter:
         """Return the filter as the domain states it.
 
-        :returns: The stage and the scale.
+        :returns: The stage, the step, the scale and the mark.
         :rtype: VersionFilter
         """
-        return VersionFilter(stage=self.stage, scale=self.scale)
+        return VersionFilter(stage=self.stage, step_id=self.step, scale=self.scale, mark=self.mark)
 
 
 class PointSchema(ResponseModel):
@@ -482,6 +488,7 @@ class PageVersionSchema(ResponseModel):
     :ivar state: Where the version is in its life cycle.
     :ivar scale: Whether the step ran on the full image or on a preview.
     :ivar edit_hash: Hash of the manual edit the step read, or empty.
+    :ivar origin: How the result came about: made by the step, or set by hand through a manual edit.
     :ivar tiles_ready: Whether the tile pyramid is cut, which a client asks for when it is not.
     :ivar error: Why the version failed, or empty.
     :ivar images: Paths of the images of a ready full run that has an image, or None.
@@ -506,6 +513,7 @@ class PageVersionSchema(ResponseModel):
     state: VersionState
     scale: VersionScale
     edit_hash: str
+    origin: VersionOrigin
     tiles_ready: bool
     error: str
     images: ImagePathsSchema | None
@@ -554,6 +562,7 @@ class PageVersionSchema(ResponseModel):
             state=version.state,
             scale=version.scale,
             edit_hash=version.edit_hash,
+            origin=version.origin,
             tiles_ready=version.tiles_ready,
             error=str(version.data.get(VersionData.ERROR, '')),
             images=images,

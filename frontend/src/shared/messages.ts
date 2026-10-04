@@ -18,6 +18,7 @@ import type {
   PageStageStatus,
   RejectionReason,
   ResetScope,
+  ResultMark,
   ReviewReason,
   RightsStatus,
   RuleCondition,
@@ -25,6 +26,7 @@ import type {
   Script,
   Stage,
   StageStatus,
+  VersionOrigin,
 } from '@/api';
 import type { Problem } from '@/features/about/fields';
 import type { Section } from '@/features/about/sections';
@@ -579,6 +581,7 @@ export const MESSAGES = {
       filters: {
         all: 'All',
         check: (count: number) => `Check ${count}`,
+        bad: (count: number) => `Marked bad ${count}`,
         leftOut: (count: number) => `Left out ${count}`,
         wide: (count: number) => `Wide ${count}`,
       },
@@ -605,9 +608,11 @@ export const MESSAGES = {
         >,
         mark: (type: string, source: string) => `${type} · ${source}`,
       },
+      markedBad: 'Result marked bad',
       empty: {
         all: 'This book has no pages yet.',
         check: 'No page needs a look in this stage.',
+        bad: 'No page has a result marked bad.',
         'left-out': 'No page is left out of the book.',
         wide: 'No scan of this book is wider than tall.',
       } satisfies Record<PageFilter, string>,
@@ -1696,6 +1701,18 @@ export const MESSAGES = {
         cancel: 'Cancel',
       },
       made: (time: string) => `Made ${time}`,
+      origin: {
+        auto: 'Made by the step',
+        hand: 'Set by hand',
+      } satisfies Record<VersionOrigin, string>,
+      filter: {
+        group: 'Show the results marked',
+        all: 'All',
+      },
+      emptyMarked: {
+        good: 'No result of this page is marked good.',
+        bad: 'No result of this page is marked bad.',
+      } satisfies Record<ResultMark, string>,
     },
     stale: {
       title: (before: string, verb: string) => `${before} changed after these pages were ${verb}`,

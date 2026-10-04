@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Self
 
 from attrs import evolve, field, frozen, validators
 
-from bookreviver.domain.enums import FigureState, PageStageStatus, StageStatus, VersionData
+from bookreviver.domain.enums import FigureState, PageStageStatus, ResultMark, StageStatus, VersionData
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
@@ -302,7 +302,7 @@ class StepRow:
         :rtype: Self
         """
         steps = () if recipe is None else recipe.enabled_steps
-        place = next((index for index, step in enumerate(steps) if step.step_id == step_id), None)
+        place = None if recipe is None else recipe.place_of(step_id)
         made = None
         read = None
         if place is not None:
@@ -342,6 +342,12 @@ class StageRow:
     through_step: int | None = None
     review_processor: str | None = None
     step: StepRow | None = None
+
+    @property
+    def marked_bad(self) -> bool:
+        """Whether the result the row stands on is marked bad: the version at its step, else the current version."""
+        shown = self.head_version if self.step is None else self.step.version
+        return shown is not None and shown.mark is ResultMark.BAD
 
     @property
     def review(self) -> ReviewReason | None:

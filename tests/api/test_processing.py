@@ -40,6 +40,7 @@ from bookreviver.domain.enums import (
     RunMode,
     Stage,
     StageState,
+    VersionOrigin,
     VersionScale,
 )
 from bookreviver.domain.geometry import Line, Mesh, SplitChoice
@@ -1676,4 +1677,124 @@ class TestResultMarks:
         listed = await fx_client.get(f'{path}/mark-changes')
         expect(put.status_code == status.HTTP_404_NOT_FOUND)
         expect(listed.status_code == status.HTTP_404_NOT_FOUND)
+        assert_expectations()
+
+
+class TestResultsOfAStep:
+    """Tests for the step and mark filters of the list of versions, and the flag of a bad result on a row."""
+
+    @staticmethod
+    async def marked_geometry(
+        client: httpx.AsyncClient, broker: InMemoryBroker, book: Book, mark: str | None
+    ) -> tuple[str, str]:
+        """Run the page split and the geometry, and set a mark on the version the geometry made.
+
+        :param client: Client of the running application.
+        :type client: httpx.AsyncClient
+        :param broker: In-process broker running the jobs.
+        :type broker: InMemoryBroker
+        :param book: Book of the signed-in account.
+        :type book: Book
+        :param mark: The mark to set, or None to leave the version unmarked.
+        :type mark: str | None
+        :returns: The identifier of the step of the geometry recipe and the identifier of the version it made.
+        :rtype: tuple[str, str]
+        """
+        await run_stage(client, broker, book, 'page-split')
+        await run_stage(client, broker, book, 'geometry')
+        step_id = await active_step_id(client, book, Stage.GEOMETRY)
+        stages = await client.get(f'{book.page_path}/stages')
+        [geometry] = [item for item in stages.json()[ITEMS] if item['stage'] == 'geometry']
+        version_id = str(geometry['head_version_id'])
+        if mark is not None:
+            await client.put(f'{book.page_path}/versions/{version_id}/mark', json={'mark': mark, 'comment': ''})
+        return step_id, version_id
+
+    async def test_the_versions_of_a_step_and_of_a_mark_are_listed_apart(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify the step narrows the list to its own versions and the mark to the versions that carry it.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the jobs.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id, version_id = await self.marked_geometry(fx_client, fx_broker, fx_book, 'bad')
+        versions = f'{fx_book.page_path}/versions'
+        stage = {'stage': 'geometry', 'step': step_id}
+        of_step = await fx_client.get(versions, params=stage)
+        bad = await fx_client.get(versions, params={**stage, 'mark': 'bad'})
+        good = await fx_client.get(versions, params={**stage, 'mark': 'good'})
+        bad_of_stage = await fx_client.get(versions, params={'stage': 'geometry', 'mark': 'bad'})
+        expect([item['id'] for item in of_step.json()[ITEMS]] == [version_id])
+        expect([item['id'] for item in bad.json()[ITEMS]] == [version_id])
+        expect(good.json()['total'] == 0)
+        expect([item['id'] for item in bad_of_stage.json()[ITEMS]] == [version_id])
+        assert_expectations()
+
+    async def test_a_step_without_its_stage_is_a_422_and_a_step_no_recipe_has_is_a_404(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify the step is refused without the stage it belongs to, and an unknown step is not an empty list.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the jobs.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id, _ = await self.marked_geometry(fx_client, fx_broker, fx_book, None)
+        versions = f'{fx_book.page_path}/versions'
+        without_stage = await fx_client.get(versions, params={'step': step_id})
+        unknown = await fx_client.get(versions, params={'stage': 'geometry', 'step': str(uuid4())})
+        wrong_mark = await fx_client.get(versions, params={'mark': 'fine'})
+        expect(without_stage.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
+        expect(unknown.status_code == status.HTTP_404_NOT_FOUND)
+        expect(wrong_mark.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
+        assert_expectations()
+
+    async def test_a_version_tells_it_was_made_by_the_step(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify a version made without a manual edit has the origin of the step.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the jobs.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        _, version_id = await self.marked_geometry(fx_client, fx_broker, fx_book, None)
+        read = await fx_client.get(f'{fx_book.page_path}/versions/{version_id}')
+        assert PageVersionSchema.model_validate_json(read.content).origin is VersionOrigin.AUTO
+
+    async def test_a_row_tells_that_its_result_is_marked_bad(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify the row of the stage and the row at the step both carry the flag once the result is marked bad.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the jobs.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id, version_id = await self.marked_geometry(fx_client, fx_broker, fx_book, None)
+        rows = f'{fx_book.path}/stages/geometry/pages'
+        before = await fx_client.get(rows)
+        await fx_client.put(f'{fx_book.page_path}/versions/{version_id}/mark', json={'mark': 'bad', 'comment': ''})
+        stage = await fx_client.get(rows)
+        at_step = await fx_client.get(rows, params={'step': step_id})
+        await fx_client.put(f'{fx_book.page_path}/versions/{version_id}/mark', json={'mark': 'good', 'comment': ''})
+        good = await fx_client.get(rows)
+        expect(before.json()[ITEMS][0]['marked_bad'] is False)
+        expect(stage.json()[ITEMS][0]['marked_bad'] is True)
+        expect(at_step.json()[ITEMS][0]['marked_bad'] is True)
+        expect(good.json()[ITEMS][0]['marked_bad'] is False)
         assert_expectations()

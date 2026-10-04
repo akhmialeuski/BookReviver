@@ -1,9 +1,17 @@
-import { CircleXIcon, EyeOffIcon, PencilIcon, PinIcon, TriangleAlertIcon } from 'lucide-react';
+import {
+  CircleXIcon,
+  EyeOffIcon,
+  PencilIcon,
+  PinIcon,
+  ThumbsDownIcon,
+  TriangleAlertIcon,
+} from 'lucide-react';
 import { PageThumbnail } from '@/features/pages/PageThumbnail';
 import { PAGE_STATUS_TONE } from '@/features/stages/stages';
 import { describeContent, markOfContent } from '@/features/workspace/content';
 import {
   isLeftOut,
+  isMarkedBad,
   type StripItem,
   thumbnailOf,
   type VariantMark,
@@ -17,7 +25,7 @@ import { MESSAGES } from '@/shared/messages';
  *
  * The dot has the colour of the state wherever the state is drawn, and the state is also a word that is read out
  * and a mark in the corner of the picture for a failure, a page to check and a page left out, so the colour is never
- * the only signal.
+ * the only signal. A page whose result is marked bad has a mark of its own in the other corner.
  */
 
 export function PageTile({
@@ -107,6 +115,13 @@ export function PageTile({
             aria-hidden="true"
           />
         ) : null}
+        {isMarkedBad(item) ? (
+          <ThumbsDownIcon
+            className="absolute right-1 bottom-1 size-4 rounded-full bg-background p-0.5 text-status-failed"
+            data-testid="strip-marked-bad"
+            aria-hidden="true"
+          />
+        ) : null}
       </span>
       <span className="flex items-center justify-center gap-1.5 text-muted-foreground">
         {row === undefined ? null : (
@@ -121,6 +136,9 @@ export function PageTile({
         <span className="sr-only">{describeContent(page)}</span>
         {isLeftOut(item) ? (
           <span className="sr-only">{MESSAGES.workspace.strip.leftOut}</span>
+        ) : null}
+        {isMarkedBad(item) ? (
+          <span className="sr-only">{MESSAGES.workspace.strip.markedBad}</span>
         ) : null}
         {variant === null ? null : (
           <span className="sr-only">

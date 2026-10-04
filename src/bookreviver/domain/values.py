@@ -1093,10 +1093,15 @@ class VersionFilter:
 
     :ivar stage: Stage whose versions are listed, or None for every stage.
     :ivar scale: Scale of the runs listed, or None for both full runs and previews.
+    :ivar step_id: Step of a recipe of the stage whose versions are listed, or None for the versions of every step. A
+                   step belongs to a stage, so it comes with one.
+    :ivar mark: Mark the versions carry, or None for every version, whether marked or not.
     """
 
     stage: Stage | None = None
     scale: VersionScale | None = None
+    step_id: StepId | None = None
+    mark: ResultMark | None = None
 
 
 @frozen(kw_only=True)

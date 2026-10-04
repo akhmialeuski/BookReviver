@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.domain.entities import ProjectOverview
-    from bookreviver.domain.enums import JobState, Side, Stage, VersionScale
+    from bookreviver.domain.enums import JobState, ResultMark, Side, Stage, VersionScale
     from bookreviver.domain.ids import AccountId, ChangeBatchId, StepId
     from bookreviver.domain.stage_summaries import StageTally, StepTally, VariantTally
     from bookreviver.domain.values import PageSize, Slice, SliceRequest
@@ -461,9 +461,14 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
 
     @abstractmethod
     async def list_for_stage(
-        self, page_id: PageId, stage: Stage | None, scale: VersionScale | None, request: SliceRequest
+        self,
+        page_id: PageId,
+        stage: Stage | None,
+        scale: VersionScale | None,
+        request: SliceRequest,
+        mark: ResultMark | None = None,
     ) -> Slice[PageVersion]:
-        """Return a window of the versions of one page, filtered by stage and scale, the earliest first.
+        """Return a window of the versions of one page, filtered by stage, scale and mark, the earliest first.
 
         :param page_id: Page owning the versions.
         :type page_id: PageId
@@ -473,6 +478,8 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         :type scale: VersionScale | None
         :param request: Offset and limit of the window.
         :type request: SliceRequest
+        :param mark: Mark the versions carry, or None for every version, marked or not.
+        :type mark: ResultMark | None
         :returns: The versions of the window and the number of all that match, ties by identifier.
         :rtype: Slice[PageVersion]
         """

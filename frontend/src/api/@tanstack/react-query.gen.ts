@@ -1364,7 +1364,10 @@ export const listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey = 
 /**
  * List Versions
  *
- * List the versions of a page, the earliest first, of one stage and one scale or of all.
+ * List the versions of a page, the earliest first, of one stage, step, scale and mark or of all.
+ *
+ * With ``step`` the list holds the results of that step of the stage on the page, which needs ``stage``; a step no
+ * recipe of the stage has is a 404. With ``mark`` it holds the versions carrying that mark only.
  */
 export const listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetOptions = (options: Options<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData>) => queryOptions<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponse, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetError, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponse, ReturnType<typeof listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -1384,7 +1387,10 @@ export const listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetInfiniteQue
 /**
  * List Versions
  *
- * List the versions of a page, the earliest first, of one stage and one scale or of all.
+ * List the versions of a page, the earliest first, of one stage, step, scale and mark or of all.
+ *
+ * With ``step`` the list holds the results of that step of the stage on the page, which needs ``stage``; a step no
+ * recipe of the stage has is a 404. With ``mark`` it holds the versions carrying that mark only.
  */
 export const listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetInfiniteOptions = (options: Options<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData>) => {
     const opts = infiniteQueryOptions<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponse, ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetError, InfiniteData<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponse>, QueryKey<Options<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData>>, number | Pick<QueryKey<Options<ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(

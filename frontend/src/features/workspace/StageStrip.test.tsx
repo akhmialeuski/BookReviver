@@ -190,6 +190,41 @@ describe('StageStrip', () => {
     });
   });
 
+  it('offers the Marked bad filter with the number of pages it lists', () => {
+    render(2);
+
+    expect(container.querySelector('[data-testid="strip-filter-bad"]')?.textContent).toBe(
+      'Marked bad 0',
+    );
+  });
+
+  it('marks the thumbnail of a page whose result is marked bad, and no other', () => {
+    const pages = [page('p-0', { position: 0 }), page('p-1', { position: 1 })];
+    const items = joinRows(pages, [row('p-0', { marked_bad: true }), row('p-1')]);
+    act(() =>
+      root.render(
+        <StageStrip
+          items={items}
+          total={2}
+          counts={countFilters(items)}
+          filter={PageFilter.All}
+          currentId={undefined}
+          onFilter={vi.fn()}
+          onOpen={vi.fn()}
+          onGrid={vi.fn()}
+        />,
+      ),
+    );
+
+    const marked = [...container.querySelectorAll('[data-testid="strip-page"]')].filter(
+      (tile) => tile.querySelector('[data-testid="strip-marked-bad"]') !== null,
+    );
+    expect(marked.map((tile) => tile.getAttribute('data-page-id'))).toEqual(['p-0']);
+    expect(container.querySelector('[data-testid="strip-filter-bad"]')?.textContent).toBe(
+      'Marked bad 1',
+    );
+  });
+
   it('offers the Wide filter only when it is asked for', () => {
     render(2);
     expect(container.querySelector('[data-testid="strip-filter-wide"]')).toBeNull();
