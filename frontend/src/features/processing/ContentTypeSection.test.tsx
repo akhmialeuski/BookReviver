@@ -169,10 +169,10 @@ describe('ContentTypeSection', () => {
       },
     });
     render(BOOK, ['a']);
-    await act(async () => {
-      await Promise.resolve();
-    });
 
-    expect(container.querySelector<HTMLButtonElement>(DETECT)?.disabled).toBe(true);
+    // The running jobs come with their own query, which may answer a few ticks after the first render
+    await vi.waitFor(() =>
+      expect(container.querySelector<HTMLButtonElement>(DETECT)?.disabled).toBe(true),
+    );
   });
 });
