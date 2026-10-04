@@ -196,8 +196,9 @@ describe('the adding of several pages', () => {
 
     answers[0]?.();
     await vi.waitFor(() => expect(invalidate).toHaveBeenCalled());
-    // One read of the pages, the project and the project list, and it comes after the request for the new pages
-    expect(invalidate).toHaveBeenCalledTimes(3);
+    // One read of the pages, the pagination sections, the project and the project list, and it comes after the
+    // request for the new pages
+    expect(invalidate).toHaveBeenCalledTimes(4);
     expect(addPages.mock.invocationCallOrder[0]).toBeLessThan(
       invalidate.mock.invocationCallOrder[0] ?? 0,
     );
