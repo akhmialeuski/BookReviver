@@ -53,6 +53,7 @@ describe('editorOf', () => {
       stepInput: null,
       result: null,
       processorKey: 'geometry.deskew',
+      pictureSize: null,
     };
 
     expect(editorOf('rotation').fallback({ ...context, size: null })).toEqual({
@@ -73,6 +74,7 @@ describe('editorOf', () => {
       stepInput: null,
       result: null,
       processorKey: 'split.auto',
+      pictureSize: null,
     };
 
     expect(editorOf('split').fallback({ ...context, size: { width: 100, height: 50 } })).toEqual({
@@ -90,6 +92,7 @@ describe('editorOf', () => {
       stepInput: null,
       result: null,
       processorKey: 'split.auto',
+      pictureSize: null,
     };
 
     expect(editorOf('split').runsAfterEdit(context)).toBe(true);
@@ -126,6 +129,7 @@ describe('editorOf', () => {
       stepInput: null,
       result,
       processorKey: 'geometry.crop',
+      pictureSize: null,
       size: sourceSize(result),
     };
 
@@ -142,6 +146,36 @@ describe('editorOf', () => {
       height: 150,
     });
     expect(editorOf('quad').size(context)).toEqual({ width: 100, height: 200 });
+  });
+
+  it('starts the sheet, the frame and the curves from the whole picture, by the size the picture says, before the step has run', () => {
+    const current = { page: page('p'), row: row('p') };
+    const context = {
+      current,
+      items: [current],
+      scan: null,
+      stepInput: null,
+      result: null,
+      processorKey: 'geometry.crop',
+      pictureSize: { width: 1000, height: 2000 },
+    };
+    const size = editorOf('rect').size(context);
+
+    expect(size).toEqual({ width: 1000, height: 2000 });
+    expect(editorOf('quad').size(context)).toEqual(size);
+    expect(editorOf('mesh').size(context)).toEqual(size);
+    expect(editorOf('rect').fallback({ ...context, size })).toEqual({
+      left: 100,
+      top: 200,
+      width: 800,
+      height: 1600,
+    });
+    expect(editorOf('quad').fallback({ ...context, size })).toEqual({
+      top_left: { x: 0, y: 0 },
+      top_right: { x: 1000, y: 0 },
+      bottom_right: { x: 1000, y: 2000 },
+      bottom_left: { x: 0, y: 2000 },
+    });
   });
 
   it('lays the curves on what the dewarping reads and starts them from the curves the step found', () => {
@@ -166,6 +200,7 @@ describe('editorOf', () => {
       stepInput: null,
       result,
       processorKey: 'geometry.dewarp',
+      pictureSize: null,
       size: sourceSize(result),
     };
 
@@ -190,6 +225,7 @@ describe('the editors of the cleanup', () => {
     stepInput: null,
     result,
     processorKey: 'cleanup.binarize',
+    pictureSize: null,
     size: sourceSize(result),
   };
 

@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   ANGLE_LIMIT,
+  AxisEnd,
+  angleFromAxisPointer,
   angleFromPointer,
+  axisEndAt,
+  formatAngle,
   handleAt,
   limitAngle,
   parseAngle,
@@ -64,6 +68,54 @@ describe('angleFromPointer', () => {
   });
 });
 
+describe('axisEndAt', () => {
+  it('lays the axis level for no angle, a handle at each end', () => {
+    const right = axisEndAt(CENTRE, RADIUS, 0, 0, AxisEnd.Right);
+    const left = axisEndAt(CENTRE, RADIUS, 0, 0, AxisEnd.Left);
+
+    expect(right.x).toBeCloseTo(CENTRE.x + RADIUS, PRECISION);
+    expect(right.y).toBeCloseTo(CENTRE.y, PRECISION);
+    expect(left.x).toBeCloseTo(CENTRE.x - RADIUS, PRECISION);
+    expect(left.y).toBeCloseTo(CENTRE.y, PRECISION);
+  });
+
+  it('raises the right end and lowers the left for a counter-clockwise angle', () => {
+    const right = axisEndAt(CENTRE, RADIUS, 10, 0, AxisEnd.Right);
+    const left = axisEndAt(CENTRE, RADIUS, 10, 0, AxisEnd.Left);
+
+    expect(right.y).toBeLessThan(CENTRE.y);
+    expect(left.y).toBeGreaterThan(CENTRE.y);
+    // The two ends and the middle lie on one line
+    expect(right.x - CENTRE.x).toBeCloseTo(CENTRE.x - left.x, PRECISION);
+    expect(CENTRE.y - right.y).toBeCloseTo(left.y - CENTRE.y, PRECISION);
+  });
+});
+
+describe('angleFromAxisPointer', () => {
+  it.each([AxisEnd.Left, AxisEnd.Right])(
+    'reads back the angle the %s end was put at, through a turned view too',
+    (end) => {
+      for (const [degrees, view] of [
+        [-30, 0],
+        [-2.4, 0],
+        [0, 0],
+        [12.5, 0],
+        [7.3, 25],
+      ] as const) {
+        const handle = axisEndAt(CENTRE, RADIUS, degrees, view, end);
+
+        expect(angleFromAxisPointer(CENTRE, handle, view, end)).toBeCloseTo(degrees, 1);
+      }
+    },
+  );
+
+  it('stops at the limit when the pointer goes round the page', () => {
+    const above = { x: CENTRE.x, y: CENTRE.y - RADIUS };
+
+    expect(angleFromAxisPointer(CENTRE, above, 0, AxisEnd.Right)).toBe(ANGLE_LIMIT);
+  });
+});
+
 describe('stepByWheel', () => {
   it('adds a tenth of a degree for a notch away from the reader and takes it for a notch towards', () => {
     expect(stepByWheel(1, -100)).toBe(1.1);
@@ -105,12 +157,29 @@ describe('limitAngle and parseAngle', () => {
   });
 });
 
+describe('formatAngle', () => {
+  it('writes up to a hundredth and drops trailing zeros', () => {
+    expect(formatAngle(-2.4)).toBe('-2.4');
+    expect(formatAngle(0)).toBe('0');
+    expect(formatAngle(1.05)).toBe('1.05');
+    expect(formatAngle(0.1 + 0.2)).toBe('0.3');
+  });
+});
+
 describe('stepByKey', () => {
-  it('adds a tenth for right and up and takes it for left and down', () => {
-    expect(stepByKey(1, 'ArrowRight', false)).toBe(1.1);
-    expect(stepByKey(1, 'ArrowUp', false)).toBe(1.1);
-    expect(stepByKey(1, 'ArrowLeft', false)).toBe(0.9);
-    expect(stepByKey(1, 'ArrowDown', false)).toBe(0.9);
+  it('adds 0.05 for right and up and takes it for left and down', () => {
+    expect(stepByKey(1, 'ArrowRight', false)).toBe(1.05);
+    expect(stepByKey(1, 'ArrowUp', false)).toBe(1.05);
+    expect(stepByKey(1, 'ArrowLeft', false)).toBe(0.95);
+    expect(stepByKey(1, 'ArrowDown', false)).toBe(0.95);
+  });
+
+  it('does not accumulate the error of floating point over many presses', () => {
+    let angle = 0;
+    for (let press = 0; press < 20; press += 1) {
+      angle = stepByKey(angle, 'ArrowRight', false) ?? angle;
+    }
+    expect(angle).toBe(1);
   });
 
   it('steps by a whole degree with Shift and stays within the limit', () => {

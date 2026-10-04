@@ -598,6 +598,8 @@ export const MESSAGES = {
     canvas: {
       toolbar: 'Page controls',
       compare: 'Before / after',
+      grid: 'Grid',
+      gridTitle: 'Show or hide the grid over the page (G)',
       compareSoon: 'Comparing a page with the stage before it comes with processing',
       empty: 'This book has no pages yet. Add files on the Import stage to see them here.',
       chip: (label: string, kind: string) => (label === '' ? kind : `p. ${label} · ${kind}`),
@@ -640,6 +642,9 @@ export const MESSAGES = {
         notRun: 'Not run yet',
       },
       pages: (count: number) => `${count} ${pluralize(count, 'page', 'pages')}`,
+      autoPage: 'Auto on this page',
+      autoCondition: (count: number) =>
+        `Auto on the pages of the step (${count} ${pluralize(count, 'page', 'pages')})`,
       auto: 'Auto on all pages',
       autoHint:
         'Run the recipe up to this step on every page. The steps before it come from the earlier run, and pages set by hand keep their shape.',
@@ -887,12 +892,16 @@ export const MESSAGES = {
         items: [
           { label: 'Move the split line by 1 px or by 10 px', keys: ['←', '→', 'Shift'] },
           { label: 'Turn the page by 0.1°', keys: ['Alt', 'Wheel'] },
+          { label: 'Turn the page by 0.05° on the Deskew step', keys: ['←', '→'] },
           { label: 'Take back the last change', keys: ['Ctrl', 'Z'] },
         ],
       },
       {
         title: 'Screen',
-        items: [{ label: 'Show these shortcuts', keys: ['?'] }],
+        items: [
+          { label: 'Show or hide the grid of a Geometry step', keys: ['G'] },
+          { label: 'Show these shortcuts', keys: ['?'] },
+        ],
       },
     ],
   },
@@ -1469,20 +1478,31 @@ export const MESSAGES = {
       name: 'Page rotation',
       handle: 'Rotation handle',
       angle: 'Angle in degrees',
-      hint: 'Drag the handle, type the angle, or hold Alt and turn the wheel until the lines of text lie along the guides.',
+      slider: 'Angle of the page',
+      range: (limit: number) => ({ least: `-${limit}°`, most: `+${limit}°` }),
+      zeroTitle: 'Do not turn the page',
+      hint: 'Drag a handle of the axis, move the slider, or press the left and right arrows to turn the page by 0.05° until the lines of text lie along the grid.',
+    },
+    figure: {
+      hint: {
+        default: 'Dashed grey: where the step starts from. It changes nothing on the page.',
+        found: 'Green: what the step found on this page.',
+        'by-hand': 'Orange: set by you, and kept by every run until you press Auto.',
+        skipped: 'This page does not meet the condition of the step, so the step passes it by.',
+      } satisfies Record<FigureState, string>,
     },
     quad: {
       name: 'Corners of the sheet',
       corner: (corner: string) => `Corner of the sheet: ${corner}`,
-      hint: 'Drag the corners of the green outline to the corners of the paper, or nudge the last one you grabbed with the arrow keys. The page is straightened again at once.',
+      hint: 'Drag the corners of the outline to the corners of the paper, or nudge the last one you grabbed with the arrow keys. The page is straightened again at once.',
     },
     rect: {
       name: 'Frame of the content',
       handle: (handle: string) => `Handle of the frame: ${handle}`,
-      hint: 'Drag the handles of the blue frame until it holds all the text and the pictures of the page, or nudge it with the arrow keys. The margin is added round it and the page is cut again at once.',
+      hint: 'Drag the handles of the frame until it holds all the text and the pictures of the page, or nudge it with the arrow keys. The margin is added round it and the page is cut again at once.',
       placement: {
         name: 'Block of text on the page',
-        hint: 'Drag the blue frame to where the block of text stands on the page, and its handles to change how large it is, or nudge it with the arrow keys. This page is placed again at once, and Auto goes back to the settings of the step.',
+        hint: 'Drag the frame to where the block of text stands on the page, and its handles to change how large it is, or nudge it with the arrow keys. This page is placed again at once, and Auto goes back to the settings of the step.',
       },
     },
     mesh: {

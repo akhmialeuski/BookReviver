@@ -4,7 +4,8 @@ import { type RotationShape, readRotation, writeRotation } from '@/features/edit
 import { type EditorDefinition, Picture } from '@/features/editors/types';
 
 /**
- * The rotation editor: the angle a page is turned by, set with a handle on the page, the field in the panel or the wheel.
+ * The rotation editor: the angle a page is turned by, set with the handles of an axis on the page, the slider and the field
+ * in the panel, the wheel or the arrow keys.
  *
  * It lies on the picture the step reads, which is what the angle is turned from. Until the reader sets an angle the editor
  * starts from the one the step found.

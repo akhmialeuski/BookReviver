@@ -1,13 +1,16 @@
 import { ChevronLeftIcon, ChevronRightIcon, PlayIcon, XIcon } from 'lucide-react';
 import type { AppliesTo, FigureState } from '@/api';
+import { EditorControls } from '@/features/editors/EditorControls';
+import type { EditorSession } from '@/features/editors/session';
 import { ParamsForm } from '@/features/processing/ParamsForm';
 import { CONDITIONS } from '@/features/processing/recipe';
 import { readResult } from '@/features/processing/results';
-import { RunScope } from '@/features/processing/scope';
+import { pagesOfCondition, RunScope } from '@/features/processing/scope';
 import { canRunThrough } from '@/features/processing/stepRuns';
 import type { Processing } from '@/features/processing/useProcessing';
 import type { StageRun } from '@/features/processing/useStageRun';
 import type { BarStep } from '@/features/workspace/steps';
+import type { StripItem } from '@/features/workspace/strip';
 import type { StepWorkspace } from '@/features/workspace/useStepWorkspace';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
@@ -69,6 +72,9 @@ export function StepPanel({
   workspace,
   step,
   pageLabel,
+  pageId,
+  items,
+  editor,
   run,
   onOpen,
   onClose,
@@ -79,7 +85,13 @@ export function StepPanel({
   step: BarStep;
   /** The printed label of the open page. */
   pageLabel: string;
-  /** The run of the stage, which "Auto on all pages" asks for. */
+  /** The open page, or undefined when the book has none. */
+  pageId: string | undefined;
+  /** Every page of the book with where it stands in the stage, which the pages of the condition are counted from. */
+  items: readonly StripItem[];
+  /** The page editor of the step on the open page, or null when the step has none or the page passes the step by. */
+  editor: EditorSession | null;
+  /** The run of the stage, which the buttons of "Auto" ask for. */
   run: StageRun;
   /** Open another step. */
   onOpen: (stepId: string) => void;
@@ -93,6 +105,8 @@ export function StepPanel({
   const found =
     page?.version === null || page?.version === undefined ? null : readResult(page.version);
   const runnable = recipe !== undefined && canRunThrough(recipe.steps, step.index);
+  const ofCondition = pagesOfCondition(items, draft?.appliesTo ?? step.appliesTo);
+  const hasCondition = (draft?.appliesTo ?? step.appliesTo) !== 'all';
 
   return (
     <section
@@ -174,11 +188,17 @@ export function StepPanel({
             <span className="font-medium">{MESSAGES.processing.thisPage.degrees(found.angle)}</span>
           </p>
         )}
+        {state === null ? null : (
+          <p className="text-xs text-muted-foreground" data-testid="step-panel-hint">
+            {MESSAGES.editors.figure.hint[state]}
+          </p>
+        )}
         {page !== null && page.version === null && page.input_version === null ? (
           <p className="text-xs text-muted-foreground" data-testid="step-panel-not-reached">
             {labels.notReached}
           </p>
         ) : null}
+        {editor === null ? null : <EditorControls session={editor} />}
       </div>
 
       <div className="grid gap-2" data-testid="step-panel-book">
@@ -210,6 +230,31 @@ export function StepPanel({
       </div>
 
       <div className="grid gap-2">
+        <Button
+          variant="outline"
+          disabled={!runnable || run.disabled || pageId === undefined}
+          data-testid="step-auto-page"
+          onClick={() => pageId !== undefined && run.startPages([pageId], step.index)}
+        >
+          <PlayIcon />
+          {labels.autoPage}
+        </Button>
+        {hasCondition ? (
+          <Button
+            variant="outline"
+            disabled={!runnable || run.disabled || ofCondition.length === 0}
+            data-testid="step-auto-condition"
+            onClick={() =>
+              run.startPages(
+                ofCondition.map((item) => item.page.id),
+                step.index,
+              )
+            }
+          >
+            <PlayIcon />
+            {labels.autoCondition(ofCondition.length)}
+          </Button>
+        ) : null}
         <Button
           disabled={!runnable || run.disabled}
           title={labels.autoHint}

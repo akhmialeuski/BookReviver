@@ -21,7 +21,7 @@ export const rectEditor: EditorDefinition<RectShape> = {
   alwaysOn: false,
   needsResult: true,
   owner: ({ current }) => current.page,
-  size: ({ result }) => sourceSize(result),
+  size: ({ result, pictureSize }) => sourceSize(result) ?? pictureSize,
   runsAfterEdit: () => true,
   fallback: ({ size, result }) => rectOf(result, size),
   read: readRect,

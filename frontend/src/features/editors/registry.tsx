@@ -37,6 +37,7 @@ function register<K extends EditableKind>(
         shape={shape}
         size={props.size}
         context={props.context}
+        figure={props.figure}
         onChange={(next) => props.onChange(definition.write(next))}
         onCommit={(next) => props.onCommit(definition.write(next))}
       />
@@ -48,8 +49,10 @@ function register<K extends EditableKind>(
       <definition.Panel
         shape={shape}
         processorKey={props.processorKey}
+        params={props.params}
         disabled={props.disabled}
         size={props.size}
+        onChange={(next) => props.onChange(definition.write(next))}
         onCommit={(next) => props.onCommit(definition.write(next))}
       />
     );

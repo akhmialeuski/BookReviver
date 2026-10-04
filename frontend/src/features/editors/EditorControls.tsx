@@ -15,7 +15,7 @@ const labels = MESSAGES.editors;
 export function EditorControls({ session }: { session: EditorSession }): React.JSX.Element {
   return (
     <div className="grid gap-2" data-testid="editor-controls">
-      {session.steps.length > 1 ? (
+      {session.steps.length > 1 && !session.focused ? (
         <ul className="grid gap-1" aria-label={labels.steps.title} data-testid="editor-steps">
           {session.steps.map((step) => (
             <li key={step.key}>

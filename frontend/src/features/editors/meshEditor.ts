@@ -18,7 +18,7 @@ export const meshEditor: EditorDefinition<MeshShape> = {
   alwaysOn: false,
   needsResult: true,
   owner: ({ current }) => current.page,
-  size: ({ result }) => sourceSize(result),
+  size: ({ result, pictureSize }) => sourceSize(result) ?? pictureSize,
   runsAfterEdit: () => true,
   fallback: ({ size, result }) => meshOf(result, size),
   read: readMesh,

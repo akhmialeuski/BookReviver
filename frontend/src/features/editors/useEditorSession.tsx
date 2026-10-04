@@ -1,7 +1,8 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import type { ScanSchema } from '@/api';
+import type { FigureState, ScanSchema } from '@/api';
 import { stepChain, stepVersions } from '@/features/editors/chain';
+import { figureStateOf } from '@/features/editors/figure';
 import { popUndo, pushUndo, type UndoEntry } from '@/features/editors/history';
 import { pictureOf } from '@/features/editors/picture';
 import { isPlacement, pictureFor } from '@/features/editors/placement';
@@ -16,6 +17,7 @@ import type { EditorScene } from '@/features/editors/scene';
 import type { EditorSession, StepChoice } from '@/features/editors/session';
 import type { Geometry } from '@/features/editors/shapes';
 import type { PageContext } from '@/features/editors/types';
+import { usePictureSize } from '@/features/editors/usePictureSize';
 import type { ImageSource } from '@/features/processing/compare';
 import { useRunInFlight, useRunStage, useVersions } from '@/features/processing/queries';
 import { readResult } from '@/features/processing/results';
@@ -63,6 +65,7 @@ export function useEditorSession({
   scans,
   before,
   focusStepId,
+  serverFigure,
 }: {
   processing: Processing;
   current: StripItem | undefined;
@@ -75,6 +78,11 @@ export function useEditorSession({
    * no step is open, and the reader then picks from the steps that have one.
    */
   focusStepId?: string;
+  /**
+   * The state of the shape of the open step on the open page, as the server computed it for the rows of the step, or null
+   * while that row is read. It decides the state shown whenever a step is open, so the rule lives in one place.
+   */
+  serverFigure?: FigureState | null;
 }): EditorSession | null {
   const { projectId, stage, catalogue } = processing;
   const queryClient = useQueryClient();
@@ -114,11 +122,6 @@ export function useEditorSession({
   const skipped = found.made?.data.skipped_by_condition === true;
   const made = skipped ? null : (found.made ?? (editable.length === 1 ? head : null));
   const result = made === null ? null : readResult(made);
-  const context: PageContext | undefined =
-    current === undefined || processor === undefined
-      ? undefined
-      : { current, items, scan, stepInput: found.read, result, processorKey: processor.key };
-  const owner = editor === undefined || context === undefined ? undefined : editor.owner(context);
   const picture =
     editor === undefined || current === undefined || processor === undefined
       ? null
@@ -130,11 +133,31 @@ export function useEditorSession({
           found.read,
           made,
         );
+  // A step open in the workspace shows its shape before it has run, so an editor that starts from the step's result
+  // starts from the whole picture instead, and the picture is asked for its size
+  const focused = focusStepId !== undefined;
+  const pictureSize = usePictureSize(
+    picture,
+    focused && editor?.needsResult === true && result === null,
+  );
+  const context: PageContext | undefined =
+    current === undefined || processor === undefined
+      ? undefined
+      : {
+          current,
+          items,
+          scan,
+          stepInput: found.read,
+          result,
+          processorKey: processor.key,
+          pictureSize,
+        };
+  const owner = editor === undefined || context === undefined ? undefined : editor.owner(context);
   const available =
     processor !== undefined &&
     picture !== null &&
     !skipped &&
-    (editor?.needsResult !== true || result !== null);
+    (editor?.needsResult !== true || result !== null || (focused && pictureSize !== null));
 
   const edits = useEdits(projectId, owner?.id, stage, available);
   const saved = edits?.find((candidate) => candidate.step_id === step?.step_id);
@@ -151,8 +174,9 @@ export function useEditorSession({
 
   const key = `${owner?.id}|${step?.step_id}`;
   const openKey = `${current?.page.id}|${stage}`;
-  const active =
-    editor !== undefined && picture !== null && (editor.alwaysOn || opened === openKey);
+  // The shape of an open step is on the page whether or not the reader has pressed "Set by hand"
+  const alwaysOn = editor?.alwaysOn === true || focused;
+  const active = editor !== undefined && picture !== null && (alwaysOn || opened === openKey);
 
   // The run waits for the book to be free, and is asked for once whatever the number of saves before it
   const runInFlight = useRunInFlight(projectId);
@@ -286,6 +310,15 @@ export function useEditorSession({
     draft !== null && draft.key === key && draft.base === savedText
       ? draft.geometry
       : (savedGeometry ?? fallback);
+  // Inside the workspace the state is the one the server computed for the row of the step. Outside it there is no such row,
+  // so the same rule is applied to what the screen has, which also covers the moment before the row arrives. A saved edit
+  // is shown as set by hand at once, since the row is read again only after the save and would still say "found" until then
+  const figure =
+    savedGeometry !== null
+      ? 'by-hand'
+      : focused && serverFigure !== undefined && serverFigure !== null && serverFigure !== 'skipped'
+        ? serverFigure
+        : figureStateOf(false, made !== null);
   const hold = (next: Geometry): void => setDraft({ key, base: savedText, geometry: next });
   const commit = (next: Geometry): void => {
     hold(next);
@@ -324,7 +357,9 @@ export function useEditorSession({
 
   return {
     picture,
-    alwaysOn: editor.alwaysOn,
+    alwaysOn,
+    focused,
+    figure,
     active,
     steps,
     choose: (stepKey: string) => {
@@ -349,6 +384,7 @@ export function useEditorSession({
         geometry={geometry}
         size={editor.size(context)}
         context={context}
+        figure={figure}
         onChange={hold}
         onCommit={commit}
       />
@@ -357,8 +393,10 @@ export function useEditorSession({
       <editor.Panel
         geometry={geometry}
         processorKey={processor.key}
+        params={step?.params ?? {}}
         disabled={saving}
         size={editor.size(context)}
+        onChange={hold}
         onCommit={commit}
       />
     ),

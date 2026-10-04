@@ -141,6 +141,9 @@ describe('useEditorSession', () => {
     before?: typeof BEFORE | null;
     /** Whether to draw the canvas of the editor too, which only the split line has a stand-in for. */
     canvas?: boolean;
+    /** The step open in the step workspace. */
+    focusStepId?: string;
+    serverFigure?: 'default' | 'found' | 'by-hand' | 'skipped' | null;
   }
 
   const PAGE_ITEM = joinRows(
@@ -156,6 +159,8 @@ describe('useEditorSession', () => {
       items,
       scans: setup.scans ?? [],
       before: setup.before === undefined ? BEFORE : setup.before,
+      focusStepId: setup.focusStepId,
+      serverFigure: setup.serverFigure,
     });
     return (
       <div>
@@ -222,6 +227,15 @@ describe('useEditorSession', () => {
 
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    // Radix measures the thumb of the slider of the angle, which jsdom cannot
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      },
+    );
     for (const mock of Object.values(sdk)) {
       mock.mockReset();
     }
@@ -511,6 +525,157 @@ describe('useEditorSession', () => {
     await pressUndo();
 
     expect(sdk.remove).toHaveBeenCalledTimes(1);
+  });
+
+  describe('in the workspace of an open step', () => {
+    const NO_RESULT = joinRows([page('page')], [row('page')]);
+    const DESKEW_STEP = 'id-geometry.deskew';
+
+    it('has the shape on the page without "Set by hand", and leaves the choice of the step to the screen', async () => {
+      await render({ focusStepId: DESKEW_STEP });
+
+      expect(session?.active).toBe(true);
+      expect(session?.alwaysOn).toBe(true);
+      expect(session?.focused).toBe(true);
+    });
+
+    it('keeps the editor shut for the same step when no step is open', async () => {
+      await render();
+
+      expect(session?.active).toBe(false);
+      expect(session?.focused).toBe(false);
+    });
+
+    it('starts the shape from the default before the step has run, found after it has, and set by hand after an edit', async () => {
+      await render({ focusStepId: DESKEW_STEP, items: NO_RESULT });
+      expect(session?.figure).toBe('default');
+      expect(field()?.value).toBe('0');
+
+      await render({ focusStepId: DESKEW_STEP });
+      expect(session?.figure).toBe('found');
+      expect(field()?.value).toBe('-2.4');
+
+      // The edits of the page were read by the renders above, and the harness keeps its cache between them, so the
+      // edit is read again as it is after a save
+      sdk.edits.mockResolvedValue(listOf(edit({ geometry: { degrees: 1.5 } })));
+      await act(async () => {
+        await client.invalidateQueries();
+      });
+      await render({ focusStepId: DESKEW_STEP });
+      expect(session?.figure).toBe('by-hand');
+      expect(field()?.value).toBe('1.5');
+    });
+
+    it('takes the state of the shape from the row of the open step when the server has sent it', async () => {
+      await render({ focusStepId: DESKEW_STEP, items: NO_RESULT, serverFigure: 'by-hand' });
+      expect(session?.figure).toBe('by-hand');
+
+      await render({ focusStepId: DESKEW_STEP, serverFigure: 'default' });
+      expect(session?.figure).toBe('default');
+    });
+
+    it('shows a saved edit as set by hand at once, while the row of the step still says found', async () => {
+      sdk.edits.mockResolvedValue(listOf(edit({ geometry: { degrees: 1.5 } })));
+
+      await render({ focusStepId: DESKEW_STEP, serverFigure: 'found' });
+
+      expect(session?.figure).toBe('by-hand');
+    });
+
+    it('applies the same rule to what the screen has while the row of the step is read, and when no step is open', async () => {
+      await render({ focusStepId: DESKEW_STEP, serverFigure: null });
+      expect(session?.figure).toBe('found');
+
+      // Without an open step the server row is not asked for, so what it would say is ignored
+      await render({ serverFigure: 'by-hand' });
+      expect(session?.figure).toBe('found');
+    });
+
+    it('keeps the state of the shape of a step as the open step changes and comes back', async () => {
+      const twice = recipe('twice', {
+        steps: [
+          step('geometry.deskew', { step_id: 'first' }),
+          step('geometry.deskew', { step_id: 'second' }),
+        ],
+      });
+      sdk.edits.mockResolvedValue(listOf(edit({ step_id: 'first', geometry: { degrees: 4 } })));
+      const state = processing({ recipe: twice, recipes: [twice] });
+
+      await render({ state, focusStepId: 'first', items: NO_RESULT });
+      expect(session?.figure).toBe('by-hand');
+      expect(field()?.value).toBe('4');
+
+      await render({ state, focusStepId: 'second', items: NO_RESULT });
+      expect(session?.figure).toBe('default');
+
+      await render({ state, focusStepId: 'first', items: NO_RESULT });
+      expect(session?.figure).toBe('by-hand');
+      expect(field()?.value).toBe('4');
+    });
+
+    it('has no editor for the open step on a page it passed by, or for a step that has none', async () => {
+      const skipped = joinRows(
+        [page('page')],
+        [row('page', { version: version('v', { data: { skipped_by_condition: true } }) })],
+      );
+      await render({ focusStepId: DESKEW_STEP, items: skipped });
+      expect(state()).toBe('none');
+
+      const crop = recipe('c', { steps: [step('geometry.crop')] });
+      await render({
+        state: processing({
+          catalogue: [processor('geometry.crop')],
+          recipe: crop,
+          recipes: [crop],
+        }),
+        focusStepId: 'id-geometry.crop',
+      });
+      expect(state()).toBe('none');
+    });
+
+    it('starts the frame from the margins of the whole picture, read from its pyramid, before the step has run', async () => {
+      const fetched = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ width: 1000, height: 2000 }),
+      });
+      vi.stubGlobal('fetch', fetched);
+      const crop = recipe('c', { steps: [step('geometry.crop')] });
+      const cropState = processing({
+        catalogue: [processor('geometry.crop', { editor: 'rect' })],
+        recipe: crop,
+        recipes: [crop],
+      });
+
+      await render({
+        state: cropState,
+        focusStepId: 'id-geometry.crop',
+        items: NO_RESULT,
+        canvas: true,
+      });
+      await settle();
+
+      expect(fetched).toHaveBeenCalledWith(BEFORE.url);
+      expect(session?.figure).toBe('default');
+      expect(
+        container.querySelector('[data-testid="commit-rect"]')?.getAttribute('data-shape'),
+      ).toBe(JSON.stringify({ left: 100, top: 200, width: 800, height: 1600 }));
+    });
+
+    it('has no frame before the step has run when no step is open, since there is nothing to start it from', async () => {
+      vi.stubGlobal('fetch', vi.fn());
+      const crop = recipe('c', { steps: [step('geometry.crop')] });
+
+      await render({
+        state: processing({
+          catalogue: [processor('geometry.crop', { editor: 'rect' })],
+          recipe: crop,
+          recipes: [crop],
+        }),
+        items: NO_RESULT,
+      });
+
+      expect(state()).toBe('none');
+    });
   });
 
   describe('the split line', () => {

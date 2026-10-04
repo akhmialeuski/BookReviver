@@ -2,6 +2,7 @@ import type { KonvaEventObject } from 'konva/lib/Node';
 import { useEffect, useRef, useState } from 'react';
 import { Circle, Line } from 'react-konva';
 import { EditorLayer } from '@/features/editors/EditorLayer';
+import { FIGURE_STYLE } from '@/features/editors/figure';
 import { nudgeOfKey } from '@/features/editors/line';
 import { CORNER_ORDER, moveCorner, QuadCorner } from '@/features/editors/quad';
 import { useSceneFrame } from '@/features/editors/scene';
@@ -19,8 +20,6 @@ import { MESSAGES } from '@/shared/messages';
 
 const labels = MESSAGES.editors.quad;
 
-const SHEET_COLOR = '#16a34a';
-const SHEET_FILL = 'rgba(22, 163, 74, 0.08)';
 const SHEET_WIDTH_PX = 2;
 const HANDLE_RADIUS_PX = 9;
 const HANDLE_BORDER_PX = 2;
@@ -37,10 +36,12 @@ export function QuadCanvas({
   scene,
   shape,
   size,
+  figure,
   onChange,
   onCommit,
 }: CanvasProps<QuadShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
+  const { stroke, dash } = FIGURE_STYLE[figure];
   const saveLater = useDebouncedCommit(onCommit, KEY_SAVE_DELAY_MS);
   // The drag handlers run between renders, so the shape they build on is the latest one and not the one they closed over
   const latest = useRef(shape);
@@ -80,7 +81,7 @@ export function QuadCanvas({
     saveLater(next);
   };
 
-  const data: Record<string, string> = {};
+  const data: Record<string, string> = { figure };
   CORNER_ORDER.forEach((corner, index) => {
     data[`corner-${dashed(corner)}`] = pairOf(shape[corner]);
     data[`handle-${dashed(corner)}`] = pairOf(screen[index] ?? { x: 0, y: 0 });
@@ -104,8 +105,8 @@ export function QuadCanvas({
       <Line
         points={screen.flatMap((point) => [point.x, point.y])}
         closed
-        stroke={SHEET_COLOR}
-        fill={SHEET_FILL}
+        stroke={stroke}
+        dash={dash}
         strokeWidth={SHEET_WIDTH_PX}
         listening={false}
       />
@@ -115,7 +116,7 @@ export function QuadCanvas({
           x={screen[index]?.x ?? 0}
           y={screen[index]?.y ?? 0}
           radius={HANDLE_RADIUS_PX}
-          fill={SHEET_COLOR}
+          fill={stroke}
           stroke={HANDLE_BORDER_COLOR}
           strokeWidth={HANDLE_BORDER_PX}
           hitStrokeWidth={HIT_EXTRA_PX}

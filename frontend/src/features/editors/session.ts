@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { FigureState } from '@/api';
 import type { EditorScene } from '@/features/editors/scene';
 import type { ImageSource } from '@/features/processing/compare';
 
@@ -25,6 +26,10 @@ export interface EditorSession {
   picture: ImageSource;
   /** Whether the editor is open whenever the stage is, and so has no "Set by hand" to press. */
   alwaysOn: boolean;
+  /** Whether the editor belongs to a step open in the step workspace, which the screen names and picks itself. */
+  focused: boolean;
+  /** The state the shape is in on the open page: the default, what the step found, or what the reader set. */
+  figure: FigureState;
   /** Whether the editor is open now. */
   active: boolean;
   /** The steps of the stage that have an editor, in the order of the recipe; the editor shown is one of them. */

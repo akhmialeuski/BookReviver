@@ -2,6 +2,7 @@ import type { KonvaEventObject } from 'konva/lib/Node';
 import { useEffect, useRef } from 'react';
 import { Rect } from 'react-konva';
 import { EditorLayer } from '@/features/editors/EditorLayer';
+import { FIGURE_STYLE } from '@/features/editors/figure';
 import { nudgeOfKey } from '@/features/editors/line';
 import { isPlacement } from '@/features/editors/placement';
 import {
@@ -27,7 +28,6 @@ import { MESSAGES } from '@/shared/messages';
 
 const labels = MESSAGES.editors.rect;
 
-const FRAME_COLOR = '#2563eb';
 const FRAME_WIDTH_PX = 2;
 const HANDLE_SIDE_PX = 12;
 const HANDLE_BORDER_PX = 2;
@@ -45,11 +45,13 @@ export function RectCanvas({
   scene,
   shape,
   size,
+  figure,
   context,
   onChange,
   onCommit,
 }: CanvasProps<RectShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
+  const { stroke, dash } = FIGURE_STYLE[figure];
   const saveLater = useDebouncedCommit(onCommit, KEY_SAVE_DELAY_MS);
   // The drag handlers run between renders, so the shape they build on is the latest one and not the one they closed over
   const latest = useRef(shape);
@@ -90,6 +92,7 @@ export function RectCanvas({
   };
 
   const data: Record<string, string> = {
+    figure,
     rect: [shape.left, shape.top, shape.width, shape.height].map(Math.round).join(','),
   };
   for (const { handle, at } of places) {
@@ -115,7 +118,8 @@ export function RectCanvas({
         y={topLeft.y}
         width={bottomRight.x - topLeft.x}
         height={bottomRight.y - topLeft.y}
-        stroke={FRAME_COLOR}
+        stroke={stroke}
+        dash={dash}
         strokeWidth={FRAME_WIDTH_PX}
         listening={false}
       />
@@ -128,7 +132,7 @@ export function RectCanvas({
           offsetY={HANDLE_SIDE_PX / HALF}
           width={HANDLE_SIDE_PX}
           height={HANDLE_SIDE_PX}
-          fill={FRAME_COLOR}
+          fill={stroke}
           stroke={HANDLE_BORDER_COLOR}
           strokeWidth={HANDLE_BORDER_PX}
           hitStrokeWidth={HIT_EXTRA_PX}
