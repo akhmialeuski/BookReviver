@@ -393,7 +393,8 @@ class RecipeProfiles:
         The steps are those of the account's default profile for the stage when it has a usable one, and otherwise those
         of the built-in template of the recipe, which are the steps the stage would have had on its first opening. The
         recipe keeps its identifier, its name, whether it is active, and the pages pinned to it, while every step is
-        new, so the settings and edits the pages kept for the old steps no longer belong to any step.
+        new, so the settings and edits the pages kept for the old steps no longer belong to any step. The recipe is
+        linked to the default profile when its steps came from it, and to no profile when they came from a template.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -408,9 +409,12 @@ class RecipeProfiles:
         """
         await owned_project(self._uow.projects, actor, project_id)
         recipe = await self._recipes.get(project_id, key.recipe_id, stage=key.stage)
-        steps = await self._recipes.default_steps(project_id, key.stage, recipe.name)
-        draft = RecipeDraft(name=recipe.name, steps=steps, order=OrderMode.FREE)
-        return await self._processing.save_variant(actor, project_id, key, draft)
+        draft = await self._recipes.default_draft(project_id, key.stage, recipe.name)
+        reset = await self._processing.save_variant(actor, project_id, key, draft)
+        # The steps now are the profile's, or the template's, so the recipe is linked to the profile or to none
+        if reset.profile_id == draft.profile_id:
+            return reset
+        return await self.link(actor, project_id, key, draft.profile_id)
 
     async def _owned(self, actor: Actor, profile_id: RecipeProfileId) -> RecipeProfile:
         """Return the actor's profile.

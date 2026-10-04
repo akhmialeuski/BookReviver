@@ -32,14 +32,15 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import RecipeId, RecipeRuleId
-from bookreviver.domain.values import Step
+from bookreviver.domain.values import RecipeDraft, Step
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import datetime
 
+    from bookreviver.domain.entities import RecipeProfile
     from bookreviver.domain.ids import ProjectId
-    from bookreviver.domain.values import MetadataMap, PageStepKey, RecipeDraft
+    from bookreviver.domain.values import MetadataMap, PageStepKey
     from bookreviver.ports.persistence import RecipeRepository, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
@@ -281,29 +282,32 @@ class RecipeBook:
             return found
         return recipes[0]
 
-    async def default_steps(self, project_id: ProjectId, stage: Stage, name: str) -> tuple[Step, ...]:
-        """Return the steps a stage starts with for a book, which are the ones ``active`` would make the recipe of.
+    async def default_draft(self, project_id: ProjectId, stage: Stage, name: str) -> RecipeDraft:
+        """Return the draft of the steps a stage starts with for a book, which ``active`` would make the recipe of.
 
-        The steps of the default profile of the book's owner come first, when there is a usable one. Without it the
-        steps are those of the built-in template named ``name``, or of the first template the application can build
-        when none has that name.
+        The default profile of the book's owner comes first, when there is a usable one, and the draft names it, so a
+        recipe made from the draft can be linked to it. Without one the steps are those of the built-in template named
+        ``name``, or of the first template the application can build when none has that name, and no profile is named.
 
         :param project_id: Project the steps are for.
         :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
-        :param name: Name of the recipe the steps are meant for, which picks a built-in template.
+        :param name: Name of the recipe the steps are meant for, which picks a built-in template and is the name of the
+                     draft.
         :type name: str
-        :returns: The steps, checked, each with a new identifier.
-        :rtype: tuple[Step, ...]
+        :returns: The draft, whose steps are checked and each have a new identifier, in the free order.
+        :rtype: RecipeDraft
         :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
         """
-        if (profile := await self._default_profile_steps(project_id, stage)) is not None:
-            return profile[1]
+        if (found := await self._default_profile(project_id, stage)) is not None:
+            profile, steps = found
+            return RecipeDraft(name=name, steps=steps, order=OrderMode.FREE, profile_id=profile.id)
         buildable = self._buildable(stage)
         if not buildable:
             raise NotFoundError(NO_RECIPE.format(stage=stage.label))
-        return self._template_steps(next((template for template in buildable if template.name == name), buildable[0]))
+        template = next((template for template in buildable if template.name == name), buildable[0])
+        return RecipeDraft(name=name, steps=self._template_steps(template), order=OrderMode.FREE)
 
     async def get(self, project_id: ProjectId, recipe_id: RecipeId, *, stage: Stage | None = None) -> Recipe:
         """Return a recipe of the project, of the given stage when one is named.
@@ -485,8 +489,10 @@ class RecipeBook:
             for key in template.processor_keys
         )
 
-    async def _default_profile_steps(self, project_id: ProjectId, stage: Stage) -> tuple[str, tuple[Step, ...]] | None:
-        """Take the name and the steps of the default profile of the project's owner, if there is a usable one.
+    async def _default_profile(
+        self, project_id: ProjectId, stage: Stage
+    ) -> tuple[RecipeProfile, tuple[Step, ...]] | None:
+        """Take the default profile of the project's owner with its checked steps, if there is a usable one.
 
         A step whose processor is not installed is left out. A profile that has no step left to run, or whose steps no
         longer fit their processors, is passed over, so the stage starts with the built-in recipes as it does for an
@@ -496,8 +502,8 @@ class RecipeBook:
         :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
-        :returns: The name of the profile and its checked steps, or None.
-        :rtype: tuple[str, tuple[Step, ...]] | None
+        :returns: The profile and its steps as a recipe runs them, or None.
+        :rtype: tuple[RecipeProfile, tuple[Step, ...]] | None
         """
         owner_id = (await self._uow.projects.get(project_id)).owner_id
         if (profile := await self._uow.recipe_profiles.find_default(owner_id, stage)) is None:
@@ -506,7 +512,7 @@ class RecipeBook:
             steps = await self.check(stage, self.installed(profile.steps)[0], order=OrderMode.FREE)
         except InvalidParametersError:
             return None
-        return profile.name, steps
+        return profile, steps
 
     async def _default_profile_recipe(self, project_id: ProjectId, stage: Stage, moment: datetime) -> Recipe | None:
         """Build the active recipe of a stage from the default profile of the project's owner, if there is a usable one.
@@ -520,14 +526,15 @@ class RecipeBook:
         :returns: The recipe, not stored yet, or None.
         :rtype: Recipe | None
         """
-        if (profile := await self._default_profile_steps(project_id, stage)) is None:
+        if (found := await self._default_profile(project_id, stage)) is None:
             return None
+        profile, steps = found
         return Recipe(
             id=RecipeId(uuid4()),
             project_id=project_id,
             stage=stage,
-            name=profile[0],
-            steps=profile[1],
+            name=profile.name,
+            steps=steps,
             active=True,
             profile_id=profile.id,
             created_at=moment,

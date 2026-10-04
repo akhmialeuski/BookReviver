@@ -378,6 +378,7 @@ class TestResetToTheDefaultSteps:
             [(step.processor_key, step.params) for step in reset.steps] == [(FAKE_KEY, {'strength': 1, 'fail': False})]
         )
         expect(reset.steps[0].step_id != soft.steps[0].step_id)
+        expect(reset.profile_id is None)
         expect((record.recipe_id, record.pinned, record.state) == (soft.id, True, StageState.STALE))
         assert_expectations()
 
@@ -396,7 +397,9 @@ class TestResetToTheDefaultSteps:
         await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
         active = await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
         reset = await fx_kit.profiles().reset(actor, project.id, RecipeKey(Stage.GEOMETRY, active.id))
-        assert [step.params['strength'] for step in reset.steps] == [PLATES_STRENGTH]
+        expect([step.params['strength'] for step in reset.steps] == [PLATES_STRENGTH])
+        expect(reset.profile_id == profile.id)
+        assert_expectations()
 
     async def test_a_recipe_takes_the_template_of_its_own_name(self, fx_asset_store: LocalAssetStore) -> None:
         """Verify a variant named like a built-in template gets that template, and any other name the first one.

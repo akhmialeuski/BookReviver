@@ -1,5 +1,11 @@
 import { useSortable } from '@dnd-kit/sortable';
-import { GripVerticalIcon, SettingsIcon, Trash2Icon, TriangleAlertIcon } from 'lucide-react';
+import {
+  BookmarkPlusIcon,
+  GripVerticalIcon,
+  SettingsIcon,
+  Trash2Icon,
+  TriangleAlertIcon,
+} from 'lucide-react';
 import { useState } from 'react';
 import type { AppliesTo, ProcessorSchema, StagePageSchema } from '@/api';
 import type { OrderIssue } from '@/features/processing/order';
@@ -162,6 +168,7 @@ export function StepsWindow({
 }): React.JSX.Element | null {
   const { stage, steps, catalogue } = processing;
   const [savedAs, setSavedAs] = useState<string | null>(null);
+  const [saveOpen, setSaveOpen] = useState(false);
   if (processing.recipe === undefined) {
     return null;
   }
@@ -244,9 +251,25 @@ export function StepsWindow({
         )}
         <RecipeSaveBar processing={processing} rows={rows} />
         <div className="flex flex-wrap gap-2">
-          <SaveProfileDialog processing={processing} onSaved={setSavedAs} />
+          <Button
+            variant="outline"
+            size="sm"
+            title={MESSAGES.profiles.save.hint}
+            disabled={!processing.valid || steps.length === 0}
+            data-testid="profile-save-open"
+            onClick={() => setSaveOpen(true)}
+          >
+            <BookmarkPlusIcon />
+            {MESSAGES.profiles.save.open}
+          </Button>
           <ResetSteps processing={processing} rows={rows} />
         </div>
+        <SaveProfileDialog
+          processing={processing}
+          open={saveOpen}
+          onOpenChange={setSaveOpen}
+          onSaved={setSavedAs}
+        />
         {savedAs === null ? null : (
           <p className="text-xs text-muted-foreground" data-testid="profile-saved">
             {MESSAGES.profiles.save.saved(savedAs)}
