@@ -510,12 +510,15 @@ class PageOverview:
                          has no image yet, such as a placeholder.
     :ivar source_id: Source holding the page's scan, which selects every page of one source, or None for a page
                      without a scan.
+    :ivar section_id: The pagination section that governs the page, or None for a page kept out of the book, a page
+                      before the first section and a book without sections.
     """
 
     page: Page
     position: int = field(validator=validators.ge(0))
     image_version: PageVersion | None = None
     source_id: SourceId | None = None
+    section_id: PaginationSectionId | None = None
 
 
 @frozen(kw_only=True)

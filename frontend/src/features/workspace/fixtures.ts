@@ -21,6 +21,7 @@ export function page(id: string, overrides: Partial<PageSchema> = {}): PageSchem
     position: 0,
     label: '',
     label_manual: false,
+    section_id: null,
     kind: 'text',
     origin: 'scan',
     scan_id: null,

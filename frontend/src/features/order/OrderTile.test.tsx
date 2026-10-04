@@ -165,7 +165,7 @@ describe('OrderTile', () => {
   });
 
   describe('the section of the page', () => {
-    const entry = page('a', { label: 'vi' });
+    const entry = page('a', { label: 'vi', section_id: 's1' });
     const [span] = sectionSpans([entry], [section('s1', 'a', { name: 'Preface' })]);
 
     it('rings the number in the colour of the section and names the section in its title', () => {

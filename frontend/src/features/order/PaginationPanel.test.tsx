@@ -27,24 +27,24 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
 
 const PROJECT = 'book';
 const PAGES: PageSchema[] = [
-  page('p0', { position: 0, kind: 'cover' }),
-  page('p1', { position: 1, label: '[i]' }),
-  page('p2', { position: 2, label: '[ii]' }),
-  page('p3', { position: 3, label: 'vi' }),
-  page('p4', { position: 4, label: 'Plate I', kind: 'plate' }),
-  page('p5', { position: 5, label: '1' }),
+  page('p0', { position: 0, kind: 'cover', section_id: 'cover' }),
+  page('p1', { position: 1, label: '[i]', section_id: 'front' }),
+  page('p2', { position: 2, label: '[ii]', section_id: 'front' }),
+  page('p3', { position: 3, label: 'vi', section_id: 'preface' }),
+  page('p4', { position: 4, label: 'Plate I', kind: 'plate', section_id: 'plates' }),
+  page('p5', { position: 5, label: '1', section_id: 'text' }),
 ];
 const SECTIONS: PaginationSectionSchema[] = [
   section('cover', 'p0', { name: 'Cover', display: 'not-counted' }),
   section('front', 'p1', { name: 'Half title', display: 'counted', style: 'roman-lower' }),
-  section('preface', 'p3', { name: 'Preface', style: 'roman-lower', start: 6 }),
-  section('text', 'p5', { name: '' }),
   section('plates', 'p1', {
     name: 'Plates',
     style: 'roman-upper',
     prefix: 'Plate ',
     kinds: ['plate'],
   }),
+  section('preface', 'p3', { name: 'Preface', style: 'roman-lower', start: 6 }),
+  section('text', 'p5', { name: '' }),
 ];
 
 describe('PaginationPanel', () => {

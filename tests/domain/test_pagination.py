@@ -13,6 +13,7 @@ from tests.helpers.builders import make_page, make_project, make_section, new_ac
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, PaginationSection
+    from bookreviver.domain.ids import PaginationSectionId
 
 PLATES: frozenset[PageKind] = frozenset({PageKind.PLATE, PageKind.FRONTISPIECE})
 PLATE_PREFIX: str = 'Plate '
@@ -256,3 +257,84 @@ class TestPagination:
 
         with pytest.raises(ValueError, match=str(ROMAN_LIMIT + 1)):
             _labels(pages, section)
+
+
+def _section_ids(pages: list[Page], *sections: PaginationSection) -> list[PaginationSectionId | None]:
+    """Find the section that governs each page, in book order.
+
+    :param pages: Pages of the book in book order.
+    :type pages: list[Page]
+    :param sections: Sections of the book.
+    :type sections: PaginationSection
+    :returns: The identifier of the governing section of each page, or None.
+    :rtype: list[PaginationSectionId | None]
+    """
+    governing = Pagination(sections, pages).section_ids()
+    return [governing[page.id] for page in pages]
+
+
+class TestPaginationSectionIds:
+    """Tests for Pagination.section_ids()."""
+
+    def test_each_page_belongs_to_the_section_it_starts_in_until_the_next_one(self) -> None:
+        """Verify the pages of the main flow are governed by the section that started last."""
+        pages = _book(*[PageKind.TEXT] * 4)
+        front = make_section(page=pages[0], style=LabelStyle.ROMAN_LOWER)
+        text = make_section(page=pages[2])
+
+        assert _section_ids(pages, text, front) == [front.id, front.id, text.id, text.id]
+
+    def test_a_series_governs_the_pages_of_its_kinds_and_the_main_flow_the_rest(self) -> None:
+        """Verify plates belong to their series from its first page, while the text stays with the main flow."""
+        pages = _book(PageKind.PLATE, PageKind.TEXT, PageKind.PLATE, PageKind.TEXT)
+        text = make_section(page=pages[0])
+        plates = make_section(page=pages[1], kinds=PLATES)
+
+        # The plate before the series follows the main flow, as it does in the numbering
+        assert _section_ids(pages, text, plates) == [text.id, text.id, plates.id, text.id]
+
+    def test_a_series_that_starts_with_the_main_flow_takes_only_its_kinds(self) -> None:
+        """Verify a series and the main flow that start on one page share the pages by kind."""
+        pages = _book(PageKind.TEXT, PageKind.PLATE)
+        text = make_section(page=pages[0])
+        plates = make_section(page=pages[0], kinds=PLATES)
+
+        assert _section_ids(pages, plates, text) == [text.id, plates.id]
+
+    def test_a_page_kept_out_of_the_book_has_no_section_and_the_others_keep_theirs(self) -> None:
+        """Verify a page that is not included is governed by nothing, though it stands inside a section."""
+        pages = _book(*[PageKind.TEXT] * 3)
+        pages[1] = evolve(pages[1], included=False)
+        text = make_section(page=pages[0])
+
+        assert _section_ids(pages, text) == [text.id, None, text.id]
+
+    def test_a_page_before_every_section_has_no_section(self) -> None:
+        """Verify the pages that stand before the first section of the main flow belong to none."""
+        pages = _book(*[PageKind.TEXT] * 3)
+        text = make_section(page=pages[1])
+
+        assert _section_ids(pages, text) == [None, text.id, text.id]
+
+    def test_a_page_of_a_section_that_is_not_counted_still_belongs_to_it(self) -> None:
+        """Verify a cover section governs its pages although they take no number."""
+        pages = _book(PageKind.COVER, PageKind.TEXT)
+        cover = make_section(page=pages[0], display=NumberDisplay.NOT_COUNTED)
+        text = make_section(page=pages[1])
+
+        assert _section_ids(pages, cover, text) == [cover.id, text.id]
+
+    def test_a_book_without_sections_and_a_section_of_another_book_govern_nothing(self) -> None:
+        """Verify no page has a section when none starts in the book."""
+        pages = _book(*[PageKind.TEXT] * 2)
+        [stranger] = _book(PageKind.TEXT)
+
+        assert _section_ids(pages) == [None, None]
+        assert _section_ids(pages, make_section(page=stranger)) == [None, None]
+
+    def test_the_sections_are_found_although_a_number_cannot_be_written(self) -> None:
+        """Verify reading the sections of the pages never fails on a number that labels would refuse."""
+        pages = _book(*[PageKind.TEXT] * 2)
+        section = evolve(make_section(page=pages[0], style=LabelStyle.ROMAN_LOWER), start=ROMAN_LIMIT)
+
+        assert _section_ids(pages, section) == [section.id, section.id]

@@ -20,7 +20,7 @@ from bookreviver.api.schemas.images import ImagePathsSchema
 from bookreviver.api.schemas.types import Dpi, GroupLabel, LongText, PageIdList, PageLabel, PagePixels
 from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.enums import BlankFill, LabelStyle, NewPageOrigin, PageKind, PageOrigin, Side
-from bookreviver.domain.ids import PageId, ScanId, SourceId
+from bookreviver.domain.ids import PageId, PaginationSectionId, ScanId, SourceId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import NewPage, PageAnchor, PageNumbering, PageSize
 from bookreviver.services.pages import PageService
@@ -324,6 +324,9 @@ class PageSchema(ResponseModel):
     :ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.
     :ivar label_manual: Whether the label is an exception to the pagination sections: written by hand, or taken from
                         the source of the scan, and so never changed when the numbers of the book are computed again.
+    :ivar section_id: The pagination section that governs the page, which is the one whose rule gave it its number, or
+                      None for a page kept out of the book, a page before the first section and a book without
+                      sections.
     :ivar kind: Role of the page in the book.
     :ivar origin: Where the image of the page comes from.
     :ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was
@@ -344,6 +347,7 @@ class PageSchema(ResponseModel):
     position: int
     label: str
     label_manual: bool
+    section_id: PaginationSectionId | None
     kind: PageKind
     origin: PageOrigin
     scan_id: ScanId | None
@@ -380,6 +384,7 @@ class PageSchema(ResponseModel):
             position=overview.position,
             label=page.label,
             label_manual=page.label_manual,
+            section_id=overview.section_id,
             kind=page.kind,
             origin=page.origin,
             scan_id=page.scan_id,

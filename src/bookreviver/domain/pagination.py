@@ -11,7 +11,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Iterator, Sequence
 
     from bookreviver.domain.entities import Page, PaginationSection
     from bookreviver.domain.enums import PageKind
@@ -47,21 +47,47 @@ class Pagination:
         :rtype: dict[PageId, str]
         :raises ValueError: If a section cannot write a number, such as 4000 in Roman numerals.
         """
-        flow: PaginationSection | None = None
-        series: dict[PageKind, PaginationSection] = {}
         next_number: dict[PaginationSectionId, int] = {}
         labels: dict[PageId, str] = {}
-        for index, page in enumerate(self._pages):
-            for section in self._starting[index]:
+        for page, governing, started in self._walk():
+            for section in started:
                 next_number[section.id] = section.start
-                if section.is_series:
-                    series.update(dict.fromkeys(section.kinds, section))
-                else:
-                    flow = section
-            governing = series.get(page.kind, flow)
             computed = ''
             if page.included and governing is not None and governing.display.counts:
                 computed = governing.label(next_number[governing.id])
                 next_number[governing.id] += 1
             labels[page.id] = page.label if page.label_manual else computed
         return labels
+
+    def section_ids(self) -> dict[PageId, PaginationSectionId | None]:
+        """Find the section that governs each page, by the same walk over the book that numbers it.
+
+        A page kept out of the book takes no part in any section, and neither does a page before the first section of
+        the main flow that is not taken by a series. A page of a section that does not count is still governed by it.
+        No number is written, so a section that cannot write one does not stop the answer.
+
+        :returns: The identifier of the governing section of every page, or None for a page that has none.
+        :rtype: dict[PageId, PaginationSectionId | None]
+        """
+        return {
+            page.id: governing.id if page.included and governing is not None else None
+            for page, governing, _ in self._walk()
+        }
+
+    def _walk(self) -> Iterator[tuple[Page, PaginationSection | None, list[PaginationSection]]]:
+        """Walk the pages in book order and name the section that governs each one.
+
+        :returns: For every page, the page, the section that governs it by position alone, whether or not the page is in
+                  the book, and the sections that start at it.
+        :rtype: Iterator[tuple[Page, PaginationSection | None, list[PaginationSection]]]
+        """
+        flow: PaginationSection | None = None
+        series: dict[PageKind, PaginationSection] = {}
+        for index, page in enumerate(self._pages):
+            started = self._starting[index]
+            for section in started:
+                if section.is_series:
+                    series.update(dict.fromkeys(section.kinds, section))
+                else:
+                    flow = section
+            yield page, series.get(page.kind, flow), started

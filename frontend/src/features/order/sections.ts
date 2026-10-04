@@ -1,13 +1,12 @@
-import type { PageKind, PageSchema, PaginationSectionSchema } from '@/api';
+import type { PageSchema, PaginationSectionSchema } from '@/api';
 import { MESSAGES } from '@/shared/messages';
 
 /**
- * Which pagination section each page of the book belongs to, worked out the way the server numbers the pages.
+ * What each pagination section of the book covers, read from the section every page names.
  *
- * The server writes the labels, and this module only reads the same rule over the same sections, so the panel can list
- * the sections with the pages and numbers they cover and the grid can colour each page by its section. A section of the
- * main flow lasts until the next one of the main flow starts, and a series by kind takes the pages of its kinds from its
- * first page on, ahead of the main flow.
+ * The server writes the labels and says in `section_id` which section governs each page, so this module holds only what
+ * is presentation: the colour of a section, the pages and the range of numbers a row of the panel shows, and the index
+ * the grid asks for the section of a tile.
  */
 
 /** The classes that draw a section: the bar at the edge of its row in the panel, and the ring of a number on a tile. */
@@ -56,56 +55,35 @@ export function isSeries(section: PaginationSectionSchema): boolean {
 }
 
 /**
- * Read which section governs each page and what each section covers.
+ * Gather what each section covers from the section each page names.
+ *
+ * The server decides which section governs a page, the same way it numbers the page, and says so in `section_id`, so
+ * nothing here works the rule out again. This only groups the pages by that id and reads what a row of the panel shows.
  *
  * @param pages The pages of the book in book order.
- * @param sections The sections of the book, in any order. A section whose first page is not in the book is left out,
- * since it starts nowhere.
- * @returns The sections in book order, which is the order of the pages they start at, with the main flow ahead of a
- * series on the same page.
+ * @param sections The sections of the book in book order, as the server lists them.
+ * @returns The sections in the order given, with the pages that name each one.
  */
 export function sectionSpans(
   pages: readonly PageSchema[],
   sections: readonly PaginationSectionSchema[],
 ): SectionSpan[] {
-  const indexOf = new Map(pages.map((page, index) => [page.id, index]));
-  const heads = sections
-    .flatMap((section) => {
-      const at = indexOf.get(section.first_page_id);
-      return at === undefined ? [] : [{ section, at }];
-    })
-    .toSorted(
-      (a, b) =>
-        a.at - b.at ||
-        Number(isSeries(a.section)) - Number(isSeries(b.section)) ||
-        a.section.created_at.localeCompare(b.section.created_at) ||
-        a.section.id.localeCompare(b.section.id),
-    );
-
-  // The pages are dealt out in one pass, a section taking effect at the page it starts at
-  const taken = new Map<string, PageSchema[]>(heads.map(({ section }) => [section.id, []]));
-  let flow: PaginationSectionSchema | undefined;
-  const series = new Map<PageKind, PaginationSectionSchema>();
-  for (const [index, page] of pages.entries()) {
-    for (const { section } of heads.filter(({ at }) => at === index)) {
-      if (isSeries(section)) {
-        for (const kind of section.kinds) {
-          series.set(kind, section);
-        }
-      } else {
-        flow = section;
-      }
-    }
-    const governing = series.get(page.kind) ?? flow;
-    if (governing !== undefined) {
-      taken.get(governing.id)?.push(page);
+  const taken = new Map<string, PageSchema[]>();
+  for (const page of pages) {
+    const own = page.section_id === null ? undefined : taken.get(page.section_id);
+    if (page.section_id !== null && own === undefined) {
+      taken.set(page.section_id, [page]);
+    } else {
+      own?.push(page);
     }
   }
+  const positionOf = new Map(pages.map((page) => [page.id, page.position + 1]));
 
   let counted = 0;
-  return heads.map(({ section, at }, index): SectionSpan => {
+  return sections.map((section, index): SectionSpan => {
     const own = taken.get(section.id) ?? [];
-    const positions = [at + 1, ...own.map((page) => page.position + 1)];
+    const first = positionOf.get(section.first_page_id) ?? 1;
+    const positions = [first, ...own.map((page) => page.position + 1)];
     const shown = own.map((page) => page.label).filter((label) => label !== '');
     const tone =
       section.display === 'not-counted'
