@@ -1839,7 +1839,7 @@ export const MESSAGES = {
     rect: {
       name: 'Frame of the content',
       handle: (handle: string) => `Handle of the frame: ${handle}`,
-      hint: 'Drag the handles of the frame until it holds all the text and the pictures of the page, or nudge it with the arrow keys. The margin is added round it and the page is cut again at once.',
+      hint: 'Drag the handles of the frame until it holds all the text and the pictures of the page, or nudge it with the arrow keys. The frame is saved when you let go, and nothing is cut: the page is cut by the frame on the Margins step.',
     },
     margins: {
       name: 'Content box and margins of the page',

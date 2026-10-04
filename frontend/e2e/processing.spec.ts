@@ -76,15 +76,14 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
 
   await test.step('the settings of the last step are opened, and a value outside its limits cannot be saved', async () => {
     await page.getByTestId('bar-step').filter({ hasText: 'Select content' }).click();
-    const margin = page.getByRole('spinbutton', { name: 'Margin' });
-    // The crop cuts to the block of text alone by default, since the normalize step sets the margins of the page
-    await expect(margin).toHaveValue('0');
-    await expect(page.getByTestId('stage-panel')).not.toContainText('margin_percent');
-    await margin.fill('99');
-    await expect(margin).toHaveAttribute('aria-invalid', 'true');
+    const speck = page.getByRole('spinbutton', { name: 'Smallest speck' });
+    await expect(speck).toHaveValue('4');
+    await expect(page.getByTestId('stage-panel')).not.toContainText('noise_min_area');
+    await speck.fill('99999');
+    await expect(speck).toHaveAttribute('aria-invalid', 'true');
     await expect(page.getByTestId('recipe-save')).toBeDisabled();
     await expect(page.getByTestId('preview-toggle')).toBeDisabled();
-    await margin.fill('0');
+    await speck.fill('4');
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
   });
 
@@ -98,14 +97,14 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     });
     expect(previews).toHaveLength(1);
 
-    const margin = page.getByRole('spinbutton', { name: 'Margin' });
-    await margin.fill('12');
+    const speck = page.getByRole('spinbutton', { name: 'Smallest speck' });
+    await speck.fill('12');
     await expect(page.getByTestId('preview-working')).toBeVisible();
     await expect(page.getByTestId('preview-working')).toBeHidden({ timeout: RUN_TIMEOUT_MS });
     expect(previews).toHaveLength(2);
 
     // Back to the settings that were shown first: the preview made for them is shown again
-    await margin.fill('0');
+    await speck.fill('4');
     await expect(page.getByTestId('preview-working')).toBeHidden();
     await page.waitForTimeout(1_000);
     expect(previews).toHaveLength(2);
