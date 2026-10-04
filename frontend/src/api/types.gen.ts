@@ -1212,6 +1212,9 @@ export type PageOrigin = 'scan' | 'blank' | 'placeholder';
  * :ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.
  * :ivar label_manual: Whether the label is an exception to the pagination sections: written by hand, or taken from
  * the source of the scan, and so never changed when the numbers of the book are computed again.
+ * :ivar section_id: The pagination section that governs the page, which is the one whose rule gave it its number, or
+ * None for a page kept out of the book, a page before the first section and a book without
+ * sections.
  * :ivar kind: Role of the page in the book.
  * :ivar origin: Where the image of the page comes from.
  * :ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was
@@ -1244,6 +1247,10 @@ export type PageSchema = {
      * Label Manual
      */
     label_manual: boolean;
+    /**
+     * Section Id
+     */
+    section_id: string | null;
     kind: PageKind;
     origin: PageOrigin;
     /**

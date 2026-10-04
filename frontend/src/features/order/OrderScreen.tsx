@@ -1,7 +1,7 @@
 import { useIsMutating } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { useEffect, useMemo, useState } from 'react';
-import type { PageSchema } from '@/api';
+import type { PageSchema, PaginationSectionSchema } from '@/api';
 import { AttachDialog } from '@/features/order/AttachDialog';
 import { DeletePagesDialog } from '@/features/order/DeletePagesDialog';
 import { insertBody, missingPageBodies } from '@/features/order/insert';
@@ -11,8 +11,10 @@ import { NumberingPanel } from '@/features/order/NumberingPanel';
 import { type NumberingDraft, newDraft } from '@/features/order/numbering';
 import { type FocusRequest, OrderGrid } from '@/features/order/OrderGrid';
 import { OrderToolbar, TILE_SIZE } from '@/features/order/OrderToolbar';
+import { PaginationPanel } from '@/features/order/PaginationPanel';
 import { placesToCheck } from '@/features/order/places';
 import { SelectionPanel } from '@/features/order/SelectionPanel';
+import { sectionSpans, spanOfPages } from '@/features/order/sections';
 import { usePreviewLabels } from '@/features/order/usePreviewLabels';
 import { useCreatePages, useMovePages } from '@/features/pages/actions';
 import { describePageError } from '@/features/pages/errors';
@@ -20,6 +22,7 @@ import { findGaps, type LabelGap } from '@/features/pages/gaps';
 import { MovePagesDialog, type MoveTarget } from '@/features/pages/MovePagesDialog';
 import { useManifest } from '@/features/pages/manifest';
 import { anchorBody, pageIdsOfSource } from '@/features/pages/order';
+import { useSections } from '@/features/pages/sections';
 import { pruneSelection } from '@/features/pages/selection';
 import { type StageSearch, ViewMode } from '@/features/workspace/params';
 import { StageWorkspace } from '@/features/workspace/StageWorkspace';
@@ -37,12 +40,14 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * selected pages or the numbering.
  *
  * The screen owns what the grid and the panel share: the selected pages, the numbering being drafted, the dialogs and
- * the actions that add and move pages. The pages are read from the manifest the viewer shares, so the events of the
+ * the actions that add and move pages. It reads the pagination sections beside the pages, so the panel lists them and
+ * the grid colours each page by its section. The pages are read from the manifest the viewer shares, so the events of the
  * book and the reader's own changes redraw the grid without a reload. `?source=<id>` opens the stage with the pages of
  * that file selected, which is how the Import stage points at the pages it made. `?view=spread` shows spreads.
  */
 
 const NO_PAGES: readonly PageSchema[] = [];
+const NO_SECTIONS: readonly PaginationSectionSchema[] = [];
 const NOTHING_SELECTED: SelectionState = { selected: new Set(), anchorId: null };
 
 export function OrderScreen({
@@ -59,6 +64,7 @@ export function OrderScreen({
   const manifest = useManifest(projectId);
   const movePages = useMovePages(projectId);
   const createPages = useCreatePages(projectId);
+  const sections = useSections(projectId);
   const pages = manifest.data ?? NO_PAGES;
 
   // What the reader picked, kept with the file the address named, so a new address starts from its own pages
@@ -104,6 +110,11 @@ export function OrderScreen({
   );
   const places = useMemo(() => placesToCheck(pages, gaps), [pages, gaps]);
   const blankPages = useMemo(() => leafPages(pages), [pages]);
+  const spans = useMemo(
+    () => sectionSpans(pages, sections.data ?? NO_SECTIONS),
+    [pages, sections.data],
+  );
+  const sectionOfPage = useMemo(() => spanOfPages(spans), [spans]);
   const preview = usePreviewLabels(projectId, pages, draft, manifest.dataUpdatedAt);
   // The grid is a step behind the server while a change is in flight or a read is on its way
   const busy = useIsMutating() > 0 || manifest.isFetching || preview.isFetching;
@@ -168,6 +179,7 @@ export function OrderScreen({
         spread={spread}
         size={size}
         previewLabels={draft === null ? undefined : preview.data}
+        sectionOfPage={sectionOfPage}
         addingGapKey={adding}
         moveError={failed ? describePageError(failure) : null}
         busy={busy}
@@ -211,6 +223,18 @@ export function OrderScreen({
         onAttach={setAttachPage}
         onDelete={() => setDeleteIds(selectedIds)}
         onShowPlace={showPlace}
+        pagination={
+          sections.isError ? (
+            <ErrorAlert message={describeError(sections.error)} />
+          ) : sections.data === undefined ? null : (
+            <PaginationPanel
+              projectId={projectId}
+              pages={pages}
+              spans={spans}
+              selectedId={selectedIds[0]}
+            />
+          )
+        }
       />
     ) : (
       <NumberingPanel

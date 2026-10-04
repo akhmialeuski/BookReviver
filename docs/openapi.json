@@ -10193,6 +10193,18 @@
             "type": "boolean",
             "title": "Label Manual"
           },
+          "section_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Id"
+          },
           "kind": {
             "$ref": "#/components/schemas/PageKind"
           },
@@ -10269,6 +10281,7 @@
           "position",
           "label",
           "label_manual",
+          "section_id",
           "kind",
           "origin",
           "scan_id",
@@ -10283,7 +10296,7 @@
           "updated_at"
         ],
         "title": "PageSchema",
-        "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except\n                in a manifest listing only the included pages, which numbers those.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar label_manual: Whether the label is an exception to the pagination sections: written by hand, or taken from\n                    the source of the scan, and so never changed when the numbers of the book are computed again.\n:ivar kind: Role of the page in the book.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar blank_fill: What the image of a blank page is: its scan, or a white leaf or a leaf of the colour of the paper\n                  of the book drawn in its place. The scan stays linked either way.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar group_label: Label of the group the user put the page in, or empty for no group.\n:ivar images: Paths of the images of the page's current version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
+        "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except\n                in a manifest listing only the included pages, which numbers those.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar label_manual: Whether the label is an exception to the pagination sections: written by hand, or taken from\n                    the source of the scan, and so never changed when the numbers of the book are computed again.\n:ivar section_id: The pagination section that governs the page, which is the one whose rule gave it its number, or\n                  None for a page kept out of the book, a page before the first section and a book without\n                  sections.\n:ivar kind: Role of the page in the book.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar blank_fill: What the image of a blank page is: its scan, or a white leaf or a leaf of the colour of the paper\n                  of the book drawn in its place. The scan stays linked either way.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar group_label: Label of the group the user put the page in, or empty for no group.\n:ivar images: Paths of the images of the page's current version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
       },
       "PageSettingForm": {
         "properties": {

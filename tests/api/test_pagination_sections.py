@@ -357,3 +357,53 @@ class TestChangeSections:
         expect((computed.label, computed.label_manual) == ('2', False))
         expect((typed.label, typed.label_manual) == ('2a', True))
         assert_expectations()
+
+    async def test_a_page_names_the_section_that_governs_it(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify the manifest and a single page give the governing section, and none where there is none.
+
+        The first page stands before the main flow, the second starts it, the third is a plate taken by a series that
+        starts earlier, and the fourth is kept out of the book.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        pages_path = f'{PROJECTS_PATH}/{fx_book.project.id}/pages'
+        flow = PaginationSectionSchema.model_validate_json(
+            (await fx_client.post(fx_book.sections_path, json=fx_book.body(1))).content
+        )
+        plates = PaginationSectionSchema.model_validate_json(
+            (await fx_client.post(fx_book.sections_path, json=fx_book.body(0, kinds=['plate']))).content
+        )
+        await fx_client.patch(f'{pages_path}/{fx_book.pages[2].id}', json={'kind': 'plate'})
+        await fx_client.patch(f'{pages_path}/{fx_book.pages[3].id}', json={'included': False})
+
+        manifest = Page[PageSchema].model_validate_json((await fx_client.get(pages_path)).content)
+        single = PageSchema.model_validate((await fx_client.get(f'{pages_path}/{fx_book.pages[2].id}')).json())
+
+        expect([item.section_id for item in manifest.items] == [None, flow.id, plates.id, None])
+        expect(single.section_id == plates.id)
+        assert_expectations()
+
+    async def test_a_book_without_sections_gives_its_pages_no_section(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify no page names a section until one is made, and none after the last is removed.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        pages_path = f'{PROJECTS_PATH}/{fx_book.project.id}/pages'
+        before = Page[PageSchema].model_validate_json((await fx_client.get(pages_path)).content)
+        made = PaginationSectionSchema.model_validate_json(
+            (await fx_client.post(fx_book.sections_path, json=fx_book.body(0))).content
+        )
+        await fx_client.delete(f'{fx_book.sections_path}/{made.id}')
+        after = Page[PageSchema].model_validate_json((await fx_client.get(pages_path)).content)
+
+        expect({item.section_id for item in before.items} == {None})
+        expect({item.section_id for item in after.items} == {None})
+        assert_expectations()

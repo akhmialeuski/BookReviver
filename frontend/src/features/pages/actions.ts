@@ -9,12 +9,15 @@ import {
 } from '@/api';
 import {
   attachScanApiV1ProjectsProjectIdPagesPageIdScanPutMutation,
+  createPaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostMutation,
   deletePageApiV1ProjectsProjectIdPagesPageIdDeleteMutation,
+  deletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteMutation,
   deleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteMutation,
   fillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostMutation,
   movePagesApiV1ProjectsProjectIdPagesMovePostMutation,
   moveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostMutation,
   numberPagesApiV1ProjectsProjectIdPagesLabelsPostMutation,
+  putPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutMutation,
   updatePageApiV1ProjectsProjectIdPagesPageIdPatchMutation,
 } from '@/api/@tanstack/react-query.gen';
 import { applyChanges } from '@/features/pages/edits';
@@ -25,6 +28,7 @@ import {
   invalidateProject,
   invalidateProjectList,
   invalidateScans,
+  invalidateSections,
   invalidateSources,
   pageChangesInFlight,
   pagesScope,
@@ -65,6 +69,8 @@ async function refreshPages(
   }
   await Promise.all([
     invalidatePages(queryClient, projectId),
+    // A page that leaves hands its section on, so a section can change with the pages
+    invalidateSections(queryClient, projectId),
     invalidateProject(queryClient, projectId),
     invalidateProjectList(queryClient),
   ]);
@@ -268,6 +274,42 @@ export function useNumberPages(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...numberPagesApiV1ProjectsProjectIdPagesLabelsPostMutation(),
+    scope: rewriteScope(projectId),
+    onSettled: readWhenLast(queryClient, projectId),
+  });
+}
+
+/**
+ * Make a pagination section, which renumbers the pages it takes.
+ *
+ * The labels are written by the server in the transaction of the change, so nothing is shown before it answers. The
+ * change runs in the scope of the pages, like every change that rewrites them, and the manifest and the sections are
+ * read again when the last of them ends.
+ */
+export function useCreateSection(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...createPaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostMutation(),
+    scope: rewriteScope(projectId),
+    onSettled: readWhenLast(queryClient, projectId),
+  });
+}
+
+/** Replace the first page and the rule of a pagination section, which renumbers the pages it takes. */
+export function usePutSection(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...putPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutMutation(),
+    scope: rewriteScope(projectId),
+    onSettled: readWhenLast(queryClient, projectId),
+  });
+}
+
+/** Remove a pagination section, which hands its pages to the section before it and renumbers them. */
+export function useDeleteSection(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...deletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteMutation(),
     scope: rewriteScope(projectId),
     onSettled: readWhenLast(queryClient, projectId),
   });

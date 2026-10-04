@@ -9,6 +9,7 @@ import type {
   JobKind,
   JobState,
   LabelStyle,
+  NumberDisplay,
   OrderRuleKind,
   Orthography,
   PageKind,
@@ -680,6 +681,8 @@ export const MESSAGES = {
       missing: 'Missing page',
       renumbered: (before: string, after: string) => `The number ${before} becomes ${after}`,
       hidden: 'The number is erased',
+      manual: 'Number set by hand',
+      section: (name: string) => `Section: ${name}`,
     },
     gap: {
       title: (first: string, last: string, count: number) =>
@@ -764,7 +767,7 @@ export const MESSAGES = {
     numbering: {
       title: 'Number pages',
       description:
-        'Writes the printed numbers into a run of pages, in book order. You see the result on the pages before anything is saved.',
+        'Makes a section of the pagination: the pages from the first to the last get the numbers, and the page after them starts a section without numbers unless one starts there already. The sections are listed under Pagination of the book, where they can be changed. You see the result on the pages before anything is saved.',
       preview:
         'Preview. New numbers are shown in blue, the old ones struck out. Nothing is saved until you apply.',
       first: 'From',
@@ -800,6 +803,63 @@ export const MESSAGES = {
       },
       apply: 'Apply numbers',
       applying: 'Applying…',
+    },
+    sections: {
+      title: 'Pagination of the book',
+      add: 'Section',
+      addLabel: 'Add a section',
+      list: 'Sections of the pagination',
+      empty: 'No section numbers the pages yet. Add one to start from the selected page.',
+      hint: 'Moving or inserting a page renumbers its section. A number typed by hand stays as it is.',
+      unnamed: (ordinal: number) => `Section ${ordinal}`,
+      range: (first: number, last: number) => (first === last ? `#${first}` : `#${first}–#${last}`),
+      numbers: (first: string, last: string) => (first === last ? first : `${first}–${last}`),
+      noNumbers: '—',
+      ownSequence: 'Own sequence',
+      styleNames: {
+        arabic: 'Arabic',
+        'roman-lower': 'Roman, lower case',
+        'roman-upper': 'Roman, upper case',
+        'alpha-lower': 'Letters, lower case',
+        'alpha-upper': 'Letters, upper case',
+        none: 'No numbers',
+      } satisfies Record<LabelStyle, string>,
+      from: (name: string, start: number) => (start === 1 ? name : `${name} from ${start}`),
+      displays: {
+        printed: {
+          label: 'Printed',
+          hint: 'The number stands on the page.',
+        },
+        counted: {
+          label: 'Counted, not printed',
+          hint: 'The page is counted and its number is shown in brackets, like [iii], but not printed on the page.',
+        },
+        'not-counted': {
+          label: 'Not counted',
+          hint: 'The page has no number and is left out of the count, like a cover or an endpaper.',
+        },
+      } satisfies Record<NumberDisplay, { label: string; hint: string }>,
+      form: {
+        addTitle: 'New section',
+        editTitle: 'Edit the section',
+        description:
+          'A section numbers the pages from the page it starts at until the next section starts.',
+        name: 'Name',
+        namePlaceholder: 'Preface',
+        first: 'Starts at',
+        style: 'Style',
+        start: 'First number',
+        prefix: 'Prefix',
+        prefixHint: 'Written before every number, like Plate for Plate I.',
+        display: 'How the pages show their numbers',
+        kinds: 'Own sequence for these kinds of page',
+        kindsHint:
+          'Leave empty to number the pages of the book in turn. With kinds chosen, only pages of those kinds take part, and they are counted apart from the other pages.',
+        save: 'Save the section',
+        saving: 'Saving…',
+        remove: 'Delete the section',
+        removing: 'Deleting…',
+      },
     },
     move: {
       title: (count: number) => `Move ${count} ${pluralize(count, 'page', 'pages')}`,

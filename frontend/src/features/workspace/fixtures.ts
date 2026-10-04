@@ -1,4 +1,4 @@
-import type { ImagePathsSchema, PageSchema, StagePageSchema } from '@/api';
+import type { ImagePathsSchema, PageSchema, PaginationSectionSchema, StagePageSchema } from '@/api';
 
 /**
  * Pages and rows of a stage as the tests of the workspace build them, with every field filled and any of them changed.
@@ -21,6 +21,7 @@ export function page(id: string, overrides: Partial<PageSchema> = {}): PageSchem
     position: 0,
     label: '',
     label_manual: false,
+    section_id: null,
     kind: 'text',
     origin: 'scan',
     scan_id: null,
@@ -31,6 +32,28 @@ export function page(id: string, overrides: Partial<PageSchema> = {}): PageSchem
     group_label: '',
     blank_fill: 'scan',
     images: images(`page-${id}`),
+    created_at: '2026-10-01T00:00:00Z',
+    updated_at: '2026-10-01T00:00:00Z',
+    ...overrides,
+  };
+}
+
+/** A pagination section of a book that starts at a page and prints Arabic numbers from 1 unless told otherwise. */
+export function section(
+  id: string,
+  firstPageId: string,
+  overrides: Partial<PaginationSectionSchema> = {},
+): PaginationSectionSchema {
+  return {
+    id,
+    project_id: 'book',
+    first_page_id: firstPageId,
+    name: '',
+    style: 'arabic',
+    start: 1,
+    prefix: '',
+    display: 'printed',
+    kinds: [],
     created_at: '2026-10-01T00:00:00Z',
     updated_at: '2026-10-01T00:00:00Z',
     ...overrides,

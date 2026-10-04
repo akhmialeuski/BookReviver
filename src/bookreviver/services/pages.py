@@ -73,6 +73,7 @@ from bookreviver.domain.errors import (
 from bookreviver.domain.events import JobChanged, PagesChanged, PageVersionReady
 from bookreviver.domain.ids import JobId, PageId
 from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.pagination import Pagination
 from bookreviver.domain.values import PageSize, PageStageKey, Progress, Slice, SliceRequest
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from bookreviver.services.book_measure import NORMALIZE_KEY
@@ -88,7 +89,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.changes import PageChanges
     from bookreviver.domain.entities import Actor, PageStage, PageVersion
-    from bookreviver.domain.ids import PageVersionId, ProjectId, ScanId, SourceId, StorageKey
+    from bookreviver.domain.ids import PageVersionId, PaginationSectionId, ProjectId, ScanId, SourceId, StorageKey
     from bookreviver.domain.values import NewPage, PageAnchor
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import UnitOfWork
@@ -775,16 +776,28 @@ class PageService:
         async with self._assets.readable(key) as path:
             yield path
 
-    async def _overviews(self, pages: Sequence[Page], first_position: int) -> Sequence[PageOverview]:
+    async def _overviews(
+        self, pages: Sequence[Page], first_position: int, *, with_sections: bool = True
+    ) -> Sequence[PageOverview]:
         """Attach positions and base versions to consecutive pages of a book, reading the versions in one call.
+
+        The section of a page is worked out on read, from the sections and the whole book, by the walk that numbers the
+        pages, so it can never disagree with their labels. It is not stored: the section that governs a page changes
+        with every section and every page that moves, and keeping it would mean writing pages that no label changes.
+        A book without sections costs no read of its pages.
 
         :param pages: Pages of one project in book order, without a gap.
         :type pages: Sequence[Page]
         :param first_position: Position of the first page in the book.
         :type first_position: int
+        :param with_sections: Whether to name the section of every page, which a caller that never shows it skips.
+        :type with_sections: bool
         :returns: The overviews of the pages, in the same order.
         :rtype: Sequence[PageOverview]
         """
+        section_ids: dict[PageId, PaginationSectionId | None] = {}
+        if with_sections and pages:
+            section_ids = await self._section_ids(pages[0].project_id)
         versions = await self._uow.page_versions.list_base_versions([page.id for page in pages])
         # The versions come earliest first, so the newest base version of a page wins
         newest = {version.page_id: version for version in versions}
@@ -797,9 +810,23 @@ class PageService:
                 position=first_position + index,
                 image_version=current.get(page.id, newest.get(page.id)),
                 source_id=sources.get(page.scan_id) if page.scan_id is not None else None,
+                section_id=section_ids.get(page.id),
             )
             for index, page in enumerate(pages)
         ]
+
+    async def _section_ids(self, project_id: ProjectId) -> dict[PageId, PaginationSectionId | None]:
+        """Name the section that governs each page of a book.
+
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :returns: The governing section by page identifier, empty for a book without sections.
+        :rtype: dict[PageId, PaginationSectionId | None]
+        """
+        sections = await self._uow.pagination_sections.list_for_project(project_id)
+        if not sections:
+            return {}
+        return Pagination(sections, await self._labels.book(project_id)).section_ids()
 
     async def _current_images(self, pages: Sequence[Page]) -> Mapping[PageId, PageVersion]:
         """Find the version each page shows: the current version of the latest stage that has an image.
@@ -1109,7 +1136,7 @@ class PageService:
         near = sorted(
             (
                 overview
-                for overview in await self._overviews(window.items, first)
+                for overview in await self._overviews(window.items, first, with_sections=False)
                 if overview.page.id != page.id
                 and overview.page.included
                 and not overview.page.is_leaf

@@ -104,6 +104,7 @@ describe('applyProjectEvent', () => {
       [
         'listPagesApiV1ProjectsProjectIdPagesGet',
         'listProjectJobsApiV1ProjectsProjectIdJobsGet',
+        'listPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGet',
         'listProjectsApiV1ProjectsGet',
         'listScansApiV1ProjectsProjectIdScansGet',
         'listSourcesApiV1ProjectsProjectIdSourcesGet',
@@ -195,6 +196,7 @@ describe('applyProjectEvent', () => {
       EventName.PagesChanged,
       [
         'listPagesApiV1ProjectsProjectIdPagesGet',
+        'listPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGet',
         'listProjectsApiV1ProjectsGet',
         'listStagesApiV1ProjectsProjectIdStagesGet',
         ...STAGE_ROWS,

@@ -9,6 +9,7 @@ import {
   invalidateProjectList,
   invalidateRecipes,
   invalidateScans,
+  invalidateSections,
   invalidateSources,
   invalidateStageRows,
   invalidateStageSummary,
@@ -95,6 +96,7 @@ export async function refreshProject(queryClient: QueryClient, projectId: string
     invalidateScans(queryClient, projectId),
     invalidateProjectList(queryClient),
     invalidatePages(queryClient, projectId),
+    invalidateSections(queryClient, projectId),
     invalidateStageSummary(queryClient, projectId),
     invalidateAllStageRows(queryClient, projectId),
     invalidateJobs(queryClient, projectId),
@@ -142,6 +144,8 @@ export function applyProjectEvent(
       if (pageChangesInFlight(queryClient, projectId) === 0) {
         void invalidatePages(queryClient, projectId);
       }
+      // A section follows its first page, so it moves, is handed on or is renumbered with the pages
+      void invalidateSections(queryClient, projectId);
       void invalidateProject(queryClient, projectId);
       void invalidateProjectList(queryClient);
       // Pages added, removed or moved change the counts of every stage and the order of its rows

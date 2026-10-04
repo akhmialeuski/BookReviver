@@ -8,6 +8,7 @@ function page(id: string, position: number): PageSchema {
     position,
     label: '',
     label_manual: false,
+    section_id: null,
     kind: 'text',
     origin: 'scan',
     scan_id: null,

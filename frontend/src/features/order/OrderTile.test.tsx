@@ -5,12 +5,13 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageSchema } from '@/api';
 import { OrderTile, type TileClick } from '@/features/order/OrderTile';
+import { SECTION_TONES, type SectionSpan, sectionSpans } from '@/features/order/sections';
 import { AnchorSide } from '@/features/pages/order';
-import { page } from '@/features/workspace/fixtures';
+import { page, section } from '@/features/workspace/fixtures';
 
 /**
  * The tile of the Order grid: what a click with a modifier key asks of the selection, the words and marks it shows
- * for a page, and the numbers of a preview.
+ * for a page, the numbers of a preview, and the ring of the colour of the section round the number.
  */
 
 describe('OrderTile', () => {
@@ -34,7 +35,12 @@ describe('OrderTile', () => {
 
   function render(
     entry: PageSchema,
-    options: { selected?: boolean; dropSide?: AnchorSide | null; previewLabel?: string } = {},
+    options: {
+      selected?: boolean;
+      dropSide?: AnchorSide | null;
+      previewLabel?: string;
+      span?: SectionSpan;
+    } = {},
   ): HTMLButtonElement {
     act(() =>
       root.render(
@@ -45,6 +51,7 @@ describe('OrderTile', () => {
               selected={options.selected ?? false}
               dropSide={options.dropSide ?? null}
               previewLabel={options.previewLabel}
+              section={options.span}
               onSelect={(click) => clicks.push(click)}
               onOpen={() => undefined}
             />
@@ -155,5 +162,42 @@ describe('OrderTile', () => {
   it('shows an erased number as "no number" in blue', () => {
     const tile = render(page('a', { label: '7' }), { previewLabel: '' });
     expect(tile.querySelector('[data-testid="new-number"]')?.textContent).toBe('no number');
+  });
+
+  describe('the section of the page', () => {
+    const entry = page('a', { label: 'vi', section_id: 's1' });
+    const [span] = sectionSpans([entry], [section('s1', 'a', { name: 'Preface' })]);
+
+    it('rings the number in the colour of the section and names the section in its title', () => {
+      const tile = render(entry, { span });
+      const number = tile.querySelector('[data-testid="page-number"]');
+      expect(number?.className).toContain(SECTION_TONES[0]?.ring);
+      expect(number?.getAttribute('title')).toBe('Section: Preface');
+      expect(tile.getAttribute('data-section-id')).toBe('s1');
+    });
+
+    it('draws no colour for a page that is in no section', () => {
+      const tile = render(entry);
+      const number = tile.querySelector('[data-testid="page-number"]');
+      expect(number?.className).toContain('border-transparent');
+      expect(number?.hasAttribute('title')).toBe(false);
+      expect(tile.hasAttribute('data-section-id')).toBe(false);
+    });
+
+    it('marks a number written by hand with a pencil and says so to a screen reader', () => {
+      const tile = render(page('a', { label: '12a', label_manual: true }));
+      const number = tile.querySelector('[data-testid="page-number"]');
+      expect(number?.getAttribute('data-manual')).toBe('true');
+      expect(number?.querySelector('svg')).not.toBeNull();
+      expect(number?.textContent).toContain('Number set by hand');
+    });
+
+    it('marks no pencil on a number that a section wrote', () => {
+      const tile = render(entry);
+      expect(tile.querySelector('[data-testid="page-number"]')?.hasAttribute('data-manual')).toBe(
+        false,
+      );
+      expect(tile.querySelector('svg')).toBeNull();
+    });
   });
 });
