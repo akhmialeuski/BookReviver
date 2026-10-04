@@ -209,20 +209,6 @@ function StepCard({
           {open ? <ChevronDownIcon className="size-4" /> : <ChevronRightIcon className="size-4" />}
           <span className="truncate">{labels.step(number, title)}</span>
         </button>
-        {issues.length === 0 ? null : (
-          <span
-            className={cn(
-              'flex shrink-0 items-center gap-1 text-xs',
-              kind === 'required' ? 'text-destructive' : 'text-status-attention',
-            )}
-            title={issues.map((issue) => issue.reason).join(' ')}
-            data-testid="step-order-mark"
-            data-kind={kind}
-          >
-            <TriangleAlertIcon className="size-3.5" aria-hidden="true" />
-            {labels.order.marks[kind]}
-          </span>
-        )}
         {run === undefined ? null : (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -269,6 +255,33 @@ function StepCard({
           <Trash2Icon />
         </Button>
       </div>
+      {issues.length === 0 && (run === undefined || !step.enabled) ? null : (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 pb-1.5 text-xs">
+          {run === undefined || !step.enabled ? null : (
+            <p
+              className="text-muted-foreground"
+              title={labels.passedHint}
+              data-testid="step-passed"
+            >
+              {labels.passed(run.passed(number - 1), run.total)}
+            </p>
+          )}
+          {issues.length === 0 ? null : (
+            <span
+              className={cn(
+                'flex shrink-0 items-center gap-1',
+                kind === 'required' ? 'text-destructive' : 'text-status-attention',
+              )}
+              title={issues.map((issue) => issue.reason).join(' ')}
+              data-testid="step-order-mark"
+              data-kind={kind}
+            >
+              <TriangleAlertIcon className="size-3.5" aria-hidden="true" />
+              {labels.order.marks[kind]}
+            </span>
+          )}
+        </div>
+      )}
       {issues.length === 0 || open ? null : (
         <p
           className={cn(
@@ -278,15 +291,6 @@ function StepCard({
           data-testid="step-order-reason"
         >
           {issues[0]?.reason}
-        </p>
-      )}
-      {run === undefined || !step.enabled ? null : (
-        <p
-          className="px-3 pb-1.5 text-xs text-muted-foreground"
-          title={labels.passedHint}
-          data-testid="step-passed"
-        >
-          {labels.passed(run.passed(number - 1), run.total)}
         </p>
       )}
       {open ? (
