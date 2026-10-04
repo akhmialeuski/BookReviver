@@ -12,7 +12,7 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
-from bookreviver.domain.enums import NormalizeParam, Stage, VersionData
+from bookreviver.domain.enums import NormalizeParam, Stage, TransformKind, VersionData
 from bookreviver.domain.geometry import ContentBox, Rect
 from bookreviver.domain.values import NewPageEdit, RecipeDraft, StageRun, Step
 from tests.helpers.samples import PAPER, png_bytes, text_page
@@ -41,6 +41,8 @@ CHANGED: int = 0
 BOX_TOLERANCE_PX: float = 12.0
 MARGIN_TOP_BY_HAND: int = 77
 MANUAL_BOX: ContentBox = ContentBox(left=150, top=170, width=200, height=300)
+# The frame of Select content that the user gave, which is smaller than the block of the page that is changed
+HAND_FRAME: Rect = Rect(left=130, top=160, width=140, height=420)
 
 
 def sheet(index: int) -> Image.Image:
@@ -218,7 +220,7 @@ class TestWhatTheUserSetsOnAPage:
 
 
 class TestMarginsAfterSelectContent:
-    """Tests for Margins with a step before it, with the two steps run as a stage runs them."""
+    """Tests for Margins with Select content before it, which leaves the page as it is, run as a stage runs them."""
 
     @staticmethod
     async def seed_two_steps(kit: ProcessingKit) -> tuple[Actor, Project, list[Page]]:
@@ -247,4 +249,53 @@ class TestMarginsAfterSelectContent:
         versions = [await margins_of(fx_cv_kit, page) for page in pages]
         expect(all(version.processor.key == NORMALIZE for version in versions))
         expect(len({size_of(version) for version in versions}) == 1)
+        assert_expectations()
+
+    async def test_a_run_on_all_pages_places_the_block_select_content_found_on_the_whole_sheet(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify Select content hands on the sheet whole, and Margins cuts the block out of it by the recorded frame.
+
+        The book is run as a whole, so the size by the book is laid over Margins and over no other step.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project, pages = await TestMarginsAfterSelectContent.seed_two_steps(fx_cv_kit)
+        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        for index, page in enumerate(pages):
+            margins = await margins_of(fx_cv_kit, page)
+            assert margins.input_id is not None
+            select = await fx_cv_kit.uow().page_versions.get(margins.input_id)
+            frame = Rect.from_data(select.data[VersionData.FRAME])
+            box = Rect.from_data(margins.data[VersionData.CONTENT_BOX])
+            (size_x, _), (place_x, place_y) = BLOCKS[index]
+            expect(select.transform.kind is TransformKind.IDENTITY)
+            expect((select.data[VersionData.WIDTH_PX], select.data[VersionData.HEIGHT_PX]) == SHEET_SIZE_PX)
+            expect(abs(box.left - frame.left) <= 1 and abs(box.width - frame.width) <= 2)
+            expect(abs(box.left - place_x) <= BOX_TOLERANCE_PX and abs(box.top - place_y) <= BOX_TOLERANCE_PX)
+            expect(box.width <= size_x)
+            expect(size_of(margins) != SHEET_SIZE_PX)
+        expect(len({size_of(await margins_of(fx_cv_kit, page)) for page in pages}) == 1)
+        assert_expectations()
+
+    async def test_the_frame_the_user_gave_to_select_content_is_the_box_margins_places(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify a frame set by hand on Select content is cut out of the whole sheet and placed by Margins.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project, pages = await TestMarginsAfterSelectContent.seed_two_steps(fx_cv_kit)
+        key = await fx_cv_kit.edit_key(pages[CHANGED], Stage.GEOMETRY, CROP)
+        await fx_cv_kit.edits().save(actor, project.id, key, NewPageEdit(kind=Rect.editor, geometry=HAND_FRAME), None)
+        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        margins = await margins_of(fx_cv_kit, pages[CHANGED])
+        assert margins.input_id is not None
+        select = await fx_cv_kit.uow().page_versions.get(margins.input_id)
+        box = Rect.from_data(margins.data[VersionData.CONTENT_BOX])
+        expect(Rect.from_data(select.data[VersionData.FRAME]) == HAND_FRAME)
+        expect(abs(box.left - HAND_FRAME.left) <= 1 and abs(box.top - HAND_FRAME.top) <= 1)
+        expect(abs(box.width - HAND_FRAME.width) <= 2 and abs(box.height - HAND_FRAME.height) <= 2)
         assert_expectations()

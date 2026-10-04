@@ -13,6 +13,7 @@ from delayed_assert import assert_expectations, expect
 from PIL import Image
 
 from bookreviver.domain.enums import ReviewReason, TransformKind, VersionData
+from bookreviver.domain.geometry import Rect
 from bookreviver.ports.processing import StepInput
 from tests.helpers.samples import save
 from tests.plugins.synthetic import draw_sheet
@@ -68,7 +69,9 @@ class TestGeometryChain:
     def test_a_sheet_on_a_dark_background_comes_out_as_a_flat_page(
         self, fx_perspective: Processor, fx_deskew: Processor, fx_crop: Processor, tmp_path: Path
     ) -> None:
-        """Verify the three steps leave a page smaller than the scan, with no mark, and the sides cut pass through.
+        """Verify the three steps find a frame smaller than the page, with no mark, and the sides cut pass through.
+
+        The last step cuts nothing, so its image is the one the step before it made, and the frame it found is inside it.
 
         :param fx_perspective: The perspective processor.
         :type fx_perspective: Processor
@@ -89,8 +92,9 @@ class TestGeometryChain:
         expect(deskew.data[VersionData.CUT_EDGES] == perspective.data[VersionData.CUT_EDGES])
         expect(crop.data[VersionData.CUT_EDGES] == perspective.data[VersionData.CUT_EDGES])
         expect(crop.review is None)
-        expect(crop.transform.kind is TransformKind.CROP)
-        expect(crop.data[VersionData.WIDTH_PX] < scan.image.width)
+        expect(crop.transform.kind is TransformKind.IDENTITY)
+        expect(crop.image == deskew.image)
+        expect(Rect.from_data(crop.data[VersionData.FRAME]).width < crop.data[VersionData.WIDTH_PX])
         assert_expectations()
 
     def test_a_cover_stays_as_it_is_through_all_three_steps(

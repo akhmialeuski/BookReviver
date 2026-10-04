@@ -50,8 +50,9 @@ MANUAL_CONFIDENCE: float = 1.0
 MIN_TONE_CONTRAST: float = 40.0
 # What a step hands on to the steps after it besides the size and the colour of its image: the sides of the sheet cut by
 # the scan, and the reason an earlier step wants the page looked at, so that the last step of a recipe, whose version is
-# the one the stage stands on, carries the reasons of all of them
-CARRIED_DATA: tuple[VersionData, ...] = (VersionData.CUT_EDGES, VersionData.REVIEW, VersionData.CONTENT_FRAME)
+# the one the stage stands on, carries the reasons of all of them. The frame of the content is not among them, since a
+# step that moves the pixels would make it stale: a step that keeps the frame of its input records it itself
+CARRIED_DATA: tuple[VersionData, ...] = (VersionData.CUT_EDGES, VersionData.REVIEW)
 # The fewest rows a block has to be measured for the distance between its lines, which is about three lines of a page
 MIN_PITCH_ROWS: int = 60
 # A peak of the autocorrelation of the rows counts as the first line when it reaches this share of the strongest peak,
@@ -196,10 +197,14 @@ def image_data(image: Samples, facts: MetadataMap, color_mode: ColorMode) -> dic
 def content_frame_of(facts: MetadataMap, scale: float = 1.0) -> Rect | None:
     """Give the frame of the content of a page in the pixels of its image, from what the steps before recorded.
 
-    A step of the cleanup carries the frame it is given. The first of them is given the data of ``geometry.crop``, whose
-    ``frame`` lies in the pixels of the image the crop read. The crop cuts the page at the frame plus the same margin on
-    both sides of an axis, so the margin of an axis is half of what the cropped image has over the frame, and the frame
-    lies that far from the corner of the cropped image.
+    A step that finds the frame records it as ``content_frame`` in the pixels of its own image, and a step of the
+    cleanup carries it on, so that is read first. ``geometry.crop`` records it so, since it leaves the page as it is,
+    and so does ``geometry.normalize`` for the block it placed on the page of the book.
+
+    A version of ``geometry.crop`` that was made while the step still cut the page records only ``frame``, in the pixels
+    of the image the crop read. That crop cut the page at the frame plus the same margin on both sides of an axis, so
+    the margin of an axis is half of what the cropped image has over the frame, and the frame lies that far from the
+    corner of the cropped image.
 
     :param facts: Data of the input version.
     :type facts: MetadataMap

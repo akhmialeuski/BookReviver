@@ -717,6 +717,119 @@ class TestNormalizeContentBox:
         assert_expectations()
 
 
+class TestNormalizeUncutInput:
+    """Tests for the input of Select content, which records the frame of the content and cuts nothing."""
+
+    def test_the_block_is_cut_out_of_the_whole_page_by_the_frame_select_content_recorded(
+        self, fx_normalize: Processor, tmp_path: Path
+    ) -> None:
+        """Verify the page Select content handed on whole is cut by its frame here, and the frame is not searched again.
+
+        The frame is the left half of the block, which no search would find, so a page holding that half and no more
+        shows the frame was read from the data of the input.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        block = text_block()
+        sheet = sheet_with(block)
+        frame = Rect(left=BLOCK_AT_PX[0], top=BLOCK_AT_PX[1], width=block.width // 2, height=block.height)
+        facts: MetadataMap = {
+            VersionData.WIDTH_PX: sheet.width,
+            VersionData.HEIGHT_PX: sheet.height,
+            VersionData.FRAME: frame.to_data(),
+            VersionData.CONTENT_FRAME: frame.to_data(),
+            VersionData.CONFIDENCE: 0.9,
+        }
+        output = run_on(
+            fx_normalize,
+            save(sheet, tmp_path / BLOCK_NAME),
+            tmp_path,
+            params={**PAGE, LINE_HEIGHT: TARGET_LINE_PX},
+            facts=facts,
+        )
+        assert output.image is not None
+        left, _top, right, _bottom = ink_box(output.image)
+        expect(Rect.from_data(output.data[VersionData.CONTENT_BOX]) == frame)
+        expect(right - left <= frame.width + EDGE_TOLERANCE_PX)
+        expect(output.data[VersionData.CONFIDENCE] == pytest.approx(0.9))
+        expect(output.data[VersionData.SOURCE_WIDTH_PX] == sheet.width)
+        assert_expectations()
+
+    def test_a_preview_of_the_whole_page_takes_the_frame_in_the_pixels_of_the_preview(
+        self, fx_normalize: Processor, tmp_path: Path
+    ) -> None:
+        """Verify the frame in the pixels of the full image is brought to a preview of the page that was not cut.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        block = text_block()
+        sheet = sheet_with(block)
+        half = sheet.resize((sheet.width // 2, sheet.height // 2), Image.Resampling.LANCZOS)
+        frame = Rect(left=BLOCK_AT_PX[0], top=BLOCK_AT_PX[1], width=block.width, height=block.height)
+        facts: MetadataMap = {
+            VersionData.WIDTH_PX: half.width,
+            VersionData.HEIGHT_PX: half.height,
+            VersionData.CONTENT_FRAME: frame.to_data(),
+        }
+        output = run_on(
+            fx_normalize,
+            save(half, tmp_path / BLOCK_NAME),
+            tmp_path,
+            params={**PAGE, LINE_HEIGHT: TARGET_LINE_PX},
+            facts=facts,
+            scale=HALF_SCALE,
+        )
+        found = Rect.from_data(output.data[VersionData.CONTENT_BOX])
+        expect(found.left == pytest.approx(frame.left, abs=1))
+        expect(found.width == pytest.approx(frame.width, abs=1))
+        assert_expectations()
+
+    def test_the_block_stands_on_the_page_as_the_content_frame_of_the_steps_after_it(
+        self, fx_normalize: Processor, tmp_path: Path
+    ) -> None:
+        """Verify the frame the step records for the cleanup is the place of the block on the page, not the one of its input.
+
+        The margins at the two sides differ, so the block is not in the middle of the page, and a frame worked out from
+        the size of the page would be wrong.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        block = text_block()
+        sheet = sheet_with(block)
+        frame = Rect(left=BLOCK_AT_PX[0], top=BLOCK_AT_PX[1], width=block.width, height=block.height)
+        facts: MetadataMap = {
+            VersionData.WIDTH_PX: sheet.width,
+            VersionData.HEIGHT_PX: sheet.height,
+            VersionData.CONTENT_FRAME: frame.to_data(),
+        }
+        output = run_on(
+            fx_normalize,
+            save(sheet, tmp_path / BLOCK_NAME),
+            tmp_path,
+            params={**PAGE, LINE_HEIGHT: TARGET_LINE_PX, ALIGN_X: HorizontalAlign.OUTER},
+            facts=facts,
+            side=PageSide.RIGHT,
+        )
+        assert output.image is not None
+        placed = Rect.from_data(output.data[VersionData.CONTENT_FRAME])
+        left, top, right, bottom = ink_box(output.image)
+        expect(output.data[VersionData.CONTENT_FRAME] == output.data[VersionData.FRAME])
+        expect(abs(placed.left - left) <= SEARCH_TOLERANCE_PX)
+        expect(abs(placed.top - top) <= SEARCH_TOLERANCE_PX)
+        expect(abs(placed.left + placed.width - right) <= SEARCH_TOLERANCE_PX)
+        expect(abs(placed.top + placed.height - bottom) <= SEARCH_TOLERANCE_PX)
+        assert_expectations()
+
+
 class TestNormalizePageOfTheBlock:
     """Tests for the page Normalize makes before the book gives it a size, which is the block and its margins."""
 

@@ -3,6 +3,7 @@
 The tests need OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
 """
 
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -24,11 +25,11 @@ from bookreviver.domain.enums import (
     VersionData,
 )
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
-from bookreviver.domain.geometry import Point, Rect
+from bookreviver.domain.geometry import Rect
 from bookreviver.ports.processing import StepInput
 from tests.helpers.samples import CV_MISSING, LINE_PITCH_PX, PAPER, save, text_page
 from tests.plugins.runner import run_on
-from tests.plugins.synthetic import SHEET_PAPER, SHEET_SIZE_PX, draw_sheet
+from tests.plugins.synthetic import SHEET_SIZE_PX, draw_sheet
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -64,11 +65,6 @@ LINE_SCALES: tuple[float, ...] = (0.8, 1.0, 1.2)
 LINE_TOLERANCE: float = 0.02
 EDIT_FRAME: Rect = Rect(left=100, top=150, width=300, height=420)
 HALF_SCALE: float = 0.5
-# The page of the paper-coloured test, its words, and how far the words stand from the left edge
-COLOUR_PAGE_PX: tuple[int, int] = (600, 800)
-WORDS_LEFT_PX: int = 12
-TONE_TOLERANCE: int = 3
-NOISE_SPREAD: float = 3.0
 # The page drawn with the borders of a scan: its size, the tones of the paper, of the text and of the borders, and where
 # the text, the header and the borders lie
 EDGE_PAGE_PX: tuple[int, int] = (600, 1000)
@@ -95,7 +91,7 @@ ALL_SIDES: frozenset[SheetEdge] = frozenset(SheetEdge)
 NO_SIDES: frozenset[SheetEdge] = frozenset[SheetEdge]()
 
 
-def ink_count(path: Path, inset: int = 0) -> int:
+def ink_count(path: Path, inset: int = 0, frame: Rect | None = None) -> int:
     """Count the pixels of ink in an image.
 
     :param path: Image to read.
@@ -103,13 +99,32 @@ def ink_count(path: Path, inset: int = 0) -> int:
     :param inset: Width in pixels of the band along each side that is left out, where a warped sheet has the dark fringe
                   of the background that it was laid on.
     :type inset: int
+    :param frame: The part of the image to count in, or None for all of it.
+    :type frame: Rect | None
     :returns: The number of pixels at or below the limit of the ink.
     :rtype: int
     """
     with Image.open(path) as image:
         samples = np.asarray(image.convert('L'))
     inside = samples[inset : samples.shape[0] - inset, inset : samples.shape[1] - inset]
+    if frame is not None:
+        inside = samples[
+            max(0, math.floor(frame.top)) : math.ceil(frame.top + frame.height),
+            max(0, math.floor(frame.left)) : math.ceil(frame.left + frame.width),
+        ]
     return int((inside <= INK_LIMIT).sum())
+
+
+def pixels_of(path: Path) -> np.ndarray:
+    """Read the samples of an image as they are stored.
+
+    :param path: Image to read.
+    :type path: Path
+    :returns: The samples, one plane for a gray image.
+    :rtype: np.ndarray
+    """
+    with Image.open(path) as image:
+        return np.asarray(image)
 
 
 def upright_sheet(perspective: Processor, workdir: Path, rotation: float, slant: float) -> Path:
@@ -349,7 +364,7 @@ class TestCrop:
     def test_the_frame_holds_all_the_ink_of_the_page(
         self, fx_perspective: Processor, fx_crop: Processor, tmp_path: Path, rotation: float, slant: float
     ) -> None:
-        """Verify no ink is cut off: the page cut to the bare frame holds the ink of the whole page.
+        """Verify no ink is left out: the frame of the page holds the ink of the whole page.
 
         :param fx_perspective: The perspective processor that straightens the drawn sheet.
         :type fx_perspective: Processor
@@ -363,12 +378,12 @@ class TestCrop:
         :type slant: float
         """
         page = upright_sheet(fx_perspective, tmp_path, rotation, slant)
-        output = run_on(fx_crop, page, tmp_path, params={MARGIN: 0})
-        assert output.image is not None
-        expect(ink_count(output.image) >= ALL_INK * ink_count(page, EDGE_INSET_PX))
+        output = run_on(fx_crop, page, tmp_path)
+        frame = Rect.from_data(output.data[VersionData.FRAME])
+        expect(ink_count(page, frame=frame) >= ALL_INK * ink_count(page, EDGE_INSET_PX))
         expect(output.review is None)
         expect(output.data[VersionData.SKIPPED] is False)
-        expect(output.transform.kind is TransformKind.CROP)
+        expect(output.transform.kind is TransformKind.IDENTITY)
         assert_expectations()
 
     def test_the_frame_hugs_the_text_of_a_page(self, fx_crop: Processor, tmp_path: Path) -> None:
@@ -389,50 +404,46 @@ class TestCrop:
         expect(0 <= frame.top + frame.height - bottom <= FRAME_TOLERANCE_PX * 4)
         assert_expectations()
 
-    def test_the_margin_is_a_share_of_the_width_of_the_frame(self, fx_crop: Processor, tmp_path: Path) -> None:
-        """Verify each side gets the percent of the width of the frame the parameter says, and none by default.
+    def test_the_page_is_handed_on_as_it_is_with_the_frame_recorded(self, fx_crop: Processor, tmp_path: Path) -> None:
+        """Verify nothing is cut: the output is the image of the input, and the size of the page is its size.
+
+        The frame is recorded in the pixels of the page, both as the frame and as the content frame the steps after it
+        carry on.
 
         :param fx_crop: The processor under test.
         :type fx_crop: Processor
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        image = save(text_page(*SHEET_SIZE_PX), tmp_path / PAGE_NAME)
-        default = run_on(fx_crop, image, tmp_path)
-        bare = run_on(fx_crop, image, tmp_path, params={MARGIN: 0})
-        narrow = run_on(fx_crop, image, tmp_path, params={MARGIN: 8})
-        wide = run_on(fx_crop, image, tmp_path, params={MARGIN: 20})
-        frame_width = Rect.from_data(default.data[VersionData.FRAME]).width
-        expect(default.data[VersionData.WIDTH_PX] == bare.data[VersionData.WIDTH_PX])
-        expect(default.data[VersionData.WIDTH_PX] == pytest.approx(frame_width, abs=FRAME_TOLERANCE_PX))
-        expect(narrow.data[VersionData.WIDTH_PX] == pytest.approx(1.16 * frame_width, abs=FRAME_TOLERANCE_PX))
-        expect(wide.data[VersionData.WIDTH_PX] == pytest.approx(1.4 * frame_width, abs=FRAME_TOLERANCE_PX))
-        expect(
-            narrow.data[VersionData.HEIGHT_PX]
-            == pytest.approx(bare.data[VersionData.HEIGHT_PX] + 0.16 * frame_width, abs=FRAME_TOLERANCE_PX)
-        )
+        page = text_page(*SHEET_SIZE_PX)
+        image = save(page, tmp_path / PAGE_NAME)
+        output = run_on(fx_crop, image, tmp_path)
+        assert output.image is not None
+        frame = Rect.from_data(output.data[VersionData.FRAME])
+        expect(output.image == image)
+        expect(np.array_equal(pixels_of(output.image), np.asarray(page)))
+        expect((output.data[VersionData.WIDTH_PX], output.data[VersionData.HEIGHT_PX]) == SHEET_SIZE_PX)
+        expect(output.transform.kind is TransformKind.IDENTITY)
+        expect(output.data[VersionData.CONTENT_FRAME] == output.data[VersionData.FRAME])
+        expect(frame.left >= 0 and frame.top >= 0)
+        expect(frame.left + frame.width <= page.width and frame.top + frame.height <= page.height)
+        expect((frame.width, frame.height) != SHEET_SIZE_PX)
         assert_expectations()
 
-    def test_the_margin_beyond_the_page_is_the_colour_of_the_paper(self, fx_crop: Processor, tmp_path: Path) -> None:
-        """Verify what the margin reaches beyond the edge of the page is filled with the median colour of the paper.
+    def test_a_bilevel_page_stays_bilevel_and_is_not_touched(self, fx_crop: Processor, tmp_path: Path) -> None:
+        """Verify the samples of a black-and-white page are not changed, so no gray appears.
 
         :param fx_crop: The processor under test.
         :type fx_crop: Processor
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        page = Image.new('RGB', COLOUR_PAGE_PX, SHEET_PAPER)
-        draw = ImageDraw.Draw(page)
-        for top in range(100, COLOUR_PAGE_PX[1] - 100, 28):
-            draw.rectangle((WORDS_LEFT_PX, top, COLOUR_PAGE_PX[0] - WORDS_LEFT_PX, top + 12), fill=(0, 0, 0))
-        noise = np.random.default_rng(3).normal(0, NOISE_SPREAD, (COLOUR_PAGE_PX[1], COLOUR_PAGE_PX[0], 1))
-        grainy = Image.fromarray((np.asarray(page) + noise).clip(0, 255).astype(np.uint8))
-        output = run_on(fx_crop, save(grainy, tmp_path / PAGE_NAME), tmp_path, params={MARGIN: 20})
-        assert output.image is not None
-        with Image.open(output.image) as cropped:
-            samples = np.asarray(cropped)
-        expect(samples.shape[1] > COLOUR_PAGE_PX[0])
-        expect(all(abs(int(samples[0, 0, plane]) - SHEET_PAPER[plane]) <= TONE_TOLERANCE for plane in range(3)))
+        page = text_page(*SHEET_SIZE_PX).convert('1').convert('L')
+        image = save(page, tmp_path / PAGE_NAME)
+        output = run_on(fx_crop, image, tmp_path)
+        expect(output.image == image)
+        expect(np.array_equal(pixels_of(image), np.asarray(page)))
+        expect(output.color_mode is ColorMode.BILEVEL)
         assert_expectations()
 
     def test_a_blank_page_is_left_as_it_is(self, fx_crop: Processor, tmp_path: Path) -> None:
@@ -491,26 +502,9 @@ class TestCrop:
         expect(output.data[VersionData.CONFIDENCE] == pytest.approx(1.0))
         expect(output.data[VersionData.SKIPPED] is False)
         expect(output.review is None)
-        expect(output.data[VersionData.WIDTH_PX] == pytest.approx(EDIT_FRAME.width, abs=FRAME_TOLERANCE_PX))
-        assert_expectations()
-
-    def test_transform_puts_the_frame_inside_the_margin(self, fx_crop: Processor, tmp_path: Path) -> None:
-        """Verify a point of the page lands where the cut puts it, and goes back to where it was.
-
-        :param fx_crop: The processor under test.
-        :type fx_crop: Processor
-        :param tmp_path: Temporary directory of the test.
-        :type tmp_path: Path
-        """
-        image = save(Image.new('L', (600, 800), PAPER), tmp_path / PAGE_NAME)
-        output = run_on(fx_crop, image, tmp_path, params={MARGIN: 8}, edit=EDIT_FRAME)
-        margin = 0.08 * EDIT_FRAME.width
-        corner = output.transform.to_output(Point(x=EDIT_FRAME.left, y=EDIT_FRAME.top))
-        back = output.transform.to_input(corner)
-        expect(corner.x == pytest.approx(margin, abs=1))
-        expect(corner.y == pytest.approx(margin, abs=1))
-        expect(back.x == pytest.approx(EDIT_FRAME.left))
-        expect(output.transform.quad is not None)
+        expect(output.image == image)
+        expect(output.data[VersionData.WIDTH_PX] == 600)
+        expect(Rect.from_data(output.data[VersionData.CONTENT_FRAME]) == EDIT_FRAME)
         assert_expectations()
 
     def test_the_adaptive_threshold_finds_the_same_frame_on_a_page_lit_unevenly(
@@ -555,23 +549,7 @@ class TestCrop:
         expect(found.height == pytest.approx(truth.height, abs=8))
         expect(half.data[VersionData.SOURCE_WIDTH_PX] == page.width)
         expect(half.data[VersionData.SOURCE_HEIGHT_PX] == page.height)
-        assert_expectations()
-
-    def test_a_bilevel_page_stays_bilevel(self, fx_crop: Processor, tmp_path: Path) -> None:
-        """Verify cutting a black-and-white page makes no gray, and the margin beyond the page is white.
-
-        :param fx_crop: The processor under test.
-        :type fx_crop: Processor
-        :param tmp_path: Temporary directory of the test.
-        :type tmp_path: Path
-        """
-        page = text_page(*SHEET_SIZE_PX).convert('1').convert('L')
-        output = run_on(fx_crop, save(page, tmp_path / PAGE_NAME), tmp_path, params={MARGIN: 30})
-        assert output.image is not None
-        with Image.open(output.image) as cropped:
-            colours = {value for _count, value in cropped.convert('L').getcolors() or []}
-        expect(colours <= {0, PAPER})
-        expect(output.color_mode is ColorMode.BILEVEL)
+        expect(half.data[VersionData.CONTENT_FRAME] == half.data[VersionData.FRAME])
         assert_expectations()
 
     def test_a_scan_on_a_binding_is_cut_inside_the_sheet_with_all_its_text(
@@ -588,15 +566,14 @@ class TestCrop:
         """
         sheet = run_on(fx_perspective, SCAN_ON_BINDING, tmp_path)
         assert sheet.image is not None
-        output = run_on(fx_crop, sheet.image, tmp_path, params={MARGIN: 0}, facts=sheet.data)
-        assert output.image is not None
+        output = run_on(fx_crop, sheet.image, tmp_path, facts=sheet.data)
         frame = Rect.from_data(output.data[VersionData.FRAME])
         width, height = sheet.data[VersionData.WIDTH_PX], sheet.data[VersionData.HEIGHT_PX]
         expect(frame.left >= 0)
         expect(frame.top >= 0)
         expect(frame.left + frame.width <= width)
         expect(frame.top + frame.height <= height)
-        expect(ink_count(output.image) >= MOST_INK * ink_count(sheet.image, EDGE_INSET_PX))
+        expect(ink_count(sheet.image, frame=frame) >= MOST_INK * ink_count(sheet.image, EDGE_INSET_PX))
         assert_expectations()
 
     def test_a_clean_page_keeps_all_its_text(
@@ -613,9 +590,9 @@ class TestCrop:
         """
         sheet = run_on(fx_perspective, CLEAN_PAGE, tmp_path)
         assert sheet.image is not None
-        output = run_on(fx_crop, sheet.image, tmp_path, params={MARGIN: 0}, facts=sheet.data)
-        assert output.image is not None
-        expect(ink_count(output.image) >= MOST_INK * ink_count(sheet.image, EDGE_INSET_PX))
+        output = run_on(fx_crop, sheet.image, tmp_path, facts=sheet.data)
+        frame = Rect.from_data(output.data[VersionData.FRAME])
+        expect(ink_count(sheet.image, frame=frame) >= MOST_INK * ink_count(sheet.image, EDGE_INSET_PX))
         expect(output.data[VersionData.SKIPPED] is False)
         assert_expectations()
 
@@ -645,11 +622,11 @@ class TestCrop:
 
     @pytest.mark.parametrize(
         'raw',
-        [{MARGIN: -1}, {MARGIN: 80}, {BINARIZATION: 'sauvola'}, {SPECK: -3}, {'margin': 5}],
-        ids=['negative-margin', 'margin-too-wide', 'unknown-method', 'negative-speck', 'unknown'],
+        [{BINARIZATION: 'sauvola'}, {SPECK: -3}, {'margin': 5}],
+        ids=['unknown-method', 'negative-speck', 'unknown'],
     )
     def test_parameters_that_do_not_fit_the_schema_are_rejected(self, fx_crop: Processor, raw: MetadataMap) -> None:
-        """Reject a margin outside its range, a method it lacks, a negative speck, and a parameter it lacks.
+        """Reject a method it lacks, a negative speck, and a parameter it lacks.
 
         :param fx_crop: The processor under test.
         :type fx_crop: Processor
@@ -668,10 +645,11 @@ class TestCrop:
         spec = fx_crop.spec
         expect(
             fx_crop.validate_params({})
-            == {METHOD: CropMethod.INK_BLOCKS, MARGIN: 0.0, BINARIZATION: Binarization.OTSU.value, SPECK: 4}
+            == {METHOD: CropMethod.INK_BLOCKS, BINARIZATION: Binarization.OTSU.value, SPECK: 4}
         )
         expect((spec.key, spec.stage, spec.scope) == ('geometry.crop', Stage.GEOMETRY, ProcessorScope.PAGE))
         expect(spec.editor is EditorKind.RECT)
+        expect(spec.version == '2')
         assert_expectations()
 
     def test_parameters_stored_before_the_methods_existed_keep_the_blocks_of_ink(self, fx_crop: Processor) -> None:
@@ -680,8 +658,19 @@ class TestCrop:
         :param fx_crop: The processor under test.
         :type fx_crop: Processor
         """
-        checked = fx_crop.validate_params({MARGIN: 3.0})
+        checked = fx_crop.validate_params({})
         assert checked[METHOD] == CropMethod.INK_BLOCKS
+
+    @pytest.mark.parametrize('margin', [0.0, 3.0, 80.0])
+    def test_the_margin_a_recipe_saved_while_the_step_cut_is_left_out(self, fx_crop: Processor, margin: float) -> None:
+        """Verify a stored recipe that holds the margin still runs, and the margin changes nothing, since nothing is cut.
+
+        :param fx_crop: The processor under test.
+        :type fx_crop: Processor
+        :param margin: The margin the stored recipe holds, in percent.
+        :type margin: float
+        """
+        assert fx_crop.validate_params({MARGIN: margin}) == fx_crop.validate_params({})
 
     def test_the_method_layout_is_declared_and_not_offered(self, fx_crop: Processor) -> None:
         """Verify the method that reads the regions of the Layout stage is refused while no such stage exists.
