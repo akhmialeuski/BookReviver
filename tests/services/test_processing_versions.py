@@ -92,9 +92,15 @@ async def ran_two_steps(
     recipe = await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, RecipeDraft(name='Two', steps=steps))
     await run_stage(kit, actor, project, StageRun(stage=Stage.GEOMETRY))
     found = await kit.uow().page_versions.list_for_page(page.id)
-    made = sorted(
-        (version for version in found if version.stage is Stage.GEOMETRY), key=lambda version: version.created_at
-    )
+    in_stage = [version for version in found if version.stage is Stage.GEOMETRY]
+    # The steps run within one tick of the clock, so the order is the one of the chain: each step reads the version of
+    # the step before it, and the first reads the image of an earlier stage
+    read = {version.input_id: version for version in in_stage}
+    made: list[PageVersion] = []
+    next_version = next((version for version in in_stage if version.input_id not in {v.id for v in in_stage}), None)
+    while next_version is not None:
+        made.append(next_version)
+        next_version = read.get(next_version.id)
     return actor, project, page, [step.step_id for step in recipe.steps], made
 
 

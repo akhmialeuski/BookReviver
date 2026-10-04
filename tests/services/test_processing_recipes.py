@@ -264,10 +264,10 @@ class TestDefaultConditions:
         )
         assert_expectations()
 
-    async def test_the_text_recipe_of_cleanup_keeps_binarization_and_despeckling_off_the_pictures(
+    async def test_the_text_recipe_of_cleanup_keeps_binarization_despeckling_and_thickness_off_the_pictures(
         self, fx_cv_kit: ProcessingKit
     ) -> None:
-        """Verify binarization and despeckling process text pages, and the eraser of the user processes every page.
+        """Verify binarization, despeckling and thickness process text pages, and the eraser of the user processes every page.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
@@ -277,6 +277,7 @@ class TestDefaultConditions:
         assert {step.processor_key: step.applies_to for step in recipe.steps} == {
             'cleanup.binarize': AppliesTo.TEXT,
             'cleanup.despeckle': AppliesTo.TEXT,
+            'cleanup.thickness': AppliesTo.TEXT,
             'cleanup.eraser': AppliesTo.ALL,
         }
 

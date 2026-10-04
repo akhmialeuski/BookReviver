@@ -182,8 +182,13 @@ class TestThickness:
         :type tmp_path: Path
         """
         image = save(Image.fromarray(_page_with_stem()), tmp_path / PAGE_NAME)
-        thinned = run_step(fx_thickness, image, tmp_path, {AMOUNT: -1})
-        thickened = run_step(fx_thickness, image, tmp_path, {AMOUNT: 1})
+        # Each run writes the same file name into its working directory, so the two runs get one directory each
+        thinned_dir = tmp_path / 'thinned'
+        thickened_dir = tmp_path / 'thickened'
+        thinned_dir.mkdir()
+        thickened_dir.mkdir()
+        thinned = run_step(fx_thickness, image, thinned_dir, {AMOUNT: -1})
+        thickened = run_step(fx_thickness, image, thickened_dir, {AMOUNT: 1})
         assert thinned.image is not None
         assert thickened.image is not None
         expect(int((read_gray(thinned.image)[MIDDLE_ROW, HAIRLINE_LEFT_PX - 5 :] == INK).sum()) == 0)
