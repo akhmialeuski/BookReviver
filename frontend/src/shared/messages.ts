@@ -1681,6 +1681,20 @@ export const MESSAGES = {
       using: 'Using…',
       pictureRemoved: 'Picture removed · made again on use',
       empty: 'Run the stage to make a result.',
+      mark: {
+        group: 'Mark of this result',
+        good: 'Good',
+        bad: 'Bad',
+      },
+      comment: {
+        label: 'Comment',
+        add: 'Add a comment',
+        edit: 'Edit comment',
+        placeholder: 'What was tried, what worked and why',
+        save: 'Save comment',
+        saving: 'Saving…',
+        cancel: 'Cancel',
+      },
       made: (time: string) => `Made ${time}`,
     },
     stale: {

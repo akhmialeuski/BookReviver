@@ -40,6 +40,7 @@ import {
   measureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostMutation,
   previewStepApiV1ProjectsProjectIdStagesStagePreviewPostMutation,
   putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutMutation,
+  putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutMutation,
   putRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutMutation,
   putSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutMutation,
   putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation,
@@ -519,6 +520,25 @@ export function useChooseVersion(projectId: string, stage: Stage) {
           }),
         }),
       ]),
+  });
+}
+
+/**
+ * Set the mark and the comment of a result, which are the user's notes and change nothing the step reads.
+ *
+ * Both are replaced together, so a caller that changes one sends the other as it is. The versions of the page are read
+ * again, since every list of results shows the notes.
+ */
+export function useMarkResult(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutMutation(),
+    onSettled: (_data, _error, variables) =>
+      queryClient.invalidateQueries({
+        queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
+          path: { project_id: projectId, page_id: variables.path.page_id },
+        }),
+      }),
   });
 }
 

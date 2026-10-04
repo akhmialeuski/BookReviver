@@ -3,6 +3,7 @@ import { EditorControls } from '@/features/editors/EditorControls';
 import type { EditorSession } from '@/features/editors/session';
 import { ApplyTo } from '@/features/processing/ApplyTo';
 import { useChooseVersion, useRemakeVersion, useVersions } from '@/features/processing/queries';
+import { ResultNote } from '@/features/processing/ResultNote';
 import { describeParams, historyOf, readChainResult } from '@/features/processing/results';
 import type { Processing } from '@/features/processing/useProcessing';
 import { useShownStep } from '@/features/processing/useShownStep';
@@ -256,6 +257,7 @@ export function ThisPageSection({
                       {labels.history.pictureRemoved}
                     </span>
                   ) : null}
+                  <ResultNote projectId={projectId} version={entry} />
                 </div>
                 {current ? (
                   <Badge variant="secondary">{labels.history.current}</Badge>
