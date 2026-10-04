@@ -2,6 +2,7 @@ import { CopyPlusIcon, PlusIcon } from 'lucide-react';
 import type { StagePageSchema } from '@/api';
 import { isPlacement } from '@/features/editors/placement';
 import { MeasureBook } from '@/features/processing/MeasureBook';
+import { PageStepHistory } from '@/features/processing/PageStepHistory';
 import { PageStepSettings } from '@/features/processing/PageStepSettings';
 import { pageValuesOf } from '@/features/processing/pageSettings';
 import {
@@ -211,6 +212,14 @@ export function RecipeSection({
                 processor={catalogue.find((processor) => processor.key === step.processorKey)}
                 pageId={pageId}
                 pageValues={pageValuesOf(pageSettings.data, step.stepId)}
+              />
+            )}
+            {pageId === undefined ? null : (
+              <PageStepHistory
+                processing={processing}
+                step={step}
+                processor={catalogue.find((processor) => processor.key === step.processorKey)}
+                pageId={pageId}
               />
             )}
           </>

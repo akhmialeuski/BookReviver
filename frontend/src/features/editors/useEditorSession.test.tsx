@@ -35,6 +35,7 @@ const sdk = vi.hoisted(() => ({
   put: vi.fn(),
   remove: vi.fn(),
   run: vi.fn(),
+  undo: vi.fn(),
   jobs: vi.fn(),
   versions: vi.fn(),
 }));
@@ -46,6 +47,7 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPut: sdk.put,
   deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDelete: sdk.remove,
   runStageApiV1ProjectsProjectIdStagesStageRunPost: sdk.run,
+  undoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPost: sdk.undo,
   listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
 }));
 
@@ -116,6 +118,30 @@ function edit(overrides: Partial<PageEditSchema>): PageEditSchema {
     edit_hash: 'abc',
     updated_at: '2026-10-01T00:00:00Z',
     ...overrides,
+  };
+}
+
+/** What an undo of the server answers: the undos it wrote, one of the layer given. */
+function undone(layer: 'settings' | 'hand') {
+  return {
+    data: {
+      changes: [
+        {
+          id: 'undo',
+          page_id: 'page',
+          stage: 'geometry',
+          step_id: 'id-geometry.deskew',
+          layer,
+          before: null,
+          after: null,
+          source: 'undo',
+          batch_id: null,
+          undoes: 'change',
+          created_at: '2026-10-01T00:00:00Z',
+          sequence: 2,
+        },
+      ],
+    },
   };
 }
 
@@ -243,6 +269,7 @@ describe('useEditorSession', () => {
     sdk.put.mockResolvedValue({ data: edit({}) });
     sdk.remove.mockResolvedValue({ data: undefined });
     sdk.run.mockResolvedValue({ data: JOB });
+    sdk.undo.mockResolvedValue(undone('hand'));
     sdk.jobs.mockResolvedValue(jobsOf());
     sdk.versions.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 50, pages: 1 } });
     session = null;
@@ -477,7 +504,7 @@ describe('useEditorSession', () => {
       expect(sdk.run).toHaveBeenCalledTimes(1);
     });
 
-    it('takes back a change with Ctrl+Z by putting the edit the page had before', async () => {
+    it('takes back a change with Ctrl+Z by asking the server to undo the newest change of the step', async () => {
       await render();
       act(() => session?.open());
       await typeAngle('4');
@@ -485,25 +512,42 @@ describe('useEditorSession', () => {
 
       await pressUndo();
 
-      expect(sdk.put).toHaveBeenCalledTimes(1);
-      expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({
-        body: { kind: 'rotation', geometry: '{"degrees":1.5}' },
+      expect(sdk.undo).toHaveBeenCalledTimes(1);
+      expect(sdk.undo.mock.calls[0]?.[0]).toMatchObject({
+        path: { page_id: 'page', stage: 'geometry', step_id: 'id-geometry.deskew' },
+        body: { change_id: null },
       });
+      expect(sdk.put).not.toHaveBeenCalled();
     });
 
-    it('takes back Auto with Ctrl+Z by putting the deleted edit back', async () => {
+    it('runs the stage again after an undo that put an edit back', async () => {
       await render();
       act(() => session?.open());
-      await act(async () => session?.auto());
+      await pressUndo();
       await settle();
+
+      expect(sdk.run).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not run the stage after an undo that took back only a setting of the page', async () => {
+      sdk.undo.mockResolvedValue(undone('settings'));
+      await render();
+      act(() => session?.open());
+
+      await pressUndo();
       await settle();
+
+      expect(sdk.run).not.toHaveBeenCalled();
+    });
+
+    it('shows the answer of the server when the undo is refused', async () => {
+      sdk.undo.mockRejectedValue(new ProblemError('The settings changed since.', 409, null, []));
+      await render();
+      act(() => session?.open());
 
       await pressUndo();
 
-      expect(sdk.put).toHaveBeenCalledTimes(1);
-      expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({
-        body: { geometry: '{"degrees":1.5}' },
-      });
+      expect(session?.error).toBe('The settings changed since.');
     });
 
     it('answers Ctrl+Z only while the editor is open', async () => {
@@ -513,18 +557,8 @@ describe('useEditorSession', () => {
 
       await pressUndo();
 
-      expect(sdk.put).not.toHaveBeenCalled();
+      expect(sdk.undo).not.toHaveBeenCalled();
     });
-  });
-
-  it('takes back the first change of a page that had no edit by deleting the edit', async () => {
-    await render();
-    act(() => session?.open());
-    await typeAngle('4');
-
-    await pressUndo();
-
-    expect(sdk.remove).toHaveBeenCalledTimes(1);
   });
 
   describe('in the workspace of an open step', () => {

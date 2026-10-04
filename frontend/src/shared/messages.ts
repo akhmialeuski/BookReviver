@@ -1209,6 +1209,34 @@ export const MESSAGES = {
         saveFirst:
           'Save the recipe first, since a step that is not saved has no settings of a page.',
       },
+      pageHistory: {
+        title: 'History of this page',
+        hint: 'Every change of this step on this page. Undo takes back the newest change that stands, and a change of a batch is taken back with the rest of its batch.',
+        none: 'Nothing has changed for this step on this page yet.',
+        undo: 'Undo',
+        undoLast: 'Undo the last change (Ctrl+Z)',
+        undoBack: 'Undo back to here',
+        undoBackLabel: (what: string) => `Undo back to the change: ${what}`,
+        undone: 'Undone',
+        batch: 'Part of a batch',
+        layers: {
+          settings: 'Settings of the page',
+          found: 'Found by the automatic run',
+          hand: 'Set by hand',
+        },
+        sources: {
+          user: 'You',
+          run: 'A run',
+          'carry-over': 'A carry-over',
+          reset: 'A reset',
+          undo: 'An undo',
+        },
+        what: (layer: string, source: string) => `${layer} · ${source}`,
+        change: (before: string, after: string) => `${before} → ${after}`,
+        nothing: 'nothing',
+        mask: 'a mask',
+        failed: 'The history of this page could not be read.',
+      },
       drag: {
         instructions:
           'To pick up a step, press Space. Move it with the arrow keys, drop it with Space, and cancel with Escape.',
