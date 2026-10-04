@@ -8,7 +8,7 @@ from pydantic import Field, model_validator
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.api.schemas.page_history import PageStepChangeSchema
 from bookreviver.api.schemas.types import PageIdList
-from bookreviver.domain.enums import CarryScope, Stage
+from bookreviver.domain.enums import CarryScope, Stage, StepLayer
 from bookreviver.domain.ids import ChangeBatchId, PageId, StepId
 from bookreviver.domain.values import CarryRequest
 from bookreviver.services.page_carry import SELECTED_NEEDS_PAGES
@@ -69,18 +69,19 @@ class CarryForm(RequestModel):
             raise ValueError(SELECTED_NEEDS_PAGES)
         return self
 
-    def to_request(self, key: PageStepKey, name: str) -> CarryRequest:
+    def to_request(self, key: PageStepKey, name: str | None = None) -> CarryRequest:
         """Return the carry-over as the domain states it.
 
         :param key: The source page, the stage and the step from the address.
         :type key: PageStepKey
-        :param name: Name of the field from the address.
-        :type name: str
+        :param name: Name of the field from the address, or None to carry the shape set by hand.
+        :type name: str | None
         :returns: The request.
         :rtype: CarryRequest
         """
         return CarryRequest(
             key=key,
+            layer=StepLayer.SETTINGS if name is not None else StepLayer.HAND,
             name=name,
             scope=self.scope,
             page_ids=() if self.page_ids is None else tuple(self.page_ids),

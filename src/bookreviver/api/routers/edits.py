@@ -15,11 +15,14 @@ from fastapi_pagination import Page, Params
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.edits import EditForm, PageEditSchema
+from bookreviver.api.schemas.page_history import PageStepChangeSchema
+from bookreviver.api.schemas.page_settings import CarryForm, CarryOverSchema
 from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import PageId, ProjectId, StepId
 from bookreviver.domain.values import PageStepKey, Slice
 from bookreviver.services.edits import EditService
+from bookreviver.services.page_carry import CarryOverService
 
 router = APIRouter(prefix='/projects', tags=['edits'], route_class=DishkaRoute)
 
@@ -143,3 +146,39 @@ async def delete_edit(
     :type edits: EditService
     """
     await edits.delete(actor, address.project_id, address.key)
+
+
+@router.post('/{project_id}/pages/{page_id}/edits/{stage}/{step_id}/carry-over')
+async def carry_over_edit(
+    address: Annotated[StepEditPath, Depends()],
+    form: CarryForm,
+    actor: ActorDep,
+    carry: FromDishka[CarryOverService],
+) -> CarryOverSchema:
+    """Carry the shape this page has set by hand for a step over to other pages, as one batch, and mark them stale.
+
+    The pages are the following ones, the selected ones, or every page of the condition of the step. The whole shape is
+    carried and not a part of it, and the settings of each page stay as they are. A page that has a shape of its own set
+    by hand is left as it is and listed as skipped, unless the form asks to write over it, and a page that has the same
+    shape is neither written nor listed. The changes share a batch, so one undo takes the shape back from every page.
+    The answer is 404 when this page has no shape set by hand for the step, and 422 for an edit that is a mask, which
+    belongs to one page, and for a carry-over to the selected pages that names none.
+
+    \N{FORM FEED}
+    :param address: Identifiers of the project, the source page, the stage and the step.
+    :type address: StepEditPath
+    :param form: The pages to carry the shape to, and whether to write over a shape of their own.
+    :type form: CarryForm
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param carry: Carry-over service of the request.
+    :type carry: CarryOverService
+    :returns: The batch, the changes written and the pages skipped.
+    :rtype: CarryOverSchema
+    """
+    carried = await carry.carry(actor, address.project_id, form.to_request(address.key))
+    return CarryOverSchema(
+        batch_id=carried.batch_id,
+        changes=[PageStepChangeSchema.model_validate(change) for change in carried.changes],
+        skipped=list(carried.skipped),
+    )

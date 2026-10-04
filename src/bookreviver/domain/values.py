@@ -26,6 +26,7 @@ from bookreviver.domain.enums import (
     Script,
     Stage,
     StepField,
+    StepLayer,
     UploadProblem,
     VersionData,
     VersionOutput,
@@ -554,23 +555,41 @@ class PageStepKey:
     step_id: StepId
 
 
+CARRY_NAME_MISMATCH: str = (
+    'A carry-over of the layer "{layer}" must name a field exactly when the layer is the settings.'
+)
+
+
 @frozen(kw_only=True)
 class CarryRequest:
-    """What a carry-over of a setting asks for: the field of a step on a page, and the pages it goes to.
+    """What a carry-over asks for: a layer of a step on a page, and the pages it goes to.
+
+    The layer is either one field of the settings of the step, which ``name`` names, or the manual edit of the step, the
+    whole shape the user set by hand, which has no name.
 
     :ivar key: The source page, the stage and the step.
-    :ivar name: Name of the field in the parameters of the step.
+    :ivar layer: The layer carried, the settings of the page or its manual edit.
+    :ivar name: Name of the field in the parameters of the step, for the layer of the settings, and None for the edit.
     :ivar scope: The pages the value goes to.
     :ivar page_ids: The pages of a carry-over to the selected pages, which the other scopes ignore.
-    :ivar overwrite: Whether a page that has another value of its own for the field takes the value as well, instead of
-                     being skipped.
+    :ivar overwrite: Whether a page that has another value of its own takes the value as well, instead of being skipped.
     """
 
     key: PageStepKey
-    name: str
+    layer: StepLayer = StepLayer.SETTINGS
+    name: str | None = None
     scope: CarryScope
     page_ids: tuple[PageId, ...] = ()
     overwrite: bool = False
+
+    def __attrs_post_init__(self) -> None:
+        """Check that a carry of the settings names its field and that a carry of the edit names none.
+
+        :raises ValueError: If the layer is the settings and no field is named, or the layer is the edit and one is.
+        """
+        if (self.layer is StepLayer.SETTINGS) != (self.name is not None):
+            err_msg = CARRY_NAME_MISMATCH.format(layer=self.layer.label)
+            raise ValueError(err_msg)
 
 
 @frozen
@@ -980,6 +999,7 @@ class ProcessorSpec:
     :ivar key: Key of the processor, ``<stage>.<name>`` or ``split.<name>``, such as ``geometry.deskew``.
     :ivar version: Version of the algorithm, which joins the identifier of the page versions it makes.
     :ivar title: Name the interface shows.
+    :ivar summary: One line the catalogue of steps shows under the title, saying what the step does to a page.
     :ivar stage: Stage whose recipe the step may be put into.
     :ivar scope: Whether the step makes one output for the page or one for each part of a scan.
     :ivar outputs: What the step writes.
@@ -998,6 +1018,7 @@ class ProcessorSpec:
     key: str = field(validator=validators.min_len(1))
     version: str = field(validator=validators.min_len(1))
     title: str = field(validator=validators.min_len(1))
+    summary: str = ''
     stage: Stage
     scope: ProcessorScope = ProcessorScope.PAGE
     outputs: frozenset[VersionOutput] = frozenset({VersionOutput.IMAGE})
