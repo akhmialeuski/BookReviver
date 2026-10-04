@@ -4992,7 +4992,7 @@
           "profiles"
         ],
         "summary": "List Profiles",
-        "description": "List the profiles of the signed-in account in the order of the stages, then oldest first.",
+        "description": "List the profiles of the signed-in account in the order of the stages, then oldest first, with their books.\n\nThe books of a profile are the books that have a recipe made from it.",
         "operationId": "list_profiles_api_v1_recipe_profiles_get",
         "parameters": [
           {
@@ -5041,7 +5041,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_RecipeProfileSchema_"
+                  "$ref": "#/components/schemas/Page_LibraryProfileSchema_"
                 }
               }
             }
@@ -5107,6 +5107,236 @@
             }
           }
         },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeProfileSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/recipe-profiles/import": {
+      "post": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Import Profile",
+        "description": "Save the profile a file holds, which is not the default until it is made one.\n\nThe file is checked as a saved profile is. A file of another version of the format, a step whose parameters do not\nfit, and a step that stands where it cannot work, unless the file asks for the free order, answer 422, and so does\na file that needs a processor that is not installed, which the answer names.",
+        "operationId": "import_profile_api_v1_recipe_profiles_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileFileSchema"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeProfileSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/recipe-profiles/{profile_id}/export": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Export Profile",
+        "description": "Write a profile as a file, which another account can import.",
+        "operationId": "export_profile_api_v1_recipe_profiles__profile_id__export_get",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe profile",
+              "title": "Profile Id"
+            },
+            "description": "Identifier of the recipe profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileFileSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/recipe-profiles/{profile_id}/duplicate": {
+      "post": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Duplicate Profile",
+        "description": "Save a copy of a profile under its name with \"(copy)\" after it, which is not the default.",
+        "operationId": "duplicate_profile_api_v1_recipe_profiles__profile_id__duplicate_post",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe profile",
+              "title": "Profile Id"
+            },
+            "description": "Identifier of the recipe profile"
+          }
+        ],
         "responses": {
           "201": {
             "description": "Successful Response",
@@ -5566,7 +5796,7 @@
           "profiles"
         ],
         "summary": "Apply Profile",
-        "description": "Add the steps of a profile to a book as a variant of the profile's stage, and optionally make it the active one.\n\nA step whose processor is not installed on the server is left out and the processor is named in the answer. A\nprofile with no step left to run answers 422. A profile of another account answers 404.",
+        "description": "Add the steps of a profile to a book as a variant of the profile's stage, and optionally make it the active one.\n\nA step whose processor is not installed on the server is left out and the processor is named in the answer. A\nprofile with no step left to run answers 422. A profile of another account answers 404. With pages, the variant is\nalso pinned to them and the stage is run on them in the background, and the queued job is in the answer; a book\nthat is busy answers 409 then, and keeps the variant.",
         "operationId": "apply_profile_api_v1_projects__project_id__recipe_profiles__profile_id__apply_post",
         "parameters": [
           {
@@ -8549,6 +8779,16 @@
             },
             "type": "array",
             "title": "Missing Processors"
+          },
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobSchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -8557,7 +8797,7 @@
           "missing_processors"
         ],
         "title": "AppliedProfileSchema",
-        "description": "The recipe a profile made in a book, and what was left out of it.\n\n:ivar recipe: The variant added to the book, which is the active recipe when the request asked for that.\n:ivar missing_processors: Keys of the processors of the profile that are not installed, whose steps were left out."
+        "description": "The recipe a profile made in a book, and what was left out of it.\n\n:ivar recipe: The variant added to the book, which is the active recipe when the request asked for that.\n:ivar missing_processors: Keys of the processors of the profile that are not installed, whose steps were left out.\n:ivar job: The queued run of the stage on the pages the profile was applied to, or null when it was applied to the\n           book only."
       },
       "AppliesTo": {
         "type": "string",
@@ -8577,12 +8817,29 @@
             "type": "boolean",
             "title": "Activate",
             "default": false
+          },
+          "page_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array",
+                "maxItems": 2000,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Ids"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "ApplyProfileBody",
-        "description": "How to apply a profile to a book.\n\n:ivar activate: Whether the new variant also becomes the active recipe of the stage."
+        "description": "How to apply a profile to a book.\n\n:ivar activate: Whether the new variant also becomes the active recipe of the stage.\n:ivar page_ids: The pages to pin the new variant to and to run the stage on, or omitted to apply the profile to the\n                book only."
       },
       "BlankFill": {
         "type": "string",
@@ -9652,6 +9909,64 @@
         ],
         "title": "LabelStyle",
         "description": "How the number of a page is written, which the numbering of a range of pages applies to its numbers.\n\nThe domain imports only the standard library, so the Roman numerals are written here and not taken from the\n``roman`` package, whose one function would be about a dozen lines of ours."
+      },
+      "LibraryProfileSchema": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/StepSchema"
+            },
+            "type": "array",
+            "title": "Steps"
+          },
+          "order": {
+            "$ref": "#/components/schemas/OrderMode"
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "books": {
+            "type": "integer",
+            "title": "Books"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "stage",
+          "name",
+          "steps",
+          "order",
+          "is_default",
+          "created_at",
+          "updated_at",
+          "books"
+        ],
+        "title": "LibraryProfileSchema",
+        "description": "A recipe profile of the signed-in account with the number of books that use it.\n\n:ivar books: Number of books that have a recipe made from the profile."
       },
       "ManifestPage_PageSchema_": {
         "properties": {
@@ -10768,6 +11083,46 @@
         ],
         "title": "Page[JobSchema]"
       },
+      "Page_LibraryProfileSchema_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryProfileSchema"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[LibraryProfileSchema]"
+      },
       "Page_PageEditSchema_": {
         "properties": {
           "items": {
@@ -11087,46 +11442,6 @@
           "pages"
         ],
         "title": "Page[ProjectSchema]"
-      },
-      "Page_RecipeProfileSchema_": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/RecipeProfileSchema"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "total": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Total"
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Page"
-          },
-          "size": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Size"
-          },
-          "pages": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Pages"
-          }
-        },
-        "type": "object",
-        "required": [
-          "items",
-          "total",
-          "page",
-          "size",
-          "pages"
-        ],
-        "title": "Page[RecipeProfileSchema]"
       },
       "Page_RecipeRuleSchema_": {
         "properties": {
@@ -11625,6 +11940,77 @@
         ],
         "title": "ProcessorScope",
         "description": "How many outputs a processor makes from its input."
+      },
+      "ProfileFileSchema": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Version"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "order": {
+            "$ref": "#/components/schemas/OrderMode",
+            "default": "usual"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileFileStep"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Steps"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version",
+          "stage",
+          "name",
+          "steps"
+        ],
+        "title": "ProfileFileSchema",
+        "description": "A profile as a file that is exchanged between accounts: the answer of an export, and the body of an import.\n\n:ivar version: Version of the format of the file.\n:ivar stage: Stage whose recipes the profile can be applied to.\n:ivar name: Name of the profile.\n:ivar order: ``usual`` if the profile refuses a step off a required place, ``free`` if it lets it stand.\n:ivar steps: The steps in the order they run."
+      },
+      "ProfileFileStep": {
+        "properties": {
+          "processor_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Processor Key"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "applies_to": {
+            "$ref": "#/components/schemas/AppliesTo",
+            "default": "all"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "processor_key"
+        ],
+        "title": "ProfileFileStep",
+        "description": "One step of a profile file: a processor, its parameters, whether it is on, and the pages it runs on.\n\nThe step has no identifier, since the identifier belongs to the recipe a step is in, and an import gives each step a\nnew one.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which an import checks against the processor.\n:ivar enabled: Whether a run runs the step.\n:ivar applies_to: Which pages the step processes."
       },
       "ProfileLinkBody": {
         "properties": {

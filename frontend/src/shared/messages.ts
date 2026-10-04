@@ -26,6 +26,7 @@ import type { Problem } from '@/features/about/fields';
 import type { Section } from '@/features/about/sections';
 import type { SuggestedField } from '@/features/about/suggestion';
 import type { OAuthFailure } from '@/features/auth/oauth';
+import type { FileProblem } from '@/features/profiles/profileFile';
 import type { RoadmapKey } from '@/features/stages/roadmap';
 import type { Phase } from '@/features/stages/stages';
 import type { PageFilter } from '@/features/workspace/params';
@@ -1119,6 +1120,12 @@ export const MESSAGES = {
       notLinked:
         'These steps are not kept in a profile. Save them as a new profile, and later changes are compared with it.',
       loadFailed: 'The profile could not be read.',
+      others: 'Other profiles',
+      othersEmpty: 'You have no other profile for this stage.',
+      switchHint: 'Apply this profile to this book, as the active recipe of the stage',
+      switchBlocked: 'Save the recipe or revert it before applying a profile.',
+      manage: 'Manage profiles…',
+      manageHint: 'Open the library of your profiles, to apply, copy, import and export them',
       save: 'Save',
       saveHint: 'Replace the steps of the profile with the steps of this book',
       saveAsNew: 'Save as new…',
@@ -1154,38 +1161,72 @@ export const MESSAGES = {
         `Saved the profile “${name}”. Rename it or make it the default for new books in the profiles of your account.`,
     },
     apply: {
-      open: 'Apply profile',
-      hint: 'Add the steps of a saved profile to this book as a variant',
-      title: 'Apply a profile',
-      description:
-        'The profile becomes a variant of this stage. No page is processed again until the stage is run.',
-      choose: 'Profile',
-      option: (name: string, isDefault: boolean, steps: number) =>
-        `${name}${isDefault ? ' · default' : ''} · ${steps} ${pluralize(steps, 'step', 'steps')}`,
-      none: 'You have no profile for this stage yet. Save a recipe as a profile first.',
-      activate: 'Make it the active recipe',
-      activateHint:
-        'The stage runs by it from now on, and the pages the old recipe made go out of date',
-      submit: 'Apply the profile',
-      submitting: 'Applying…',
-      loadFailed: 'The profiles could not be read.',
-      applied: (name: string, active: boolean) =>
-        active
-          ? `Applied the profile “${name}”. It is the active recipe of this book now.`
-          : `Applied the profile “${name}” as a variant of this book.`,
       leftOut: (processors: readonly string[]) =>
         `Left out, since no such processor is installed on this machine: ${processors.join(', ')}.`,
+    },
+    library: {
+      title: 'Profiles',
+      description:
+        'Your recipe profiles, by stage. Apply one to this book or to the selected pages, copy it, or exchange it as a file.',
+      stages: 'Stages',
+      allStages: 'All stages',
+      empty: (stage: string) =>
+        `You have no ${stage} profile yet. Save the steps of this book with “From this book”, or import a profile file.`,
+      emptyAll: 'You have no profiles yet. Import a profile file, or save the steps of a book.',
+      loadFailed: 'The profiles could not be read.',
+      usedIn: (books: number) =>
+        books === 0 ? 'Used in no book' : `Used in ${books} ${pluralize(books, 'book', 'books')}`,
+      defaultMark: 'default',
+      steps: {
+        label: 'Steps',
+        off: 'off',
+        none: 'No steps',
+      },
+      applyBook: 'Apply to this book',
+      applyBookHint:
+        'Add the profile to this book. Whether it becomes the active recipe is the choice above the list',
+      activate: 'Make it the active recipe',
+      activateHint:
+        'The stage runs by it from now on, and the pages the old recipe made go out of date. Left off, the profile is added as a variant and no page is processed again until the stage is run',
+      applyPages: 'Apply to selected pages',
+      applyPagesHint:
+        'The profile becomes a variant of this book, pinned to the selected pages, and the stage runs on them',
+      applyPagesNone: 'Select pages in the grid first',
+      applyBusy: 'The book is busy with another job',
+      applyDirty: 'Save the recipe or revert it first',
+      applying: 'Applying…',
+      appliedBook: (name: string) =>
+        `Applied the profile “${name}”. It is the active recipe of this book now.`,
+      appliedVariant: (name: string) => `Applied the profile “${name}” as a variant of this book.`,
+      appliedPages: (name: string, pages: number) =>
+        `Applied the profile “${name}” to ${pages} ${pluralize(pages, 'page', 'pages')}. The stage is running on them.`,
+      duplicate: 'Duplicate',
+      duplicateHint: 'Keep a copy of this profile under another name',
+      duplicated: (name: string) => `Saved the copy “${name}”.`,
+      export: 'Export',
+      exportHint: 'Save this profile as a file, to give to another user or keep',
+      exported: (name: string) => `Saved the profile “${name}” to a file.`,
+      more: (name: string) => `More about the profile ${name}`,
+      fromBook: 'From this book',
+      fromBookHint: 'Keep the steps of this book as a new profile',
+      import: 'Import a profile file',
+      importHint: 'Add the profile a file holds to your account',
+      importing: 'Importing…',
+      imported: (name: string) => `Imported the profile “${name}”.`,
+      fileLabel: 'Profile file',
+      fileProblems: {
+        'not-json': 'The file is not a profile file: it does not hold JSON.',
+        'not-profile':
+          'The file is not a profile file: it lacks the version, stage, name or steps.',
+        version:
+          'The file is of a version of the profile format this application does not know, so it was not read.',
+      } satisfies Record<FileProblem, string>,
     },
     page: {
       title: 'Recipe profiles',
       description:
         'The recipes you saved from your books, by stage. A new book starts a stage with the default profile of the stage instead of the built-in recipe.',
       loading: 'Loading the profiles…',
-      failed: 'The profiles could not be read.',
-      empty:
-        'You have no profiles yet. Open a recipe in a book and choose “Save as profile” to make one.',
-      steps: (steps: number) => `${steps} ${pluralize(steps, 'step', 'steps')}`,
-      stepOff: (title: string) => `${title} (off)`,
       defaultBadge: 'Default for new books',
       makeDefault: 'Make default',
       makeDefaultHint: 'A new book starts this stage with this profile',

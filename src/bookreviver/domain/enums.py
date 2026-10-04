@@ -339,6 +339,12 @@ class OrderMode(LabeledStrEnum):
     FREE = 'free', 'Free order'
 
 
+class ProfileFileVersion(enum.IntEnum):
+    """The versions of the format a recipe profile is written to a file in, so a later format can read an older file."""
+
+    V1 = 1
+
+
 class OrderRuleKind(LabeledStrEnum):
     """How firmly a processor asks for its place among the steps of a recipe."""
 

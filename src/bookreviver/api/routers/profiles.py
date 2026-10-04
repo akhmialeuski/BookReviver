@@ -2,8 +2,10 @@
 
 A profile is the account's, so these routes take no project except the ones that apply a profile to a book and that
 record which profile a recipe of a book was made from. A profile of another account answers 404 like a missing one.
-Applying a profile runs nothing and processes no page; like adding a variant, it only stores a recipe, and making it
-the active one marks the pages the old active recipe processed stale.
+Applying a profile to a book runs nothing and processes no page; like adding a variant, it only stores a recipe, and
+making it the active one marks the pages the old active recipe processed stale. Applying it to some pages also queues
+a run of the stage on them, as giving a variant to pages does. A profile leaves the account and enters another as a
+file, through the export and the import.
 """
 
 from dataclasses import dataclass
@@ -16,26 +18,31 @@ from fastapi_pagination import Page
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
 from bookreviver.api.routers.processing import PROJECT_ID_DESCRIPTION, VariantPath
+from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.processing import RecipeBody, RecipeSchema
 from bookreviver.api.schemas.profiles import (
     AppliedProfileSchema,
     ApplyProfileBody,
+    LibraryProfileSchema,
+    ProfileFileSchema,
     ProfileLinkBody,
     ProfileQuery,
     RecipeProfileBody,
     RecipeProfileName,
     RecipeProfileSchema,
 )
-from bookreviver.domain.entities import RecipeProfile
 from bookreviver.domain.ids import ProjectId, RecipeProfileId
 from bookreviver.domain.values import RecipeKey
 from bookreviver.services.recipe_order import RecipeOrder
-from bookreviver.services.recipe_profiles import RecipeProfiles
+from bookreviver.services.recipe_profiles import ListedProfile, RecipeProfiles
 
 PROFILE_ID_DESCRIPTION: str = 'Identifier of the recipe profile'
 PROFILES_PATH: str = '/recipe-profiles'
 PROFILE_PATH: str = PROFILES_PATH + '/{profile_id}'
 DEFAULT_PATH: str = PROFILE_PATH + '/default'
+DUPLICATE_PATH: str = PROFILE_PATH + '/duplicate'
+EXPORT_PATH: str = PROFILE_PATH + '/export'
+IMPORT_PATH: str = PROFILES_PATH + '/import'
 APPLY_PATH: str = '/projects/{project_id}' + PROFILES_PATH + '/{profile_id}/apply'
 LINK_PATH: str = '/projects/{project_id}/stages/{stage}/variants/{recipe_id}/profile'
 
@@ -59,8 +66,10 @@ class AppliedPath:
 @router.get(PROFILES_PATH)
 async def list_profiles(
     query: Annotated[ProfileQuery, Depends()], actor: ActorDep, profiles: FromDishka[RecipeProfiles]
-) -> Page[RecipeProfileSchema]:
-    """List the profiles of the signed-in account in the order of the stages, then oldest first.
+) -> Page[LibraryProfileSchema]:
+    """List the profiles of the signed-in account in the order of the stages, then oldest first, with their books.
+
+    The books of a profile are the books that have a recipe made from it.
 
     \N{FORM FEED}
     :param query: Page number and size from the query, and the stage to list.
@@ -70,10 +79,10 @@ async def list_profiles(
     :param profiles: Profiles service of the request.
     :type profiles: RecipeProfiles
     :returns: One page of the profiles.
-    :rtype: Page[RecipeProfileSchema]
+    :rtype: Page[LibraryProfileSchema]
     """
-    pager = Pager[RecipeProfile, RecipeProfileSchema](query, RecipeProfileSchema.model_validate)
-    return pager.page(await profiles.profiles(actor, query.stage, pager.request))
+    pager = Pager[ListedProfile, LibraryProfileSchema](query, LibraryProfileSchema.of)
+    return pager.page(await profiles.library(actor, query.stage, pager.request))
 
 
 @router.post(PROFILES_PATH, status_code=status.HTTP_201_CREATED)
@@ -97,6 +106,68 @@ async def create_profile(
     """
     profile = await profiles.save(actor, body.stage, body.to_draft())
     return RecipeProfileSchema.model_validate(profile)
+
+
+@router.post(IMPORT_PATH, status_code=status.HTTP_201_CREATED)
+async def import_profile(
+    body: ProfileFileSchema, actor: ActorDep, profiles: FromDishka[RecipeProfiles]
+) -> RecipeProfileSchema:
+    """Save the profile a file holds, which is not the default until it is made one.
+
+    The file is checked as a saved profile is. A file of another version of the format, a step whose parameters do not
+    fit, and a step that stands where it cannot work, unless the file asks for the free order, answer 422, and so does
+    a file that needs a processor that is not installed, which the answer names.
+
+    \N{FORM FEED}
+    :param body: The content of the profile file.
+    :type body: ProfileFileSchema
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param profiles: Profiles service of the request.
+    :type profiles: RecipeProfiles
+    :returns: The profile as stored.
+    :rtype: RecipeProfileSchema
+    """
+    profile = await profiles.import_profile(actor, body.stage, body.to_draft())
+    return RecipeProfileSchema.model_validate(profile)
+
+
+@router.get(EXPORT_PATH)
+async def export_profile(
+    profile_id: ProfilePath, actor: ActorDep, profiles: FromDishka[RecipeProfiles]
+) -> ProfileFileSchema:
+    """Write a profile as a file, which another account can import.
+
+    \N{FORM FEED}
+    :param profile_id: Identifier of the profile.
+    :type profile_id: RecipeProfileId
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param profiles: Profiles service of the request.
+    :type profiles: RecipeProfiles
+    :returns: The content of the profile file.
+    :rtype: ProfileFileSchema
+    """
+    return ProfileFileSchema.of(await profiles.get(actor, profile_id))
+
+
+@router.post(DUPLICATE_PATH, status_code=status.HTTP_201_CREATED)
+async def duplicate_profile(
+    profile_id: ProfilePath, actor: ActorDep, profiles: FromDishka[RecipeProfiles]
+) -> RecipeProfileSchema:
+    """Save a copy of a profile under its name with "(copy)" after it, which is not the default.
+
+    \N{FORM FEED}
+    :param profile_id: Identifier of the profile to copy.
+    :type profile_id: RecipeProfileId
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param profiles: Profiles service of the request.
+    :type profiles: RecipeProfiles
+    :returns: The copy as stored.
+    :rtype: RecipeProfileSchema
+    """
+    return RecipeProfileSchema.model_validate(await profiles.duplicate(actor, profile_id))
 
 
 @router.put(PROFILE_PATH)
@@ -213,12 +284,14 @@ async def apply_profile(
     """Add the steps of a profile to a book as a variant of the profile's stage, and optionally make it the active one.
 
     A step whose processor is not installed on the server is left out and the processor is named in the answer. A
-    profile with no step left to run answers 422. A profile of another account answers 404.
+    profile with no step left to run answers 422. A profile of another account answers 404. With pages, the variant is
+    also pinned to them and the stage is run on them in the background, and the queued job is in the answer; a book
+    that is busy answers 409 then, and keeps the variant.
 
     \N{FORM FEED}
     :param address: Identifiers of the project and the profile.
     :type address: AppliedPath
-    :param body: Whether the new variant becomes the active recipe.
+    :param body: Whether the new variant becomes the active recipe, and the pages to give it to.
     :type body: ApplyProfileBody
     :param actor: The signed-in account.
     :type actor: Actor
@@ -226,13 +299,16 @@ async def apply_profile(
     :type profiles: RecipeProfiles
     :param order: Finder of the steps that stand off the place their processors ask for.
     :type order: RecipeOrder
-    :returns: The recipe, with the steps that are out of their place, and the processors whose steps were left out.
+    :returns: The recipe, with the steps that are out of their place, the processors whose steps were left out, and the
+              queued run when there were pages.
     :rtype: AppliedProfileSchema
     """
-    applied = await profiles.apply(actor, address.project_id, address.profile_id, activate=body.activate)
+    pages = None if body.page_ids is None else tuple(body.page_ids)
+    applied = await profiles.apply(actor, address.project_id, address.profile_id, activate=body.activate, pages=pages)
     return AppliedProfileSchema(
         recipe=RecipeSchema.of(applied.recipe, order.issues(applied.recipe.steps)),
         missing_processors=list(applied.missing_processors),
+        job=None if applied.job is None else JobSchema.model_validate(applied.job),
     )
 
 
