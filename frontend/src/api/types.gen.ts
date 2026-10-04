@@ -5456,6 +5456,56 @@ export type PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutRespon
 
 export type PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponse = PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponses[keyof PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponses];
 
+export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+        /**
+         * Recipe Id
+         *
+         * Identifier of the recipe
+         */
+        recipe_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}/reset';
+};
+
+export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostError = ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostErrors[keyof ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostErrors];
+
+export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: RecipeSchema;
+};
+
+export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostResponse = ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostResponses[keyof ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostResponses];
+
 export type ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostData = {
     body?: never;
     path: {
