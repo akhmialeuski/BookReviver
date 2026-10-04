@@ -106,8 +106,15 @@ test('the book is measured and its pages come out of one size with the lines at 
   });
 
   await test.step('measuring the book fills the settings of the normalize step from the pages', async () => {
+    // Opening Margins asks for a preview of the page, which finds the content box, and the server refuses to measure the
+    // book while that job runs
+    const previewAsked = page.waitForResponse((response) =>
+      response.url().endsWith('/stages/geometry/preview'),
+    );
     await page.getByTestId('bar-step').filter({ hasText: NORMALIZE_TITLE }).click();
     await expect(normalize).toBeVisible();
+    await previewAsked;
+    await waitForIdleJobs(page, projectId);
     await expect(field('page_width')).toHaveValue(DEFAULT_PAGE_WIDTH);
     await normalize.getByTestId('measure-book-button').click();
     await expect(field('page_width')).not.toHaveValue(DEFAULT_PAGE_WIDTH, {
