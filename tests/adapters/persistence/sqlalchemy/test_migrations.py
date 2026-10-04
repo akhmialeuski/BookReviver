@@ -10,7 +10,7 @@ import re
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from advanced_alchemy.alembic.commands import AlembicCommands
@@ -28,6 +28,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     PageStepStateRow,
     PageVersionRow,
     ProjectRow,
+    RecipeProfileRow,
     RecipeRow,
     ScanRow,
     SourceRow,
@@ -37,7 +38,8 @@ from bookreviver.app.container import build_container
 from bookreviver.app.main import create_app
 from bookreviver.app.providers.database import MIGRATE_COMMAND, MIGRATE_DOWNGRADE_COMMAND
 from bookreviver.app.settings import PersistenceBackend
-from bookreviver.domain.enums import EditorKind, Rendition
+from bookreviver.domain.enums import EditorKind, OrderMode, Rendition
+from bookreviver.domain.ids import RecipeId, RecipeProfileId
 from bookreviver.domain.values import Renditions
 from tests.helpers.builders import EPOCH, make_job, make_page, make_page_version, make_project, make_scan, make_source
 from tests.helpers.seeding import commit_account
@@ -117,6 +119,13 @@ INSERT_SETTINGS_ONLY: str = (
 )
 # The revision before the one that lets a change of the history name the change it takes back
 BEFORE_UNDO_REVISION: str = '53cae47541f2'
+# The revision before the one that links a recipe to its profile and keeps the order of a profile
+BEFORE_LINK_REVISION: str = '45e3f395141c'
+# A profile as the revision before the link wrote it, with no order
+INSERT_PROFILE: str = (
+    'INSERT INTO recipe_profiles (id, account_id, stage, name, steps, is_default, created_at, updated_at) '
+    "VALUES (:id, :account_id, 'geometry', :name, :steps, 0, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+)
 # A change of the history as the revision before the undo wrote it
 INSERT_CHANGE: str = (
     'INSERT INTO page_step_changes (id, page_id, stage, step_id, layer, before, after, source, created_at, sequence) '
@@ -592,6 +601,112 @@ class TestUndoRevision:
             )
         expect(undoes == [None])
         expect('undoes_id' not in columns and 'batch_id' in columns)
+        assert_expectations()
+
+
+class TestProfileLinkRevision:
+    """Tests for the revision that links a recipe to the profile it was made from and keeps the order of a profile."""
+
+    @staticmethod
+    async def _seed(database: SqlDatabase) -> tuple[bytes, bytes]:
+        """Store a profile and a recipe as the revision before left them, which know nothing of each other.
+
+        :param database: Database migrated to the revision before.
+        :type database: SqlDatabase
+        :returns: The identifiers of the recipe and of the profile, as bytes.
+        :rtype: tuple[bytes, bytes]
+        """
+        account_id = await commit_account(database)
+        project = make_project(owner_id=account_id)
+        recipe_id, profile_id = uuid4(), uuid4()
+        steps = json.dumps(
+            [{PROCESSOR: DESKEW, 'params': {}, 'enabled': True, 'step_id': str(uuid4()), 'applies_to': 'all'}]
+        )
+        async with database.sessions() as session:
+            await SqlAlchemyUnitOfWork(session).projects.add(project)
+            await session.commit()
+            await session.execute(
+                text(INSERT_RECIPE),
+                {'id': recipe_id.bytes, 'project_id': project.id.bytes, 'name': 'Text', 'steps': steps, 'active': True},
+            )
+            await session.execute(
+                text(INSERT_PROFILE),
+                {'id': profile_id.bytes, 'account_id': str(account_id), 'name': 'Photographed book', 'steps': steps},
+            )
+            await session.commit()
+        return recipe_id.bytes, profile_id.bytes
+
+    async def test_the_recipes_stay_unlinked_and_the_profiles_start_in_the_usual_order(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify the rows that exist keep their data, no recipe names a profile, and no profile is in the free order.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, BEFORE_LINK_REVISION)
+        await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        async with fx_empty_database.sessions() as session:
+            recipe = (await session.execute(select(RecipeRow))).scalar_one()
+            profile = (await session.execute(select(RecipeProfileRow))).scalar_one()
+        expect((recipe.name, recipe.profile_id) == ('Text', None))
+        expect((profile.name, profile.order) == ('Photographed book', OrderMode.USUAL))
+        assert_expectations()
+
+    async def test_the_database_empties_the_link_of_a_recipe_when_its_profile_is_deleted(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify the foreign key the revision adds sets the link to null and leaves the recipe, as the tables declare.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, BEFORE_LINK_REVISION)
+        recipe_id, profile_id = await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        async with fx_empty_database.sessions() as session:
+            uow = SqlAlchemyUnitOfWork(session)
+            recipe = await uow.recipes.get(RecipeId(UUID(bytes=recipe_id)))
+            await uow.recipes.update(evolve(recipe, profile_id=RecipeProfileId(UUID(bytes=profile_id))))
+            await uow.commit()
+        async with fx_empty_database.sessions() as session:
+            await SqlAlchemyUnitOfWork(session).recipe_profiles.delete(RecipeProfileId(UUID(bytes=profile_id)))
+            await session.commit()
+        async with fx_empty_database.sessions() as session:
+            row = (await session.execute(select(RecipeRow))).scalar_one()
+        assert (row.name, row.profile_id) == ('Text', None)
+
+    async def test_downgrade_drops_the_link_and_the_order_and_keeps_the_rows(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify a downgrade past the revision removes the two columns and leaves the recipe and the profile.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, BEFORE_LINK_REVISION)
+        await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        await _migrate(fx_empty_database, migrations.downgrade, BEFORE_LINK_REVISION)
+        async with fx_empty_database.engine.connect() as connection:
+            recipe_columns = await connection.run_sync(
+                lambda sync_connection: {column['name'] for column in inspect(sync_connection).get_columns('recipes')}
+            )
+            profile_columns = await connection.run_sync(
+                lambda sync_connection: {
+                    column['name'] for column in inspect(sync_connection).get_columns('recipe_profiles')
+                }
+            )
+            names = (
+                await connection.execute(text('SELECT name FROM recipes UNION SELECT name FROM recipe_profiles'))
+            ).all()
+        expect('profile_id' not in recipe_columns)
+        expect('order' not in profile_columns)
+        expect(sorted(row[0] for row in names) == ['Photographed book', 'Text'])
         assert_expectations()
 
 

@@ -12,7 +12,7 @@ from fastapi_pagination import Params
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.api.schemas.processing import RecipeBody, RecipeSchema, StepSchema
 from bookreviver.api.schemas.types import RecipeName
-from bookreviver.domain.enums import Stage
+from bookreviver.domain.enums import OrderMode, Stage
 from bookreviver.domain.ids import RecipeProfileId
 
 
@@ -23,6 +23,7 @@ class RecipeProfileSchema(ResponseModel):
     :ivar stage: Stage whose recipes the profile can be applied to.
     :ivar name: Name the user sees.
     :ivar steps: The steps in the order they run, each with its parameters and its switch.
+    :ivar order: ``usual`` if the steps were saved with a step off a required place refused, ``free`` if it may stand.
     :ivar is_default: Whether a new book starts the stage with this profile.
     :ivar created_at: When the profile was saved.
     :ivar updated_at: When the profile was last changed.
@@ -32,6 +33,7 @@ class RecipeProfileSchema(ResponseModel):
     stage: Stage
     name: str
     steps: list[StepSchema]
+    order: OrderMode
     is_default: bool
     created_at: datetime
     updated_at: datetime
@@ -42,6 +44,7 @@ class RecipeProfileBody(RecipeBody):
 
     :ivar name: Name of the profile.
     :ivar steps: Its steps in the order they run, each checked against its processor.
+    :ivar order: The order the profile is saved in, which a book opened from it starts in.
     :ivar stage: Stage whose recipes the profile can be applied to.
     """
 
@@ -86,3 +89,12 @@ class AppliedProfileSchema(ResponseModel):
 
     recipe: RecipeSchema
     missing_processors: list[str]
+
+
+class ProfileLinkBody(RequestModel):
+    """The profile a recipe of a book was made from.
+
+    :ivar profile_id: Identifier of the profile, or null to say the recipe was made from none.
+    """
+
+    profile_id: RecipeProfileId | None

@@ -1048,12 +1048,45 @@ export const MESSAGES = {
   },
   profiles: {
     menu: 'Recipe profiles',
+    link: {
+      label: 'Profile',
+      none: 'No profile',
+      noneHint: 'The steps of this recipe are not kept in a profile',
+      changed: 'changed',
+      changedHint: 'The steps of this book differ from the profile',
+      menuTitle: (stage: string) => `Profile of ${stage}`,
+      unchanged: 'The steps are those of the profile.',
+      notLinked:
+        'These steps are not kept in a profile. Save them as a new profile, and later changes are compared with it.',
+      loadFailed: 'The profile could not be read.',
+      save: 'Save',
+      saveHint: 'Replace the steps of the profile with the steps of this book',
+      saveAsNew: 'Save as new…',
+      saveAsNewHint:
+        'Keep the steps of this book as a new profile, which the book is then compared with',
+      revert: 'Revert to profile',
+      revertHint:
+        'Put the steps of the profile on the screen. The recipe of the book changes when it is saved',
+      saving: 'Saving…',
+      saved: (name: string) => `Saved the changes to the profile “${name}”.`,
+      changes: {
+        label: 'Differences from the profile',
+        added: (step: string) => `${step} added`,
+        removed: (step: string) => `${step} removed`,
+        order: 'The order of the steps changed',
+        switchedOn: (step: string) => `${step} switched on`,
+        switchedOff: (step: string) => `${step} switched off`,
+        condition: (step: string, pages: string) => `${step}: pages changed to ${pages}`,
+        params: (step: string, fields: readonly string[]) =>
+          `${step}: ${fields.join(', ')} changed`,
+      },
+    },
     save: {
       open: 'Save as profile',
       hint: 'Keep these steps in your account, to apply them to other books',
       title: 'Save as a profile',
       description:
-        'The steps on the screen are kept in your account, in their order and with their settings and switches. Any of your books can apply them.',
+        'The steps of this book are kept in your account, in their order and with their settings and switches, and the book is compared with the new profile from now on. Any of your books can apply it.',
       nameLabel: 'Name of the profile',
       submit: 'Save the profile',
       submitting: 'Saving…',

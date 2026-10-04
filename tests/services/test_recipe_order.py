@@ -8,10 +8,8 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.enums import OrderMode, OrderRuleKind, Stage
 from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.values import RecipeDraft, RecipeKey, Step
-from bookreviver.plugins.split_none import SplitNone
 from bookreviver.services.recipe_order import RecipeOrder
 from tests.helpers.fake_processing import FakeCatalogue
-from tests.helpers.processing import ProcessingKit
 from tests.helpers.processors import (
     FIRST_KEY,
     OPENING_KEY,
@@ -20,8 +18,6 @@ from tests.helpers.processors import (
     SECOND_REASON,
     THIRD_KEY,
     THIRD_REASON,
-    CleanupProcessor,
-    FakeProcessor,
     FirstProcessor,
     OpeningProcessor,
     SecondProcessor,
@@ -29,7 +25,7 @@ from tests.helpers.processors import (
 )
 
 if TYPE_CHECKING:
-    from bookreviver.adapters.storage import LocalAssetStore
+    from tests.helpers.processing import ProcessingKit
 
 UNKNOWN_KEY: str = 'geometry.gone'
 DRAFT_NAME: str = 'Ordered'
@@ -209,26 +205,6 @@ def draft_of(*keys: str, order: OrderMode = OrderMode.USUAL) -> RecipeDraft:
     :rtype: RecipeDraft
     """
     return RecipeDraft(name=DRAFT_NAME, steps=steps_of(*keys), order=order)
-
-
-@pytest.fixture
-def fx_ordered_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
-    """Build the processing kit over processors that declare a place.
-
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
-    :returns: The kit whose catalogue holds the fakes of the tests and the processors that ask for a place.
-    :rtype: ProcessingKit
-    """
-    processors = [
-        SplitNone(),
-        FakeProcessor(),
-        CleanupProcessor(),
-        FirstProcessor(),
-        SecondProcessor(),
-        ThirdProcessor(),
-    ]
-    return ProcessingKit(fx_asset_store, processors=processors)
 
 
 @pytest.mark.anyio

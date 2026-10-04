@@ -96,6 +96,8 @@ export interface Processing {
   refusalOf: (activeId: string, overId: string) => OrderIssue | undefined;
   /** Put the steps in their usual order, which keeps every setting. */
   restoreOrder: () => void;
+  /** Put other steps on the screen, as the steps of a profile are, with the order they are saved in. */
+  loadSteps: (steps: StepDraft[], mode: OrderMode) => void;
   move: (activeId: string, overId: string) => void;
   toggle: (id: string) => void;
   remove: (id: string) => void;
@@ -240,6 +242,10 @@ export function useProcessing(
     refused,
     refusalOf: (activeId, overId) => refusalOf(steps, catalogue, activeId, overId),
     restoreOrder: () => write(restoreUsualOrder(steps, catalogue)),
+    loadSteps: (next, mode) => {
+      write(next);
+      setModeChoice({ owner: recipe?.id, mode });
+    },
     move: (activeId, overId) => write(moveStep(steps, activeId, overId)),
     toggle: (id) => write(toggleStep(steps, id)),
     remove: (id) => write(removeStep(steps, id)),

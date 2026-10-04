@@ -40,6 +40,9 @@ STAGE_FIELD: str = 'stage'
 TOTAL_FIELD: str = 'total'
 PROCESSOR_FIELD: str = 'processor_key'
 PARAMS_FIELD: str = 'params'
+ORDER_FIELD: str = 'order'
+PROFILE_ID_FIELD: str = 'profile_id'
+FREE_ORDER: str = 'free'
 
 
 def _default_path(profile_id: object) -> str:
@@ -93,6 +96,19 @@ def _body(name: str = PROFILE_NAME) -> dict[str, object]:
             {PROCESSOR_FIELD: FAKE_KEY, PARAMS_FIELD: {STRENGTH: 2}},
         ],
     }
+
+
+def _link_path(project: Project, recipe_id: object) -> str:
+    """Return the path that records the profile a recipe of the geometry stage was made from.
+
+    :param project: The project.
+    :type project: Project
+    :param recipe_id: Identifier of the recipe.
+    :type recipe_id: object
+    :returns: The path of the request.
+    :rtype: str
+    """
+    return f'{PROJECTS_PATH}/{project.id}/stages/geometry/variants/{recipe_id}/profile'
 
 
 def _apply_path(project: Project, profile_id: object) -> str:
@@ -231,8 +247,13 @@ class TestProfiles:
         foreign = await _store(fx_database, make_recipe_profile(account_id=new_account_id(), steps=(_step(FAKE_KEY),)))
         path = f'{PROFILES_PATH}/{foreign.id}'
         listed = await fx_client.get(PROFILES_PATH)
+        recipe = RecipeSchema.model_validate_json((await fx_client.get(_recipe_path(fx_project))).content)
         responses = [
             await fx_client.patch(path, json={NAME_FIELD: OTHER_NAME}),
+            await fx_client.put(
+                path, json={key: value for key, value in _body(OTHER_NAME).items() if key != STAGE_FIELD}
+            ),
+            await fx_client.put(_link_path(fx_project, recipe.id), json={PROFILE_ID_FIELD: str(foreign.id)}),
             await fx_client.put(_default_path(foreign.id)),
             await fx_client.delete(_default_path(foreign.id)),
             await fx_client.delete(path),
@@ -330,3 +351,156 @@ class TestApplyProfile:
         recipe = RecipeSchema.model_validate_json(response.content)
         expect((recipe.name, recipe.active, recipe.steps) == (PROFILE_NAME, True, profile.steps))
         assert_expectations()
+
+
+class TestOrderOfProfile:
+    """Tests for the order a profile is saved in and replaced under."""
+
+    async def test_a_profile_is_answered_with_the_order_it_was_saved_in(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify the usual order is the default, and the free order the body asks for is stored and listed.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        usual = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
+        free = RecipeProfileSchema.model_validate_json(
+            (await fx_client.post(PROFILES_PATH, json=_body(OTHER_NAME) | {ORDER_FIELD: FREE_ORDER})).content
+        )
+        listed = await fx_client.get(PROFILES_PATH)
+        expect((usual.order, free.order) == ('usual', FREE_ORDER))
+        expect([item[ORDER_FIELD] for item in listed.json()[ITEMS]] == ['usual', FREE_ORDER])
+        assert_expectations()
+
+    async def test_put_replaces_the_name_the_steps_and_the_order_and_keeps_the_stage(
+        self, fx_client: httpx.AsyncClient
+    ) -> None:
+        """Verify PUT answers the profile as replaced, and a listing reads the same.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
+        body = {
+            NAME_FIELD: OTHER_NAME,
+            ORDER_FIELD: FREE_ORDER,
+            STEPS_FIELD: [{PROCESSOR_FIELD: FAKE_KEY, PARAMS_FIELD: {STRENGTH: 5}}],
+        }
+        response = await fx_client.put(f'{PROFILES_PATH}/{profile.id}', json=body)
+        replaced = RecipeProfileSchema.model_validate_json(response.content)
+        listed = await fx_client.get(PROFILES_PATH)
+        expect(response.status_code == status.HTTP_200_OK)
+        expect(
+            (replaced.id, replaced.stage, replaced.name, replaced.order)
+            == (profile.id, Stage.GEOMETRY, OTHER_NAME, FREE_ORDER)
+        )
+        expect([step.params[STRENGTH] for step in replaced.steps] == [5])
+        expect(listed.json()[ITEMS][0][STEPS_FIELD] == response.json()[STEPS_FIELD])
+        assert_expectations()
+
+    async def test_put_with_steps_that_do_not_fit_is_a_422_problem(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify a parameter the processor does not know answers 422 and leaves the profile as it was.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
+        body = _body() | {STEPS_FIELD: [{PROCESSOR_FIELD: FAKE_KEY, PARAMS_FIELD: {'unknown': 1}}]}
+        response = await fx_client.put(f'{PROFILES_PATH}/{profile.id}', json=body)
+        listed = await fx_client.get(PROFILES_PATH)
+        expect(response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
+        expect(len(listed.json()[ITEMS][0][STEPS_FIELD]) == len(profile.steps))
+        assert_expectations()
+
+
+class TestLinkRecipeToProfile:
+    """Tests for the profile a recipe of a book is made from."""
+
+    async def test_an_applied_profile_is_the_profile_of_the_recipe_it_made(
+        self, fx_client: httpx.AsyncClient, fx_project: Project
+    ) -> None:
+        """Verify the answer of applying, and the active recipe once it is activated, name the profile.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_project: A book of the signed-in account.
+        :type fx_project: Project
+        """
+        profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
+        applied = AppliedProfileSchema.model_validate_json(
+            (await fx_client.post(_apply_path(fx_project, profile.id), json={'activate': True})).content
+        )
+        active = RecipeSchema.model_validate_json((await fx_client.get(_recipe_path(fx_project))).content)
+        expect(applied.recipe.profile_id == profile.id)
+        expect((active.id, active.profile_id) == (applied.recipe.id, profile.id))
+        assert_expectations()
+
+    async def test_a_recipe_made_from_no_profile_answers_null(
+        self, fx_client: httpx.AsyncClient, fx_project: Project
+    ) -> None:
+        """Verify the built-in recipe of a book names no profile.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_project: A book of the signed-in account.
+        :type fx_project: Project
+        """
+        response = await fx_client.get(_recipe_path(fx_project))
+        assert response.json()[PROFILE_ID_FIELD] is None
+
+    async def test_put_links_a_recipe_to_a_profile_and_null_unlinks_it(
+        self, fx_client: httpx.AsyncClient, fx_project: Project
+    ) -> None:
+        """Verify PUT records the profile without changing the steps, and a null profile clears it.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_project: A book of the signed-in account.
+        :type fx_project: Project
+        """
+        profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
+        before = RecipeSchema.model_validate_json((await fx_client.get(_recipe_path(fx_project))).content)
+        path = _link_path(fx_project, before.id)
+        linked = await fx_client.put(path, json={PROFILE_ID_FIELD: str(profile.id)})
+        read = RecipeSchema.model_validate_json((await fx_client.get(_recipe_path(fx_project))).content)
+        unlinked = await fx_client.put(path, json={PROFILE_ID_FIELD: None})
+        expect(linked.status_code == status.HTTP_200_OK)
+        expect(RecipeSchema.model_validate_json(linked.content).profile_id == profile.id)
+        expect((read.profile_id, read.steps, read.updated_at) == (profile.id, before.steps, before.updated_at))
+        expect(RecipeSchema.model_validate_json(unlinked.content).profile_id is None)
+        assert_expectations()
+
+    async def test_a_profile_of_another_stage_is_a_422_problem(
+        self, fx_client: httpx.AsyncClient, fx_project: Project
+    ) -> None:
+        """Verify a recipe cannot be linked to a profile of another stage.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_project: A book of the signed-in account.
+        :type fx_project: Project
+        """
+        cleanup = {
+            NAME_FIELD: OTHER_NAME,
+            STAGE_FIELD: Stage.CLEANUP,
+            STEPS_FIELD: [{PROCESSOR_FIELD: 'cleanup.fake', PARAMS_FIELD: {}}],
+        }
+        profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=cleanup)).content)
+        recipe = RecipeSchema.model_validate_json((await fx_client.get(_recipe_path(fx_project))).content)
+        response = await fx_client.put(_link_path(fx_project, recipe.id), json={PROFILE_ID_FIELD: str(profile.id)})
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    async def test_deleting_a_profile_clears_the_link_of_its_recipes(
+        self, fx_client: httpx.AsyncClient, fx_project: Project
+    ) -> None:
+        """Verify a recipe made from a profile is still answered after the profile is deleted, with no profile.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_project: A book of the signed-in account.
+        :type fx_project: Project
+        """
+        profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
+        await fx_client.post(_apply_path(fx_project, profile.id), json={'activate': True})
+        await fx_client.delete(f'{PROFILES_PATH}/{profile.id}')
+        response = await fx_client.get(_recipe_path(fx_project))
+        assert (response.status_code, response.json()[PROFILE_ID_FIELD]) == (status.HTTP_200_OK, None)

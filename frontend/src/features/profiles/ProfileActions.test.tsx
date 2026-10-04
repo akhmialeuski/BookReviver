@@ -2,18 +2,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { processing, recipe, step } from '@/features/processing/fixtures';
-import { draftOf, toggleStep } from '@/features/processing/recipe';
+import { processing, recipe } from '@/features/processing/fixtures';
 import { profile, profilePage } from '@/features/profiles/fixtures';
 import { ProfileActions } from '@/features/profiles/ProfileActions';
 
 /**
- * The two buttons that move a recipe between books through the account: saving the steps on the screen as a profile,
- * with the switches and the order the reader left them in, and applying a profile to the open book.
+ * The button that applies a profile of the account to the open book, as a variant or as the active recipe, and what the
+ * panel says about the steps the server had to leave out. Saving the steps as a profile is the profile menu.
  */
 
 const sdk = vi.hoisted(() => ({
-  create: vi.fn(),
   list: vi.fn(),
   apply: vi.fn(),
   recipes: vi.fn(),
@@ -21,16 +19,10 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  createProfileApiV1RecipeProfilesPost: sdk.create,
   listProfilesApiV1RecipeProfilesGet: sdk.list,
   applyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPost: sdk.apply,
   listVariantsApiV1ProjectsProjectIdStagesStageVariantsGet: sdk.recipes,
 }));
-
-const SAVED = recipe('r1', {
-  name: 'Deskew',
-  steps: [step('geometry.deskew'), step('geometry.crop')],
-});
 
 describe('ProfileActions', () => {
   let container: HTMLDivElement;
@@ -57,20 +49,11 @@ describe('ProfileActions', () => {
     });
   }
 
-  async function type(input: HTMLInputElement | null, value: string): Promise<void> {
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      setter?.call(input, value);
-      input?.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-  }
-
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     for (const fake of Object.values(sdk)) {
       fake.mockReset();
     }
-    sdk.create.mockResolvedValue({ data: profile('made', { name: 'Clean flatbed scan' }) });
     sdk.list.mockResolvedValue(
       profilePage([profile('p1', { name: 'Photographed book', is_default: true })]),
     );
@@ -91,50 +74,6 @@ describe('ProfileActions', () => {
     container.remove();
     client.clear();
     vi.unstubAllGlobals();
-  });
-
-  it('saves the steps on the screen in their order, with their switches, under the name the reader gives', async () => {
-    const draft = toggleStep(draftOf(SAVED), 'step-1');
-    render(processing({ recipe: SAVED, steps: draft.toReversed(), dirty: true }));
-
-    await click('profile-save-open');
-    const name = document.body.querySelector<HTMLInputElement>('input[name="profile-name"]');
-    expect(name?.value).toBe('Deskew');
-    await type(name, 'Clean flatbed scan');
-    await click('profile-save-submit');
-
-    expect(sdk.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        body: {
-          stage: 'geometry',
-          name: 'Clean flatbed scan',
-          order: 'usual',
-          steps: [
-            {
-              processor_key: 'geometry.crop',
-              params: {},
-              enabled: false,
-              step_id: 'id-geometry.crop',
-              applies_to: 'all',
-            },
-            {
-              processor_key: 'geometry.deskew',
-              params: {},
-              enabled: true,
-              step_id: 'id-geometry.deskew',
-              applies_to: 'all',
-            },
-          ],
-        },
-      }),
-    );
-    expect(byId('profile-saved')?.textContent).toContain('Clean flatbed scan');
-  });
-
-  it('offers no saving while a value is outside its limits', () => {
-    render(processing({ valid: false }));
-
-    expect(byId('profile-save-open')).toHaveProperty('disabled', true);
   });
 
   it('lists the profiles of the stage and applies the chosen one as a variant', async () => {

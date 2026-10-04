@@ -5164,6 +5164,92 @@
       }
     },
     "/api/v1/recipe-profiles/{profile_id}": {
+      "put": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Put Profile",
+        "description": "Replace the name, the steps and the order of a profile, which is how a book saves its changes to its profile.\n\nThe stage and the default mark stay. The recipes made from the profile are not changed. A step whose processor is\nunknown or of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it\ncannot work, unless the body asks for the free order.",
+        "operationId": "put_profile_api_v1_recipe_profiles__profile_id__put",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe profile",
+              "title": "Profile Id"
+            },
+            "description": "Identifier of the recipe profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecipeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeProfileSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "profiles"
@@ -5525,6 +5611,116 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AppliedProfileSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}/profile": {
+      "put": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Put Recipe Profile",
+        "description": "Record which profile a recipe of a book was made from, so the book can tell how its steps differ from it.\n\nThe steps do not change and no page goes stale. A profile of another account answers 404, and so does a recipe the\nproject does not have, and a profile of another stage answers 422.",
+        "operationId": "put_recipe_profile_api_v1_projects__project_id__stages__stage__variants__recipe_id__profile_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          },
+          {
+            "name": "recipe_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe",
+              "title": "Recipe Id"
+            },
+            "description": "Identifier of the recipe"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileLinkBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeSchema"
                 }
               }
             }
@@ -11417,6 +11613,29 @@
         "title": "ProcessorScope",
         "description": "How many outputs a processor makes from its input."
       },
+      "ProfileLinkBody": {
+        "properties": {
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "profile_id"
+        ],
+        "title": "ProfileLinkBody",
+        "description": "The profile a recipe of a book was made from.\n\n:ivar profile_id: Identifier of the profile, or null to say the recipe was made from none."
+      },
       "ProgressSchema": {
         "properties": {
           "done": {
@@ -12164,7 +12383,7 @@
           "stage"
         ],
         "title": "RecipeProfileBody",
-        "description": "The name and the steps of a profile to save, with the stage whose recipes it fits.\n\n:ivar name: Name of the profile.\n:ivar steps: Its steps in the order they run, each checked against its processor.\n:ivar stage: Stage whose recipes the profile can be applied to."
+        "description": "The name and the steps of a profile to save, with the stage whose recipes it fits.\n\n:ivar name: Name of the profile.\n:ivar steps: Its steps in the order they run, each checked against its processor.\n:ivar order: The order the profile is saved in, which a book opened from it starts in.\n:ivar stage: Stage whose recipes the profile can be applied to."
       },
       "RecipeProfileName": {
         "properties": {
@@ -12204,6 +12423,9 @@
             "type": "array",
             "title": "Steps"
           },
+          "order": {
+            "$ref": "#/components/schemas/OrderMode"
+          },
           "is_default": {
             "type": "boolean",
             "title": "Is Default"
@@ -12225,12 +12447,13 @@
           "stage",
           "name",
           "steps",
+          "order",
           "is_default",
           "created_at",
           "updated_at"
         ],
         "title": "RecipeProfileSchema",
-        "description": "A recipe profile of the signed-in account.\n\n:ivar id: Identifier of the profile.\n:ivar stage: Stage whose recipes the profile can be applied to.\n:ivar name: Name the user sees.\n:ivar steps: The steps in the order they run, each with its parameters and its switch.\n:ivar is_default: Whether a new book starts the stage with this profile.\n:ivar created_at: When the profile was saved.\n:ivar updated_at: When the profile was last changed."
+        "description": "A recipe profile of the signed-in account.\n\n:ivar id: Identifier of the profile.\n:ivar stage: Stage whose recipes the profile can be applied to.\n:ivar name: Name the user sees.\n:ivar steps: The steps in the order they run, each with its parameters and its switch.\n:ivar order: ``usual`` if the steps were saved with a step off a required place refused, ``free`` if it may stand.\n:ivar is_default: Whether a new book starts the stage with this profile.\n:ivar created_at: When the profile was saved.\n:ivar updated_at: When the profile was last changed."
       },
       "RecipeRuleBody": {
         "properties": {
@@ -12349,6 +12572,18 @@
             "type": "boolean",
             "title": "Active"
           },
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -12375,11 +12610,12 @@
           "name",
           "steps",
           "active",
+          "profile_id",
           "created_at",
           "updated_at"
         ],
         "title": "RecipeSchema",
-        "description": "A recipe: the ordered steps of one stage, active or a variant.\n\n:ivar id: Identifier of the recipe.\n:ivar project_id: Project owning the recipe.\n:ivar stage: Stage the recipe processes.\n:ivar name: Name the user sees.\n:ivar steps: The steps in the order they run.\n:ivar active: Whether the recipe is the one the stage runs by default.\n:ivar created_at: When the recipe was created.\n:ivar updated_at: When the recipe was last changed.\n:ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual\n                    order. A required place appears here only for a recipe saved in the free order."
+        "description": "A recipe: the ordered steps of one stage, active or a variant.\n\n:ivar id: Identifier of the recipe.\n:ivar project_id: Project owning the recipe.\n:ivar stage: Stage the recipe processes.\n:ivar name: Name the user sees.\n:ivar steps: The steps in the order they run.\n:ivar active: Whether the recipe is the one the stage runs by default.\n:ivar profile_id: The profile of the account the recipe was made from, or null for a recipe that was not.\n:ivar created_at: When the recipe was created.\n:ivar updated_at: When the recipe was last changed.\n:ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual\n                    order. A required place appears here only for a recipe saved in the free order."
       },
       "RejectedFileSchema": {
         "properties": {

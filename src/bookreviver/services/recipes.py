@@ -317,7 +317,8 @@ class RecipeBook:
         :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
-        :param draft: Name and steps of the variant, which are checked against their processors and their order.
+        :param draft: Name and steps of the variant, which are checked against their processors and their order, and
+                      the profile it is linked to.
         :type draft: RecipeDraft
         :returns: The variant as stored, not yet committed.
         :rtype: Recipe
@@ -333,6 +334,7 @@ class RecipeBook:
             stage=stage,
             name=draft.name,
             steps=await self.check(stage, draft.steps, order=draft.order),
+            profile_id=draft.profile_id,
             created_at=moment,
             updated_at=moment,
         )
@@ -469,6 +471,7 @@ class RecipeBook:
             name=profile.name,
             steps=steps,
             active=True,
+            profile_id=profile.id,
             created_at=moment,
             updated_at=moment,
         )

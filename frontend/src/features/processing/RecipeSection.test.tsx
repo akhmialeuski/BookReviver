@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { deskew, processing, recipe, step } from '@/features/processing/fixtures';
 import { RecipeSection } from '@/features/processing/RecipeSection';
 import { setStepParams, toggleStep } from '@/features/processing/recipe';
+import { profilePage } from '@/features/profiles/fixtures';
 import { row } from '@/features/workspace/fixtures';
 
 /**
@@ -20,6 +21,7 @@ const sdk = vi.hoisted(() => ({
   activate: vi.fn(),
   rules: vi.fn(),
   stages: vi.fn(),
+  profiles: vi.fn(),
 }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
@@ -29,6 +31,7 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePost: sdk.activate,
   listRulesApiV1ProjectsProjectIdStagesStageRulesGet: sdk.rules,
   listStagesApiV1ProjectsProjectIdStagesGet: sdk.stages,
+  listProfilesApiV1RecipeProfilesGet: sdk.profiles,
 }));
 
 class SizeObserverStandIn {
@@ -89,6 +92,7 @@ describe('RecipeSection', () => {
         pages: 1,
       },
     });
+    sdk.profiles.mockResolvedValue(profilePage([]));
     sdk.stages.mockResolvedValue({
       data: {
         items: [
@@ -138,6 +142,13 @@ describe('RecipeSection', () => {
     expect(container.querySelector('[data-testid="recipe-step"]')?.textContent).toContain(
       '1 · Deskew',
     );
+  });
+
+  it('puts the button of the profile above the recipes, naming none for a recipe made from no profile', () => {
+    render(processing());
+
+    expect(byId('profile-button')?.textContent).toContain('No profile');
+    expect(byId('profile-changed')).toBeNull();
   });
 
   it('lists the steps that are coming under the steps that exist, and drops one the catalogue has', () => {
