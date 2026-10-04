@@ -25,12 +25,12 @@ PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
 
 @dataclass(frozen=True)
 class StageRowsPath(StagePath):
-    """The address of the rows of a stage, with the step the rows may be placed at.
+    """The address of the rows of a stage, with the request, whose application knows the route that serves the images.
 
-    :ivar step: A step of a recipe of the stage to place every page at, or None for the rows of the stage alone.
+    :ivar request: The request.
     """
 
-    step: Annotated[StepId | None, Query(description='A step of a recipe of the stage to place every page at')] = None
+    request: Request
 
 
 router = APIRouter(prefix='/projects', tags=['stages'], route_class=DishkaRoute)
@@ -68,9 +68,9 @@ async def list_stages(
 async def list_stage_pages(
     address: Annotated[StageRowsPath, Depends()],
     params: Annotated[ManifestParams, Depends()],
-    request: Request,
     actor: ActorDep,
     projects: FromDishka[ProjectService],
+    step: Annotated[StepId | None, Query(description='A step of a recipe of the stage to place every page at')] = None,
 ) -> ManifestPage[StagePageSchema]:
     """List the pages of a book in book order, each with where it stands in a stage and the version that is its result.
 
@@ -80,19 +80,19 @@ async def list_stage_pages(
     404.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project and the stage, and the step to place the pages at.
+    :param address: Identifiers of the project and the stage, and the request.
     :type address: StageRowsPath
     :param params: Page number and size from the query, the size up to a thousand.
     :type params: ManifestParams
-    :param request: The request, whose application knows the route that serves the images.
-    :type request: Request
     :param actor: The signed-in account.
     :type actor: Actor
     :param projects: Project service of the request.
     :type projects: ProjectService
+    :param step: The step to place every page at, or None for the rows of the stage alone.
+    :type step: StepId | None
     :returns: One page of the rows of the stage.
     :rtype: ManifestPage[StagePageSchema]
     """
-    to_schema = partial(StagePageSchema.of, project_id=address.project_id, request=request)
+    to_schema = partial(StagePageSchema.of, project_id=address.project_id, request=address.request)
     pager = Pager[StageRow, StagePageSchema](params, to_schema)
-    return pager.page(await projects.stage_pages(actor, address.project_id, address.stage, pager.request, address.step))
+    return pager.page(await projects.stage_pages(actor, address.project_id, address.stage, pager.request, step))
