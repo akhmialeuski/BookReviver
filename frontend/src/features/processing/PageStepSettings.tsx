@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ProcessorSchema } from '@/api';
 import { ParamsForm } from '@/features/processing/ParamsForm';
-import { changedFields, effectiveParams } from '@/features/processing/pageSettings';
+import { changedFields, effectiveParams, showValue } from '@/features/processing/pageSettings';
 import { useResetPageSetting, useSetPageSetting } from '@/features/processing/queries';
 import type { StepDraft } from '@/features/processing/recipe';
 import { fieldTitleOf, formSchemaOf } from '@/features/processing/schema';
@@ -21,10 +21,6 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  */
 
 const labels = MESSAGES.processing.steps.pageSettings;
-
-function show(value: unknown): string {
-  return typeof value === 'string' ? value : JSON.stringify(value);
-}
 
 export function PageStepSettings({
   processing,
@@ -94,7 +90,7 @@ export function PageStepSettings({
             const title = schema === undefined ? name : fieldTitleOf(schema, name);
             return (
               <li key={name} className="flex items-center justify-between gap-2 text-sm">
-                <span>{labels.current(title, show(pageValues[name]))}</span>
+                <span>{labels.current(title, showValue(pageValues[name]))}</span>
                 <Button
                   variant="ghost"
                   size="sm"

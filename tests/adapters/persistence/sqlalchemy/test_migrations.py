@@ -115,6 +115,14 @@ INSERT_SETTINGS_ONLY: str = (
     'INSERT INTO page_step_states (page_id, stage, step_id, params, updated_at) '
     "VALUES (:page_id, 'geometry', :step_id, :params, '2026-01-01 00:00:00')"
 )
+# The revision before the one that lets a change of the history name the change it takes back
+BEFORE_UNDO_REVISION: str = '53cae47541f2'
+# A change of the history as the revision before the undo wrote it
+INSERT_CHANGE: str = (
+    'INSERT INTO page_step_changes (id, page_id, stage, step_id, layer, before, after, source, created_at, sequence) '
+    "VALUES (:id, :page_id, 'geometry', :step_id, 'settings', NULL, '{\"method\": \"otsu\"}', 'user', "
+    "'2026-01-01 00:00:00', 1)"
+)
 # The tables holding the rows of a book, each of which refers to the project or to a row that does
 BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (ProjectRow, SourceRow, ScanRow, PageRow, PageVersionRow, JobRow)
 
@@ -547,6 +555,43 @@ class TestStepStateRevision:
             tables = await connection.run_sync(lambda sync: inspect(sync).get_table_names())
         expect([tuple(edit) for edit in edits] == [('rotation', 'abc'), ('brush-mask', 'def')])
         expect('page_step_states' not in tables and 'page_step_changes' not in tables)
+        assert_expectations()
+
+
+class TestUndoRevision:
+    """Tests for the revision that lets a change of the history name the change it takes back."""
+
+    async def test_changes_written_before_stand_and_the_column_goes_with_a_downgrade(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify a change written before names no undone change, and a downgrade takes the column out.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, BEFORE_UNDO_REVISION)
+        project = make_project(owner_id=await commit_account(fx_empty_database))
+        page = make_page(project_id=project.id)
+        async with fx_empty_database.sessions() as session:
+            uow = SqlAlchemyUnitOfWork(session)
+            await uow.projects.add(project)
+            await uow.pages.add(page)
+            await uow.commit()
+            await session.execute(
+                text(INSERT_CHANGE), {'id': uuid4().bytes, 'page_id': page.id.bytes, 'step_id': uuid4().bytes}
+            )
+            await session.commit()
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        async with fx_empty_database.sessions() as session:
+            undoes = (await session.execute(text('SELECT undoes_id FROM page_step_changes'))).scalars().all()
+        await _migrate(fx_empty_database, migrations.downgrade, BEFORE_UNDO_REVISION)
+        async with fx_empty_database.engine.connect() as connection:
+            columns = await connection.run_sync(
+                lambda sync: [column['name'] for column in inspect(sync).get_columns('page_step_changes')]
+            )
+        expect(undoes == [None])
+        expect('undoes_id' not in columns and 'batch_id' in columns)
         assert_expectations()
 
 

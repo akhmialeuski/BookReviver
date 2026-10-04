@@ -907,6 +907,7 @@ class ChangeSource(LabeledStrEnum):
     RUN = 'run', 'A run'
     CARRY_OVER = 'carry-over', 'A carry-over from another page'
     RESET = 'reset', 'A reset to the defaults'
+    UNDO = 'undo', 'An undo of an earlier change'
 
 
 class TransformKind(LabeledStrEnum):

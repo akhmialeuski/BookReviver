@@ -52,3 +52,8 @@ export function changedFields(
     ([name, value]) => JSON.stringify(value) !== JSON.stringify(before[name]),
   );
 }
+
+/** Write the value of a field as a sentence quotes it: a text as it is, anything else as JSON. */
+export function showValue(value: unknown): string {
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}

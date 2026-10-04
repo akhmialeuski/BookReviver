@@ -44,6 +44,7 @@ import {
   runStageApiV1ProjectsProjectIdStagesStageRunPostMutation,
   unpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteMutation,
 } from '@/api/@tanstack/react-query.gen';
+import { invalidateHistory } from '@/features/processing/historyQueries';
 import {
   invalidateJobs,
   invalidateProject,
@@ -356,6 +357,7 @@ async function refreshSettings(
         path: { project_id: projectId, page_id: pageId, stage },
       }),
     }),
+    invalidateHistory(queryClient),
     invalidateStageRows(queryClient, projectId, stage),
     invalidateStageSummary(queryClient, projectId),
   ]);

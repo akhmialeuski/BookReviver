@@ -124,7 +124,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
     from bookreviver.domain.enums import JobState
-    from bookreviver.domain.ids import AccountId, StepId
+    from bookreviver.domain.ids import AccountId, ChangeBatchId, StepId
     from bookreviver.domain.values import SliceRequest
 
 
@@ -1514,6 +1514,35 @@ class SqlAlchemyPageStepChangeRepository(
         if stage is not None:
             filters['stage'] = stage
         rows = await self._rows.get_many(order_by=[PageStepChangeRow.sequence.asc()], **filters)
+        return [self._mapper.to_entity(row) for row in rows]
+
+    @override
+    async def list_for_batch(self, batch_id: ChangeBatchId) -> Sequence[PageStepChange]:
+        """Return the changes of one batch, by page and then by sequence.
+
+        :param batch_id: Identifier the changes of the batch share.
+        :type batch_id: ChangeBatchId
+        :returns: The changes of the batch.
+        :rtype: Sequence[PageStepChange]
+        """
+        rows = await self._rows.get_many(
+            order_by=[PageStepChangeRow.page_id.asc(), PageStepChangeRow.sequence.asc()], batch_id=batch_id
+        )
+        return [self._mapper.to_entity(row) for row in rows]
+
+    @override
+    async def list_undoing(self, change_ids: Collection[PageStepChangeId]) -> Sequence[PageStepChange]:
+        """Return the changes that take back any of the given changes, by page and then by sequence.
+
+        :param change_ids: Identifiers of the changes that may have been undone.
+        :type change_ids: Collection[PageStepChangeId]
+        :returns: The undos.
+        :rtype: Sequence[PageStepChange]
+        """
+        rows = await self._rows.get_many(
+            CollectionFilter(field_name=PageStepChangeRow.undoes_id, values=set(change_ids)),
+            order_by=[PageStepChangeRow.page_id.asc(), PageStepChangeRow.sequence.asc()],
+        )
         return [self._mapper.to_entity(row) for row in rows]
 
 

@@ -6294,6 +6294,263 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/pages/{page_id}/history/{stage}/{step_id}": {
+      "get": {
+        "tags": [
+          "page-history"
+        ],
+        "summary": "List History",
+        "description": "List the changes of a step on a page, the newest first, with which of them were taken back.",
+        "operationId": "list_history_api_v1_projects__project_id__pages__page_id__history__stage___step_id__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the step"
+            },
+            "description": "Stage of the step"
+          },
+          {
+            "name": "step_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the step of a recipe",
+              "title": "Step Id"
+            },
+            "description": "Identifier of the step of a recipe"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PageStepChangeSchema_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pages/{page_id}/history/{stage}/{step_id}/undo": {
+      "post": {
+        "tags": [
+          "page-history"
+        ],
+        "summary": "Undo Change",
+        "description": "Take back the newest change of a step on a page, or every change back to a chosen one, and mark the stage stale.\n\nA change of a batch is taken back with the rest of its batch, on every page the batch reached. The answer is 409\nwhen a layer changed after the change that is taken back, and 200 with no changes when there is nothing to take\nback.",
+        "operationId": "undo_change_api_v1_projects__project_id__pages__page_id__history__stage___step_id__undo_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the step"
+            },
+            "description": "Stage of the step"
+          },
+          {
+            "name": "step_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the step of a recipe",
+              "title": "Step Id"
+            },
+            "description": "Identifier of the step of a recipe"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UndoForm"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UndoneSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/processors": {
       "get": {
         "tags": [
@@ -8693,6 +8950,18 @@
         "title": "CanvasPositionSchema",
         "description": "Where the canvas looked.\n\n:ivar zoom: Multiple of the zoom that fits the whole view into the canvas.\n:ivar centre_x: Horizontal coordinate of the centre in page heights, from the left edge of the view.\n:ivar centre_y: Vertical coordinate of the centre in page heights, from the top edge of the view."
       },
+      "ChangeSource": {
+        "type": "string",
+        "enum": [
+          "user",
+          "run",
+          "carry-over",
+          "reset",
+          "undo"
+        ],
+        "title": "ChangeSource",
+        "description": "What made a change of a layer of a step on a page."
+      },
       "ColorMode": {
         "type": "string",
         "enum": [
@@ -9917,6 +10186,113 @@
         "title": "PageStageStatus",
         "description": "Where one page stands in one stage: the state of its record, or that the stage has not run on it yet."
       },
+      "PageStepChangeSchema": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Page Id"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "step_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Step Id"
+          },
+          "layer": {
+            "$ref": "#/components/schemas/StepLayer"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "after": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ChangeSource"
+          },
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
+          },
+          "undoes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Undoes"
+          },
+          "undone": {
+            "type": "boolean",
+            "title": "Undone",
+            "default": false
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "sequence": {
+            "type": "integer",
+            "title": "Sequence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "page_id",
+          "stage",
+          "step_id",
+          "layer",
+          "before",
+          "after",
+          "source",
+          "batch_id",
+          "undoes",
+          "created_at",
+          "sequence"
+        ],
+        "title": "PageStepChangeSchema",
+        "description": "One change of a layer of a step on a page.\n\n:ivar id: Identifier of the change.\n:ivar page_id: Page the change was made on.\n:ivar stage: Stage of the step.\n:ivar step_id: Identifier of the step.\n:ivar layer: The layer that changed.\n:ivar before: Content of the layer before the change, or None when it was empty.\n:ivar after: Content of the layer after the change, or None when the change emptied it.\n:ivar source: What made the change.\n:ivar batch_id: Identifier shared by the changes of one batch, which are undone together, or None.\n:ivar undoes: The change this one takes back, or None for a change that is not an undo.\n:ivar undone: Whether a later change took this one back, so it no longer stands.\n:ivar created_at: When the change was made.\n:ivar sequence: Place of the change in the history of its page."
+      },
       "PageStepSettingsSchema": {
         "properties": {
           "page_id": {
@@ -10262,6 +10638,46 @@
           "pages"
         ],
         "title": "Page[PageStageSchema]"
+      },
+      "Page_PageStepChangeSchema_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PageStepChangeSchema"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[PageStepChangeSchema]"
       },
       "Page_PageStepSettingsSchema_": {
         "properties": {
@@ -12693,6 +13109,16 @@
         "title": "StepBody",
         "description": "A step of a recipe or of a preview as the interface sends it.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which the processor checks and fills in.\n:ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.\n:ivar step_id: Identifier of a step that already exists, which the interface sends back to keep its edits, or\n               omitted for a step that is added, which gets a new one.\n:ivar applies_to: Which pages the step processes, all of them unless the interface says otherwise."
       },
+      "StepLayer": {
+        "type": "string",
+        "enum": [
+          "settings",
+          "found",
+          "hand"
+        ],
+        "title": "StepLayer",
+        "description": "One of the three layers a page keeps for a step, which a change of the history names."
+      },
       "StepPageSchema": {
         "properties": {
           "step_id": {
@@ -12896,6 +13322,44 @@
         ],
         "title": "TransformSchema",
         "description": "How a step moves the coordinates of its input image to its output image.\n\n:ivar kind: Kind of the transform.\n:ivar quad: Area of the input that becomes the output, for a crop or a perspective correction.\n:ivar angle: Angle of a rotation in degrees, counter-clockwise.\n:ivar mesh_key: Storage key of the mesh a dewarping follows.\n:ivar matrix: The nine numbers of the 3 by 3 matrix from the input to the output, in rows."
+      },
+      "UndoForm": {
+        "properties": {
+          "change_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Id",
+            "description": "The oldest change to take back, with every later one, or none for the newest change"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "UndoForm",
+        "description": "What an undo takes back.\n\n:ivar change_id: The oldest change to take back, which takes back every change after it as well, or omitted for the\n                 newest change alone."
+      },
+      "UndoneSchema": {
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/PageStepChangeSchema"
+            },
+            "type": "array",
+            "title": "Changes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "changes"
+        ],
+        "title": "UndoneSchema",
+        "description": "What an undo wrote.\n\n:ivar changes: The undos that were written, which are none when the step had no change to take back."
       },
       "ValidationError": {
         "properties": {

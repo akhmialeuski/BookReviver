@@ -32,6 +32,7 @@ from bookreviver.domain.values import PageStepKey, RecipeKey, Renditions
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.services.edits import EditService
+from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
@@ -268,6 +269,15 @@ class ProcessingKit:
         """
         uow = InMemoryUnitOfWork(self.database)
         return PageSettingsService(uow=uow, catalogue=self.catalogue, records=self.parts(uow).records, clock=self.clock)
+
+    def page_history(self) -> PageHistoryService:
+        """Build the page history service over a new unit of work.
+
+        :returns: The service.
+        :rtype: PageHistoryService
+        """
+        uow = InMemoryUnitOfWork(self.database)
+        return PageHistoryService(uow=uow, records=self.parts(uow).records, clock=self.clock)
 
     async def edit_key(self, page: Page, stage: Stage, processor_key: str) -> PageStepKey:
         """Give the key of the edit of a step of the active recipe of a stage on a page, found by its processor.

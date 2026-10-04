@@ -21,6 +21,7 @@ from bookreviver.ports.processing import ProcessorCatalog, ProcessorSettings
 from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
 from bookreviver.ports.storage import AssetStore
 from bookreviver.services.edits import EditService
+from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
@@ -286,3 +287,18 @@ class ProcessingProvider(Provider):
         :rtype: PageSettingsService
         """
         return PageSettingsService(uow=uow, catalogue=catalogue, records=parts.records, clock=clock)
+
+    @provide(scope=Scope.REQUEST)
+    def page_history_service(self, uow: UnitOfWork, parts: ProcessingParts, clock: Clock) -> PageHistoryService:
+        """Build the page history service of a request.
+
+        :param uow: Unit of work of the current request.
+        :type uow: UnitOfWork
+        :param parts: The parts the processing use cases share, of which the stage records are used.
+        :type parts: ProcessingParts
+        :param clock: Clock of the application.
+        :type clock: Clock
+        :returns: The page history service.
+        :rtype: PageHistoryService
+        """
+        return PageHistoryService(uow=uow, records=parts.records, clock=clock)

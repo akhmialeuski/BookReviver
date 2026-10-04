@@ -23,9 +23,9 @@ from bookreviver.domain.values import Slice, SliceRequest
 
 if TYPE_CHECKING:
     from bookreviver.domain.changes import ProjectChanges
-    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.entities import Actor, Page
     from bookreviver.domain.enums import Stage
-    from bookreviver.domain.ids import StepId
+    from bookreviver.domain.ids import PageId, StepId
     from bookreviver.domain.stage_summaries import StageRow, StageSummary
     from bookreviver.domain.values import BookDetails
     from bookreviver.ports.persistence import ProjectRepository, UnitOfWork
@@ -51,6 +51,28 @@ async def owned_project(projects: ProjectRepository, actor: Actor, project_id: P
     if not project.is_owned_by(actor):
         raise NotFoundError(project_id)
     return project
+
+
+async def owned_page(uow: UnitOfWork, actor: Actor, project_id: ProjectId, page_id: PageId) -> Page:
+    """Return a page of the actor's project.
+
+    :param uow: Unit of work to read the project and the page from.
+    :type uow: UnitOfWork
+    :param actor: Account acting in the current request.
+    :type actor: Actor
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :param page_id: Identifier of the page.
+    :type page_id: PageId
+    :returns: The page, which is one of the book of the project.
+    :rtype: Page
+    :raises NotFoundError: If the actor has no such project, or the project has no such page.
+    """
+    await owned_project(uow.projects, actor, project_id)
+    page = await uow.pages.get(page_id)
+    if page.project_id != project_id:
+        raise NotFoundError(page_id)
+    return page
 
 
 class ProjectService:

@@ -89,7 +89,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Hashable, Iterable, Mapping, Sequence
     from datetime import datetime
 
-    from bookreviver.domain.ids import AccountId, StepId
+    from bookreviver.domain.ids import AccountId, ChangeBatchId, StepId
 
 # Attribute holding the identifier of every entity addressed by one
 ID_ATTRIBUTE: str = 'id'
@@ -1428,6 +1428,35 @@ class InMemoryPageStepChangeRepository(InMemoryRepository[PageStepChange, PageSt
                 if change.page_id == page_id and (stage is None or change.stage == stage)
             ),
             key=attrgetter('sequence'),
+        )
+
+    @override
+    async def list_for_batch(self, batch_id: ChangeBatchId) -> Sequence[PageStepChange]:
+        """Return the changes of one batch, by page and then by sequence.
+
+        :param batch_id: Identifier the changes of the batch share.
+        :type batch_id: ChangeBatchId
+        :returns: The changes of the batch.
+        :rtype: Sequence[PageStepChange]
+        """
+        return sorted(
+            (change for change in self._rows.values() if change.batch_id == batch_id),
+            key=attrgetter('page_id', 'sequence'),
+        )
+
+    @override
+    async def list_undoing(self, change_ids: Collection[PageStepChangeId]) -> Sequence[PageStepChange]:
+        """Return the changes that take back any of the given changes, by page and then by sequence.
+
+        :param change_ids: Identifiers of the changes that may have been undone.
+        :type change_ids: Collection[PageStepChangeId]
+        :returns: The undos.
+        :rtype: Sequence[PageStepChange]
+        """
+        wanted = set(change_ids)
+        return sorted(
+            (change for change in self._rows.values() if change.undoes in wanted),
+            key=attrgetter('page_id', 'sequence'),
         )
 
 

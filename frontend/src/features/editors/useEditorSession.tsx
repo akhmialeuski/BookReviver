@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from 'react';
 import type { FigureState, ScanSchema } from '@/api';
 import { stepChain, stepVersions } from '@/features/editors/chain';
 import { figureStateOf } from '@/features/editors/figure';
-import { popUndo, pushUndo, type UndoEntry } from '@/features/editors/history';
 import { pictureOf } from '@/features/editors/picture';
 import { isPlacement, pictureFor } from '@/features/editors/placement';
 import { editsKey, useEditChanges, useEdits } from '@/features/editors/queries';
@@ -19,6 +18,7 @@ import type { Geometry } from '@/features/editors/shapes';
 import type { PageContext } from '@/features/editors/types';
 import { usePictureSize } from '@/features/editors/usePictureSize';
 import type { ImageSource } from '@/features/processing/compare';
+import { useUndo } from '@/features/processing/historyQueries';
 import { useRunInFlight, useRunStage, useVersions } from '@/features/processing/queries';
 import { readResult } from '@/features/processing/results';
 import type { Processing } from '@/features/processing/useProcessing';
@@ -37,8 +37,9 @@ import { MESSAGES } from '@/shared/messages';
  * A change reaches the server when the reader lets go of the shape: the edit is saved, and the stage is run on the one
  * page it belongs to, so the result is on the screen without another press. The run waits while another job of the book
  * is going, since the server runs one stage at a time, and asks once for any number of saves that came meanwhile.
- * "Auto" deletes the edit and runs again, and Ctrl+Z puts back the edit the page had before the last change, or deletes
- * the edit when it had none.
+ * "Auto" deletes the edit and runs again, and Ctrl+Z asks the server to take back the newest change of the step on the
+ * page, which the history of the page keeps: the edit it had before is put back, or deleted when it had none, and a
+ * setting of the page changed after the edit is taken back first. The stage is run again when an edit was put back.
  */
 
 /** The shape being moved, which stands in for the saved one until the server has the new one. */
@@ -88,6 +89,7 @@ export function useEditorSession({
   const queryClient = useQueryClient();
   const { save, remove } = useEditChanges(projectId);
   const run = useRunStage(projectId, stage);
+  const { mutate: takeBack } = useUndo(projectId, stage);
   const { mutate: startRun } = run;
   const activeJobs = useActiveJobs(projectId);
 
@@ -168,9 +170,6 @@ export function useEditorSession({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [wanted, setWanted] = useState<WantedRun | null>(null);
-  const undoStack = useRef<UndoEntry[]>([]);
-  // What the server will hold once the writes in flight are done, which is what the next change replaces
-  const written = useRef<{ key: string; geometry: Geometry | null } | null>(null);
 
   const key = `${owner?.id}|${step?.step_id}`;
   const openKey = `${current?.page.id}|${stage}`;
@@ -205,7 +204,7 @@ export function useEditorSession({
     );
   }, [wanted, idle, startRun, projectId, stage]);
 
-  const write = async (next: Geometry | null, remember: boolean): Promise<void> => {
+  const write = async (next: Geometry | null): Promise<void> => {
     if (
       editor === undefined ||
       context === undefined ||
@@ -215,15 +214,6 @@ export function useEditorSession({
     ) {
       return;
     }
-    if (remember) {
-      const previous = written.current?.key === key ? written.current.geometry : savedGeometry;
-      undoStack.current = pushUndo(undoStack.current, {
-        ownerId: owner.id,
-        stepId: step.step_id,
-        previous,
-      });
-    }
-    written.current = { key, geometry: next };
     const path = {
       project_id: projectId,
       page_id: owner.id,
@@ -247,7 +237,6 @@ export function useEditorSession({
         setWanted({ recipeId: recipe.id, pageId: owner.id });
       }
     } catch (failure) {
-      written.current = null;
       setError(describeError(failure));
     } finally {
       await Promise.all([
@@ -259,15 +248,33 @@ export function useEditorSession({
   };
 
   const undo = (): void => {
-    if (owner === undefined || step === undefined) {
+    if (
+      owner === undefined ||
+      step === undefined ||
+      editor === undefined ||
+      context === undefined
+    ) {
       return;
     }
-    const taken = popUndo(undoStack.current, owner.id, step.step_id);
-    if (taken !== null) {
-      undoStack.current = taken.rest;
-      setDraft(null);
-      void write(taken.entry.previous, false);
-    }
+    setDraft(null);
+    takeBack(
+      {
+        path: { project_id: projectId, page_id: owner.id, stage, step_id: step.step_id },
+        body: { change_id: null },
+      },
+      {
+        onSuccess: (undone) => {
+          if (
+            recipe !== undefined &&
+            editor.runsAfterEdit(context) &&
+            undone.changes.some((change) => change.layer === 'hand')
+          ) {
+            setWanted({ recipeId: recipe.id, pageId: owner.id });
+          }
+        },
+        onError: (failure) => setError(describeError(failure)),
+      },
+    );
   };
 
   const latestUndo = useRef(undo);
@@ -322,7 +329,7 @@ export function useEditorSession({
   const hold = (next: Geometry): void => setDraft({ key, base: savedText, geometry: next });
   const commit = (next: Geometry): void => {
     hold(next);
-    void write(next, true);
+    void write(next);
   };
   const saving = save.isPending || remove.isPending;
   const titleOf = (candidate: EditableStep): string =>
@@ -375,7 +382,7 @@ export function useEditorSession({
     auto: () => {
       if (savedGeometry !== null) {
         setDraft({ key, base: savedText, geometry: fallback });
-        void write(null, true);
+        void write(null);
       }
     },
     renderCanvas: (scene: EditorScene) => (
