@@ -412,6 +412,7 @@ export function useEditorSession({
             serverFigure !== 'skipped'
           ? serverFigure
           : figureStateOf(false, made !== null);
+  const reachRect = editor.reach(context);
   const hold = (next: Geometry): void => setDraft({ key, base: savedText, geometry: next });
   const commit = (next: Geometry): void => {
     hold(next);
@@ -473,6 +474,7 @@ export function useEditorSession({
         void write(null);
       }
     },
+    reach: reachRect === null ? null : { rect: reachRect, size: editor.size(context) },
     renderCanvas: (scene: EditorScene) => (
       <StepSettingsContext.Provider value={stepSettings}>
         <editor.Canvas

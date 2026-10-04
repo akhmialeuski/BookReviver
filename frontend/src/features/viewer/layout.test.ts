@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   FALLBACK_ASPECT,
+  holdingReach,
   layoutView,
   pageRect,
   SPREAD_GUTTER,
@@ -85,5 +86,53 @@ describe('withBottomInset', () => {
   it('gives the rectangle back when the viewport is no taller than the inset', () => {
     expect(withBottomInset(rect, { width: 1000, height: 64 }, 64)).toEqual(rect);
     expect(withBottomInset(rect, { width: 0, height: 800 }, 64)).toEqual(rect);
+  });
+});
+
+describe('holdingReach', () => {
+  const WORLD = { x: 0, y: 0, width: 0.5, height: 1 };
+  // A picture that fills the world, counted in 1000 by 2000 pixels
+  const PIXELS = { width: 1000, height: 2000 };
+
+  it('grows the world to the border that lies beyond the picture on every side', () => {
+    const held = holdingReach(WORLD, WORLD, PIXELS, {
+      x: -100,
+      y: -200,
+      width: 1300,
+      height: 2600,
+    });
+
+    expect(held.x).toBeCloseTo(-0.05);
+    expect(held.y).toBeCloseTo(-0.1);
+    expect(held.x + held.width).toBeCloseTo(0.6);
+    expect(held.y + held.height).toBeCloseTo(1.2);
+  });
+
+  it('leaves the world as it is when the border lies inside the picture', () => {
+    expect(
+      holdingReach(WORLD, WORLD, PIXELS, { x: 100, y: 200, width: 800, height: 1600 }),
+    ).toEqual(WORLD);
+  });
+
+  it('counts the border on the picture where it stands in the world, not on the world', () => {
+    const picture = { x: 0.2, y: 0.1, width: 0.25, height: 0.5 };
+    // A border one picture wide, standing wholly left of the picture
+    const held = holdingReach(WORLD, picture, PIXELS, {
+      x: -1000,
+      y: 0,
+      width: 1000,
+      height: 2000,
+    });
+
+    expect(held.x).toBeCloseTo(-0.05);
+    expect(held.width).toBeCloseTo(0.55);
+    expect(held.y).toBe(0);
+    expect(held.height).toBe(1);
+  });
+
+  it('leaves the world as it is while the size of the picture in pixels is not known', () => {
+    expect(
+      holdingReach(WORLD, WORLD, { width: 0, height: 0 }, { x: -1, y: -1, width: 9, height: 9 }),
+    ).toEqual(WORLD);
   });
 });

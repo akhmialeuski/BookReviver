@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react';
 import type { FigureState, PageSchema, PageVersionSchema, ScanSchema } from '@/api';
 import type { EditorScene } from '@/features/editors/scene';
-import type { Geometry, Size } from '@/features/editors/shapes';
+import type { Geometry, RectShape, Size } from '@/features/editors/shapes';
 import type { PageResult } from '@/features/processing/results';
 import type { StripItem } from '@/features/workspace/strip';
 
@@ -95,6 +95,11 @@ export interface EditorDefinition<S> {
   size: (context: PageContext) => Size | null;
   /** Whether saving an edit is followed by running the stage on the page. */
   runsAfterEdit: (context: PageContext) => boolean;
+  /**
+   * The rectangle the editor draws beyond the picture, in the pixels of the edit, which the fit of the canvas holds too so
+   * that its handles can be reached; absent for an editor that draws only on the picture.
+   */
+  reach?: (context: PageContext) => RectShape | null;
   /** The shape to start from when the page has no edit. */
   fallback: (context: FallbackContext) => S;
   read: (geometry: Geometry | null) => S | null;
@@ -138,6 +143,8 @@ export interface RegisteredEditor {
   owner: (context: PageContext) => PageSchema;
   size: (context: PageContext) => Size | null;
   runsAfterEdit: (context: PageContext) => boolean;
+  /** The rectangle the editor draws beyond the picture, in the pixels of the edit, or null for none. */
+  reach: (context: PageContext) => RectShape | null;
   /** The geometry to start from when the page has no edit. */
   fallback: (context: FallbackContext) => Geometry;
   /** Paint the mask that is saved with the geometry, for an editor whose edit is a mask; absent for the others. */

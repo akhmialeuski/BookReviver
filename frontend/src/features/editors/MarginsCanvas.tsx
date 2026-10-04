@@ -91,8 +91,9 @@ export function MarginsCanvas({
     latestMargins.current = margins;
   }, [margins]);
   const names = result?.marginSettings ?? null;
-  const blockScale = result?.blockScale ?? null;
-  const sidesEditable = margins !== null && names !== null && blockScale !== null && blockScale > 0;
+  const pixelsPerMm = result?.marginPixelsPerMm ?? null;
+  const sidesEditable =
+    margins !== null && names !== null && pixelsPerMm !== null && pixelsPerMm > 0;
 
   const { mapping } = frame;
   const toScreen = (rect: { left: number; top: number; width: number; height: number }) => {
@@ -141,8 +142,8 @@ export function MarginsCanvas({
 
   const letGoOfSide = (side: MarginSide) => () => {
     const current = latestMargins.current;
-    if (current !== null && names !== null && blockScale !== null) {
-      settings?.set(names[side], settingOf(current[side], blockScale));
+    if (current !== null && names !== null && pixelsPerMm !== null && pixelsPerMm > 0) {
+      settings?.set(names[side], settingOf(current[side], pixelsPerMm));
     }
   };
 

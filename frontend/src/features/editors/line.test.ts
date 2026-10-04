@@ -40,7 +40,7 @@ describe('cutLine', () => {
     specks: null,
     contentBox: null,
     marginBox: null,
-    blockScale: null,
+    marginPixelsPerMm: null,
     marginSettings: null,
   };
 

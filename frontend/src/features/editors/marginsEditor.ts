@@ -10,7 +10,8 @@ import { sourceSize } from '@/features/processing/results';
  * from it by the margins, whose sides set the margins of the page.
  *
  * It lies on the picture the step reads, in its pixels, and starts from the box the step found, which the server works out
- * for a page that has not been run too. The alignment of the box on the page is chosen in the panel.
+ * for a page that has not been run too. The alignment of the box on the page is chosen in the panel. The border may lie
+ * beyond the picture, so the canvas is fitted to hold the picture and the border both.
  */
 
 export const marginsEditor: EditorDefinition<ContentBoxShape> = {
@@ -20,6 +21,8 @@ export const marginsEditor: EditorDefinition<ContentBoxShape> = {
   owner: ({ current }) => current.page,
   size: ({ result, pictureSize }) => sourceSize(result) ?? pictureSize,
   runsAfterEdit: () => true,
+  // The border of the page is wider than the picture when the margins are, so the canvas is fitted to hold it
+  reach: ({ result }) => result?.marginBox ?? null,
   fallback: ({ size, result }) => contentBoxOf(result, size),
   read: readContentBox,
   write: writeContentBox,

@@ -32,8 +32,16 @@ const STEP_ADDRESS = /\/stages\/geometry\/steps\/[0-9a-f-]{36}(\?|$)/;
 const DRAG_PX = 30;
 // How far a box found by a run of a page may stand from the one a preview found, in pixels of the picture
 const FOUND_TOLERANCE_PX = 12;
-const SMALL_MARGIN_PX = 20;
-const MARGIN_FIELDS = ['Top margin', 'Bottom margin', 'Inner margin', 'Outer margin'];
+// What the margins of the step are in the form, in millimetres, which the scans of this scenario meet unchanged
+const MARGIN_FIELDS = [
+  ['Top margin, mm', '10'],
+  ['Bottom margin, mm', '15'],
+  ['Inner margin, mm', '15'],
+  ['Outer margin, mm', '10'],
+] as const;
+const SIDES = ['left', 'right', 'top', 'bottom'] as const;
+// The height the toolbar over the bottom of the canvas covers, counted from the bottom edge
+const TOOLBAR_PX = 64;
 const LEFT_MARGIN_SETTINGS = ['margin_inner', 'margin_outer'];
 
 // Tall enough for the pictures of the key states to show the bar, the canvas and the panel
@@ -140,24 +148,28 @@ test('the content box and the border of a page are found on opening, edited with
   });
 
   await test.step('dragging a side of the border sets that margin for the page alone', async () => {
-    // The margins a book starts with are 150 to 200 pixels, and the border is the page they make round the box, so it
-    // lies beyond a canvas that shows a scan this small. The recipe is given margins that fit, as a scan of a real size
-    // has, and the pages are run again with them
-    for (const name of MARGIN_FIELDS) {
-      await page
-        .getByTestId('step-panel-settings')
-        .getByRole('spinbutton', { name, exact: true })
-        .fill(String(SMALL_MARGIN_PX));
+    // The step keeps the margins a book starts with, which are lengths of the paper in millimetres, so the border lies at
+    // the same place on a scan of any size, and the canvas is fitted to hold it
+    for (const [name, millimetres] of MARGIN_FIELDS) {
+      await expect(
+        page.getByTestId('step-panel-settings').getByRole('spinbutton', { name, exact: true }),
+      ).toHaveValue(millimetres);
     }
-    await page.getByTestId('recipe-save').click();
-    await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
-    await waitForIdleJobs(page, projectId);
-    await runAll(page);
-    await waitForIdleJobs(page, projectId);
-    await expect(layer).toHaveAttribute('data-figure', 'by-hand', { timeout: RUN_TIMEOUT_MS });
     await expect
       .poll(async () => (await pairOf(layer, 'data-side-left')).x, { timeout: RUN_TIMEOUT_MS })
       .toBeGreaterThan(0);
+    // Every side of the border can be grabbed: its handle stands inside the canvas and above the toolbar that floats over
+    // the bottom of it, the places of the handles being counted from the corner of the layer
+    const view = await layer.boundingBox();
+    expect(view).not.toBeNull();
+    for (const side of SIDES) {
+      const handle = await pairOf(layer, `data-side-${side}`);
+      expect(handle.x).toBeGreaterThan(0);
+      expect(handle.x).toBeLessThan(view?.width ?? 0);
+      expect(handle.y).toBeGreaterThan(0);
+      expect(handle.y).toBeLessThan((view?.height ?? 0) - TOOLBAR_PX);
+    }
+    await snap(page, 'margins-border-in-view');
     const before = await numbersOf(layer, 'data-outer');
     const side = await pairOf(layer, 'data-side-left');
     await dragFrom(page, layer, side, { x: -DRAG_PX, y: 0 });

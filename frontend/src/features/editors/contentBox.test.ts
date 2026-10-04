@@ -17,7 +17,7 @@ const FOUND = readResult({
   data: {
     content_box: { left: 100, top: 200, width: 300, height: 400 },
     margin_box: { left: 70, top: 150, width: 380, height: 520 },
-    block_scale: 0.5,
+    margin_pixels_per_mm: 4,
   },
 });
 const BOX = { left: 100, top: 200, width: 300, height: 400 };
@@ -80,9 +80,9 @@ describe('marginAt', () => {
 });
 
 describe('settingOf', () => {
-  it('turns a distance on the picture into whole pixels of the page, by the scale of the box', () => {
-    expect(settingOf(50, 0.5)).toBe(25);
-    expect(settingOf(33, 0.8)).toBe(26);
+  it('turns a distance on the picture into millimetres of the page, to a tenth', () => {
+    expect(settingOf(40, 4)).toBe(10);
+    expect(settingOf(50, 11.811)).toBe(4.2);
   });
 });
 

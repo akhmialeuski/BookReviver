@@ -1,7 +1,14 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { binarize, deskew, deskewMethods, spread, whole } from '@/features/processing/fixtures';
+import {
+  binarize,
+  deskew,
+  deskewMethods,
+  margins,
+  spread,
+  whole,
+} from '@/features/processing/fixtures';
 import { ParamsForm } from '@/features/processing/ParamsForm';
 
 /**
@@ -66,6 +73,25 @@ describe('ParamsForm', () => {
     expect(labels).toEqual(['Largest slant', 'Least confidence']);
     expect(container.textContent).not.toContain('max_angle');
     expect(container.textContent).not.toContain('DeskewParams');
+  });
+
+  it('names the millimetre in the label of each margin and shows the length typed in it', () => {
+    render(margins(), { margin_top: 10, margin_inner: 12.5 });
+
+    const labels = [...container.querySelectorAll('label')].map((label) => label.textContent);
+    expect(labels).toEqual(['Top margin, mm', 'Inner margin, mm']);
+    expect(container.textContent).toContain('in millimetres of the paper');
+    const inputs = [...container.querySelectorAll<HTMLInputElement>('input[type="number"]')];
+    expect(inputs.map((input) => input.value)).toEqual(['10', '12.5']);
+  });
+
+  it('hands back a margin typed with a tenth of a millimetre as it is', () => {
+    const onChange = render(margins(), { margin_top: 10, margin_inner: 15 });
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]');
+
+    typeInto(input as HTMLInputElement, '7.5');
+
+    expect(onChange).toHaveBeenLastCalledWith({ margin_top: 7.5, margin_inner: 15 });
   });
 
   it('marks the field the open page changes for itself in its label, and only that field', () => {
