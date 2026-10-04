@@ -26,8 +26,8 @@ import type {
   Script,
   Stage,
   StageStatus,
-  VersionOrigin,
   StepFlag,
+  VersionOrigin,
 } from '@/api';
 import type { Problem } from '@/features/about/fields';
 import type { Section } from '@/features/about/sections';
