@@ -55,6 +55,7 @@ export function RecipeSection({
   rows,
   run,
   pageId,
+  onManageProfiles,
 }: {
   processing: Processing;
   rows: readonly StagePageSchema[];
@@ -62,6 +63,8 @@ export function RecipeSection({
   run?: StageRun;
   /** The page that is open, whose own settings of the steps are shown, or absent when none is. */
   pageId?: string;
+  /** Opens the library of profiles, which the profile menu offers when it is given. */
+  onManageProfiles?: () => void;
 }): React.JSX.Element | null {
   const { projectId, stage, recipe, steps, catalogue } = processing;
   const save = useSaveRecipe(projectId, stage);
@@ -116,7 +119,7 @@ export function RecipeSection({
           {counts.join(' · ')}
         </p>
       )}
-      <ProfileMenu processing={processing} />
+      <ProfileMenu processing={processing} onManage={onManageProfiles} />
       <select
         aria-label={labels.recipe.choose}
         data-testid="recipe-select"

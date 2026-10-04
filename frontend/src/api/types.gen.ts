@@ -95,6 +95,8 @@ export type AccountUpdate = {
  *
  * :ivar recipe: The variant added to the book, which is the active recipe when the request asked for that.
  * :ivar missing_processors: Keys of the processors of the profile that are not installed, whose steps were left out.
+ * :ivar job: The queued run of the stage on the pages the profile was applied to, or null when it was applied to the
+ * book only.
  */
 export type AppliedProfileSchema = {
     recipe: RecipeSchema;
@@ -102,6 +104,7 @@ export type AppliedProfileSchema = {
      * Missing Processors
      */
     missing_processors: Array<string>;
+    job?: JobSchema | null;
 };
 
 /**
@@ -122,12 +125,18 @@ export type AppliesTo = 'all' | 'text' | 'pictures' | 'color-pictures' | 'bw-pic
  * How to apply a profile to a book.
  *
  * :ivar activate: Whether the new variant also becomes the active recipe of the stage.
+ * :ivar page_ids: The pages to pin the new variant to and to run the stage on, or omitted to apply the profile to the
+ * book only.
  */
 export type ApplyProfileBody = {
     /**
      * Activate
      */
     activate?: boolean;
+    /**
+     * Page Ids
+     */
+    page_ids?: Array<string> | null;
 };
 
 /**
@@ -838,6 +847,46 @@ export type LabelRange = {
  * ``roman`` package, whose one function would be about a dozen lines of ours.
  */
 export type LabelStyle = 'arabic' | 'roman-lower' | 'roman-upper' | 'alpha-lower' | 'alpha-upper' | 'none';
+
+/**
+ * LibraryProfileSchema
+ *
+ * A recipe profile of the signed-in account with the number of books that use it.
+ *
+ * :ivar books: Number of books that have a recipe made from the profile.
+ */
+export type LibraryProfileSchema = {
+    /**
+     * Id
+     */
+    id: string;
+    stage: Stage;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Steps
+     */
+    steps: Array<StepSchema>;
+    order: OrderMode;
+    /**
+     * Is Default
+     */
+    is_default: boolean;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+    /**
+     * Books
+     */
+    books: number;
+};
 
 /**
  * ManifestPage[PageSchema]
@@ -1612,6 +1661,32 @@ export type PageJobSchema = {
 };
 
 /**
+ * Page[LibraryProfileSchema]
+ */
+export type PageLibraryProfileSchema = {
+    /**
+     * Items
+     */
+    items: Array<LibraryProfileSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
+};
+
+/**
  * Page[PageEditSchema]
  */
 export type PagePageEditSchema = {
@@ -1801,32 +1876,6 @@ export type PageProjectSchema = {
      * Items
      */
     items: Array<ProjectSchema>;
-    /**
-     * Total
-     */
-    total: number;
-    /**
-     * Page
-     */
-    page: number;
-    /**
-     * Size
-     */
-    size: number;
-    /**
-     * Pages
-     */
-    pages: number;
-};
-
-/**
- * Page[RecipeProfileSchema]
- */
-export type PageRecipeProfileSchema = {
-    /**
-     * Items
-     */
-    items: Array<RecipeProfileSchema>;
     /**
      * Total
      */
@@ -2203,6 +2252,65 @@ export type ProcessorSchema = {
  * How many outputs a processor makes from its input.
  */
 export type ProcessorScope = 'page' | 'split';
+
+/**
+ * ProfileFileSchema
+ *
+ * A profile as a file that is exchanged between accounts: the answer of an export, and the body of an import.
+ *
+ * :ivar version: Version of the format of the file.
+ * :ivar stage: Stage whose recipes the profile can be applied to.
+ * :ivar name: Name of the profile.
+ * :ivar order: ``usual`` if the profile refuses a step off a required place, ``free`` if it lets it stand.
+ * :ivar steps: The steps in the order they run.
+ */
+export type ProfileFileSchema = {
+    /**
+     * Version
+     */
+    version: 1;
+    stage: Stage;
+    /**
+     * Name
+     */
+    name: string;
+    order?: OrderMode;
+    /**
+     * Steps
+     */
+    steps: Array<ProfileFileStep>;
+};
+
+/**
+ * ProfileFileStep
+ *
+ * One step of a profile file: a processor, its parameters, whether it is on, and the pages it runs on.
+ *
+ * The step has no identifier, since the identifier belongs to the recipe a step is in, and an import gives each step a
+ * new one.
+ *
+ * :ivar processor_key: Key of the processor.
+ * :ivar params: Parameters of the step, which an import checks against the processor.
+ * :ivar enabled: Whether a run runs the step.
+ * :ivar applies_to: Which pages the step processes.
+ */
+export type ProfileFileStep = {
+    /**
+     * Processor Key
+     */
+    processor_key: string;
+    /**
+     * Params
+     */
+    params?: {
+        [key: string]: unknown;
+    };
+    /**
+     * Enabled
+     */
+    enabled?: boolean;
+    applies_to?: AppliesTo;
+};
 
 /**
  * ProfileLinkBody
@@ -6070,7 +6178,7 @@ export type ListProfilesApiV1RecipeProfilesGetResponses = {
     /**
      * Successful Response
      */
-    200: PageRecipeProfileSchema;
+    200: PageLibraryProfileSchema;
 };
 
 export type ListProfilesApiV1RecipeProfilesGetResponse = ListProfilesApiV1RecipeProfilesGetResponses[keyof ListProfilesApiV1RecipeProfilesGetResponses];
@@ -6107,6 +6215,119 @@ export type CreateProfileApiV1RecipeProfilesPostResponses = {
 };
 
 export type CreateProfileApiV1RecipeProfilesPostResponse = CreateProfileApiV1RecipeProfilesPostResponses[keyof CreateProfileApiV1RecipeProfilesPostResponses];
+
+export type ImportProfileApiV1RecipeProfilesImportPostData = {
+    body: ProfileFileSchema;
+    path?: never;
+    query?: never;
+    url: '/api/v1/recipe-profiles/import';
+};
+
+export type ImportProfileApiV1RecipeProfilesImportPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ImportProfileApiV1RecipeProfilesImportPostError = ImportProfileApiV1RecipeProfilesImportPostErrors[keyof ImportProfileApiV1RecipeProfilesImportPostErrors];
+
+export type ImportProfileApiV1RecipeProfilesImportPostResponses = {
+    /**
+     * Successful Response
+     */
+    201: RecipeProfileSchema;
+};
+
+export type ImportProfileApiV1RecipeProfilesImportPostResponse = ImportProfileApiV1RecipeProfilesImportPostResponses[keyof ImportProfileApiV1RecipeProfilesImportPostResponses];
+
+export type ExportProfileApiV1RecipeProfilesProfileIdExportGetData = {
+    body?: never;
+    path: {
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
+    };
+    query?: never;
+    url: '/api/v1/recipe-profiles/{profile_id}/export';
+};
+
+export type ExportProfileApiV1RecipeProfilesProfileIdExportGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ExportProfileApiV1RecipeProfilesProfileIdExportGetError = ExportProfileApiV1RecipeProfilesProfileIdExportGetErrors[keyof ExportProfileApiV1RecipeProfilesProfileIdExportGetErrors];
+
+export type ExportProfileApiV1RecipeProfilesProfileIdExportGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: ProfileFileSchema;
+};
+
+export type ExportProfileApiV1RecipeProfilesProfileIdExportGetResponse = ExportProfileApiV1RecipeProfilesProfileIdExportGetResponses[keyof ExportProfileApiV1RecipeProfilesProfileIdExportGetResponses];
+
+export type DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostData = {
+    body?: never;
+    path: {
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
+    };
+    query?: never;
+    url: '/api/v1/recipe-profiles/{profile_id}/duplicate';
+};
+
+export type DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostError = DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostErrors[keyof DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostErrors];
+
+export type DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostResponses = {
+    /**
+     * Successful Response
+     */
+    201: RecipeProfileSchema;
+};
+
+export type DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostResponse = DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostResponses[keyof DuplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostResponses];
 
 export type DeleteProfileApiV1RecipeProfilesProfileIdDeleteData = {
     body?: never;

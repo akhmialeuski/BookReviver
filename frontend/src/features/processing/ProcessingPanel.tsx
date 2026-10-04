@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { EditorSession } from '@/features/editors/session';
 import { RecipeSection } from '@/features/processing/RecipeSection';
 import { RunControls } from '@/features/processing/RunControls';
@@ -6,6 +7,7 @@ import { StepPanel } from '@/features/processing/StepPanel';
 import { ThisPageSection } from '@/features/processing/ThisPageSection';
 import type { Processing } from '@/features/processing/useProcessing';
 import { useStageRun } from '@/features/processing/useStageRun';
+import { ProfileLibraryPanel } from '@/features/profiles/ProfileLibraryPanel';
 import { StagePanel } from '@/features/workspace/StagePanel';
 import type { BarStep } from '@/features/workspace/steps';
 import type { StripItem } from '@/features/workspace/strip';
@@ -45,6 +47,7 @@ export function ProcessingPanel({
 }): React.JSX.Element {
   const rows = items.flatMap((item) => (item.row === undefined ? [] : [item.row]));
   const run = useStageRun(processing, items, current, selected);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   if (processing.failed) {
     return (
       <StagePanel stage={processing.stage} available>
@@ -83,7 +86,13 @@ export function ProcessingPanel({
         {processing.stage === 'page-split' && current !== undefined ? (
           <SplitSection processing={processing} items={items} current={current} />
         ) : null}
-        <RecipeSection processing={processing} rows={rows} run={run} pageId={current?.page.id} />
+        <RecipeSection
+          processing={processing}
+          rows={rows}
+          run={run}
+          pageId={current?.page.id}
+          onManageProfiles={() => setLibraryOpen(true)}
+        />
         {current === undefined ? null : (
           <ThisPageSection
             processing={processing}
@@ -95,6 +104,11 @@ export function ProcessingPanel({
           />
         )}
       </div>
+      <ProfileLibraryPanel
+        open={libraryOpen}
+        onOpenChange={setLibraryOpen}
+        book={{ processing, items, selected }}
+      />
     </StagePanel>
   );
 }

@@ -19,6 +19,8 @@ const sdk = vi.hoisted(() => ({
   link: vi.fn(),
   recipes: vi.fn(),
   saveRecipe: vi.fn(),
+  apply: vi.fn(),
+  jobs: vi.fn(),
 }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
@@ -29,6 +31,8 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   putRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePut: sdk.link,
   listVariantsApiV1ProjectsProjectIdStagesStageVariantsGet: sdk.recipes,
   putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPut: sdk.saveRecipe,
+  applyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPost: sdk.apply,
+  listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
 }));
 
 const STEPS = [
@@ -53,11 +57,14 @@ describe('ProfileMenu', () => {
     });
   }
 
-  async function render(state: ReturnType<typeof processing>): Promise<void> {
+  async function render(
+    state: ReturnType<typeof processing>,
+    onManage?: () => void,
+  ): Promise<void> {
     act(() =>
       root.render(
         <QueryClientProvider client={client}>
-          <ProfileMenu processing={state} />
+          <ProfileMenu processing={state} onManage={onManage} />
         </QueryClientProvider>,
       ),
     );
@@ -94,6 +101,14 @@ describe('ProfileMenu', () => {
       }),
     });
     sdk.recipes.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 100, pages: 1 } });
+    sdk.jobs.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 20, pages: 1 } });
+    sdk.apply.mockResolvedValue({
+      data: {
+        recipe: recipe('applied', { name: 'Clean flatbed scan', active: true }),
+        missing_processors: [],
+        job: null,
+      },
+    });
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -315,5 +330,76 @@ describe('ProfileMenu', () => {
     await click('profile-button');
 
     expect(byId('profile-save-new')).toHaveProperty('disabled', true);
+  });
+  describe('the other profiles of the stage and the library', () => {
+    const OTHER = profile('p2', { name: 'Clean flatbed scan', is_default: true });
+
+    it('lists the profiles of the stage other than the one of the recipe', async () => {
+      sdk.list.mockResolvedValue(profilePage([PROFILE, OTHER]));
+
+      await render(processing({ recipe: LINKED, steps: draftOf(LINKED) }));
+      await click('profile-button');
+
+      expect(
+        [...document.body.querySelectorAll<HTMLElement>('[data-testid="profile-switch"]')].map(
+          (item) => item.dataset.name,
+        ),
+      ).toEqual(['Clean flatbed scan']);
+      expect(byId('profile-others-empty')).toBeNull();
+    });
+
+    it('says so when the stage has no other profile', async () => {
+      await render(processing({ recipe: LINKED, steps: draftOf(LINKED) }));
+      await click('profile-button');
+
+      expect(byId('profile-others-empty')).not.toBeNull();
+      expect(byId('profile-others')).toBeNull();
+    });
+
+    it('applies a listed profile to the book as the active recipe, and opens it in the panel', async () => {
+      sdk.list.mockResolvedValue(profilePage([PROFILE, OTHER]));
+      const chooseRecipe = vi.fn();
+
+      await render(processing({ recipe: LINKED, steps: draftOf(LINKED), chooseRecipe }));
+      await click('profile-button');
+      await click('profile-switch');
+      await flush();
+
+      expect(sdk.apply).toHaveBeenCalledWith(
+        expect.objectContaining({
+          path: { project_id: 'project', profile_id: 'p2' },
+          body: { activate: true },
+        }),
+      );
+      expect(chooseRecipe).toHaveBeenCalledWith('applied');
+      expect(byId('profile-saved')?.textContent).toContain('Clean flatbed scan');
+    });
+
+    it('waits for the unsaved changes to be saved or reverted before it applies another profile', async () => {
+      sdk.list.mockResolvedValue(profilePage([PROFILE, OTHER]));
+      const off = toggleStep(draftOf(LINKED), 'step-1');
+
+      await render(processing({ recipe: LINKED, steps: off, dirty: true }));
+      await click('profile-button');
+
+      expect(byId('profile-switch')).toHaveProperty('disabled', true);
+    });
+
+    it('opens the library from the entry of the menu', async () => {
+      const onManage = vi.fn();
+
+      await render(processing({ recipe: LINKED, steps: draftOf(LINKED) }), onManage);
+      await click('profile-button');
+      await click('profile-manage');
+
+      expect(onManage).toHaveBeenCalledOnce();
+    });
+
+    it('has no entry for the library where it cannot be opened', async () => {
+      await render(processing({ recipe: LINKED, steps: draftOf(LINKED) }));
+      await click('profile-button');
+
+      expect(byId('profile-manage')).toBeNull();
+    });
   });
 });

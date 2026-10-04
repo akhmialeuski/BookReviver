@@ -5,6 +5,9 @@ import {
   createProfileApiV1RecipeProfilesPostMutation,
   deleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteMutation,
   deleteProfileApiV1RecipeProfilesProfileIdDeleteMutation,
+  duplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostMutation,
+  exportProfileApiV1RecipeProfilesProfileIdExportGetOptions,
+  importProfileApiV1RecipeProfilesImportPostMutation,
   listProfilesApiV1RecipeProfilesGetOptions,
   listProfilesApiV1RecipeProfilesGetQueryKey,
   putDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutMutation,
@@ -13,13 +16,16 @@ import {
   renameProfileApiV1RecipeProfilesProfileIdPatchMutation,
 } from '@/api/@tanstack/react-query.gen';
 import { refreshStage } from '@/features/processing/queries';
+import { invalidateJobs } from '@/features/projects/queries';
 
 /**
  * The queries and changes behind the recipe profiles of the account: the list of them, by stage or all, and the saving,
- * replacing, renaming, choosing as the default, deleting, applying to a book and linking a recipe to one.
+ * replacing, renaming, choosing as the default, copying, exporting, importing, deleting, applying to a book and linking a
+ * recipe to one.
  *
  * Every change of a profile reads the lists again, since a new default takes the mark off the one before it. Applying a
- * profile changes the recipes of one stage of one book, not the profiles, so it marks that stage stale.
+ * profile changes the recipes of one stage of one book and the number of books the profile has, so it reads the stage
+ * and the list again, and the jobs too, since applying it to pages queues a run.
  */
 
 /** Profiles asked for per request; the route accepts at most this many. */
@@ -112,11 +118,51 @@ export function useUnsetDefaultProfile() {
   });
 }
 
-/** Add the steps of a profile to a book as a variant of the stage, which may become the active recipe. */
+/**
+ * Add the steps of a profile to a book as a variant of the stage, which may become the active recipe and may be given to
+ * some pages, which queues a run of the stage on them.
+ */
 export function useApplyProfile(projectId: string, stage: Stage) {
   const queryClient = useQueryClient();
   return useMutation({
     ...applyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostMutation(),
-    onSettled: () => refreshStage(queryClient, projectId, stage),
+    onSettled: () =>
+      Promise.all([
+        refreshStage(queryClient, projectId, stage),
+        refreshProfiles(queryClient),
+        invalidateJobs(queryClient, projectId),
+      ]),
+  });
+}
+
+/** Save a copy of a profile, under its name with "(copy)" after it. */
+export function useDuplicateProfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...duplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostMutation(),
+    onSettled: () => refreshProfiles(queryClient),
+  });
+}
+
+/** Save the profile a file holds. The server checks it as it checks a saved profile, and names what is wrong with it. */
+export function useImportProfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...importProfileApiV1RecipeProfilesImportPostMutation(),
+    onSettled: () => refreshProfiles(queryClient),
+  });
+}
+
+/** Read a profile as the file it is exchanged by. The file is read again every time, so it is never an old one. */
+export function useExportProfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (profileId: string) =>
+      queryClient.fetchQuery({
+        ...exportProfileApiV1RecipeProfilesProfileIdExportGetOptions({
+          path: { profile_id: profileId },
+        }),
+        staleTime: 0,
+      }),
   });
 }

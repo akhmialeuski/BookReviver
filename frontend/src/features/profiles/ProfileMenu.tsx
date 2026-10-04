@@ -4,7 +4,7 @@ import { useSaveRecipe } from '@/features/processing/queries';
 import { bodyOf, draftOf } from '@/features/processing/recipe';
 import type { Processing } from '@/features/processing/useProcessing';
 import { type ProfileChange, profileChanges } from '@/features/profiles/changes';
-import { useProfiles, useReplaceProfile } from '@/features/profiles/queries';
+import { useApplyProfile, useProfiles, useReplaceProfile } from '@/features/profiles/queries';
 import { SaveProfileDialog } from '@/features/profiles/SaveProfileDialog';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
@@ -21,6 +21,9 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
  * recipe, as the save bar does, and write the profile from the saved recipe, so the steps have the same identifiers on
  * both sides and no false difference appears. Putting the profile back changes the draft only, and the recipe changes
  * when it is saved.
+ *
+ * Under the three actions stand the other profiles of the stage, each of which is applied to the book as the active
+ * recipe by a press, and the entry that opens the library of profiles.
  */
 
 const labels = MESSAGES.profiles.link;
@@ -46,7 +49,14 @@ function sentenceOf(change: ProfileChange): string {
   }
 }
 
-export function ProfileMenu({ processing }: { processing: Processing }): React.JSX.Element | null {
+export function ProfileMenu({
+  processing,
+  onManage,
+}: {
+  processing: Processing;
+  /** Opens the library of profiles, or absent where the library is not available. */
+  onManage?: () => void;
+}): React.JSX.Element | null {
   const { stage, recipe, steps, catalogue } = processing;
   const [open, setOpen] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -54,6 +64,7 @@ export function ProfileMenu({ processing }: { processing: Processing }): React.J
   const profiles = useProfiles(stage);
   const replace = useReplaceProfile();
   const saveRecipe = useSaveRecipe(processing.projectId, stage);
+  const apply = useApplyProfile(processing.projectId, stage);
   if (recipe === undefined) {
     return null;
   }
@@ -63,7 +74,8 @@ export function ProfileMenu({ processing }: { processing: Processing }): React.J
       ? undefined
       : profiles.data?.find((profile) => profile.id === recipe.profile_id);
   const changes = linked === undefined ? [] : profileChanges(linked.steps, steps, catalogue);
-  const error = saveRecipe.error ?? replace.error;
+  const error = saveRecipe.error ?? replace.error ?? apply.error;
+  const others = (profiles.data ?? []).filter((profile) => profile.id !== linked?.id);
   const modeDiffers = linked !== undefined && linked.order !== processing.orderMode;
   const canKeep = processing.valid && processing.refused.length === 0;
 
@@ -194,6 +206,80 @@ export function ProfileMenu({ processing }: { processing: Processing }): React.J
               >
                 {labels.revert}
               </Button>
+            </div>
+            <div className="grid gap-1 border-t pt-2">
+              <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                {labels.others}
+              </p>
+              {others.length === 0 ? (
+                <p className="text-xs text-muted-foreground" data-testid="profile-others-empty">
+                  {labels.othersEmpty}
+                </p>
+              ) : (
+                <ul className="grid max-h-40 gap-0.5 overflow-y-auto" data-testid="profile-others">
+                  {others.map((profile) => (
+                    <li key={profile.id}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full min-w-0 justify-between"
+                        title={processing.dirty ? labels.switchBlocked : labels.switchHint}
+                        disabled={processing.dirty || apply.isPending}
+                        data-testid="profile-switch"
+                        data-name={profile.name}
+                        onClick={() =>
+                          apply.mutate(
+                            {
+                              path: { project_id: processing.projectId, profile_id: profile.id },
+                              body: { activate: true },
+                            },
+                            {
+                              onSuccess: (applied) => {
+                                processing.chooseRecipe(applied.recipe.id);
+                                setNotice(
+                                  [
+                                    MESSAGES.profiles.library.appliedBook(applied.recipe.name),
+                                    ...(applied.missing_processors.length === 0
+                                      ? []
+                                      : [
+                                          MESSAGES.profiles.apply.leftOut(
+                                            applied.missing_processors,
+                                          ),
+                                        ]),
+                                  ].join(' '),
+                                );
+                                setOpen(false);
+                              },
+                            },
+                          )
+                        }
+                      >
+                        <span className="truncate">{profile.name}</span>
+                        {profile.is_default ? (
+                          <span className="shrink-0 text-xs text-muted-foreground">
+                            {MESSAGES.profiles.library.defaultMark}
+                          </span>
+                        ) : null}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {onManage === undefined ? null : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="justify-start"
+                  title={labels.manageHint}
+                  data-testid="profile-manage"
+                  onClick={() => {
+                    setOpen(false);
+                    onManage();
+                  }}
+                >
+                  {labels.manage}
+                </Button>
+              )}
             </div>
             {error === null ? null : <ErrorAlert message={describeError(error)} />}
           </div>

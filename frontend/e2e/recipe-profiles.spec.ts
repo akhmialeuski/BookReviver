@@ -153,7 +153,9 @@ test('a recipe is saved as a profile, applied in another book, made the default,
     await page.getByTestId('account-profiles').click();
     await expect(page.getByRole('heading', { name: 'Recipe profiles' })).toBeVisible();
     const row = page.locator(`[data-testid="profile-row"][data-name="${PROFILE_NAME}"]`);
-    await expect(row.getByTestId('profile-steps')).toContainText(`${BUILT_IN.length} steps`);
+    await expect(row.getByTestId('profile-steps')).toContainText(
+      'Select content · Perspective (off) · Deskew',
+    );
     await row.getByTestId('profile-make-default').click();
     await expect(row.getByTestId('profile-default-badge')).toBeVisible();
     await row.getByTestId('profile-rename').click();

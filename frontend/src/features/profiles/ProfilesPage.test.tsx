@@ -7,8 +7,8 @@ import { profile, profilePage } from '@/features/profiles/fixtures';
 import { ProfilesPage } from '@/features/profiles/ProfilesPage';
 
 /**
- * The profiles of the account in the settings: grouped by stage, with the steps each holds, the mark on the default of a
- * stage, and the buttons that choose or give up the default.
+ * The profiles of the account in the settings, which are the library without a book: grouped by stage, with the steps
+ * each holds, the mark on the default of a stage, and the buttons that choose or give up the default.
  */
 
 const sdk = vi.hoisted(() => ({
@@ -112,8 +112,21 @@ describe('ProfilesPage', () => {
   it('names the steps of a profile by their titles and marks the ones that are off', async () => {
     await render();
 
-    expect(byId('profile-steps')[1]?.textContent).toBe('2 steps: Deskew → Crop (off)');
-    expect(byId('profile-steps')[0]?.textContent).toBe('1 step: Whole scan');
+    expect(byId('profile-steps')[1]?.textContent).toBe('Deskew · Crop (off)');
+    expect(byId('profile-steps')[0]?.textContent).toBe('Whole scan');
+  });
+
+  it('is the library without a book: it counts the books of a profile and offers no application', async () => {
+    sdk.list.mockResolvedValue(profilePage([profile('p1', { books: 3 })]));
+
+    await render();
+
+    expect(byId('profile-books')[0]?.textContent).toBe('Used in 3 books');
+    expect(byId('profile-duplicate')).toHaveLength(1);
+    expect(byId('profile-export')).toHaveLength(1);
+    expect(byId('profile-import')).toHaveLength(1);
+    expect(byId('profile-apply-book')).toHaveLength(0);
+    expect(byId('profile-apply-pages')).toHaveLength(0);
   });
 
   it('marks the default of a stage, and offers to make the others the default', async () => {
