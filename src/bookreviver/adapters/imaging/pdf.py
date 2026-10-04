@@ -144,8 +144,8 @@ class PdfFormat(SourceFormat):
             rules = read_label_rules(document.get_page_labels(), page_count=document.page_count)
             # Empty for a page no rule governs, such as every page of a document that defines no page label rules
             labels = [''] * len(scans)
-            ends = [*(rule.first_index for rule in rules[1:]), len(scans)]
-            for rule, end in zip(rules, ends, strict=True):
+            bounds = [*(rule.first_index for rule in rules), len(scans)]
+            for rule, end in zip(rules, bounds[1:], strict=True):
                 for number in range(rule.first_index, end):
                     labels[number] = rule.label_at(number)
             metadata = document.metadata or {}
