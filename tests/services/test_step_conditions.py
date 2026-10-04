@@ -10,7 +10,16 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import AppliesTo, BlankFill, EditorKind, PageKind, Stage, TransformKind, VersionData
+from bookreviver.domain.enums import (
+    AppliesTo,
+    BlankFill,
+    ContentType,
+    EditorKind,
+    PageKind,
+    Stage,
+    TransformKind,
+    VersionData,
+)
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.values import NewPageEdit, PageStepKey, RecipeDraft, StageRun, Step
 from tests.helpers.processors import RAN_KEY, STRENGTH_PARAMETER, FakeProcessor
@@ -88,6 +97,48 @@ class TestCondition:
         expect(text_last.data[VersionData.SKIPPED_BY_CONDITION] is True)
         expect(plate_first.data[VersionData.SKIPPED_BY_CONDITION] is True)
         expect(plate_last.data[RAN_KEY] == 2 and VersionData.SKIPPED_BY_CONDITION not in plate_last.data)
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        ('content', 'by_hand', 'text_runs'),
+        [
+            (ContentType.COLOR_PICTURE, False, False),
+            (ContentType.BW_PICTURE, True, False),
+            (ContentType.TEXT, True, True),
+        ],
+        ids=['found-picture', 'picture-set-by-hand', 'plate-set-to-text'],
+    )
+    async def test_what_the_page_shows_decides_over_its_kind(
+        self, fx_kit: ProcessingKit, content: ContentType, *, by_hand: bool, text_runs: bool
+    ) -> None:
+        """Verify a text page found to be a picture meets the step for pictures, and a plate set to text the other.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param content: What the page shows, on the text page when it is a picture and on the plate when it is text.
+        :type content: ContentType
+        :param by_hand: Whether the user set it.
+        :type by_hand: bool
+        :param text_runs: Whether the step for text runs on the page that has the content.
+        :type text_runs: bool
+        """
+        actor, project, text, plate = await text_and_plate(fx_kit)
+        page = plate if content is ContentType.TEXT else text
+        uow = fx_kit.uow()
+        await uow.pages.update(evolve(await uow.pages.get(page.id), content_type=content, content_by_hand=by_hand))
+        await uow.commit()
+        steps = [
+            Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 1}, applies_to=AppliesTo.TEXT),
+            Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2}, applies_to=AppliesTo.PICTURES),
+        ]
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, RecipeDraft(name=TWO_STEPS, steps=steps))
+
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+
+        last = await head_of(fx_kit, page, Stage.GEOMETRY)
+        first = await input_of(fx_kit, last)
+        ran = last if VersionData.SKIPPED_BY_CONDITION not in last.data else first
+        expect(ran.data[RAN_KEY] == (1 if text_runs else 2))
         assert_expectations()
 
     async def test_a_skipped_step_makes_an_identity_version_without_parameters_or_review_mark(

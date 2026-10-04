@@ -75,9 +75,11 @@ NAMELESS_SEGMENTS: frozenset[str] = frozenset({'', '.', '..'})
 DRIVE_LETTER: re.Pattern[str] = re.compile(r'[A-Za-z]:')
 CONTROL_CHARACTERS: re.Pattern[str] = re.compile(r'[\x00-\x1f\x7f]')
 PIN_NEEDS_RECIPE: str = 'A run pins a recipe to its pages only when it names the recipe.'
-# Key of the last step to run in the stored parameters of a ``run-stage`` job
+# Keys in the stored parameters of the jobs: the last step of a ``run-stage`` job to run, the version it makes again,
+# and the pages a job works on
 THROUGH_STEP_KEY: str = 'through_step'
 REMAKE_KEY: str = 'remake'
+PAGE_IDS_KEY: str = 'page_ids'
 REMAKE_ONE_PAGE: str = 'A run that makes a version again names no recipe and exactly one page.'
 REMAKE_KEEPS: str = 'A run that makes a version again keeps the settings and edits of the page.'
 RESET_NEEDS_PAGE: str = 'A reset of the open page names the page.'
@@ -1149,7 +1151,7 @@ class StageRun:
         return {
             'stage': self.stage.value,
             'recipe_id': None if self.recipe_id is None else str(self.recipe_id),
-            'page_ids': None if self.page_ids is None else [str(page_id) for page_id in self.page_ids],
+            PAGE_IDS_KEY: None if self.page_ids is None else [str(page_id) for page_id in self.page_ids],
             'confirm_unsplit': self.confirm_unsplit,
             'pin': self.pin,
             THROUGH_STEP_KEY: self.through_step,
@@ -1169,7 +1171,7 @@ class StageRun:
         :raises InvalidParametersError: If the object is not one of a ``run-stage`` job.
         """
         try:
-            page_ids = stored['page_ids']
+            page_ids = stored[PAGE_IDS_KEY]
             return cls(
                 stage=Stage(stored['stage']),
                 recipe_id=None if stored['recipe_id'] is None else RecipeId(UUID(stored['recipe_id'])),
@@ -1383,6 +1385,42 @@ class TileCut:
             return cls(version_ids=tuple(PageVersionId(version_id) for version_id in stored['version_ids']))
         except (KeyError, ValueError, TypeError) as error:
             raise _params_error(JobKind.CUT_TILES, error) from error
+
+
+@frozen(kw_only=True)
+class ContentDetection:
+    """What a ``detect-content`` job detects: the content type of some pages, or of those that have none yet.
+
+    :ivar page_ids: Pages to detect, which includes the pages the user set by hand and the pages of every kind, since
+                    the user asked for them by name, or None for every page of the book that has an image and has no
+                    content type yet.
+    """
+
+    page_ids: tuple[PageId, ...] | None = None
+
+    def to_map(self) -> dict[str, Any]:
+        """Return the value as the JSON object a job stores.
+
+        :returns: The pages as text, or None for the pages that are not detected yet.
+        :rtype: dict[str, Any]
+        """
+        return {PAGE_IDS_KEY: None if self.page_ids is None else [str(page_id) for page_id in self.page_ids]}
+
+    @classmethod
+    def from_map(cls, stored: MetadataMap) -> Self:
+        """Read the value from the JSON object ``to_map`` wrote.
+
+        :param stored: The stored object.
+        :type stored: MetadataMap
+        :returns: The value.
+        :rtype: Self
+        :raises InvalidParametersError: If the object is not one of a ``detect-content`` job.
+        """
+        try:
+            page_ids = stored[PAGE_IDS_KEY]
+            return cls(page_ids=None if page_ids is None else tuple(PageId(UUID(page_id)) for page_id in page_ids))
+        except (KeyError, ValueError, TypeError) as error:
+            raise _params_error(JobKind.DETECT_CONTENT, error) from error
 
 
 @frozen(kw_only=True)

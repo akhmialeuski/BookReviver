@@ -59,6 +59,8 @@ export function pageOf(id: string, kind: PageSchema['kind'] = 'text'): PageSchem
     label_manual: false,
     section_id: null,
     kind,
+    content_type: 'text',
+    content_source: 'kind',
     origin: 'scan',
     scan_id: null,
     source_id: null,

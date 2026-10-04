@@ -16,7 +16,7 @@ from bookreviver.domain.enums import BlankFill, PageKind
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, Project
-    from bookreviver.domain.enums import ImagePolicy, Orthography, RightsStatus, Script
+    from bookreviver.domain.enums import ContentType, ImagePolicy, Orthography, RightsStatus, Script
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor
 
@@ -165,6 +165,9 @@ class PageChanges:
     :ivar label: New printed number, or an empty string to leave the number to the pagination sections.
     :ivar kind: New role of the page in the book. A page that stops being a blank page gets its scan back in place of a
                 leaf.
+    :ivar content_type: New content type of the page, which the user sets by hand, so the detection of the content never
+                        changes it again. It has no empty value: giving the page back to the detection is a request to
+                        detect it, which writes the page.
     :ivar included: New decision whether the page is part of the book.
     :ivar notes: New notes of the user, or an empty string for none.
     :ivar group_label: New label of the group of the page, or an empty string for no group.
@@ -172,6 +175,7 @@ class PageChanges:
 
     label: str | None = None
     kind: PageKind | None = None
+    content_type: ContentType | None = None
     included: bool | None = None
     notes: str | None = None
     group_label: str | None = None
@@ -192,4 +196,6 @@ class PageChanges:
         # A leaf stands in place of the scan of a blank page only
         if self.kind is not None and self.kind is not PageKind.BLANK:
             given['blank_fill'] = BlankFill.SCAN
+        if self.content_type is not None:
+            given['content_by_hand'] = True
         return evolve(page, **given)

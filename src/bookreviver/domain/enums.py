@@ -297,6 +297,32 @@ class PageKind(LabeledStrEnum):
     OTHER = 'other', 'Other'
 
 
+class ContentType(LabeledStrEnum):
+    """What the image of a page is: text, or a picture in colour or in black and white.
+
+    The program proposes it from the share of the page that pictures cover and from the colour of the pictures, and the
+    user may change it. It is what the conditions of the steps of a recipe read, apart from the role the page has in the
+    book (``PageKind``), which says where the page stands and not what it shows.
+    """
+
+    TEXT = 'text', 'Text'
+    COLOR_PICTURE = 'color-picture', 'Colour picture'
+    BW_PICTURE = 'bw-picture', 'Black-and-white picture'
+
+    @property
+    def is_picture(self) -> bool:
+        """Whether the page shows a picture, in colour or not."""
+        return self is not ContentType.TEXT
+
+
+class ContentSource(LabeledStrEnum):
+    """Where the content type of a page comes from, which tells the user how far to trust it."""
+
+    DETECTED = 'detected', 'Found by the program'
+    HAND = 'hand', 'Set by hand'
+    KIND = 'kind', 'Given by the kind of the page'
+
+
 class RuleCondition(LabeledStrEnum):
     """What a rule of a stage asks of a page, to give the page the variant of the rule.
 
@@ -355,10 +381,11 @@ class OrderRuleKind(LabeledStrEnum):
 class AppliesTo(LabeledStrEnum):
     """The condition of a step of a recipe: which pages the step processes, the others passing it unchanged.
 
-    What makes a page text or a picture is decided here and nowhere else. Until the content of a page is detected, the
-    role the user gave the page decides: a plate or a frontispiece is a picture, and every other kind of page is text.
-    The colour of a picture is the colour mode of the image the stage starts from, and an unknown mode counts as colour,
-    since a step for black and white pictures must not touch a page that may be a colour plate.
+    What makes a page text or a picture is decided by its content type (``Page.content_of``) and nowhere else. Until the
+    content of a page is detected, the role the user gave the page decides: a plate or a frontispiece is a picture, and
+    every other kind of page is text. The colour of such a picture is the colour mode of the image the stage starts
+    from, and an unknown mode counts as colour, since a step for black and white pictures must not touch a page that
+    may be a colour plate.
     """
 
     ALL = 'all', 'All pages'
@@ -367,32 +394,30 @@ class AppliesTo(LabeledStrEnum):
     COLOR_PICTURES = 'color-pictures', 'Colour pictures'
     BW_PICTURES = 'bw-pictures', 'Black-and-white pictures'
 
-    def matches(self, kind: PageKind, color_mode: ColorMode) -> bool:
+    def matches(self, content: ContentType) -> bool:
         """Tell whether a step with this condition processes a page.
 
-        :param kind: Role of the page in the book.
-        :type kind: PageKind
-        :param color_mode: Colour mode of the image the stage starts from.
-        :type color_mode: ColorMode
+        :param content: What the page shows, as ``Page.content_of`` works it out.
+        :type content: ContentType
         :returns: True when the page is processed, False when it passes the step unchanged.
         :rtype: bool
         """
-        picture = kind in _PICTURE_KINDS
         match self:
             case AppliesTo.ALL:
                 return True
             case AppliesTo.TEXT:
-                return not picture
+                return content is ContentType.TEXT
             case AppliesTo.PICTURES:
-                return picture
+                return content.is_picture
             case AppliesTo.COLOR_PICTURES:
-                return picture and color_mode in {ColorMode.COLOR, ColorMode.UNKNOWN}
+                return content is ContentType.COLOR_PICTURE
             case AppliesTo.BW_PICTURES:
-                return picture and color_mode in {ColorMode.BILEVEL, ColorMode.GRAY}
+                return content is ContentType.BW_PICTURE
 
 
-# The kinds of page that are pictures, which are those a rule on plates sends to the plates recipe
-_PICTURE_KINDS: Final[frozenset[PageKind]] = RuleCondition.PLATES.kinds
+# The kinds of page that are pictures whatever the program finds in them, which are those a rule on plates sends to the
+# plates recipe
+PICTURE_KINDS: Final[frozenset[PageKind]] = RuleCondition.PLATES.kinds
 
 
 class PageOrigin(LabeledStrEnum):
@@ -767,6 +792,8 @@ class VersionData(LabeledStrEnum):
     THRESHOLD = 'threshold', 'Threshold of the page when the method has one for the whole page'
     ZONES = 'zones', 'Picture zones of the page in the pixels of the full image the step read'
     SPECKS = 'specks', 'Number of specks the step removed'
+    CONTENT_TYPE = 'content_type', 'What the page shows: text, a colour picture or a black-and-white one'
+    PICTURE_SHARE = 'picture_share', 'Share of the page that pictures cover, from 0 to 1'
 
 
 class VersionState(LabeledStrEnum):
@@ -967,6 +994,7 @@ class JobKind(LabeledStrEnum):
     CUT_TILES = 'cut-tiles', 'Cut tiles'
     COLLECT_VERSIONS = 'collect-versions', 'Collect old versions'
     MEASURE_BOOK = 'measure-book', 'Measure the book'
+    DETECT_CONTENT = 'detect-content', 'Detect the content of pages'
 
     @classmethod
     def processing(cls) -> frozenset[JobKind]:

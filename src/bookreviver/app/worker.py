@@ -58,13 +58,18 @@ async def import_source(job_id: str, container: FromDishka[AsyncContainer]) -> N
 async def prepare_pages(job_id: str, container: FromDishka[AsyncContainer]) -> None:
     """Run a job that writes the images of pending page versions: the entry point of ``JobKind.PREPARE_PAGES``.
 
+    A job that made images is followed by the detection of the content of the pages that have none, which reads the
+    images the job made.
+
     :param job_id: Identifier of the job as text, the one argument the queue sends.
     :type job_id: str
     :param container: Request-scoped container of the task.
     :type container: AsyncContainer
     """
     service = await container.get(PageService)
-    await service.prepare_images(JobId(UUID(job_id)))
+    prepared = await service.prepare_images(JobId(UUID(job_id)))
+    if prepared is not None and prepared.progress.total > 0:
+        await service.detect_new_pages(prepared.project_id)
 
 
 async def run_stage(job_id: str, container: FromDishka[AsyncContainer]) -> None:
@@ -127,6 +132,18 @@ async def measure_book(job_id: str, container: FromDishka[AsyncContainer]) -> No
     await jobs.measure_book(JobId(UUID(job_id)))
 
 
+async def detect_content(job_id: str, container: FromDishka[AsyncContainer]) -> None:
+    """Detect what the pages show and write it into them: the entry point of ``JobKind.DETECT_CONTENT``.
+
+    :param job_id: Identifier of the job as text, the one argument the queue sends.
+    :type job_id: str
+    :param container: Request-scoped container of the task.
+    :type container: AsyncContainer
+    """
+    jobs = await container.get(ProcessingJobs)
+    await jobs.detect_content(JobId(UUID(job_id)))
+
+
 JOB_TASKS: Mapping[JobKind, JobTask] = MappingProxyType(
     {
         JobKind.IMPORT_SOURCE: import_source,
@@ -136,6 +153,7 @@ JOB_TASKS: Mapping[JobKind, JobTask] = MappingProxyType(
         JobKind.CUT_TILES: cut_tiles,
         JobKind.COLLECT_VERSIONS: collect_versions,
         JobKind.MEASURE_BOOK: measure_book,
+        JobKind.DETECT_CONTENT: detect_content,
     }
 )
 

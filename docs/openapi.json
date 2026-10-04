@@ -1277,7 +1277,7 @@
           "pages"
         ],
         "summary": "Update Page",
-        "description": "Merge the body into the page, as JSON Merge Patch (RFC 7396) defines.\n\nA field left out keeps its value, and a label or notes sent as null are cleared. The kind and the inclusion cannot\nbe cleared, and the order, the origin and the scan of a page are changed by other routes. A page that stops being\nblank shows its scan again in place of a leaf.",
+        "description": "Merge the body into the page, as JSON Merge Patch (RFC 7396) defines.\n\nA field left out keeps its value, and a label or notes sent as null are cleared. The kind, the content type and the\ninclusion cannot be cleared, and the order, the origin and the scan of a page are changed by other routes. A content\ntype sent here is the user's, which the detection of the content leaves alone. A page that stops being blank shows\nits scan again in place of a leaf.",
         "operationId": "update_page_api_v1_projects__project_id__pages__page_id__patch",
         "parameters": [
           {
@@ -1668,6 +1668,94 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pages/content-types/detect": {
+      "post": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Detect Content Types",
+        "description": "Detect what pages show in the background, and answer with the queued job.\n\nThe job reads the preview of the image of each page, tells text from a picture and a picture in colour from one in\nblack and white, and writes the answer into the page as its content type. Without ``page_ids`` it goes over the\npages of the book that have no content type yet, which a job queued by the end of the preparation of the images\ndoes too, and it leaves the pages the user set by hand and the covers, the endpapers and the blank pages alone. With\n``page_ids`` it goes over those pages whatever they have, and gives the ones the user set by hand back to the\ndetection. The answer is 409 while the content of the pages of the project is being detected. The change reaches the\nbrowser as a ``pages-changed`` event.",
+        "operationId": "detect_content_types_api_v1_projects__project_id__pages_content_types_detect_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentDetectionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSchema"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -9459,7 +9547,7 @@
           "bw-pictures"
         ],
         "title": "AppliesTo",
-        "description": "The condition of a step of a recipe: which pages the step processes, the others passing it unchanged.\n\nWhat makes a page text or a picture is decided here and nowhere else. Until the content of a page is detected, the\nrole the user gave the page decides: a plate or a frontispiece is a picture, and every other kind of page is text.\nThe colour of a picture is the colour mode of the image the stage starts from, and an unknown mode counts as colour,\nsince a step for black and white pictures must not touch a page that may be a colour plate."
+        "description": "The condition of a step of a recipe: which pages the step processes, the others passing it unchanged.\n\nWhat makes a page text or a picture is decided by its content type (``Page.content_of``) and nowhere else. Until the\ncontent of a page is detected, the role the user gave the page decides: a plate or a frontispiece is a picture, and\nevery other kind of page is text. The colour of such a picture is the colour mode of the image the stage starts\nfrom, and an unknown mode counts as colour, since a step for black and white pictures must not touch a page that\nmay be a colour plate."
       },
       "ApplyProfileBody": {
         "properties": {
@@ -10164,6 +10252,51 @@
         "title": "CompareMode",
         "description": "How the result of a stage is compared with the result before it."
       },
+      "ContentDetectionRequest": {
+        "properties": {
+          "page_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array",
+                "maxItems": 2000,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ContentDetectionRequest",
+        "description": "Which pages to detect the content of, which the job writes into the pages as a proposal.\n\n:ivar page_ids: The pages to detect, each at most once, which gives a page the user set by hand back to the\n                detection, or omitted for the pages of the book that have no content type yet."
+      },
+      "ContentSource": {
+        "type": "string",
+        "enum": [
+          "detected",
+          "hand",
+          "kind"
+        ],
+        "title": "ContentSource",
+        "description": "Where the content type of a page comes from, which tells the user how far to trust it."
+      },
+      "ContentType": {
+        "type": "string",
+        "enum": [
+          "text",
+          "color-picture",
+          "bw-picture"
+        ],
+        "title": "ContentType",
+        "description": "What the image of a page is: text, or a picture in colour or in black and white.\n\nThe program proposes it from the share of the page that pictures cover and from the colour of the pictures, and the\nuser may change it. It is what the conditions of the steps of a recipe read, apart from the role the page has in the\nbook (``PageKind``), which says where the page stands and not what it shows."
+      },
       "ContributorRole": {
         "type": "string",
         "enum": [
@@ -10472,7 +10605,8 @@
           "preview-step",
           "cut-tiles",
           "collect-versions",
-          "measure-book"
+          "measure-book",
+          "detect-content"
         ],
         "title": "JobKind",
         "description": "What a background job does."
@@ -11251,6 +11385,12 @@
           "kind": {
             "$ref": "#/components/schemas/PageKind"
           },
+          "content_type": {
+            "$ref": "#/components/schemas/ContentType"
+          },
+          "content_source": {
+            "$ref": "#/components/schemas/ContentSource"
+          },
           "origin": {
             "$ref": "#/components/schemas/PageOrigin"
           },
@@ -11326,6 +11466,8 @@
           "label_manual",
           "section_id",
           "kind",
+          "content_type",
+          "content_source",
           "origin",
           "scan_id",
           "source_id",
@@ -11339,7 +11481,7 @@
           "updated_at"
         ],
         "title": "PageSchema",
-        "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except\n                in a manifest listing only the included pages, which numbers those.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar label_manual: Whether the label is an exception to the pagination sections: written by hand, or taken from\n                    the source of the scan, and so never changed when the numbers of the book are computed again.\n:ivar section_id: The pagination section that governs the page, which is the one whose rule gave it its number, or\n                  None for a page kept out of the book, a page before the first section and a book without\n                  sections.\n:ivar kind: Role of the page in the book.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar blank_fill: What the image of a blank page is: its scan, or a white leaf or a leaf of the colour of the paper\n                  of the book drawn in its place. The scan stays linked either way.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar group_label: Label of the group the user put the page in, or empty for no group.\n:ivar images: Paths of the images of the page's current version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
+        "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except\n                in a manifest listing only the included pages, which numbers those.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar label_manual: Whether the label is an exception to the pagination sections: written by hand, or taken from\n                    the source of the scan, and so never changed when the numbers of the book are computed again.\n:ivar section_id: The pagination section that governs the page, which is the one whose rule gave it its number, or\n                  None for a page kept out of the book, a page before the first section and a book without\n                  sections.\n:ivar kind: Role of the page in the book.\n:ivar content_type: What the page shows for the conditions of the steps: text, or a picture in colour or in black\n                    and white. It is the one the user set, else the one the program found, else the one the kind\n                    of the page gives, which counts a plate or a frontispiece as a picture in colour.\n:ivar content_source: Where ``content_type`` comes from, so the interface can say whether it was found or set.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar blank_fill: What the image of a blank page is: its scan, or a white leaf or a leaf of the colour of the paper\n                  of the book drawn in its place. The scan stays linked either way.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar group_label: Label of the group the user put the page in, or empty for no group.\n:ivar images: Paths of the images of the page's current version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
       },
       "PageSettingForm": {
         "properties": {
@@ -11600,6 +11742,10 @@
             "$ref": "#/components/schemas/PageKind",
             "title": "Kind"
           },
+          "content_type": {
+            "$ref": "#/components/schemas/ContentType",
+            "title": "Content Type"
+          },
           "included": {
             "type": "boolean",
             "title": "Included"
@@ -11632,7 +11778,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "PageUpdate",
-        "description": "A JSON Merge Patch of a page: an omitted field is kept, and a null label or note is cleared.\n\nThe kind and the inclusion of a page have no empty value, so they may be omitted but not null. A label that is not\nempty is written by hand, so it is an exception to the pagination sections, and clearing it gives the number of the\npage back to the sections.\n\n:ivar label: New printed number, or None to give the number back to the pagination sections.\n:ivar kind: New role of the page in the book.\n:ivar included: New decision whether the page is part of the book.\n:ivar notes: New notes, or None to clear them.\n:ivar group_label: New label of the group of the page, or None to take the page out of its group."
+        "description": "A JSON Merge Patch of a page: an omitted field is kept, and a null label or note is cleared.\n\nThe kind and the inclusion of a page have no empty value, so they may be omitted but not null. A label that is not\nempty is written by hand, so it is an exception to the pagination sections, and clearing it gives the number of the\npage back to the sections.\n\n:ivar label: New printed number, or None to give the number back to the pagination sections.\n:ivar kind: New role of the page in the book.\n:ivar content_type: What the page shows, which the user sets by hand and the detection of the content then leaves\n                    alone. It cannot be cleared: a request to detect the page gives it back to the detection.\n:ivar included: New decision whether the page is part of the book.\n:ivar notes: New notes, or None to clear them.\n:ivar group_label: New label of the group of the page, or None to take the page out of its group."
       },
       "PageVersionSchema": {
         "properties": {

@@ -39,6 +39,7 @@ from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import StageRun, StepPreview, TileCut, VersionCollection
 from bookreviver.services.book_measure import BookMeasure
+from bookreviver.services.content_detection import ContentDetector
 from bookreviver.services.run_plans import RunPlan
 from bookreviver.services.stage_runs import PreviewRun, RecipeRun
 
@@ -51,6 +52,7 @@ if TYPE_CHECKING:
     from bookreviver.services.stage_runs import StageRuntime
 
 NO_PAGE_PROCESSED: str = 'No page could be processed. The state of the stage of each page says why.'
+NO_CONTENT_DETECTED: str = 'The content of no page could be detected. The log of the worker says why.'
 UNEXPECTED_FAILURE: str = 'The job stopped because of an unexpected error. It has been logged.'
 BEING_COLLECTED: str = 'The version is being deleted.'
 
@@ -79,6 +81,7 @@ class ProcessingJobs:
         self._records = parts.records
         self._clock = parts.clock
         self._measure = BookMeasure(uow=uow, recipes=parts.recipes, records=parts.records)
+        self._detector = ContentDetector(uow=uow, runtime=runtime, records=parts.records, tracker=parts.tracker)
         self._tracker = parts.tracker
         self._starter = parts.starter
 
@@ -194,6 +197,35 @@ class ProcessingJobs:
             await self._tracker.finish(job, JobState.FAILED, error=UNEXPECTED_FAILURE)
         else:
             await self._tracker.finish(job, JobState.SUCCEEDED, total=total)
+
+    async def detect_content(self, job_id: JobId) -> None:
+        """Run a ``detect-content`` job: what each page shows, written into the pages as a proposal.
+
+        :param job_id: Identifier of the job.
+        :type job_id: JobId
+        :raises NotFoundError: If there is no such job.
+        """
+        if (job := await self._tracker.start(job_id)) is None:
+            return
+        try:
+            outcome = await self._detector.run(job)
+        except DomainError as error:
+            await self._uow.rollback()
+            await self._tracker.finish(job, JobState.FAILED, error=str(error))
+        except Exception:
+            logger.exception('The detect-content job %s stopped', job_id)
+            await self._tracker.finish(job, JobState.FAILED, error=UNEXPECTED_FAILURE)
+        else:
+            if outcome is None:
+                return
+            read, failed = outcome
+            no_page = bool(failed) and not read
+            await self._tracker.finish(
+                job,
+                JobState.FAILED if no_page else JobState.SUCCEEDED,
+                error=NO_CONTENT_DETECTED if no_page else '',
+                total=read + failed,
+            )
 
     async def _run_pages(self, job: Job) -> tuple[int, int, int] | None:
         """Run the recipe of a ``run-stage`` job over its pages, recording the progress as it goes.

@@ -153,3 +153,15 @@ def fx_eraser() -> Processor:
     processor = pytest.importorskip('bookreviver.plugins.eraser', reason=CV_MISSING).Eraser()
     assert isinstance(processor, Processor)
     return processor
+
+
+@pytest.fixture
+def fx_content_type() -> Processor:
+    """Build the processor that tells what a page shows, or skip the test where OpenCV is not installed.
+
+    :returns: The processor ``pages.content``.
+    :rtype: Processor
+    """
+    processor = pytest.importorskip('bookreviver.plugins.content_type', reason=CV_MISSING).ContentTypeProbe()
+    assert isinstance(processor, Processor)
+    return processor

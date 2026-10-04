@@ -328,7 +328,7 @@ class StageWork:
         if processor.spec.scope is ProcessorScope.SPLIT:
             raise ConflictError(SPLIT_NOT_AVAILABLE.format(key=step.processor_key))
         # A leaf the program drew has nothing for a step to find, so it passes every step unchanged and unmarked
-        skipped = page.is_leaf or not step.applies_to.matches(page.kind, source.stage_color or source.color_mode)
+        skipped = page.is_leaf or not step.applies_to.matches(page.content_of(source.stage_color or source.color_mode))
         state = None if skipped else await self._uow.page_step_states.find(PageStepKey(page.id, stage, step.step_id))
         # The settings of the page are laid over the parameters of the step before they are checked, so the identifier
         # of the version hashes the parameters the step runs with, and two pages that end up with equal ones share it.

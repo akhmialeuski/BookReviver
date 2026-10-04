@@ -14,14 +14,13 @@ from typing import TYPE_CHECKING
 from attrs import evolve
 
 from bookreviver.domain.entities import PageStage
-from bookreviver.domain.enums import StageState
+from bookreviver.domain.enums import Stage, StageState
 from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.values import PageStageKey
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock, EventPublisher
@@ -119,6 +118,24 @@ class StageRecords:
         stale = evolve(record, state=StageState.STALE, updated_at=self._clock.now())
         await self._uow.page_stages.save(stale)
         return [stale]
+
+    async def mark_content_stale(self, page_id: PageId) -> list[PageStage]:
+        """Mark every stage of a page after the page order stale, because what the page shows changed.
+
+        The condition of a step reads what a page shows, so a page that is text now and was a picture is processed by
+        other steps than the ones that made its current versions.
+
+        :param page_id: Page whose content type changed.
+        :type page_id: PageId
+        :returns: The records that became stale, none for a page that has not been through such a stage or whose stages
+                  are stale or failed already.
+        :rtype: list[PageStage]
+        """
+        stale: list[PageStage] = []
+        for record in await self._uow.page_stages.list_for_page(page_id):
+            if record.stage.position > Stage.PAGE_ORDER.position:
+                stale.extend(await self.mark_stale(page_id, record.stage))
+        return stale
 
     async def mark_recipe_stale(self, recipe_id: RecipeId) -> list[PageStage]:
         """Mark the stage of every page a recipe processed stale, because the recipe changed or stopped being active.

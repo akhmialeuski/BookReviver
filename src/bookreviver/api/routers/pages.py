@@ -15,8 +15,10 @@ from fastapi import APIRouter, Body, Depends, Path, Request, Response, status
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import ManifestPage, Pager
 from bookreviver.api.route_names import RouteName
+from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.pages import (
     BlankFillChange,
+    ContentDetectionRequest,
     LabelRange,
     NumberedPageSchema,
     PageCreate,
@@ -219,6 +221,38 @@ async def fill_blank_pages(
     await pages.set_blank_fill(actor, project_id, body.page_ids, body.blank_fill)
 
 
+@router.post('/{project_id}/pages/content-types/detect', status_code=status.HTTP_202_ACCEPTED)
+async def detect_content_types(
+    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    body: ContentDetectionRequest,
+    actor: ActorDep,
+    pages: FromDishka[PageService],
+) -> JobSchema:
+    """Detect what pages show in the background, and answer with the queued job.
+
+    The job reads the preview of the image of each page, tells text from a picture and a picture in colour from one in
+    black and white, and writes the answer into the page as its content type. Without ``page_ids`` it goes over the
+    pages of the book that have no content type yet, which a job queued by the end of the preparation of the images
+    does too, and it leaves the pages the user set by hand and the covers, the endpapers and the blank pages alone. With
+    ``page_ids`` it goes over those pages whatever they have, and gives the ones the user set by hand back to the
+    detection. The answer is 409 while the content of the pages of the project is being detected. The change reaches the
+    browser as a ``pages-changed`` event.
+
+    \N{FORM FEED}
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :param body: The pages to detect, or none for those that are not detected yet.
+    :type body: ContentDetectionRequest
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param pages: Page service of the request.
+    :type pages: PageService
+    :returns: The queued job.
+    :rtype: JobSchema
+    """
+    return JobSchema.model_validate(await pages.start_detection(actor, project_id, body.page_ids))
+
+
 @router.patch('/{project_id}/pages/{page_id}')
 async def update_page(
     address: Annotated[PagePath, Depends()],
@@ -229,9 +263,10 @@ async def update_page(
 ) -> PageSchema:
     """Merge the body into the page, as JSON Merge Patch (RFC 7396) defines.
 
-    A field left out keeps its value, and a label or notes sent as null are cleared. The kind and the inclusion cannot
-    be cleared, and the order, the origin and the scan of a page are changed by other routes. A page that stops being
-    blank shows its scan again in place of a leaf.
+    A field left out keeps its value, and a label or notes sent as null are cleared. The kind, the content type and the
+    inclusion cannot be cleared, and the order, the origin and the scan of a page are changed by other routes. A content
+    type sent here is the user's, which the detection of the content leaves alone. A page that stops being blank shows
+    its scan again in place of a leaf.
 
     \N{FORM FEED}
     :param address: Identifiers of the project and of the page.

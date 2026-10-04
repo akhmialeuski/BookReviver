@@ -112,10 +112,11 @@ export type AppliedProfileSchema = {
  *
  * The condition of a step of a recipe: which pages the step processes, the others passing it unchanged.
  *
- * What makes a page text or a picture is decided here and nowhere else. Until the content of a page is detected, the
- * role the user gave the page decides: a plate or a frontispiece is a picture, and every other kind of page is text.
- * The colour of a picture is the colour mode of the image the stage starts from, and an unknown mode counts as colour,
- * since a step for black and white pictures must not touch a page that may be a colour plate.
+ * What makes a page text or a picture is decided by its content type (``Page.content_of``) and nowhere else. Until the
+ * content of a page is detected, the role the user gave the page decides: a plate or a frontispiece is a picture, and
+ * every other kind of page is text. The colour of such a picture is the colour mode of the image the stage starts
+ * from, and an unknown mode counts as colour, since a step for black and white pictures must not touch a page that
+ * may be a colour plate.
  */
 export type AppliesTo = 'all' | 'text' | 'pictures' | 'color-pictures' | 'bw-pictures';
 
@@ -590,6 +591,39 @@ export type ColorMode = 'bilevel' | 'gray' | 'color' | 'unknown';
 export type CompareMode = 'off' | 'swipe' | 'side';
 
 /**
+ * ContentDetectionRequest
+ *
+ * Which pages to detect the content of, which the job writes into the pages as a proposal.
+ *
+ * :ivar page_ids: The pages to detect, each at most once, which gives a page the user set by hand back to the
+ * detection, or omitted for the pages of the book that have no content type yet.
+ */
+export type ContentDetectionRequest = {
+    /**
+     * Page Ids
+     */
+    page_ids?: Array<string> | null;
+};
+
+/**
+ * ContentSource
+ *
+ * Where the content type of a page comes from, which tells the user how far to trust it.
+ */
+export type ContentSource = 'detected' | 'hand' | 'kind';
+
+/**
+ * ContentType
+ *
+ * What the image of a page is: text, or a picture in colour or in black and white.
+ *
+ * The program proposes it from the share of the page that pictures cover and from the colour of the pictures, and the
+ * user may change it. It is what the conditions of the steps of a recipe read, apart from the role the page has in the
+ * book (``PageKind``), which says where the page stands and not what it shows.
+ */
+export type ContentType = 'text' | 'color-picture' | 'bw-picture';
+
+/**
  * ContributorRole
  *
  * Role of a person in the making of a book.
@@ -797,7 +831,7 @@ export type ImportResultSchema = {
  *
  * What a background job does.
  */
-export type JobKind = 'import-source' | 'prepare-pages' | 'run-stage' | 'preview-step' | 'cut-tiles' | 'collect-versions' | 'measure-book';
+export type JobKind = 'import-source' | 'prepare-pages' | 'run-stage' | 'preview-step' | 'cut-tiles' | 'collect-versions' | 'measure-book' | 'detect-content';
 
 /**
  * JobSchema
@@ -1318,6 +1352,10 @@ export type PageOrigin = 'scan' | 'blank' | 'placeholder';
  * None for a page kept out of the book, a page before the first section and a book without
  * sections.
  * :ivar kind: Role of the page in the book.
+ * :ivar content_type: What the page shows for the conditions of the steps: text, or a picture in colour or in black
+ * and white. It is the one the user set, else the one the program found, else the one the kind
+ * of the page gives, which counts a plate or a frontispiece as a picture in colour.
+ * :ivar content_source: Where ``content_type`` comes from, so the interface can say whether it was found or set.
  * :ivar origin: Where the image of the page comes from.
  * :ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was
  * deleted.
@@ -1354,6 +1392,8 @@ export type PageSchema = {
      */
     section_id: string | null;
     kind: PageKind;
+    content_type: ContentType;
+    content_source: ContentSource;
     origin: PageOrigin;
     /**
      * Scan Id
@@ -1572,6 +1612,8 @@ export type PageStepSettingsSchema = {
  *
  * :ivar label: New printed number, or None to give the number back to the pagination sections.
  * :ivar kind: New role of the page in the book.
+ * :ivar content_type: What the page shows, which the user sets by hand and the detection of the content then leaves
+ * alone. It cannot be cleared: a request to detect the page gives it back to the detection.
  * :ivar included: New decision whether the page is part of the book.
  * :ivar notes: New notes, or None to clear them.
  * :ivar group_label: New label of the group of the page, or None to take the page out of its group.
@@ -1585,6 +1627,10 @@ export type PageUpdate = {
      * Kind
      */
     kind?: PageKind;
+    /**
+     * Content Type
+     */
+    content_type?: ContentType;
     /**
      * Included
      */
@@ -4754,6 +4800,46 @@ export type FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostResponses = {
 };
 
 export type FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostResponse = FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostResponses[keyof FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostResponses];
+
+export type DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostData = {
+    body: ContentDetectionRequest;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/content-types/detect';
+};
+
+export type DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostError = DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostErrors[keyof DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostErrors];
+
+export type DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: JobSchema;
+};
+
+export type DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostResponse = DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostResponses[keyof DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostResponses];
 
 export type NumberPagesApiV1ProjectsProjectIdPagesLabelsPostData = {
     body: LabelRange;

@@ -74,7 +74,7 @@ from bookreviver.domain.events import JobChanged, PagesChanged, PageVersionReady
 from bookreviver.domain.ids import JobId, PageId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.pagination import Pagination
-from bookreviver.domain.values import PageSize, PageStageKey, Progress, Slice, SliceRequest
+from bookreviver.domain.values import ContentDetection, PageSize, PageStageKey, Progress, Slice, SliceRequest
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from bookreviver.services.book_measure import NORMALIZE_KEY
 from bookreviver.services.page_labels import PageLabels
@@ -90,7 +90,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.changes import PageChanges
     from bookreviver.domain.entities import Actor, PageStage, PageVersion
     from bookreviver.domain.ids import PageVersionId, PaginationSectionId, ProjectId, ScanId, SourceId, StorageKey
-    from bookreviver.domain.values import NewPage, PageAnchor
+    from bookreviver.domain.values import MetadataMap, NewPage, PageAnchor
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
@@ -111,6 +111,8 @@ SCAN_NOT_CUT: str = 'The scan has no image yet. Bind it after its import has cut
 SCAN_DELETED: str = 'The scan of the page was deleted, so its image cannot be copied.'
 PAGES_FAILED: str = '{count} of the page images could not be made. They are tried again by the next job.'
 NOT_QUEUED: str = 'The images of the pages could not be queued. They are made by the next job.'
+DETECTION_NOT_QUEUED: str = 'The detection of the content of the pages could not be queued. Ask for it again.'
+DETECTION_RUNNING: str = 'The content of the pages is being detected. Wait for it to end, or cancel it.'
 BATCH_TOO_LONG: str = 'A request adds at most {limit} pages. Send the rest in another request.'
 PAGE_OF_BATCH: str = 'The page at index {index} of the list cannot be added: {reason}'
 ANCHOR_NOT_IN_BOOK: str = 'the page it is put next to is not a page of the book.'
@@ -283,6 +285,9 @@ class PageService:
             if before.blank_fill is not BlankFill.SCAN and page.blank_fill is BlankFill.SCAN
             else []
         )
+        # What the page shows decides which steps of the stages after the page order process it
+        if before.content_of(ColorMode.UNKNOWN) is not page.content_of(ColorMode.UNKNOWN):
+            records.extend(await self._records.mark_content_stale(page_id))
         # A label, a kind or an inclusion changes what the sections give the pages, the page itself included
         if any(field is not None for field in (changes.label, changes.kind, changes.included)) and (
             await self._labels.recompute(project_id)
@@ -292,6 +297,41 @@ class PageService:
         await self._finish(project_id, [changed], PageChange.EDITED)
         await self._records.announce(project_id, records)
         return overview
+
+    async def start_detection(self, actor: Actor, project_id: ProjectId, page_ids: Sequence[PageId] | None) -> Job:
+        """Record a job that detects what some pages show, and queue it.
+
+        The job writes the content type it finds into the pages it goes over, which gives a page the user set by hand
+        back to the detection.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param page_ids: Pages to detect, or None for the pages that have no content type yet.
+        :type page_ids: Sequence[PageId] | None
+        :returns: The queued job.
+        :rtype: Job
+        :raises NotFoundError: If the actor has no such project, or the project has no such page.
+        :raises ConflictError: If the content of the pages of the project is being detected already.
+        """
+        await owned_project(self._uow.projects, actor, project_id)
+        if page_ids is not None:
+            await self._uow.pages.list_by_ids(project_id, page_ids)
+        detection = ContentDetection(page_ids=None if page_ids is None else tuple(page_ids))
+        if (job := await self._enqueue(project_id, JobKind.DETECT_CONTENT, detection.to_map())) is None:
+            raise ConflictError(DETECTION_RUNNING)
+        return job
+
+    async def detect_new_pages(self, project_id: ProjectId) -> None:
+        """Queue the detection of the content of the pages that have none, which a worker asks for when images are made.
+
+        Nothing is queued while a detection of the project is queued or running, which goes over the pages it finds.
+
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        """
+        await self._enqueue(project_id, JobKind.DETECT_CONTENT, ContentDetection().to_map())
 
     async def add(self, actor: Actor, project_id: ProjectId, new_page: NewPage) -> PageOverview:
         """Add a placeholder or a blank leaf at a place of the book, or at its end.
@@ -326,7 +366,7 @@ class PageService:
         overview = await self._overview(page)
         await self._finish(project_id, [page], PageChange.ADDED)
         if blank:
-            await self._enqueue_prepare(project_id)
+            await self._enqueue(project_id, JobKind.PREPARE_PAGES)
         return overview
 
     async def add_many(self, actor: Actor, project_id: ProjectId, new_pages: Sequence[NewPage]) -> list[PageOverview]:
@@ -405,7 +445,7 @@ class PageService:
             )
         await self._finish(project_id, added, PageChange.ADDED)
         if leaves:
-            await self._enqueue_prepare(project_id)
+            await self._enqueue(project_id, JobKind.PREPARE_PAGES)
         return [overviews[page.id] for page in added]
 
     async def set_blank_fill(
@@ -471,7 +511,7 @@ class PageService:
         await self._finish(project_id, changing, PageChange.EDITED)
         await self._records.announce(project_id, records)
         if pending:
-            await self._enqueue_prepare(project_id)
+            await self._enqueue(project_id, JobKind.PREPARE_PAGES)
 
     async def delete(self, actor: Actor, project_id: ProjectId, page_id: PageId) -> None:
         """Delete a page with its versions, and then its files, leaving its scan and the scan's source.
@@ -596,10 +636,10 @@ class PageService:
         if taken:
             await self._announce(project_id, taken, PageChange.REMOVED)
         await self._announce(project_id, [page], PageChange.EDITED)
-        await self._enqueue_prepare(project_id)
+        await self._enqueue(project_id, JobKind.PREPARE_PAGES)
         return overview
 
-    async def prepare_images(self, job_id: JobId) -> None:
+    async def prepare_images(self, job_id: JobId) -> Job | None:
         """Run a ``prepare-pages`` job a worker took from the queue: write the files of every pending or failed version.
 
         The versions of the page split and the page order stages are read when the job starts, and each is written and
@@ -609,17 +649,20 @@ class PageService:
 
         :param job_id: Identifier of the job.
         :type job_id: JobId
+        :returns: The job as it ended, or None when this run did not take the job through its pages: it was over
+                  already, another delivery took it, it stopped on an error, or it was cancelled.
+        :rtype: Job | None
         :raises NotFoundError: If there is no such job.
         """
         job = await self._uow.jobs.get(job_id)
         if job.state.is_final:
-            return
+            return None
         if job.state is JobState.QUEUED:
             started = evolve(job, state=JobState.RUNNING, started_at=self._clock.now())
             if (running := await self._uow.jobs.update_if_state(started, expected=(JobState.QUEUED,))) is None:
                 # The job left the queue since it was read: another delivery started it, or it was cancelled
                 await self._uow.rollback()
-                return
+                return None
             job = running
             await self._uow.commit()
         await self._publisher.publish(JobChanged(project_id=job.project_id, job=job))
@@ -631,15 +674,16 @@ class PageService:
             logger.exception('The prepare-pages job %s stopped', job_id)
             await self._uow.rollback()
             await self._conclude(job, JobState.FAILED, UNEXPECTED_FAILURE)
-            return
+            return None
         if outcome is None:
-            return
+            return None
         job, failed, total = outcome
         if failed:
             await self._conclude(job, JobState.FAILED, PAGES_FAILED.format(count=failed), total=total)
         else:
             await self._conclude(job, JobState.SUCCEEDED, '', total=total)
         await self._follow_up(job.project_id)
+        return job
 
     async def _prepare_all(self, job: Job) -> tuple[Job, int, int] | None:
         """Prepare every pending and failed version of the job's project, recording the progress as it goes.
@@ -1016,14 +1060,14 @@ class PageService:
         for page in pages:
             await self._assets.delete_prefix(keys.page(page.id))
 
-    async def _enqueue_prepare(self, project_id: ProjectId) -> None:
-        """Queue a ``prepare-pages`` job for the project, unless one is queued or running already.
+    async def _enqueue(self, project_id: ProjectId, kind: JobKind, params: MetadataMap | None = None) -> Job | None:
+        """Queue a ``prepare-pages`` or a ``detect-content`` job for the project, unless one of its kind is active.
 
-        A project has one such job at a time, so two jobs never write the files of one version together. The check is
-        a read and the insert a second step, so the unique index of the database decides when two requests pass the
-        check together, and the one that loses finds the job of the other. A job that is running when a version is
-        committed may have read its versions before it, which is why the job looks again when it ends, in
-        ``_follow_up``.
+        A project has one job of each of the kinds at a time, so two jobs never write the files of one version, or the
+        content of one page, together. The check is a read and the insert a second step, so the unique index of the
+        database decides when two requests pass the check of a ``prepare-pages`` job together, and the one that loses
+        finds the job of the other. A job that is running when a version is committed may have read its versions before
+        it, which is why the job looks again when it ends, in ``_follow_up``.
 
         The page is committed already, so a queue that refuses the job does not fail the request: the job is stored
         as failed, announced, and logged, which frees the project for the next job, and the version stays pending
@@ -1031,27 +1075,39 @@ class PageService:
 
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
+        :param kind: What the job does, ``prepare-pages`` or ``detect-content``.
+        :type kind: JobKind
+        :param params: What the job was asked to do, in the form its value class writes, or None for a job without.
+        :type params: MetadataMap | None
+        :returns: The job as stored, queued or failed, or None when a job of the kind is queued or running already, or
+                  another request took the project between the check and the insert.
+        :rtype: Job | None
         """
         active = await self._uow.jobs.list_for_project(project_id, JobState.active())
-        if any(job.kind is JobKind.PREPARE_PAGES for job in active):
-            return
-        job = Job(id=JobId(uuid4()), project_id=project_id, kind=JobKind.PREPARE_PAGES, created_at=self._clock.now())
+        if any(job.kind is kind for job in active):
+            return None
+        job = Job(
+            id=JobId(uuid4()), project_id=project_id, kind=kind, params=params or {}, created_at=self._clock.now()
+        )
         try:
             await self._uow.jobs.add(job)
             await self._uow.commit()
         except ConflictError:
             await self._uow.rollback()
-            return
+            return None
         await self._publisher.publish(JobChanged(project_id=project_id, job=job))
         try:
             await self._queue.enqueue(job)
         except Exception:
-            logger.exception('The prepare-pages job %s could not be queued', job.id)
-            failed = evolve(job, state=JobState.FAILED, error=NOT_QUEUED, finished_at=self._clock.now())
+            logger.exception('The %s job %s could not be queued', kind, job.id)
+            error = NOT_QUEUED if kind is JobKind.PREPARE_PAGES else DETECTION_NOT_QUEUED
+            failed = evolve(job, state=JobState.FAILED, error=error, finished_at=self._clock.now())
             stored = await self._uow.jobs.update_if_state(failed, expected=(JobState.QUEUED,))
             await self._uow.commit()
             if stored is not None:
                 await self._publisher.publish(JobChanged(project_id=project_id, job=stored))
+                return stored
+        return job
 
     async def _follow_up(self, project_id: ProjectId) -> None:
         """Queue another job when a version was committed while the job that just ended was running.
@@ -1066,7 +1122,7 @@ class PageService:
         """
         waiting = await self._uow.page_versions.list_to_prepare(project_id, PREPARED_PROCESSORS)
         if any(version.state is VersionState.PENDING for version in waiting):
-            await self._enqueue_prepare(project_id)
+            await self._enqueue(project_id, JobKind.PREPARE_PAGES)
 
     async def _median_size(self, project_id: ProjectId) -> PageSize:
         """Return the size of a blank leaf that stands level with the pages of the book.
