@@ -193,7 +193,7 @@ def image_data(image: Samples, facts: MetadataMap, color_mode: ColorMode) -> dic
     return data
 
 
-def content_frame_of(facts: MetadataMap) -> Rect | None:
+def content_frame_of(facts: MetadataMap, scale: float = 1.0) -> Rect | None:
     """Give the frame of the content of a page in the pixels of its image, from what the steps before recorded.
 
     A step of the cleanup carries the frame it is given. The first of them is given the data of ``geometry.crop``, whose
@@ -203,6 +203,9 @@ def content_frame_of(facts: MetadataMap) -> Rect | None:
 
     :param facts: Data of the input version.
     :type facts: MetadataMap
+    :param scale: Size of the image of the version over the size of the full image, which is below 1 for a preview and
+                  is what the size the version recorded is brought back to the full image by.
+    :type scale: float
     :returns: The frame in the pixels of the full image of the version, or None when no step found one.
     :rtype: Rect | None
     """
@@ -215,8 +218,8 @@ def content_frame_of(facts: MetadataMap) -> Rect | None:
         return None
     frame = Rect.from_data(found)
     return Rect(
-        left=(size.width_px - frame.width) / 2,
-        top=(size.height_px - frame.height) / 2,
+        left=(size.width_px / scale - frame.width) / 2,
+        top=(size.height_px / scale - frame.height) / 2,
         width=frame.width,
         height=frame.height,
     )

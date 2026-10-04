@@ -1,22 +1,27 @@
-"""Measuring the book: the size of its text and of its page, written into the step that makes the pages alike.
+"""Measuring the book: the size of its text and of its page, from the content box every page was placed by.
 
-``geometry.crop`` records for every page the frame of its block of text and the distance between its lines. The pages
-of one book are made alike by ``geometry.normalize``, which needs a target for that distance and a size for the page,
-and no step sees more than one page. This job reads what the crop of every page recorded and writes the medians into
-the parameters of the normalize step of the active Geometry recipe, where the user sees them in the form and may
-change them.
+``geometry.normalize`` records for every page the content box it found on its input and the distance between the
+lines of the box. The pages of one book are made alike by the same step, which needs a target for that distance and a
+size for the page, and no step sees more than one page. ``BookBlocks`` reads what the step recorded on the current
+version of every page, and ``BookSize`` works the target and the page out of it, in one place for the two ways it is
+used. The ``measure-book`` job writes them into the parameters of the normalize step of the active Geometry recipe,
+where the user sees them in the form and may change them. A run of the stage, and the preview of the step, lay them over
+the parameters that are 0, which is the size by the book, without writing them anywhere, so a book needs no press of the
+button to have one page size.
 
 A page whose lines were photographed larger than another's has a larger block too, so each block is brought to the
-median line height before the blocks are compared, as the normalize step will bring it. The page is that median block
-with the margins round it. While the margins are measured they are shares of the block, written in pixels; once the
-user sets one by hand the margins are left as they are, and the page is the median block with the margins the step has.
-The line height and the page size are written either way. Changing the parameters of a recipe marks
-the pages it processed stale by the rules every change of a recipe follows, and runs nothing.
+median line height before the blocks are compared, as the normalize step will bring it. The page is the largest of those
+blocks with the margins round it, so no page has a block that does not fit. While the margins are measured they are
+shares of that block, written in pixels; once the user sets one by hand the margins are left as they are, and the page
+is the largest block with the margins the step has. The line height and the page size are written either way. Changing
+the parameters of a recipe marks the pages it processed stale by the rules every change of a recipe follows, and runs
+nothing.
 """
 
 import math
 import statistics
-from typing import TYPE_CHECKING, ClassVar
+from collections import Counter
+from typing import TYPE_CHECKING, ClassVar, Self
 
 from attrs import evolve, frozen
 
@@ -26,43 +31,334 @@ from bookreviver.domain.geometry import Rect
 from bookreviver.domain.values import RecipeDraft
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
     from bookreviver.domain.entities import PageStage, PageVersion, Recipe
-    from bookreviver.domain.ids import PageVersionId, ProjectId
+    from bookreviver.domain.ids import PageId, PageVersionId, ProjectId
     from bookreviver.domain.values import MetadataMap, Step
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.services.recipes import RecipeBook
     from bookreviver.services.stage_records import StageRecords
 
-CROP_KEY: str = 'geometry.crop'
 NORMALIZE_KEY: str = 'geometry.normalize'
 NO_NORMALIZE_STEP: str = 'The active recipe of the Geometry stage has no {key} step to write the measures into.'
-NOTHING_TO_MEASURE: str = 'No page of the book has been cut to its block of text yet, so there is nothing to measure.'
+NOTHING_TO_MEASURE: str = (
+    'Margins has not placed any page of the book yet, so there is nothing to measure. Run the Geometry stage first.'
+)
 PERCENT: float = 100.0
+# The fields of the normalize step that are 0 until the book gives them a value
+BOOK_FIELDS: tuple[NormalizeParam, ...] = (
+    NormalizeParam.PAGE_WIDTH,
+    NormalizeParam.PAGE_HEIGHT,
+    NormalizeParam.LINE_HEIGHT,
+)
+
+
+def wants_the_book(params: MetadataMap) -> bool:
+    """Tell whether a field of the normalize step is 0, which the book fills in when the step runs.
+
+    :param params: The parameters of the step with the defaults of the processor filled in.
+    :type params: MetadataMap
+    :returns: Whether the page size or the line height is left to the book.
+    :rtype: bool
+    """
+    return not all(params.get(name) for name in BOOK_FIELDS)
 
 
 @frozen(kw_only=True)
 class BlockMeasure:
-    """What the crop of one page recorded.
+    """What the normalize step recorded of the content box of one page.
 
-    :ivar width: Width of the block of text in pixels.
-    :ivar height: Height of the block of text in pixels.
-    :ivar line_height: Distance between the lines of the block in pixels, or None when the crop found none.
+    :ivar width: Width of the content box in pixels of the full image the step read.
+    :ivar height: Height of the content box in the same pixels.
+    :ivar line_height: Distance between the lines of the box in those pixels, or None when the step found none.
     """
 
     width: float
     height: float
     line_height: float | None
 
+    @classmethod
+    def of(cls, version: PageVersion) -> Self | None:
+        """Read the content box and the line height a version of the normalize step recorded.
 
-class BookMeasure:
-    """Reads the crop of every page of a book and writes the medians into its normalize step."""
+        :param version: The version the step made.
+        :type version: PageVersion
+        :returns: The measure, or None for a page the step placed whole for want of content, or passed unchanged.
+        :rtype: Self | None
+        """
+        box = version.data.get(VersionData.CONTENT_BOX)
+        if version.data.get(VersionData.SKIPPED) is True or not isinstance(box, dict):
+            return None
+        rect = Rect.from_data(box)
+        recorded = version.data.get(VersionData.LINE_HEIGHT_PX)
+        factor = version.data.get(VersionData.BLOCK_SCALE)
+        line_height = None
+        # The step records the distance after it scaled the box, so it is brought back to the pixels of the page itself
+        if isinstance(recorded, int | float) and isinstance(factor, int | float) and recorded > 0 and factor > 0:
+            line_height = float(recorded) / float(factor)
+        return cls(width=rect.width, height=rect.height, line_height=line_height)
+
+
+@frozen(kw_only=True)
+class PageSetting:
+    """The line height and the page size a page of the book was placed by.
+
+    :ivar line_height: Distance between the lines the page was brought to, in pixels.
+    :ivar width: Width of the page in pixels.
+    :ivar height: Height of the page in pixels.
+    """
+
+    line_height: float
+    width: int
+    height: int
+
+    @classmethod
+    def of(cls, version: PageVersion) -> Self | None:
+        """Read what a version of the normalize step was placed by, from the parameters it ran with.
+
+        :param version: The version the step made.
+        :type version: PageVersion
+        :returns: The setting, or None for a page that ran with a size or a line height of 0, which is no setting.
+        :rtype: Self | None
+        """
+        line_height, width, height = (
+            version.params.get(name)
+            for name in (NormalizeParam.LINE_HEIGHT, NormalizeParam.PAGE_WIDTH, NormalizeParam.PAGE_HEIGHT)
+        )
+        if not (
+            isinstance(line_height, int | float)
+            and isinstance(width, int)
+            and isinstance(height, int)
+            and line_height > 0
+            and width > 0
+            and height > 0
+        ):
+            return None
+        return cls(line_height=float(line_height), width=width, height=height)
+
+
+class BookSize:
+    """Works the target line height and the size of the page out of the content boxes of a book."""
 
     MARGIN_TOP_PERCENT: ClassVar[float] = 8.0
     MARGIN_BOTTOM_PERCENT: ClassVar[float] = 10.0
     MARGIN_INNER_PERCENT: ClassVar[float] = 10.0
     MARGIN_OUTER_PERCENT: ClassVar[float] = 8.0
+    DEFAULT_MARGINS: ClassVar[Mapping[NormalizeParam, int]] = {
+        NormalizeParam.MARGIN_TOP: 150,
+        NormalizeParam.MARGIN_BOTTOM: 200,
+        NormalizeParam.MARGIN_INNER: 200,
+        NormalizeParam.MARGIN_OUTER: 150,
+    }
+
+    def __init__(self, measures: Sequence[BlockMeasure]) -> None:
+        """Take the line height of the book and bring every box to it.
+
+        :param measures: The content boxes of the pages, at least one.
+        :type measures: Sequence[BlockMeasure]
+        """
+        heights = [measure.line_height for measure in measures if measure.line_height is not None]
+        self._median_line_height = statistics.median(heights) if heights else None
+        self._measures = measures
+
+    def measured(self, current: MetadataMap) -> MetadataMap:
+        """Work out the parameters the measure of the book writes.
+
+        :param current: The parameters the step has now, whose margins are kept when the user set them.
+        :type current: MetadataMap
+        :returns: The line height when any page has one, the size of the page, and the margins when the measure sets
+                  them.
+        :rtype: MetadataMap
+        """
+        block_width, block_height = self._block(self._median_line_height)
+        margins: dict[str, int] = {
+            NormalizeParam.MARGIN_TOP: math.ceil(block_height * self.MARGIN_TOP_PERCENT / PERCENT),
+            NormalizeParam.MARGIN_BOTTOM: math.ceil(block_height * self.MARGIN_BOTTOM_PERCENT / PERCENT),
+            NormalizeParam.MARGIN_INNER: math.ceil(block_width * self.MARGIN_INNER_PERCENT / PERCENT),
+            NormalizeParam.MARGIN_OUTER: math.ceil(block_width * self.MARGIN_OUTER_PERCENT / PERCENT),
+        }
+        # The margins the user set stay, and the page is the largest block with them
+        if current.get(NormalizeParam.MARGINS_SOURCE) == MarginsSource.MANUAL:
+            margins = {name: int(current[name]) for name in margins}
+            written: dict[str, int] = {}
+        else:
+            written = margins
+        parameters: dict[str, object] = {
+            NormalizeParam.PAGE_WIDTH: math.ceil(
+                block_width + margins[NormalizeParam.MARGIN_INNER] + margins[NormalizeParam.MARGIN_OUTER]
+            ),
+            NormalizeParam.PAGE_HEIGHT: math.ceil(
+                block_height + margins[NormalizeParam.MARGIN_TOP] + margins[NormalizeParam.MARGIN_BOTTOM]
+            ),
+            **written,
+        }
+        if self._median_line_height is not None:
+            parameters[NormalizeParam.LINE_HEIGHT] = round(self._median_line_height, 1)
+        return parameters
+
+    def by_the_book(self, current: MetadataMap, held: PageSetting | None = None) -> MetadataMap:
+        """Work out the fields of the step that are 0, which is to say by the book, for a run that lays them over it.
+
+        The margins and every field the user gave stay as they are. The line height the user gave is the one the boxes
+        are brought to, so the page holds the boxes as they will be placed. A run of some pages of a book whose other
+        pages are placed already takes the line height of those pages and does not make a page smaller than theirs, so
+        the pages it makes are of the size the rest have, unless a box of its own does not fit that size.
+
+        :param current: The parameters the step has, with the defaults of the processor filled in.
+        :type current: MetadataMap
+        :param held: The line height and the page size the other pages of the book have, or None for a run of the whole
+                     book, which works them out from the boxes.
+        :type held: PageSetting | None
+        :returns: The line height, the width and the height of the page, each only where the step has 0.
+        :rtype: MetadataMap
+        """
+        given = current.get(NormalizeParam.LINE_HEIGHT)
+        if isinstance(given, int | float) and given > 0:
+            line_height: float | None = float(given)
+        elif held is not None:
+            line_height = held.line_height
+        else:
+            line_height = self._median_line_height
+        # The page is placed with the line height it is written with, which has a tenth of a pixel
+        line_height = None if line_height is None else round(line_height, 1)
+        block_width, block_height = self._block(line_height)
+        margins = {name: int(current.get(name, default)) for name, default in self.DEFAULT_MARGINS.items()}
+        width = math.ceil(block_width + margins[NormalizeParam.MARGIN_INNER] + margins[NormalizeParam.MARGIN_OUTER])
+        height = math.ceil(block_height + margins[NormalizeParam.MARGIN_TOP] + margins[NormalizeParam.MARGIN_BOTTOM])
+        sizes: dict[str, object] = {
+            NormalizeParam.PAGE_WIDTH: width if held is None else max(width, held.width),
+            NormalizeParam.PAGE_HEIGHT: height if held is None else max(height, held.height),
+        }
+        if line_height is not None:
+            sizes[NormalizeParam.LINE_HEIGHT] = line_height
+        return {name: value for name, value in sizes.items() if not current.get(name)}
+
+    def _block(self, line_height: float | None) -> tuple[float, float]:
+        """Give the largest content box of the book once every box is brought to a line height.
+
+        :param line_height: The distance between the lines the boxes are brought to, or None to leave them as they are.
+        :type line_height: float | None
+        :returns: The width and the height of the box that holds every box, which are those of the largest of each.
+        :rtype: tuple[float, float]
+        """
+        factors = [
+            1.0 if line_height is None or measure.line_height is None else line_height / measure.line_height
+            for measure in self._measures
+        ]
+        return (
+            max(measure.width * factor for measure, factor in zip(self._measures, factors, strict=True)),
+            max(measure.height * factor for measure, factor in zip(self._measures, factors, strict=True)),
+        )
+
+
+class BookBlocks:
+    """Reads the content boxes the normalize step recorded on the current versions of the pages of a book."""
+
+    def __init__(self, uow: UnitOfWork) -> None:
+        """Read through the unit of work of a job or a request.
+
+        :param uow: Unit of work the records and the versions are read through.
+        :type uow: UnitOfWork
+        """
+        self._uow = uow
+
+    async def read(
+        self, project_id: ProjectId, stage: Stage, *, leaving_out: Collection[PageId] = ()
+    ) -> dict[PageId, BlockMeasure]:
+        """Find the measure of every page whose current version came through the normalize step.
+
+        :param project_id: Project whose pages are read.
+        :type project_id: ProjectId
+        :param stage: The stage of the normalize step.
+        :type stage: Stage
+        :param leaving_out: Pages whose measure is not wanted, since a fresher one stands in its place.
+        :type leaving_out: Collection[PageId]
+        :returns: The measure of each page that has one, by page.
+        :rtype: dict[PageId, BlockMeasure]
+        """
+        measures: dict[PageId, BlockMeasure] = {}
+        for version in await self._versions(project_id, stage, leaving_out):
+            if (measure := BlockMeasure.of(version)) is not None:
+                measures[version.page_id] = measure
+        return measures
+
+    async def by_the_book(
+        self, project_id: ProjectId, stage: Stage, params: MetadataMap, fresh: Mapping[PageId, BlockMeasure]
+    ) -> MetadataMap:
+        """Work out the fields of the normalize step that are 0, from the boxes of the pages the step has placed.
+
+        When the pages that were not just measured hold a line height and a page size, which they do after a run of
+        the whole book, the pages that were are placed by those, so that a page run alone is as large as the others.
+
+        :param project_id: Project whose pages make the book.
+        :type project_id: ProjectId
+        :param stage: The stage of the step.
+        :type stage: Stage
+        :param params: The parameters of the normalize step with the defaults of the processor filled in.
+        :type params: MetadataMap
+        :param fresh: The boxes of the pages a run has just placed, which stand in place of those the pages held.
+        :type fresh: Mapping[PageId, BlockMeasure]
+        :returns: The fields to lay over the parameters, none when nothing is 0 or no page has a box.
+        :rtype: MetadataMap
+        """
+        if not wants_the_book(params):
+            return {}
+        others = await self._versions(project_id, stage, fresh)
+        held = Counter(setting for version in others if (setting := PageSetting.of(version)) is not None)
+        if held and fresh:
+            return BookSize(list(fresh.values())).by_the_book(params, held.most_common(1)[0][0])
+        measures = [
+            *(measure for version in others if (measure := BlockMeasure.of(version)) is not None),
+            *fresh.values(),
+        ]
+        return BookSize(measures).by_the_book(params) if measures else {}
+
+    async def _versions(
+        self, project_id: ProjectId, stage: Stage, leaving_out: Collection[PageId]
+    ) -> list[PageVersion]:
+        """Find the current version of the normalize step of every page but some.
+
+        :param project_id: Project whose pages are read.
+        :type project_id: ProjectId
+        :param stage: The stage of the step.
+        :type stage: Stage
+        :param leaving_out: Pages that are not read.
+        :type leaving_out: Collection[PageId]
+        :returns: The ready versions, one for each page that has one.
+        :rtype: list[PageVersion]
+        """
+        left_out = set(leaving_out)
+        records = [
+            record
+            for record in await self._uow.page_stages.list_for_project_stage(project_id, stage)
+            if record.page_id not in left_out
+        ]
+        return await self._normalized(records)
+
+    async def _normalized(self, records: Sequence[PageStage]) -> list[PageVersion]:
+        """Find the version the normalize step made on each page, by following the current version back to it.
+
+        :param records: The records of the stage of the pages.
+        :type records: Sequence[PageStage]
+        :returns: The ready versions of the normalize step, one for each page that has one.
+        :rtype: list[PageVersion]
+        """
+        pending = {record.head_version_id for record in records if record.head_version_id is not None}
+        found: list[PageVersion] = []
+        while pending:
+            following: set[PageVersionId] = set()
+            for version in await self._uow.page_versions.list_by_ids(pending):
+                if version.processor.key == NORMALIZE_KEY:
+                    found.append(version)
+                elif version.input_id is not None and version.stage is Stage.GEOMETRY:
+                    following.add(version.input_id)
+            pending = following
+        return [version for version in found if version.state is VersionState.READY]
+
+
+class BookMeasure:
+    """Reads the content boxes of every page of a book and writes the largest into its normalize step."""
 
     def __init__(self, *, uow: UnitOfWork, recipes: RecipeBook, records: StageRecords) -> None:
         """Work over the ports of one job.
@@ -86,113 +382,21 @@ class BookMeasure:
         :returns: The number of pages that were measured.
         :rtype: int
         :raises NotFoundError: If the Geometry stage has no recipe.
-        :raises ConflictError: If the active recipe has no normalize step, or no page was cut to its block yet.
+        :raises ConflictError: If the active recipe has no normalize step, or the step has placed no page yet.
         :raises InvalidParametersError: If the measured page does not fit the bounds of the step.
         """
         recipe = await self._recipes.active(project_id, Stage.GEOMETRY)
         position = next((index for index, step in enumerate(recipe.steps) if step.processor_key == NORMALIZE_KEY), None)
         if position is None:
             raise ConflictError(NO_NORMALIZE_STEP.format(key=NORMALIZE_KEY))
-        records = await self._uow.page_stages.list_for_project_stage(project_id, Stage.GEOMETRY)
-        measures = [
-            measure for version in await self._crops(records) if (measure := self._measure_of(version)) is not None
-        ]
+        measures = list((await BookBlocks(self._uow).read(project_id, Stage.GEOMETRY)).values())
         if not measures:
             raise ConflictError(NOTHING_TO_MEASURE)
         step = recipe.steps[position]
-        measured = evolve(step, params={**step.params, **self._parameters(measures, step.params)})
+        measured = evolve(step, params={**step.params, **BookSize(measures).measured(step.params)})
         if measured.params != step.params:
             await self._write(recipe, position, measured)
         return len(measures)
-
-    async def _crops(self, records: Sequence[PageStage]) -> list[PageVersion]:
-        """Find the version the crop made on each page, by following the chain of the current version back to it.
-
-        :param records: The records of the Geometry stage of the pages.
-        :type records: Sequence[PageStage]
-        :returns: The ready versions of the crop step, one for each page that has one.
-        :rtype: list[PageVersion]
-        """
-        pending = {record.head_version_id for record in records if record.head_version_id is not None}
-        crops: list[PageVersion] = []
-        while pending:
-            following: set[PageVersionId] = set()
-            for version in await self._uow.page_versions.list_by_ids(pending):
-                if version.processor.key == CROP_KEY:
-                    crops.append(version)
-                elif version.input_id is not None and version.stage is Stage.GEOMETRY:
-                    following.add(version.input_id)
-            pending = following
-        return [version for version in crops if version.state is VersionState.READY]
-
-    @staticmethod
-    def _measure_of(version: PageVersion) -> BlockMeasure | None:
-        """Read the block and the line height a crop recorded.
-
-        :param version: The version the crop made.
-        :type version: PageVersion
-        :returns: The measure, or None for a page the crop left as it was because it found no content.
-        :rtype: BlockMeasure | None
-        """
-        frame = version.data.get(VersionData.FRAME)
-        if version.data.get(VersionData.SKIPPED) is True or not isinstance(frame, dict):
-            return None
-        rect = Rect.from_data(frame)
-        line_height = version.data.get(VersionData.LINE_HEIGHT_PX)
-        return BlockMeasure(
-            width=rect.width,
-            height=rect.height,
-            line_height=float(line_height) if isinstance(line_height, int | float) and line_height > 0 else None,
-        )
-
-    def _parameters(self, measures: Sequence[BlockMeasure], current: MetadataMap) -> MetadataMap:
-        """Work out the parameters of the normalize step from the measures of the pages.
-
-        :param measures: The measures of the pages.
-        :type measures: Sequence[BlockMeasure]
-        :param current: The parameters the step has now, whose margins are kept when the user set them.
-        :type current: MetadataMap
-        :returns: The line height when any page has one, the size of the page, and the margins when the measure sets
-                  them.
-        :rtype: MetadataMap
-        """
-        heights = [measure.line_height for measure in measures if measure.line_height is not None]
-        line_height = statistics.median(heights) if heights else None
-        # A block is compared at the size the normalize step will give it, which is the one of the median line height
-        factors = [
-            1.0 if line_height is None or measure.line_height is None else line_height / measure.line_height
-            for measure in measures
-        ]
-        block_width = statistics.median(
-            measure.width * factor for measure, factor in zip(measures, factors, strict=True)
-        )
-        block_height = statistics.median(
-            measure.height * factor for measure, factor in zip(measures, factors, strict=True)
-        )
-        margins: dict[str, int] = {
-            NormalizeParam.MARGIN_TOP: math.ceil(block_height * self.MARGIN_TOP_PERCENT / PERCENT),
-            NormalizeParam.MARGIN_BOTTOM: math.ceil(block_height * self.MARGIN_BOTTOM_PERCENT / PERCENT),
-            NormalizeParam.MARGIN_INNER: math.ceil(block_width * self.MARGIN_INNER_PERCENT / PERCENT),
-            NormalizeParam.MARGIN_OUTER: math.ceil(block_width * self.MARGIN_OUTER_PERCENT / PERCENT),
-        }
-        # The margins the user set stay, and the page is the median block with them
-        if current.get(NormalizeParam.MARGINS_SOURCE) == MarginsSource.MANUAL:
-            margins = {name: int(current[name]) for name in margins}
-            written: dict[str, int] = {}
-        else:
-            written = margins
-        parameters: dict[str, object] = {
-            NormalizeParam.PAGE_WIDTH: math.ceil(
-                block_width + margins[NormalizeParam.MARGIN_INNER] + margins[NormalizeParam.MARGIN_OUTER]
-            ),
-            NormalizeParam.PAGE_HEIGHT: math.ceil(
-                block_height + margins[NormalizeParam.MARGIN_TOP] + margins[NormalizeParam.MARGIN_BOTTOM]
-            ),
-            **written,
-        }
-        if line_height is not None:
-            parameters[NormalizeParam.LINE_HEIGHT] = round(line_height, 1)
-        return parameters
 
     async def _write(self, recipe: Recipe, position: int, step: Step) -> None:
         """Store the recipe with the measured step, mark the pages it processed stale, and commit.

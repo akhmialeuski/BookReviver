@@ -64,6 +64,7 @@ from bookreviver.ports.processing import StepOutput, StepResult
 
 if TYPE_CHECKING:
     from bookreviver.domain.enums import ColorMode
+    from bookreviver.domain.values import MetadataMap
     from bookreviver.plugins.cv_image import Indices, Samples
     from bookreviver.ports.processing import StepInput
 
@@ -89,6 +90,20 @@ FRAME_ROOM_PX: int = 2
 # How close the frame is to a side of the page to come to it, as a share of the size of the page
 EDGE_TOLERANCE_SHARE: float = 0.01
 PERCENT: float = 100.0
+
+
+def cut_edges_of(facts: MetadataMap) -> frozenset[SheetEdge]:
+    """Read the sides of the sheet that lie on the edge of the scan from the data of the input of a step.
+
+    :param facts: Data of the input version, which ``geometry.perspective`` filled in.
+    :type facts: MetadataMap
+    :returns: The sides, none when the data names none.
+    :rtype: frozenset[SheetEdge]
+    """
+    stated = facts.get(VersionData.CUT_EDGES)
+    if not isinstance(stated, list):
+        return frozenset[SheetEdge]()
+    return frozenset(SheetEdge(edge) for edge in stated)
 
 
 class CropParams(Params):
@@ -321,8 +336,7 @@ class Crop(ModelProcessor):
         params = CropParams.model_validate(step_input.params)
         image = read_samples(step_input.image)
         color_mode = color_mode_of(image, step_input.input_data)
-        stated = step_input.input_data.get(VersionData.CUT_EDGES)
-        cut_edges = frozenset(SheetEdge(edge) for edge in stated) if isinstance(stated, list) else frozenset()
+        cut_edges = cut_edges_of(step_input.input_data)
         search = FrameSearch(image, params, cut_edges)
         frame = self._frame(step_input, search)
         if frame is None:

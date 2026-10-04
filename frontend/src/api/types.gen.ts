@@ -675,7 +675,7 @@ export type EditForm = {
  *
  * The editor a processor offers for the manual edit of its input.
  */
-export type EditorKind = 'none' | 'rect' | 'quad' | 'line' | 'rotation' | 'split' | 'mesh' | 'brush-mask' | 'regions';
+export type EditorKind = 'none' | 'rect' | 'quad' | 'line' | 'rotation' | 'split' | 'mesh' | 'brush-mask' | 'regions' | 'content-box';
 
 /**
  * ErrorModel

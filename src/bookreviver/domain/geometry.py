@@ -115,6 +115,23 @@ class Rect:
 
 
 @frozen(kw_only=True)
+class ContentBox(Rect):
+    """The box of the content of a page, which the user drew over the picture a step reads instead of the box it found.
+
+    It is a rectangle in the pixels of the full image the step reads, like the frame of a crop, and has an editor of its
+    own, since the step that reads it places the box on a page of the book and a frame the user gave for another
+    purpose, such as the place of a block on the page, is not a box of the content.
+
+    :ivar left: Distance of the left edge from the left edge of the image.
+    :ivar top: Distance of the top edge from the top edge of the image.
+    :ivar width: Width in pixels.
+    :ivar height: Height in pixels.
+    """
+
+    editor: ClassVar[EditorKind] = EditorKind.CONTENT_BOX
+
+
+@frozen(kw_only=True)
 class Quad:
     """A quadrilateral, such as a half of a spread or a skewed page.
 
@@ -527,6 +544,7 @@ EDIT_SHAPES: Mapping[EditorKind, type[Rect | Quad | Line | Rotation | SplitChoic
     EditorKind.MESH: Mesh,
     EditorKind.REGIONS: Regions,
     EditorKind.BRUSH_MASK: BrushStrokes,
+    EditorKind.CONTENT_BOX: ContentBox,
 }
 
 

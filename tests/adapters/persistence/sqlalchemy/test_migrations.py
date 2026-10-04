@@ -151,6 +151,21 @@ INSERT_VERSION: str = (
     ' \'{"kind": "identity", "quad": null, "angle": null, "mesh_key": null}\', \'{}\','
     " 'ready', '2026-01-01 00:00:00')"
 )
+# The revision before the one that adds the content box editor and takes the frames of Margins away
+BEFORE_CONTENT_BOX_REVISION: str = 'a8b6015ddb1b'
+NORMALIZE: str = 'geometry.normalize'
+FRAME: str = '{"left": 1, "top": 2, "width": 3, "height": 4}'
+# A state with an edit of the given editor and the given settings
+INSERT_EDIT_STATE: str = (
+    'INSERT INTO page_step_states (page_id, stage, step_id, params, kind, geometry, edit_hash, edit_saved_at, updated_at)'
+    " VALUES (:page_id, 'geometry', :step_id, :params, :kind, :geometry, 'abc', '2026-01-01 00:00:00',"
+    " '2026-01-01 00:00:00')"
+)
+# A change of the history of the given layer
+INSERT_LAYER_CHANGE: str = (
+    'INSERT INTO page_step_changes (id, page_id, stage, step_id, layer, before, after, source, created_at, sequence) '
+    "VALUES (:id, :page_id, 'geometry', :step_id, :layer, NULL, '{}', 'user', '2026-01-01 00:00:00', :sequence)"
+)
 # The tables holding the rows of a book, each of which refers to the project or to a row that does
 BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (ProjectRow, SourceRow, ScanRow, PageRow, PageVersionRow, JobRow)
 
@@ -1123,4 +1138,128 @@ class TestDescriptionRevision:
 
         expect(upgraded == NEW_SUGGESTIONS)
         expect(downgraded == OLD_SUGGESTIONS_AFTER_DOWNGRADE)
+        assert_expectations()
+
+
+class TestContentBoxRevision:
+    """Tests for the revision that adds the content box editor and takes the frames of Margins away."""
+
+    @staticmethod
+    async def _seed(database: SqlDatabase) -> tuple[list[bytes], bytes, bytes]:
+        """Store a recipe of a Margins step and a Select content step, and three pages with a frame each.
+
+        The first page has a frame of Margins alone and a change of its manual layer and of its settings, the second a
+        frame of Margins and a setting, and the third a frame of Select content.
+
+        :param database: Database migrated to the revision before.
+        :type database: SqlDatabase
+        :returns: The identifiers of the pages, of the Margins step and of the Select content step, as bytes.
+        :rtype: tuple[list[bytes], bytes, bytes]
+        """
+        project = make_project(owner_id=await commit_account(database))
+        pages = [make_page(project_id=project.id, order_key=f'a{index}') for index in range(3)]
+        margins, crop = uuid4().bytes, uuid4().bytes
+        steps = json.dumps(
+            [
+                {
+                    PROCESSOR: NORMALIZE,
+                    'params': {},
+                    'enabled': True,
+                    'step_id': str(UUID(bytes=margins)),
+                    'applies_to': 'all',
+                },
+                {PROCESSOR: CROP, 'params': {}, 'enabled': True, 'step_id': str(UUID(bytes=crop)), 'applies_to': 'all'},
+            ]
+        )
+        frames = [(pages[0], margins, '{}'), (pages[1], margins, '{"margin_top": 5}'), (pages[2], crop, '{}')]
+        async with database.sessions() as session:
+            await SqlAlchemyUnitOfWork(session).projects.add(project)
+            await session.commit()
+            await session.execute(
+                text(INSERT_RECIPE),
+                {'id': uuid4().bytes, 'project_id': project.id.bytes, 'name': 'Text', 'steps': steps, 'active': True},
+            )
+            for page in pages:
+                await session.execute(
+                    text(INSERT_PAGE),
+                    {'id': page.id.bytes, 'project_id': project.id.bytes, 'order_key': page.order_key},
+                )
+            for page, step_id, params in frames:
+                await session.execute(
+                    text(INSERT_EDIT_STATE),
+                    {'page_id': page.id.bytes, 'step_id': step_id, 'params': params, 'kind': 'rect', 'geometry': FRAME},
+                )
+            for sequence, layer in enumerate(('hand', 'settings'), start=1):
+                await session.execute(
+                    text(INSERT_LAYER_CHANGE),
+                    {
+                        'id': uuid4().bytes,
+                        'page_id': pages[0].id.bytes,
+                        'step_id': margins,
+                        'layer': layer,
+                        'sequence': sequence,
+                    },
+                )
+            await session.commit()
+        return [page.id.bytes for page in pages], margins, crop
+
+    async def test_the_frames_of_margins_go_with_their_history_and_the_rest_stays(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify a frame of a Margins step is taken away, and its settings, its history of settings and every other edit stay.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, BEFORE_CONTENT_BOX_REVISION)
+        pages, margins, crop = await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        async with fx_empty_database.sessions() as session:
+            states = {
+                (row.page_id.bytes, row.step_id.bytes): row
+                for row in (await session.execute(select(PageStepStateRow))).scalars().all()
+            }
+            layers = (await session.execute(text('SELECT layer FROM page_step_changes'))).scalars().all()
+        expect(sorted(states) == sorted([(pages[1], margins), (pages[2], crop)]))
+        expect((states[pages[1], margins].kind, states[pages[1], margins].params) == (None, {'margin_top': 5}))
+        expect(states[pages[1], margins].geometry is None and states[pages[1], margins].edit_hash is None)
+        expect(states[pages[2], crop].kind == EditorKind.RECT)
+        expect(states[pages[2], crop].geometry == {'left': 1, 'top': 2, 'width': 3, 'height': 4})
+        expect(layers == ['settings'])
+        assert_expectations()
+
+    async def test_the_content_box_edits_are_taken_away_by_a_downgrade_and_the_settings_stay(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify a downgrade deletes the content box edits, since the editor before has none, and keeps the settings.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, BEFORE_CONTENT_BOX_REVISION)
+        pages, margins, _crop = await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        async with fx_empty_database.sessions() as session:
+            for page, params in ((pages[0], '{}'), (pages[1], '{"margin_top": 5}')):
+                await session.execute(text('DELETE FROM page_step_states WHERE page_id = :page_id'), {'page_id': page})
+                await session.execute(
+                    text(INSERT_EDIT_STATE),
+                    {
+                        'page_id': page,
+                        'step_id': margins,
+                        'params': params,
+                        'kind': 'content-box',
+                        'geometry': FRAME,
+                    },
+                )
+            await session.commit()
+        await _migrate(fx_empty_database, migrations.downgrade, BEFORE_CONTENT_BOX_REVISION)
+        async with fx_empty_database.sessions() as session:
+            rows = (await session.execute(text('SELECT page_id, kind, params FROM page_step_states'))).all()
+        expect(
+            sorted((row[0], row[1], json.loads(row[2])) for row in rows)
+            == sorted([(pages[1], None, {'margin_top': 5}), (pages[2], 'rect', {})])
+        )
         assert_expectations()

@@ -795,6 +795,13 @@ class VersionData(LabeledStrEnum):
     SPECKS = 'specks', 'Number of specks the step removed'
     CONTENT_TYPE = 'content_type', 'What the page shows: text, a colour picture or a black-and-white one'
     PICTURE_SHARE = 'picture_share', 'Share of the page that pictures cover, from 0 to 1'
+    CONTENT_BOX = 'content_box', 'Content box the step placed on the page, in the pixels of the full image it read'
+    BLOCK_SCALE = 'block_scale', 'Factor the step scaled the content box by when it placed it on the page'
+    MARGIN_BOX = 'margin_box', 'Content box grown by the margins of the page, in the pixels of the full image read'
+    MARGIN_PARAMS = (
+        'margin_params',
+        'Names of the parameters that hold the margin of each side of the page, which the side of the book decides',
+    )
 
 
 class VersionState(LabeledStrEnum):
@@ -957,6 +964,7 @@ class EditorKind(LabeledStrEnum):
     MESH = 'mesh', 'Mesh'
     BRUSH_MASK = 'brush-mask', 'Brush mask'
     REGIONS = 'regions', 'Regions'
+    CONTENT_BOX = 'content-box', 'Content box'
 
 
 class StepLayer(LabeledStrEnum):

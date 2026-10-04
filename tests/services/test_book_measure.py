@@ -1,4 +1,4 @@
-"""Tests for the job that measures the book: the medians of the crop of every page, written into the normalize step."""
+"""Tests for the job that measures the book: the content boxes Margins placed, written into the normalize step."""
 
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -36,10 +36,10 @@ VERSION_ID_DIGITS: int = 16
 FIRST_KEY: str = 'a0'
 BUSY_MESSAGE: str = 'project is busy'
 # The pages of the first test: a block and a line height each, the block being the same size when the lines are brought
-# to the median one, which is 30 pixels, so the median block is 300 by 600
+# to the median one, which is 30 pixels, so the block is 300 by 600 on all three
 BLOCKS: tuple[tuple[float, float, float], ...] = ((200, 400, 20), (300, 600, 30), (400, 800, 40))
 MEDIAN_LINE_HEIGHT_PX: float = 30.0
-# The median block 300 by 600 plus the margins, which are 8, 10, 10 and 8 percent of the block, rounded up
+# The block 300 by 600 plus the margins, which are 8, 10, 10 and 8 percent of the block, rounded up
 EXPECTED_PAGE: dict[str, int] = {
     NormalizeParam.PAGE_WIDTH: 354,
     NormalizeParam.PAGE_HEIGHT: 708,
@@ -60,14 +60,14 @@ def version_id() -> PageVersionId:
     return PageVersionId(uuid4().hex[:VERSION_ID_DIGITS])
 
 
-async def crop_page(
+async def placed_page(
     kit: ProcessingKit,
     project: Project,
     recipe: Recipe,
     order_key: str,
     data: dict[str, object],
 ) -> Page:
-    """Commit a page whose Geometry stage stands on a normalize version that read a crop version with the given data.
+    """Commit a page whose Geometry stage stands on a normalize version with the given data.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
@@ -77,49 +77,43 @@ async def crop_page(
     :type recipe: Recipe
     :param order_key: Order key of the page.
     :type order_key: str
-    :param data: The data the crop version recorded.
+    :param data: The data the normalize version recorded.
     :type data: dict[str, object]
     :returns: The page.
     :rtype: Page
     """
     page, _ = await kit.seed_scan_page(project, order_key=order_key)
-    crop = evolve(
+    normalize = evolve(
         make_page_version(page_id=page.id),
         id=version_id(),
         stage=Stage.GEOMETRY,
-        processor=ProcessorRef(key=CROP_KEY, version='1'),
+        processor=ProcessorRef(key=NORMALIZE_KEY, version='2'),
         state=VersionState.READY,
         data=data,
     )
-    normalize = evolve(
-        crop,
-        id=version_id(),
-        processor=ProcessorRef(key=NORMALIZE_KEY, version='1'),
-        input_id=crop.id,
-        data={},
-    )
     uow = kit.uow()
-    await uow.page_versions.add(crop)
     await uow.page_versions.add(normalize)
     await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id, head_version_id=normalize.id))
     await uow.commit()
     return page
 
 
-def crop_data(width: float, height: float, line_height: float | None) -> dict[str, object]:
-    """Build the data a crop records for a page.
+def block_data(width: float, height: float, line_height: float | None) -> dict[str, object]:
+    """Build the data the normalize step records for a page it placed at the scale of the page itself.
 
-    :param width: Width of the frame in pixels.
+    :param width: Width of the content box in pixels.
     :type width: float
-    :param height: Height of the frame in pixels.
+    :param height: Height of the content box in pixels.
     :type height: float
-    :param line_height: Distance between the lines in pixels, or None when the crop found none.
+    :param line_height: Distance between the lines in pixels, or None when the step found none.
     :type line_height: float | None
-    :returns: The frame, the confidence, that the page was not skipped, and the line height when there is one.
+    :returns: The box, the factor 1, the confidence, that the page was not skipped, and the line height when there is
+              one.
     :rtype: dict[str, object]
     """
     data: dict[str, object] = {
-        VersionData.FRAME: Rect(left=10, top=20, width=width, height=height).to_data(),
+        VersionData.CONTENT_BOX: Rect(left=10, top=20, width=width, height=height).to_data(),
+        VersionData.BLOCK_SCALE: 1.0,
         VersionData.CONFIDENCE: 1.0,
         VersionData.SKIPPED: False,
     }
@@ -185,8 +179,10 @@ async def set_normalize_params(kit: ProcessingKit, actor: Actor, project: Projec
 class TestMeasureBook:
     """Tests for the ``measure-book`` job."""
 
-    async def test_the_medians_of_the_pages_are_written_into_the_normalize_step(self, fx_cv_kit: ProcessingKit) -> None:
-        """Verify the median line height and a page of the median block with its margins reach the parameters.
+    async def test_the_line_height_and_the_page_of_the_pages_are_written_into_the_normalize_step(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify the median line height and a page of the largest block with its margins reach the parameters.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
@@ -194,7 +190,7 @@ class TestMeasureBook:
         actor, project = await fx_cv_kit.seed_project()
         recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
         for index, (width, height, line_height) in enumerate(BLOCKS):
-            await crop_page(fx_cv_kit, project, recipe, f'a{index}', crop_data(width, height, line_height))
+            await placed_page(fx_cv_kit, project, recipe, f'a{index}', block_data(width, height, line_height))
         before = await normalize_params(fx_cv_kit, actor, project)
         job = await measure(fx_cv_kit, actor, project)
         after = await normalize_params(fx_cv_kit, actor, project)
@@ -210,6 +206,25 @@ class TestMeasureBook:
         )
         assert_expectations()
 
+    async def test_the_page_holds_the_largest_block_of_the_book_in_each_direction(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify the page is as wide as the widest block and as high as the highest, which are of two pages.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        for index, (width, height) in enumerate(((300, 500), (260, 640), (280, 600))):
+            await placed_page(fx_cv_kit, project, recipe, f'a{index}', block_data(width, height, MEDIAN_LINE_HEIGHT_PX))
+        await measure(fx_cv_kit, actor, project)
+        after = await normalize_params(fx_cv_kit, actor, project)
+        # The margins are 8, 10, 10 and 8 percent of the largest block, rounded up
+        expect(after[NormalizeParam.PAGE_WIDTH] == 300 + 30 + 24)
+        expect(after[NormalizeParam.PAGE_HEIGHT] == 640 + 52 + 64)
+        assert_expectations()
+
     async def test_the_pages_the_recipe_processed_go_out_of_date_and_are_announced(
         self, fx_cv_kit: ProcessingKit
     ) -> None:
@@ -221,7 +236,7 @@ class TestMeasureBook:
         actor, project = await fx_cv_kit.seed_project()
         recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
         pages = [
-            await crop_page(fx_cv_kit, project, recipe, f'a{index}', crop_data(width, height, line_height))
+            await placed_page(fx_cv_kit, project, recipe, f'a{index}', block_data(width, height, line_height))
             for index, (width, height, line_height) in enumerate(BLOCKS)
         ]
         await measure(fx_cv_kit, actor, project)
@@ -239,7 +254,7 @@ class TestMeasureBook:
         """
         actor, project = await fx_cv_kit.seed_project()
         recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
-        page = await crop_page(fx_cv_kit, project, recipe, FIRST_KEY, crop_data(300, 600, 30))
+        page = await placed_page(fx_cv_kit, project, recipe, FIRST_KEY, block_data(300, 600, 30))
         await measure(fx_cv_kit, actor, project)
         written = await fx_cv_kit.uow().recipes.get(recipe.id)
         uow = fx_cv_kit.uow()
@@ -256,7 +271,7 @@ class TestMeasureBook:
         expect(record.state is StageState.FRESH)
         assert_expectations()
 
-    async def test_a_page_the_crop_left_as_it_was_or_that_has_no_line_height_is_handled(
+    async def test_a_page_margins_found_no_box_for_or_that_has_no_line_height_is_handled(
         self, fx_cv_kit: ProcessingKit
     ) -> None:
         """Verify a page with no content does not count, and a page with no line height counts by its block alone.
@@ -266,9 +281,9 @@ class TestMeasureBook:
         """
         actor, project = await fx_cv_kit.seed_project()
         recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
-        await crop_page(fx_cv_kit, project, recipe, FIRST_KEY, crop_data(300, 600, 30))
-        await crop_page(fx_cv_kit, project, recipe, 'a1', crop_data(300, 600, None))
-        await crop_page(fx_cv_kit, project, recipe, 'a2', {VersionData.SKIPPED: True, VersionData.CONFIDENCE: 0.0})
+        await placed_page(fx_cv_kit, project, recipe, FIRST_KEY, block_data(300, 600, 30))
+        await placed_page(fx_cv_kit, project, recipe, 'a1', block_data(300, 600, None))
+        await placed_page(fx_cv_kit, project, recipe, 'a2', {VersionData.SKIPPED: True, VersionData.CONFIDENCE: 0.0})
         job = await measure(fx_cv_kit, actor, project)
         after = await normalize_params(fx_cv_kit, actor, project)
         expect(job.progress.done == 2)
@@ -276,7 +291,7 @@ class TestMeasureBook:
         expect(after[NormalizeParam.PAGE_WIDTH] == EXPECTED_PAGE[NormalizeParam.PAGE_WIDTH])
         assert_expectations()
 
-    async def test_a_book_none_of_whose_pages_was_cropped_has_nothing_to_measure(
+    async def test_a_book_none_of_whose_pages_margins_placed_has_nothing_to_measure(
         self, fx_cv_kit: ProcessingKit
     ) -> None:
         """Verify the job fails with the reason, and the recipe is left as it was.
@@ -305,7 +320,7 @@ class TestMeasureBook:
         recipe = await fx_cv_kit.service().save_recipe(
             actor, project.id, Stage.GEOMETRY, RecipeDraft(name=recipe.name, steps=[Step(processor_key=CROP_KEY)])
         )
-        page = await crop_page(fx_cv_kit, project, recipe, FIRST_KEY, crop_data(300, 600, 30))
+        page = await placed_page(fx_cv_kit, project, recipe, FIRST_KEY, block_data(300, 600, 30))
         job = await measure(fx_cv_kit, actor, project)
         record = await fx_cv_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         expect(job.state is JobState.FAILED)
@@ -323,7 +338,7 @@ class TestMeasureBook:
         """
         actor, project = await fx_cv_kit.seed_project()
         recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
-        await crop_page(fx_cv_kit, project, recipe, FIRST_KEY, crop_data(TOO_WIDE_PX, 600, 30))
+        await placed_page(fx_cv_kit, project, recipe, FIRST_KEY, block_data(TOO_WIDE_PX, 600, 30))
         before = await normalize_params(fx_cv_kit, actor, project)
         job = await measure(fx_cv_kit, actor, project)
         expect(job.state is JobState.FAILED)
@@ -358,7 +373,7 @@ class TestMarginsSource:
     async def test_manual_margins_survive_a_measure_while_the_line_height_and_the_page_follow(
         self, fx_cv_kit: ProcessingKit
     ) -> None:
-        """Verify a measure keeps the four margins, and makes the page the median block plus those margins.
+        """Verify a measure keeps the four margins, and makes the page the largest block plus those margins.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
@@ -366,7 +381,7 @@ class TestMarginsSource:
         actor, project = await fx_cv_kit.seed_project()
         recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
         for index, (width, height, line_height) in enumerate(BLOCKS):
-            await crop_page(fx_cv_kit, project, recipe, f'a{index}', crop_data(width, height, line_height))
+            await placed_page(fx_cv_kit, project, recipe, f'a{index}', block_data(width, height, line_height))
         margins: dict[str, object] = {
             NormalizeParam.MARGIN_TOP: 11,
             NormalizeParam.MARGIN_BOTTOM: 22,
@@ -382,7 +397,7 @@ class TestMarginsSource:
         expect({name: after[name] for name in margins} == margins)
         expect(after[NormalizeParam.MARGINS_SOURCE] == MarginsSource.MANUAL)
         expect(after[NormalizeParam.LINE_HEIGHT] == pytest.approx(MEDIAN_LINE_HEIGHT_PX))
-        # The median block is 300 by 600
+        # The block is 300 by 600
         expect(after[NormalizeParam.PAGE_WIDTH] == 300 + 33 + 44)
         expect(after[NormalizeParam.PAGE_HEIGHT] == 600 + 11 + 22)
         assert_expectations()
@@ -398,7 +413,7 @@ class TestMarginsSource:
         actor, project = await fx_cv_kit.seed_project()
         recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
         for index, (width, height, line_height) in enumerate(BLOCKS):
-            await crop_page(fx_cv_kit, project, recipe, f'a{index}', crop_data(width, height, line_height))
+            await placed_page(fx_cv_kit, project, recipe, f'a{index}', block_data(width, height, line_height))
         await set_normalize_params(
             fx_cv_kit,
             actor,
