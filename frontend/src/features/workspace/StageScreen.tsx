@@ -491,11 +491,7 @@ export function StageScreen({
           }
           canvasHeader={grid ? null : header}
           stepBar={
-            grid || !hasStepBar(stage) || !processed ? null : workspace.steps.length === 0 ? (
-              // The row keeps its height while the recipe is read, so the canvas is not resized, and the page not
-              // moved out of its fit, when the steps arrive
-              <div className="h-10 shrink-0 border-b" aria-hidden="true" />
-            ) : (
+            grid || !hasStepBar(stage) || workspace.steps.length === 0 ? null : (
               <StepBar
                 steps={workspace.steps}
                 openId={openStep?.stepId}

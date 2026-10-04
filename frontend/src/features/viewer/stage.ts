@@ -5,9 +5,11 @@ import {
   layoutView,
   PAGE_HEIGHT,
   pageRect,
+  TOOLBAR_INSET_PX,
   type ViewLayout,
   type WorldRect,
   widthRect,
+  withBottomInset,
 } from '@/features/viewer/layout';
 
 /**
@@ -215,9 +217,14 @@ export class ViewerStage {
       return;
     }
     const { viewport } = this.viewer;
+    const container = viewport.getContainerSize();
     const rect =
       mode === FitMode.Page
-        ? pageRect(this.layout)
+        ? withBottomInset(
+            pageRect(this.layout),
+            { width: container.x, height: container.y },
+            TOOLBAR_INSET_PX,
+          )
         : widthRect(this.layout, viewport.getAspectRatio());
     viewport.fitBounds(toRect(rect), immediately);
   }

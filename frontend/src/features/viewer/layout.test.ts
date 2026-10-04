@@ -5,6 +5,7 @@ import {
   pageRect,
   SPREAD_GUTTER,
   widthRect,
+  withBottomInset,
 } from '@/features/viewer/layout';
 
 describe('layoutView', () => {
@@ -49,5 +50,40 @@ describe('pageRect and widthRect', () => {
 
   it('treats a viewport of no size as square', () => {
     expect(widthRect(layout, 0).height).toBe(layout.width);
+  });
+});
+
+describe('withBottomInset', () => {
+  const rect = { x: 0, y: 0, width: 0.7, height: 1 };
+
+  it('leaves room below a page that is fitted by its height, so it ends the inset above the viewport bottom', () => {
+    const viewport = { width: 1000, height: 800 };
+    const grown = withBottomInset(rect, viewport, 64);
+    // The page spans 736 px at the zoom of the fit, so the whole rectangle spans the 800 px of the viewport
+    const scale = viewport.height / grown.height;
+
+    expect(rect.height * scale).toBeCloseTo(viewport.height - 64);
+  });
+
+  it('leaves room below a page that is fitted by its width, as far as the width allows', () => {
+    const viewport = { width: 350, height: 1200 };
+    const grown = withBottomInset(rect, viewport, 64);
+    const scale = viewport.width / rect.width;
+
+    expect(grown.height).toBeCloseTo(rect.height + 64 / scale);
+    expect(grown.height * scale).toBeLessThanOrEqual(viewport.height);
+  });
+
+  it('keeps the top and the sides of the rectangle where they were', () => {
+    expect(withBottomInset(rect, { width: 1000, height: 800 }, 64)).toMatchObject({
+      x: 0,
+      y: 0,
+      width: 0.7,
+    });
+  });
+
+  it('gives the rectangle back when the viewport is no taller than the inset', () => {
+    expect(withBottomInset(rect, { width: 1000, height: 64 }, 64)).toEqual(rect);
+    expect(withBottomInset(rect, { width: 0, height: 800 }, 64)).toEqual(rect);
   });
 });

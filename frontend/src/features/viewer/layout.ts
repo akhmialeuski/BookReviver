@@ -53,6 +53,38 @@ export function layoutView(aspects: readonly number[]): ViewLayout {
   return { pages, width: x, height: PAGE_HEIGHT };
 }
 
+/**
+ * The height in pixels the floating toolbar at the bottom of the canvas covers, counted from the bottom edge of the
+ * canvas: its own height and the gap under it. A page fitted whole ends above it, so nothing at the bottom edge of the
+ * page, such as a handle of an editor, lies under the toolbar.
+ */
+export const TOOLBAR_INSET_PX = 64;
+
+/**
+ * Grow a rectangle downward so that, when it is fitted to a viewport, what it holds ends a number of pixels above the
+ * bottom of the viewport.
+ *
+ * The zoom of the fit is the smaller of the zoom that fills the width and the one that fills the height left over, and
+ * the rectangle gets the world distance that many pixels span at that zoom, below its own bottom edge.
+ *
+ * @param rect The rectangle that is to be fully shown.
+ * @param viewport The size of the viewport in pixels.
+ * @param bottomPx The pixels to keep free at the bottom of the viewport.
+ * @returns The rectangle with the room below it, or the rectangle itself while the viewport has no room to spare.
+ */
+export function withBottomInset(
+  rect: WorldRect,
+  viewport: { width: number; height: number },
+  bottomPx: number,
+): WorldRect {
+  const room = viewport.height - bottomPx;
+  if (rect.width <= 0 || rect.height <= 0 || viewport.width <= 0 || room <= 0) {
+    return rect;
+  }
+  const scale = Math.min(viewport.width / rect.width, room / rect.height);
+  return { ...rect, height: rect.height + bottomPx / scale };
+}
+
 /** The rectangle that shows the whole view, which `fit to page` zooms to. */
 export function pageRect(layout: ViewLayout): WorldRect {
   return { x: 0, y: 0, width: layout.width, height: layout.height };
