@@ -250,7 +250,9 @@ class TestProfiles:
         recipe = RecipeSchema.model_validate_json((await fx_client.get(_recipe_path(fx_project))).content)
         responses = [
             await fx_client.patch(path, json={NAME_FIELD: OTHER_NAME}),
-            await fx_client.put(path, json=_body(OTHER_NAME)),
+            await fx_client.put(
+                path, json={key: value for key, value in _body(OTHER_NAME).items() if key != STAGE_FIELD}
+            ),
             await fx_client.put(_link_path(fx_project, recipe.id), json={PROFILE_ID_FIELD: str(foreign.id)}),
             await fx_client.put(_default_path(foreign.id)),
             await fx_client.delete(_default_path(foreign.id)),
