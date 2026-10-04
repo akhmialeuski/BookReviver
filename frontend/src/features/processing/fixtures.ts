@@ -265,6 +265,7 @@ export function processor(key: string, overrides: Partial<ProcessorSchema> = {})
     key,
     version: '1',
     title: key,
+    summary: '',
     stage: 'geometry',
     scope: 'page',
     outputs: ['image'],
