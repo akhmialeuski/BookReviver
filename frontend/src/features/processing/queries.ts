@@ -11,6 +11,7 @@ import {
   listScansApiV1ProjectsProjectIdScansGet,
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet,
   type PageVersionSchema,
+  type ResultMark,
   type ScanSchema,
   type Stage,
 } from '@/api';
@@ -54,6 +55,7 @@ import {
 } from '@/api/@tanstack/react-query.gen';
 import { invalidateHistory, invalidatePageLayers } from '@/features/processing/historyQueries';
 import {
+  invalidateAllStageRows,
   invalidateJobs,
   invalidateProject,
   invalidateStageRows,
@@ -95,9 +97,35 @@ export function useRecipes(projectId: string, stage: Stage, enabled: boolean) {
   });
 }
 
-/** Query options of the full results a stage made on one page, earliest first. */
-export function versionsOptions(projectId: string, pageId: string, stage: Stage) {
-  const query = { stage, scale: 'full', size: LIST_SIZE } as const;
+/** What narrows the results a stage made on a page: one step of the stage, and one mark. */
+export interface VersionsFilter {
+  /** The step whose results are read, or undefined for the results of every step. */
+  step?: string;
+  /** The mark the results carry, or undefined for every result. */
+  mark?: ResultMark;
+}
+
+/**
+ * Query options of the full results a stage made on one page, earliest first.
+ *
+ * @param projectId The book.
+ * @param pageId The page.
+ * @param stage The stage.
+ * @param filter The step and the mark to read, or nothing for the results of every step.
+ */
+export function versionsOptions(
+  projectId: string,
+  pageId: string,
+  stage: Stage,
+  filter: VersionsFilter = {},
+) {
+  const query = {
+    stage,
+    scale: 'full',
+    size: LIST_SIZE,
+    ...(filter.step === undefined ? {} : { step: filter.step }),
+    ...(filter.mark === undefined ? {} : { mark: filter.mark }),
+  } as const;
   return queryOptions({
     queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
       path: { project_id: projectId, page_id: pageId },
@@ -123,14 +151,15 @@ export function versionsOptions(projectId: string, pageId: string, stage: Stage)
   });
 }
 
-/** Read the results a stage made on a page, for the history of the page. */
+/** Read the results a stage made on a page, for the history of the page and the chain of its steps. */
 export function useVersions(
   projectId: string,
   pageId: string | undefined,
   stage: Stage,
+  filter: VersionsFilter = {},
 ): UseQueryResult<PageVersionSchema[]> {
   return useQuery({
-    ...versionsOptions(projectId, pageId ?? '', stage),
+    ...versionsOptions(projectId, pageId ?? '', stage, filter),
     enabled: pageId !== undefined,
   });
 }
@@ -527,18 +556,22 @@ export function useChooseVersion(projectId: string, stage: Stage) {
  * Set the mark and the comment of a result, which are the user's notes and change nothing the step reads.
  *
  * Both are replaced together, so a caller that changes one sends the other as it is. The versions of the page are read
- * again, since every list of results shows the notes.
+ * again, since every list of results shows the notes, and so are the rows of the stages, since the strip marks the pages
+ * whose result is marked bad.
  */
 export function useMarkResult(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutMutation(),
     onSettled: (_data, _error, variables) =>
-      queryClient.invalidateQueries({
-        queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
-          path: { project_id: projectId, page_id: variables.path.page_id },
+      Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
+            path: { project_id: projectId, page_id: variables.path.page_id },
+          }),
         }),
-      }),
+        invalidateAllStageRows(queryClient, projectId),
+      ]),
   });
 }
 

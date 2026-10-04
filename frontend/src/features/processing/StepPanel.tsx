@@ -5,6 +5,7 @@ import { EditorControls } from '@/features/editors/EditorControls';
 import type { EditorSession } from '@/features/editors/session';
 import { CarryOver } from '@/features/processing/CarryOver';
 import { ParamsForm } from '@/features/processing/ParamsForm';
+import { ResultsSection } from '@/features/processing/ResultsSection';
 import { CONDITIONS } from '@/features/processing/recipe';
 import { readResult } from '@/features/processing/results';
 import { StepReset } from '@/features/processing/StepReset';
@@ -26,7 +27,8 @@ import { CheckboxField } from '@/shared/ui/checkbox-field';
  *
  * It stands above the sections of the recipe and of the open page and takes none of them away. The settings are the
  * draft of the step the recipe section edits, so a change made here is the change made there. Under the buttons of
- * "Auto" is the menu that resets the step to its defaults.
+ * "Auto" is the menu that resets the step to its defaults. The results of the step on the open page are listed here, and
+ * the section of the open page leaves the results of the stage to them.
  */
 
 const labels = MESSAGES.workspace.stepPanel;
@@ -116,6 +118,8 @@ export function StepPanel({
   const found =
     page?.version === null || page?.version === undefined ? null : readResult(page.version);
   const runnable = recipe !== undefined && canRunThrough(recipe.steps, step.index);
+  // Only a result of the last step is a result of the stage, which is all that can be made the current one
+  const isLast = recipe?.steps.findLastIndex((entry) => entry.enabled) === step.index;
   const ofCondition = pagesOfCondition(items, draft?.appliesTo ?? step.appliesTo);
   const hasCondition = (draft?.appliesTo ?? step.appliesTo) !== 'all';
 
@@ -232,6 +236,16 @@ export function StepPanel({
           </div>
         ) : null}
       </div>
+
+      {pageId === undefined ? null : (
+        <ResultsSection
+          processing={processing}
+          pageId={pageId}
+          stepId={step.stepId}
+          currentId={page?.version?.id}
+          canUse={isLast}
+        />
+      )}
 
       <div className="grid gap-2" data-testid="step-panel-book">
         <Heading>{labels.book}</Heading>

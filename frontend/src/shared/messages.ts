@@ -18,6 +18,7 @@ import type {
   PageStageStatus,
   RejectionReason,
   ResetScope,
+  ResultMark,
   ReviewReason,
   RightsStatus,
   RuleCondition,
@@ -25,6 +26,7 @@ import type {
   Script,
   Stage,
   StageStatus,
+  VersionOrigin,
 } from '@/api';
 import type { Problem } from '@/features/about/fields';
 import type { Section } from '@/features/about/sections';
@@ -1699,6 +1701,18 @@ export const MESSAGES = {
         cancel: 'Cancel',
       },
       made: (time: string) => `Made ${time}`,
+      origin: {
+        auto: 'Made by the step',
+        hand: 'Set by hand',
+      } satisfies Record<VersionOrigin, string>,
+      filter: {
+        group: 'Show the results marked',
+        all: 'All',
+      },
+      emptyMarked: {
+        good: 'No result of this page is marked good.',
+        bad: 'No result of this page is marked bad.',
+      } satisfies Record<ResultMark, string>,
     },
     stale: {
       title: (before: string, verb: string) => `${before} changed after these pages were ${verb}`,

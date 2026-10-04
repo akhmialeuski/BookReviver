@@ -112,6 +112,7 @@ export function ProcessingPanel({
             selected={selected}
             editor={editor}
             controls={step === undefined}
+            results={step === undefined}
           />
         )}
       </div>
