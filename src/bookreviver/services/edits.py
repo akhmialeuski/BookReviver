@@ -10,6 +10,8 @@ cache. A mask is stored under the key of its edit, in a directory of the hash, s
 earlier one.
 
 An edit computes nothing. It marks the stage of its page stale, and a run of the stage picks it up like any other.
+Saving and deleting an edit write the manual layer of the step to the history of the page, with the edit before and
+after as snapshots, so an undo can put either back.
 
 A mask arrives as an upload. It is written to a scratch key while its digest is worked out, since its final key holds
 the hash of the whole edit, and then copied to that key and the scratch removed.
@@ -23,8 +25,8 @@ from uuid import uuid4
 import anyio
 from attrs import evolve
 
-from bookreviver.domain.entities import PageEdit, PageStepState
-from bookreviver.domain.enums import EditorKind, Rendition
+from bookreviver.domain.entities import PageEdit, PageStepChange, PageStepState
+from bookreviver.domain.enums import ChangeSource, EditorKind, Rendition, StepLayer
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import StorageKey
 from bookreviver.domain.keys import ProjectKeys
@@ -133,7 +135,7 @@ class EditService:
         state = await self._uow.page_step_states.find(key) or PageStepState(
             page_id=key.page_id, stage=key.stage, step_id=key.step_id, updated_at=stored.updated_at
         )
-        await self._uow.page_step_states.save(evolve(state, edit=stored, updated_at=stored.updated_at))
+        await self._store(state, evolve(state, edit=stored, updated_at=stored.updated_at))
         stale = await self._records.mark_stale(key.page_id, key.stage)
         await self._uow.commit()
         await self._records.announce(project_id, stale)
@@ -178,13 +180,28 @@ class EditService:
         state = await self._uow.page_step_states.find(key)
         if state is None or state.edit is None:
             raise NotFoundError(key)
-        if state.params:
-            await self._uow.page_step_states.save(evolve(state, edit=None, updated_at=self._clock.now()))
-        else:
-            await self._uow.page_step_states.delete(key)
+        await self._store(state, evolve(state, edit=None, updated_at=self._clock.now()))
         stale = await self._records.mark_stale(key.page_id, key.stage)
         await self._uow.commit()
         await self._records.announce(project_id, stale)
+
+    async def _store(self, state: PageStepState, changed: PageStepState) -> None:
+        """Write the state with the edit saved or deleted, and the change of the manual layer to the history.
+
+        A state with neither a setting nor an edit left is deleted. An edit equal to the stored one writes no change.
+
+        :param state: The state as it is stored, or an empty one.
+        :type state: PageStepState
+        :param changed: The state after the edit was saved or deleted.
+        :type changed: PageStepState
+        """
+        if changed.is_empty:
+            await self._uow.page_step_states.delete(state.key)
+        else:
+            await self._uow.page_step_states.save(changed)
+        change = PageStepChange.between(state, changed, StepLayer.HAND, ChangeSource.USER)
+        if change.before != change.after:
+            await self._uow.page_step_changes.add(change)
 
     async def _spec(self, project_id: ProjectId, key: PageStepKey) -> ProcessorSpec:
         """Find the spec of the processor of a step, by the step in the recipes of the stage.

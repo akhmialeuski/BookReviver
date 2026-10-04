@@ -711,6 +711,7 @@ class PageStepChangeRow(DefaultBase):
     :ivar after: Content of the layer after the change, or null when it is emptied.
     :ivar source: What made the change, stored by value.
     :ivar batch_id: Identifier shared by the changes of one batch, or null.
+    :ivar undoes_id: The change this one takes back, with no foreign key like the step, or null.
     :ivar created_at: Time the change was made.
     :ivar sequence: Place of the change in the history of its page, from one, unique within the page.
     :ivar page: Page owning the change, never loaded implicitly.
@@ -720,6 +721,7 @@ class PageStepChangeRow(DefaultBase):
     __table_args__ = (
         Index(None, 'page_id', 'stage'),
         Index(None, 'batch_id'),
+        Index(None, 'undoes_id'),
         UniqueConstraint('page_id', 'sequence'),
     )
 
@@ -732,6 +734,7 @@ class PageStepChangeRow(DefaultBase):
     after: Mapped[dict[str, Any] | None] = mapped_column(JsonB)
     source: Mapped[ChangeSource] = mapped_column(enum_by_value(ChangeSource))
     batch_id: Mapped[UUID | None]
+    undoes_id: Mapped[UUID | None]
     created_at: Mapped[datetime]
     sequence: Mapped[int]
 

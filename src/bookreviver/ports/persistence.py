@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import ProjectOverview
     from bookreviver.domain.enums import JobState, Side, Stage, VersionScale
-    from bookreviver.domain.ids import AccountId, StepId
+    from bookreviver.domain.ids import AccountId, ChangeBatchId, StepId
     from bookreviver.domain.stage_summaries import StageTally, StepTally, VariantTally
     from bookreviver.domain.values import PageSize, Slice, SliceRequest
 
@@ -697,6 +697,26 @@ class PageStepChangeRepository(Repository[PageStepChange, PageStepChangeId]):
         :param stage: Stage whose changes are listed, or None for every stage.
         :type stage: Stage | None
         :returns: The changes of the page.
+        :rtype: Sequence[PageStepChange]
+        """
+
+    @abstractmethod
+    async def list_for_batch(self, batch_id: ChangeBatchId) -> Sequence[PageStepChange]:
+        """Return the changes of one batch, which may span several pages, by page and then by sequence.
+
+        :param batch_id: Identifier the changes of the batch share.
+        :type batch_id: ChangeBatchId
+        :returns: The changes of the batch.
+        :rtype: Sequence[PageStepChange]
+        """
+
+    @abstractmethod
+    async def list_undoing(self, change_ids: Collection[PageStepChangeId]) -> Sequence[PageStepChange]:
+        """Return the changes that take back any of the given changes.
+
+        :param change_ids: Identifiers of the changes that may have been undone.
+        :type change_ids: Collection[PageStepChangeId]
+        :returns: The undos, by page and then by sequence; none for changes that stand.
         :rtype: Sequence[PageStepChange]
         """
 

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -10,10 +11,11 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.entities import VERSION_ID_PATTERN, PageEdit, VersionInputs
+from bookreviver.domain.entities import VERSION_ID_PATTERN, PageEdit, PageStepChange, VersionInputs
 from bookreviver.domain.enums import (
     AppliesTo,
     BlankFill,
+    ChangeSource,
     ColorMode,
     JobKind,
     PageKind,
@@ -22,16 +24,21 @@ from bookreviver.domain.enums import (
     Rendition,
     Stage,
     StepField,
+    StepLayer,
     VersionScale,
 )
+from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.geometry import Line, Point, Rotation
-from bookreviver.domain.ids import PageId, PageVersionId, ScanId
+from bookreviver.domain.history import StepHistory
+from bookreviver.domain.ids import PageId, PageStepChangeId, PageVersionId, ScanId, StorageKey
 from bookreviver.domain.values import BookDetails, ProcessorRef, Progress, Renditions, StageRun, Step
 from tests.helpers.builders import (
+    EPOCH,
     SPLIT_NONE,
     make_job,
     make_page,
     make_page_edit,
+    make_page_step_change,
     make_page_step_state,
     make_page_version,
     make_project,
@@ -379,6 +386,102 @@ class TestPageStepState:
         """Verify the key a repository stores the state under is the one of its page, stage and step."""
         state = make_page_step_state(page_id=PAGE_ID)
         assert (state.key.page_id, state.key.stage, state.key.step_id) == (PAGE_ID, state.stage, state.step_id)
+
+    def test_a_layer_reads_back_what_it_was_written_from(self) -> None:
+        """Verify the settings and the edit survive ``layer`` and ``with_layer``, and an empty layer is None."""
+        edit = make_page_edit(page_id=PAGE_ID)
+        state = make_page_step_state(page_id=PAGE_ID, params={'max_angle': 3}, edit=edit)
+        empty = make_page_step_state(page_id=PAGE_ID)
+        rebuilt = empty.with_layer(StepLayer.SETTINGS, state.layer(StepLayer.SETTINGS), EPOCH)
+        rebuilt = rebuilt.with_layer(StepLayer.HAND, state.layer(StepLayer.HAND), EPOCH)
+        expect(rebuilt == state)
+        expect((empty.layer(StepLayer.SETTINGS), empty.layer(StepLayer.HAND)) == (None, None))
+        expect(state.with_layer(StepLayer.SETTINGS, None, EPOCH).params == {})
+        expect(state.with_layer(StepLayer.HAND, None, EPOCH).edit is None)
+        assert_expectations()
+
+    def test_the_layer_of_what_the_run_found_is_not_kept(self) -> None:
+        """Verify reading or writing the found layer is a conflict, since no state keeps it yet."""
+        state = make_page_step_state(page_id=PAGE_ID)
+        with pytest.raises(ConflictError):
+            state.layer(StepLayer.FOUND)
+        with pytest.raises(ConflictError):
+            state.with_layer(StepLayer.FOUND, None, EPOCH)
+
+
+class TestPageEditSnapshot:
+    """Tests for the snapshot of an edit that the history keeps."""
+
+    def test_snapshot_is_json_and_rebuilds_the_edit(self) -> None:
+        """Verify the snapshot holds JSON types only, and the edit it rebuilds has the shape, the hash and the mask."""
+        edit = evolve(make_page_edit(page_id=PAGE_ID), mask_key=StorageKey('edits/mask.png'))
+        snapshot = edit.to_snapshot()
+        rebuilt = PageEdit.from_snapshot(edit.key, snapshot, edit.updated_at)
+        expect(snapshot == json.loads(json.dumps(snapshot)))
+        expect(rebuilt == edit)
+        assert_expectations()
+
+    def test_the_time_of_the_save_is_not_part_of_the_snapshot(self) -> None:
+        """Verify two saves of one shape at different times give the same snapshot."""
+        edit = make_page_edit(page_id=PAGE_ID)
+        assert edit.to_snapshot() == evolve(edit, updated_at=EPOCH + timedelta(days=1)).to_snapshot()
+
+
+class TestPageStepChangeBetween:
+    """Tests for PageStepChange.between."""
+
+    def test_the_change_holds_the_layer_before_and_after_and_the_time_of_the_new_state(self) -> None:
+        """Verify the change names the page, the step and the layer, and carries the content on both sides."""
+        before = make_page_step_state(page_id=PAGE_ID, params={'max_angle': 3})
+        after = evolve(make_page_step_state(page_id=PAGE_ID), updated_at=EPOCH + timedelta(days=1))
+        change = PageStepChange.between(before, after, StepLayer.SETTINGS, ChangeSource.USER)
+        expect((change.page_id, change.step_id, change.key) == (PAGE_ID, after.step_id, after.key))
+        expect((change.before, change.after) == ({'max_angle': 3}, None))
+        expect((change.source, change.batch_id, change.undoes) == (ChangeSource.USER, None, None))
+        expect(change.created_at == after.updated_at)
+        assert_expectations()
+
+
+class TestStepHistory:
+    """Tests for the stack of changes that can be taken back."""
+
+    @staticmethod
+    def _change(source: ChangeSource = ChangeSource.USER, undoes: PageStepChange | None = None) -> PageStepChange:
+        """Build a change of the settings of the deskew step.
+
+        :param source: What made the change.
+        :type source: ChangeSource
+        :param undoes: The change it takes back, or None.
+        :type undoes: PageStepChange | None
+        :returns: The change.
+        :rtype: PageStepChange
+        """
+        return evolve(
+            make_page_step_change(page_id=PAGE_ID), source=source, undoes=None if undoes is None else undoes.id
+        )
+
+    def test_the_changes_an_undo_names_and_the_undos_do_not_stand(self) -> None:
+        """Verify only a change that is no undo and that no undo names stands, oldest first."""
+        first, second, third = (self._change() for _ in range(3))
+        undo = self._change(ChangeSource.UNDO, second)
+        history = StepHistory((first, second, undo, third))
+        expect(history.standing == (first, third))
+        expect(history.undone == {second.id})
+        assert_expectations()
+
+    def test_back_to_lists_the_change_and_the_later_ones_newest_first(self) -> None:
+        """Verify an undo back to a change takes it and every standing change after it."""
+        first, second, third = (self._change() for _ in range(3))
+        assert StepHistory((first, second, third)).back_to(second.id) == (third, second)
+
+    def test_back_to_a_change_that_does_not_stand_is_not_found(self) -> None:
+        """Verify a change that was taken back, an undo and an unknown change cannot be taken back."""
+        taken = self._change()
+        undo = self._change(ChangeSource.UNDO, taken)
+        history = StepHistory((taken, undo))
+        for gone in (taken.id, undo.id, PageStepChangeId(uuid4())):
+            with pytest.raises(NotFoundError):
+                history.back_to(gone)
 
 
 class TestBookDetails:

@@ -801,6 +801,7 @@ class PageStepChangeMapper(RowMapper[PageStepChange, PageStepChangeRow]):
             after=row.after,
             source=row.source,
             batch_id=None if row.batch_id is None else ChangeBatchId(row.batch_id),
+            undoes=None if row.undoes_id is None else PageStepChangeId(row.undoes_id),
             created_at=row.created_at,
             sequence=row.sequence,
         )
@@ -824,6 +825,7 @@ class PageStepChangeMapper(RowMapper[PageStepChange, PageStepChangeRow]):
             after=None if entity.after is None else dict(entity.after),
             source=entity.source,
             batch_id=entity.batch_id,
+            undoes_id=entity.undoes,
             created_at=entity.created_at,
             sequence=entity.sequence,
         )

@@ -6,6 +6,7 @@ make.
 """
 
 from datetime import timedelta
+from operator import attrgetter
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -25,7 +26,7 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.geometry import Line, Point
-from bookreviver.domain.ids import ChangeBatchId, PageId, PageVersionId, ProjectId, StepId
+from bookreviver.domain.ids import ChangeBatchId, PageId, PageStepChangeId, PageVersionId, ProjectId, StepId
 from bookreviver.domain.stage_summaries import StepTally
 from bookreviver.domain.values import PageStageKey, PageStepKey, SliceRequest, Step
 from tests.helpers.builders import (
@@ -802,6 +803,7 @@ class TestPageStepChangeRepository:
             make_page_step_change(page_id=page_id, before=None, after={'method': 'otsu'}),
             source=ChangeSource.CARRY_OVER,
             batch_id=ChangeBatchId(uuid4()),
+            undoes=PageStepChangeId(uuid4()),
         )
         uow = await fx_uow_factory()
         stored = await uow.page_step_changes.add(change)
@@ -859,6 +861,56 @@ class TestPageStepChangeRepository:
             [earlier.id, later.id, cleanup.id],
             [earlier.id, later.id],
         )
+
+    async def test_list_for_batch_lists_the_changes_of_the_batch_of_every_page(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a batch lists its changes across pages, by page and sequence, and leaves out the other changes.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project_id, first_page = await _store_page(fx_uow_factory, fx_new_owner)
+        uow = await fx_uow_factory()
+        second_page = make_page(project_id=project_id)
+        await uow.pages.add(second_page)
+        batch = ChangeBatchId(uuid4())
+        members = [
+            evolve(make_page_step_change(page_id=page_id), batch_id=batch)
+            for page_id in (first_page, second_page.id, first_page)
+        ]
+        outside = [
+            make_page_step_change(page_id=first_page),
+            evolve(make_page_step_change(page_id=first_page), batch_id=ChangeBatchId(uuid4())),
+        ]
+        stored = await uow.page_step_changes.add_many([*members, *outside])
+        await uow.commit()
+        listed = await (await fx_uow_factory()).page_step_changes.list_for_batch(batch)
+        expected = sorted(stored[: len(members)], key=attrgetter('page_id', 'sequence'))
+        assert listed == expected
+
+    async def test_list_undoing_finds_the_undos_of_the_given_changes_only(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the changes that take back the given changes are listed, and a change that stands has none.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        taken, standing, other = (make_page_step_change(page_id=page_id) for _ in range(3))
+        undo = evolve(make_page_step_change(page_id=page_id), source=ChangeSource.UNDO, undoes=taken.id)
+        unrelated = evolve(make_page_step_change(page_id=page_id), source=ChangeSource.UNDO, undoes=other.id)
+        uow = await fx_uow_factory()
+        await uow.page_step_changes.add_many([taken, standing, other, undo, unrelated])
+        await uow.commit()
+        found = await (await fx_uow_factory()).page_step_changes.list_undoing([taken.id, standing.id])
+        nothing = await (await fx_uow_factory()).page_step_changes.list_undoing([])
+        assert ([change.id for change in found], nothing) == ([undo.id], [])
 
     async def test_change_of_a_missing_page_is_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
         """Reject a change whose page is not stored.

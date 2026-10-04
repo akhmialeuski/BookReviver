@@ -15,15 +15,13 @@ of the stage picks the settings up like the parameters of the recipe.
 """
 
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 from attrs import evolve
 
 from bookreviver.domain.entities import PageStepChange, PageStepState
 from bookreviver.domain.enums import ChangeSource, StepLayer
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.ids import PageStepChangeId
-from bookreviver.services.projects import owned_project
+from bookreviver.services.projects import owned_page
 from bookreviver.services.recipes import find_step
 
 if TYPE_CHECKING:
@@ -74,7 +72,7 @@ class PageSettingsService:
         :rtype: Sequence[PageStepState]
         :raises NotFoundError: If the actor has no such project, or the project has no such page.
         """
-        await self._check_page(actor, project_id, page_id)
+        await owned_page(self._uow, actor, project_id, page_id)
         return [state for state in await self._uow.page_step_states.list_for_page(page_id, stage) if state.params]
 
     async def change(
@@ -98,7 +96,7 @@ class PageSettingsService:
                                has the step, or its processor is not installed.
         :raises InvalidParametersError: If the processor has no such field, or the value is out of its range.
         """
-        await self._check_page(actor, project_id, key.page_id)
+        await owned_page(self._uow, actor, project_id, key.page_id)
         step = await find_step(self._uow.recipes, project_id, key)
         state = await self._state(key)
         checked = self._catalogue.get(step.processor_key).validate_params({**state.apply_to(step.params), name: value})
@@ -121,27 +119,12 @@ class PageSettingsService:
         :raises NotFoundError: If the actor has no such project, the project has no such page, or the page does not
                                change the field.
         """
-        await self._check_page(actor, project_id, key.page_id)
+        await owned_page(self._uow, actor, project_id, key.page_id)
         state = await self._state(key)
         if name not in state.params:
             raise NotFoundError(name)
         remaining = {field: value for field, value in state.params.items() if field != name}
         return await self._store(project_id, state, remaining)
-
-    async def _check_page(self, actor: Actor, project_id: ProjectId, page_id: PageId) -> None:
-        """Check that the project is the actor's and the page is one of its book.
-
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :param page_id: Identifier of the page.
-        :type page_id: PageId
-        :raises NotFoundError: If the actor has no such project, or the project has no such page.
-        """
-        await owned_project(self._uow.projects, actor, project_id)
-        if (await self._uow.pages.get(page_id)).project_id != project_id:
-            raise NotFoundError(page_id)
 
     async def _state(self, key: PageStepKey) -> PageStepState:
         """Return the state of a step on a page, or an empty one for a page that changes nothing of it yet.
@@ -180,17 +163,7 @@ class PageSettingsService:
         else:
             await self._uow.page_step_states.save(changed)
         await self._uow.page_step_changes.add(
-            PageStepChange(
-                id=PageStepChangeId(uuid4()),
-                page_id=state.page_id,
-                stage=state.stage,
-                step_id=state.step_id,
-                layer=StepLayer.SETTINGS,
-                before=dict(state.params) or None,
-                after=dict(params) or None,
-                source=ChangeSource.USER,
-                created_at=moment,
-            )
+            PageStepChange.between(state, changed, StepLayer.SETTINGS, ChangeSource.USER)
         )
         stale = await self._records.mark_stale(state.page_id, state.stage)
         await self._uow.commit()
