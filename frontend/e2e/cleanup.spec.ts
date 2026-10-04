@@ -3,6 +3,7 @@ import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 import {
   createBook,
+  markPagesAsText,
   openProjectId,
   registerAndSignIn,
   setKind,
@@ -15,7 +16,7 @@ import {
 import { dragFrom } from './support/layer';
 
 /**
- * The Cleanup stage on scans of a sheet of paper: the default recipe of a new book has three variants and four steps,
+ * The Cleanup stage on scans of a sheet of paper: the default recipe of a new book has three variants and four steps in the bar,
  * the form of the binarization shows the fields of the method that is chosen, a run on all pages sends the plate to its
  * own variant by the rule of the book, the picture zones and the brush of the eraser are set by hand on one page, and the
  * erased page is what the stage stands on.
@@ -25,6 +26,9 @@ const PAGES = 3;
 const SCAN_SCALE = 2;
 const DUST_SPECKS = 6;
 const PLATE_POSITION = 2;
+const STEP_TITLES = ['Binarization', 'Despeckle', 'Thickness', 'Fill zones'];
+const BINARIZE_INDEX = 0;
+const DESPECKLE_INDEX = 1;
 const SCENARIO_TIMEOUT_MS = 300_000;
 const RUN_TIMEOUT_MS = 120_000;
 const BRUSH_FROM = { x: 120, y: 150 };
@@ -94,6 +98,7 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
   const layer = page.getByTestId('editor-layer');
   const strip = page.getByTestId('strip-page');
   const marks = page.getByTestId('strip-variant');
+  const barSteps = page.getByTestId('bar-step');
   const steps = page.getByTestId('editor-step');
   const stepOf = (title: string) => steps.filter({ hasText: title });
   const settled = async (): Promise<void> => {
@@ -123,6 +128,8 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
     await uploadFolder(page, folder, PAGES);
     await waitForIdleJobs(page, openProjectId(page));
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
+    // The sheets are pages of text but the plate, which the reader says is one
+    await markPagesAsText(page, [PLATE_POSITION]);
     await setKind(page, PLATE_POSITION, 'plate');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(strip).toHaveCount(PAGES);
@@ -135,12 +142,12 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
     await expect(strip).toHaveCount(PAGES);
     await expect(page.getByTestId('recipe-select')).toContainText('Text');
     await expect(page.getByTestId('recipe-active')).toBeVisible();
-    const recipeSteps = page.getByTestId('recipe-step');
-    await expect(recipeSteps).toHaveCount(4);
-    await expect(recipeSteps.nth(0)).toContainText('1 · Binarization');
-    await expect(recipeSteps.nth(1)).toContainText('2 · Despeckle');
-    await expect(recipeSteps.nth(2)).toContainText('3 · Thickness');
-    await expect(recipeSteps.nth(3)).toContainText('4 · Fill zones');
+    // The steps are in the bar only, and the panel of the recipe lists none
+    await expect(page.getByTestId('recipe-steps')).toHaveCount(0);
+    await expect(barSteps).toHaveCount(STEP_TITLES.length);
+    for (const [index, title] of STEP_TITLES.entries()) {
+      await expect(barSteps.nth(index)).toContainText(title);
+    }
     const variants = await page.getByTestId('recipe-select').locator('option').allTextContents();
     // The options say how many pages each variant has processed, and the active one is named
     expect(variants.map((name) => name.split(' · ')[0]?.trim()).sort()).toEqual([
@@ -151,11 +158,13 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
   });
 
   await test.step('the form of the binarization offers the methods and shows only the fields of the one that is chosen', async () => {
+    await barSteps.nth(BINARIZE_INDEX).click();
+    await expect(page.getByTestId('step-panel-title')).toHaveText('1 · Binarization');
     await expect(page.getByRole('slider', { name: 'Window, px' })).toBeVisible();
     await expect(page.getByRole('slider', { name: 'Coefficient k' })).toBeVisible();
     await expect(page.getByTestId('stage-panel')).not.toContainText('output_dpi');
     const method = page
-      .getByTestId('stage-panel')
+      .getByTestId('step-panel-settings')
       .locator('button[aria-haspopup="listbox"]')
       .first();
     await expect(method).toHaveText('Sauvola');
@@ -178,12 +187,17 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
   });
 
   await test.step('the despeckling is made stronger in the recipe, which the dust on the scans needs', async () => {
-    const despeckle = page.getByTestId('recipe-step').nth(1);
-    await despeckle.getByTestId('step-toggle').click();
-    await expect(despeckle.getByRole('spinbutton', { name: 'Strength' })).toHaveValue('2');
-    await despeckle.getByRole('spinbutton', { name: 'Strength' }).fill('3');
+    await barSteps.nth(DESPECKLE_INDEX).click();
+    const strength = page.getByTestId('step-panel-settings').getByRole('spinbutton', {
+      name: 'Strength',
+    });
+    await expect(strength).toHaveValue('2');
+    await strength.fill('3');
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
+    // The step is closed, so the controls of the page editor stand in the panel of the page again
+    await page.getByTestId('step-close').click();
+    await expect(page.getByTestId('step-panel')).toHaveCount(0);
   });
 
   await test.step('a run on all pages sends the plate to Plates by the rule of the book and keeps the text pages on Text', async () => {

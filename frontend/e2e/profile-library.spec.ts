@@ -39,7 +39,7 @@ async function openNewGeometry(page: Page, title: string, folder: string): Promi
   const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
   await page.goto(`${bookPath}/stages/geometry`);
   await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
-  await expect(page.getByTestId('recipe-step').first()).toBeVisible();
+  await expect(page.getByTestId('bar-step').first()).toBeVisible();
 }
 
 /** Open the library from the entry of the profile menu. */

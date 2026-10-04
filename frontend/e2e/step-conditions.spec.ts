@@ -27,8 +27,10 @@ const SCENARIO_TIMEOUT_MS = 240_000;
 const RUN_TIMEOUT_MS = 90_000;
 const DESKEW = 'geometry.deskew';
 const FIRST_DESKEW_INDEX = 1;
+// A step added from the catalogue stands where its processor usually does, which is right after the first one
+const SECOND_DESKEW_INDEX = 2;
 
-// Tall enough for the pictures of the key states to show the steps of the recipe with the open one
+// Tall enough for the pictures of the key states to show the bar with the panel of the open step
 test.use({ viewport: { width: 1280, height: 1000 } });
 
 interface ListedVersion {
@@ -81,7 +83,7 @@ test('a second Deskew for the pictures skips the text pages, and the first Deske
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
-  const steps = page.getByTestId('recipe-step');
+  const steps = page.getByTestId('bar-step');
   let stepCount = 0;
 
   await test.step('a book of three pages with a plate opens on the Geometry stage, and every page is made by the one recipe', async () => {
@@ -105,18 +107,20 @@ test('a second Deskew for the pictures skips the text pages, and the first Deske
   });
 
   await test.step('a second Deskew is added for the pictures, and the first is kept for the text pages', async () => {
-    await page.getByTestId('step-add').click();
-    await page.getByRole('menuitem', { name: 'Deskew', exact: true }).click();
+    await page.getByTestId('step-catalogue').click();
+    await page.getByTestId('step-catalogue-list').locator(`[data-processor="${DESKEW}"]`).click();
     await expect(steps).toHaveCount(stepCount + 1);
-    const added = steps.nth(stepCount);
-    await expect(added.getByTestId('step-condition')).toHaveValue('all');
-    await added.getByTestId('step-condition').selectOption('pictures');
+    await expect(steps.nth(SECOND_DESKEW_INDEX)).toContainText('Deskew');
+    // The added step is open, and its condition is set in its own panel
+    await expect(page.getByTestId('step-panel-condition')).toHaveValue('all');
+    await page.getByTestId('step-panel-condition').selectOption('pictures');
     await snap(page, 'second-deskew-for-pictures');
 
-    const first = steps.nth(FIRST_DESKEW_INDEX);
-    await expect(first).toHaveAttribute('data-processor', DESKEW);
-    await first.getByTestId('step-toggle').click();
-    await first.getByTestId('step-condition').selectOption('text');
+    await steps.nth(FIRST_DESKEW_INDEX).click();
+    await expect(page.getByTestId('step-panel-title')).toHaveText(
+      `${FIRST_DESKEW_INDEX + 1} · Deskew`,
+    );
+    await page.getByTestId('step-panel-condition').selectOption('text');
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
     // The server gave the added step an identifier of its own, which its edits are kept under
@@ -125,16 +129,16 @@ test('a second Deskew for the pictures skips the text pages, and the first Deske
     expect(new Set(ids).size).toBe(2);
   });
 
-  await test.step('the recipe is run through its last step on every page, which is the step with the second Deskew', async () => {
+  await test.step('the recipe is run through the step with the second Deskew on every page from the panel of that step', async () => {
     await waitForIdleJobs(page, openProjectId(page));
     const before = await finishedRuns(page);
-    await steps.nth(stepCount).getByTestId('step-run').click();
-    await page.getByTestId('step-run-all').click();
+    await steps.nth(SECOND_DESKEW_INDEX).click();
+    await expect(steps.nth(SECOND_DESKEW_INDEX)).toHaveAttribute('data-open', 'true');
+    await page.getByTestId('step-auto').click();
     await expect.poll(() => finishedRuns(page), { timeout: RUN_TIMEOUT_MS }).toBe(before + 1);
-    await expect(steps.nth(stepCount).getByTestId('step-passed')).toHaveText(
-      `${PAGES} of ${PAGES} pages passed`,
-      { timeout: RUN_TIMEOUT_MS },
-    );
+    await expect(page.getByTestId('step-passed')).toHaveText(`${PAGES} of ${PAGES} pages passed`, {
+      timeout: RUN_TIMEOUT_MS,
+    });
   });
 
   await test.step('the text page was skipped by the second Deskew and the plate by the first', async () => {

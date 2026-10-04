@@ -3,6 +3,7 @@ import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 import {
   createBook,
+  markPagesAsText,
   openProjectId,
   registerAndSignIn,
   snap,
@@ -57,7 +58,7 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
   const barSteps = page.getByTestId('bar-step');
   const strip = page.getByTestId('strip-page');
   const flagFilter = page.getByTestId('strip-step-filter');
-  const thickness = page.locator(`[data-testid="recipe-step"][data-processor="${THICKNESS}"]`);
+  const settings = page.getByTestId('step-panel').getByTestId('page-settings');
   let bookPath = '';
   let stepId = '';
 
@@ -66,6 +67,7 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
     await createBook(page, 'A book to clean in steps');
     await uploadFolder(page, folder, PAGES);
     await waitForIdleJobs(page, openProjectId(page));
+    await markPagesAsText(page);
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(strip).toHaveCount(PAGES);
@@ -147,10 +149,6 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
   });
 
   await test.step('a page that has an amount of its own for the step is set by hand, and the filter lists it alone', async () => {
-    const settings = thickness.getByTestId('page-settings');
-    if (!(await settings.isVisible())) {
-      await thickness.getByTestId('step-toggle').click();
-    }
     await settings.getByTestId('page-settings-edit').click();
     await settings.getByRole('spinbutton', { name: 'Amount' }).fill(PAGE_AMOUNT);
     await expect(settings.getByTestId('page-settings-list')).toBeVisible();

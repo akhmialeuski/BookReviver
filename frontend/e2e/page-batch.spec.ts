@@ -22,6 +22,7 @@ import {
 const PAGES = 3;
 const SCENARIO_TIMEOUT_MS = 240_000;
 const DESKEW = 'geometry.deskew';
+const DESKEW_TITLE = 'Deskew';
 const FIELD = 'max_angle';
 const SLANT_OF_THE_PAGE = 3;
 const SLANT_OF_THE_OTHER_PAGE = 4;
@@ -110,7 +111,8 @@ test('a reader carries a setting to the pages after it, and a run that replaces 
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
-  const step = page.locator(`[data-testid="recipe-step"][data-processor="${DESKEW}"]`);
+  // The settings of the page and its history are in the panel of the open step
+  const step = page.getByTestId('step-panel');
   const settings = step.getByTestId('page-settings');
   let ids: string[] = [];
   let stepId = '';
@@ -130,7 +132,8 @@ test('a reader carries a setting to the pages after it, and a run that replaces 
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
     await expect(page.getByTestId('page-strip').getByTestId('strip-page')).toHaveCount(PAGES);
-    await step.getByTestId('step-toggle').click();
+    await page.getByTestId('bar-step').filter({ hasText: DESKEW_TITLE }).click();
+    await expect(step).toBeVisible();
     await expect(settings.getByTestId('page-settings-list')).toContainText(
       `Largest slant: ${SLANT_OF_THE_PAGE}`,
     );

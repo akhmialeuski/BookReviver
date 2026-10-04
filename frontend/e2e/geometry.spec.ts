@@ -3,6 +3,7 @@ import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 import {
   createBook,
+  markPagesAsText,
   openProjectId,
   registerAndSignIn,
   snap,
@@ -74,10 +75,12 @@ test('a reader corrects the sheet, the angle and the frame of a page, and the co
     await registerAndSignIn(page);
     await createBook(page, 'A book of sheets');
     await uploadFolder(page, folder, PAGES);
+    await waitForIdleJobs(page, openProjectId(page));
+    await markPagesAsText(page);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
-    await expect(page.getByTestId('recipe-step')).toHaveCount(STEPS);
+    await expect(page.getByTestId('bar-step')).toHaveCount(STEPS);
     await runAll(page);
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
     await expect(facts).toContainText('Confidence', { timeout: RUN_TIMEOUT_MS });

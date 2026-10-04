@@ -22,6 +22,7 @@ import {
 const PAGES = 2;
 const SCENARIO_TIMEOUT_MS = 240_000;
 const DESKEW = 'geometry.deskew';
+const DESKEW_TITLE = 'Deskew';
 const FIRST_PAGE = 0;
 const ANGLE_OF_THE_EDIT = 1.5;
 const SLANT_OF_THE_PAGE = '3';
@@ -76,7 +77,8 @@ test('a reader sees what changed on a page, takes the last change back with the 
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
-  const step = page.locator(`[data-testid="recipe-step"][data-processor="${DESKEW}"]`);
+  // The settings of the page and its history are in the panel of the open step
+  const step = page.getByTestId('step-panel');
   const history = step.getByTestId('page-history');
   const rows = history.getByTestId('page-history-row');
   const settings = step.getByTestId('page-settings');
@@ -92,7 +94,7 @@ test('a reader sees what changed on a page, takes the last change back with the 
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
     await expect(page.getByTestId('page-strip').getByTestId('strip-page')).toHaveCount(PAGES);
-    await expect(step).toBeVisible();
+    await expect(page.getByTestId('bar-step').first()).toBeVisible();
     pageId = await firstPageId(page);
     [stepId = ''] = await stepIdsOf(page, 'geometry', DESKEW);
     expect(stepId).not.toBe('');
@@ -100,7 +102,8 @@ test('a reader sees what changed on a page, takes the last change back with the 
   });
 
   await test.step('the open step lists the edit, and a setting changed for this page joins it above', async () => {
-    await step.getByTestId('step-toggle').click();
+    await page.getByTestId('bar-step').filter({ hasText: DESKEW_TITLE }).click();
+    await expect(step).toBeVisible();
     await expect(history).toBeVisible();
     await expect(rows).toHaveCount(1);
     await expect(rows.first()).toContainText('Set by hand');

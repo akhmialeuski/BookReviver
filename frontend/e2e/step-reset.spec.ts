@@ -30,6 +30,7 @@ import {
 const PAGES = 3;
 const SCENARIO_TIMEOUT_MS = 240_000;
 const DESKEW = 'geometry.deskew';
+const DESKEW_TITLE = 'Deskew';
 const FIELD = 'max_angle';
 const SLANT_OF_THE_PAGE = 3;
 const SLANT_OF_THE_OTHER_PAGE = 4;
@@ -45,7 +46,8 @@ test('a reader resets a step on every page after a warning with the number of pa
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
-  const step = page.locator(`[data-testid="recipe-step"][data-processor="${DESKEW}"]`);
+  // The settings of the page and its history are in the panel of the open step
+  const step = page.getByTestId('step-panel');
   const settings = step.getByTestId('page-settings');
   let ids: string[] = [];
   let stepId = '';
@@ -65,14 +67,15 @@ test('a reader resets a step on every page after a warning with the number of pa
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
     await expect(page.getByTestId('page-strip').getByTestId('strip-page')).toHaveCount(PAGES);
-    await step.getByTestId('step-toggle').click();
+    await page.getByTestId('bar-step').filter({ hasText: DESKEW_TITLE }).click();
+    await expect(step).toBeVisible();
     await expect(settings.getByTestId('page-settings-list')).toContainText(
       `Largest slant: ${SLANT_OF_THE_PAGE}`,
     );
   });
 
   await test.step('the menu offers the four scopes', async () => {
-    await settings.getByTestId('reset-menu').click();
+    await step.getByTestId('reset-menu').click();
     await expect(page.getByTestId('reset-page-step')).toHaveText('This step on this page');
     await expect(page.getByTestId('reset-page')).toHaveText('Every step on this page');
     await expect(page.getByTestId('reset-step')).toHaveText('This step on every page');
@@ -103,10 +106,10 @@ test('a reader resets a step on every page after a warning with the number of pa
   });
 
   await test.step('the confirmed reset takes the settings and the edit of every page, and the history says a reset did it', async () => {
-    await settings.getByTestId('reset-menu').click();
+    await step.getByTestId('reset-menu').click();
     await page.getByTestId('reset-step').click();
     await page.getByTestId('reset-confirm').click();
-    await expect(settings.getByTestId('reset-result')).toContainText('Reset 3 layers on 2 pages.');
+    await expect(step.getByTestId('reset-result')).toContainText('Reset 3 layers on 2 pages.');
     expect(await readSettings(page, ids[FIRST] ?? '')).toEqual([]);
     expect(await readSettings(page, ids[SECOND] ?? '')).toEqual([]);
     expect(await countEdits(page, ids[SECOND] ?? '')).toBe(0);
@@ -119,8 +122,8 @@ test('a reader resets a step on every page after a warning with the number of pa
   });
 
   await test.step('one undo gives the settings and the edit back on every page', async () => {
-    await settings.getByTestId('reset-undo').click();
-    await expect(settings.getByTestId('reset-result')).toHaveCount(0);
+    await step.getByTestId('reset-undo').click();
+    await expect(step.getByTestId('reset-result')).toHaveCount(0);
     expect(await readSettings(page, ids[FIRST] ?? '')).toEqual([{ [FIELD]: SLANT_OF_THE_PAGE }]);
     expect(await readSettings(page, ids[SECOND] ?? '')).toEqual([
       { [FIELD]: SLANT_OF_THE_OTHER_PAGE },
@@ -129,9 +132,9 @@ test('a reader resets a step on every page after a warning with the number of pa
   });
 
   await test.step('a reset of the step on the open page asks nothing and leaves the other pages as they are', async () => {
-    await settings.getByTestId('reset-menu').click();
+    await step.getByTestId('reset-menu').click();
     await page.getByTestId('reset-page-step').click();
-    await expect(settings.getByTestId('reset-result')).toContainText('Reset 1 layer on 1 page.');
+    await expect(step.getByTestId('reset-result')).toContainText('Reset 1 layer on 1 page.');
     await expect(page.getByTestId('reset-dialog')).toHaveCount(0);
     expect(await readSettings(page, ids[FIRST] ?? '')).toEqual([]);
     expect(await readSettings(page, ids[SECOND] ?? '')).toEqual([
