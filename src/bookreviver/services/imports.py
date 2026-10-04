@@ -351,8 +351,14 @@ class ImportRun:
             )
             for scan, order_key in zip(scans, order_keys, strict=True)
         ]
-        # The label rules of the file become sections, and only a label they do not give stays an exception
-        source_labels = SourceLabels(rules=analysis.label_rules, pages=pages, moment=moment)
+        # The label rules of the file become sections, and only a label they do not give stays an exception. A source
+        # without rules is kept out of the numbering of a book that has sections, instead of continuing it
+        source_labels = SourceLabels(
+            rules=analysis.label_rules,
+            pages=pages,
+            moment=moment,
+            book_has_sections=bool(await self._uow.pagination_sections.list_for_project(source.project_id)),
+        )
         pages = source_labels.pages
         await self._record_progress(total=len(scans))
         await self._uow.sources.add(source)

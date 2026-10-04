@@ -38,14 +38,39 @@ def _pages(*labels: str) -> list[Page]:
 class TestSourceLabels:
     """Tests for SourceLabels."""
 
-    def test_a_source_without_rules_makes_no_section_and_keeps_its_labels(self) -> None:
-        """Verify the labels a scan carries stay exceptions when the file has no rules to make sections of."""
+    def test_a_source_without_rules_in_a_book_without_sections_makes_none_and_keeps_its_labels(self) -> None:
+        """Verify the labels a scan carries stay exceptions when there are no rules and no sections to number them."""
         pages = _pages('i', '')
 
-        labels = SourceLabels(rules=[], pages=pages, moment=EPOCH)
+        labels = SourceLabels(rules=[], pages=pages, moment=EPOCH, book_has_sections=False)
 
         expect(labels.sections == [])
         expect(labels.pages == pages)
+        assert_expectations()
+
+    def test_a_source_without_rules_in_a_book_with_sections_is_a_section_that_does_not_count(self) -> None:
+        """Verify the pages do not continue the section in force, and a label a scan carries stays an exception."""
+        pages = _pages('', 'x')
+
+        labels = SourceLabels(rules=[], pages=pages, moment=EPOCH, book_has_sections=True)
+
+        expect([section.first_page_id for section in labels.sections] == [pages[0].id])
+        expect([section.display for section in labels.sections] == [NumberDisplay.NOT_COUNTED])
+        expect([page.label_manual for page in labels.pages] == [False, True])
+        assert_expectations()
+
+    def test_a_source_that_has_pages_and_rules_makes_its_own_sections_in_a_book_with_sections(self) -> None:
+        """Verify the rules of a later source make sections as they do in an empty book."""
+        pages = _pages('1', '2')
+        rules = [PageLabelRule(first_index=0, style=LabelStyle.ARABIC)]
+
+        labels = SourceLabels(rules=rules, pages=pages, moment=EPOCH, book_has_sections=True)
+
+        expect(
+            [(section.first_page_id, section.display) for section in labels.sections]
+            == [(pages[0].id, NumberDisplay.PRINTED)]
+        )
+        expect([page.label_manual for page in labels.pages] == [False, False])
         assert_expectations()
 
     def test_each_rule_makes_a_printed_section_that_starts_at_its_first_page(self) -> None:
@@ -56,7 +81,7 @@ class TestSourceLabels:
             PageLabelRule(first_index=2, style=LabelStyle.ARABIC, prefix='A-', start=5),
         ]
 
-        labels = SourceLabels(rules=rules, pages=pages, moment=EPOCH)
+        labels = SourceLabels(rules=rules, pages=pages, moment=EPOCH, book_has_sections=False)
 
         expect([section.first_page_id for section in labels.sections] == [pages[0].id, pages[2].id])
         expect([section.style for section in labels.sections] == [LabelStyle.ROMAN_LOWER, LabelStyle.ARABIC])
@@ -72,7 +97,7 @@ class TestSourceLabels:
             PageLabelRule(first_index=2, style=LabelStyle.ARABIC),
         ]
 
-        labels = SourceLabels(rules=rules, pages=pages, moment=EPOCH)
+        labels = SourceLabels(rules=rules, pages=pages, moment=EPOCH, book_has_sections=False)
 
         assert [page.label_manual for page in labels.pages] == [False, False, False]
 
@@ -81,7 +106,7 @@ class TestSourceLabels:
         pages = _pages('1', HAND_WRITTEN, '3')
         rules = [PageLabelRule(first_index=0, style=LabelStyle.ARABIC)]
 
-        labels = SourceLabels(rules=rules, pages=pages, moment=EPOCH)
+        labels = SourceLabels(rules=rules, pages=pages, moment=EPOCH, book_has_sections=False)
 
         assert [page.label_manual for page in labels.pages] == [False, True, False]
 
@@ -93,7 +118,7 @@ class TestSourceLabels:
             PageLabelRule(first_index=1, style=LabelStyle.NONE, prefix=HAND_WRITTEN),
         ]
 
-        labels = SourceLabels(rules=rules, pages=pages, moment=EPOCH)
+        labels = SourceLabels(rules=rules, pages=pages, moment=EPOCH, book_has_sections=False)
 
         expect([section.display for section in labels.sections] == [NumberDisplay.PRINTED, NumberDisplay.NOT_COUNTED])
         expect([page.label_manual for page in labels.pages] == [False, True, True])
@@ -104,7 +129,7 @@ class TestSourceLabels:
         pages = _pages('', '', '1')
         rules = [PageLabelRule(first_index=2, style=LabelStyle.ARABIC)]
 
-        labels = SourceLabels(rules=rules, pages=pages, moment=EPOCH)
+        labels = SourceLabels(rules=rules, pages=pages, moment=EPOCH, book_has_sections=False)
 
         expect([section.first_page_id for section in labels.sections] == [pages[0].id, pages[2].id])
         expect([section.display for section in labels.sections] == [NumberDisplay.NOT_COUNTED, NumberDisplay.PRINTED])
@@ -127,6 +152,6 @@ class TestSourceLabels:
         pages = _pages(*[''] * length)
         rules = [PageLabelRule(first_index=0, style=LabelStyle.ROMAN_LOWER)]
 
-        labels = SourceLabels(rules=rules, pages=pages, moment=EPOCH)
+        labels = SourceLabels(rules=rules, pages=pages, moment=EPOCH, book_has_sections=False)
 
         assert [section.display for section in labels.sections] == [display]

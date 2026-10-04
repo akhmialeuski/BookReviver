@@ -79,7 +79,7 @@ class EpubPageList(PageLabelWriter):
         :raises ValueError: If the document has no body.
         """
         tree = parse(target)
-        body = tree.getroot().find(_xhtml('body'))
+        body = tree.find(_xhtml('body'))
         if body is None:
             err_msg = f'{target.name} has no body to hold a page list.'
             raise ValueError(err_msg)

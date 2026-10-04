@@ -6,6 +6,11 @@ the book is paginated as the file was and the numbers follow the pages when they
 whose label is not what its section gives, such as ``12a`` or a label with a prefix and no number, keeps its label as an
 exception that no recompute changes. A rule a section cannot express becomes a section that does not count, so its
 pages stay outside the count of the pages before them and after them.
+
+The pages of a source that has no rules do not continue the numbering of the sources before it, so a cover image that
+follows a labelled PDF is not numbered 1 more than its last page. When the book already has sections, such a source
+gets a section that does not count at its first page, and the pages that precede its first rule get one in the same
+way. A book without sections stays without them, so its sources are numbered when the user adds the first section.
 """
 
 from typing import TYPE_CHECKING
@@ -29,15 +34,19 @@ if TYPE_CHECKING:
 class SourceLabels:
     """The sections and the page exceptions that the label rules of one source give the pages of its scans.
 
-    :ivar sections: The sections to add to the book, in the order of the pages they start at; none without rules.
+    :ivar sections: The sections to add to the book, in the order of the pages they start at; none for a source without
+                    rules in a book that has no sections.
     :ivar pages: The pages given, with ``label_manual`` set on those whose label their section does not give.
     """
 
-    def __init__(self, *, rules: Sequence[PageLabelRule], pages: Sequence[Page], moment: datetime) -> None:
+    def __init__(
+        self, *, rules: Sequence[PageLabelRule], pages: Sequence[Page], moment: datetime, book_has_sections: bool
+    ) -> None:
         """Make the sections of the rules and find which labels they do not give.
 
         Pages before the first rule are outside every rule of the file, so they are made a section that does not count.
-        Without rules there are no sections, and a label of a scan stays an exception, as it is without a rule.
+        Without rules the whole source is such a section when the book has sections already, and there are none when
+        it has not. A label a scan carries stays an exception whenever the section it falls in does not give it.
 
         :param rules: The rules of the source, in the order of its scans, as ``SourceAnalysis.label_rules``.
         :type rules: Sequence[PageLabelRule]
@@ -45,12 +54,15 @@ class SourceLabels:
         :type pages: Sequence[Page]
         :param moment: Time to stamp the sections with.
         :type moment: datetime
+        :param book_has_sections: Whether the book has sections before this source is added to it.
+        :type book_has_sections: bool
         """
         self.sections: list[PaginationSection] = []
         self.pages: list[Page] = list(pages)
-        if not rules:
+        if not pages or not (rules or book_has_sections):
             return
-        unnumbered = [PageLabelRule(first_index=0, style=LabelStyle.NONE)] if rules[0].first_index > 0 else []
+        starts_late = not rules or rules[0].first_index > 0
+        unnumbered = [PageLabelRule(first_index=0, style=LabelStyle.NONE)] if starts_late else []
         runs = [*unnumbered, *rules]
         ends = [*(rule.first_index for rule in runs[1:]), len(pages)]
         for rule, end in zip(runs, ends, strict=True):
