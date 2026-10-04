@@ -43,6 +43,23 @@ async function contentOf(page: Page): Promise<string[]> {
     .map((item) => `${item.content_type}:${item.content_source}`);
 }
 
+/**
+ * Read the conditions of the first steps of the recipe in the panel. A step shows its condition among its settings, which
+ * its toggle opens, and the first step of a recipe is open already, so a step is opened only when it is closed.
+ */
+async function conditionsOf(page: Page, count: number): Promise<string[]> {
+  const conditions: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const step = page.getByTestId('recipe-step').nth(index);
+    const toggle = step.getByTestId('step-toggle');
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
+      await toggle.click();
+    }
+    conditions.push(await step.getByTestId('step-condition').inputValue());
+  }
+  return conditions;
+}
+
 test('the program finds what each page shows, the strip marks it, and the selected pages are changed and given back at once', async ({
   page,
 }) => {
@@ -79,17 +96,9 @@ test('the program finds what each page shows, the strip marks it, and the select
   });
 
   await test.step('the steps of the first recipes process the pages they are for', async () => {
-    const conditionOf = async (index: number): Promise<string> =>
-      page.getByTestId('recipe-step').nth(index).getByTestId('step-condition').inputValue();
     await expect(page.getByTestId('recipe-step').first()).toBeVisible();
     // Perspective, Deskew, Dewarp, Select content and Margins: the two that follow the lines of text are for text
-    expect(await Promise.all([0, 1, 2, 3, 4].map(conditionOf))).toEqual([
-      'all',
-      'text',
-      'text',
-      'all',
-      'all',
-    ]);
+    expect(await conditionsOf(page, 5)).toEqual(['all', 'text', 'text', 'all', 'all']);
   });
 
   await test.step('two selected pages of different types are changed to text at once', async () => {
@@ -155,6 +164,8 @@ test('the first recipe of the Cleanup stage keeps binarization and despeckling o
   await registerAndSignIn(page);
   await createBook(page, 'A book to clean');
   await uploadFolder(page, folder, PAGES);
+  // The split and the detection that follow the import read the recipes again, which closes an open step
+  await waitForIdleJobs(page, openProjectId(page));
   const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
   await page.goto(`${bookPath}/stages/cleanup`);
   await expect(page.getByTestId('stage-title')).toHaveText('Cleanup');
@@ -164,9 +175,7 @@ test('the first recipe of the Cleanup stage keeps binarization and despeckling o
   const processors = await Promise.all(
     [0, 1, 2].map((index) => steps.nth(index).getAttribute('data-processor')),
   );
-  const conditions = await Promise.all(
-    [0, 1, 2].map((index) => steps.nth(index).getByTestId('step-condition').inputValue()),
-  );
+  const conditions = await conditionsOf(page, 3);
   expect(processors).toEqual(['cleanup.binarize', 'cleanup.despeckle', 'cleanup.eraser']);
   expect(conditions).toEqual(['text', 'text', 'all']);
   await snap(page, 'content-type-cleanup-conditions');
