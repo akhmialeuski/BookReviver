@@ -14,7 +14,7 @@ from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.enums import ContentSource, ContentType, JobKind, JobState, PageKind
 from bookreviver.domain.values import ContentDetection
-from tests.helpers.builders import make_page, make_project, new_account_id
+from tests.helpers.builders import make_job, make_page, make_project, new_account_id
 from tests.helpers.seeding import commit_project
 
 if TYPE_CHECKING:
@@ -207,20 +207,26 @@ class TestDetectContent:
         assert_expectations()
 
     async def test_a_second_request_while_the_job_is_queued_is_a_409_problem(
-        self, fx_client: httpx.AsyncClient, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_book: Book
     ) -> None:
-        """Verify one detection of the project at a time, which the second request is told of.
+        """Verify one detection of the project at a time, which the request is told of while one is queued.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        first = await fx_client.post(fx_book.detect_path, json={})
-        second = await fx_client.post(fx_book.detect_path, json={})
+        # The queue of the application runs a detection of three pages before a second request would arrive, so the
+        # first detection is stored as queued instead of asked for
+        queued = make_job(project_id=fx_book.project.id, kind=JobKind.DETECT_CONTENT)
+        fx_database.tables.jobs[queued.id] = queued
 
-        expect(first.status_code == status.HTTP_202_ACCEPTED)
-        expect(second.status_code == status.HTTP_409_CONFLICT)
+        response = await fx_client.post(fx_book.detect_path, json={})
+
+        expect(response.status_code == status.HTTP_409_CONFLICT)
+        expect([job.id for job in fx_database.tables.jobs.values()] == [queued.id])
         assert_expectations()
 
     @pytest.mark.parametrize(
