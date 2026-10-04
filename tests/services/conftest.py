@@ -181,7 +181,7 @@ def fx_cv_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :returns: The kit whose catalogue has ``split.none``, ``split.spread``, ``split.auto``, the five geometry
-              processors and the three cleanup processors, which the default recipes of those stages need.
+              processors and the four cleanup processors, which the default recipes of those stages need.
     :rtype: ProcessingKit
     """
     split = pytest.importorskip('bookreviver.plugins.split_spread', reason=CV_MISSING).SplitSpread()
@@ -193,6 +193,7 @@ def fx_cv_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
     normalize = pytest.importorskip('bookreviver.plugins.normalize', reason=CV_MISSING).Normalize()
     binarize = pytest.importorskip('bookreviver.plugins.binarize', reason=CV_MISSING).Binarize()
     despeckle = pytest.importorskip('bookreviver.plugins.despeckle', reason=CV_MISSING).Despeckle()
+    thickness = pytest.importorskip('bookreviver.plugins.thickness', reason=CV_MISSING).Thickness()
     eraser = pytest.importorskip('bookreviver.plugins.eraser', reason=CV_MISSING).Eraser()
     return ProcessingKit(
         fx_asset_store,
@@ -207,6 +208,7 @@ def fx_cv_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
             normalize,
             binarize,
             despeckle,
+            thickness,
             eraser,
         ],
         defaults=CV_DEFAULTS,

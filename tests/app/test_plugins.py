@@ -51,6 +51,7 @@ class TestEntryPointCatalog:
             'cleanup.binarize',
             'cleanup.despeckle',
             'cleanup.eraser',
+            'cleanup.thickness',
         } <= set(keys)
 
     def test_every_parameter_of_a_built_in_processor_has_a_title_and_a_description_of_its_own(self) -> None:

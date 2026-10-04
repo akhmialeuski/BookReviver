@@ -23,6 +23,7 @@ MARGINS_KEY: str = 'geometry.normalize'
 CROP_KEY: str = 'geometry.crop'
 DESPECKLE_KEY: str = 'cleanup.despeckle'
 BINARIZE_KEY: str = 'cleanup.binarize'
+THICKNESS_KEY: str = 'cleanup.thickness'
 
 
 @pytest.fixture
@@ -109,16 +110,16 @@ class TestOrderRules:
         ]
         assert marked == []
 
-    def test_margins_must_follow_select_content_and_despeckle_must_follow_binarization(
+    def test_margins_must_follow_select_content_and_despeckle_and_thickness_must_follow_binarization(
         self, fx_catalogue: EntryPointCatalog
     ) -> None:
-        """Verify the two steps that lose their meaning without the one before them require their place.
+        """Verify the steps that lose their meaning without the one before them require their place.
 
         :param fx_catalogue: The catalogue of the built-in processors.
         :type fx_catalogue: EntryPointCatalog
         """
         required = {
             key: [rule.processor_key for rule in spec_of(fx_catalogue, key).requires_after]
-            for key in (MARGINS_KEY, DESPECKLE_KEY)
+            for key in (MARGINS_KEY, DESPECKLE_KEY, THICKNESS_KEY)
         }
-        assert required == {MARGINS_KEY: [CROP_KEY], DESPECKLE_KEY: [BINARIZE_KEY]}
+        assert required == {MARGINS_KEY: [CROP_KEY], DESPECKLE_KEY: [BINARIZE_KEY], THICKNESS_KEY: [BINARIZE_KEY]}
