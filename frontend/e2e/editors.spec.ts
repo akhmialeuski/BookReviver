@@ -12,7 +12,7 @@ import {
 import { dragFrom, pairOf } from './support/layer';
 
 /**
- * The page editors on the canvas: the rotation handle of the Geometry stage with its field, its wheel, its undo and its
+ * The page editors on the canvas: the rotation handles of the Geometry stage with its field, its wheel, its undo and its
  * "Auto", and the split line of the Split stage with its arrow keys, its handles and the same undo and "Auto", for a
  * book on the automatic split and for a book on the older recipe that cuts every spread.
  *
@@ -101,9 +101,9 @@ test('a reader turns a page by hand with the handle, the field and the wheel, ta
     expect(saves).toHaveLength(2);
   });
 
-  await test.step('dragging the handle turns the page and saves when it is let go', async () => {
+  await test.step('dragging the right handle of the axis up turns the page and saves when it is let go', async () => {
     const handle = await pairOf(layer, 'data-handle-rotation');
-    await dragFrom(page, layer, handle, { x: -DRAG_PX, y: DRAG_PX });
+    await dragFrom(page, layer, handle, { x: 0, y: -DRAG_PX });
     const turned = Number(await layer.getAttribute('data-degrees'));
     expect(turned).toBeGreaterThan(2.7);
     await expect(facts).toContainText(`${turned.toFixed(1)}°`, { timeout: RUN_TIMEOUT_MS });
