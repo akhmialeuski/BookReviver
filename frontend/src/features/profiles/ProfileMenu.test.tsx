@@ -125,7 +125,8 @@ describe('ProfileMenu', () => {
   it('names the profile the recipe was made from, with no mark while the steps are the profile’s', async () => {
     await render(processing({ recipe: LINKED, steps: draftOf(LINKED) }));
 
-    expect(byId('profile-name')?.textContent).toBe('Photographed book');
+    // The name comes with the list of profiles, which may answer after the first render
+    await vi.waitFor(() => expect(byId('profile-name')?.textContent).toBe('Photographed book'));
     expect(byId('profile-changed')).toBeNull();
     expect(sdk.list).toHaveBeenCalledWith(
       expect.objectContaining({ query: { size: 100, stage: 'geometry' } }),
