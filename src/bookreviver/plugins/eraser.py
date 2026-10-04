@@ -86,6 +86,7 @@ class Eraser(ModelProcessor):
         key='cleanup.eraser',
         version='1',
         title='Fill zones',
+        summary='Paints over the areas that were brushed',
         stage=Stage.CLEANUP,
         scope=ProcessorScope.PAGE,
         outputs=frozenset({VersionOutput.IMAGE}),

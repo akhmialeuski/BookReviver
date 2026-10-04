@@ -276,6 +276,7 @@ class Crop(ModelProcessor):
         key='geometry.crop',
         version='1',
         title='Select content',
+        summary='Finds the content box and drops the rest',
         stage=Stage.GEOMETRY,
         scope=ProcessorScope.PAGE,
         outputs=frozenset({VersionOutput.IMAGE}),

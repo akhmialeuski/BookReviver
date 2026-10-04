@@ -288,6 +288,7 @@ class Normalize(ModelProcessor):
         key='geometry.normalize',
         version='1',
         title=MARGINS_TITLE,
+        summary='One page size, scale and margins for the book',
         stage=Stage.GEOMETRY,
         scope=ProcessorScope.PAGE,
         outputs=frozenset({VersionOutput.IMAGE}),

@@ -132,6 +132,7 @@ class Despeckle(ModelProcessor):
         key='cleanup.despeckle',
         version='1',
         title='Despeckle',
+        summary='Removes dust and specks from the page',
         stage=Stage.CLEANUP,
         scope=ProcessorScope.PAGE,
         outputs=frozenset({VersionOutput.IMAGE, VersionOutput.MASK}),

@@ -88,6 +88,7 @@ class BlankPage(ModelProcessor):
         key='pages.blank',
         version='1',
         title='Blank leaf',
+        summary='Makes an empty leaf in place of a missing page',
         stage=Stage.PAGE_ORDER,
         scope=ProcessorScope.PAGE,
         outputs=frozenset({VersionOutput.IMAGE}),

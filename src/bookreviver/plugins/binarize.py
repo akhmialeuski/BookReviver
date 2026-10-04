@@ -333,6 +333,7 @@ class Binarize(ModelProcessor):
         key='cleanup.binarize',
         version='1',
         title='Binarization',
+        summary='Makes the page black and white',
         stage=Stage.CLEANUP,
         scope=ProcessorScope.PAGE,
         outputs=frozenset({VersionOutput.IMAGE}),
