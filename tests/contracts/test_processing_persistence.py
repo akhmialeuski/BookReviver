@@ -55,6 +55,8 @@ pytestmark = pytest.mark.anyio
 OLD: timedelta = timedelta(days=60)
 RECENT: timedelta = timedelta(days=1)
 VARIANT_NAME: str = 'Variant'
+# Order key of a second page of the same book, after the 'a0' a stored page gets
+SECOND_ORDER_KEY: str = 'a1'
 NOW = EPOCH + timedelta(days=100)
 FULL_CUTOFF = NOW - timedelta(days=30)
 PREVIEW_CUTOFF = NOW - timedelta(hours=1)
@@ -874,7 +876,7 @@ class TestPageStepChangeRepository:
         """
         project_id, first_page = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
-        second_page = make_page(project_id=project_id)
+        second_page = make_page(project_id=project_id, order_key=SECOND_ORDER_KEY)
         await uow.pages.add(second_page)
         batch = ChangeBatchId(uuid4())
         members = [
