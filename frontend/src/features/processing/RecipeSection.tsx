@@ -1,5 +1,5 @@
 import { CopyPlusIcon, PlusIcon } from 'lucide-react';
-import type { StagePageSchema } from '@/api';
+import type { ProcessorSchema, StagePageSchema } from '@/api';
 import { isPlacement } from '@/features/editors/placement';
 import { MeasureBook } from '@/features/processing/MeasureBook';
 import { PageStepHistory } from '@/features/processing/PageStepHistory';
@@ -12,8 +12,9 @@ import {
   useRules,
 } from '@/features/processing/queries';
 import { RecipeSaveBar } from '@/features/processing/RecipeSaveBar';
-import { bodyOf } from '@/features/processing/recipe';
+import { bodyOf, type StepDraft } from '@/features/processing/recipe';
 import { StepList, type StepRunControl } from '@/features/processing/StepList';
+import { StepReset } from '@/features/processing/StepReset';
 import { RunScope } from '@/features/processing/scope';
 import { passedPages } from '@/features/processing/stepRuns';
 import { UsedFor } from '@/features/processing/UsedFor';
@@ -23,6 +24,7 @@ import { countsOf } from '@/features/processing/variants';
 import { ProfileMenu } from '@/features/profiles/ProfileMenu';
 import { roadmapOf } from '@/features/stages/roadmap';
 import { useStageSummaries } from '@/features/workspace/queries';
+import { hasStepBar } from '@/features/workspace/steps';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
 import { Badge } from '@/shared/ui/badge';
@@ -37,14 +39,17 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 import { Switch } from '@/shared/ui/switch';
 
 /**
- * The recipe of a stage in the panel: which recipe is shown, its steps with their settings, the steps that can be added
- * and the ones that are coming, and the bar that saves what was changed.
+ * The recipe of a stage in the panel: which recipe is shown, what it is used for, and the bar that saves what was changed.
+ *
+ * A stage with a step bar keeps its steps there: they are added from the catalogue of the bar, ordered and switched in
+ * the window of the gear, and set in the panel of the open step. The recipe of such a stage lists no steps here. A stage
+ * without a bar lists its steps, with their settings, the steps that can be added and the ones that are coming.
  *
  * Nothing is saved while a step is edited. The draft lives in the state of the screen, so a preview can use it, and the
  * recipe is written only by the button, which says first how many pages the save makes out of date.
  *
- * When a page is open, a step that is open also shows what that page changes for the step, and marks those fields in
- * its form.
+ * When a page is open, a step that is open in the list also shows what that page changes for the step, and marks those
+ * fields in its form.
  */
 
 const labels = MESSAGES.processing;
@@ -68,12 +73,11 @@ export function RecipeSection({
   /** The pages selected in the grid, which a setting of the open page can be carried over to. */
   selected?: ReadonlySet<string>;
 }): React.JSX.Element | null {
-  const { projectId, stage, recipe, steps, catalogue } = processing;
+  const { projectId, stage, recipe, steps } = processing;
   const create = useCreateVariant(projectId, stage);
   const activate = useActivateRecipe(projectId, stage);
   const rules = useRules(projectId, stage, recipe !== undefined);
   const summaries = useStageSummaries(projectId);
-  const pageSettings = usePageSettings(projectId, pageId, stage);
   if (recipe === undefined) {
     return null;
   }
@@ -84,20 +88,7 @@ export function RecipeSection({
     processing.recipes,
     labels.recipe.countOf,
   );
-  const installed = new Set(catalogue.map((processor) => processor.key));
-  const coming = roadmapOf(stage, installed);
   const error = create.error ?? activate.error;
-  const stepRun: StepRunControl | undefined =
-    run === undefined
-      ? undefined
-      : {
-          choices: run.choices,
-          describe: run.describe,
-          disabled: run.disabled,
-          passed: (index) => passedPages(rows, recipe.id, index),
-          total: run.choices.find(({ scope }) => scope === RunScope.All)?.count ?? 0,
-          onRun: (index, scope) => run.start(scope, index),
-        };
 
   return (
     <section className="grid grid-cols-1 gap-3" aria-label={labels.recipe.label}>
@@ -184,6 +175,59 @@ export function RecipeSection({
         pages={processedBy(recipe.id)}
       />
 
+      {hasStepBar(stage) ? null : (
+        <RecipeSteps
+          processing={processing}
+          rows={rows}
+          run={run}
+          pageId={pageId}
+          selected={selected}
+        />
+      )}
+
+      <RecipeSaveBar processing={processing} rows={rows} />
+      {error === null ? null : <ErrorAlert message={describeError(error)} />}
+    </section>
+  );
+}
+
+/** The steps of a stage that has no step bar: the list with its settings, the menu that adds one and the steps to come. */
+function RecipeSteps({
+  processing,
+  rows,
+  run,
+  pageId,
+  selected,
+}: {
+  processing: Processing;
+  rows: readonly StagePageSchema[];
+  run?: StageRun;
+  pageId?: string;
+  selected?: ReadonlySet<string>;
+}): React.JSX.Element | null {
+  const { projectId, stage, recipe, steps, catalogue } = processing;
+  const pageSettings = usePageSettings(projectId, pageId, stage);
+  if (recipe === undefined) {
+    return null;
+  }
+  const processorOf = (step: StepDraft): ProcessorSchema | undefined =>
+    catalogue.find((processor) => processor.key === step.processorKey);
+  const installed = new Set(catalogue.map((processor) => processor.key));
+  const coming = roadmapOf(stage, installed);
+  const stepRun: StepRunControl | undefined =
+    run === undefined
+      ? undefined
+      : {
+          choices: run.choices,
+          describe: run.describe,
+          disabled: run.disabled,
+          passed: (index) => passedPages(rows, recipe.id, index),
+          total: run.choices.find(({ scope }) => scope === RunScope.All)?.count ?? 0,
+          onRun: (index, scope) => run.start(scope, index),
+        };
+
+  return (
+    <>
       <div className="flex min-h-6 items-center justify-between gap-2">
         <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           {labels.steps.title}
@@ -214,17 +258,25 @@ export function RecipeSection({
               <PageStepSettings
                 processing={processing}
                 step={step}
-                processor={catalogue.find((processor) => processor.key === step.processorKey)}
+                processor={processorOf(step)}
                 pageId={pageId}
                 pageValues={pageValuesOf(pageSettings.data, step.stepId)}
                 selected={selected}
+              />
+            )}
+            {pageId === undefined || step.stepId === null ? null : (
+              <StepReset
+                processing={processing}
+                pageId={pageId}
+                stepId={step.stepId}
+                title={processorOf(step)?.title ?? step.processorKey}
               />
             )}
             {pageId === undefined ? null : (
               <PageStepHistory
                 processing={processing}
                 step={step}
-                processor={catalogue.find((processor) => processor.key === step.processorKey)}
+                processor={processorOf(step)}
                 pageId={pageId}
               />
             )}
@@ -277,9 +329,6 @@ export function RecipeSection({
           ))}
         </ul>
       )}
-
-      <RecipeSaveBar processing={processing} rows={rows} />
-      {error === null ? null : <ErrorAlert message={describeError(error)} />}
-    </section>
+    </>
   );
 }

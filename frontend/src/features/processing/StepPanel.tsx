@@ -1,16 +1,29 @@
-import { ChevronLeftIcon, ChevronRightIcon, PlayIcon, XIcon } from 'lucide-react';
-import { useState } from 'react';
+import {
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  PlayIcon,
+  TriangleAlertIcon,
+  XIcon,
+} from 'lucide-react';
+import { useMemo, useState } from 'react';
 import type { AppliesTo, FigureState } from '@/api';
 import { EditorControls } from '@/features/editors/EditorControls';
+import { isPlacement } from '@/features/editors/placement';
 import type { EditorSession } from '@/features/editors/session';
 import { CarryOver } from '@/features/processing/CarryOver';
+import { MeasureBook } from '@/features/processing/MeasureBook';
+import { PageStepHistory } from '@/features/processing/PageStepHistory';
+import { PageStepSettings } from '@/features/processing/PageStepSettings';
 import { ParamsForm } from '@/features/processing/ParamsForm';
+import { pageValuesOf } from '@/features/processing/pageSettings';
+import { usePageSettings } from '@/features/processing/queries';
 import { ResultsSection } from '@/features/processing/ResultsSection';
 import { CONDITIONS } from '@/features/processing/recipe';
 import { readResult } from '@/features/processing/results';
 import { StepReset } from '@/features/processing/StepReset';
 import { pagesOfCondition, RunScope } from '@/features/processing/scope';
-import { canRunThrough } from '@/features/processing/stepRuns';
+import { canRunThrough, passedPages } from '@/features/processing/stepRuns';
 import type { Processing } from '@/features/processing/useProcessing';
 import type { StageRun } from '@/features/processing/useStageRun';
 import type { BarStep } from '@/features/workspace/steps';
@@ -20,15 +33,24 @@ import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 import { CheckboxField } from '@/shared/ui/checkbox-field';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/shared/ui/dropdown-menu';
 
 /**
- * The section of the panel for the step that is open: its settings, what it did on the open page, how the pages of the
- * book stand at it, the button that runs the recipe up to it on every page, and the way to the steps either side of it.
+ * The section of the panel for the step that is open, which is where a step of a stage with a bar is set and looked at:
+ * its settings, where it stands in the order and what is wrong with that, what it did on the open page and what the
+ * page changes for it, how the pages of the book stand at it and how many passed it, the buttons that run the recipe up to
+ * it, and the way to the steps either side of it.
  *
  * It stands above the sections of the recipe and of the open page and takes none of them away. The settings are the
- * draft of the step the recipe section edits, so a change made here is the change made there. Under the buttons of
- * "Auto" is the menu that resets the step to its defaults. The results of the step on the open page are listed here, and
- * the section of the open page leaves the results of the stage to them.
+ * draft of the recipe, which the window of the gear and the save bar share, so a change made here is the change made
+ * there. Under the buttons of "Auto" is the menu that resets the step to its defaults. The results of the step on the open
+ * page are listed here, and the section of the open page leaves the results of the stage to them.
  */
 
 const labels = MESSAGES.workspace.stepPanel;
@@ -42,6 +64,9 @@ const DOT: Readonly<Record<FigureState, string>> = {
 };
 
 const NO_PAGES: ReadonlySet<string> = new Set();
+
+/** The scopes of a run that the buttons of "Auto" do not name: the pages selected in the grid and those that need a look. */
+const OTHER_SCOPES: ReadonlySet<RunScope> = new Set([RunScope.Selected, RunScope.Attention]);
 
 function Heading({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
@@ -111,7 +136,13 @@ export function StepPanel({
 }): React.JSX.Element {
   const { catalogue, recipe } = processing;
   const [overwrite, setOverwrite] = useState(false);
+  const pageSettings = usePageSettings(processing.projectId, pageId, processing.stage);
   const draft = processing.steps.find((entry) => entry.stepId === step.stepId);
+  const pageValues = pageValuesOf(pageSettings.data, step.stepId);
+  const marked = useMemo(() => new Set(Object.keys(pageValues)), [pageValues]);
+  const issues = draft === undefined ? [] : (processing.orderIssues.get(draft.id) ?? []);
+  const issueKind = issues.some((issue) => issue.kind === 'required') ? 'required' : 'usual';
+  const stageRows = items.flatMap((item) => (item.row === undefined ? [] : [item.row]));
   const processor = catalogue.find((entry) => entry.key === step.processorKey);
   const { page, counts, neighbours } = workspace;
   const state = page?.state ?? null;
@@ -146,6 +177,32 @@ export function StepPanel({
         </Button>
       </div>
       {step.enabled ? null : <p className="text-xs text-muted-foreground">{labels.off}</p>}
+      {issues.length === 0 ? null : (
+        <div className="grid gap-2" data-testid="step-order-details" data-kind={issueKind}>
+          {issues.map((issue) => (
+            <p
+              key={`${issue.otherId}|${issue.reason}`}
+              className={cn(
+                'flex items-start gap-1.5 text-xs break-words',
+                issue.kind === 'required' ? 'text-destructive' : 'text-status-attention',
+              )}
+            >
+              <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              {issue.reason}
+            </p>
+          ))}
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-fit"
+            title={stepLabels.order.restoreHint}
+            data-testid="step-restore-order"
+            onClick={processing.restoreOrder}
+          >
+            {stepLabels.order.restore}
+          </Button>
+        </div>
+      )}
 
       <div className="grid gap-3" data-testid="step-panel-settings">
         <Heading>{labels.settings}</Heading>
@@ -175,9 +232,13 @@ export function StepPanel({
             processor={processor}
             params={draft.params}
             idPrefix="step-panel"
+            marked={marked}
             onChange={(params) => processing.change(draft.id, params)}
           />
         )}
+        {draft !== undefined && isPlacement(step.processorKey) ? (
+          <MeasureBook processing={processing} step={draft} />
+        ) : null}
       </div>
 
       <div className="grid gap-2" data-testid="step-panel-page">
@@ -235,6 +296,24 @@ export function StepPanel({
             />
           </div>
         ) : null}
+        {draft === undefined || pageId === undefined ? null : (
+          <>
+            <PageStepSettings
+              processing={processing}
+              step={draft}
+              processor={processor}
+              pageId={pageId}
+              pageValues={pageValues}
+              selected={selected}
+            />
+            <PageStepHistory
+              processing={processing}
+              step={draft}
+              processor={processor}
+              pageId={pageId}
+            />
+          </>
+        )}
       </div>
 
       {pageId === undefined ? null : (
@@ -249,6 +328,14 @@ export function StepPanel({
 
       <div className="grid gap-2" data-testid="step-panel-book">
         <Heading>{labels.book}</Heading>
+        {recipe === undefined || !step.enabled || recipe.steps.length < 2 ? null : (
+          <p className="text-sm" title={stepLabels.passedHint} data-testid="step-passed">
+            {stepLabels.passed(
+              passedPages(stageRows, recipe.id, step.index),
+              run.choices.find(({ scope }) => scope === RunScope.All)?.count ?? 0,
+            )}
+          </p>
+        )}
         {counts === null ? (
           <p className="text-sm text-muted-foreground">{MESSAGES.workspace.steps.reading}</p>
         ) : (
@@ -314,6 +401,34 @@ export function StepPanel({
           <PlayIcon />
           {labels.auto}
         </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              disabled={!runnable || run.disabled}
+              data-testid="step-auto-more"
+            >
+              <PlayIcon />
+              {labels.autoMore}
+              <ChevronDownIcon />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuLabel>{stepLabels.runThrough}</DropdownMenuLabel>
+            {run.choices
+              .filter(({ scope }) => OTHER_SCOPES.has(scope))
+              .map(({ scope, count }) => (
+                <DropdownMenuItem
+                  key={scope}
+                  disabled={count === 0}
+                  data-testid={`step-run-${scope}`}
+                  onSelect={() => run.start(scope, step.index)}
+                >
+                  {run.describe(scope, count)}
+                </DropdownMenuItem>
+              ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <p className="text-xs text-muted-foreground">
           {run.dirty ? labels.saveFirst : labels.autoHint}
         </p>

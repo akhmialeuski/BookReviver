@@ -33,8 +33,9 @@ import { Switch } from '@/shared/ui/switch';
  * condition, switches on and off and removes, with the button that keeps the steps as a profile of the account and the one
  * that puts the default steps back. Profiles are applied elsewhere, so the window has no button for that.
  *
- * It is the recipe of the right panel in a window and edits the same draft, so a change made here is the change made
- * there, and the bar that saves it is the same bar. Nothing is written until it is pressed.
+ * It is the one place the order, the switches and the removal of the steps of a stage with a bar are set. It edits the
+ * draft that the panel of the open step and the save bar read, so a change made here is the change made there.
+ * Nothing is written until the bar is pressed.
  */
 
 const labels = MESSAGES.workspace.steps.gear;
@@ -110,18 +111,28 @@ function StepRow({
             <span className="truncate text-xs text-muted-foreground">{processor.summary}</span>
           )
         ) : (
-          <span
-            className={cn(
-              'flex items-center gap-1 truncate text-xs',
-              kind === 'required' ? 'text-destructive' : 'text-status-attention',
-            )}
-            title={issues.map((issue) => issue.reason).join(' ')}
-            data-testid="window-step-order-mark"
-            data-kind={kind}
-          >
-            <TriangleAlertIcon className="size-3.5 shrink-0" aria-hidden="true" />
-            {stepLabels.order.marks[kind]}
-          </span>
+          <>
+            <span
+              className={cn(
+                'flex items-center gap-1 text-xs',
+                kind === 'required' ? 'text-destructive' : 'text-status-attention',
+              )}
+              data-testid="window-step-order-mark"
+              data-kind={kind}
+            >
+              <TriangleAlertIcon className="size-3.5 shrink-0" aria-hidden="true" />
+              {stepLabels.order.marks[kind]}
+            </span>
+            <span
+              className={cn(
+                'text-xs break-words',
+                kind === 'required' ? 'text-destructive' : 'text-status-attention',
+              )}
+              data-testid="window-step-order-reason"
+            >
+              {issues[0]?.reason}
+            </span>
+          </>
         )}
       </div>
       <select
