@@ -7,10 +7,12 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.enums import ResultMark, VersionScale
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.values import ResultNote
+from bookreviver.services.result_marks import ResultMarksService
 from tests.helpers.builders import EPOCH
 from tests.services.test_processing_remake import collected_book
 from tests.services.test_processing_versions import ran_geometry
@@ -25,6 +27,17 @@ LATER: timedelta = timedelta(minutes=5)
 PREVIEW_ID: PageVersionId = PageVersionId('abcdabcdabcdabcd')
 
 
+def _marks(kit: ProcessingKit) -> ResultMarksService:
+    """Build the result marks service over a new unit of work of the kit.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :returns: The service.
+    :rtype: ResultMarksService
+    """
+    return ResultMarksService(uow=InMemoryUnitOfWork(kit.database), clock=kit.clock)
+
+
 class TestSet:
     """Tests for ResultMarksService.set."""
 
@@ -35,7 +48,7 @@ class TestSet:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, version = await ran_geometry(fx_kit)
-        answered = await fx_kit.result_marks().set(
+        answered = await _marks(fx_kit).set(
             actor, project.id, page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
         )
         stored = await fx_kit.stored_version(version.id)
@@ -53,15 +66,13 @@ class TestSet:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, version = await ran_geometry(fx_kit)
-        await fx_kit.result_marks().set(
-            actor, project.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
-        )
+        await _marks(fx_kit).set(actor, project.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=''))
         fx_kit.clock.moment = EPOCH + LATER
-        await fx_kit.result_marks().set(
+        await _marks(fx_kit).set(
             actor, project.id, page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
         )
-        await fx_kit.result_marks().set(actor, project.id, page.id, version.id, ResultNote(mark=None, comment=COMMENT))
-        log = await fx_kit.result_marks().changes(actor, project.id, page.id, version.id)
+        await _marks(fx_kit).set(actor, project.id, page.id, version.id, ResultNote(mark=None, comment=COMMENT))
+        log = await _marks(fx_kit).changes(actor, project.id, page.id, version.id)
         assert [
             (c.sequence, c.mark_before, c.mark_after, c.comment_before, c.comment_after, c.created_at) for c in log
         ] == [
@@ -77,17 +88,15 @@ class TestSet:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, version = await ran_geometry(fx_kit)
-        await fx_kit.result_marks().set(
+        await _marks(fx_kit).set(
             actor, project.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=COMMENT)
         )
-        await fx_kit.result_marks().set(
+        await _marks(fx_kit).set(
             actor, project.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=COMMENT)
         )
-        untouched = await fx_kit.result_marks().set(
-            actor, project.id, page.id, version.id, ResultNote(mark=None, comment='')
-        )
-        await fx_kit.result_marks().set(actor, project.id, page.id, version.id, ResultNote(mark=None, comment=''))
-        log = await fx_kit.result_marks().changes(actor, project.id, page.id, version.id)
+        untouched = await _marks(fx_kit).set(actor, project.id, page.id, version.id, ResultNote(mark=None, comment=''))
+        await _marks(fx_kit).set(actor, project.id, page.id, version.id, ResultNote(mark=None, comment=''))
+        log = await _marks(fx_kit).changes(actor, project.id, page.id, version.id)
         assert (len(log), untouched.mark) == (2, None)
 
     async def test_a_preview_takes_no_mark(self, fx_kit: ProcessingKit) -> None:
@@ -102,7 +111,7 @@ class TestSet:
         await uow.page_versions.add(preview)
         await uow.commit()
         with pytest.raises(ConflictError):
-            await fx_kit.result_marks().set(
+            await _marks(fx_kit).set(
                 actor, project.id, page.id, preview.id, ResultNote(mark=ResultMark.GOOD, comment='')
             )
 
@@ -116,7 +125,7 @@ class TestSet:
         other, _ = await fx_kit.seed_scan_page(project, order_key='a1')
         assert other.id != page.id
         with pytest.raises(NotFoundError):
-            await fx_kit.result_marks().set(
+            await _marks(fx_kit).set(
                 actor, project.id, other.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
             )
 
@@ -129,11 +138,11 @@ class TestSet:
         _, project, page, version = await ran_geometry(fx_kit)
         stranger, _ = await fx_kit.seed_project()
         with pytest.raises(NotFoundError):
-            await fx_kit.result_marks().set(
+            await _marks(fx_kit).set(
                 stranger, project.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
             )
         with pytest.raises(NotFoundError):
-            await fx_kit.result_marks().changes(stranger, project.id, page.id, version.id)
+            await _marks(fx_kit).changes(stranger, project.id, page.id, version.id)
 
     async def test_mark_and_comment_survive_the_collection_and_the_remake_of_the_picture(
         self, fx_kit: ProcessingKit
@@ -145,7 +154,7 @@ class TestSet:
         """
         actor, project, page, removed, _ = await collected_book(fx_kit)
         assert removed.files_removed
-        await fx_kit.result_marks().set(
+        await _marks(fx_kit).set(
             actor, project.id, page.id, removed.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
         )
         job = await fx_kit.service().start_remake(actor, project.id, page.id, removed.id)

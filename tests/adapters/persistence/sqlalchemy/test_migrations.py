@@ -147,7 +147,8 @@ OLD_VERSION_ID: PageVersionId = PageVersionId('0123456789abcdef')
 # A version as the revision before the marks wrote it, which has no mark and no comment column
 INSERT_VERSION: str = (
     'INSERT INTO page_versions (id, page_id, stage, processor_key, processor_version, params, transform, data, state,'
-    " created_at) VALUES (:id, :page_id, 'page-split', 'split.none', '1', '{}', '{\"kind\": \"identity\"}', '{}',"
+    " created_at) VALUES (:id, :page_id, 'page-split', 'split.none', '1', '{}',"
+    ' \'{"kind": "identity", "quad": null, "angle": null, "mesh_key": null}\', \'{}\','
     " 'ready', '2026-01-01 00:00:00')"
 )
 # The tables holding the rows of a book, each of which refers to the project or to a row that does
