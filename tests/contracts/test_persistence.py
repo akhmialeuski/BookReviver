@@ -13,6 +13,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import (
+    BlankFill,
     JobKind,
     JobState,
     PageKind,
@@ -24,7 +25,7 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.errors import ConcurrentChangeError, ConflictError, NotFoundError
-from bookreviver.domain.ids import SourceId
+from bookreviver.domain.ids import PageVersionId, SourceId
 from bookreviver.domain.values import (
     BookDetails,
     ImportRequest,
@@ -1379,8 +1380,8 @@ class TestPageVersionRepository:
     ) -> None:
         """Verify only the recorded sizes of base versions of included pages cut from a scan are returned.
 
-        A page kept out, a generated leaf, a later version, a version recording no size and another project's page take
-        no part.
+        A page kept out, a generated leaf, a later version, a leaf drawn in place of a scan, a version recording no size
+        and another project's page take no part.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -1405,7 +1406,18 @@ class TestPageVersionRepository:
             evolve(make_page_version(page_id=page.id), data=data)
             for page, data in zip([*pages[:2], leaf, *pages[3:], foreign_page], recorded, strict=True)
         ]
-        derived = evolve(make_page_version(page_id=pages[2].id, minutes=1), input_id=versions[0].id, data=sized)
+        # A later version of a page, and a leaf of the page order in place of the scan of a page that is counted, whose
+        # size must not be counted twice
+        derived_pair = [
+            evolve(make_page_version(page_id=pages[2].id, minutes=1), input_id=versions[0].id, data=sized),
+            evolve(
+                make_page_version(page_id=pages[4].id, minutes=2),
+                id=PageVersionId('0123456789abcdef'),
+                stage=Stage.PAGE_ORDER,
+                processor=ProcessorRef(key='pages.blank', version='1'),
+                data={'width_px': 7, 'height_px': 7},
+            ),
+        ]
         uow = await fx_uow_factory()
         for owned in (project, other):
             await uow.projects.add(owned)
@@ -1413,13 +1425,48 @@ class TestPageVersionRepository:
         await uow.scans.add_many([*scans, foreign_scan])
         await uow.pages.add_many([*pages, leaf, foreign_page])
         await uow.page_versions.add_many(versions)
-        await uow.page_versions.add(derived)
+        await uow.page_versions.add_many(derived_pair)
         await uow.commit()
         found = await (await fx_uow_factory()).page_versions.base_sizes(project.id)
         assert sorted(found, key=attrgetter('width_px')) == [
             PageSize(width_px=10, height_px=20, dpi=None),
             PageSize(width_px=2000, height_px=3000, dpi=300.0),
         ]
+
+    async def test_the_choice_of_a_leaf_survives_the_store_and_leaves_the_scan_linked(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a blank page reads back with the leaf chosen for it and its scan, and with the scan again after.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        source = make_source(project_id=project.id)
+        scan = make_scan(source=source, number=0)
+        page = make_page(project_id=project.id, scan=scan, kind=PageKind.BLANK)
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.sources.add(source)
+        await uow.scans.add(scan)
+        await uow.pages.add(page)
+        await uow.commit()
+        uow = await fx_uow_factory()
+        stored = await uow.pages.get(page.id)
+        await uow.pages.update(evolve(stored, blank_fill=BlankFill.PAPER))
+        await uow.commit()
+
+        uow = await fx_uow_factory()
+        leaf = await uow.pages.get(page.id)
+        await uow.pages.update(evolve(leaf, blank_fill=BlankFill.SCAN))
+        await uow.commit()
+
+        expect(stored.blank_fill is BlankFill.SCAN)
+        expect((leaf.blank_fill, leaf.scan_id) == (BlankFill.PAPER, scan.id))
+        expect((await (await fx_uow_factory()).pages.get(page.id)).blank_fill is BlankFill.SCAN)
+        assert_expectations()
 
     async def test_versions_read_back_in_creation_order(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory

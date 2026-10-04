@@ -1277,7 +1277,7 @@
           "pages"
         ],
         "summary": "Update Page",
-        "description": "Merge the body into the page, as JSON Merge Patch (RFC 7396) defines.\n\nA field left out keeps its value, and a label or notes sent as null are cleared. The kind and the inclusion cannot\nbe cleared, and the order, the origin and the scan of a page are changed by other routes.",
+        "description": "Merge the body into the page, as JSON Merge Patch (RFC 7396) defines.\n\nA field left out keeps its value, and a label or notes sent as null are cleared. The kind and the inclusion cannot\nbe cleared, and the order, the origin and the scan of a page are changed by other routes. A page that stops being\nblank shows its scan again in place of a leaf.",
         "operationId": "update_page_api_v1_projects__project_id__pages__page_id__patch",
         "parameters": [
           {
@@ -1580,6 +1580,87 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PagesMove"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pages/blank-fill": {
+      "post": {
+        "tags": [
+          "pages"
+        ],
+        "summary": "Fill Blank Pages",
+        "description": "Choose the image of one or more blank pages: their scan, a white leaf or a leaf of the paper of the book.\n\nA leaf stands in place of the scan of a page of kind blank that is cut from a scan, has the size of the pages of\nthe book and passes the stages after the page order without steps and without a mark of review. Its image is\nwritten by a job, so the pages show it once the job is done. The scan stays, and choosing it again, or changing the\nkind of the page, brings it back. The answer is 409 when a page is not cut from a scan, or is not blank and gets a\nleaf, or when no page of the book has a size to give the leaf, and nothing is changed then. The change reaches the\nbrowser as a ``pages-changed`` event, so the answer has no body.",
+        "operationId": "fill_blank_pages_api_v1_projects__project_id__pages_blank_fill_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlankFillChange"
               }
             }
           }
@@ -8031,6 +8112,41 @@
         "title": "ApplyProfileBody",
         "description": "How to apply a profile to a book.\n\n:ivar activate: Whether the new variant also becomes the active recipe of the stage."
       },
+      "BlankFill": {
+        "type": "string",
+        "enum": [
+          "scan",
+          "white",
+          "paper"
+        ],
+        "title": "BlankFill",
+        "description": "What the image of a page of kind blank is: the scan the page was cut from, or a leaf made in its place.\n\nA leaf is a page the program draws, so the steps of the stages after the page order pass it unchanged. The scan of\nthe page is kept whatever the choice, so the choice can be undone."
+      },
+      "BlankFillChange": {
+        "properties": {
+          "page_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 2000,
+            "minItems": 1,
+            "title": "Page Ids"
+          },
+          "blank_fill": {
+            "$ref": "#/components/schemas/BlankFill"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "page_ids",
+          "blank_fill"
+        ],
+        "title": "BlankFillChange",
+        "description": "What the image of blank pages cut from a scan becomes: their scan, a white leaf or the paper of the book.\n\n:ivar page_ids: The pages to change, each at most once.\n:ivar blank_fill: The choice: ``scan`` keeps the scan, ``white`` draws a white leaf, ``paper`` draws a leaf of the\n                  colour of the paper of the neighbouring pages."
+      },
       "Body_auth_cookie_login_api_v1_auth_login_post": {
         "properties": {
           "grant_type": {
@@ -9616,6 +9732,9 @@
             "type": "integer",
             "title": "Slot"
           },
+          "blank_fill": {
+            "$ref": "#/components/schemas/BlankFill"
+          },
           "included": {
             "type": "boolean",
             "title": "Included"
@@ -9660,6 +9779,7 @@
           "scan_id",
           "source_id",
           "slot",
+          "blank_fill",
           "included",
           "notes",
           "group_label",
@@ -9668,7 +9788,7 @@
           "updated_at"
         ],
         "title": "PageSchema",
-        "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except\n                in a manifest listing only the included pages, which numbers those.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar label_manual: Whether the label is an exception to the pagination sections: written by hand, or taken from\n                    the source of the scan, and so never changed when the numbers of the book are computed again.\n:ivar kind: Role of the page in the book.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar group_label: Label of the group the user put the page in, or empty for no group.\n:ivar images: Paths of the images of the page's current version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
+        "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except\n                in a manifest listing only the included pages, which numbers those.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar label_manual: Whether the label is an exception to the pagination sections: written by hand, or taken from\n                    the source of the scan, and so never changed when the numbers of the book are computed again.\n:ivar kind: Role of the page in the book.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar blank_fill: What the image of a blank page is: its scan, or a white leaf or a leaf of the colour of the paper\n                  of the book drawn in its place. The scan stays linked either way.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar group_label: Label of the group the user put the page in, or empty for no group.\n:ivar images: Paths of the images of the page's current version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
       },
       "PageSettingForm": {
         "properties": {

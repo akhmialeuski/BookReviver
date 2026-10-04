@@ -945,8 +945,9 @@ class SqlAlchemyPageVersionRepository(
     async def base_sizes(self, project_id: ProjectId) -> Sequence[PageSize]:
         """Return the sizes the base versions of the project's included scan pages record in their data.
 
-        Only the data column is read, and the sizes are taken from it here, since the column is JSON and the same
-        reading serves every database.
+        A leaf drawn in place of a scan is a version of the page order, so it is not counted. Only the data column is
+        read, and the sizes are taken from it here, since the column is JSON and the same reading serves every
+        database.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
@@ -961,6 +962,7 @@ class SqlAlchemyPageVersionRepository(
                 PageRow.included.is_(True),
                 PageRow.origin == PageOrigin.SCAN,
                 PageVersionRow.input_id.is_(None),
+                PageVersionRow.stage == Stage.PAGE_SPLIT,
             )
         )
         sizes = (PageSize.from_data(data) for data in (await self._rows.session.scalars(statement)).all())

@@ -13,6 +13,13 @@ change that adds, deletes or moves pages, or changes the kind or the inclusion o
 pagination sections give the pages, in its own transaction, and announces the pages renumbered as a second
 ``PagesChanged``.
 
+A blank page cut from a scan may show a leaf in place of its scan: a white leaf, or one of the colour of the paper of
+the neighbouring pages. The leaf is the version of the page order that ``pages.blank`` makes, of the size of the pages
+of the book, and it becomes the current version of the page order, so the stages after it read the leaf. The page keeps
+its scan and its version, so choosing the scan again removes the record of the page order and the page shows its scan
+again. Changing the kind of the page does the same. A change of the choice is written in one transaction for all the
+pages, and the leaves are written by the ``prepare-pages`` job.
+
 A page without a scan is added in a place of the book: a placeholder has no image and waits for a scan, and a blank leaf
 gets the base version ``pages.blank``, a white image of the median size of the book's pages. Binding a scan to a
 placeholder makes it a page of that scan with the base version ``split.none``. None of these writes an image in the
@@ -38,13 +45,19 @@ from attrs import evolve, frozen
 
 from bookreviver.domain.entities import Job, Page, PageOverview
 from bookreviver.domain.enums import (
+    BlankFill,
+    BlankParam,
     ColorMode,
     JobKind,
     JobState,
     NewPageOrigin,
+    NormalizeParam,
     PageChange,
+    PageKind,
     PageOrigin,
+    PaperFill,
     Side,
+    Stage,
     VersionData,
     VersionState,
 )
@@ -60,8 +73,9 @@ from bookreviver.domain.errors import (
 from bookreviver.domain.events import JobChanged, PagesChanged, PageVersionReady
 from bookreviver.domain.ids import JobId, PageId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PageSize, PageStageKey, Progress, Slice
+from bookreviver.domain.values import PageSize, PageStageKey, Progress, Slice, SliceRequest
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
+from bookreviver.services.book_measure import NORMALIZE_KEY
 from bookreviver.services.page_labels import PageLabels
 from bookreviver.services.projects import owned_project
 from bookreviver.services.stage_records import StageRecords
@@ -73,9 +87,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.changes import PageChanges
-    from bookreviver.domain.entities import Actor, PageVersion
-    from bookreviver.domain.ids import ProjectId, ScanId, SourceId, StorageKey
-    from bookreviver.domain.values import NewPage, PageAnchor, SliceRequest
+    from bookreviver.domain.entities import Actor, PageStage, PageVersion
+    from bookreviver.domain.ids import PageVersionId, ProjectId, ScanId, SourceId, StorageKey
+    from bookreviver.domain.values import NewPage, PageAnchor
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
@@ -86,6 +100,8 @@ if TYPE_CHECKING:
 # page is given when it is made. A version of another processor of the same stages, such as a half of a split spread,
 # belongs to the run that makes it
 PREPARED_PROCESSORS: frozenset[str] = frozenset({SPLIT_NONE.key, PAGES_BLANK.key})
+NOT_A_CUT_PAGE: str = 'The page {page_id} is not cut from a scan, so it has no scan to keep or to replace.'
+NOT_A_BLANK_PAGE: str = 'The page {page_id} is not a blank page, so no leaf can stand in place of its scan.'
 NO_BOOK_IMAGE: str = (
     'No page of the book that is cut from a scan and part of the book has a recorded size, so a blank leaf has no size '
     'to take. Give the size of the leaf.'
@@ -138,10 +154,16 @@ class PageService:
     :cvar PAGE_WRITE_ATTEMPTS: How many times a change of one page is read, applied and written when another request
                                keeps changing the page in between.
     :cvar MAX_PAGES_PER_BATCH: Most pages one call of ``add_many`` adds, which bounds the rows of one transaction.
+    :cvar PAPER_KINDS: Kinds of page whose paper a leaf may take, which are the pages printed on the paper of the book.
+    :cvar PAPER_RADIUS: How many pages on each side of a leaf are looked at for pages to take the paper from.
+    :cvar PAPER_PAGES: Most pages a leaf takes its paper from, the nearest ones.
     """
 
     PAGE_WRITE_ATTEMPTS: ClassVar[int] = 3
     MAX_PAGES_PER_BATCH: ClassVar[int] = 1000
+    PAPER_KINDS: ClassVar[frozenset[PageKind]] = frozenset({PageKind.TEXT, PageKind.TITLE})
+    PAPER_RADIUS: ClassVar[int] = 10
+    PAPER_PAGES: ClassVar[int] = 6
 
     def __init__(self, *, uow: UnitOfWork, assets: AssetStore, runtime: PageRuntime, imaging: PageImaging) -> None:
         """Work over the ports of one request or job.
@@ -211,6 +233,9 @@ class PageService:
     async def update(self, actor: Actor, project_id: ProjectId, page_id: PageId, changes: PageChanges) -> PageOverview:
         """Change the printed number, the kind, the inclusion or the notes of a page, which writes its one row.
 
+        A page that stops being blank shows its scan again in place of a leaf, so the record of its page order is
+        removed and the stages after it become stale.
+
         :param actor: Account acting in the current request.
         :type actor: Actor
         :param project_id: Identifier of the project.
@@ -248,8 +273,15 @@ class PageService:
         :raises NotFoundError: If the project has no such page.
         :raises ConcurrentChangeError: If another request changed the page after it was read.
         """
-        page = changes.apply_to(await self._page(project_id, page_id))
+        before = await self._page(project_id, page_id)
+        page = changes.apply_to(before)
         changed = await self._uow.pages.update(evolve(page, updated_at=self._clock.now()))
+        # A page that stops being blank gets its scan back in place of the leaf, so the leaf is no longer current
+        records = (
+            await self._records.clear(PageStageKey(page_id, Stage.PAGE_ORDER))
+            if before.blank_fill is not BlankFill.SCAN and page.blank_fill is BlankFill.SCAN
+            else []
+        )
         # A label, a kind or an inclusion changes what the sections give the pages, the page itself included
         if any(field is not None for field in (changes.label, changes.kind, changes.included)) and (
             await self._labels.recompute(project_id)
@@ -257,6 +289,7 @@ class PageService:
             changed = await self._uow.pages.get(page_id)
         overview = await self._overview(changed)
         await self._finish(project_id, [changed], PageChange.EDITED)
+        await self._records.announce(project_id, records)
         return overview
 
     async def add(self, actor: Actor, project_id: ProjectId, new_page: NewPage) -> PageOverview:
@@ -279,7 +312,7 @@ class PageService:
         """
         project = await owned_project(self._uow.projects, actor, project_id)
         blank = new_page.origin is NewPageOrigin.BLANK
-        size = (new_page.size or await self._median_size(project_id)) if blank else None
+        size = (new_page.size or await self._leaf_size(project_id)) if blank else None
         [key] = await self._keys_at(project_id, new_page.anchor, count=1)
         moment = self._clock.now()
         page = self._new_page(project_id, new_page, key, moment)
@@ -327,7 +360,7 @@ class PageService:
         sizeless = (i for i, page in enumerate(new_pages) if page.origin is NewPageOrigin.BLANK and page.size is None)
         if (lacking := next(sizeless, None)) is not None:
             try:
-                median = await self._median_size(project_id)
+                median = await self._leaf_size(project_id)
             except ConflictError as error:
                 raise ConflictError(PAGE_OF_BATCH.format(index=lacking, reason=error)) from error
 
@@ -373,6 +406,71 @@ class PageService:
         if leaves:
             await self._enqueue_prepare(project_id)
         return [overviews[page.id] for page in added]
+
+    async def set_blank_fill(
+        self, actor: Actor, project_id: ProjectId, page_ids: Collection[PageId], fill: BlankFill
+    ) -> None:
+        """Choose what the image of blank pages cut from a scan is: the scan, a white leaf or the paper of the book.
+
+        A leaf is the pending version of the page order that ``pages.blank`` makes, of the size of the pages of the
+        book, and the ``prepare-pages`` job writes it, after which it becomes the current version of the page order and
+        the stages after it read it. A leaf of the paper takes the colour of the nearest pages of text. Choosing the
+        scan removes the record of the page order, so the page shows its scan again and runs through the stages as it
+        did, and a leaf already made for the page is found again when it is chosen again. A page that has the choice
+        already is left as it is, and when every page has it nothing is written. All the pages change in one
+        transaction, or none of them.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param page_ids: Pages to change, each at most once.
+        :type page_ids: Collection[PageId]
+        :param fill: What the image of the pages becomes.
+        :type fill: BlankFill
+        :raises NotFoundError: If the actor has no such project, or the project lacks one of the pages.
+        :raises ConflictError: If a page is not cut from a scan, or a leaf is chosen for a page that is not blank, or no
+                               page of the book has a recorded size to give the leaf.
+        :raises ConcurrentChangeError: If another request changed one of the pages meanwhile, which changes none.
+        """
+        project = await owned_project(self._uow.projects, actor, project_id)
+        found = {page.id: page for page in await self._uow.pages.list_by_ids(project_id, page_ids)}
+        if missing := next((page_id for page_id in page_ids if page_id not in found), None):
+            raise NotFoundError(missing)
+        for page in found.values():
+            if page.origin is not PageOrigin.SCAN or (fill is BlankFill.SCAN and page.scan_id is None):
+                raise ConflictError(NOT_A_CUT_PAGE.format(page_id=page.id))
+            if fill is not BlankFill.SCAN and page.kind is not PageKind.BLANK:
+                raise ConflictError(NOT_A_BLANK_PAGE.format(page_id=page.id))
+        changing = [page for page in found.values() if page.blank_fill is not fill]
+        if not changing:
+            return
+
+        moment = self._clock.now()
+        size = None if fill is BlankFill.SCAN else await self._leaf_size(project_id)
+        full = project.image_policy.full_format(ColorMode.BILEVEL)
+        await self._uow.pages.update_many([evolve(page, blank_fill=fill, updated_at=moment) for page in changing])
+        records: list[PageStage] = []
+        pending = False
+        for page in changing:
+            key = PageStageKey(page.id, Stage.PAGE_ORDER)
+            if size is None:
+                records.extend(await self._records.clear(key))
+                continue
+            sources = await self._paper_sources(page) if fill is BlankFill.PAPER else None
+            leaf = BaseVersions.blank(page=page, size=size, full=full, moment=moment, paper_from=sources)
+            made = await self._uow.page_versions.find(leaf.id)
+            if made is not None and made.state is VersionState.READY and not made.files_removed:
+                # The same leaf was made before, so it is current again without the job
+                records.extend(await self._records.set_head(key, head_version_id=made.id, recipe_id=None))
+                continue
+            if made is None:
+                await self._uow.page_versions.add(leaf)
+            pending = True
+        await self._finish(project_id, changing, PageChange.EDITED)
+        await self._records.announce(project_id, records)
+        if pending:
+            await self._enqueue_prepare(project_id)
 
     async def delete(self, actor: Actor, project_id: ProjectId, page_id: PageId) -> None:
         """Delete a page with its versions, and then its files, leaving its scan and the scan's source.
@@ -965,6 +1063,65 @@ class PageService:
             dpi=round(statistics.median(resolutions), 1) if resolutions else None,
         )
 
+    async def _leaf_size(self, project_id: ProjectId) -> PageSize:
+        """Return the size of a blank leaf that stands level with the pages of the book.
+
+        Once the book is measured, its pages are the size the active normalize step of the Geometry stage gives them,
+        and a leaf has that size. Before that it is the median size of the pages cut from a scan.
+
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :returns: The size of the pages of the book, with the median resolution.
+        :rtype: PageSize
+        :raises ConflictError: If no page of the book has a recorded size yet.
+        """
+        median = await self._median_size(project_id)
+        recipe = await self._uow.recipes.find_active(project_id, Stage.GEOMETRY)
+        step = (
+            None
+            if recipe is None
+            else next((step for step in recipe.steps if step.enabled and step.processor_key == NORMALIZE_KEY), None)
+        )
+        if step is None:
+            return median
+        width, height = (step.params.get(name) for name in (NormalizeParam.PAGE_WIDTH, NormalizeParam.PAGE_HEIGHT))
+        if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
+            return evolve(median, width_px=width, height_px=height)
+        return median
+
+    async def _paper_sources(self, page: Page) -> list[PageVersionId]:
+        """Find the versions of the pages nearest to a leaf whose paper the leaf takes the colour of.
+
+        The pages looked at are those of text in a window round the leaf: pages cut from a scan and part of the book,
+        which are not leaves themselves and have an image that is ready. The nearest ones are taken, and a leaf with
+        none has none to take, which makes it white.
+
+        :param page: The page that becomes a leaf.
+        :type page: Page
+        :returns: The identifiers of the versions the pages show.
+        :rtype: list[PageVersionId]
+        """
+        position = await self._uow.pages.count_before(page)
+        first = max(0, position - self.PAPER_RADIUS)
+        window = await self._uow.pages.list_for_project(
+            page.project_id, SliceRequest(offset=first, limit=position - first + self.PAPER_RADIUS + 1)
+        )
+        near = sorted(
+            (
+                overview
+                for overview in await self._overviews(window.items, first)
+                if overview.page.id != page.id
+                and overview.page.included
+                and not overview.page.is_leaf
+                and overview.page.kind in self.PAPER_KINDS
+                and overview.image_version is not None
+                and overview.image_version.renditions is not None
+                and overview.image_version.renditions.ready
+            ),
+            key=lambda overview: abs(overview.position - position),
+        )
+        return [overview.image_version.id for overview in near[: self.PAPER_PAGES] if overview.image_version]
+
     async def _prepare(self, version: PageVersion) -> bool:
         """Write the files of one pending or failed version, and store its new state.
 
@@ -981,6 +1138,16 @@ class PageService:
         try:
             page = await self._uow.pages.get(version.page_id)
         except NotFoundError:
+            return True
+        # A leaf whose fill is not the choice of its page any longer, such as one of a page that got its scan back, is
+        # nothing to make, and left pending it would be taken by every job
+        if (
+            version.processor == PAGES_BLANK
+            and page.origin is PageOrigin.SCAN
+            and page.blank_fill.value != version.params.get(BlankParam.FILL, PaperFill.WHITE.value)
+        ):
+            await self._uow.page_versions.delete_many([version.id])
+            await self._uow.commit()
             return True
         try:
             made = await self._write_files(version, page)
@@ -1046,8 +1213,18 @@ class PageService:
                 input_data=scan.facts.as_data(),
                 image=keys.scan_rendition(scan, scan.renditions.full),
             )
-        elif version.processor == PAGES_BLANK and (size := PageSize.from_data(version.data)) is not None:
-            run = StepRun(processor_key=PAGES_BLANK.key, params=size.as_data(), input_data={})
+        elif version.processor == PAGES_BLANK and PageSize.from_data(version.data) is not None:
+            sources = await self._uow.page_versions.list_by_ids(version.params.get(BlankParam.PAPER_FROM, []))
+            run = StepRun(
+                processor_key=PAGES_BLANK.key,
+                params=version.params,
+                input_data={},
+                references=[
+                    keys.version_rendition(source, source.renditions.full)
+                    for source in sources
+                    if source.renditions is not None and source.renditions.ready and not source.files_removed
+                ],
+            )
         else:
             err_msg = f'Page version {version.id} made by {version.processor.key} has no files to write.'
             raise ValueError(err_msg)

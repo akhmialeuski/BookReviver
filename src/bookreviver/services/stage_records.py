@@ -87,6 +87,22 @@ class StageRecords:
             changed.extend(await self._mark_later_stale(key.page_id, key.stage))
         return changed
 
+    async def clear(self, key: PageStageKey) -> list[PageStage]:
+        """Remove the record of a stage of a page that has no current version of its own any longer.
+
+        The later stages of the page were computed from the version the record named, so they are marked stale, and the
+        record of a stage the page never had is nothing to remove.
+
+        :param key: Page and stage whose record is removed.
+        :type key: PageStageKey
+        :returns: The later stages that became stale.
+        :rtype: list[PageStage]
+        """
+        if await self._uow.page_stages.find(key) is None:
+            return []
+        await self._uow.page_stages.delete(key)
+        return await self._mark_later_stale(key.page_id, key.stage)
+
     async def mark_stale(self, page_id: PageId, stage: Stage) -> list[PageStage]:
         """Mark one stage of a page stale, because its recipe or a manual edit it reads changed.
 

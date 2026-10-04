@@ -16,15 +16,15 @@ The class touches no file itself: images are read and written through the asset 
 from typing import TYPE_CHECKING
 
 from bookreviver.domain.entities import PageVersion, VersionInputs
-from bookreviver.domain.enums import Rendition, Stage, VersionState
+from bookreviver.domain.enums import BlankParam, PaperFill, Rendition, Stage, VersionState
 from bookreviver.domain.values import PageSize, ProcessorRef, Renditions
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Collection
     from datetime import datetime
 
     from bookreviver.domain.entities import Page, Scan
-    from bookreviver.domain.ids import StorageKey
+    from bookreviver.domain.ids import PageVersionId, StorageKey
     from bookreviver.ports.imaging import Tiler
     from bookreviver.ports.storage import AssetStore
 
@@ -84,8 +84,19 @@ class BaseVersions:
         )
 
     @staticmethod
-    def blank(*, page: Page, size: PageSize, full: Rendition, moment: datetime) -> PageVersion:
+    def blank(
+        *,
+        page: Page,
+        size: PageSize,
+        full: Rendition,
+        moment: datetime,
+        paper_from: Collection[PageVersionId] | None = None,
+    ) -> PageVersion:
         """Build the pending base version of a generated blank leaf, whose image a job writes.
+
+        A white leaf has the size alone for its parameters, as a leaf had before it could be anything else, so the
+        identifiers of the leaves already stored stay as they are. A leaf of the colour of the paper names the versions
+        of the pages it takes the paper from, which is what makes a leaf made from other pages another version.
 
         :param page: The blank page.
         :type page: Page
@@ -95,15 +106,21 @@ class BaseVersions:
         :type full: Rendition
         :param moment: Time the version is created.
         :type moment: datetime
+        :param paper_from: Versions of the neighbouring pages whose paper the leaf takes, none for a white leaf. An
+                           empty collection is a leaf of the paper with no page to take it from, which is white.
+        :type paper_from: Collection[PageVersionId] | None
         :returns: The pending version, with the size of the leaf in its data.
         :rtype: PageVersion
         """
+        params = size.as_data()
+        if paper_from is not None:
+            params = {**params, BlankParam.FILL: PaperFill.PAPER.value, BlankParam.PAPER_FROM: sorted(paper_from)}
         return PageVersion(
-            id=VersionInputs(page_id=page.id, processor=PAGES_BLANK, params=size.as_data()).identify(),
+            id=VersionInputs(page_id=page.id, processor=PAGES_BLANK, params=params).identify(),
             page_id=page.id,
             stage=Stage.PAGE_ORDER,
             processor=PAGES_BLANK,
-            params=size.as_data(),
+            params=params,
             data=size.as_data(),
             renditions=Renditions(ready=False, full=full),
             state=VersionState.PENDING,

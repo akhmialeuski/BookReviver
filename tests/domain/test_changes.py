@@ -1,15 +1,27 @@
 """Tests for partial changes of value objects."""
 
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import attrs
 import pytest
 
-from bookreviver.domain.changes import KEEP, BookDetailsChanges, CoverChange, ProjectChanges
-from bookreviver.domain.enums import ContributorRole, IdentifierScheme, ImagePolicy, Orthography, Script
+from bookreviver.domain.changes import KEEP, BookDetailsChanges, CoverChange, PageChanges, ProjectChanges
+from bookreviver.domain.enums import (
+    BlankFill,
+    ContributorRole,
+    IdentifierScheme,
+    ImagePolicy,
+    Orthography,
+    PageKind,
+    Script,
+)
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor
-from tests.helpers.builders import FULL_DETAILS, make_project, new_account_id
+from tests.helpers.builders import FULL_DETAILS, make_page, make_project, make_scan, make_source, new_account_id
+
+if TYPE_CHECKING:
+    from bookreviver.domain.entities import Page
 
 NEW_TITLE: str = 'New title'
 CURRENT: BookDetails = BookDetails(
@@ -117,3 +129,33 @@ class TestProjectChangesApplyTo:
         """Verify the result is validated, so a change cannot produce a project with an invalid description."""
         with pytest.raises(ValueError, match='title'):
             ProjectChanges(details=BookDetailsChanges(title='')).apply_to(PROJECT)
+
+
+class TestPageChangesApplyTo:
+    """Tests for PageChanges.apply_to() where the kind of a page carries a leaf in place of its scan."""
+
+    @staticmethod
+    def _leaf_page() -> Page:
+        """Build a blank page cut from a scan that shows a white leaf.
+
+        :returns: The page.
+        :rtype: Page
+        """
+        project = make_project(owner_id=new_account_id())
+        scan = make_scan(source=make_source(project_id=project.id), number=0)
+        return attrs.evolve(
+            make_page(project_id=project.id, scan=scan, kind=PageKind.BLANK), blank_fill=BlankFill.WHITE
+        )
+
+    def test_a_page_that_stops_being_blank_gets_its_scan_back(self) -> None:
+        """Verify the leaf is dropped with the kind, since a leaf stands in place of the scan of a blank page only."""
+        changed = PageChanges(kind=PageKind.TEXT).apply_to(self._leaf_page())
+
+        assert (changed.kind, changed.blank_fill) == (PageKind.TEXT, BlankFill.SCAN)
+
+    def test_a_page_that_stays_blank_keeps_its_leaf(self) -> None:
+        """Verify a change that leaves the kind alone, or sets the same one, keeps the leaf."""
+        leaf = self._leaf_page()
+
+        assert PageChanges(notes='x').apply_to(leaf).blank_fill is BlankFill.WHITE
+        assert PageChanges(kind=PageKind.BLANK).apply_to(leaf).blank_fill is BlankFill.WHITE

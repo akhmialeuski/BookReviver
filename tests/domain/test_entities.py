@@ -13,6 +13,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.entities import VERSION_ID_PATTERN, PageEdit, VersionInputs
 from bookreviver.domain.enums import (
     AppliesTo,
+    BlankFill,
     ColorMode,
     JobKind,
     PageKind,
@@ -35,6 +36,8 @@ from tests.helpers.builders import (
     make_page_version,
     make_project,
     make_recipe,
+    make_scan,
+    make_source,
     new_account_id,
 )
 
@@ -83,6 +86,54 @@ class TestPage:
         page = make_page(project_id=make_project(owner_id=new_account_id()).id)
         with pytest.raises(ValueError, match='has no scan'):
             evolve(page, origin=origin, scan_id=ScanId(uuid4()))
+
+    @pytest.mark.parametrize('fill', [BlankFill.WHITE, BlankFill.PAPER])
+    def test_a_leaf_stands_in_place_of_the_scan_of_a_blank_page_cut_from_a_scan(self, fill: BlankFill) -> None:
+        """Verify a blank page cut from a scan may show either leaf, and then is a leaf for the stages.
+
+        :param fill: The leaf the page shows.
+        :type fill: BlankFill
+        """
+        project = make_project(owner_id=new_account_id())
+        scan = make_scan(source=make_source(project_id=project.id), number=0)
+        page = make_page(project_id=project.id, scan=scan, kind=PageKind.BLANK)
+
+        assert evolve(page, blank_fill=fill).is_leaf
+
+    def test_a_page_that_keeps_its_scan_is_no_leaf_and_a_generated_page_is_one(self) -> None:
+        """Verify the scan is no leaf, and a page generated as a white leaf is one without choosing anything."""
+        project = make_project(owner_id=new_account_id())
+        scan = make_scan(source=make_source(project_id=project.id), number=0)
+        scanned = make_page(project_id=project.id, scan=scan, kind=PageKind.BLANK)
+
+        assert not scanned.is_leaf
+        assert evolve(make_page(project_id=project.id), origin=PageOrigin.BLANK).is_leaf
+
+    @pytest.mark.parametrize(
+        ('kind', 'origin'),
+        [
+            (PageKind.TEXT, PageOrigin.SCAN),
+            (PageKind.BLANK, PageOrigin.PLACEHOLDER),
+            (PageKind.BLANK, PageOrigin.BLANK),
+        ],
+        ids=['text-page', 'placeholder', 'generated-leaf'],
+    )
+    def test_a_leaf_is_refused_where_there_is_no_blank_scan_to_replace(
+        self, kind: PageKind, origin: PageOrigin
+    ) -> None:
+        """Reject a leaf on a page that is not blank, and on a page that is cut from no scan.
+
+        :param kind: Kind of the page.
+        :type kind: PageKind
+        :param origin: Where the image of the page comes from.
+        :type origin: PageOrigin
+        """
+        project = make_project(owner_id=new_account_id())
+        scan = make_scan(source=make_source(project_id=project.id), number=0) if origin is PageOrigin.SCAN else None
+        page = evolve(make_page(project_id=project.id, scan=scan, kind=kind), origin=origin)
+
+        with pytest.raises(ValueError, match='blank page cut from a scan'):
+            evolve(page, blank_fill=BlankFill.WHITE)
 
     def test_page_whose_source_was_deleted_keeps_its_origin(self) -> None:
         """Verify a page cut from a scan stays one when its scan is gone, since it keeps its own copy of the image."""

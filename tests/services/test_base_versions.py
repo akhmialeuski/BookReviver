@@ -7,7 +7,8 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import VersionInputs
-from bookreviver.domain.enums import ColorMode, Rendition, Stage, VersionState
+from bookreviver.domain.enums import BlankParam, ColorMode, PaperFill, Rendition, Stage, VersionState
+from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.values import PageSize, Renditions
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from tests.helpers.builders import EPOCH, make_page, make_project, make_scan, make_source, new_account_id
@@ -94,4 +95,34 @@ class TestBlank:
         )
         expect(version.renditions == Renditions(ready=False, full=Rendition.FULL_PNG))
         expect(PageSize.from_data(version.data) == size)
+        assert_expectations()
+
+    def test_a_white_leaf_has_the_size_alone_for_its_parameters(self) -> None:
+        """Verify a leaf without a paper keeps the parameters it had before leaves could have one."""
+        page = make_page(project_id=make_project(owner_id=new_account_id()).id)
+        size = PageSize(width_px=100, height_px=150, dpi=96.0)
+
+        version = BaseVersions.blank(page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH)
+
+        assert version.params == size.as_data()
+
+    def test_a_leaf_of_the_paper_names_the_pages_it_takes_the_paper_from_in_a_fixed_order(self) -> None:
+        """Verify the identifier does not depend on the order the pages are given in, and differs from a white leaf's."""
+        page = make_page(project_id=make_project(owner_id=new_account_id()).id)
+        size = PageSize(width_px=100, height_px=150)
+        pages = [PageVersionId('b' * 16), PageVersionId('a' * 16)]
+
+        paper = BaseVersions.blank(page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH, paper_from=pages)
+        again = BaseVersions.blank(
+            page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH, paper_from=list(reversed(pages))
+        )
+        white = BaseVersions.blank(page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH)
+        other = BaseVersions.blank(
+            page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH, paper_from=[PageVersionId('c' * 16)]
+        )
+
+        expect(paper.params[BlankParam.FILL] == PaperFill.PAPER)
+        expect(paper.params[BlankParam.PAPER_FROM] == sorted(pages))
+        expect(paper.id == again.id)
+        expect(paper.id not in {white.id, other.id} and white.id != other.id)
         assert_expectations()

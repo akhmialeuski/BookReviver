@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from attrs import field, frozen, validators
 
 from bookreviver.domain.enums import (
+    BlankFill,
     CompareMode,
     ImagePolicy,
     JobKind,
@@ -237,6 +238,8 @@ class Page:
                    deleted.
     :ivar slot: Part of the scan the page shows: ``0`` the whole scan, ``1`` and ``2`` the halves of a spread, higher
                 for a fold-out.
+    :ivar blank_fill: What the image of a page of kind blank is: its scan, or a leaf drawn in its place. The scan of the
+                      page stays linked whatever the choice, so choosing the scan again brings it back.
     :ivar included: Whether the page is part of the book; off for a colour chart or a duplicate.
     :ivar notes: Notes of the user.
     :ivar group_label: Label of the group the user put the page in by hand, or empty for no group, which a rule of a
@@ -260,6 +263,7 @@ class Page:
     origin: PageOrigin
     scan_id: ScanId | None = None
     slot: int = field(default=WHOLE_SCAN, validator=validators.ge(WHOLE_SCAN))
+    blank_fill: BlankFill = BlankFill.SCAN
     included: bool = True
     notes: str = ''
     group_label: str = ''
@@ -268,13 +272,25 @@ class Page:
     revision: int = field(default=0, validator=validators.ge(0))
 
     def __attrs_post_init__(self) -> None:
-        """Check that only a page cut from a scan names a scan.
+        """Check that only a page cut from a scan names a scan, and that only a blank one of them has a leaf.
 
-        :raises ValueError: If a blank leaf or a placeholder names a scan.
+        :raises ValueError: If a blank leaf or a placeholder names a scan, or a leaf stands in place of the scan of a
+                            page that is not a blank page cut from a scan.
         """
         if self.scan_id is not None and self.origin is not PageOrigin.SCAN:
             err_msg = f'A page of origin {self.origin} has no scan, but names scan {self.scan_id}.'
             raise ValueError(err_msg)
+        cut_blank = self.origin is PageOrigin.SCAN and self.kind is PageKind.BLANK
+        if self.blank_fill is not BlankFill.SCAN and not cut_blank:
+            err_msg = (
+                f'A leaf replaces the scan of a blank page cut from a scan, not of a {self.kind} page of {self.origin}.'
+            )
+            raise ValueError(err_msg)
+
+    @property
+    def is_leaf(self) -> bool:
+        """Whether the image of the page is drawn by the program, so no step of a stage has anything to find in it."""
+        return self.origin is PageOrigin.BLANK or self.blank_fill is not BlankFill.SCAN
 
 
 @frozen(kw_only=True)

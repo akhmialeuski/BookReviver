@@ -29,6 +29,8 @@ MARKER_COLOR: tuple[int, int, int] = (220, 20, 20)
 MARKER_RADIUS_PX: int = 9
 # How much redder than green a pixel is where the landmark is, which paper, ink and the gutter are not
 REDNESS_LIMIT: int = 100
+# The tones of a colour image
+RGB_TONES: int = 3
 
 
 def text_page(width_px: int, height_px: int, *, seed: int = 7) -> Image.Image:
@@ -54,6 +56,60 @@ def text_page(width_px: int, height_px: int, *, seed: int = 7) -> Image.Image:
             draw.rectangle((left, top, right, top + WORD_HEIGHT_PX), fill=INK)
             left = right + chance.randint(*WORD_GAP_RANGE_PX)
     return page
+
+
+def ruled_page(
+    size: tuple[int, int], paper: tuple[int, ...], ink: tuple[int, ...] | None = None, *, pitch_px: int = 10
+) -> Image.Image:
+    """Draw a page of thin lines of ink on paper of any colour, which a measure of the paper can part from its ink.
+
+    :param size: Width and height of the page in pixels.
+    :type size: tuple[int, int]
+    :param paper: Colour of the paper, one tone for a gray page and three for a colour one.
+    :type paper: tuple[int, ...]
+    :param ink: Colour of the lines, of as many tones as the paper, or None for a page of paper alone.
+    :type ink: tuple[int, ...] | None
+    :param pitch_px: Distance between the lines in pixels.
+    :type pitch_px: int
+    :returns: A gray page for one tone and an RGB page for three.
+    :rtype: Image.Image
+    """
+    colour = len(paper) == RGB_TONES
+    page = Image.new('RGB' if colour else 'L', size, paper if colour else paper[0])
+    if ink is not None:
+        draw = ImageDraw.Draw(page)
+        for top in range(pitch_px, size[1] - pitch_px, pitch_px):
+            draw.rectangle((pitch_px, top, size[0] - pitch_px, top + 2), fill=ink if colour else ink[0])
+    return page
+
+
+def pixel(image: Image.Image, point: tuple[int, int]) -> tuple[int, ...]:
+    """Read one pixel as a tuple of tones, whatever the mode of the image.
+
+    :param image: The image.
+    :type image: Image.Image
+    :param point: Column and row of the pixel.
+    :type point: tuple[int, int]
+    :returns: One tone for a gray image and one for each band of a colour one.
+    :rtype: tuple[int, ...]
+    """
+    found = image.getpixel(point)
+    return found if isinstance(found, tuple) else (round(found or 0),)
+
+
+def same_colour(found: tuple[int, ...], expected: tuple[int, ...], *, tolerance: int = 2) -> bool:
+    """Tell whether two colours are the same to within the tolerance of a resampled thumbnail.
+
+    :param found: Colour found.
+    :type found: tuple[int, ...]
+    :param expected: Colour expected.
+    :type expected: tuple[int, ...]
+    :param tolerance: Largest difference of a tone that still counts as the same.
+    :type tolerance: int
+    :returns: True when every tone differs by no more than the tolerance.
+    :rtype: bool
+    """
+    return all(abs(a - b) <= tolerance for a, b in zip(found, expected, strict=True))
 
 
 def turned(page: Image.Image, degrees: float) -> Image.Image:

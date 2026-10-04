@@ -413,9 +413,10 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
 
     @abstractmethod
     async def base_sizes(self, project_id: ProjectId) -> Sequence[PageSize]:
-        """Return the sizes of the base versions of the project's pages that show a scan and are part of the book.
+        """Return the sizes of the page split's base versions of the included pages that show a scan.
 
-        The median of these is the size of a generated blank leaf. A version that records no size is left out.
+        The median of these is the size of a generated blank leaf. A leaf drawn in place of a scan is a version of the
+        page order, so it is not counted. A version that records no size is left out.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId

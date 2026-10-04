@@ -16,6 +16,7 @@ from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import ManifestPage, Pager
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.pages import (
+    BlankFillChange,
     LabelRange,
     NumberedPageSchema,
     PageCreate,
@@ -189,6 +190,35 @@ async def move_pages(
     await pages.move_group(actor, project_id, body.page_ids, body.anchor)
 
 
+@router.post('/{project_id}/pages/blank-fill', status_code=status.HTTP_204_NO_CONTENT)
+async def fill_blank_pages(
+    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    body: BlankFillChange,
+    actor: ActorDep,
+    pages: FromDishka[PageService],
+) -> None:
+    """Choose the image of one or more blank pages: their scan, a white leaf or a leaf of the paper of the book.
+
+    A leaf stands in place of the scan of a page of kind blank that is cut from a scan, has the size of the pages of
+    the book and passes the stages after the page order without steps and without a mark of review. Its image is
+    written by a job, so the pages show it once the job is done. The scan stays, and choosing it again, or changing the
+    kind of the page, brings it back. The answer is 409 when a page is not cut from a scan, or is not blank and gets a
+    leaf, or when no page of the book has a size to give the leaf, and nothing is changed then. The change reaches the
+    browser as a ``pages-changed`` event, so the answer has no body.
+
+    \N{FORM FEED}
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :param body: The pages to change and the choice.
+    :type body: BlankFillChange
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param pages: Page service of the request.
+    :type pages: PageService
+    """
+    await pages.set_blank_fill(actor, project_id, body.page_ids, body.blank_fill)
+
+
 @router.patch('/{project_id}/pages/{page_id}')
 async def update_page(
     address: Annotated[PagePath, Depends()],
@@ -200,7 +230,8 @@ async def update_page(
     """Merge the body into the page, as JSON Merge Patch (RFC 7396) defines.
 
     A field left out keeps its value, and a label or notes sent as null are cleared. The kind and the inclusion cannot
-    be cleared, and the order, the origin and the scan of a page are changed by other routes.
+    be cleared, and the order, the origin and the scan of a page are changed by other routes. A page that stops being
+    blank shows its scan again in place of a leaf.
 
     \N{FORM FEED}
     :param address: Identifiers of the project and of the page.

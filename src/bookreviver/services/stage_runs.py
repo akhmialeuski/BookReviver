@@ -5,8 +5,9 @@ makes one version for each step of the recipe, each reading the one before. Befo
 worked out from everything it depends on, so a version that was made already is found and used again, and only a step
 whose parameters, edit or input changed is computed. A page that does not meet the condition of a step (``AppliesTo``)
 passes it unchanged: the version of the step holds the image of its input, flagged as skipped by the condition. A
-version that is made is stored in its own directory and never changed, and one that fails is stored as failed with its
-reason, so a repeated run makes it again under the same identifier.
+page that shows a generated leaf meets no condition, so it passes every step unchanged, with the mark of review its
+input has, which a leaf has none of. A version that is made is stored in its own directory and never changed, and one
+that fails is stored as failed with its reason, so a repeated run makes it again under the same identifier.
 
 ``RecipeRun`` ends a page's run by making the last version the current one of the stage, which marks the later stages of
 the page stale, and by cutting its tile pyramid. A run may stop at one step of the recipe, and the page is then recorded
@@ -326,7 +327,8 @@ class StageWork:
         processor = self._catalogue.get(step.processor_key)
         if processor.spec.scope is ProcessorScope.SPLIT:
             raise ConflictError(SPLIT_NOT_AVAILABLE.format(key=step.processor_key))
-        skipped = not step.applies_to.matches(page.kind, source.stage_color or source.color_mode)
+        # A leaf the program drew has nothing for a step to find, so it passes every step unchanged and unmarked
+        skipped = page.is_leaf or not step.applies_to.matches(page.kind, source.stage_color or source.color_mode)
         state = None if skipped else await self._uow.page_step_states.find(PageStepKey(page.id, stage, step.step_id))
         # The settings of the page are laid over the parameters of the step before they are checked, so the identifier
         # of the version hashes the parameters the step runs with, and two pages that end up with equal ones share it.

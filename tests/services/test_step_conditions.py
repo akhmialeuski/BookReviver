@@ -10,7 +10,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import AppliesTo, EditorKind, PageKind, Stage, TransformKind, VersionData
+from bookreviver.domain.enums import AppliesTo, BlankFill, EditorKind, PageKind, Stage, TransformKind, VersionData
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.values import NewPageEdit, PageStepKey, RecipeDraft, StageRun, Step
 from tests.helpers.processors import RAN_KEY, STRENGTH_PARAMETER, FakeProcessor
@@ -27,6 +27,7 @@ ROTATION: NewPageEdit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(
 # Names of the recipes the tests save
 TWO_STEPS: str = 'Two'
 PICTURES_ONLY: str = 'Pictures'
+ALL_PAGES: str = 'Everything'
 
 
 async def input_of(kit: ProcessingKit, version: PageVersion) -> PageVersion:
@@ -157,6 +158,67 @@ class TestCondition:
         made = await head_of(fx_kit, text, Stage.GEOMETRY)
         expect(made.id != skipped.id)
         expect(made.data[RAN_KEY] == 3 and VersionData.SKIPPED_BY_CONDITION not in made.data)
+        assert_expectations()
+
+
+class TestLeaf:
+    """Tests for a page that shows a leaf the program drew, which every step of every stage passes unchanged."""
+
+    async def test_a_page_that_shows_a_leaf_passes_every_step_unchanged_and_unmarked(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify no step runs on the leaf, and its version is the identity with no parameters and no review mark.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project = await fx_kit.seed_project()
+        page, _ = await fx_kit.seed_scan_page(project, kind=PageKind.BLANK)
+        await fx_kit.seed_base_version(page)
+        uow = fx_kit.uow()
+        await uow.pages.update(evolve(await uow.pages.get(page.id), blank_fill=BlankFill.WHITE))
+        await uow.commit()
+        steps = [Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: strength}) for strength in (4, 5)]
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, ALL_PAGES, steps)
+
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+
+        passed = await head_of(fx_kit, page, Stage.GEOMETRY)
+        expect(fx_kit.fake.runs == 0)
+        expect(passed.transform.kind is TransformKind.IDENTITY)
+        expect((passed.params, passed.review, passed.edit_hash) == ({}, None, ''))
+        expect(passed.data[VersionData.SKIPPED] is True and passed.data[VersionData.SKIPPED_BY_CONDITION] is True)
+        expect(passed.renditions is not None and passed.renditions.ready)
+        assert_expectations()
+
+    async def test_the_page_is_processed_by_the_steps_again_when_it_shows_its_scan_again(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify the leaf and the scan do not share a version, so the scan is run by the step and not found as passed.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project = await fx_kit.seed_project()
+        page, _ = await fx_kit.seed_scan_page(project, kind=PageKind.BLANK)
+        await fx_kit.seed_base_version(page)
+        uow = fx_kit.uow()
+        await uow.pages.update(evolve(await uow.pages.get(page.id), blank_fill=BlankFill.WHITE))
+        await uow.commit()
+        step = Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 4})
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, ALL_PAGES, [step])
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        passed = await head_of(fx_kit, page, Stage.GEOMETRY)
+        uow = fx_kit.uow()
+        await uow.pages.update(evolve(await uow.pages.get(page.id), blank_fill=BlankFill.SCAN))
+        await uow.commit()
+
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+
+        made = await head_of(fx_kit, page, Stage.GEOMETRY)
+        expect(fx_kit.fake.runs == 1)
+        expect(made.id != passed.id)
+        expect(made.data[RAN_KEY] == 4 and VersionData.SKIPPED_BY_CONDITION not in made.data)
         assert_expectations()
 
 

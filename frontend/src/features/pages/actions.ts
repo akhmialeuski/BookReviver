@@ -11,6 +11,7 @@ import {
   attachScanApiV1ProjectsProjectIdPagesPageIdScanPutMutation,
   deletePageApiV1ProjectsProjectIdPagesPageIdDeleteMutation,
   deleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteMutation,
+  fillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostMutation,
   movePagesApiV1ProjectsProjectIdPagesMovePostMutation,
   moveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostMutation,
   numberPagesApiV1ProjectsProjectIdPagesLabelsPostMutation,
@@ -32,8 +33,8 @@ import {
 /**
  * Every change a reader can make to the pages of a book, as TanStack Query mutations over the generated client.
  *
- * A move, and a change of the kind, inclusion, number or notes of pages, is applied to the cached manifest before
- * the server answers and put back if it fails, so the grid never lags behind a click. Whatever the outcome, the
+ * A move, a change of the kind, inclusion, number or notes of pages, and the choice of the image of blank pages, is
+ * applied to the cached manifest before the server answers and put back if it fails, so the grid never lags behind a click. Whatever the outcome, the
  * manifest is read again afterwards, which settles on the server's state and makes a conflict show what the other
  * change did. The other changes wait for the answer, since they cannot be predicted: a numbering, a blank leaf whose
  * image a job writes, a scan taken over from a page.
@@ -193,6 +194,29 @@ export function useUpdatePages(projectId: string) {
         ),
       );
     },
+    onSettled: readWhenLast(queryClient, projectId),
+  });
+}
+
+/**
+ * Choose the image of blank pages: their scan, a white leaf or the paper of the book.
+ *
+ * The choice is shown on the pages at once. The leaf itself is drawn by a job, so the picture of a page changes when
+ * the manifest is read after the job's event, and a page the server refuses leaves all of them as they were.
+ */
+export function useFillBlankPages(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...fillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostMutation(),
+    scope: rewriteScope(projectId),
+    onMutate: ({ body }) =>
+      applyOptimistically(queryClient, projectId, (pages) => {
+        const targets = new Set(body.page_ids);
+        return pages.map((page) =>
+          targets.has(page.id) ? { ...page, blank_fill: body.blank_fill } : page,
+        );
+      }),
+    onError: (_error, _variables, snapshot) => restore(queryClient, projectId, snapshot),
     onSettled: readWhenLast(queryClient, projectId),
   });
 }
