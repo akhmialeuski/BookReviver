@@ -555,7 +555,12 @@ describe('useEditorSession', () => {
       expect(session?.figure).toBe('found');
       expect(field()?.value).toBe('-2.4');
 
+      // The edits of the page were read by the renders above, and the harness keeps its cache between them, so the
+      // edit is read again as it is after a save
       sdk.edits.mockResolvedValue(listOf(edit({ geometry: { degrees: 1.5 } })));
+      await act(async () => {
+        await client.invalidateQueries();
+      });
       await render({ focusStepId: DESKEW_STEP });
       expect(session?.figure).toBe('by-hand');
       expect(field()?.value).toBe('1.5');
@@ -567,6 +572,14 @@ describe('useEditorSession', () => {
 
       await render({ focusStepId: DESKEW_STEP, serverFigure: 'default' });
       expect(session?.figure).toBe('default');
+    });
+
+    it('shows a saved edit as set by hand at once, while the row of the step still says found', async () => {
+      sdk.edits.mockResolvedValue(listOf(edit({ geometry: { degrees: 1.5 } })));
+
+      await render({ focusStepId: DESKEW_STEP, serverFigure: 'found' });
+
+      expect(session?.figure).toBe('by-hand');
     });
 
     it('applies the same rule to what the screen has while the row of the step is read, and when no step is open', async () => {

@@ -310,12 +310,15 @@ export function useEditorSession({
     draft !== null && draft.key === key && draft.base === savedText
       ? draft.geometry
       : (savedGeometry ?? fallback);
-  // Outside the step workspace there is no row of a step to read the state from, so the same rule is applied here to what
-  // the screen has. The same fallback covers the moment before the row of an open step arrives
+  // Inside the workspace the state is the one the server computed for the row of the step. Outside it there is no such row,
+  // so the same rule is applied to what the screen has, which also covers the moment before the row arrives. A saved edit
+  // is shown as set by hand at once, since the row is read again only after the save and would still say "found" until then
   const figure =
-    focused && serverFigure !== undefined && serverFigure !== null && serverFigure !== 'skipped'
-      ? serverFigure
-      : figureStateOf(savedGeometry !== null, made !== null);
+    savedGeometry !== null
+      ? 'by-hand'
+      : focused && serverFigure !== undefined && serverFigure !== null && serverFigure !== 'skipped'
+        ? serverFigure
+        : figureStateOf(false, made !== null);
   const hold = (next: Geometry): void => setDraft({ key, base: savedText, geometry: next });
   const commit = (next: Geometry): void => {
     hold(next);
