@@ -412,12 +412,12 @@ describe('ThisPageSection', () => {
       });
       await render({ page: page('page'), row: row('page', { version: NEW }) });
 
-      const notes = [...container.querySelectorAll('[data-testid="result-note"]')].map(
-        (note) => note.textContent,
-      );
-      expect(notes[0]).toContain('Too tight');
-      expect(notes[0]).toContain('Edit comment');
-      expect(notes[1]).toContain('Add a comment');
+      // The history lists the newest result first, so each note is found by its version
+      const note = (id: string): string | null | undefined =>
+        container.querySelector(`[data-testid="result-note"][data-version="${id}"]`)?.textContent;
+      expect(note('old')).toContain('Too tight');
+      expect(note('old')).toContain('Edit comment');
+      expect(note('new')).toContain('Add a comment');
     });
 
     it('tells the reader when the notes could not be saved', async () => {
@@ -428,7 +428,8 @@ describe('ThisPageSection', () => {
 
       await click('old', 'result-mark-good');
 
-      expect(container.querySelector('[role="alert"]')).not.toBeNull();
+      // The mutation reports its failure a few ticks after the click
+      await vi.waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
     });
   });
 

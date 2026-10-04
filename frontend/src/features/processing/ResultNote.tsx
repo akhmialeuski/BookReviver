@@ -39,7 +39,7 @@ export function ResultNote({
   }
 
   return (
-    <div className="grid gap-1.5" data-testid="result-note">
+    <div className="grid gap-1.5" data-testid="result-note" data-version={version.id}>
       <fieldset className="m-0 flex min-w-0 gap-1.5 border-0 p-0">
         <legend className="sr-only">{labels.mark.group}</legend>
         {MARKS.map((mark) => (
