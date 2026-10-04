@@ -177,7 +177,7 @@ function StepCard({
         transition,
       }}
       className={cn(
-        'rounded-lg border bg-card text-card-foreground',
+        'min-w-0 rounded-lg border bg-card text-card-foreground',
         isDragging && 'z-10 opacity-80 shadow-lg',
         outOfLimits && 'border-destructive/60',
         hover === 'usual' && 'border-destructive bg-destructive/10',
@@ -272,7 +272,7 @@ function StepCard({
       {issues.length === 0 || open ? null : (
         <p
           className={cn(
-            'px-3 pb-1.5 text-xs',
+            'px-3 pb-1.5 text-xs break-words',
             kind === 'required' ? 'text-destructive' : 'text-status-attention',
           )}
           data-testid="step-order-reason"
@@ -300,7 +300,7 @@ function StepCard({
                 <p
                   key={`${issue.otherId}|${issue.reason}`}
                   className={cn(
-                    'text-xs',
+                    'text-xs break-words',
                     issue.kind === 'required' ? 'text-destructive' : 'text-status-attention',
                   )}
                 >
@@ -448,7 +448,7 @@ export function StepList({
         <OrderNotice mode={order.mode} issue={hover.issue} />
       )}
       <SortableContext items={steps.map((step) => step.id)} strategy={verticalListSortingStrategy}>
-        <ol aria-label={labels.title} className="grid gap-2" data-testid="recipe-steps">
+        <ol aria-label={labels.title} className="grid grid-cols-1 gap-2" data-testid="recipe-steps">
           {steps.map((step, index) => (
             <StepCard
               key={step.id}

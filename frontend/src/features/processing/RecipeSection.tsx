@@ -94,7 +94,7 @@ export function RecipeSection({
         };
 
   return (
-    <section className="grid gap-3" aria-label={labels.recipe.label}>
+    <section className="grid grid-cols-1 gap-3" aria-label={labels.recipe.label}>
       <div className="flex min-h-6 items-center justify-between gap-2">
         <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           {labels.recipe.label}
