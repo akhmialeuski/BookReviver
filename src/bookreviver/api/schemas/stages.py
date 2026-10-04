@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Self
 
 from bookreviver.api.schemas.base import ResponseModel
 from bookreviver.api.schemas.processing import PageVersionSchema
-from bookreviver.domain.enums import FigureState, PageStageStatus, ReviewReason, Stage, StageStatus
+from bookreviver.domain.enums import FigureState, PageStageStatus, ReviewReason, Stage, StageStatus, StepFlag
 from bookreviver.domain.ids import PageId, RecipeId, StepId
 
 if TYPE_CHECKING:
@@ -87,12 +87,15 @@ class StepPageSchema(ResponseModel):
     :ivar input_version: The version the step reads on the page, which the canvas of the step shows, or None when the
                          page has not come as far as the step or is not run.
     :ivar version: The version the step made on the page, or None when the page was not run through the step.
+    :ivar flags: Why the page asks for a look at the step: the step is unsure of it, what it found departs from the
+                 book, it is set by hand, or the condition skipped it. The strip of the open step lists pages by these.
     """
 
     step_id: StepId
     state: FigureState
     input_version: PageVersionSchema | None
     version: PageVersionSchema | None
+    flags: list[StepFlag]
 
     @classmethod
     def of(cls, row: StepRow, project_id: ProjectId, request: Request) -> Self:
@@ -114,6 +117,7 @@ class StepPageSchema(ResponseModel):
             if row.input_version is None
             else PageVersionSchema.of(row.input_version, project_id, request),
             version=None if row.version is None else PageVersionSchema.of(row.version, project_id, request),
+            flags=list(row.flags),
         )
 
 

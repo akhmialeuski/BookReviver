@@ -8,7 +8,7 @@ import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.app.plugins import PROCESSOR_GROUP, EntryPointCatalog
-from bookreviver.domain.enums import WorkerPool
+from bookreviver.domain.enums import StepMeasure, WorkerPool
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.plugins.base import ModelProcessor
 from tests.helpers.samples import CV_MISSING
@@ -53,6 +53,12 @@ class TestEntryPointCatalog:
             'cleanup.eraser',
             'cleanup.thickness',
         } <= set(keys)
+
+    def test_the_steps_that_find_a_number_on_each_page_say_what_to_compare_with_the_book(self) -> None:
+        """Verify the deskew names the angle and the content selection the size of its frame, and nothing else does."""
+        pytest.importorskip('cv2', reason=CV_MISSING)
+        measures = {spec.key: spec.measure for spec in EntryPointCatalog(pools=set(WorkerPool)).specs() if spec.measure}
+        assert measures == {'geometry.deskew': StepMeasure.ANGLE, 'geometry.crop': StepMeasure.FRAME_SIZE}
 
     def test_every_parameter_of_a_built_in_processor_has_a_title_and_a_description_of_its_own(self) -> None:
         """Verify the form of a processor has a label and a hint for each field, not the name of the field.

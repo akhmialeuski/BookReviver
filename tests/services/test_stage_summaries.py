@@ -18,6 +18,7 @@ from bookreviver.domain.enums import (
     Stage,
     StageState,
     StageStatus,
+    StepFlag,
     VersionState,
 )
 from bookreviver.domain.errors import NotFoundError
@@ -25,7 +26,7 @@ from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import StepId
 from bookreviver.domain.values import NewPageEdit, PageStepKey, ProcessorRef, RecipeDraft, SliceRequest, StageRun, Step
 from tests.helpers.builders import make_page_stage, make_page_version
-from tests.helpers.processors import FakeProcessor
+from tests.helpers.processors import MEASURING_KEY, STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.spreads import run_stage
 
 if TYPE_CHECKING:
@@ -40,6 +41,9 @@ STAGES_WITH_A_PROCESSOR: frozenset[Stage] = frozenset({Stage.PAGE_SPLIT, Stage.G
 PAGE_KEYS: tuple[str, ...] = ('a0', 'a1', 'a2')
 FAKE_KEY: str = FakeProcessor.spec.key
 ROTATION: NewPageEdit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=1.5))
+# A strength a page sets for its step, and a far one that makes the angle of the page depart from the book
+STRONGER: int = 2
+FAR_STRENGTH: int = 5
 
 
 async def seed_book(kit: ProcessingKit) -> tuple[Actor, Project, list[Page]]:
@@ -576,3 +580,105 @@ class TestStepRows:
         _, project, _, _ = await seed_text_and_plate(fx_kit)
         with pytest.raises(NotFoundError):
             await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), StepId(uuid4()))
+
+    async def test_a_page_with_a_setting_of_its_own_for_the_step_is_set_by_hand_and_keeps_its_shape(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a setting of the page raises the flag without changing where the shape comes from.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, text, _ = await seed_text_and_plate(fx_kit)
+        first, _ = await step_ids_of(fx_kit, project)
+        key = PageStepKey(text.id, Stage.GEOMETRY, first)
+        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
+        steps = [row.step for row in rows.items]
+        assert [(step.state, step.flags) for step in steps if step] == [
+            (FigureState.DEFAULT, (StepFlag.BY_HAND,)),
+            (FigureState.DEFAULT, ()),
+        ]
+
+    async def test_a_page_the_condition_skipped_is_flagged_as_skipped(self, fx_kit: ProcessingKit) -> None:
+        """Verify the skipped flag follows the condition, per step.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, _, _ = await seed_text_and_plate(fx_kit)
+        first, _ = await step_ids_of(fx_kit, project)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
+        assert [row.step.flags for row in rows.items if row.step] == [(), (StepFlag.SKIPPED,)]
+
+
+async def seed_measured_book(kit: ProcessingKit) -> tuple[Project, StepId]:
+    """Seed a book of four pages run through a step that finds an angle, and one page that sets a far strength.
+
+    The processor records its strength as the angle, so three pages find 1 and the page that set a strength of its own
+    finds 5, which is far from the median of the book.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :returns: The project and the step.
+    :rtype: tuple[Project, StepId]
+    """
+    actor, project = await kit.seed_project()
+    pages: list[Page] = []
+    for key in (*PAGE_KEYS, 'a3'):
+        page, _ = await kit.seed_scan_page(project, order_key=key)
+        await kit.seed_base_version(page)
+        pages.append(page)
+    await kit.service().save_recipe(
+        actor, project.id, Stage.GEOMETRY, RecipeDraft(name='Measured', steps=[Step(processor_key=MEASURING_KEY)])
+    )
+    [step_id] = await step_ids_of(kit, project)
+    await kit.page_settings().change(
+        actor, project.id, PageStepKey(pages[-1].id, Stage.GEOMETRY, step_id), STRENGTH_PARAMETER, FAR_STRENGTH
+    )
+    await run_stage(kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+    return project, step_id
+
+
+class TestUnusualPages:
+    """Tests for the pages whose value at a step departs from the book."""
+
+    async def test_the_page_whose_angle_is_far_from_the_median_of_the_book_is_unusual(
+        self, fx_measuring_kit: ProcessingKit
+    ) -> None:
+        """Verify one page of four, the one that found 5 where the others found 1, is the unusual one.
+
+        :param fx_measuring_kit: The kit whose catalogue has a processor that finds an angle.
+        :type fx_measuring_kit: ProcessingKit
+        """
+        project, step_id = await seed_measured_book(fx_measuring_kit)
+        rows = await fx_measuring_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), step_id)
+        assert [row.step.flags for row in rows.items if row.step] == [
+            (),
+            (),
+            (),
+            (StepFlag.UNUSUAL, StepFlag.BY_HAND),
+        ]
+
+    async def test_a_window_of_the_book_is_compared_with_the_whole_book(self, fx_measuring_kit: ProcessingKit) -> None:
+        """Verify the last page is unusual in a window of its own, where its median alone would be 5.
+
+        :param fx_measuring_kit: The kit whose catalogue has a processor that finds an angle.
+        :type fx_measuring_kit: ProcessingKit
+        """
+        project, step_id = await seed_measured_book(fx_measuring_kit)
+        window = await fx_measuring_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(offset=3, limit=1), step_id)
+        assert [row.step.flags for row in window.items if row.step] == [(StepFlag.UNUSUAL, StepFlag.BY_HAND)]
+
+    async def test_a_step_with_nothing_to_compare_marks_no_page_unusual(self, fx_kit: ProcessingKit) -> None:
+        """Verify a step whose processor declares no measure never raises the flag.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, _, _ = await seed_text_and_plate(fx_kit)
+        first, _ = await step_ids_of(fx_kit, project)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
+        assert all(StepFlag.UNUSUAL not in row.step.flags for row in rows.items if row.step)

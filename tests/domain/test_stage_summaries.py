@@ -17,6 +17,8 @@ from bookreviver.domain.enums import (
     Stage,
     StageState,
     StageStatus,
+    StepFlag,
+    StepMeasure,
     VersionData,
 )
 from bookreviver.domain.ids import PageId, ProjectId, RecipeId
@@ -26,6 +28,7 @@ from tests.helpers.builders import make_page_version
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import PageVersion
+    from bookreviver.domain.values import MetadataMap
 
 PROJECT_ID: ProjectId = ProjectId(uuid4())
 PAGES: int = 5
@@ -388,7 +391,14 @@ def recipe_of(*steps: Step) -> Recipe:
     )
 
 
-def made_by(page_id: PageId, processor_key: str, *, skipped: bool = False) -> PageVersion:
+def made_by(
+    page_id: PageId,
+    processor_key: str,
+    *,
+    skipped: bool = False,
+    review: ReviewReason | None = None,
+    data: MetadataMap | None = None,
+) -> PageVersion:
     """Build a version of the geometry stage that a step of a processor made.
 
     :param page_id: The page.
@@ -397,6 +407,10 @@ def made_by(page_id: PageId, processor_key: str, *, skipped: bool = False) -> Pa
     :type processor_key: str
     :param skipped: Whether the page did not meet the condition of the step, so the step passed it unchanged.
     :type skipped: bool
+    :param review: The reason the version asks for a second look, or None.
+    :type review: ReviewReason | None
+    :param data: What the step found, which the version carries.
+    :type data: MetadataMap | None
     :returns: The version.
     :rtype: PageVersion
     """
@@ -404,7 +418,8 @@ def made_by(page_id: PageId, processor_key: str, *, skipped: bool = False) -> Pa
         make_page_version(page_id=page_id),
         stage=Stage.GEOMETRY,
         processor=ProcessorRef(key=processor_key, version='1'),
-        data={VersionData.SKIPPED_BY_CONDITION: True} if skipped else {},
+        data={**(data or {}), **({VersionData.SKIPPED_BY_CONDITION: True} if skipped else {})},
+        review=review,
     )
 
 
@@ -489,6 +504,88 @@ class TestStepRow:
         expect(StepRow.of(first.step_id, recipe, chain, None, edited=False).state is FigureState.SKIPPED)
         expect(StepRow.of(second.step_id, recipe, chain, None, edited=False).state is FigureState.FOUND)
         assert_expectations()
+
+
+class TestStepRowFlags:
+    """Tests for the flags of a page at a step, which the strip of an open step lists pages by."""
+
+    def test_a_mark_the_step_made_itself_is_unsure_and_the_mark_it_carried_is_not(self) -> None:
+        """Verify the step that marked the page is the unsure one, and the step after it that kept the mark is not."""
+        page_id = PageId(uuid4())
+        first, second = Step(processor_key=DESKEW_KEY), Step(processor_key=CROP_KEY)
+        chain = [
+            made_by(page_id, DESKEW_KEY, review=ReviewReason.NOT_APPLIED),
+            made_by(page_id, CROP_KEY, review=ReviewReason.NOT_APPLIED),
+        ]
+        recipe = recipe_of(first, second)
+        expect(StepRow.of(first.step_id, recipe, chain, None, edited=False).unsure)
+        expect(not StepRow.of(second.step_id, recipe, chain, None, edited=False).unsure)
+        assert_expectations()
+
+    def test_a_mark_an_earlier_stage_made_is_not_the_first_step_s_doubt(self) -> None:
+        """Verify the first step that only carries the mark of the stage before it is not unsure of the page."""
+        page_id = PageId(uuid4())
+        step = Step(processor_key=PERSPECTIVE_KEY)
+        before = evolve(make_page_version(page_id=page_id), review=ReviewReason.CUT_BY_EDGE)
+        chain = [made_by(page_id, PERSPECTIVE_KEY, review=ReviewReason.CUT_BY_EDGE)]
+        assert not StepRow.of(step.step_id, recipe_of(step), chain, before, edited=False).unsure
+
+    def test_a_page_the_condition_skipped_is_not_unsure_but_is_flagged_as_skipped(self) -> None:
+        """Verify a skipped page carries the skipped flag alone, whatever mark it brought along."""
+        page_id = PageId(uuid4())
+        step = Step(processor_key=DESKEW_KEY)
+        chain = [made_by(page_id, DESKEW_KEY, skipped=True, review=ReviewReason.LOW_CONFIDENCE)]
+        row = StepRow.of(step.step_id, recipe_of(step), chain, None, edited=False)
+        assert row.flags == (StepFlag.SKIPPED,)
+
+    def test_an_edit_and_the_settings_of_a_page_both_set_it_by_hand(self) -> None:
+        """Verify a shape the user drew and a setting of the page are the same flag."""
+        step = Step(processor_key=DESKEW_KEY)
+        edited = StepRow.of(step.step_id, None, [], None, edited=True)
+        adjusted = StepRow.of(step.step_id, None, [], None, edited=False).with_settings()
+        untouched = StepRow.of(step.step_id, None, [], None, edited=False)
+        expect(edited.flags == (StepFlag.BY_HAND,))
+        expect(adjusted.flags == (StepFlag.BY_HAND,))
+        expect(adjusted.state is FigureState.DEFAULT)
+        expect(untouched.flags == ())
+        assert_expectations()
+
+    def test_a_page_whose_value_departs_from_the_book_is_unusual(self) -> None:
+        """Verify the comparison marks a page that is far from the median and leaves one that is near it."""
+        page_id = PageId(uuid4())
+        step = Step(processor_key=DESKEW_KEY)
+        recipe = recipe_of(step)
+        far = [made_by(page_id, DESKEW_KEY, data={VersionData.ANGLE: 4.0})]
+        near = [made_by(page_id, DESKEW_KEY, data={VersionData.ANGLE: 0.5})]
+        expect(
+            StepRow.of(step.step_id, recipe, far, None, edited=False).compared_with(StepMeasure.ANGLE, (0.2,)).unusual
+        )
+        expect(
+            not StepRow.of(step.step_id, recipe, near, None, edited=False)
+            .compared_with(StepMeasure.ANGLE, (0.2,))
+            .unusual
+        )
+        assert_expectations()
+
+    def test_a_book_too_small_to_have_a_median_marks_no_page(self) -> None:
+        """Verify a page is not compared with a book that has no median."""
+        page_id = PageId(uuid4())
+        step = Step(processor_key=DESKEW_KEY)
+        chain = [made_by(page_id, DESKEW_KEY, data={VersionData.ANGLE: 9.0})]
+        row = StepRow.of(step.step_id, recipe_of(step), chain, None, edited=False)
+        assert not row.compared_with(StepMeasure.ANGLE, None).unusual
+
+    def test_the_flags_come_in_the_order_they_are_declared(self) -> None:
+        """Verify a page with several reasons lists them in one order, so a client can rely on it."""
+        page_id = PageId(uuid4())
+        step = Step(processor_key=DESKEW_KEY)
+        chain = [made_by(page_id, DESKEW_KEY, review=ReviewReason.LOW_CONFIDENCE, data={VersionData.ANGLE: 4.0})]
+        row = (
+            StepRow.of(step.step_id, recipe_of(step), chain, None, edited=True)
+            .compared_with(StepMeasure.ANGLE, (0.0,))
+            .with_settings()
+        )
+        assert row.flags == (StepFlag.UNSURE, StepFlag.UNUSUAL, StepFlag.BY_HAND)
 
 
 class TestStageManual:

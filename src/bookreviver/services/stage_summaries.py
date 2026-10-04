@@ -17,15 +17,15 @@ from typing import TYPE_CHECKING
 from attrs import evolve
 
 from bookreviver.domain.enums import JobState, PageStageStatus, Stage
-from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.stage_summaries import BookProgress, StageRow, StageSummary, StepRow
+from bookreviver.domain.stage_summaries import BookProgress, StageRow, StageSummary
 from bookreviver.domain.values import Slice
+from bookreviver.services.step_rows import StepRows
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
-    from bookreviver.domain.entities import Page, PageStage, PageVersion, Project, ProjectOverview
-    from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId, StepId
+    from bookreviver.domain.entities import PageVersion, Project, ProjectOverview
+    from bookreviver.domain.ids import PageVersionId, ProjectId, RecipeId, StepId
     from bookreviver.domain.stage_summaries import StageTally, StepTally, VariantTally
     from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.persistence import UnitOfWork
@@ -93,7 +93,13 @@ class StageSummaries:
         head_ids = {record.head_version_id for record in records.values() if record.head_version_id is not None}
         heads = {version.id: version for version in await self._uow.page_versions.list_by_ids(head_ids)}
         markers = await self._markers(heads.values())
-        steps = {} if step_id is None else await self._step_rows(stage, step_id, pages.items, records, heads)
+        steps = (
+            {}
+            if step_id is None
+            else await StepRows(uow=self._uow, catalogue=self._catalogue, stage=stage, step_id=step_id).of(
+                pages.items, records, heads
+            )
+        )
         rows: list[StageRow] = []
         for page in pages.items:
             if (record := records.get(page.id)) is None:
@@ -113,92 +119,6 @@ class StageSummaries:
                 )
             )
         return Slice(items=rows, total=pages.total)
-
-    async def _step_rows(
-        self,
-        stage: Stage,
-        step_id: StepId,
-        pages: Sequence[Page],
-        records: Mapping[PageId, PageStage],
-        heads: Mapping[PageVersionId, PageVersion],
-    ) -> dict[PageId, StepRow]:
-        """Place one step of a stage on each page of a window.
-
-        The versions that made the current version of each page are found by walking back from it, a level at a time for
-        all the pages together, until a version of an earlier stage is reached, which is what the first step read.
-
-        :param stage: The stage.
-        :type stage: Stage
-        :param step_id: The step, which a recipe of the stage must have.
-        :type step_id: StepId
-        :param pages: The pages of the window.
-        :type pages: Sequence[Page]
-        :param records: The records of the stage of those of the pages that have one, by page.
-        :type records: Mapping[PageId, PageStage]
-        :param heads: The current versions of the stage, by identifier.
-        :type heads: Mapping[PageVersionId, PageVersion]
-        :returns: The row of the step for each page of the window.
-        :rtype: dict[PageId, StepRow]
-        :raises NotFoundError: If no recipe of the stage has the step.
-        """
-        if not pages:
-            return {}
-        recipes = {recipe.id: recipe for recipe in await self._uow.recipes.list_for_stage(pages[0].project_id, stage)}
-        if not any(step.step_id == step_id for recipe in recipes.values() for step in recipe.steps):
-            raise NotFoundError(step_id)
-        found = await self._uow.page_step_states.list_for_step([page.id for page in pages], stage, step_id)
-        edited = {state.page_id for state in found if state.edit is not None}
-        chains, before = await self._chains(heads.values())
-        steps: dict[PageId, StepRow] = {}
-        for page in pages:
-            record = records.get(page.id)
-            recipe = None if record is None or record.recipe_id is None else recipes.get(record.recipe_id)
-            head_id = None if record is None or record.head_version_id not in heads else record.head_version_id
-            steps[page.id] = StepRow.of(
-                step_id,
-                recipe,
-                [] if head_id is None else chains[head_id],
-                None if head_id is None else before.get(head_id),
-                edited=page.id in edited,
-            )
-        return steps
-
-    async def _chains(
-        self, heads: Collection[PageVersion]
-    ) -> tuple[dict[PageVersionId, list[PageVersion]], dict[PageVersionId, PageVersion]]:
-        """Find the versions that made each current version of a stage, and the version the first of them read.
-
-        The versions are walked back a level at a time for all the pages together, as the marks of the review are.
-
-        :param heads: The current versions of the stage over a window of pages.
-        :type heads: Collection[PageVersion]
-        :returns: For each current version, by its identifier, the versions of the stage that made it with the first
-                  step first, and the version of an earlier stage that the first of them read, which a first version
-                  without an input has none of.
-        :rtype: tuple[dict[PageVersionId, list[PageVersion]], dict[PageVersionId, PageVersion]]
-        """
-        chains = {head.id: [head] for head in heads}
-        before: dict[PageVersionId, PageVersion] = {}
-        walking = {head.id: head for head in heads}
-        while walking:
-            inputs = {
-                version.id: version
-                for version in await self._uow.page_versions.list_by_ids(
-                    {first.input_id for first in walking.values() if first.input_id is not None}
-                )
-            }
-            ahead: dict[PageVersionId, PageVersion] = {}
-            for head_id, first in walking.items():
-                earlier = None if first.input_id is None else inputs.get(first.input_id)
-                if earlier is None:
-                    continue
-                if earlier.stage is first.stage and earlier not in chains[head_id]:
-                    chains[head_id].insert(0, earlier)
-                    ahead[head_id] = earlier
-                else:
-                    before[head_id] = earlier
-            walking = ahead
-        return chains, before
 
     async def _markers(self, heads: Collection[PageVersion]) -> dict[PageVersionId, str]:
         """Find the processor of the first step of a stage that marked each page that carries a review mark.

@@ -15,14 +15,16 @@ from typing import TYPE_CHECKING, Self
 
 from attrs import evolve, field, frozen, validators
 
-from bookreviver.domain.enums import FigureState, PageStageStatus, ResultMark, StageStatus, VersionData
+from bookreviver.domain.enums import FigureState, PageStageStatus, ResultMark, StageStatus, StepFlag, VersionData
+from bookreviver.domain.step_measures import departs, read_measure
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
     from bookreviver.domain.entities import PageVersion, Recipe
-    from bookreviver.domain.enums import ReviewReason, Stage
+    from bookreviver.domain.enums import ReviewReason, Stage, StepMeasure
     from bookreviver.domain.ids import PageId, ProjectId, RecipeId, StepId
+    from bookreviver.domain.step_measures import Reading
 
 # The statuses of a stage that a user still has something to do or to watch in, which a book's next stage is taken from
 STATUSES_WITH_WORK: frozenset[StageStatus] = frozenset(
@@ -265,12 +267,60 @@ class StepRow:
                          page has not come as far as that, or the step is the first and the page is not run.
     :ivar version: The version the step made on the page, or None when the page was not run through the step, or its
                    recipe has no such step switched on.
+    :ivar unsure: Whether the step marked the page itself as one it was not sure of, which a mark of an earlier step
+                  that the step only carried on is not.
+    :ivar unusual: Whether what the step found departs notably from the rest of the book.
+    :ivar by_hand: Whether the page has a setting of its own for the step, or a shape the user drew for it.
     """
 
     step_id: StepId
     state: FigureState = FigureState.DEFAULT
     input_version: PageVersion | None = None
     version: PageVersion | None = None
+    unsure: bool = False
+    unusual: bool = False
+    by_hand: bool = False
+
+    @property
+    def flags(self) -> tuple[StepFlag, ...]:
+        """Why the page asks for a look at the step, in the order the flags are declared."""
+        raised = {
+            StepFlag.UNSURE: self.unsure,
+            StepFlag.UNUSUAL: self.unusual,
+            StepFlag.BY_HAND: self.by_hand,
+            StepFlag.SKIPPED: self.state is FigureState.SKIPPED,
+        }
+        return tuple(flag for flag, on in raised.items() if on)
+
+    @staticmethod
+    def place(
+        step_id: StepId, recipe: Recipe | None, chain: Sequence[PageVersion], before: PageVersion | None
+    ) -> tuple[PageVersion | None, PageVersion | None]:
+        """Find the version a step read and the version it made on one page, in the versions that made its head.
+
+        The chain holds one version for each step that is on, so the place of a step in it is the number of steps that
+        are on before it. A version of another processor than the step's stands for a step the recipe has changed since,
+        which the page has not been through yet.
+
+        :param step_id: The step.
+        :type step_id: StepId
+        :param recipe: The recipe the page was processed by, or None for a page no recipe processed.
+        :type recipe: Recipe | None
+        :param chain: The versions of the stage that made its current version, the first step first, or none.
+        :type chain: Sequence[PageVersion]
+        :param before: The version the first of the chain read, which an earlier stage made, or None.
+        :type before: PageVersion | None
+        :returns: The version the step read and the version it made, each None when the page has not come as far, or its
+                  recipe has no such step switched on.
+        :rtype: tuple[PageVersion | None, PageVersion | None]
+        """
+        steps = () if recipe is None else recipe.enabled_steps
+        place = None if recipe is None else recipe.place_of(step_id)
+        if place is None:
+            return None, None
+        made = chain[place] if place < len(chain) and chain[place].processor.key == steps[place].processor_key else None
+        read = before if place == 0 else (chain[place - 1] if place <= len(chain) else None)
+        return read, made
 
     @classmethod
     def of(
@@ -283,10 +333,6 @@ class StepRow:
         edited: bool,
     ) -> Self:
         """Place one step on one page from the versions that made the current version of the stage.
-
-        The chain holds one version for each step that is on, so the place of a step in it is the number of steps that
-        are on before it. A version of another processor than the step's stands for a step the recipe has changed since,
-        which the page has not been through yet.
 
         :param step_id: The step.
         :type step_id: StepId
@@ -301,21 +347,45 @@ class StepRow:
         :returns: The row. A page whose recipe has no such step, or has it switched off, has neither version.
         :rtype: Self
         """
-        steps = () if recipe is None else recipe.enabled_steps
-        place = None if recipe is None else recipe.place_of(step_id)
-        made = None
-        read = None
-        if place is not None:
-            if place < len(chain) and chain[place].processor.key == steps[place].processor_key:
-                made = chain[place]
-            read = before if place == 0 else (chain[place - 1] if place <= len(chain) else None)
-        if made is not None and made.data.get(VersionData.SKIPPED_BY_CONDITION) is True:
+        read, made = cls.place(step_id, recipe, chain, before)
+        skipped = made is not None and made.data.get(VersionData.SKIPPED_BY_CONDITION) is True
+        if skipped:
             state = FigureState.SKIPPED
         elif edited:
             state = FigureState.BY_HAND
         else:
             state = FigureState.DEFAULT if made is None else FigureState.FOUND
-        return cls(step_id=step_id, state=state, input_version=read, version=made)
+        unsure = (
+            made is not None
+            and not skipped
+            and made.review is not None
+            and (read is None or read.review is not made.review)
+        )
+        return cls(step_id=step_id, state=state, input_version=read, version=made, unsure=unsure, by_hand=edited)
+
+    def with_settings(self) -> Self:
+        """Give the row the mark of a page that has settings of its own for the step.
+
+        :returns: The row, set by hand.
+        :rtype: Self
+        """
+        return evolve(self, by_hand=True)
+
+    def compared_with(self, measure: StepMeasure, median: Reading | None) -> Self:
+        """Tell whether what the step found on the page departs from the rest of the book.
+
+        :param measure: What the step finds that is compared.
+        :type measure: StepMeasure
+        :param median: The median of the book for the measure, or None when the book is too small to compare with.
+        :type median: Reading | None
+        :returns: The row, marked unusual when the page departs. A page the step left as it was, skipped by its
+                  condition or not run through it never does, since the step found nothing on it.
+        :rtype: Self
+        """
+        if median is None or self.version is None:
+            return self
+        reading = read_measure(measure, self.version.data)
+        return self if reading is None else evolve(self, unusual=departs(measure, reading, median))
 
 
 @frozen(kw_only=True)

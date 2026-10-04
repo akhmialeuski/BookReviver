@@ -56,6 +56,7 @@ if TYPE_CHECKING:
         ResultMark,
         Side,
         SourceKind,
+        StepMeasure,
         VersionScale,
     )
     from bookreviver.domain.geometry import EditGeometry
@@ -1029,6 +1030,8 @@ class ProcessorSpec:
     :ivar before: Processors whose steps this step usually stands before, marked the same way.
     :ivar requires_after: Processors whose steps this step must stand after, since it works on what they leave. A step
                           that stands before one of them is refused, unless the recipe is saved in the free order.
+    :ivar measure: What the step finds on each page that the strip compares with the rest of the book, so a page that
+                   departs from it is listed, or None for a step that finds nothing to compare.
     """
 
     key: str = field(validator=validators.min_len(1))
@@ -1045,6 +1048,7 @@ class ProcessorSpec:
     after: tuple[OrderRule, ...] = ()
     before: tuple[OrderRule, ...] = ()
     requires_after: tuple[OrderRule, ...] = ()
+    measure: StepMeasure | None = None
 
     @property
     def ref(self) -> ProcessorRef:

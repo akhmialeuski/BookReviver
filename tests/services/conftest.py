@@ -18,6 +18,7 @@ from tests.helpers.processors import (
     CleanupProcessor,
     FakeProcessor,
     FirstProcessor,
+    MeasuringProcessor,
     SecondProcessor,
     ThirdProcessor,
 )
@@ -233,3 +234,17 @@ def fx_ordered_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
         ThirdProcessor(),
     ]
     return ProcessingKit(fx_asset_store, processors=processors)
+
+
+@pytest.fixture
+def fx_measuring_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
+    """Build the processing kit over a processor that finds an angle on each page.
+
+    :param fx_asset_store: Local asset store over the test's storage root.
+    :type fx_asset_store: LocalAssetStore
+    :returns: The kit whose catalogue holds the fakes of the tests and ``geometry.measuring``.
+    :rtype: ProcessingKit
+    """
+    return ProcessingKit(
+        fx_asset_store, processors=[SplitNone(), FakeProcessor(), CleanupProcessor(), MeasuringProcessor()]
+    )
