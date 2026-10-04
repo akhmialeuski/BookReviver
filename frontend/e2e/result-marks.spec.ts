@@ -79,12 +79,10 @@ test('a result is marked and commented, and the notes can be changed later', asy
   await test.step('the log of the result holds the three changes in the order they were made', async () => {
     const pages = await page.request.get(`/api/v1/projects/${projectId}/pages?size=1`);
     const first = ((await pages.json()) as { items: { id: string }[] }).items[0];
-    const versions = await page.request.get(
-      `/api/v1/projects/${projectId}/pages/${first?.id}/versions?stage=geometry`,
-    );
-    const version = ((await versions.json()) as { items: { id: string }[] }).items[0];
+    // The stage keeps a version for each of its steps, so the marked one is read from the entry itself
+    const versionId = await entry.getByTestId('result-mark-good').getAttribute('data-version');
     const listed = await page.request.get(
-      `/api/v1/projects/${projectId}/pages/${first?.id}/versions/${version?.id}/mark-changes`,
+      `/api/v1/projects/${projectId}/pages/${first?.id}/versions/${versionId}/mark-changes`,
     );
     const log = ((await listed.json()) as { items: ListedChange[] }).items;
     expect(log.map((change) => [change.sequence, change.mark_after, change.comment_after])).toEqual(
