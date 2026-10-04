@@ -268,6 +268,43 @@ class TestRecipes:
         saved = await fx_client.put(f'{fx_book.path}/stages/geometry/variants/{variant.id}', json=body)
         assert RecipeSchema.model_validate_json(saved.content).name == 'Stronger'
 
+    async def test_reset_puts_the_steps_of_the_stage_back_and_keeps_the_recipe(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a saved recipe is reset to the template steps, with its identifier, name and activity unchanged.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        body = {'name': 'Strong', 'steps': [{'processor_key': FAKE_KEY, 'params': {'strength': 4}}]}
+        saved = RecipeSchema.model_validate_json(
+            (await fx_client.put(f'{fx_book.path}/stages/geometry/recipe', json=body)).content
+        )
+        response = await fx_client.post(f'{fx_book.path}/stages/geometry/variants/{saved.id}/reset')
+        reset = RecipeSchema.model_validate_json(response.content)
+        expect(response.status_code == status.HTTP_200_OK)
+        expect((reset.id, reset.name, reset.active) == (saved.id, 'Strong', True))
+        expect(
+            [(step.processor_key, step.params) for step in reset.steps] == [(FAKE_KEY, {'strength': 1, 'fail': False})]
+        )
+        expect(reset.steps[0].step_id != saved.steps[0].step_id)
+        assert_expectations()
+
+    async def test_reset_of_a_recipe_that_does_not_exist_is_a_404(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify an identifier no recipe of the book has is answered 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.post(f'{fx_book.path}/stages/geometry/variants/{uuid4()}/reset')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
     async def test_project_of_another_account_is_not_found(self, fx_client: httpx.AsyncClient) -> None:
         """Verify a project the account does not own is answered 404.
 

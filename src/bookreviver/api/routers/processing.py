@@ -35,6 +35,7 @@ from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
 from bookreviver.domain.values import RecipeKey
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.recipe_order import RecipeOrder
+from bookreviver.services.recipe_profiles import RecipeProfiles
 from bookreviver.services.run_plans import RunImpactService
 
 PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
@@ -247,6 +248,35 @@ async def put_variant(
         actor, address.project_id, RecipeKey(address.stage, address.recipe_id), body.to_draft()
     )
     return RecipeSchema.of(saved, order.issues(saved.steps))
+
+
+@router.post('/{project_id}/stages/{stage}/variants/{recipe_id}/reset')
+async def reset_variant(
+    address: Annotated[VariantPath, Depends()],
+    actor: ActorDep,
+    profiles: FromDishka[RecipeProfiles],
+    order: FromDishka[RecipeOrder],
+) -> RecipeSchema:
+    """Put the steps a stage starts with back into a recipe, which marks the pages it processed stale.
+
+    The steps are those of the account's default profile for the stage when it has a usable one, and otherwise those of
+    the built-in template of the recipe. The recipe keeps its identifier, its name, whether it is active and the pages
+    pinned to it, and every step in it is new. The answer is 404 for a stage that has no steps by default.
+
+    \N{FORM FEED}
+    :param address: Identifiers of the project, the stage and the recipe.
+    :type address: VariantPath
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param profiles: Recipe profile service of the request, which also puts the default steps back.
+    :type profiles: RecipeProfiles
+    :param order: Finder of the steps that stand off the place their processors ask for.
+    :type order: RecipeOrder
+    :returns: The recipe as stored, with the steps that are out of their place.
+    :rtype: RecipeSchema
+    """
+    reset = await profiles.reset(actor, address.project_id, RecipeKey(address.stage, address.recipe_id))
+    return RecipeSchema.of(reset, order.issues(reset.steps))
 
 
 @router.post('/{project_id}/stages/{stage}/variants/{recipe_id}/activate')
