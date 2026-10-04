@@ -1,7 +1,7 @@
 """Link a recipe to its profile and keep the order mode of a profile.
 
 Revision ID: d1bd087dadcc
-Revises: 2fd4f715e483
+Revises: 45e3f395141c
 Create Date: 2026-10-04 09:00:49.570922
 """
 
@@ -19,7 +19,7 @@ __all__ = ('data_downgrades', 'data_upgrades', 'downgrade', 'schema_downgrades',
 
 # Revision identifiers, used by Alembic
 revision: str = 'd1bd087dadcc'
-down_revision: str | Sequence[str] | None = '2fd4f715e483'
+down_revision: str | Sequence[str] | None = '45e3f395141c'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
