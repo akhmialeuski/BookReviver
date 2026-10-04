@@ -80,6 +80,7 @@ class SplitSpread(ModelProcessor):
         key='split.spread',
         version='2',
         title='Spread',
+        summary='Cuts a spread into two pages at a fixed place',
         stage=Stage.PAGE_SPLIT,
         scope=ProcessorScope.SPLIT,
         outputs=frozenset({VersionOutput.IMAGE}),

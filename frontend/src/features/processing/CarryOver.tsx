@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { CarryOverSchema, CarryScope } from '@/api';
 import { useUndo } from '@/features/processing/historyQueries';
-import { useCarryOver } from '@/features/processing/queries';
+import { useCarryOver, useCarryShape } from '@/features/processing/queries';
 import type { Processing } from '@/features/processing/useProcessing';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
@@ -15,9 +15,10 @@ import {
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
- * The menu that carries the value the open page has for one field of a step over to other pages, and what it did.
+ * The menu that carries what the open page has for a step over to other pages, and what it did: the value of one field of
+ * the settings, or, when no field is named, the whole shape the page has set by hand.
  *
- * The value goes to the pages after the open one, to the pages selected in the grid, or to every page the step
+ * What is carried goes to the pages after the open one, to the pages selected in the grid, or to every page the step
  * processes. A page that has a value of its own for the field is skipped, and the line under the menu says how many
  * were, unless the reader asked to write over them. The pages the value reached are one batch of the history, so the
  * undo beside the line takes it back from all of them at once. The server decides which pages the value reaches, so the
@@ -39,9 +40,9 @@ export function CarryOver({
   processing: Pick<Processing, 'projectId' | 'stage'>;
   pageId: string;
   stepId: string;
-  /** The field in the parameters of the step. */
-  name: string;
-  /** What the field is called in the form. */
+  /** The field in the parameters of the step, or absent to carry the shape set by hand. */
+  name?: string;
+  /** What is carried is called, such as the title of the field in the form. */
   title: string;
   /** The pages selected in the grid, which the open page may be one of. */
   selected: ReadonlySet<string>;
@@ -51,20 +52,23 @@ export function CarryOver({
   children?: React.ReactNode;
 }): React.JSX.Element {
   const { projectId, stage } = processing;
-  const carry = useCarryOver(projectId, stage);
+  const carryField = useCarryOver(projectId, stage);
+  const carryShape = useCarryShape(projectId, stage);
+  const pending = carryField.isPending || carryShape.isPending;
+  const carryError = carryField.error ?? carryShape.error;
   const undo = useUndo(projectId, stage);
   const [result, setResult] = useState<CarryOverSchema | null>(null);
   const others = [...selected].filter((id) => id !== pageId);
   const first = result?.changes[0];
 
   const send = (scope: CarryScope): void => {
-    carry.mutate(
-      {
-        path: { project_id: projectId, page_id: pageId, stage, step_id: stepId, name },
-        body: { scope, overwrite, ...(scope === 'selected' ? { page_ids: others } : {}) },
-      },
-      { onSuccess: setResult },
-    );
+    const body = { scope, overwrite, ...(scope === 'selected' ? { page_ids: others } : {}) };
+    const path = { project_id: projectId, page_id: pageId, stage, step_id: stepId };
+    if (name === undefined) {
+      carryShape.mutate({ path, body }, { onSuccess: setResult });
+    } else {
+      carryField.mutate({ path: { ...path, name }, body }, { onSuccess: setResult });
+    }
   };
 
   return (
@@ -76,7 +80,7 @@ export function CarryOver({
               variant="ghost"
               size="sm"
               aria-label={labels.ofField(title)}
-              disabled={carry.isPending}
+              disabled={pending}
               data-testid="carry-menu"
             >
               {labels.label}
@@ -132,8 +136,8 @@ export function CarryOver({
           )}
         </p>
       )}
-      {carry.error === null && undo.error === null ? null : (
-        <ErrorAlert message={describeError(carry.error ?? undo.error)} />
+      {carryError === null && undo.error === null ? null : (
+        <ErrorAlert message={describeError(carryError ?? undo.error)} />
       )}
     </div>
   );

@@ -387,6 +387,35 @@ class RecipeProfiles:
             job = await self._processing.start_run(actor, project_id, profile.stage, run)
         return AppliedProfile(recipe=recipe, missing_processors=missing, job=job)
 
+    async def reset(self, actor: Actor, project_id: ProjectId, key: RecipeKey) -> Recipe:
+        """Put the steps a stage starts with back into a recipe, and mark the pages it processed stale.
+
+        The steps are those of the account's default profile for the stage when it has a usable one, and otherwise those
+        of the built-in template of the recipe, which are the steps the stage would have had on its first opening. The
+        recipe keeps its identifier, its name, whether it is active, and the pages pinned to it, while every step is
+        new, so the settings and edits the pages kept for the old steps no longer belong to any step. The recipe is
+        linked to the default profile when its steps came from it, and to no profile when they came from a template.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param key: The stage the request names and the identifier of the recipe, which must belong to that stage.
+        :type key: RecipeKey
+        :returns: The recipe as stored.
+        :rtype: Recipe
+        :raises NotFoundError: If the actor has no such project, the project has no such recipe of the stage, or the
+                               stage has no steps by default.
+        """
+        await owned_project(self._uow.projects, actor, project_id)
+        recipe = await self._recipes.get(project_id, key.recipe_id, stage=key.stage)
+        draft = await self._recipes.default_draft(project_id, key.stage, recipe.name)
+        reset = await self._processing.save_variant(actor, project_id, key, draft)
+        # The steps now are the profile's, or the template's, so the recipe is linked to the profile or to none
+        if reset.profile_id == draft.profile_id:
+            return reset
+        return await self.link(actor, project_id, key, draft.profile_id)
+
     async def _owned(self, actor: Actor, profile_id: RecipeProfileId) -> RecipeProfile:
         """Return the actor's profile.
 

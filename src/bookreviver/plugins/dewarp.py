@@ -170,6 +170,7 @@ class Dewarp(ModelProcessor):
         key='geometry.dewarp',
         version='1',
         title='Dewarp',
+        summary='Straightens lines bent into the gutter',
         stage=Stage.GEOMETRY,
         scope=ProcessorScope.PAGE,
         outputs=frozenset({VersionOutput.IMAGE}),

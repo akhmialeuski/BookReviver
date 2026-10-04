@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,6 +19,13 @@ import { page as pageOf, row } from '@/features/workspace/fixtures';
 import { barStepsOf, countStep, neighboursOf } from '@/features/workspace/steps';
 import { joinRows, type StripItem } from '@/features/workspace/strip';
 import type { StepWorkspace } from '@/features/workspace/useStepWorkspace';
+
+const sdk = vi.hoisted(() => ({ carry: vi.fn() }));
+
+vi.mock('@/api/sdk.gen', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
+  carryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPost: sdk.carry,
+}));
 
 /**
  * The section of the panel for the open step: its settings, the state of its shape on the open page, how the pages of the
@@ -85,6 +93,7 @@ function placed(state: FigureState, found: Record<string, unknown> = {}): StepPa
 describe('StepPanel', () => {
   let container: HTMLDivElement;
   let root: Root;
+  let client: QueryClient;
   const onOpen = vi.fn();
   const onClose = vi.fn();
   const start = vi.fn();
@@ -117,7 +126,11 @@ describe('StepPanel', () => {
     open = 1,
     page: StepPageSchema | null = placed('found', { angle: -1.4 }),
     run = runStub(),
-    extra: { items?: readonly StripItem[]; editor?: EditorSession | null } = {},
+    extra: {
+      items?: readonly StripItem[];
+      editor?: EditorSession | null;
+      selected?: ReadonlySet<string>;
+    } = {},
   ): void {
     const rows = [
       row('1', { step: placed('found') }),
@@ -172,18 +185,21 @@ describe('StepPanel', () => {
     });
     act(() =>
       root.render(
-        <StepPanel
-          processing={state}
-          workspace={workspace}
-          step={opened}
-          pageLabel="14"
-          pageId="p1"
-          items={extra.items ?? PAGES}
-          editor={extra.editor ?? null}
-          run={run}
-          onOpen={onOpen}
-          onClose={onClose}
-        />,
+        <QueryClientProvider client={client}>
+          <StepPanel
+            processing={state}
+            workspace={workspace}
+            step={opened}
+            pageLabel="14"
+            pageId="p1"
+            items={extra.items ?? PAGES}
+            selected={extra.selected}
+            editor={extra.editor ?? null}
+            run={run}
+            onOpen={onOpen}
+            onClose={onClose}
+          />
+        </QueryClientProvider>,
       ),
     );
   }
@@ -201,11 +217,18 @@ describe('StepPanel', () => {
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    sdk.carry.mockReset();
+    sdk.carry.mockResolvedValue({ data: { batch_id: 'batch', changes: [], skipped: [] } });
   });
 
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    for (const node of document.body.querySelectorAll('[role="menu"]')) {
+      node.remove();
+    }
+    client.clear();
     vi.unstubAllGlobals();
   });
 
@@ -339,5 +362,58 @@ describe('StepPanel', () => {
 
     expect(container.querySelector('[id^="step-panel_"]')).not.toBeNull();
     expect(container.querySelector('[id^="root_"]')).toBeNull();
+  });
+
+  describe('carrying the shape over', () => {
+    async function choose(id: string): Promise<void> {
+      const trigger = find('carry-menu');
+      await act(async () => {
+        trigger?.focus();
+        trigger?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      });
+      await act(async () => {
+        document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`)?.click();
+      });
+    }
+
+    it('offers the carry-over only for a shape the reader set by hand', () => {
+      render(1, placed('by-hand', { angle: 0.5 }));
+      expect(find('step-carry')).not.toBeNull();
+
+      for (const state of ['found', 'default', 'skipped'] as const) {
+        render(1, placed(state));
+        expect(find('step-carry')).toBeNull();
+      }
+    });
+
+    it('carries the shape of the step to the following pages, naming no field', async () => {
+      render(1, placed('by-hand', { angle: 0.5 }));
+      await choose('carry-following');
+
+      expect(sdk.carry).toHaveBeenCalledTimes(1);
+      expect(sdk.carry.mock.calls[0]?.[0]).toMatchObject({
+        path: { page_id: 'p1', stage: 'geometry', step_id: 'b' },
+        body: { scope: 'following', overwrite: false },
+      });
+    });
+
+    it('carries it to every page of the condition, over the pages with a shape of their own when asked', async () => {
+      render(1, placed('by-hand', { angle: 0.5 }));
+      act(() => find('step-carry-overwrite')?.click());
+      await choose('carry-condition');
+
+      expect(sdk.carry.mock.calls[0]?.[0]).toMatchObject({
+        body: { scope: 'condition', overwrite: true },
+      });
+    });
+
+    it('carries it to the pages selected in the grid, but the open one', async () => {
+      render(1, placed('by-hand', { angle: 0.5 }), runStub(), { selected: new Set(['p1', 'p2']) });
+      await choose('carry-selected');
+
+      expect(sdk.carry.mock.calls[0]?.[0]).toMatchObject({
+        body: { scope: 'selected', page_ids: ['p2'] },
+      });
+    });
   });
 });

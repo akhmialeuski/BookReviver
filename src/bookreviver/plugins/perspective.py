@@ -545,6 +545,7 @@ class Perspective(ModelProcessor):
         key='geometry.perspective',
         version='1',
         title='Perspective',
+        summary='Makes the sheet of a photo a rectangle',
         stage=Stage.GEOMETRY,
         scope=ProcessorScope.PAGE,
         outputs=frozenset({VersionOutput.IMAGE}),

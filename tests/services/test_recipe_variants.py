@@ -4,17 +4,20 @@ from typing import TYPE_CHECKING
 
 import pytest
 from attrs import evolve
+from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import PageKind, RuleCondition, Stage, StageState
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.values import PageStageKey, RecipeDraft, StageRun, Step
+from bookreviver.domain.values import PageStageKey, RecipeDraft, RecipeKey, StageRun, Step
 from bookreviver.services.recipe_picks import RecipePicker
+from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
+from tests.helpers.processing import ProcessingKit
 from tests.helpers.processors import FakeProcessor
 
 if TYPE_CHECKING:
+    from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, PageStage, Project, Recipe
     from bookreviver.domain.ids import PageId
-    from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 
@@ -352,3 +355,85 @@ class TestPinnedVariant:
         picked = await picker.pick(project.id, Stage.GEOMETRY, [await reader.pages.get(page_id)])
         active = await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
         assert picked[page_id].id == active.id
+
+
+class TestResetToTheDefaultSteps:
+    """Tests for putting back the steps a stage starts with, which are the profile of the account or the template."""
+
+    async def test_the_template_steps_come_back_and_the_recipe_keeps_what_is_its_own(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify the steps are new ones of the template while the identifier, the name and the pin of the recipe stay.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, (plate,) = await seed_book(fx_kit, [PageKind.PLATE])
+        soft = await add_variant(fx_kit, actor, project, SOFT_NAME, SOFT_STRENGTH)
+        await run_all(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, recipe_id=soft.id, pin=True))
+        reset = await fx_kit.profiles().reset(actor, project.id, RecipeKey(Stage.GEOMETRY, soft.id))
+        record = await record_of(fx_kit, plate)
+        expect((reset.id, reset.name, reset.active) == (soft.id, SOFT_NAME, False))
+        expect(
+            [(step.processor_key, step.params) for step in reset.steps] == [(FAKE_KEY, {'strength': 1, 'fail': False})]
+        )
+        expect(reset.steps[0].step_id != soft.steps[0].step_id)
+        expect(reset.profile_id is None)
+        expect((record.recipe_id, record.pinned, record.state) == (soft.id, True, StageState.STALE))
+        assert_expectations()
+
+    async def test_the_default_profile_of_the_account_comes_before_the_template(self, fx_kit: ProcessingKit) -> None:
+        """Verify an account with a default profile for the stage gets the steps of that profile.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project = await fx_kit.seed_project()
+        profile = await fx_kit.profiles().save(
+            actor,
+            Stage.GEOMETRY,
+            RecipeDraft(name='Own', steps=[Step(processor_key=FAKE_KEY, params={'strength': PLATES_STRENGTH})]),
+        )
+        await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
+        active = await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        reset = await fx_kit.profiles().reset(actor, project.id, RecipeKey(Stage.GEOMETRY, active.id))
+        expect([step.params['strength'] for step in reset.steps] == [PLATES_STRENGTH])
+        expect(reset.profile_id == profile.id)
+        assert_expectations()
+
+    async def test_a_recipe_takes_the_template_of_its_own_name(self, fx_asset_store: LocalAssetStore) -> None:
+        """Verify a variant named like a built-in template gets that template, and any other name the first one.
+
+        :param fx_asset_store: Local asset store over the test's storage root.
+        :type fx_asset_store: LocalAssetStore
+        """
+        templates = DefaultRecipes(
+            {
+                Stage.GEOMETRY: (
+                    RecipeTemplate(name='Text', processor_keys=(FAKE_KEY,), params={FAKE_KEY: {'strength': 2}}),
+                    RecipeTemplate(name=PLATES_NAME, processor_keys=(FAKE_KEY,), params={FAKE_KEY: {'strength': 3}}),
+                )
+            }
+        )
+        kit = ProcessingKit(fx_asset_store, defaults=templates)
+        actor, project = await kit.seed_project()
+        strengths = []
+        for name in (PLATES_NAME, SOFT_NAME):
+            variant = await add_variant(kit, actor, project, name, SOFT_STRENGTH)
+            reset = await kit.profiles().reset(actor, project.id, RecipeKey(Stage.GEOMETRY, variant.id))
+            strengths.append(reset.steps[0].params['strength'])
+        assert strengths == [3, 2]
+
+    async def test_a_recipe_of_another_book_or_stage_is_not_found(self, fx_kit: ProcessingKit) -> None:
+        """Verify the recipe of another account's book and the recipe named under another stage are refused.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project = await fx_kit.seed_project()
+        stranger, _ = await fx_kit.seed_project()
+        soft = await add_variant(fx_kit, actor, project, SOFT_NAME, SOFT_STRENGTH)
+        with pytest.raises(NotFoundError):
+            await fx_kit.profiles().reset(stranger, project.id, RecipeKey(Stage.GEOMETRY, soft.id))
+        with pytest.raises(NotFoundError):
+            await fx_kit.profiles().reset(actor, project.id, RecipeKey(Stage.CLEANUP, soft.id))

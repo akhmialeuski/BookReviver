@@ -77,6 +77,7 @@ export function ProcessingPanel({
             pageLabel={step.pageLabel}
             pageId={current?.page.id}
             items={items}
+            selected={selected}
             editor={editor}
             run={run}
             onOpen={step.onOpen}

@@ -59,6 +59,7 @@ class SplitAuto(SplitSpread):
         key='split.auto',
         version='1',
         title='Automatic split',
+        summary='Cuts a spread at the gutter the step finds',
         stage=Stage.PAGE_SPLIT,
         scope=ProcessorScope.SPLIT,
         outputs=frozenset({VersionOutput.IMAGE}),

@@ -2248,6 +2248,7 @@ export type ProcessorRefSchema = {
  * :ivar key: Key of the processor, such as ``geometry.deskew``.
  * :ivar version: Version of its algorithm.
  * :ivar title: Name the interface shows.
+ * :ivar summary: One line that says what the step does, which the catalogue of steps shows, or an empty string.
  * :ivar stage: Stage whose recipe it can be put into.
  * :ivar scope: Whether it makes one output for a page or one for each part of a scan.
  * :ivar outputs: What it writes.
@@ -2271,6 +2272,10 @@ export type ProcessorSchema = {
      * Title
      */
     title: string;
+    /**
+     * Summary
+     */
+    summary?: string;
     stage: Stage;
     scope: ProcessorScope;
     /**
@@ -5451,6 +5456,56 @@ export type PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutRespon
 
 export type PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponse = PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponses[keyof PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponses];
 
+export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+        /**
+         * Recipe Id
+         *
+         * Identifier of the recipe
+         */
+        recipe_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}/reset';
+};
+
+export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostError = ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostErrors[keyof ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostErrors];
+
+export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: RecipeSchema;
+};
+
+export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostResponse = ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostResponses[keyof ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostResponses];
+
 export type ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostData = {
     body?: never;
     path: {
@@ -6942,6 +6997,62 @@ export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutResponses
 };
 
 export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutResponse = PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutResponses[keyof PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutResponses];
+
+export type CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostData = {
+    body: CarryForm;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Stage of the step that reads the edit
+         */
+        stage: Stage;
+        /**
+         * Step Id
+         *
+         * Identifier of the step of a recipe that reads the edit
+         */
+        step_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{step_id}/carry-over';
+};
+
+export type CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostError = CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostErrors[keyof CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostErrors];
+
+export type CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: CarryOverSchema;
+};
+
+export type CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostResponse = CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostResponses[keyof CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostResponses];
 
 export type ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetData = {
     body?: never;

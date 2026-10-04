@@ -268,6 +268,43 @@ class TestRecipes:
         saved = await fx_client.put(f'{fx_book.path}/stages/geometry/variants/{variant.id}', json=body)
         assert RecipeSchema.model_validate_json(saved.content).name == 'Stronger'
 
+    async def test_reset_puts_the_steps_of_the_stage_back_and_keeps_the_recipe(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a saved recipe is reset to the template steps, with its identifier, name and activity unchanged.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        body = {'name': 'Strong', 'steps': [{'processor_key': FAKE_KEY, 'params': {'strength': 4}}]}
+        saved = RecipeSchema.model_validate_json(
+            (await fx_client.put(f'{fx_book.path}/stages/geometry/recipe', json=body)).content
+        )
+        response = await fx_client.post(f'{fx_book.path}/stages/geometry/variants/{saved.id}/reset')
+        reset = RecipeSchema.model_validate_json(response.content)
+        expect(response.status_code == status.HTTP_200_OK)
+        expect((reset.id, reset.name, reset.active) == (saved.id, 'Strong', True))
+        expect(
+            [(step.processor_key, step.params) for step in reset.steps] == [(FAKE_KEY, {'strength': 1, 'fail': False})]
+        )
+        expect(reset.steps[0].step_id != saved.steps[0].step_id)
+        assert_expectations()
+
+    async def test_reset_of_a_recipe_that_does_not_exist_is_a_404(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify an identifier no recipe of the book has is answered 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.post(f'{fx_book.path}/stages/geometry/variants/{uuid4()}/reset')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
     async def test_project_of_another_account_is_not_found(self, fx_client: httpx.AsyncClient) -> None:
         """Verify a project the account does not own is answered 404.
 
@@ -937,6 +974,107 @@ class TestCarryOver:
             f'{fx_book.page_path}/settings/geometry/{step_id}/strength/carry-over', json={'scope': 'following'}
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+class TestCarryOverOfAShape:
+    """Tests for the endpoint that carries the shape a page set by hand over to other pages."""
+
+    async def test_a_shape_is_carried_to_the_following_pages_in_one_batch_that_one_undo_takes_back(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase
+    ) -> None:
+        """Verify the shape reaches the pages after the source and one undo on any of them takes it from all.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        pages = [await add_page(fx_database, fx_book, order_key) for order_key in ('a1', 'a2')]
+        await fx_client.put(
+            f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
+        )
+        carried = await fx_client.post(
+            f'{fx_book.page_path}/edits/geometry/{step_id}/carry-over', json={'scope': 'following'}
+        )
+        body = carried.json()
+        target = f'{fx_book.path}/pages/{pages[0].id}'
+        listed = await fx_client.get(f'{target}/edits/geometry')
+        undone = await fx_client.post(
+            f'{target}/history/geometry/{step_id}/undo', json={'change_id': body['changes'][0]['id']}
+        )
+        after = await fx_client.get(f'{fx_book.path}/pages/{pages[1].id}/edits/geometry')
+        expect(carried.status_code == status.HTTP_200_OK)
+        expect(sorted(change['page_id'] for change in body['changes']) == sorted(str(page.id) for page in pages))
+        expect({change['batch_id'] for change in body['changes']} == {body['batch_id']})
+        expect({(change['source'], change['layer']) for change in body['changes']} == {('carry-over', 'hand')})
+        expect([item['geometry'] for item in listed.json()[ITEMS]] == [{'degrees': 1.5}])
+        expect(len(undone.json()['changes']) == len(pages))
+        expect(after.json()['total'] == 0)
+        assert_expectations()
+
+    async def test_a_page_set_by_hand_separately_is_skipped_unless_the_form_overwrites(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase
+    ) -> None:
+        """Verify the page with a shape of its own is listed as skipped and keeps it, and overwriting takes it along.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        page = await add_page(fx_database, fx_book, 'a1')
+        own = f'{fx_book.path}/pages/{page.id}/edits/geometry'
+        await fx_client.put(
+            f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
+        )
+        await fx_client.put(f'{own}/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 2.5}'})
+        path = f'{fx_book.page_path}/edits/geometry/{step_id}/carry-over'
+        skipped = await fx_client.post(path, json={'scope': 'condition'})
+        kept = await fx_client.get(own)
+        overwritten = await fx_client.post(path, json={'scope': 'condition', 'overwrite': True})
+        expect(skipped.json()['skipped'] == [str(page.id)] and skipped.json()['changes'] == [])
+        expect([item['geometry'] for item in kept.json()[ITEMS]] == [{'degrees': 2.5}])
+        expect(overwritten.json()['skipped'] == [] and len(overwritten.json()['changes']) == 1)
+        assert_expectations()
+
+    async def test_a_page_with_no_shape_set_by_hand_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify carrying from a page that set no shape answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.post(
+            f'{fx_book.page_path}/edits/geometry/{step_id}/carry-over', json={'scope': 'following'}
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_the_selected_pages_scope_without_pages_is_a_422(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify the scope of the selected pages that names none answers 422.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        await fx_client.put(
+            f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
+        )
+        response = await fx_client.post(
+            f'{fx_book.page_path}/edits/geometry/{step_id}/carry-over', json={'scope': 'selected'}
+        )
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 class TestRunModes:

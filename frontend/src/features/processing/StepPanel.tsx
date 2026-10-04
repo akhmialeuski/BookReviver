@@ -1,7 +1,9 @@
 import { ChevronLeftIcon, ChevronRightIcon, PlayIcon, XIcon } from 'lucide-react';
+import { useState } from 'react';
 import type { AppliesTo, FigureState } from '@/api';
 import { EditorControls } from '@/features/editors/EditorControls';
 import type { EditorSession } from '@/features/editors/session';
+import { CarryOver } from '@/features/processing/CarryOver';
 import { ParamsForm } from '@/features/processing/ParamsForm';
 import { CONDITIONS } from '@/features/processing/recipe';
 import { readResult } from '@/features/processing/results';
@@ -15,6 +17,7 @@ import type { StepWorkspace } from '@/features/workspace/useStepWorkspace';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
+import { CheckboxField } from '@/shared/ui/checkbox-field';
 
 /**
  * The section of the panel for the step that is open: its settings, what it did on the open page, how the pages of the
@@ -33,6 +36,8 @@ const DOT: Readonly<Record<FigureState, string>> = {
   'by-hand': 'bg-status-attention',
   skipped: 'bg-muted-foreground/25',
 };
+
+const NO_PAGES: ReadonlySet<string> = new Set();
 
 function Heading({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
@@ -74,6 +79,7 @@ export function StepPanel({
   pageLabel,
   pageId,
   items,
+  selected = NO_PAGES,
   editor,
   run,
   onOpen,
@@ -89,6 +95,8 @@ export function StepPanel({
   pageId: string | undefined;
   /** Every page of the book with where it stands in the stage, which the pages of the condition are counted from. */
   items: readonly StripItem[];
+  /** The pages selected in the grid, which a shape set by hand can be carried over to. */
+  selected?: ReadonlySet<string>;
   /** The page editor of the step on the open page, or null when the step has none or the page passes the step by. */
   editor: EditorSession | null;
   /** The run of the stage, which the buttons of "Auto" ask for. */
@@ -98,6 +106,7 @@ export function StepPanel({
   onClose: () => void;
 }): React.JSX.Element {
   const { catalogue, recipe } = processing;
+  const [overwrite, setOverwrite] = useState(false);
   const draft = processing.steps.find((entry) => entry.stepId === step.stepId);
   const processor = catalogue.find((entry) => entry.key === step.processorKey);
   const { page, counts, neighbours } = workspace;
@@ -199,6 +208,27 @@ export function StepPanel({
           </p>
         ) : null}
         {editor === null ? null : <EditorControls session={editor} />}
+        {state === 'by-hand' && pageId !== undefined ? (
+          <div className="grid gap-1" data-testid="step-carry">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-muted-foreground">{labels.carry.hint}</span>
+              <CarryOver
+                processing={processing}
+                pageId={pageId}
+                stepId={step.stepId}
+                title={labels.carry.title}
+                selected={selected}
+                overwrite={overwrite}
+              />
+            </div>
+            <CheckboxField
+              label={MESSAGES.processing.steps.pageSettings.carry.overwrite}
+              checked={overwrite}
+              data-testid="step-carry-overwrite"
+              onChange={(event) => setOverwrite(event.target.checked)}
+            />
+          </div>
+        ) : null}
       </div>
 
       <div className="grid gap-2" data-testid="step-panel-book">

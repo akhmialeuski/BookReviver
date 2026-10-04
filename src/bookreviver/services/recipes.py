@@ -32,14 +32,15 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import RecipeId, RecipeRuleId
-from bookreviver.domain.values import Step
+from bookreviver.domain.values import RecipeDraft, Step
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import datetime
 
+    from bookreviver.domain.entities import RecipeProfile
     from bookreviver.domain.ids import ProjectId
-    from bookreviver.domain.values import MetadataMap, PageStepKey, RecipeDraft
+    from bookreviver.domain.values import MetadataMap, PageStepKey
     from bookreviver.ports.persistence import RecipeRepository, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
@@ -235,11 +236,7 @@ class RecipeBook:
         if (found := await self._uow.recipes.find_active(project_id, stage)) is not None:
             return found
         moment = self._clock.now()
-        buildable = [
-            template
-            for template in self._defaults.for_stage(stage)
-            if all(self._offers(key) for key in template.processor_keys)
-        ]
+        buildable = self._buildable(stage)
         preferred = await self._default_profile_recipe(project_id, stage, moment)
         if not buildable and preferred is None:
             raise NotFoundError(NO_RECIPE.format(stage=stage.label))
@@ -249,14 +246,7 @@ class RecipeBook:
                 project_id=project_id,
                 stage=stage,
                 name=template.name,
-                steps=tuple(
-                    Step(
-                        processor_key=key,
-                        params=self._catalogue.get(key).validate_params(template.params.get(key, {})),
-                        enabled=key not in template.off,
-                    )
-                    for key in template.processor_keys
-                ),
+                steps=self._template_steps(template),
                 active=index == 0 and preferred is None,
                 # A microsecond apart and after the recipe of a default profile, so the recipes are listed in the order
                 # of their templates
@@ -291,6 +281,33 @@ class RecipeBook:
                 raise
             return found
         return recipes[0]
+
+    async def default_draft(self, project_id: ProjectId, stage: Stage, name: str) -> RecipeDraft:
+        """Return the draft of the steps a stage starts with for a book, which ``active`` would make the recipe of.
+
+        The default profile of the book's owner comes first, when there is a usable one, and the draft names it, so a
+        recipe made from the draft can be linked to it. Without one the steps are those of the built-in template named
+        ``name``, or of the first template the application can build when none has that name, and no profile is named.
+
+        :param project_id: Project the steps are for.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :param name: Name of the recipe the steps are meant for, which picks a built-in template and is the name of the
+                     draft.
+        :type name: str
+        :returns: The draft, whose steps are checked and each have a new identifier, in the free order.
+        :rtype: RecipeDraft
+        :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
+        """
+        if (found := await self._default_profile(project_id, stage)) is not None:
+            profile, steps = found
+            return RecipeDraft(name=name, steps=steps, order=OrderMode.FREE, profile_id=profile.id)
+        buildable = self._buildable(stage)
+        if not buildable:
+            raise NotFoundError(NO_RECIPE.format(stage=stage.label))
+        template = next((template for template in buildable if template.name == name), buildable[0])
+        return RecipeDraft(name=name, steps=self._template_steps(template), order=OrderMode.FREE)
 
     async def get(self, project_id: ProjectId, recipe_id: RecipeId, *, stage: Stage | None = None) -> Recipe:
         """Return a recipe of the project, of the given stage when one is named.
@@ -441,12 +458,64 @@ class RecipeBook:
         missing = dict.fromkeys(step.processor_key for step in steps if not self._offers(step.processor_key))
         return kept, tuple(missing)
 
-    async def _default_profile_recipe(self, project_id: ProjectId, stage: Stage, moment: datetime) -> Recipe | None:
-        """Build the active recipe of a stage from the default profile of the project's owner, if there is a usable one.
+    def _buildable(self, stage: Stage) -> list[RecipeTemplate]:
+        """List the built-in templates of a stage whose processors are all installed, the active one first.
+
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The templates the application can build.
+        :rtype: list[RecipeTemplate]
+        """
+        return [
+            template
+            for template in self._defaults.for_stage(stage)
+            if all(self._offers(key) for key in template.processor_keys)
+        ]
+
+    def _template_steps(self, template: RecipeTemplate) -> tuple[Step, ...]:
+        """Build the steps of a built-in template, each with a new identifier.
+
+        :param template: Template whose processors are installed.
+        :type template: RecipeTemplate
+        :returns: The steps with the parameters of the template and the defaults of each processor.
+        :rtype: tuple[Step, ...]
+        """
+        return tuple(
+            Step(
+                processor_key=key,
+                params=self._catalogue.get(key).validate_params(template.params.get(key, {})),
+                enabled=key not in template.off,
+            )
+            for key in template.processor_keys
+        )
+
+    async def _default_profile(
+        self, project_id: ProjectId, stage: Stage
+    ) -> tuple[RecipeProfile, tuple[Step, ...]] | None:
+        """Take the default profile of the project's owner with its checked steps, if there is a usable one.
 
         A step whose processor is not installed is left out. A profile that has no step left to run, or whose steps no
         longer fit their processors, is passed over, so the stage starts with the built-in recipes as it does for an
         account without a default profile.
+
+        :param project_id: Project the steps are for.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The profile and its steps as a recipe runs them, or None.
+        :rtype: tuple[RecipeProfile, tuple[Step, ...]] | None
+        """
+        owner_id = (await self._uow.projects.get(project_id)).owner_id
+        if (profile := await self._uow.recipe_profiles.find_default(owner_id, stage)) is None:
+            return None
+        try:
+            steps = await self.check(stage, self.installed(profile.steps)[0], order=OrderMode.FREE)
+        except InvalidParametersError:
+            return None
+        return profile, steps
+
+    async def _default_profile_recipe(self, project_id: ProjectId, stage: Stage, moment: datetime) -> Recipe | None:
+        """Build the active recipe of a stage from the default profile of the project's owner, if there is a usable one.
 
         :param project_id: Project the recipe is for.
         :type project_id: ProjectId
@@ -457,13 +526,9 @@ class RecipeBook:
         :returns: The recipe, not stored yet, or None.
         :rtype: Recipe | None
         """
-        owner_id = (await self._uow.projects.get(project_id)).owner_id
-        if (profile := await self._uow.recipe_profiles.find_default(owner_id, stage)) is None:
+        if (found := await self._default_profile(project_id, stage)) is None:
             return None
-        try:
-            steps = await self.check(stage, self.installed(profile.steps)[0], order=OrderMode.FREE)
-        except InvalidParametersError:
-            return None
+        profile, steps = found
         return Recipe(
             id=RecipeId(uuid4()),
             project_id=project_id,

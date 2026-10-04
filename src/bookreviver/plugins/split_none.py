@@ -34,6 +34,7 @@ class SplitNone(ModelProcessor):
         key='split.none',
         version='1',
         title='Whole scan',
+        summary='Keeps the scan as one page',
         stage=Stage.PAGE_SPLIT,
         scope=ProcessorScope.PAGE,
         outputs=frozenset({VersionOutput.IMAGE}),

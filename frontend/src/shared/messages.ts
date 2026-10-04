@@ -626,6 +626,38 @@ export const MESSAGES = {
         after: (number: number, title: string) => `Result of step ${number} · ${title}`,
         input: (number: number, title: string) => `Input of step ${number} · ${title}`,
       },
+      catalogue: {
+        open: '+ Step',
+        title: (stage: string) => `Add a ${stage.toLowerCase()} step`,
+        hint: 'A step can be added more than once, with its own settings and pages.',
+        saveFirst:
+          'The steps have changes that are not saved. Save or discard them, then add a step.',
+        stale: (pages: number) =>
+          `Adding a step makes ${pages} ${pluralize(pages, 'page', 'pages')} out of date.`,
+        refused: (reason: string) =>
+          `This step cannot stand in the usual order. ${reason} Switch to the free order in the steps window to add it anyway.`,
+      },
+      gear: {
+        open: 'Steps of the stage',
+        title: (stage: string) => `Steps of ${stage}`,
+        hint: 'Drag a step to reorder, choose the pages it processes, switch it off or remove it. Nothing changes until the steps are saved.',
+
+        reset: {
+          open: 'Reset to the default steps',
+          hint: 'Put back the steps of your default profile for this stage, or the built-in steps when you have none',
+          title: 'Reset to the default steps?',
+          body: (pages: number) =>
+            `The steps of this recipe are replaced by the default ones, and the settings and hand edits that pages kept for the old steps no longer belong to any step. ${
+              pages === 0
+                ? 'No page is made out of date.'
+                : `${pages} ${pluralize(pages, 'page', 'pages')} will be out of date.`
+            }`,
+          unsaved: 'The changes of the steps that are not saved yet are dropped.',
+          confirm: 'Reset the steps',
+          working: 'Resetting…',
+          cancel: 'Cancel',
+        },
+      },
     },
     stepPanel: {
       label: (number: number, title: string) => `Step ${number} · ${title}`,
@@ -655,6 +687,10 @@ export const MESSAGES = {
       moves: 'Move between steps',
       moveTo: (number: number, title: string) => `Go to step ${number}, ${title}`,
       close: 'Close the step',
+      carry: {
+        title: 'the shape',
+        hint: 'The whole shape set by hand goes to the pages you choose. A page that set its own shape keeps it.',
+      },
     },
   },
   order: {

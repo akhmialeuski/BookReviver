@@ -199,6 +199,7 @@ class Deskew(ModelProcessor):
         key='geometry.deskew',
         version='1',
         title='Deskew',
+        summary='Turns the page so its lines of text run level',
         stage=Stage.GEOMETRY,
         scope=ProcessorScope.PAGE,
         outputs=frozenset({VersionOutput.IMAGE}),

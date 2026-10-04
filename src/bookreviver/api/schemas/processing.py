@@ -75,6 +75,7 @@ class ProcessorSchema(ResponseModel):
     :ivar key: Key of the processor, such as ``geometry.deskew``.
     :ivar version: Version of its algorithm.
     :ivar title: Name the interface shows.
+    :ivar summary: One line that says what the step does, which the catalogue of steps shows, or an empty string.
     :ivar stage: Stage whose recipe it can be put into.
     :ivar scope: Whether it makes one output for a page or one for each part of a scan.
     :ivar outputs: What it writes.
@@ -89,6 +90,7 @@ class ProcessorSchema(ResponseModel):
     key: str
     version: str
     title: str
+    summary: str = ''
     stage: Stage
     scope: ProcessorScope
     outputs: list[VersionOutput]

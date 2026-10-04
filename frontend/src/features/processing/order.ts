@@ -1,5 +1,5 @@
 import type { OrderRuleKind, ProcessorSchema } from '@/api';
-import { moveStep, type StepDraft } from '@/features/processing/recipe';
+import { addStep, moveStep, type StepDraft } from '@/features/processing/recipe';
 
 /**
  * The order of the steps of a draft, as the processors ask for it in the catalogue.
@@ -96,10 +96,28 @@ function identityOf(issue: OrderIssue): string {
 }
 
 /**
- * Find the required place that dropping a step on another step would make the draft break, if there is one.
+ * Find the required place that a change of the draft makes it break, if there is one.
  *
  * A required place the draft already breaks is not counted, so a recipe that was saved in the free order can still be
- * rearranged in the usual one, and only a move that makes things worse is refused.
+ * rearranged in the usual one, and only a change that makes things worse is refused.
+ */
+function newRequiredIssue(
+  before: readonly StepDraft[],
+  after: readonly StepDraft[],
+  catalogue: readonly ProcessorSchema[],
+): OrderIssue | undefined {
+  const broken = new Set(
+    orderIssues(before, catalogue)
+      .filter((issue) => issue.kind === 'required')
+      .map(identityOf),
+  );
+  return orderIssues(after, catalogue).find(
+    (issue) => issue.kind === 'required' && !broken.has(identityOf(issue)),
+  );
+}
+
+/**
+ * Find the required place that dropping a step on another step would make the draft break, if there is one.
  *
  * @param steps The draft.
  * @param catalogue The processors of the stage.
@@ -112,14 +130,60 @@ export function refusalOf(
   activeId: string,
   overId: string,
 ): OrderIssue | undefined {
-  const broken = new Set(
-    orderIssues(steps, catalogue)
-      .filter((issue) => issue.kind === 'required')
-      .map(identityOf),
-  );
-  return orderIssues(moveStep(steps, activeId, overId), catalogue).find(
-    (issue) => issue.kind === 'required' && !broken.has(identityOf(issue)),
-  );
+  return newRequiredIssue(steps, moveStep(steps, activeId, overId), catalogue);
+}
+
+/**
+ * Find the required place that adding a step of a processor at a place would make the draft break, if there is one.
+ *
+ * @param steps The draft.
+ * @param catalogue The processors of the stage.
+ * @param processor The processor of the step to add.
+ * @param index The place the step would take, from zero.
+ */
+export function refusalOfAdd(
+  steps: readonly StepDraft[],
+  catalogue: readonly ProcessorSchema[],
+  processor: ProcessorSchema,
+  index: number,
+): OrderIssue | undefined {
+  return newRequiredIssue(steps, addStep(steps, processor, index), catalogue);
+}
+
+/** How much a broken rule weighs when the places for a new step are compared: a required place far outweighs a usual one. */
+const WEIGHT: Readonly<Record<OrderRuleKind, number>> = { usual: 1, required: 100 };
+
+/**
+ * Find where a new step of a processor usually stands among the steps of the draft, without moving any of them.
+ *
+ * Each place is tried, and the one where the new step breaks the fewest rules, the required ones counting most, is taken.
+ * Of equal places the latest is taken, so a step that nothing asks to stand earlier goes to the end, and a second step of
+ * a processor goes after the steps of the processor it already has.
+ *
+ * @param steps The draft.
+ * @param catalogue The processors of the stage.
+ * @param processor The processor of the step to add.
+ * @returns The place of the new step, from zero, which is the end when no rule asks for another.
+ */
+export function usualPlace(
+  steps: readonly StepDraft[],
+  catalogue: readonly ProcessorSchema[],
+  processor: ProcessorSchema,
+): number {
+  let best = steps.length;
+  let fewest = Number.POSITIVE_INFINITY;
+  for (let index = steps.length; index >= 0; index -= 1) {
+    const trial = addStep(steps, processor, index);
+    const added = trial[index]?.id;
+    const cost = orderIssues(trial, catalogue)
+      .filter((issue) => issue.stepId === added || issue.otherId === added)
+      .reduce((total, issue) => total + WEIGHT[issue.kind], 0);
+    if (cost < fewest) {
+      fewest = cost;
+      best = index;
+    }
+  }
+  return best;
 }
 
 /**

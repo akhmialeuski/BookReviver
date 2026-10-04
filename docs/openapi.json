@@ -3352,6 +3352,106 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}/reset": {
+      "post": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Reset Variant",
+        "description": "Put the steps a stage starts with back into a recipe, which marks the pages it processed stale.\n\nThe steps are those of the account's default profile for the stage when it has a usable one, and otherwise those of\nthe built-in template of the recipe. The recipe keeps its identifier, its name, whether it is active and the pages\npinned to it, and every step in it is new. The answer is 404 for a stage that has no steps by default.",
+        "operationId": "reset_variant_api_v1_projects__project_id__stages__stage__variants__recipe_id__reset_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          },
+          {
+            "name": "recipe_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the recipe",
+              "title": "Recipe Id"
+            },
+            "description": "Identifier of the recipe"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}/activate": {
       "post": {
         "tags": [
@@ -6400,6 +6500,128 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{step_id}/carry-over": {
+      "post": {
+        "tags": [
+          "edits"
+        ],
+        "summary": "Carry Over Edit",
+        "description": "Carry the shape this page has set by hand for a step over to other pages, as one batch, and mark them stale.\n\nThe pages are the following ones, the selected ones, or every page of the condition of the step. The whole shape is\ncarried and not a part of it, and the settings of each page stay as they are. A page that has a shape of its own set\nby hand is left as it is and listed as skipped, unless the form asks to write over it, and a page that has the same\nshape is neither written nor listed. The changes share a batch, so one undo takes the shape back from every page.\nThe answer is 404 when this page has no shape set by hand for the step, and 422 for an edit that is a mask, which\nbelongs to one page, and for a carry-over to the selected pages that names none.",
+        "operationId": "carry_over_edit_api_v1_projects__project_id__pages__page_id__edits__stage___step_id__carry_over_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the step that reads the edit"
+            },
+            "description": "Stage of the step that reads the edit"
+          },
+          {
+            "name": "step_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the step of a recipe that reads the edit",
+              "title": "Step Id"
+            },
+            "description": "Identifier of the step of a recipe that reads the edit"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CarryForm"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CarryOverSchema"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -12178,6 +12400,11 @@
             "type": "string",
             "title": "Title"
           },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "default": ""
+          },
           "stage": {
             "$ref": "#/components/schemas/Stage"
           },
@@ -12240,7 +12467,7 @@
           "requires_after"
         ],
         "title": "ProcessorSchema",
-        "description": "A processor a recipe can use.\n\n:ivar key: Key of the processor, such as ``geometry.deskew``.\n:ivar version: Version of its algorithm.\n:ivar title: Name the interface shows.\n:ivar stage: Stage whose recipe it can be put into.\n:ivar scope: Whether it makes one output for a page or one for each part of a scan.\n:ivar outputs: What it writes.\n:ivar parameters: JSON Schema of its parameters, from which the interface builds the form.\n:ivar editor: Editor of the manual edit it reads.\n:ivar pool: Class of worker it runs on.\n:ivar after: Processors whose steps its step usually stands after.\n:ivar before: Processors whose steps its step usually stands before.\n:ivar requires_after: Processors whose steps its step must stand after, which the interface keeps it from leaving."
+        "description": "A processor a recipe can use.\n\n:ivar key: Key of the processor, such as ``geometry.deskew``.\n:ivar version: Version of its algorithm.\n:ivar title: Name the interface shows.\n:ivar summary: One line that says what the step does, which the catalogue of steps shows, or an empty string.\n:ivar stage: Stage whose recipe it can be put into.\n:ivar scope: Whether it makes one output for a page or one for each part of a scan.\n:ivar outputs: What it writes.\n:ivar parameters: JSON Schema of its parameters, from which the interface builds the form.\n:ivar editor: Editor of the manual edit it reads.\n:ivar pool: Class of worker it runs on.\n:ivar after: Processors whose steps its step usually stands after.\n:ivar before: Processors whose steps its step usually stands before.\n:ivar requires_after: Processors whose steps its step must stand after, which the interface keeps it from leaving."
       },
       "ProcessorScope": {
         "type": "string",

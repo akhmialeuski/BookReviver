@@ -16,6 +16,7 @@ import {
 } from '@/api';
 import {
   activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostMutation,
+  carryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostMutation,
   carryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostMutation,
   chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutMutation,
   createRuleApiV1ProjectsProjectIdStagesStageRulesPostMutation,
@@ -42,6 +43,7 @@ import {
   putSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutMutation,
   putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation,
   remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostMutation,
+  resetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostMutation,
   runImpactApiV1ProjectsProjectIdStagesStageRunImpactPostMutation,
   runStageApiV1ProjectsProjectIdStagesStageRunPostMutation,
   unpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteMutation,
@@ -206,6 +208,18 @@ export function useSaveRecipe(projectId: string, stage: Stage) {
   const queryClient = useQueryClient();
   return useMutation({
     ...putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation(),
+    onSettled: () => refreshStage(queryClient, projectId, stage),
+  });
+}
+
+/**
+ * Put the steps a stage starts with back into a recipe, which marks the pages it processed out of date. The steps are the
+ * default profile of the account or the built-in template, chosen by the server.
+ */
+export function useResetRecipe(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...resetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostMutation(),
     onSettled: () => refreshStage(queryClient, projectId, stage),
   });
 }
@@ -404,6 +418,26 @@ export function useCarryOver(projectId: string, stage: Stage) {
   return useMutation({
     ...carryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostMutation(),
     scope: { id: `page-settings:${projectId}` },
+    onSettled: () =>
+      Promise.all([
+        invalidatePageLayers(queryClient),
+        invalidateStageRows(queryClient, projectId, stage),
+        invalidateStageSummary(queryClient, projectId),
+      ]),
+  });
+}
+
+/**
+ * Carry the shape the open page has set by hand for a step over to other pages, as one batch of the history.
+ *
+ * It shares the mutation scope of the edits of the book, so it reaches the server after the edit of the source page that
+ * was saved just before it. The edits and the histories of every page it reached are read again.
+ */
+export function useCarryShape(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...carryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostMutation(),
+    scope: { id: `page-edits:${projectId}` },
     onSettled: () =>
       Promise.all([
         invalidatePageLayers(queryClient),

@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import type { ProcessorSchema } from '@/api';
 import { processor, recipe, step } from '@/features/processing/fixtures';
 import {
   issuesByStep,
   orderIssues,
   refusalOf,
+  refusalOfAdd,
   restoreUsualOrder,
+  usualPlace,
 } from '@/features/processing/order';
 import { draftOf, type StepDraft } from '@/features/processing/recipe';
 
@@ -132,6 +135,57 @@ describe('refusalOf', () => {
 
     expect(refusalOf(broken, CATALOGUE, 'step-2', 'step-1')).toBeUndefined();
     expect(refusalOf(broken, CATALOGUE, 'step-1', 'step-0')).toBeUndefined();
+  });
+});
+
+const processorOf = (key: string): ProcessorSchema => {
+  const found = CATALOGUE.find((entry) => entry.key === `geometry.${key}`);
+  if (found === undefined) {
+    throw new Error(`No processor ${key}`);
+  }
+  return found;
+};
+
+describe('refusalOfAdd', () => {
+  it('refuses a step added where it would stand after the step that must follow it', () => {
+    const refusal = refusalOfAdd(draft('c'), CATALOGUE, processorOf('b'), 1);
+
+    expect(refusal).toMatchObject({ kind: 'required', reason: C_REASON });
+  });
+
+  it('allows the place that keeps every required place', () => {
+    expect(refusalOfAdd(draft('c'), CATALOGUE, processorOf('b'), 0)).toBeUndefined();
+  });
+
+  it('does not count a required place the draft already breaks', () => {
+    expect(refusalOfAdd(draft('c', 'b'), CATALOGUE, processorOf('b'), 2)).toBeUndefined();
+  });
+});
+
+describe('usualPlace', () => {
+  it('puts a step at the end when no rule asks for another place', () => {
+    expect(usualPlace(draft('a'), CATALOGUE, processorOf('b'))).toBe(1);
+    expect(usualPlace([], CATALOGUE, processorOf('a'))).toBe(0);
+  });
+
+  it('puts a second step of a processor after the first and before the step that follows it', () => {
+    expect(usualPlace(draft('a', 'b'), CATALOGUE, processorOf('a'))).toBe(1);
+  });
+
+  it('puts a step before the step that must follow it', () => {
+    expect(usualPlace(draft('c'), CATALOGUE, processorOf('b'))).toBe(0);
+  });
+
+  it('puts a step before the step it usually precedes', () => {
+    expect(usualPlace(draft('a'), CATALOGUE, processorOf('o'))).toBe(0);
+  });
+
+  it('moves no step that is already in the draft', () => {
+    const before = draft('b', 'a');
+
+    usualPlace(before, CATALOGUE, processorOf('a'));
+
+    expect(keys(before)).toEqual(['b', 'a']);
   });
 });
 

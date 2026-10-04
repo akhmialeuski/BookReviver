@@ -36,6 +36,7 @@ describe('StepBar', () => {
     openId: string | undefined,
     states: Record<string, FigureState | null> = {},
     recipes = [{ id: 'r', name: 'Book' }],
+    actions?: React.ReactNode,
   ): void {
     act(() =>
       root.render(
@@ -47,6 +48,7 @@ describe('StepBar', () => {
           recipeId="r"
           onChooseRecipe={onChooseRecipe}
           onOpen={onOpen}
+          actions={actions}
         />,
       ),
     );
@@ -152,5 +154,15 @@ describe('StepBar', () => {
     });
 
     expect(onChooseRecipe).toHaveBeenCalledWith('q');
+  });
+
+  it('draws the actions the caller gives it after the last step, outside the list of steps', () => {
+    render(undefined, {}, undefined, <button type="button" data-testid="action" />);
+
+    const action = container.querySelector('[data-testid="action"]');
+    const list = container.querySelector('ol');
+    expect(action).not.toBeNull();
+    expect(list?.contains(action)).toBe(false);
+    expect(list?.nextElementSibling).toBe(action);
   });
 });

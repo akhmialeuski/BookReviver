@@ -45,6 +45,8 @@ import { StagePanel } from '@/features/workspace/StagePanel';
 import { StageStrip } from '@/features/workspace/StageStrip';
 import { StageWorkspace } from '@/features/workspace/StageWorkspace';
 import { StepBar } from '@/features/workspace/StepBar';
+import { StepCatalogue } from '@/features/workspace/StepCatalogue';
+import { StepsWindow } from '@/features/workspace/StepsWindow';
 import {
   type ClickModifiers,
   type SelectionState,
@@ -63,6 +65,7 @@ import {
   stopOptions,
   type VariantView,
 } from '@/features/workspace/strip';
+import { useCloseRemovedStep } from '@/features/workspace/useCloseRemovedStep';
 import { useStepWorkspace } from '@/features/workspace/useStepWorkspace';
 import { describeError } from '@/shared/http/problem';
 import { cn } from '@/shared/lib/utils';
@@ -195,6 +198,17 @@ export function StageScreen({
     currentItem,
   );
   const openStep = workspace.open;
+  // A step that was removed from the recipe leaves the address, so no workspace stays open for a step that is gone
+  useCloseRemovedStep(
+    hasStepBar(stage) ? stepId : undefined,
+    openStep,
+    processing.ready && processing.recipe !== undefined,
+    () => onStepChange(undefined),
+  );
+  const stageRows = useMemo(
+    () => items.flatMap((item) => (item.row === undefined ? [] : [item.row])),
+    [items],
+  );
   // The variants of the stage mark its pages and narrow the list to one of them; the choice belongs to one stage
   const [variantPick, setVariantPick] = useState<{ stage: Stage; id: string | null }>({
     stage,
@@ -516,6 +530,16 @@ export function StageScreen({
                 recipeId={processing.recipe?.id}
                 onChooseRecipe={processing.chooseRecipe}
                 onOpen={onStepChange}
+                actions={
+                  <>
+                    <StepCatalogue
+                      processing={processing}
+                      rows={stageRows}
+                      onAdded={onStepChange}
+                    />
+                    <StepsWindow processing={processing} rows={stageRows} />
+                  </>
+                }
               />
             )
           }
