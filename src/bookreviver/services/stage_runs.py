@@ -15,6 +15,11 @@ as stopped there. If the earlier stage of the page is stale, or stopped short of
 its own recipe, which finds its versions in the cache when nothing changed. ``PreviewRun`` runs the steps of a form on
 the previews of the images and never changes what is current.
 
+A page is placed on the page size by the book, which no page alone knows. The fields of the normalize step that are 0
+are laid over its parameters from the content boxes the book has: a run of the whole book works them out once, from the
+boxes its pages were just placed by, and a run of a page or a preview works them out from the box of that page and the
+boxes the other pages hold. The version holds the parameters the step ran with, so the size reaches its identifier.
+
 Both classes read and write through one unit of work and commit after each version, so the viewer shows the first
 results while the rest are made.
 """
@@ -42,14 +47,15 @@ from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import COLOR_MODE_KEY, PageSize, PageStageKey, PageStepKey, Step
+from bookreviver.services.book_measure import NORMALIZE_KEY, BlockMeasure, BookBlocks, wants_the_book
 from bookreviver.services.spread_splits import SpreadSplit
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from bookreviver.domain.entities import Project, Recipe
-    from bookreviver.domain.ids import PageVersionId, StorageKey
+    from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StorageKey
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import UnitOfWork
@@ -90,6 +96,8 @@ class StepSource:
     :ivar ratio: Size of the image over the size of the full image, 1 for a full run.
     :ivar stage_color: Colour mode of the image the stage started from, which the condition of a step reads, or None
                        when the source is that image.
+    :ivar book: What the book gives the fields of the normalize step that are 0, which lies under the settings of the
+                page, or None for a run that has not worked it out.
     """
 
     version_id: PageVersionId | None
@@ -98,6 +106,7 @@ class StepSource:
     scale: VersionScale = VersionScale.FULL
     ratio: float = 1.0
     stage_color: ColorMode | None = None
+    book: MetadataMap | None = None
 
     @property
     def color_mode(self) -> ColorMode:
@@ -266,6 +275,110 @@ class StageWork:
         """
         return min(1.0, self._preview_long_side_px / max(width_px, height_px))
 
+    async def _make_chain(
+        self,
+        page: Page,
+        stage: Stage,
+        steps: Sequence[Step],
+        source: StepSource,
+        *,
+        expected: Sequence[PageVersionId] | None = None,
+    ) -> PageVersion | None:
+        """Make the version of each step, each reading the one before, on the scale of the source.
+
+        :param page: Page to process.
+        :type page: Page
+        :param stage: Stage of the steps.
+        :type stage: Stage
+        :param steps: The steps to make, in order.
+        :type steps: Sequence[Step]
+        :param source: What the first step reads, whose scale is the scale of every version made and whose book
+                       is laid over the step that takes one.
+        :type source: StepSource
+        :param expected: The identifier each version must have, in the order of the steps, when versions are made
+                         again, or None.
+        :type expected: Sequence[PageVersionId] | None
+        :returns: The version of the last step, or the one that failed, which ends the chain, or None for no step.
+        :rtype: PageVersion | None
+        :raises DomainError: If a processor is missing, its parameters do not fit, or the identifier is not the expected
+                             one.
+        """
+        version: PageVersion | None = None
+        # The colour of a picture is the one the stage started from, so a step that binarises it does not change it
+        stage_color = source.color_mode
+        for index, step in enumerate(steps):
+            version = await self._make_version(
+                page, stage, step, source, expected=None if expected is None else expected[index]
+            )
+            if version.state is not VersionState.READY:
+                return version
+            # A preview made of a preview is as large of the full image as the preview it read, so the ratio goes on
+            source = evolve(
+                self._version_source(version, source.scale),
+                stage_color=stage_color,
+                book=source.book,
+                ratio=source.ratio,
+            )
+        return version
+
+    def _book_fields(self, steps: Sequence[Step]) -> MetadataMap | None:
+        """Find the parameters of the normalize step among steps when some of its fields are left to the book.
+
+        :param steps: The steps a run or a preview goes over.
+        :type steps: Sequence[Step]
+        :returns: The parameters of the step with the defaults filled in, or None when no step is a normalize step, or
+                  every field of it has a value.
+        :rtype: MetadataMap | None
+        """
+        step = next((step for step in steps if step.processor_key == NORMALIZE_KEY), None)
+        if step is None:
+            return None
+        params = self._catalogue.get(NORMALIZE_KEY).validate_params(step.params)
+        return params if wants_the_book(params) else None
+
+    async def _measure(
+        self, page: Page, stage: Stage, steps: Sequence[Step], source: StepSource
+    ) -> BlockMeasure | None:
+        """Make the steps up to the normalize step as they stand, and read the content box it recorded.
+
+        :param page: Page to measure.
+        :type page: Page
+        :param stage: Stage of the steps.
+        :type stage: Stage
+        :param steps: The steps a run or a preview goes over, one of which is the normalize step.
+        :type steps: Sequence[Step]
+        :param source: What the first step reads.
+        :type source: StepSource
+        :returns: The box of the page, or None when a step failed or the page has no content to find a box by.
+        :rtype: BlockMeasure | None
+        """
+        position = next(index for index, step in enumerate(steps) if step.processor_key == NORMALIZE_KEY)
+        version = await self._make_chain(page, stage, steps[: position + 1], source)
+        return None if version is None or version.state is not VersionState.READY else BlockMeasure.of(version)
+
+    async def _book_of(self, page: Page, stage: Stage, steps: Sequence[Step], source: StepSource) -> MetadataMap:
+        """Work out what the book gives the normalize step on a page that is run or previewed alone.
+
+        :param page: The page, whose content box is measured now.
+        :type page: Page
+        :param stage: Stage of the steps.
+        :type stage: Stage
+        :param steps: The steps a run or a preview goes over.
+        :type steps: Sequence[Step]
+        :param source: What the first step reads.
+        :type source: StepSource
+        :returns: The fields of the step that are by the book with their values, none when the step has no field by the
+                  book or no page has a box.
+        :rtype: MetadataMap
+        """
+        if (params := self._book_fields(steps)) is None:
+            return {}
+        measure = await self._measure(page, stage, steps, source)
+        fresh: dict[PageId, BlockMeasure] = {}
+        if measure is not None:
+            fresh[page.id] = measure
+        return await BookBlocks(self._uow).by_the_book(page.project_id, stage, params, fresh)
+
     async def _execute(self, version: PageVersion, run: StepRun) -> PageVersion:
         """Run the step of a version and store its files.
 
@@ -312,7 +425,8 @@ class StageWork:
         :param step: The step to run.
         :type step: Step
         :param source: What the step reads, whose scale says whether the step runs on the full image or on the preview,
-                       and whose colour of the start of the stage the condition of the step reads.
+                       whose colour of the start of the stage the condition of the step reads, and whose book gives the
+                       fields of the step that are 0 their values.
         :type source: StepSource
         :param expected: Identifier the version must have, when the step makes a version again, or None.
         :type expected: PageVersionId | None
@@ -333,7 +447,9 @@ class StageWork:
         # The settings of the page are laid over the parameters of the step before they are checked, so the identifier
         # of the version hashes the parameters the step runs with, and two pages that end up with equal ones share it.
         # A version that is made again ran with the parameters it stored, which already hold the settings of its time
-        laid = step.params if state is None or expected is not None else state.apply_to(step.params)
+        # and the size of the book it had then
+        base = step.params if not source.book or expected is not None else {**step.params, **source.book}
+        laid = base if state is None or expected is not None else state.apply_to(base)
         checked = processor.validate_params(laid)
         params = {} if skipped else checked
         edit = None if state is None else state.edit
@@ -423,6 +539,7 @@ class RecipeRun(StageWork):
         self._recipes = recipes
         self._records = records
         self._splits = SpreadSplit(project=project, uow=uow, runtime=runtime, records=records)
+        self._books: dict[RecipeId, MetadataMap] = {}
 
     async def run(
         self,
@@ -456,6 +573,7 @@ class RecipeRun(StageWork):
         stage = recipe.stage
         if stage is Stage.PAGE_SPLIT and page.slot > Page.LEFT_HALF:
             return RunOutcome.SKIPPED
+        steps = [step for _, step in recipe.indexed_steps_through(through_step)]
         try:
             if (source := await self._source(page, stage, VersionScale.FULL)) is None:
                 return RunOutcome.SKIPPED
@@ -467,7 +585,7 @@ class RecipeRun(StageWork):
                 )
             undoing = await self._splits.undoing(page, recipe, confirmed=confirmed)
             version = await self._run_steps(
-                page, stage, [step for _, step in recipe.indexed_steps_through(through_step)], source
+                page, stage, steps, evolve(source, book=await self._book_for(page, recipe, steps, source))
             )
         except DomainError:
             await self._uow.rollback()
@@ -585,20 +703,86 @@ class RecipeRun(StageWork):
         :raises DomainError: If a processor is missing, its parameters do not fit, the identifier is not the expected
                              one, or the pyramid cannot be cut.
         """
-        version: PageVersion | None = None
-        # The colour of a picture is the one the stage started from, so a step that binarises it does not change it
-        stage_color = source.color_mode
-        for index, step in enumerate(steps):
-            version = await self._make_version(
-                page, stage, step, source, expected=None if expected is None else expected[index]
-            )
-            if version.state is not VersionState.READY:
-                return None
-            source = evolve(self._version_source(version, VersionScale.FULL), stage_color=stage_color)
-        if version is not None and version.renditions is not None and not version.tiles_ready:
+        version = await self._make_chain(page, stage, steps, source, expected=expected)
+        if version is None or version.state is not VersionState.READY:
+            return None
+        if version.renditions is not None and not version.tiles_ready:
             version = await self._runner.cut_tiles(self._keys, version)
             await self._uow.page_versions.update(version)
         return version
+
+    async def measure(self, page: Page, recipe: Recipe, *, through_step: int | None = None) -> BlockMeasure | None:
+        """Make the steps of the recipe up to the normalize step, and read the content box the step recorded.
+
+        A run of the whole book places every page by a page size that is the largest of the boxes of all of them, so it
+        asks every page for its box first. The versions this makes are the ones the run finds again.
+
+        :param page: Page to measure.
+        :type page: Page
+        :param recipe: Recipe of the stage the page is run by.
+        :type recipe: Recipe
+        :param through_step: Index in the recipe of the last step the run goes over, or None for every step that is on.
+        :type through_step: int | None
+        :returns: The box of the page, or None when the page has no image, a step failed, or it has no content.
+        :rtype: BlockMeasure | None
+        """
+        steps = [step for _, step in recipe.indexed_steps_through(through_step)]
+        if (
+            self._book_fields(steps) is None
+            or (source := await self._source(page, recipe.stage, VersionScale.FULL)) is None
+        ):
+            return None
+        return await self._measure(page, recipe.stage, steps, source)
+
+    def wants_book(self, recipe: Recipe, *, through_step: int | None = None) -> bool:
+        """Tell whether a run of the recipe has a field of the normalize step to take from the book.
+
+        :param recipe: Recipe of the stage.
+        :type recipe: Recipe
+        :param through_step: Index in the recipe of the last step the run goes over, or None for every step that is on.
+        :type through_step: int | None
+        :returns: Whether the step is among those the run goes over and has the page size or the line height at 0.
+        :rtype: bool
+        """
+        return self._book_fields([step for _, step in recipe.indexed_steps_through(through_step)]) is not None
+
+    async def _book_for(self, page: Page, recipe: Recipe, steps: Sequence[Step], source: StepSource) -> MetadataMap:
+        """Give what the book gives the normalize step on a page: what the run worked out, or else the page's own.
+
+        A run of the whole book worked the size out once for all its pages. A page that is run alone works it out from
+        its own box and the boxes the other pages hold.
+
+        :param page: The page being run.
+        :type page: Page
+        :param recipe: Recipe the page is run by.
+        :type recipe: Recipe
+        :param steps: The steps the run goes over.
+        :type steps: Sequence[Step]
+        :param source: What the first step reads.
+        :type source: StepSource
+        :returns: The fields of the step that are by the book with their values, none when there is nothing to give.
+        :rtype: MetadataMap
+        """
+        worked = self._books.get(recipe.id)
+        return worked if worked is not None else await self._book_of(page, recipe.stage, steps, source)
+
+    async def settle_book(
+        self, recipe: Recipe, fresh: Mapping[PageId, BlockMeasure], *, through_step: int | None = None
+    ) -> None:
+        """Work out what the book gives the fields of the normalize step that are 0, for every page run by the recipe.
+
+        :param recipe: Recipe of the stage the pages are run by.
+        :type recipe: Recipe
+        :param fresh: The boxes of the pages the run has just measured.
+        :type fresh: Mapping[PageId, BlockMeasure]
+        :param through_step: Index in the recipe of the last step the run goes over, or None for every step that is on.
+        :type through_step: int | None
+        """
+        params = self._book_fields([step for _, step in recipe.indexed_steps_through(through_step)])
+        if params is not None:
+            self._books[recipe.id] = await BookBlocks(self._uow).by_the_book(
+                recipe.project_id, recipe.stage, params, fresh
+            )
 
     @override
     async def _refresh(self, page: Page, stage: Stage) -> None:
@@ -662,13 +846,12 @@ class PreviewRun(StageWork):
         source = await self._source(page, stage, VersionScale.PREVIEW)
         if source is None:
             raise ConflictError(NO_PREVIEW_INPUT)
-        version: PageVersion | None = None
-        stage_color = source.color_mode
-        for step in (step for step in steps[: step_index + 1] if step.enabled):
-            version = await self._make_version(page, stage, step, source)
-            if version.state is not VersionState.READY:
-                raise ConflictError(version.data[VersionData.ERROR])
-            source = evolve(self._version_source(version, VersionScale.PREVIEW), stage_color=stage_color)
+        enabled = [step for step in steps[: step_index + 1] if step.enabled]
+        version = await self._make_chain(
+            page, stage, enabled, evolve(source, book=await self._book_of(page, stage, enabled, source))
+        )
         if version is None:
             raise ConflictError(NO_STEP_TO_PREVIEW)
+        if version.state is not VersionState.READY:
+            raise ConflictError(version.data[VersionData.ERROR])
         return version

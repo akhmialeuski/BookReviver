@@ -4,7 +4,6 @@ import { Rect } from 'react-konva';
 import { EditorLayer } from '@/features/editors/EditorLayer';
 import { FIGURE_STYLE } from '@/features/editors/figure';
 import { nudgeOfKey } from '@/features/editors/line';
-import { isPlacement } from '@/features/editors/placement';
 import {
   HANDLE_ORDER,
   handlePoint,
@@ -46,7 +45,6 @@ export function RectCanvas({
   shape,
   size,
   figure,
-  context,
   onChange,
   onCommit,
 }: CanvasProps<RectShape>): React.JSX.Element {
@@ -103,7 +101,7 @@ export function RectCanvas({
     <EditorLayer
       scene={scene}
       frame={frame}
-      label={isPlacement(context.processorKey) ? labels.placement.name : labels.name}
+      label={labels.name}
       value={{
         min: 0,
         max: frame.size.width,

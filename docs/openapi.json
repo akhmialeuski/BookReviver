@@ -10663,7 +10663,8 @@
           "split",
           "mesh",
           "brush-mask",
-          "regions"
+          "regions",
+          "content-box"
         ],
         "title": "EditorKind",
         "description": "The editor a processor offers for the manual edit of its input."

@@ -16,12 +16,19 @@ import { page, row } from '@/features/workspace/fixtures';
 /** The registry of page editors: which kinds have a component, and what each one is built to do. */
 
 describe('hasEditor', () => {
-  it.each(['line', 'rotation', 'split', 'quad', 'rect', 'mesh', 'regions', 'brush-mask'] as const)(
-    'has a component for %s',
-    (kind) => {
-      expect(hasEditor(kind)).toBe(true);
-    },
-  );
+  it.each([
+    'line',
+    'rotation',
+    'split',
+    'quad',
+    'rect',
+    'mesh',
+    'regions',
+    'brush-mask',
+    'content-box',
+  ] as const)('has a component for %s', (kind) => {
+    expect(hasEditor(kind)).toBe(true);
+  });
 
   it.each(['none'] as const)('has none yet for %s', (kind) => {
     expect(hasEditor(kind)).toBe(false);
@@ -29,6 +36,51 @@ describe('hasEditor', () => {
 });
 
 describe('editorOf', () => {
+  it('lays the content box on what the step reads, offers it once the step has run, and runs the stage after it', () => {
+    const current = { page: page('p'), row: row('p') };
+    const context = {
+      current,
+      items: [current],
+      scan: scan('s', 100, 50),
+      stepInput: null,
+      result: null,
+      processorKey: 'geometry.normalize',
+      pictureSize: null,
+    };
+
+    expect(editorOf('content-box').picture).toBe(Picture.Input);
+    expect(editorOf('content-box').needsResult).toBe(true);
+    expect(editorOf('content-box').runsAfterEdit(context)).toBe(true);
+  });
+
+  it('starts the content box from the box the step found, in the pixels of the picture the step read', () => {
+    const current = { page: page('p'), row: row('p') };
+    const result = readResult({
+      data: {
+        content_box: { left: 10, top: 20, width: 70, height: 150 },
+        source_width_px: 1000,
+        source_height_px: 1500,
+      },
+    });
+    const context = {
+      current,
+      items: [current],
+      scan: scan('s', 100, 50),
+      stepInput: null,
+      result,
+      processorKey: 'geometry.normalize',
+      pictureSize: null,
+    };
+
+    expect(editorOf('content-box').size(context)).toEqual({ width: 1000, height: 1500 });
+    expect(editorOf('content-box').fallback({ ...context, size: sourceSize(result) })).toEqual({
+      left: 10,
+      top: 20,
+      width: 70,
+      height: 150,
+    });
+  });
+
   it('puts the split line on the scan and the rotation on what the step reads', () => {
     expect(editorOf('line').picture).toBe(Picture.Scan);
     expect(editorOf('rotation').picture).toBe(Picture.Input);

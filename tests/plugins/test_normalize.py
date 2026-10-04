@@ -1,4 +1,4 @@
-"""Tests for the geometry.normalize processor, on blocks of text drawn for the tests at different scales.
+"""Tests for the geometry.normalize processor, on blocks of text and on sheets with a block, drawn at different scales.
 
 The tests need OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
 """
@@ -26,7 +26,7 @@ from bookreviver.domain.enums import (
     VerticalAlign,
 )
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
-from bookreviver.domain.geometry import Point, Rect
+from bookreviver.domain.geometry import ContentBox, Point, Rect
 from bookreviver.plugins.cv_image import line_pitch
 from bookreviver.ports.processing import StepInput
 from tests.helpers.samples import INK, LINE_PITCH_PX, PAPER, save, text_page
@@ -66,7 +66,11 @@ EDGE_TOLERANCE_PX: float = 2.0
 SHORT_BLOCK_PX: tuple[int, int] = (300, 200)
 # The ink of a block is black, and every sample below this is ink
 INK_LIMIT: int = 128
-EDIT_RECT: Rect = Rect(left=210, top=330, width=400, height=520)
+# The sheet a block of text lies on in the tests that find the box themselves, and where the block lies on it
+SHEET_SIZE_PX: tuple[int, int] = (1_200, 1_600)
+BLOCK_AT_PX: tuple[int, int] = (300, 400)
+# How far the box a search finds may be from the ink of the block, which it keeps a few pixels of room round
+SEARCH_TOLERANCE_PX: float = 10.0
 HALF_SCALE: float = 0.5
 LINE_HEIGHT: str = NormalizeParam.LINE_HEIGHT
 TARGET_LINE_PX: float = float(LINE_PITCH_PX)
@@ -116,6 +120,33 @@ def ink_box(path: Path) -> tuple[int, int, int, int]:
     return int(columns.min()), int(rows.min()), int(columns.max()) + 1, int(rows.max()) + 1
 
 
+def crop_facts(block: Image.Image, scale: float = 1.0) -> MetadataMap:
+    """Give the data of a version a crop made of a block as tight as the crop cuts it, which is the input of the step.
+
+    :param block: The block of text, which is the whole image the crop cut.
+    :type block: Image.Image
+    :param scale: Size of the image over the size of the full image, 1 for a full run.
+    :type scale: float
+    :returns: The size of the image and the frame of the crop, which is the whole of it, in the pixels of the full image.
+    :rtype: MetadataMap
+    """
+    frame = Rect(left=0, top=0, width=block.width / scale, height=block.height / scale)
+    return {VersionData.WIDTH_PX: block.width, VersionData.HEIGHT_PX: block.height, VersionData.FRAME: frame.to_data()}
+
+
+def sheet_with(block: Image.Image) -> Image.Image:
+    """Lay a block of text on a sheet of white paper, as the page of a book without Select content is.
+
+    :param block: The block of text.
+    :type block: Image.Image
+    :returns: The sheet, which is larger than the block and has paper on every side of it.
+    :rtype: Image.Image
+    """
+    sheet = Image.new('L', SHEET_SIZE_PX, PAPER)
+    sheet.paste(block, BLOCK_AT_PX)
+    return sheet
+
+
 def normalized(
     processor: Processor,
     block: Image.Image,
@@ -123,7 +154,9 @@ def normalized(
     params: MetadataMap | None = None,
     **extras: Unpack[StepExtras],
 ) -> StepOutput:
-    """Run the step on a block with the page of the tests and the parameters a test changes.
+    """Run the step on a block the crop cut, with the page of the tests and the parameters a test changes.
+
+    The input carries the frame of the crop, which is the whole block, unless a test gives other facts.
 
     :param processor: The processor under test.
     :type processor: Processor
@@ -138,6 +171,7 @@ def normalized(
     :returns: The output.
     :rtype: StepOutput
     """
+    extras['facts'] = {**crop_facts(block, extras.get('scale', 1.0)), **extras.get('facts', {})}
     return run_on(processor, save(block, workdir / BLOCK_NAME), workdir, params={**PAGE, **(params or {})}, **extras)
 
 
@@ -390,30 +424,6 @@ class TestNormalize:
         expect(right - left == SHORT_BLOCK_PX[0])
         assert_expectations()
 
-    def test_rect_edit_places_and_scales_the_block_of_the_page(self, fx_normalize: Processor, tmp_path: Path) -> None:
-        """Verify the rectangle of the user replaces the alignment and the scale of the block.
-
-        The block is fitted to it, with no review mark and full confidence.
-
-        :param fx_normalize: The processor under test.
-        :type fx_normalize: Processor
-        :param tmp_path: Temporary directory of the test.
-        :type tmp_path: Path
-        """
-        output = normalized(
-            fx_normalize,
-            solid_block(*SHORT_BLOCK_PX),
-            tmp_path,
-            params={LINE_HEIGHT: TARGET_LINE_PX},
-            edit=EDIT_RECT,
-        )
-        assert output.image is not None
-        expect(ink_box(output.image) == (210, 330, 610, 850))
-        expect(Rect.from_data(output.data[VersionData.FRAME]) == EDIT_RECT)
-        expect(output.data[VersionData.CONFIDENCE] == pytest.approx(1.0))
-        expect(output.review is None)
-        assert_expectations()
-
     def test_the_rest_of_the_page_is_the_median_colour_of_the_paper_or_white(
         self, fx_normalize: Processor, tmp_path: Path
     ) -> None:
@@ -474,27 +484,31 @@ class TestNormalize:
         expect(found.left == pytest.approx(truth.left, abs=2))
         expect(found.top == pytest.approx(truth.top, abs=2))
         expect(found.width == pytest.approx(truth.width, rel=0.02))
-        expect(half.data[VersionData.SOURCE_WIDTH_PX] == PAGE_WIDTH_PX)
-        expect(half.data[VersionData.SOURCE_HEIGHT_PX] == PAGE_HEIGHT_PX)
+        # The size of the image the step read is told in the pixels of the full image, which the editor is drawn on
+        expect(half.data[VersionData.SOURCE_WIDTH_PX] == round(half_block.width / HALF_SCALE))
+        expect(half.data[VersionData.SOURCE_HEIGHT_PX] == round(half_block.height / HALF_SCALE))
         assert_expectations()
 
     def test_the_transform_carries_a_point_of_the_block_to_its_place_on_the_page(
         self, fx_normalize: Processor, tmp_path: Path
     ) -> None:
-        """Verify the corners of the block go to the corners of the frame, and back.
+        """Verify the corners of the box go to the corners of its place on the page, and back, whatever lies round it.
 
         :param fx_normalize: The processor under test.
         :type fx_normalize: Processor
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        block = solid_block(*SHORT_BLOCK_PX)
-        output = normalized(fx_normalize, block, tmp_path, edit=EDIT_RECT)
-        corner = output.transform.to_output(Point(x=block.width, y=block.height))
-        back = output.transform.to_input(Point(x=EDIT_RECT.left, y=EDIT_RECT.top))
-        expect(corner.x == pytest.approx(EDIT_RECT.left + EDIT_RECT.width, abs=1))
-        expect(corner.y == pytest.approx(EDIT_RECT.top + EDIT_RECT.height, abs=1))
-        expect((back.x, back.y) == pytest.approx((0, 0), abs=1))
+        edit = ContentBox(left=100, top=200, width=SHORT_BLOCK_PX[0], height=SHORT_BLOCK_PX[1])
+        sheet = Image.new('L', SHEET_SIZE_PX, PAPER)
+        sheet.paste(solid_block(*SHORT_BLOCK_PX), (100, 200))
+        output = run_on(fx_normalize, save(sheet, tmp_path / BLOCK_NAME), tmp_path, params=PAGE, edit=edit)
+        place = Rect.from_data(output.data[VersionData.FRAME])
+        corner = output.transform.to_output(Point(x=edit.left + edit.width, y=edit.top + edit.height))
+        back = output.transform.to_input(Point(x=place.left, y=place.top))
+        expect(corner.x == pytest.approx(place.left + place.width, abs=1))
+        expect(corner.y == pytest.approx(place.top + place.height, abs=1))
+        expect((back.x, back.y) == pytest.approx((edit.left, edit.top), abs=1))
         assert_expectations()
 
     def test_the_side_of_the_page_is_what_the_spec_asks_for(self, fx_normalize: Processor) -> None:
@@ -505,7 +519,7 @@ class TestNormalize:
         """
         spec = fx_normalize.spec
         expect((spec.key, spec.stage, spec.scope) == ('geometry.normalize', Stage.GEOMETRY, ProcessorScope.PAGE))
-        expect(spec.editor is EditorKind.RECT)
+        expect(spec.editor is EditorKind.CONTENT_BOX)
         expect(spec.by_page_side)
         assert_expectations()
 
@@ -568,8 +582,143 @@ class TestNormalize:
             fx_normalize.run(StepInput(image=None, params=fx_normalize.validate_params({}), workdir=tmp_path))
 
 
+class TestNormalizeContentBox:
+    """Tests for the box of the content the step places: found on the sheet, drawn by the user, or missing."""
+
+    def test_a_sheet_with_no_crop_before_it_places_the_block_of_text_and_not_the_sheet(
+        self, fx_normalize: Processor, tmp_path: Path
+    ) -> None:
+        """Verify the step finds the block on a sheet when no Select content cut it, and puts that block on the page.
+
+        The sheet is much larger than the block, and the block is at the target line height, so it is placed as it is
+        at the top margin and its width is the width it has on the sheet.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        block = text_block()
+        sheet = sheet_with(block)
+        output = run_on(
+            fx_normalize,
+            save(sheet, tmp_path / BLOCK_NAME),
+            tmp_path,
+            params={**PAGE, LINE_HEIGHT: TARGET_LINE_PX, ALIGN_Y: VerticalAlign.TOP},
+        )
+        assert output.image is not None
+        left, top, right, bottom = ink_box(output.image)
+        found = Rect.from_data(output.data[VersionData.CONTENT_BOX])
+        expect(abs((right - left) - block.width) <= SEARCH_TOLERANCE_PX)
+        expect(abs((bottom - top) - block.height) <= SEARCH_TOLERANCE_PX)
+        expect(abs(top - MARGIN_TOP_PX) <= SEARCH_TOLERANCE_PX)
+        expect(left >= MARGIN_OUTER_PX and right <= PAGE_WIDTH_PX - MARGIN_OUTER_PX)
+        expect(abs(found.left - BLOCK_AT_PX[0]) <= SEARCH_TOLERANCE_PX)
+        expect(abs(found.top - BLOCK_AT_PX[1]) <= SEARCH_TOLERANCE_PX)
+        expect(abs(found.width - block.width) <= SEARCH_TOLERANCE_PX)
+        expect(output.data[VersionData.BLOCK_SCALE] == pytest.approx(1.0, rel=LINE_TOLERANCE))
+        expect(output.review is None)
+        expect(output.data[VersionData.SOURCE_WIDTH_PX] == SHEET_SIZE_PX[0])
+        assert_expectations()
+
+    def test_a_sheet_with_no_ink_is_placed_whole_and_unscaled_and_marked(
+        self, fx_normalize: Processor, tmp_path: Path
+    ) -> None:
+        """Verify a page with no content to find a box by is not scaled, and says it was not sure.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        blank = Image.new('L', SHEET_SIZE_PX, PAPER)
+        output = run_on(
+            fx_normalize, save(blank, tmp_path / BLOCK_NAME), tmp_path, params={**PAGE, LINE_HEIGHT: TARGET_LINE_PX}
+        )
+        expect(output.review is ReviewReason.NOT_APPLIED)
+        expect(Rect.from_data(output.data[VersionData.FRAME]).width == pytest.approx(SHEET_SIZE_PX[0]))
+        expect(VersionData.CONTENT_BOX not in output.data)
+        expect(output.data[VersionData.CONFIDENCE] == pytest.approx(0.0))
+        assert_expectations()
+
+    def test_the_box_of_the_user_replaces_the_one_that_is_found_and_the_rest_of_the_sheet_is_dropped(
+        self, fx_normalize: Processor, tmp_path: Path
+    ) -> None:
+        """Verify a content box edit is the box that is placed, with full confidence and no review.
+
+        The edit takes the left half of the block of text, so the page holds that half and no more.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        block = text_block()
+        sheet = sheet_with(block)
+        edit = ContentBox(left=BLOCK_AT_PX[0], top=BLOCK_AT_PX[1], width=block.width // 2, height=block.height)
+        output = run_on(
+            fx_normalize,
+            save(sheet, tmp_path / BLOCK_NAME),
+            tmp_path,
+            params={**PAGE, LINE_HEIGHT: TARGET_LINE_PX},
+            edit=edit,
+        )
+        assert output.image is not None
+        left, _top, right, _bottom = ink_box(output.image)
+        expect(Rect.from_data(output.data[VersionData.CONTENT_BOX]) == Rect(**edit.to_data()))
+        expect(right - left <= edit.width + EDGE_TOLERANCE_PX)
+        expect(output.data[VersionData.CONFIDENCE] == pytest.approx(1.0))
+        expect(output.review is None)
+        assert_expectations()
+
+    def test_a_frame_of_the_old_kind_is_not_a_box_of_the_content(self, fx_normalize: Processor, tmp_path: Path) -> None:
+        """Verify a rectangle that is no content box, such as a place of a block on the page saved earlier, is ignored.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        block = text_block()
+        output = run_on(
+            fx_normalize,
+            save(sheet_with(block), tmp_path / BLOCK_NAME),
+            tmp_path,
+            params={**PAGE, LINE_HEIGHT: TARGET_LINE_PX},
+            edit=Rect(left=0, top=0, width=50, height=50),
+        )
+        expect(abs(Rect.from_data(output.data[VersionData.CONTENT_BOX]).width - block.width) <= SEARCH_TOLERANCE_PX)
+        assert_expectations()
+
+    def test_the_box_grown_by_the_margins_is_recorded_in_the_pixels_of_the_input(
+        self, fx_normalize: Processor, tmp_path: Path
+    ) -> None:
+        """Verify the box grown by the margins, which an editor draws on the input, is the box and the margins over the scale.
+
+        The text is a fifth larger than the target, so the box is scaled down by that much and each margin, which is in
+        pixels of the page, is that much larger in pixels of the input.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        given = 1.2
+        block = text_block(given)
+        output = normalized(fx_normalize, block, tmp_path, params={LINE_HEIGHT: TARGET_LINE_PX}, side=PageSide.RIGHT)
+        grown = Rect.from_data(output.data[VersionData.MARGIN_BOX])
+        factor = output.data[VersionData.BLOCK_SCALE]
+        expect(factor == pytest.approx(1 / given, rel=LINE_TOLERANCE))
+        # The right page has its gutter on the left, where the inner margin is
+        expect(grown.left == pytest.approx(-MARGIN_INNER_PX / factor, abs=1))
+        expect(grown.top == pytest.approx(-MARGIN_TOP_PX / factor, abs=1))
+        expect(grown.width == pytest.approx(block.width + (MARGIN_INNER_PX + MARGIN_OUTER_PX) / factor, abs=1))
+        expect(grown.height == pytest.approx(block.height + (MARGIN_TOP_PX + MARGIN_BOTTOM_PX) / factor, abs=1))
+        assert_expectations()
+
+
 class TestNormalizePageOfTheBlock:
-    """Tests for the page Normalize makes before the book is measured, whose size is the block and its margins."""
+    """Tests for the page Normalize makes before the book gives it a size, which is the block and its margins."""
 
     @pytest.mark.parametrize(SIDE_ARG, SIDES, ids=[side.value for side in SIDES])
     def test_a_page_of_size_zero_is_the_block_and_its_margins(
@@ -595,42 +744,13 @@ class TestNormalizePageOfTheBlock:
         left = MARGIN_OUTER_PX if side is PageSide.LEFT else MARGIN_INNER_PX
         assert output.image is not None
         expect(
-            (output.data[VersionData.SOURCE_WIDTH_PX], output.data[VersionData.SOURCE_HEIGHT_PX])
+            (output.data[VersionData.WIDTH_PX], output.data[VersionData.HEIGHT_PX])
             == (width + MARGIN_INNER_PX + MARGIN_OUTER_PX, height + MARGIN_TOP_PX + MARGIN_BOTTOM_PX)
         )
         expect(ink_box(output.image) == (left, MARGIN_TOP_PX, left + width, MARGIN_TOP_PX + height))
         assert_expectations()
 
-    def test_a_block_placed_by_hand_on_a_page_of_size_zero_keeps_the_margins_past_it(
-        self, fx_normalize: Processor, tmp_path: Path
-    ) -> None:
-        """Verify the rectangle of the user stands where it was put, and the page reaches the margins beyond it.
-
-        :param fx_normalize: The processor under test.
-        :type fx_normalize: Processor
-        :param tmp_path: Temporary directory of the test.
-        :type tmp_path: Path
-        """
-        output = normalized(
-            fx_normalize,
-            solid_block(*SHORT_BLOCK_PX),
-            tmp_path,
-            params={NormalizeParam.PAGE_WIDTH: 0, NormalizeParam.PAGE_HEIGHT: 0},
-            side=PageSide.RIGHT,
-            edit=EDIT_RECT,
-        )
-        assert output.image is not None
-        expect(
-            (output.data[VersionData.SOURCE_WIDTH_PX], output.data[VersionData.SOURCE_HEIGHT_PX])
-            == (
-                EDIT_RECT.left + EDIT_RECT.width + MARGIN_OUTER_PX,
-                EDIT_RECT.top + EDIT_RECT.height + MARGIN_BOTTOM_PX,
-            )
-        )
-        expect(ink_box(output.image) == (210, 330, 610, 850))
-        assert_expectations()
-
-    def test_the_default_page_is_the_block_until_the_book_is_measured(self, fx_normalize: Processor) -> None:
+    def test_the_default_page_is_by_the_book_until_the_book_gives_it_a_size(self, fx_normalize: Processor) -> None:
         """Verify the size of the page is 0 by default, which the parameters accept whatever the margins.
 
         :param fx_normalize: The processor under test.

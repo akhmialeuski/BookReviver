@@ -43,7 +43,7 @@ from bookreviver.domain.enums import (
     VersionOrigin,
     VersionScale,
 )
-from bookreviver.domain.geometry import Line, Mesh, SplitChoice
+from bookreviver.domain.geometry import ContentBox, Line, Mesh, SplitChoice
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import Renditions, StageRun
 from tests.helpers.builders import make_page, make_project, make_scan, make_source, new_account_id
@@ -1161,7 +1161,7 @@ class TestRunModes:
 
 
 class TestEditForm:
-    """Tests for the form of an edit, for the shapes the split editor draws."""
+    """Tests for the form of an edit, for the shapes the split, the mesh and the content box editors draw."""
 
     def test_a_choice_of_one_page_or_two_is_read_into_its_shape(self) -> None:
         """Verify the form of the split editor gives the choice, with the line of a cut when there is one."""
@@ -1208,6 +1208,28 @@ class TestEditForm:
         """
         with pytest.raises(ValidationError):
             EditForm.model_validate({'kind': EditorKind.SPLIT, 'geometry': geometry})
+
+    def test_a_box_of_the_content_is_read_into_its_own_shape(self) -> None:
+        """Verify the form of the content box editor gives a content box, which is no frame of the crop."""
+        box = {'left': 10.0, 'top': 20.0, 'width': 300.0, 'height': 400.0}
+        edit = EditForm.model_validate({'kind': EditorKind.CONTENT_BOX, 'geometry': json.dumps(box)}).to_edit()
+        expect(edit.geometry == ContentBox.from_data(box))
+        expect(isinstance(edit.geometry, ContentBox) and edit.geometry.editor is EditorKind.CONTENT_BOX)
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        'geometry',
+        ['{"left": 0, "top": 0, "width": 0, "height": 5}', '{"pages": 2}', '{"left": 1}'],
+        ids=['no-width', 'a-split-choice', 'a-corner-only'],
+    )
+    def test_a_box_of_the_content_that_does_not_fit_is_refused(self, geometry: str) -> None:
+        """Reject a box with no area, the shape of another editor, and a box with a side missing.
+
+        :param geometry: The shape under test, as the form sends it.
+        :type geometry: str
+        """
+        with pytest.raises(ValidationError):
+            EditForm.model_validate({'kind': EditorKind.CONTENT_BOX, 'geometry': geometry})
 
 
 class TestStageRunBody:

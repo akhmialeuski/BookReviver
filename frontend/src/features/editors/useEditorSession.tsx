@@ -1,10 +1,10 @@
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import type { FigureState, ScanSchema } from '@/api';
+import { getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetOptions } from '@/api/@tanstack/react-query.gen';
 import { stepChain, stepVersions } from '@/features/editors/chain';
 import { figureStateOf } from '@/features/editors/figure';
 import { pictureOf } from '@/features/editors/picture';
-import { isPlacement, pictureFor } from '@/features/editors/placement';
 import { editsKey, useEditChanges, useEdits } from '@/features/editors/queries';
 import {
   type EditableStep,
@@ -15,12 +15,23 @@ import {
 import type { EditorScene } from '@/features/editors/scene';
 import type { EditorSession, StepChoice } from '@/features/editors/session';
 import type { Geometry } from '@/features/editors/shapes';
+import { type StepSettings, StepSettingsContext } from '@/features/editors/stepSettings';
 import type { PageContext } from '@/features/editors/types';
 import { usePictureSize } from '@/features/editors/usePictureSize';
-import type { ImageSource } from '@/features/processing/compare';
+import { type ImageSource, sourceOfPreview } from '@/features/processing/compare';
 import { useUndo } from '@/features/processing/historyQueries';
-import { useRunInFlight, useRunStage, useVersions } from '@/features/processing/queries';
+import { effectiveParams, pageValuesOf } from '@/features/processing/pageSettings';
+import type { PreviewRequest } from '@/features/processing/preview';
+import {
+  usePageSettings,
+  useRunInFlight,
+  useRunStage,
+  useSetPageSetting,
+  useVersions,
+} from '@/features/processing/queries';
+import { bodyOf, draftOf } from '@/features/processing/recipe';
 import { readResult } from '@/features/processing/results';
+import { usePreview } from '@/features/processing/usePreview';
 import type { Processing } from '@/features/processing/useProcessing';
 import { invalidateStageRows, invalidateStageSummary } from '@/features/projects/queries';
 import { isTypingTarget } from '@/features/viewer/keys';
@@ -123,21 +134,60 @@ export function useEditorSession({
   // A page that did not meet the condition of the step passed it as it was, so the step found nothing on it
   const skipped = found.made?.data.skipped_by_condition === true;
   const made = skipped ? null : (found.made ?? (editable.length === 1 ? head : null));
-  const result = made === null ? null : readResult(made);
+  const focused = focusStepId !== undefined;
+  // The settings the open page has for the step, which the editor of the content box reads and sets besides its shape
+  const sets = kind === 'content-box';
+  const pageSettings = usePageSettings(projectId, current?.page.id, stage, sets);
+  const setting = useSetPageSetting(projectId, stage);
+  const pageValues = pageValuesOf(pageSettings.data, step?.step_id ?? null);
+  // A page the step has not made a result on is looked at by a preview of the step, which finds what a run would find, so
+  // the editor shows it as found without a run
+  const wantsFound =
+    sets &&
+    focused &&
+    made === null &&
+    !skipped &&
+    current !== undefined &&
+    entry !== undefined &&
+    recipe !== undefined;
+  const previewRequest: PreviewRequest | null =
+    wantsFound && recipe !== undefined && entry !== undefined && current !== undefined
+      ? {
+          pageId: current.page.id,
+          steps: bodyOf(
+            draftOf(recipe).map((draft, index) =>
+              index === entry.index
+                ? { ...draft, params: effectiveParams(draft.params, pageValues) }
+                : draft,
+            ),
+          ),
+          stepIndex: entry.index,
+        }
+      : null;
+  const foundPreview = usePreview(projectId, stage, previewRequest, wantsFound);
+  const foundVersion =
+    wantsFound && foundPreview.shown?.page_id === current?.page.id ? foundPreview.shown : null;
+  const foundInput = useQuery({
+    ...getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetOptions({
+      path: {
+        project_id: projectId,
+        page_id: current?.page.id ?? '',
+        version_id: foundVersion?.input_id ?? '',
+      },
+    }),
+    enabled: foundVersion?.input_id != null,
+  });
+  // What the preview found is drawn on the picture the step read in the preview, so it waits for that picture
+  const foundPicture = foundVersion === null ? null : sourceOfPreview(foundInput.data);
+  const foundResult = foundVersion !== null && foundPicture !== null ? foundVersion : null;
+  const result =
+    made !== null ? readResult(made) : foundResult === null ? null : readResult(foundResult);
   const picture =
     editor === undefined || current === undefined || processor === undefined
       ? null
-      : pictureOf(
-          pictureFor(editor.picture, processor.key),
-          scan,
-          current.page,
-          before,
-          found.read,
-          made,
-        );
+      : (foundPicture ?? pictureOf(editor.picture, scan, current.page, before, found.read, made));
   // A step open in the workspace shows its shape before it has run, so an editor that starts from the step's result
   // starts from the whole picture instead, and the picture is asked for its size
-  const focused = focusStepId !== undefined;
   const pictureSize = usePictureSize(
     picture,
     focused && editor?.needsResult === true && result === null,
@@ -247,6 +297,26 @@ export function useEditorSession({
     }
   };
 
+  // A setting of the open page for the step is saved at once, and the stage is run on the page after it, as after an edit
+  const setSetting = (name: string, value: unknown): void => {
+    if (owner === undefined || step === undefined || recipe === undefined) {
+      return;
+    }
+    setting.mutate(
+      {
+        path: { project_id: projectId, page_id: owner.id, stage, step_id: step.step_id, name },
+        body: { value },
+      },
+      {
+        onSuccess: () => {
+          setError(null);
+          setWanted({ recipeId: recipe.id, pageId: owner.id });
+        },
+        onError: (failure) => setError(describeError(failure)),
+      },
+    );
+  };
+
   const undo = (): void => {
     if (
       owner === undefined ||
@@ -323,19 +393,26 @@ export function useEditorSession({
   const figure =
     savedGeometry !== null
       ? 'by-hand'
-      : focused && serverFigure !== undefined && serverFigure !== null && serverFigure !== 'skipped'
-        ? serverFigure
-        : figureStateOf(false, made !== null);
+      : foundResult !== null
+        ? 'found'
+        : focused &&
+            serverFigure !== undefined &&
+            serverFigure !== null &&
+            serverFigure !== 'skipped'
+          ? serverFigure
+          : figureStateOf(false, made !== null);
   const hold = (next: Geometry): void => setDraft({ key, base: savedText, geometry: next });
   const commit = (next: Geometry): void => {
     hold(next);
     void write(next);
   };
   const saving = save.isPending || remove.isPending;
-  const titleOf = (candidate: EditableStep): string =>
-    isPlacement(candidate.processor.key)
-      ? MESSAGES.editors.steps.placement
-      : MESSAGES.editors.steps.kinds[candidate.kind];
+  const stepSettings: StepSettings = {
+    values: effectiveParams(step?.params ?? {}, pageValues),
+    set: setSetting,
+    busy: saving || setting.isPending || wanted !== null || run.isPending,
+  };
+  const titleOf = (candidate: EditableStep): string => MESSAGES.editors.steps.kinds[candidate.kind];
   const steps = editable.flatMap((candidate): StepChoice[] => {
     if (recipe === undefined) {
       return [];
@@ -375,7 +452,7 @@ export function useEditorSession({
       setOpened(openKey);
     },
     hasEdit: savedGeometry !== null,
-    busy: saving || wanted !== null || run.isPending,
+    busy: saving || setting.isPending || wanted !== null || run.isPending,
     error,
     open: () => setOpened(openKey),
     close: () => setOpened(null),
@@ -386,26 +463,30 @@ export function useEditorSession({
       }
     },
     renderCanvas: (scene: EditorScene) => (
-      <editor.Canvas
-        scene={scene}
-        geometry={geometry}
-        size={editor.size(context)}
-        context={context}
-        figure={figure}
-        onChange={hold}
-        onCommit={commit}
-      />
+      <StepSettingsContext.Provider value={stepSettings}>
+        <editor.Canvas
+          scene={scene}
+          geometry={geometry}
+          size={editor.size(context)}
+          context={context}
+          figure={figure}
+          onChange={hold}
+          onCommit={commit}
+        />
+      </StepSettingsContext.Provider>
     ),
     renderPanel: () => (
-      <editor.Panel
-        geometry={geometry}
-        processorKey={processor.key}
-        params={step?.params ?? {}}
-        disabled={saving}
-        size={editor.size(context)}
-        onChange={hold}
-        onCommit={commit}
-      />
+      <StepSettingsContext.Provider value={stepSettings}>
+        <editor.Panel
+          geometry={geometry}
+          processorKey={processor.key}
+          params={step?.params ?? {}}
+          disabled={saving}
+          size={editor.size(context)}
+          onChange={hold}
+          onCommit={commit}
+        />
+      </StepSettingsContext.Provider>
     ),
   };
 }

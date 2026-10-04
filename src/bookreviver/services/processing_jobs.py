@@ -7,15 +7,17 @@ a job whose parameters are not valid fails with the reason.
 A run goes by the pages of the stage and the steps of the recipe. A run that names no recipe gives each page its own,
 the pinned one, else the one of the first matching rule, else the active one (``RecipePicker``). The mode of the run
 says what it does first with the settings and the manual edits of the pages (``RunPlan``), which it keeps unless it was
-asked to take them away. It reads the current version of the nearest earlier stage of a page, finds the versions it
-made before by their identifier, makes only what is new, and makes the last version the current one of the stage. A
-page that fails is recorded as failed and the job goes on to the next, and the job succeeds when it processed at least
-one page. When it ends it queues a collection of the project's old versions, so old versions go by their age without
-the user asking. The collection is stored in the same commit as the end of the run, so the project is never free
-between the two.
+asked to take them away. A recipe whose normalize step leaves the page size to the book is run twice over: the pages
+are first taken as far as the step to find their content boxes, then the size of the book is worked out once from all
+of them, and the pages are run by it, so every page comes out of one size without a press of the button of the measure.
+The run reads the current version of the nearest earlier stage of a page, finds the versions it made before by their
+identifier, makes only what is new, and makes the last version the current one of the stage. A page that fails is
+recorded as failed and the job goes on to the next, and the job succeeds when it processed at least one page. When it
+ends it queues a collection of the project's old versions, so old versions go by their age without the user asking. The
+collection is stored in the same commit as the end of the run, so the project is never free between the two.
 
-A measure of the book reads the versions of the crop of every page and writes the parameters of the normalize step of
-the active Geometry recipe, which marks the pages of that recipe stale.
+A measure of the book reads the content boxes the normalize step recorded on every page and writes the parameters of
+that step of the active Geometry recipe, which marks the pages of that recipe stale.
 
 A project processes one thing at a time, so a collection never overlaps a run that may be reusing the versions it
 clears. A collection chooses the versions, marks them failed so that none can be chosen or reused any more, removes
@@ -44,10 +46,13 @@ from bookreviver.services.run_plans import RunPlan
 from bookreviver.services.stage_runs import PreviewRun, RecipeRun
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
     from bookreviver.domain.entities import Job, Page, Recipe
-    from bookreviver.domain.ids import JobId
+    from bookreviver.domain.ids import JobId, PageId, RecipeId
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.storage import AssetStore
+    from bookreviver.services.book_measure import BlockMeasure
     from bookreviver.services.processing_parts import ProcessingParts
     from bookreviver.services.stage_runs import StageRuntime
 
@@ -261,13 +266,58 @@ class ProcessingJobs:
         recipes = await plan.recipes()
         # The work the mode takes away goes first, as one batch, so one undo gives it back on every page
         await plan.apply_mode()
+        measured = [page for page in pages if executor.wants_book(recipes[page.id], through_step=run.through_step)]
+        if measured:
+            if (saved := await self._measure_book(job, executor, measured, recipes, run)) is None:
+                return None
+            job = saved
+        total = len(pages) + len(measured)
         outcomes: list[RunOutcome] = []
         for page in pages:
-            if (saved := await self._tracker.advance(job, done=len(outcomes), total=len(pages))) is None:
+            if (saved := await self._tracker.advance(job, done=len(measured) + len(outcomes), total=total)) is None:
                 return None
             job = saved
             outcomes.append(await self._run_page(executor, page, recipes[page.id], run))
         return outcomes.count(RunOutcome.DONE), outcomes.count(RunOutcome.FAILED), len(pages)
+
+    async def _measure_book(
+        self, job: Job, executor: RecipeRun, pages: Sequence[Page], recipes: Mapping[PageId, Recipe], run: StageRun
+    ) -> Job | None:
+        """Take the pages as far as the normalize step, and work out the page size of the book from their content boxes.
+
+        A page that fails on the way is left for the run to fail with its reason, and has no box.
+
+        :param job: The running job.
+        :type job: Job
+        :param executor: Runner of recipes of the project, which holds the size it works out for the pages of a recipe.
+        :type executor: RecipeRun
+        :param pages: The pages whose recipe leaves a field of the normalize step to the book.
+        :type pages: Sequence[Page]
+        :param recipes: The recipe of each page.
+        :type recipes: Mapping[PageId, Recipe]
+        :param run: What the job was asked to run, whose last step the pages are taken as far as.
+        :type run: StageRun
+        :returns: The job as the progress left it, or None when it was cancelled.
+        :rtype: Job | None
+        """
+        boxes: dict[RecipeId, dict[PageId, BlockMeasure]] = {}
+        # The measure is a step of progress for each page it goes over, and the run another for each page
+        total = len(recipes) + len(pages)
+        for done, page in enumerate(pages):
+            if (saved := await self._tracker.advance(job, done=done, total=total)) is None:
+                return None
+            job = saved
+            try:
+                box = await executor.measure(page, recipes[page.id], through_step=run.through_step)
+            except Exception:
+                logger.exception('The content box of page %s could not be measured', page.id)
+                await self._uow.rollback()
+                box = None
+            if box is not None:
+                boxes.setdefault(recipes[page.id].id, {})[page.id] = box
+        for recipe in {recipes[page.id].id: recipes[page.id] for page in pages}.values():
+            await executor.settle_book(recipe, boxes.get(recipe.id, {}), through_step=run.through_step)
+        return job
 
     async def _run_page(self, executor: RecipeRun, page: Page, recipe: Recipe, run: StageRun) -> RunOutcome:
         """Run the recipe on one page, so that whatever goes wrong on it fails the page and not the job.

@@ -38,6 +38,8 @@ const sdk = vi.hoisted(() => ({
   undo: vi.fn(),
   jobs: vi.fn(),
   versions: vi.fn(),
+  settings: vi.fn(),
+  putSetting: vi.fn(),
 }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
@@ -49,6 +51,8 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   runStageApiV1ProjectsProjectIdStagesStageRunPost: sdk.run,
   undoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPost: sdk.undo,
   listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
+  listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGet: sdk.settings,
+  putSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePut: sdk.putSetting,
 }));
 
 // A stand-in for the canvas of the split line, which needs a real viewer: it shows the shape it was given and lets a
@@ -93,6 +97,29 @@ vi.mock('@/features/editors/RectCanvas', () => ({
       onClick={() => onCommit({ left: 50, top: 60, width: 700, height: 900 })}
     >
       frame
+    </button>
+  ),
+}));
+
+// A stand-in for the canvas of the content box, in the same way
+vi.mock('@/features/editors/MarginsCanvas', () => ({
+  MarginsCanvas: ({
+    shape,
+    figure,
+    onCommit,
+  }: {
+    shape: unknown;
+    figure: string;
+    onCommit: (box: { left: number; top: number; width: number; height: number }) => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="commit-box"
+      data-figure={figure}
+      data-shape={JSON.stringify(shape)}
+      onClick={() => onCommit({ left: 20, top: 30, width: 600, height: 900 })}
+    >
+      box
     </button>
   ),
 }));
@@ -271,6 +298,12 @@ describe('useEditorSession', () => {
     sdk.run.mockResolvedValue({ data: JOB });
     sdk.undo.mockResolvedValue(undone('hand'));
     sdk.jobs.mockResolvedValue(jobsOf());
+    sdk.settings.mockResolvedValue({
+      data: { items: [], total: 0, page: 1, size: 50, pages: 1 },
+    });
+    sdk.putSetting.mockResolvedValue({
+      data: { page_id: 'page', stage: 'geometry', step_id: 'id-geometry.normalize', params: {} },
+    });
     sdk.versions.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 50, pages: 1 } });
     session = null;
     container = document.createElement('div');
@@ -1113,6 +1146,106 @@ describe('useEditorSession', () => {
       await settle();
 
       expect(session?.steps.map((entry) => entry.manual)).toEqual([true, false, false]);
+    });
+  });
+
+  describe('with the Margins step', () => {
+    const margins = recipe('m', {
+      steps: [step('geometry.normalize', { params: { margins_by: 'inner-outer' } })],
+    });
+    const MARGINS_STATE = processing({
+      catalogue: [processor('geometry.normalize', { editor: 'content-box' })],
+      recipe: margins,
+      recipes: [margins],
+    });
+    const PLACED = joinRows(
+      [page('page')],
+      [
+        row('page', {
+          version: version('placed', {
+            processor: { key: 'geometry.normalize', version: '2' },
+            data: {
+              content_box: { left: 100, top: 200, width: 300, height: 400 },
+              margin_box: { left: 70, top: 150, width: 380, height: 520 },
+              block_scale: 1,
+              source_width_px: 1000,
+              source_height_px: 1500,
+            },
+          }),
+        }),
+      ],
+    );
+
+    it('starts the content box from the box the step found, and says it was found', async () => {
+      await render({
+        state: MARGINS_STATE,
+        items: PLACED,
+        focusStepId: 'id-geometry.normalize',
+        serverFigure: 'found',
+        canvas: true,
+      });
+
+      const box = container.querySelector('[data-testid="commit-box"]');
+      expect(box?.getAttribute('data-shape')).toBe(
+        JSON.stringify({ left: 100, top: 200, width: 300, height: 400 }),
+      );
+      expect(box?.getAttribute('data-figure')).toBe('found');
+    });
+
+    it('saves the box as an edit of the content box editor and runs the stage on the one page', async () => {
+      await render({
+        state: MARGINS_STATE,
+        items: PLACED,
+        focusStepId: 'id-geometry.normalize',
+        canvas: true,
+      });
+
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="commit-box"]')?.click();
+      });
+      await settle();
+      await settle();
+
+      expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({
+        path: { page_id: 'page', stage: 'geometry', step_id: 'id-geometry.normalize' },
+        body: { kind: 'content-box', geometry: '{"left":20,"top":30,"width":600,"height":900}' },
+      });
+      expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
+        body: { recipe_id: 'm', page_ids: ['page'] },
+      });
+    });
+
+    it('saves the alignment as a setting of the page alone and runs the stage on the page', async () => {
+      await render({ state: MARGINS_STATE, items: PLACED, focusStepId: 'id-geometry.normalize' });
+
+      await act(async () => {
+        container
+          .querySelector<HTMLInputElement>(
+            '[data-testid="align-vertical"] input[type="radio"][value="bottom"]',
+          )
+          ?.click();
+      });
+      await settle();
+      await settle();
+
+      expect(sdk.putSetting.mock.calls[0]?.[0]).toMatchObject({
+        path: {
+          page_id: 'page',
+          stage: 'geometry',
+          step_id: 'id-geometry.normalize',
+          name: 'align_vertical',
+        },
+        body: { value: 'bottom' },
+      });
+      expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
+        body: { recipe_id: 'm', page_ids: ['page'] },
+      });
+    });
+
+    it('does not ask for the settings of the page for a step that has no use for them', async () => {
+      await render();
+
+      expect(sdk.settings).not.toHaveBeenCalled();
     });
   });
 });

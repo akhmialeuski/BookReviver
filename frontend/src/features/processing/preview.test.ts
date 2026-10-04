@@ -107,3 +107,60 @@ describe('answersPreview', () => {
     expect(answersPreview(answer, two)).toBe(true);
   });
 });
+
+describe('answersPreview for the step that places the content box', () => {
+  const ask: PreviewRequest = {
+    pageId: 'page',
+    stepIndex: 0,
+    steps: [
+      {
+        processor_key: 'geometry.normalize',
+        params: { page_width: 0, page_height: 0, line_height: 0, margin_top: 150 },
+      },
+    ],
+  };
+  const made = (params: Record<string, unknown>) =>
+    version('v1', {
+      scale: 'preview',
+      preview: '/preview/v1.png',
+      params,
+      processor: { key: 'geometry.normalize', version: '2' },
+    });
+
+  it('takes the size the book gave for a size the ask left at 0', () => {
+    expect(
+      answersPreview(
+        made({ page_width: 1400, page_height: 2000, line_height: 31.5, margin_top: 150 }),
+        ask,
+      ),
+    ).toBe(true);
+  });
+
+  it('still tells a margin that differs from the one asked for', () => {
+    expect(
+      answersPreview(
+        made({ page_width: 1400, page_height: 2000, line_height: 31.5, margin_top: 90 }),
+        ask,
+      ),
+    ).toBe(false);
+  });
+
+  it('does not take a size from the book for a step of another processor', () => {
+    const other: PreviewRequest = {
+      ...ask,
+      steps: [{ processor_key: 'geometry.crop', params: { page_width: 0 } }],
+    };
+
+    expect(
+      answersPreview(
+        version('v2', {
+          scale: 'preview',
+          preview: '/preview/v2.png',
+          params: { page_width: 5 },
+          processor: { key: 'geometry.crop', version: '1' },
+        }),
+        other,
+      ),
+    ).toBe(false);
+  });
+});
