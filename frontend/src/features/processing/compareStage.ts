@@ -5,9 +5,18 @@ import {
   type ComparePair,
   clipWidth,
   type ImageSource,
+  innerRect,
+  type PairPlacement,
+  Side,
   SourceKind,
 } from '@/features/processing/compare';
-import { PAGE_HEIGHT, TOOLBAR_INSET_PX, withBottomInset } from '@/features/viewer/layout';
+import {
+  FALLBACK_ASPECT,
+  PAGE_HEIGHT,
+  TOOLBAR_INSET_PX,
+  type WorldRect,
+  withBottomInset,
+} from '@/features/viewer/layout';
 import { addedItem, nameWholeImageTile, type StageHooks } from '@/features/viewer/stage';
 import { CompareMode } from '@/features/workspace/params';
 
@@ -21,6 +30,10 @@ import { CompareMode } from '@/features/workspace/params';
  * the first and the picture after in the second, whose zoom and pan follow each other. Both pictures are loaded once and
  * only their opacity and clip change when the mode does, so a switch is instant and a held key shows the picture before
  * without a wait.
+ *
+ * Both pictures are as tall as a page and stand at the origin, unless the step that made the picture after moved and scaled
+ * its input, as the margins do. Then the one picture stands whole and the other lies inside it where the transform of the
+ * step puts it, so the swipe shows the same part of the page on both sides.
  */
 
 const ANIMATION_SECONDS = 0.35;
@@ -30,6 +43,8 @@ const VISIBLE = 1;
 const SHAPE_DIGITS = 2;
 /** The least a clip may uncover, since a clip of no width is read as no clip at all. */
 const LEAST_CLIP_PX = 0.5;
+/** Decimal digits of a place in the world that the scenarios read. */
+const PLACE_DIGITS = 4;
 
 /** What `show` found out about the pictures it put on the stage. */
 export interface ShownCompare {
@@ -68,6 +83,7 @@ export class CompareStage {
   private after: OpenSeadragon.TiledImage | null = null;
   private afterAside: OpenSeadragon.TiledImage | null = null;
   private shown: ComparePair = { before: null, after: null };
+  private placement: PairPlacement | null = null;
   private mode: CompareMode = CompareMode.Off;
   private holding = false;
   private divider = 0.5;
@@ -150,15 +166,18 @@ export class CompareStage {
    * @param after The picture after, or null when there is none.
    * @param pageKey What names the pages the pictures belong to. Pictures of the same pages and the same shape as the
    * ones fitted before keep the view of the reader, and any other pictures are fitted.
+   * @param placement Where the two pictures stand in one world, or null to draw them as tall as each other.
    * @returns What could not be read, or null when a later call replaced this one before it finished.
    */
   async show(
     before: ImageSource | null,
     after: ImageSource | null,
     pageKey: string,
+    placement: PairPlacement | null = null,
   ): Promise<ShownCompare | null> {
     const token = ++this.generation;
     this.settled = false;
+    this.placement = placement;
     if (!sameSource(this.shown.before, before)) {
       this.drop(this.first, this.before);
       this.before = null;
@@ -180,10 +199,7 @@ export class CompareStage {
     }
     this.after = loadedAfter;
     this.before = loadedBefore;
-    for (const item of [this.after, this.before]) {
-      item?.setHeight(PAGE_HEIGHT, true);
-      item?.setPosition(new OpenSeadragon.Point(0, 0), true);
-    }
+    this.place();
     // The picture before is drawn over the picture after, which a clip then uncovers
     if (this.before !== null) {
       this.first.world.setItemIndex(this.before, this.first.world.getItemCount() - 1);
@@ -192,9 +208,9 @@ export class CompareStage {
     this.arrange();
     // The first pictures of a screen go back to where the reader left the canvas, and later ones are fitted, unless
     // they are other pictures of the pages that were fitted before, of the same shape
-    const size = this.image?.getContentSize();
+    const world = this.worldRect();
     const fittedFor =
-      size === undefined ? null : `${pageKey}|${(size.x / size.y).toFixed(SHAPE_DIGITS)}`;
+      world === null ? null : `${pageKey}|${(world.width / world.height).toFixed(SHAPE_DIGITS)}`;
     const restored = this.hasFitted ? null : (this.hooks.restore?.() ?? null);
     if (restored !== null) {
       this.look(restored);
@@ -204,6 +220,7 @@ export class CompareStage {
     this.fittedFor = fittedFor;
     this.hasFitted = true;
     this.settled = true;
+    this.publishPlacement();
     return {
       failed: [
         ...(before !== null && this.before === null ? ['before'] : []),
@@ -243,16 +260,78 @@ export class CompareStage {
     this.arrange();
   }
 
+  /** Whether the picture before and the picture after stand by a place, and not each as tall as a page. */
+  private placed(): boolean {
+    return this.placement !== null && this.before !== null && this.after !== null;
+  }
+
+  /** Put the pictures of the first viewer where they stand: as tall as a page at the origin, or one inside the other. */
+  private place(): void {
+    for (const item of [this.after, this.before]) {
+      item?.setHeight(PAGE_HEIGHT, true);
+      item?.setPosition(new OpenSeadragon.Point(0, 0), true);
+    }
+    const { placement, before, after } = this;
+    if (placement === null || before === null || after === null) {
+      return;
+    }
+    const [base, inner] = placement.base === Side.Before ? [before, after] : [after, before];
+    const rect = innerRect(placement, base.getBounds(true));
+    inner.setHeight(rect.height, true);
+    inner.setPosition(new OpenSeadragon.Point(rect.x, rect.y), true);
+  }
+
+  /** The rectangle of the world that the pictures cover, or null while there is none. */
+  private worldRect(): WorldRect | null {
+    const { before, after } = this;
+    if (this.placed() && before !== null && after !== null) {
+      const [first, second] = [before.getBounds(true), after.getBounds(true)];
+      const left = Math.min(first.x, second.x);
+      const top = Math.min(first.y, second.y);
+      return {
+        x: left,
+        y: top,
+        width: Math.max(first.x + first.width, second.x + second.width) - left,
+        height: Math.max(first.y + first.height, second.y + second.height) - top,
+      };
+    }
+    const size = (after ?? before)?.getContentSize();
+    return size === undefined
+      ? null
+      : { x: 0, y: 0, width: (size.x / size.y) * PAGE_HEIGHT, height: PAGE_HEIGHT };
+  }
+
+  /** Show where the pictures stand in the document, where the end-to-end scenarios read it. */
+  private publishPlacement(): void {
+    for (const [name, item] of [
+      ['beforeBox', this.before],
+      ['afterBox', this.after],
+    ] as const) {
+      const bounds = item?.getBounds(true);
+      if (bounds === undefined) {
+        delete this.element.dataset[name];
+      } else {
+        this.element.dataset[name] = [bounds.x, bounds.y, bounds.width, bounds.height]
+          .map((value) => value.toFixed(PLACE_DIGITS))
+          .join(',');
+      }
+    }
+  }
+
   /** The rectangle of the world that fits the picture, with the room round it. */
   private fitRect(): OpenSeadragon.Rect {
-    const size = (this.after ?? this.before)?.getContentSize();
-    const aspect = size === undefined ? 0.7 : size.x / size.y;
+    const world = this.worldRect() ?? {
+      x: 0,
+      y: 0,
+      width: FALLBACK_ASPECT * PAGE_HEIGHT,
+      height: PAGE_HEIGHT,
+    };
     const room = this.padding * PAGE_HEIGHT;
     return new OpenSeadragon.Rect(
-      -room,
-      -room,
-      aspect * PAGE_HEIGHT + 2 * room,
-      PAGE_HEIGHT + 2 * room,
+      world.x - room,
+      world.y - room,
+      world.width + 2 * room,
+      world.height + 2 * room,
     );
   }
 
@@ -354,8 +433,10 @@ export class CompareStage {
       this.afterAside = await this.load(this.second, after);
     }
     if (token === this.generation && this.afterAside !== null) {
-      this.afterAside.setHeight(PAGE_HEIGHT, true);
-      this.afterAside.setPosition(new OpenSeadragon.Point(0, 0), true);
+      // The picture after stands in the second viewer where it stands in the first, so the two views share one world
+      const bounds = this.placed() ? this.after?.getBounds(true) : undefined;
+      this.afterAside.setHeight(bounds?.height ?? PAGE_HEIGHT, true);
+      this.afterAside.setPosition(new OpenSeadragon.Point(bounds?.x ?? 0, bounds?.y ?? 0), true);
       // The second viewer holds this one picture, which is drawn whenever the side by side mode is on
       this.afterAside.setOpacity(VISIBLE);
     }

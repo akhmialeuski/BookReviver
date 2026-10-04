@@ -1,9 +1,17 @@
 import { LoaderCircleIcon } from 'lucide-react';
-import { type ReactNode, type Ref, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import {
+  type ReactNode,
+  type Ref,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type { EditorScene } from '@/features/editors/scene';
 import { usePlaceWriter } from '@/features/place/PlaceWriterContext';
 import { Restore } from '@/features/place/writer';
-import type { ComparePair } from '@/features/processing/compare';
+import type { ComparePair, PairPlacement } from '@/features/processing/compare';
 import { clampDivider, DIVIDER_CENTRE } from '@/features/processing/compare';
 import { CompareStage } from '@/features/processing/compareStage';
 import { useHoldKey } from '@/features/processing/useHoldKey';
@@ -40,6 +48,7 @@ export function CompareCanvas({
   handle,
   overlay,
   roomShare = 0,
+  placement = null,
 }: {
   pairs: ComparePair;
   mode: CompareMode;
@@ -57,6 +66,8 @@ export function CompareCanvas({
   overlay?: (scene: EditorScene) => ReactNode;
   /** The room to leave round the page when it is fitted, as a share of its height. */
   roomShare?: number;
+  /** Where the two pictures stand in one world, or null for both as tall as a page. */
+  placement?: PairPlacement | null;
 }): React.JSX.Element {
   const [first, setFirst] = useState<HTMLDivElement | null>(null);
   const [aside, setAside] = useState<HTMLDivElement | null>(null);
@@ -72,6 +83,25 @@ export function CompareCanvas({
   const afterKind = pairs.after?.kind ?? null;
   const afterUrl = pairs.after?.url ?? null;
   const pageKey = pageIds.join(',');
+  // The screen works the place out on every render, so the effect follows the numbers it holds
+  const placeBase = placement?.base ?? null;
+  const placeLeft = placement?.left ?? 0;
+  const placeTop = placement?.top ?? 0;
+  const placeWidth = placement?.width ?? 0;
+  const placeHeight = placement?.height ?? 0;
+  const stand = useMemo<PairPlacement | null>(
+    () =>
+      placeBase === null
+        ? null
+        : {
+            base: placeBase,
+            left: placeLeft,
+            top: placeTop,
+            width: placeWidth,
+            height: placeHeight,
+          },
+    [placeBase, placeLeft, placeTop, placeWidth, placeHeight],
+  );
 
   useHoldKey(hasBefore, setHolding);
   const place = usePlaceWriter();
@@ -104,7 +134,7 @@ export function CompareCanvas({
       beforeUrl === null || beforeKind === null ? null : { kind: beforeKind, url: beforeUrl };
     const after =
       afterUrl === null || afterKind === null ? null : { kind: afterKind, url: afterUrl };
-    void stage.show(before, after, pageKey).then((shown) => {
+    void stage.show(before, after, pageKey, stand).then((shown) => {
       if (current && shown !== null) {
         setState(shown.failed.length > 0 ? 'failed' : 'ready');
       }
@@ -112,7 +142,7 @@ export function CompareCanvas({
     return () => {
       current = false;
     };
-  }, [stage, beforeKind, beforeUrl, afterKind, afterUrl, pageKey]);
+  }, [stage, beforeKind, beforeUrl, afterKind, afterUrl, pageKey, stand]);
 
   useEffect(() => stage?.setMode(mode), [stage, mode]);
   useEffect(() => stage?.setDivider(divider), [stage, divider]);
