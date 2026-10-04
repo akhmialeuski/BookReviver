@@ -28,13 +28,15 @@ export function ResultNote({
   // The comment being written, or null while the stored one is shown
   const [draft, setDraft] = useState<string | null>(null);
 
-  function send(mark: ResultMark | null, comment: string): void {
+  // Only the saving of a comment closes the field of the comment. A mark pressed while a comment is being written settles
+  // later than the press, and its answer must not take the text away
+  function send(mark: ResultMark | null, comment: string, closesDraft = false): void {
     save.mutate(
       {
         path: { project_id: projectId, page_id: version.page_id, version_id: version.id },
         body: { mark, comment },
       },
-      { onSuccess: () => setDraft(null) },
+      closesDraft ? { onSuccess: () => setDraft(null) } : undefined,
     );
   }
 
@@ -89,7 +91,7 @@ export function ResultNote({
               size="sm"
               disabled={save.isPending}
               data-testid="result-comment-save"
-              onClick={() => send(version.mark, draft)}
+              onClick={() => send(version.mark, draft, true)}
             >
               {save.isPending ? labels.comment.saving : labels.comment.save}
             </Button>
