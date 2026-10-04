@@ -15,7 +15,7 @@ import {
 import { dragFrom } from './support/layer';
 
 /**
- * The Cleanup stage on scans of a sheet of paper: the default recipe of a new book has three variants and three steps,
+ * The Cleanup stage on scans of a sheet of paper: the default recipe of a new book has three variants and four steps,
  * the form of the binarization shows the fields of the method that is chosen, a run on all pages sends the plate to its
  * own variant by the rule of the book, the picture zones and the brush of the eraser are set by hand on one page, and the
  * erased page is what the stage stands on.
@@ -129,17 +129,18 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
     await runAll();
   });
 
-  await test.step('the Cleanup stage starts with three steps in the order binarize, despeckle, eraser', async () => {
+  await test.step('the Cleanup stage starts with four steps in the order binarize, despeckle, thickness, eraser', async () => {
     await page.goto(`${bookPath}/stages/cleanup`);
     await expect(page.getByTestId('stage-title')).toHaveText('Cleanup');
     await expect(strip).toHaveCount(PAGES);
     await expect(page.getByTestId('recipe-select')).toContainText('Text');
     await expect(page.getByTestId('recipe-active')).toBeVisible();
     const recipeSteps = page.getByTestId('recipe-step');
-    await expect(recipeSteps).toHaveCount(3);
+    await expect(recipeSteps).toHaveCount(4);
     await expect(recipeSteps.nth(0)).toContainText('1 · Binarization');
     await expect(recipeSteps.nth(1)).toContainText('2 · Despeckle');
-    await expect(recipeSteps.nth(2)).toContainText('3 · Fill zones');
+    await expect(recipeSteps.nth(2)).toContainText('3 · Thickness');
+    await expect(recipeSteps.nth(3)).toContainText('4 · Fill zones');
     const variants = await page.getByTestId('recipe-select').locator('option').allTextContents();
     // The options say how many pages each variant has processed, and the active one is named
     expect(variants.map((name) => name.split(' · ')[0]?.trim()).sort()).toEqual([
