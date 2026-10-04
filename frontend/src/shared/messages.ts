@@ -1067,7 +1067,6 @@ export const MESSAGES = {
       revert: 'Revert to profile',
       revertHint:
         'Put the steps of the profile on the screen. The recipe of the book changes when it is saved',
-      saveFirst: 'Save the recipe of the book first, then keep it in a profile.',
       saving: 'Saving…',
       saved: (name: string) => `Saved the changes to the profile “${name}”.`,
       changes: {

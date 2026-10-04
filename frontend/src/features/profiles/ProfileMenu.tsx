@@ -1,5 +1,6 @@
 import { BookmarkIcon, ChevronDownIcon } from 'lucide-react';
 import { useState } from 'react';
+import { useSaveRecipe } from '@/features/processing/queries';
 import { bodyOf, draftOf } from '@/features/processing/recipe';
 import type { Processing } from '@/features/processing/useProcessing';
 import { type ProfileChange, profileChanges } from '@/features/profiles/changes';
@@ -16,9 +17,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
  *
  * The button names the profile, and carries a mark as soon as the steps on the screen differ from it. The menu lists the
  * differences and offers three actions: save the steps to the profile, save them as a new profile, and put the steps of
- * the profile back. The two ways of saving are offered only when the steps on the screen are the saved recipe, since a
- * step the reader added has no identifier until the recipe is saved, and a profile saved from it would not match the
- * recipe afterwards. Putting the profile back changes the draft only, and the recipe changes when it is saved.
+ * the profile back. When the steps on the screen are not yet the saved recipe, the two ways of saving first save the
+ * recipe, as the save bar does, and write the profile from the saved recipe, so the steps have the same identifiers on
+ * both sides and no false difference appears. Putting the profile back changes the draft only, and the recipe changes
+ * when it is saved.
  */
 
 const labels = MESSAGES.profiles.link;
@@ -51,6 +53,7 @@ export function ProfileMenu({ processing }: { processing: Processing }): React.J
   const [notice, setNotice] = useState<string | null>(null);
   const profiles = useProfiles(stage);
   const replace = useReplaceProfile();
+  const saveRecipe = useSaveRecipe(processing.projectId, stage);
   if (recipe === undefined) {
     return null;
   }
@@ -60,8 +63,9 @@ export function ProfileMenu({ processing }: { processing: Processing }): React.J
       ? undefined
       : profiles.data?.find((profile) => profile.id === recipe.profile_id);
   const changes = linked === undefined ? [] : profileChanges(linked.steps, steps, catalogue);
+  const error = saveRecipe.error ?? replace.error;
   const modeDiffers = linked !== undefined && linked.order !== processing.orderMode;
-  const canKeep = !processing.dirty && processing.valid;
+  const canKeep = processing.valid && processing.refused.length === 0;
 
   return (
     <div className="grid gap-1">
@@ -121,11 +125,6 @@ export function ProfileMenu({ processing }: { processing: Processing }): React.J
                 )}
               </div>
             )}
-            {canKeep ? null : (
-              <p className="text-xs text-status-attention" data-testid="profile-save-first">
-                {labels.saveFirst}
-              </p>
-            )}
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="outline"
@@ -135,31 +134,37 @@ export function ProfileMenu({ processing }: { processing: Processing }): React.J
                   linked === undefined ||
                   !canKeep ||
                   (changes.length === 0 && !modeDiffers) ||
-                  replace.isPending
+                  replace.isPending ||
+                  saveRecipe.isPending
                 }
                 data-testid="profile-save"
-                onClick={() =>
-                  linked === undefined
-                    ? undefined
-                    : replace.mutate(
-                        {
-                          path: { profile_id: linked.id },
+                onClick={async () => {
+                  if (linked === undefined) {
+                    return;
+                  }
+                  try {
+                    const kept = processing.dirty
+                      ? await saveRecipe.mutateAsync({
+                          path: { project_id: processing.projectId, stage, recipe_id: recipe.id },
                           body: {
-                            name: linked.name,
+                            name: recipe.name,
                             steps: bodyOf(steps),
                             order: processing.orderMode,
                           },
-                        },
-                        {
-                          onSuccess: (saved) => {
-                            setNotice(labels.saved(saved.name));
-                            setOpen(false);
-                          },
-                        },
-                      )
-                }
+                        })
+                      : { steps: bodyOf(steps) };
+                    const saved = await replace.mutateAsync({
+                      path: { profile_id: linked.id },
+                      body: { name: linked.name, steps: kept.steps, order: processing.orderMode },
+                    });
+                    setNotice(labels.saved(saved.name));
+                    setOpen(false);
+                  } catch {
+                    // The error of the failed request is shown under the buttons
+                  }
+                }}
               >
-                {replace.isPending ? labels.saving : labels.save}
+                {replace.isPending || saveRecipe.isPending ? labels.saving : labels.save}
               </Button>
               <Button
                 variant="outline"
@@ -190,7 +195,7 @@ export function ProfileMenu({ processing }: { processing: Processing }): React.J
                 {labels.revert}
               </Button>
             </div>
-            {replace.isError ? <ErrorAlert message={describeError(replace.error)} /> : null}
+            {error === null ? null : <ErrorAlert message={describeError(error)} />}
           </div>
         </PopoverContent>
       </Popover>

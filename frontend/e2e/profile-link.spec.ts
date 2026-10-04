@@ -10,8 +10,8 @@ import {
 /**
  * The profile a book was made from is visible where the steps are: a built-in recipe names no profile, the steps are kept
  * as a new profile and the button names it, a switched-off step marks the book as changed and the menu says what changed,
- * reverting puts the steps of the profile back, and saving the changes to the profile ends the difference, which a
- * reload of the page keeps.
+ * reverting puts the steps of the profile back, and saving the changes to the profile saves the recipe of the book first and
+ * ends the difference, which a reload of the page keeps.
  */
 
 const PAGES = 2;
@@ -77,9 +77,8 @@ test('a book shows its profile, marks a change of the steps, and saves or revert
     await snap(page, 'profile-changed-mark');
     await openMenu(page);
     await expect(page.getByTestId('profile-changes')).toContainText('Perspective switched off');
-    // Saving to the profile waits for the recipe of the book to be saved
-    await expect(page.getByTestId('profile-save')).toBeDisabled();
-    await expect(page.getByTestId('profile-save-first')).toBeVisible();
+    // Unsaved changes of the recipe do not keep the menu from saving to the profile
+    await expect(page.getByTestId('profile-save')).toBeEnabled();
     await snap(page, 'profile-changed-menu');
   });
 
@@ -89,18 +88,14 @@ test('a book shows its profile, marks a change of the steps, and saves or revert
     expect(await isOn(page, PERSPECTIVE)).toBe(true);
   });
 
-  await test.step('the recipe is saved with the step off, and the changes are saved to the profile', async () => {
+  await test.step('saving to the profile saves the recipe of the book first, and the changes end', async () => {
     await stepOf(page, PERSPECTIVE).getByTestId('step-enabled').click();
     await expect(page.getByTestId('profile-changed')).toBeVisible();
-    await page.getByTestId('recipe-save').click();
-    await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
-    // The recipe is the book's and still differs from the profile
-    await expect(page.getByTestId('profile-changed')).toBeVisible();
     await openMenu(page);
-    await expect(page.getByTestId('profile-save')).toBeEnabled();
     await page.getByTestId('profile-save').click();
     await expect(page.getByTestId('profile-saved')).toContainText(PROFILE_NAME);
     await expect(page.getByTestId('profile-changed')).toHaveCount(0);
+    await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
   });
 
   await test.step('after a reload the book still names the profile, with no mark and the step off', async () => {

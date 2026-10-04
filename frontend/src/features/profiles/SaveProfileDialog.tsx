@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSaveRecipe } from '@/features/processing/queries';
 import { bodyOf } from '@/features/processing/recipe';
 import type { Processing } from '@/features/processing/useProcessing';
 import { useLinkProfile, useSaveProfile } from '@/features/profiles/queries';
@@ -21,8 +22,9 @@ import { TextField } from '@/shared/ui/text-field';
  * name of the recipe, and links the recipe to the profile it made, so the book is compared with that profile from then
  * on. The profile menu opens it.
  *
- * The steps are the draft the reader is looking at. The menu offers the dialog only when the draft is the saved recipe,
- * so the profile and the recipe hold the same steps with the same identifiers.
+ * The steps are the draft the reader is looking at. When the draft is not yet the saved recipe, the recipe is saved first,
+ * as the save bar does, and the profile is written from the saved recipe, so the profile and the recipe hold the same
+ * steps with the same identifiers.
  */
 
 const labels = MESSAGES.profiles.save;
@@ -44,10 +46,38 @@ export function SaveProfileDialog({
   const [name, setName] = useState('');
   const save = useSaveProfile();
   const link = useLinkProfile(projectId, stage);
+  const saveRecipe = useSaveRecipe(projectId, stage);
   if (recipe === undefined) {
     return null;
   }
-  const error = save.error ?? link.error;
+  const error = saveRecipe.error ?? save.error ?? link.error;
+  const busy = saveRecipe.isPending || save.isPending || link.isPending;
+
+  /** Save the recipe when the draft differs from it, then the profile from the saved steps, then the link. */
+  async function keep(): Promise<void> {
+    if (recipe === undefined) {
+      return;
+    }
+    try {
+      const kept = processing.dirty
+        ? await saveRecipe.mutateAsync({
+            path: { project_id: projectId, stage, recipe_id: recipe.id },
+            body: { name: recipe.name, steps: bodyOf(steps), order: processing.orderMode },
+          })
+        : { steps: bodyOf(steps) };
+      const profile = await save.mutateAsync({
+        body: { stage, name: name.trim(), steps: kept.steps, order: processing.orderMode },
+      });
+      await link.mutateAsync({
+        path: { project_id: projectId, stage, recipe_id: recipe.id },
+        body: { profile_id: profile.id },
+      });
+      onOpenChange(false);
+      onSaved(profile.name);
+    } catch {
+      // The error of the failed request is shown in the dialog
+    }
+  }
 
   return (
     <Dialog
@@ -57,6 +87,7 @@ export function SaveProfileDialog({
           setName(recipe.name);
           save.reset();
           link.reset();
+          saveRecipe.reset();
         }
         onOpenChange(next);
       }}
@@ -66,31 +97,7 @@ export function SaveProfileDialog({
           className="grid gap-4"
           onSubmit={(event) => {
             event.preventDefault();
-            save.mutate(
-              {
-                body: {
-                  stage,
-                  name: name.trim(),
-                  steps: bodyOf(steps),
-                  order: processing.orderMode,
-                },
-              },
-              {
-                onSuccess: (profile) =>
-                  link.mutate(
-                    {
-                      path: { project_id: projectId, stage, recipe_id: recipe.id },
-                      body: { profile_id: profile.id },
-                    },
-                    {
-                      onSuccess: () => {
-                        onOpenChange(false);
-                        onSaved(profile.name);
-                      },
-                    },
-                  ),
-              },
-            );
+            void keep();
           }}
         >
           <DialogHeader>
@@ -109,10 +116,10 @@ export function SaveProfileDialog({
           <DialogFooter>
             <Button
               type="submit"
-              disabled={save.isPending || link.isPending || name.trim() === ''}
+              disabled={busy || name.trim() === ''}
               data-testid="profile-save-submit"
             >
-              {save.isPending || link.isPending ? labels.submitting : labels.submit}
+              {busy ? labels.submitting : labels.submit}
             </Button>
           </DialogFooter>
         </form>

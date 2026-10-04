@@ -10,8 +10,8 @@ import {
 
 /**
  * A recipe set up in one book is kept as a profile of the account and applied in another: the steps are put in another
- * order and one is switched off, the recipe is saved and kept as a profile from the profile menu, applied in a second
- * book, made the default for new books in the settings of the account, and a third book starts the Geometry stage
+ * order and one is switched off, the steps on the screen are kept as a profile from the profile menu in one go, applied
+ * in a second book, made the default for new books in the settings of the account, and a third book starts the Geometry stage
  * with it.
  */
 
@@ -121,9 +121,7 @@ test('a recipe is saved as a profile, applied in another book, made the default,
     ]);
   });
 
-  await test.step('the saved recipe is kept as a profile from the profile menu', async () => {
-    await page.getByTestId('recipe-save').click();
-    await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
+  await test.step('the steps on the screen are kept as a profile, which saves the recipe of the book first', async () => {
     await page.getByTestId('profile-button').click();
     await page.getByTestId('profile-save-new').click();
     await expect(page.getByLabel('Name of the profile')).toBeVisible();

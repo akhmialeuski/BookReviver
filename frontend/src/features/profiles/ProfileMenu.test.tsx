@@ -18,6 +18,7 @@ const sdk = vi.hoisted(() => ({
   replace: vi.fn(),
   link: vi.fn(),
   recipes: vi.fn(),
+  saveRecipe: vi.fn(),
 }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
@@ -27,6 +28,7 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   putProfileApiV1RecipeProfilesProfileIdPut: sdk.replace,
   putRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePut: sdk.link,
   listVariantsApiV1ProjectsProjectIdStagesStageVariantsGet: sdk.recipes,
+  putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPut: sdk.saveRecipe,
 }));
 
 const STEPS = [
@@ -85,6 +87,12 @@ describe('ProfileMenu', () => {
     sdk.create.mockResolvedValue({ data: profile('made', { name: 'Clean flatbed scan' }) });
     sdk.replace.mockResolvedValue({ data: PROFILE });
     sdk.link.mockResolvedValue({ data: recipe('r1', { profile_id: 'made' }) });
+    sdk.saveRecipe.mockResolvedValue({
+      data: recipe('r1', {
+        profile_id: 'p1',
+        steps: [step('geometry.deskew', { step_id: 'saved-1' })],
+      }),
+    });
     sdk.recipes.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 100, pages: 1 } });
     container = document.createElement('div');
     document.body.append(container);
@@ -131,15 +139,87 @@ describe('ProfileMenu', () => {
     ).toEqual(['geometry.crop switched off']);
   });
 
-  it('keeps the two ways of saving from a draft that is not the saved recipe, and says why', async () => {
+  it('offers the two ways of saving while the recipe has unsaved changes', async () => {
     const off = toggleStep(draftOf(LINKED), 'step-1');
     await render(processing({ recipe: LINKED, steps: off, dirty: true }));
     await click('profile-button');
 
-    expect(byId('profile-save-first')).not.toBeNull();
+    expect(byId('profile-save')).toHaveProperty('disabled', false);
+    expect(byId('profile-save-new')).toHaveProperty('disabled', false);
+  });
+
+  it('keeps the two ways of saving from steps that cannot be saved', async () => {
+    await render(processing({ recipe: LINKED, steps: draftOf(LINKED), valid: false }));
+    await click('profile-button');
+
     expect(byId('profile-save')).toHaveProperty('disabled', true);
     expect(byId('profile-save-new')).toHaveProperty('disabled', true);
-    expect(byId('profile-revert')).toHaveProperty('disabled', false);
+  });
+
+  it('saves the recipe first, with its order, and writes the profile from the saved steps', async () => {
+    const off = toggleStep(draftOf(LINKED), 'step-1');
+    await render(processing({ recipe: LINKED, steps: off, dirty: true, orderMode: 'free' }));
+    await click('profile-button');
+    await click('profile-save');
+    await flush();
+
+    expect(sdk.saveRecipe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: { project_id: 'project', stage: 'geometry', recipe_id: 'r1' },
+        body: { name: 'Deskew', steps: bodyOf(off), order: 'free' },
+      }),
+    );
+    expect(sdk.replace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: {
+          name: 'Photographed book',
+          steps: [step('geometry.deskew', { step_id: 'saved-1' })],
+          order: 'free',
+        },
+      }),
+    );
+    expect(sdk.saveRecipe.mock.invocationCallOrder[0]).toBeLessThan(
+      sdk.replace.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it('writes no profile when the recipe could not be saved', async () => {
+    sdk.saveRecipe.mockRejectedValue({ status: 422, detail: 'No' });
+    const off = toggleStep(draftOf(LINKED), 'step-1');
+    await render(processing({ recipe: LINKED, steps: off, dirty: true }));
+    await click('profile-button');
+    await click('profile-save');
+    await flush();
+
+    expect(sdk.replace).not.toHaveBeenCalled();
+    expect(byId('profile-saved')).toBeNull();
+  });
+
+  it('saves the recipe before it keeps the steps as a new profile', async () => {
+    const off = toggleStep(draftOf(LINKED), 'step-1');
+    await render(
+      processing({
+        recipe: recipe('r1', { name: 'Deskew', steps: STEPS }),
+        steps: off,
+        dirty: true,
+      }),
+    );
+    await click('profile-button');
+    await click('profile-save-new');
+    await click('profile-save-submit');
+    await flush();
+
+    expect(sdk.saveRecipe).toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.objectContaining({ steps: bodyOf(off) }) }),
+    );
+    expect(sdk.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.objectContaining({
+          steps: [step('geometry.deskew', { step_id: 'saved-1' })],
+        }),
+      }),
+    );
+    expect(sdk.link).toHaveBeenCalled();
   });
 
   it('saves the steps to the profile with the order the book is in', async () => {
