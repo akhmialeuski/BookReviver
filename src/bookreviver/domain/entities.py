@@ -1122,6 +1122,7 @@ class PageStepChange:
             created_at=after.updated_at,
         )
 
+
 @frozen(kw_only=True)
 class ResultMarkChange:
     """One change of the mark or the comment of a result, which the log of the result keeps and never rewrites.
