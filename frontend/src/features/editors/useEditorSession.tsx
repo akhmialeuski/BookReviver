@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import type { ScanSchema } from '@/api';
+import type { FigureState, ScanSchema } from '@/api';
 import { stepChain, stepVersions } from '@/features/editors/chain';
 import { figureStateOf } from '@/features/editors/figure';
 import { popUndo, pushUndo, type UndoEntry } from '@/features/editors/history';
@@ -65,6 +65,7 @@ export function useEditorSession({
   scans,
   before,
   focusStepId,
+  serverFigure,
 }: {
   processing: Processing;
   current: StripItem | undefined;
@@ -77,6 +78,11 @@ export function useEditorSession({
    * no step is open, and the reader then picks from the steps that have one.
    */
   focusStepId?: string;
+  /**
+   * The state of the shape of the open step on the open page, as the server computed it for the rows of the step, or null
+   * while that row is read. It decides the state shown whenever a step is open, so the rule lives in one place.
+   */
+  serverFigure?: FigureState | null;
 }): EditorSession | null {
   const { projectId, stage, catalogue } = processing;
   const queryClient = useQueryClient();
@@ -304,7 +310,12 @@ export function useEditorSession({
     draft !== null && draft.key === key && draft.base === savedText
       ? draft.geometry
       : (savedGeometry ?? fallback);
-  const figure = figureStateOf(savedGeometry !== null, made !== null);
+  // Outside the step workspace there is no row of a step to read the state from, so the same rule is applied here to what
+  // the screen has. The same fallback covers the moment before the row of an open step arrives
+  const figure =
+    focused && serverFigure !== undefined && serverFigure !== null && serverFigure !== 'skipped'
+      ? serverFigure
+      : figureStateOf(savedGeometry !== null, made !== null);
   const hold = (next: Geometry): void => setDraft({ key, base: savedText, geometry: next });
   const commit = (next: Geometry): void => {
     hold(next);

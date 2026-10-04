@@ -143,6 +143,7 @@ describe('useEditorSession', () => {
     canvas?: boolean;
     /** The step open in the step workspace. */
     focusStepId?: string;
+    serverFigure?: 'default' | 'found' | 'by-hand' | 'skipped' | null;
   }
 
   const PAGE_ITEM = joinRows(
@@ -159,6 +160,7 @@ describe('useEditorSession', () => {
       scans: setup.scans ?? [],
       before: setup.before === undefined ? BEFORE : setup.before,
       focusStepId: setup.focusStepId,
+      serverFigure: setup.serverFigure,
     });
     return (
       <div>
@@ -557,6 +559,23 @@ describe('useEditorSession', () => {
       await render({ focusStepId: DESKEW_STEP });
       expect(session?.figure).toBe('by-hand');
       expect(field()?.value).toBe('1.5');
+    });
+
+    it('takes the state of the shape from the row of the open step when the server has sent it', async () => {
+      await render({ focusStepId: DESKEW_STEP, items: NO_RESULT, serverFigure: 'by-hand' });
+      expect(session?.figure).toBe('by-hand');
+
+      await render({ focusStepId: DESKEW_STEP, serverFigure: 'default' });
+      expect(session?.figure).toBe('default');
+    });
+
+    it('applies the same rule to what the screen has while the row of the step is read, and when no step is open', async () => {
+      await render({ focusStepId: DESKEW_STEP, serverFigure: null });
+      expect(session?.figure).toBe('found');
+
+      // Without an open step the server row is not asked for, so what it would say is ignored
+      await render({ serverFigure: 'by-hand' });
+      expect(session?.figure).toBe('found');
     });
 
     it('keeps the state of the shape of a step as the open step changes and comes back', async () => {

@@ -257,6 +257,7 @@ export function StageScreen({
     scans: scans.data ?? NO_SCANS,
     before: beforeSource,
     focusStepId: openStep?.stepId,
+    serverFigure: workspace.page?.state ?? null,
   });
 
   // The grid over the page of the steps of Geometry, which the Deskew step shows until the reader chooses; it is not the
