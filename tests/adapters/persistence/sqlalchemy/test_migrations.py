@@ -116,7 +116,7 @@ INSERT_SETTINGS_ONLY: str = (
     "VALUES (:page_id, 'geometry', :step_id, :params, '2026-01-01 00:00:00')"
 )
 # The revision before the one that lets a change of the history name the change it takes back
-BEFORE_UNDO_REVISION: str = '2fd4f715e483'
+BEFORE_UNDO_REVISION: str = '53cae47541f2'
 # A change of the history as the revision before the undo wrote it
 INSERT_CHANGE: str = (
     'INSERT INTO page_step_changes (id, page_id, stage, step_id, layer, before, after, source, created_at, sequence) '

@@ -1,7 +1,7 @@
 """Let a change of the history of a step name the change it takes back.
 
 Revision ID: 45e3f395141c
-Revises: 2fd4f715e483
+Revises: 53cae47541f2
 Create Date: 2026-10-04 04:44:47.465446
 """
 
@@ -19,7 +19,7 @@ __all__ = ('data_downgrades', 'data_upgrades', 'downgrade', 'schema_downgrades',
 
 # Revision identifiers, used by Alembic
 revision: str = '45e3f395141c'
-down_revision: str | Sequence[str] | None = '2fd4f715e483'
+down_revision: str | Sequence[str] | None = '53cae47541f2'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
