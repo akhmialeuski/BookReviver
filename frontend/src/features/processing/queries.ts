@@ -43,6 +43,7 @@ import {
   putSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutMutation,
   putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation,
   remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostMutation,
+  resetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostMutation,
   runImpactApiV1ProjectsProjectIdStagesStageRunImpactPostMutation,
   runStageApiV1ProjectsProjectIdStagesStageRunPostMutation,
   unpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteMutation,
@@ -207,6 +208,18 @@ export function useSaveRecipe(projectId: string, stage: Stage) {
   const queryClient = useQueryClient();
   return useMutation({
     ...putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation(),
+    onSettled: () => refreshStage(queryClient, projectId, stage),
+  });
+}
+
+/**
+ * Put the steps a stage starts with back into a recipe, which marks the pages it processed out of date. The steps are the
+ * default profile of the account or the built-in template, chosen by the server.
+ */
+export function useResetRecipe(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...resetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostMutation(),
     onSettled: () => refreshStage(queryClient, projectId, stage),
   });
 }

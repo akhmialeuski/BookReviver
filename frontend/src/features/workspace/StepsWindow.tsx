@@ -1,12 +1,14 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { GripVerticalIcon, SettingsIcon, Trash2Icon, TriangleAlertIcon } from 'lucide-react';
+import { useState } from 'react';
 import type { AppliesTo, ProcessorSchema, StagePageSchema } from '@/api';
 import type { OrderIssue } from '@/features/processing/order';
 import { RecipeSaveBar } from '@/features/processing/RecipeSaveBar';
 import { CONDITIONS, type StepDraft } from '@/features/processing/recipe';
 import { StepSorter } from '@/features/processing/StepSorter';
 import type { Processing } from '@/features/processing/useProcessing';
-import { ProfileActions } from '@/features/profiles/ProfileActions';
+import { SaveProfileDialog } from '@/features/profiles/SaveProfileDialog';
+import { ResetSteps } from '@/features/workspace/ResetSteps';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
@@ -22,8 +24,8 @@ import { Switch } from '@/shared/ui/switch';
 
 /**
  * The window of the gear in the bar: the steps of the recipe as a list that the reader reorders by dragging, gives a
- * condition, switches on and off and removes, with the buttons that keep the steps as a profile of the account or take a
- * profile in.
+ * condition, switches on and off and removes, with the button that keeps the steps as a profile of the account and the one
+ * that puts the default steps back. Profiles are applied elsewhere, so the window has no button for that.
  *
  * It is the recipe of the right panel in a window and edits the same draft, so a change made here is the change made
  * there, and the bar that saves it is the same bar. Nothing is written until it is pressed.
@@ -159,6 +161,7 @@ export function StepsWindow({
   rows: readonly StagePageSchema[];
 }): React.JSX.Element | null {
   const { stage, steps, catalogue } = processing;
+  const [savedAs, setSavedAs] = useState<string | null>(null);
   if (processing.recipe === undefined) {
     return null;
   }
@@ -240,7 +243,15 @@ export function StepsWindow({
           </Button>
         )}
         <RecipeSaveBar processing={processing} rows={rows} />
-        <ProfileActions processing={processing} />
+        <div className="flex flex-wrap gap-2">
+          <SaveProfileDialog processing={processing} onSaved={setSavedAs} />
+          <ResetSteps processing={processing} rows={rows} />
+        </div>
+        {savedAs === null ? null : (
+          <p className="text-xs text-muted-foreground" data-testid="profile-saved">
+            {MESSAGES.profiles.save.saved(savedAs)}
+          </p>
+        )}
       </DialogContent>
     </Dialog>
   );

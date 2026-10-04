@@ -641,6 +641,22 @@ export const MESSAGES = {
         open: 'Steps of the stage',
         title: (stage: string) => `Steps of ${stage}`,
         hint: 'Drag a step to reorder, choose the pages it processes, switch it off or remove it. Nothing changes until the steps are saved.',
+
+        reset: {
+          open: 'Reset to the default steps',
+          hint: 'Put back the steps of your default profile for this stage, or the built-in steps when you have none',
+          title: 'Reset to the default steps?',
+          body: (pages: number) =>
+            `The steps of this recipe are replaced by the default ones, and the settings and hand edits that pages kept for the old steps no longer belong to any step. ${
+              pages === 0
+                ? 'No page is made out of date.'
+                : `${pages} ${pluralize(pages, 'page', 'pages')} will be out of date.`
+            }`,
+          unsaved: 'The changes of the steps that are not saved yet are dropped.',
+          confirm: 'Reset the steps',
+          working: 'Resetting…',
+          cancel: 'Cancel',
+        },
       },
     },
     stepPanel: {

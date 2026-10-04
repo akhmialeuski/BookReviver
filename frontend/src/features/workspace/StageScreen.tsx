@@ -65,6 +65,7 @@ import {
   stopOptions,
   type VariantView,
 } from '@/features/workspace/strip';
+import { useCloseRemovedStep } from '@/features/workspace/useCloseRemovedStep';
 import { useStepWorkspace } from '@/features/workspace/useStepWorkspace';
 import { describeError } from '@/shared/http/problem';
 import { cn } from '@/shared/lib/utils';
@@ -197,6 +198,13 @@ export function StageScreen({
     currentItem,
   );
   const openStep = workspace.open;
+  // A step that was removed from the recipe leaves the address, so no workspace stays open for a step that is gone
+  useCloseRemovedStep(
+    hasStepBar(stage) ? stepId : undefined,
+    openStep,
+    processing.ready && processing.recipe !== undefined,
+    () => onStepChange(undefined),
+  );
   const stageRows = useMemo(
     () => items.flatMap((item) => (item.row === undefined ? [] : [item.row])),
     [items],

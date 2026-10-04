@@ -123,6 +123,29 @@ test('a step is added from the catalogue twice, removed in the window of the gea
     expect(await stepIdsOf(page, 'geometry', 'geometry.deskew')).toHaveLength(1);
   });
 
+  await test.step('"Reset to the default steps" asks first, then puts the steps of the stage back and closes the step that is gone', async () => {
+    await page.getByTestId('step-catalogue').click();
+    await page
+      .getByTestId('step-catalogue-list')
+      .locator('[data-processor="geometry.deskew"]')
+      .click();
+    await expect(barSteps).toHaveCount(stepsBefore + 1);
+    await expect(page).toHaveURL(STEP_ADDRESS);
+
+    await page.getByTestId('steps-gear').click();
+    await windowOfSteps.getByTestId('steps-reset').click();
+    const confirmation = page.getByTestId('steps-reset-dialog');
+    await expect(confirmation).toContainText('out of date');
+    await snap(page, 'reset-to-the-default-steps');
+    await confirmation.getByTestId('steps-reset-confirm').click();
+
+    await expect(barSteps).toHaveCount(stepsBefore);
+    await expect(deskews).toHaveCount(1);
+    await expect(page).not.toHaveURL(/\/steps\//);
+    await page.keyboard.press('Escape');
+    await expect(windowOfSteps).toHaveCount(0);
+  });
+
   await test.step('a shape set by hand on the first page is carried to the following pages in one action', async () => {
     await deskews.first().click();
     await expect(page).toHaveURL(STEP_ADDRESS);

@@ -180,7 +180,7 @@ describe('StepsWindow', () => {
     expect(byId('recipe-stale-warning')?.textContent).toContain('1 page');
   });
 
-  it('switches the order the draft is saved in, and offers the profiles of the account', async () => {
+  it('switches the order the draft is saved in, and offers to keep the steps as a profile and to reset them', async () => {
     render();
     await open();
 
@@ -190,6 +190,7 @@ describe('StepsWindow', () => {
 
     expect(actions.setOrderMode).toHaveBeenCalledWith('free');
     expect(byId('steps-window')?.textContent).toContain('Save as profile');
-    expect(byId('steps-window')?.textContent).toContain('Apply profile');
+    expect(byId('steps-window')?.textContent).not.toContain('Apply profile');
+    expect(byId('steps-reset')?.textContent).toContain('Reset to the default steps');
   });
 });
