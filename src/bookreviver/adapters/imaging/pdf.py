@@ -35,6 +35,7 @@ from bookreviver.adapters.imaging.common import (
     to_mm,
     write_full,
 )
+from bookreviver.adapters.imaging.pdf_labels import read_label_rules
 from bookreviver.adapters.imaging.reader import SourceFormat
 from bookreviver.adapters.imaging.suggestions import SuggestionBuilder
 from bookreviver.domain.enums import ColorMode, Rendition, SourceKind
@@ -118,9 +119,9 @@ class PdfFormat(SourceFormat):
 
         :param files: Local path of the PDF file, the one file of the source.
         :type files: Sequence[Path]
-        :returns: Facts and page label of every page in page order, the document information, version, page count,
-                  outline and integrity facts of the file, and the description found in its XMP packet and document
-                  information.
+        :returns: Facts and page label of every page in page order, the page label rules of the file, the document
+                  information, version, page count, outline and integrity facts of the file, and the description found
+                  in its XMP packet and document information.
         :rtype: SourceAnalysis
         :raises UnsupportedSourceError: If the file is not a readable PDF without a password.
         :raises ValueError: If the source is not exactly one file.
@@ -139,11 +140,14 @@ class PdfFormat(SourceFormat):
             if document.needs_pass:
                 err_msg = f'{path.name} is protected by a password. Remove the password and upload the PDF again.'
                 raise UnsupportedSourceError(err_msg)
-            scans, labels = [], []
-            for page in document.pages():
-                scans.append(_scan_facts(page))
-                # Empty when the document defines no page label rules, which is what a scan without a label has
-                labels.append(page.get_label())
+            scans = [_scan_facts(page) for page in document.pages()]
+            rules = read_label_rules(document.get_page_labels(), page_count=document.page_count)
+            # Empty for a page no rule governs, such as every page of a document that defines no page label rules
+            labels = [''] * len(scans)
+            ends = [*(rule.first_index for rule in rules[1:]), len(scans)]
+            for rule, end in zip(rules, ends, strict=True):
+                for number in range(rule.first_index, end):
+                    labels[number] = rule.label_at(number)
             metadata = document.metadata or {}
             outline = document.get_toc()
             info = {key: value for key, value in metadata.items() if value and key != PyMuPdfKey.PDF_VERSION}
@@ -163,6 +167,7 @@ class PdfFormat(SourceFormat):
             kind=SourceKind.PDF,
             scans=scans,
             scan_labels=labels,
+            label_rules=rules,
             file_metadata=file_metadata,
             suggestion=suggestion,
         )
