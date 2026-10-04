@@ -958,7 +958,9 @@ export const getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetOptions = (optio
  * Replace the name and the steps of the active recipe, which marks the pages it processed stale.
  *
  * No page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown
- * or of another stage, or whose parameters do not fit, answers 422.
+ * or of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it cannot
+ * work, unless the body asks for the free order. A step that stands off its usual place is saved and named in the
+ * answer.
  */
 export const putRecipeApiV1ProjectsProjectIdStagesStageRecipePutMutation = (options?: Partial<Options<PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutData>>): UseMutationOptions<PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponse, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutError, Options<PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutData>> => {
     const mutationOptions: UseMutationOptions<PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponse, PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutError, Options<PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutData>> = {
@@ -1030,6 +1032,8 @@ export const listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetInfiniteOpt
  * Create Variant
  *
  * Add a variant of a stage, which is not active until it is activated.
+ *
+ * The order of the steps is kept as for ``PUT .../recipe``.
  */
 export const createVariantApiV1ProjectsProjectIdStagesStageVariantsPostMutation = (options?: Partial<Options<CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostData>>): UseMutationOptions<CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponse, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostError, Options<CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostData>> => {
     const mutationOptions: UseMutationOptions<CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponse, CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostError, Options<CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostData>> = {
@@ -1049,6 +1053,8 @@ export const createVariantApiV1ProjectsProjectIdStagesStageVariantsPostMutation 
  * Put Variant
  *
  * Replace the name and the steps of a recipe of a stage, which marks the pages it processed stale.
+ *
+ * The order of the steps is kept as for ``PUT .../recipe``.
  */
 export const putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation = (options?: Partial<Options<PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutData>>): UseMutationOptions<PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponse, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutError, Options<PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutData>> => {
     const mutationOptions: UseMutationOptions<PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponse, PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutError, Options<PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutData>> = {
@@ -1553,7 +1559,8 @@ export const listProfilesApiV1RecipeProfilesGetInfiniteOptions = (options?: Opti
  *
  * Save the steps of a recipe as a profile, which is not the default until it is made one.
  *
- * A step whose processor is unknown or of another stage, or whose parameters do not fit, answers 422.
+ * A step whose processor is unknown or of another stage, or whose parameters do not fit, answers 422, and so does a
+ * step that stands where it cannot work, unless the body asks for the free order.
  */
 export const createProfileApiV1RecipeProfilesPostMutation = (options?: Partial<Options<CreateProfileApiV1RecipeProfilesPostData>>): UseMutationOptions<CreateProfileApiV1RecipeProfilesPostResponse, CreateProfileApiV1RecipeProfilesPostError, Options<CreateProfileApiV1RecipeProfilesPostData>> => {
     const mutationOptions: UseMutationOptions<CreateProfileApiV1RecipeProfilesPostResponse, CreateProfileApiV1RecipeProfilesPostError, Options<CreateProfileApiV1RecipeProfilesPostData>> = {

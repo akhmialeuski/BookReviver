@@ -2843,7 +2843,7 @@
           "processing"
         ],
         "summary": "Put Recipe",
-        "description": "Replace the name and the steps of the active recipe, which marks the pages it processed stale.\n\nNo page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown\nor of another stage, or whose parameters do not fit, answers 422.",
+        "description": "Replace the name and the steps of the active recipe, which marks the pages it processed stale.\n\nNo page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown\nor of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it cannot\nwork, unless the body asks for the free order. A step that stands off its usual place is saved and named in the\nanswer.",
         "operationId": "put_recipe_api_v1_projects__project_id__stages__stage__recipe_put",
         "parameters": [
           {
@@ -3050,7 +3050,7 @@
           "processing"
         ],
         "summary": "Create Variant",
-        "description": "Add a variant of a stage, which is not active until it is activated.",
+        "description": "Add a variant of a stage, which is not active until it is activated.\n\nThe order of the steps is kept as for ``PUT .../recipe``.",
         "operationId": "create_variant_api_v1_projects__project_id__stages__stage__variants_post",
         "parameters": [
           {
@@ -3148,7 +3148,7 @@
           "processing"
         ],
         "summary": "Put Variant",
-        "description": "Replace the name and the steps of a recipe of a stage, which marks the pages it processed stale.",
+        "description": "Replace the name and the steps of a recipe of a stage, which marks the pages it processed stale.\n\nThe order of the steps is kept as for ``PUT .../recipe``.",
         "operationId": "put_variant_api_v1_projects__project_id__stages__stage__variants__recipe_id__put",
         "parameters": [
           {
@@ -4995,7 +4995,7 @@
           "profiles"
         ],
         "summary": "Create Profile",
-        "description": "Save the steps of a recipe as a profile, which is not the default until it is made one.\n\nA step whose processor is unknown or of another stage, or whose parameters do not fit, answers 422.",
+        "description": "Save the steps of a recipe as a profile, which is not the default until it is made one.\n\nA step whose processor is unknown or of another stage, or whose parameters do not fit, answers 422, and so does a\nstep that stands where it cannot work, unless the body asks for the free order.",
         "operationId": "create_profile_api_v1_recipe_profiles_post",
         "requestBody": {
           "required": true,
@@ -9217,6 +9217,83 @@
         "title": "NumberedPageSchema",
         "description": "A page and the label a numbering would give it, shown before the numbering is saved.\n\n:ivar page_id: The page.\n:ivar label: The label the page would have, empty for the style ``none``."
       },
+      "OrderIssueSchema": {
+        "properties": {
+          "step_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Step Id"
+          },
+          "processor_key": {
+            "type": "string",
+            "title": "Processor Key"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/OrderRuleKind"
+          },
+          "other_step_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Other Step Id"
+          },
+          "other_key": {
+            "type": "string",
+            "title": "Other Key"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "step_id",
+          "processor_key",
+          "kind",
+          "other_step_id",
+          "other_key",
+          "reason"
+        ],
+        "title": "OrderIssueSchema",
+        "description": "A step that stands where its processor does not want it.\n\n:ivar step_id: The step that is out of place.\n:ivar processor_key: Key of its processor.\n:ivar kind: Whether the place is the usual one, which the step may leave, or a required one.\n:ivar other_step_id: The step it is compared with.\n:ivar other_key: Key of the processor of that step.\n:ivar reason: One sentence that says why the place matters."
+      },
+      "OrderMode": {
+        "type": "string",
+        "enum": [
+          "usual",
+          "free"
+        ],
+        "title": "OrderMode",
+        "description": "How strictly the order of the steps of a recipe is kept when the recipe is saved.\n\nThe usual order refuses a step that stands where it cannot work, and the free order lets it stand, with a warning.\nA step that stands off its usual place is never refused, whatever the mode."
+      },
+      "OrderRuleKind": {
+        "type": "string",
+        "enum": [
+          "usual",
+          "required"
+        ],
+        "title": "OrderRuleKind",
+        "description": "How firmly a processor asks for its place among the steps of a recipe."
+      },
+      "OrderRuleSchema": {
+        "properties": {
+          "processor_key": {
+            "type": "string",
+            "title": "Processor Key"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "processor_key",
+          "reason"
+        ],
+        "title": "OrderRuleSchema",
+        "description": "The place a processor asks for relative to the steps of another processor.\n\n:ivar processor_key: Key of the other processor.\n:ivar reason: One sentence that says why the place matters."
+      },
       "Orthography": {
         "type": "string",
         "enum": [
@@ -10724,6 +10801,27 @@
           },
           "pool": {
             "$ref": "#/components/schemas/WorkerPool"
+          },
+          "after": {
+            "items": {
+              "$ref": "#/components/schemas/OrderRuleSchema"
+            },
+            "type": "array",
+            "title": "After"
+          },
+          "before": {
+            "items": {
+              "$ref": "#/components/schemas/OrderRuleSchema"
+            },
+            "type": "array",
+            "title": "Before"
+          },
+          "requires_after": {
+            "items": {
+              "$ref": "#/components/schemas/OrderRuleSchema"
+            },
+            "type": "array",
+            "title": "Requires After"
           }
         },
         "type": "object",
@@ -10736,10 +10834,13 @@
           "outputs",
           "parameters",
           "editor",
-          "pool"
+          "pool",
+          "after",
+          "before",
+          "requires_after"
         ],
         "title": "ProcessorSchema",
-        "description": "A processor a recipe can use.\n\n:ivar key: Key of the processor, such as ``geometry.deskew``.\n:ivar version: Version of its algorithm.\n:ivar title: Name the interface shows.\n:ivar stage: Stage whose recipe it can be put into.\n:ivar scope: Whether it makes one output for a page or one for each part of a scan.\n:ivar outputs: What it writes.\n:ivar parameters: JSON Schema of its parameters, from which the interface builds the form.\n:ivar editor: Editor of the manual edit it reads.\n:ivar pool: Class of worker it runs on."
+        "description": "A processor a recipe can use.\n\n:ivar key: Key of the processor, such as ``geometry.deskew``.\n:ivar version: Version of its algorithm.\n:ivar title: Name the interface shows.\n:ivar stage: Stage whose recipe it can be put into.\n:ivar scope: Whether it makes one output for a page or one for each part of a scan.\n:ivar outputs: What it writes.\n:ivar parameters: JSON Schema of its parameters, from which the interface builds the form.\n:ivar editor: Editor of the manual edit it reads.\n:ivar pool: Class of worker it runs on.\n:ivar after: Processors whose steps its step usually stands after.\n:ivar before: Processors whose steps its step usually stands before.\n:ivar requires_after: Processors whose steps its step must stand after, which the interface keeps it from leaving."
       },
       "ProcessorScope": {
         "type": "string",
@@ -11449,6 +11550,10 @@
             "maxItems": 50,
             "minItems": 1,
             "title": "Steps"
+          },
+          "order": {
+            "$ref": "#/components/schemas/OrderMode",
+            "default": "usual"
           }
         },
         "additionalProperties": false,
@@ -11458,7 +11563,7 @@
           "steps"
         ],
         "title": "RecipeBody",
-        "description": "The name and the steps of a recipe, for the active recipe and for a variant alike.\n\n:ivar name: Name of the recipe.\n:ivar steps: Its steps in the order they run, each checked against its processor."
+        "description": "The name and the steps of a recipe, for the active recipe and for a variant alike.\n\n:ivar name: Name of the recipe.\n:ivar steps: Its steps in the order they run, each checked against its processor.\n:ivar order: ``usual`` refuses a step that stands where it cannot work, with the reason as the detail of a 422, and\n             ``free`` saves it and reports it in the answer. A step off its usual place is saved either way."
       },
       "RecipeProfileBody": {
         "properties": {
@@ -11476,6 +11581,10 @@
             "maxItems": 50,
             "minItems": 1,
             "title": "Steps"
+          },
+          "order": {
+            "$ref": "#/components/schemas/OrderMode",
+            "default": "usual"
           },
           "stage": {
             "$ref": "#/components/schemas/Stage"
@@ -11683,6 +11792,13 @@
             "type": "string",
             "format": "date-time",
             "title": "Updated At"
+          },
+          "order_issues": {
+            "items": {
+              "$ref": "#/components/schemas/OrderIssueSchema"
+            },
+            "type": "array",
+            "title": "Order Issues"
           }
         },
         "type": "object",
@@ -11697,7 +11813,7 @@
           "updated_at"
         ],
         "title": "RecipeSchema",
-        "description": "A recipe: the ordered steps of one stage, active or a variant.\n\n:ivar id: Identifier of the recipe.\n:ivar project_id: Project owning the recipe.\n:ivar stage: Stage the recipe processes.\n:ivar name: Name the user sees.\n:ivar steps: The steps in the order they run.\n:ivar active: Whether the recipe is the one the stage runs by default.\n:ivar created_at: When the recipe was created.\n:ivar updated_at: When the recipe was last changed."
+        "description": "A recipe: the ordered steps of one stage, active or a variant.\n\n:ivar id: Identifier of the recipe.\n:ivar project_id: Project owning the recipe.\n:ivar stage: Stage the recipe processes.\n:ivar name: Name the user sees.\n:ivar steps: The steps in the order they run.\n:ivar active: Whether the recipe is the one the stage runs by default.\n:ivar created_at: When the recipe was created.\n:ivar updated_at: When the recipe was last changed.\n:ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual\n                    order. A required place appears here only for a recipe saved in the free order."
       },
       "RejectedFileSchema": {
         "properties": {

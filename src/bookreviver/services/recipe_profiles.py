@@ -17,17 +17,16 @@ from uuid import uuid4
 from attrs import evolve, frozen
 
 from bookreviver.domain.entities import RecipeProfile
+from bookreviver.domain.enums import OrderMode
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import RecipeProfileId
-from bookreviver.domain.values import Slice
+from bookreviver.domain.values import RecipeDraft, Slice
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from bookreviver.domain.entities import Actor, Recipe
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import ProjectId
-    from bookreviver.domain.values import SliceRequest, Step
+    from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock
     from bookreviver.services.processing import ProcessingService
@@ -83,20 +82,19 @@ class RecipeProfiles:
         profiles = await self._uow.recipe_profiles.list_for_account(actor.account_id, stage)
         return Slice(items=profiles[request.offset : request.offset + request.limit], total=len(profiles))
 
-    async def save(self, actor: Actor, stage: Stage, name: str, steps: Sequence[Step]) -> RecipeProfile:
+    async def save(self, actor: Actor, stage: Stage, draft: RecipeDraft) -> RecipeProfile:
         """Save the steps of a recipe as a profile of the account.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
         :param stage: Stage whose recipes the profile can be applied to.
         :type stage: Stage
-        :param name: Name of the profile.
-        :type name: str
-        :param steps: Steps in the order they run, which are checked against their processors.
-        :type steps: Sequence[Step]
+        :param draft: Name and steps of the profile, which are checked against their processors and their order.
+        :type draft: RecipeDraft
         :returns: The profile as stored, which is not the default.
         :rtype: RecipeProfile
-        :raises InvalidParametersError: If a step does not fit its processor.
+        :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
+                                        usual order.
         """
         moment = self._clock.now()
         profile = await self._uow.recipe_profiles.add(
@@ -104,8 +102,8 @@ class RecipeProfiles:
                 id=RecipeProfileId(uuid4()),
                 account_id=actor.account_id,
                 stage=stage,
-                name=name,
-                steps=await self._recipes.check(stage, steps),
+                name=draft.name,
+                steps=await self._recipes.check(stage, draft.steps, order=draft.order),
                 created_at=moment,
                 updated_at=moment,
             )
@@ -193,7 +191,9 @@ class RecipeProfiles:
         steps, missing = self._recipes.installed(profile.steps)
         if missing and not any(step.enabled for step in steps):
             raise InvalidParametersError(NOTHING_TO_APPLY.format(keys=', '.join(missing)))
-        recipe = await self._processing.add_variant(actor, project_id, profile.stage, profile.name, steps)
+        # The steps were checked when the profile was saved, and rules may have been added to the processors since
+        draft = RecipeDraft(name=profile.name, steps=steps, order=OrderMode.FREE)
+        recipe = await self._processing.add_variant(actor, project_id, profile.stage, draft)
         if activate:
             recipe = await self._processing.activate(actor, project_id, profile.stage, recipe.id)
         return AppliedProfile(recipe=recipe, missing_processors=missing)

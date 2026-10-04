@@ -930,6 +930,78 @@ export type NumberedPageSchema = {
 };
 
 /**
+ * OrderIssueSchema
+ *
+ * A step that stands where its processor does not want it.
+ *
+ * :ivar step_id: The step that is out of place.
+ * :ivar processor_key: Key of its processor.
+ * :ivar kind: Whether the place is the usual one, which the step may leave, or a required one.
+ * :ivar other_step_id: The step it is compared with.
+ * :ivar other_key: Key of the processor of that step.
+ * :ivar reason: One sentence that says why the place matters.
+ */
+export type OrderIssueSchema = {
+    /**
+     * Step Id
+     */
+    step_id: string;
+    /**
+     * Processor Key
+     */
+    processor_key: string;
+    kind: OrderRuleKind;
+    /**
+     * Other Step Id
+     */
+    other_step_id: string;
+    /**
+     * Other Key
+     */
+    other_key: string;
+    /**
+     * Reason
+     */
+    reason: string;
+};
+
+/**
+ * OrderMode
+ *
+ * How strictly the order of the steps of a recipe is kept when the recipe is saved.
+ *
+ * The usual order refuses a step that stands where it cannot work, and the free order lets it stand, with a warning.
+ * A step that stands off its usual place is never refused, whatever the mode.
+ */
+export type OrderMode = 'usual' | 'free';
+
+/**
+ * OrderRuleKind
+ *
+ * How firmly a processor asks for its place among the steps of a recipe.
+ */
+export type OrderRuleKind = 'usual' | 'required';
+
+/**
+ * OrderRuleSchema
+ *
+ * The place a processor asks for relative to the steps of another processor.
+ *
+ * :ivar processor_key: Key of the other processor.
+ * :ivar reason: One sentence that says why the place matters.
+ */
+export type OrderRuleSchema = {
+    /**
+     * Processor Key
+     */
+    processor_key: string;
+    /**
+     * Reason
+     */
+    reason: string;
+};
+
+/**
  * Orthography
  *
  * Spelling norm of the printed text.
@@ -1930,6 +2002,9 @@ export type ProcessorRefSchema = {
  * :ivar parameters: JSON Schema of its parameters, from which the interface builds the form.
  * :ivar editor: Editor of the manual edit it reads.
  * :ivar pool: Class of worker it runs on.
+ * :ivar after: Processors whose steps its step usually stands after.
+ * :ivar before: Processors whose steps its step usually stands before.
+ * :ivar requires_after: Processors whose steps its step must stand after, which the interface keeps it from leaving.
  */
 export type ProcessorSchema = {
     /**
@@ -1958,6 +2033,18 @@ export type ProcessorSchema = {
     };
     editor: EditorKind;
     pool: WorkerPool;
+    /**
+     * After
+     */
+    after: Array<OrderRuleSchema>;
+    /**
+     * Before
+     */
+    before: Array<OrderRuleSchema>;
+    /**
+     * Requires After
+     */
+    requires_after: Array<OrderRuleSchema>;
 };
 
 /**
@@ -2347,6 +2434,8 @@ export type QuadSchema = {
  *
  * :ivar name: Name of the recipe.
  * :ivar steps: Its steps in the order they run, each checked against its processor.
+ * :ivar order: ``usual`` refuses a step that stands where it cannot work, with the reason as the detail of a 422, and
+ * ``free`` saves it and reports it in the answer. A step off its usual place is saved either way.
  */
 export type RecipeBody = {
     /**
@@ -2357,6 +2446,7 @@ export type RecipeBody = {
      * Steps
      */
     steps: Array<StepBody>;
+    order?: OrderMode;
 };
 
 /**
@@ -2377,6 +2467,7 @@ export type RecipeProfileBody = {
      * Steps
      */
     steps: Array<StepBody>;
+    order?: OrderMode;
     stage: Stage;
 };
 
@@ -2521,6 +2612,8 @@ export type RecipeRuleTarget = {
  * :ivar active: Whether the recipe is the one the stage runs by default.
  * :ivar created_at: When the recipe was created.
  * :ivar updated_at: When the recipe was last changed.
+ * :ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual
+ * order. A required place appears here only for a recipe saved in the free order.
  */
 export type RecipeSchema = {
     /**
@@ -2552,6 +2645,10 @@ export type RecipeSchema = {
      * Updated At
      */
     updated_at: string;
+    /**
+     * Order Issues
+     */
+    order_issues?: Array<OrderIssueSchema>;
 };
 
 /**

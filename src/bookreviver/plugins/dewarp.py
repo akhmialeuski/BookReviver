@@ -39,7 +39,7 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Mesh
-from bookreviver.domain.values import ProcessorSpec
+from bookreviver.domain.values import OrderRule, ProcessorSpec
 from bookreviver.plugins.base import METHOD_TITLE, ModelProcessor, Params, method_discriminator
 from bookreviver.plugins.cv_image import (
     MANUAL_CONFIDENCE,
@@ -175,6 +175,21 @@ class Dewarp(ModelProcessor):
         outputs=frozenset({VersionOutput.IMAGE}),
         parameters=DewarpParams.model_json_schema(),
         editor=Mesh.editor,
+        after=(
+            OrderRule(
+                processor_key='geometry.perspective',
+                reason=(
+                    'Dewarp measures how the lines bend on an upright sheet, so it usually comes after Perspective.'
+                ),
+            ),
+            OrderRule(
+                processor_key='geometry.deskew',
+                reason=(
+                    'Dewarp measures the bend of the lines on a page that is turned level, '
+                    'so it usually comes after Deskew.'
+                ),
+            ),
+        ),
     )
 
     def __init__(self) -> None:

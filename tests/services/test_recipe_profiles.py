@@ -9,7 +9,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import RuleCondition, Stage
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
-from bookreviver.domain.values import SliceRequest, Step
+from bookreviver.domain.values import RecipeDraft, SliceRequest, Step
 from tests.helpers.builders import make_project, make_recipe_profile, new_account_id
 from tests.helpers.processors import FakeProcessor
 
@@ -79,7 +79,7 @@ async def saved(kit: ProcessingKit, actor: Actor, name: str = PROFILE_NAME) -> R
     :returns: The profile as stored.
     :rtype: RecipeProfile
     """
-    profile = await kit.profiles().save(actor, Stage.GEOMETRY, name, REORDERED)
+    profile = await kit.profiles().save(actor, Stage.GEOMETRY, RecipeDraft(name=name, steps=REORDERED))
     # The next profile is saved a minute later, so the order of creation does not fall to the random identifiers
     kit.clock.moment += timedelta(minutes=1)
     return profile
@@ -107,8 +107,9 @@ class TestSaveProfile:
         :type fx_kit: ProcessingKit
         """
         actor, _ = await fx_kit.seed_project()
+        missing = RecipeDraft(name=PROFILE_NAME, steps=[Step(processor_key=MISSING_KEY)])
         with pytest.raises(InvalidParametersError):
-            await fx_kit.profiles().save(actor, Stage.GEOMETRY, PROFILE_NAME, [Step(processor_key=MISSING_KEY)])
+            await fx_kit.profiles().save(actor, Stage.GEOMETRY, missing)
 
     async def test_steps_that_are_all_switched_off_are_refused(self, fx_kit: ProcessingKit) -> None:
         """Reject a profile that could never run.
@@ -117,10 +118,9 @@ class TestSaveProfile:
         :type fx_kit: ProcessingKit
         """
         actor, _ = await fx_kit.seed_project()
+        off = RecipeDraft(name=PROFILE_NAME, steps=[Step(processor_key=FAKE_KEY, enabled=False)])
         with pytest.raises(InvalidParametersError):
-            await fx_kit.profiles().save(
-                actor, Stage.GEOMETRY, PROFILE_NAME, [Step(processor_key=FAKE_KEY, enabled=False)]
-            )
+            await fx_kit.profiles().save(actor, Stage.GEOMETRY, off)
 
 
 class TestChangeProfile:
@@ -136,9 +136,8 @@ class TestChangeProfile:
         other, _ = await fx_kit.seed_project()
         mine = await saved(fx_kit, actor)
         await saved(fx_kit, other, OTHER_NAME)
-        cleanup = await fx_kit.profiles().save(
-            actor, Stage.CLEANUP, OTHER_NAME, [Step(processor_key=fx_kit.cleanup.spec.key)]
-        )
+        cleaning = RecipeDraft(name=OTHER_NAME, steps=[Step(processor_key=fx_kit.cleanup.spec.key)])
+        cleanup = await fx_kit.profiles().save(actor, Stage.CLEANUP, cleaning)
         everything = await fx_kit.profiles().profiles(actor, None, EVERYTHING)
         geometry = await fx_kit.profiles().profiles(actor, Stage.GEOMETRY, EVERYTHING)
         assert ([profile.id for profile in everything.items], everything.total) == ([mine.id, cleanup.id], 2)
@@ -333,7 +332,8 @@ class TestDefaultProfileOfANewBook:
         :type fx_cv_kit: ProcessingKit
         """
         actor, _ = await fx_cv_kit.seed_project()
-        profile = await fx_cv_kit.profiles().save(actor, Stage.GEOMETRY, PROFILE_NAME, [Step(processor_key=DESKEW_KEY)])
+        deskew = RecipeDraft(name=PROFILE_NAME, steps=[Step(processor_key=DESKEW_KEY)])
+        profile = await fx_cv_kit.profiles().save(actor, Stage.GEOMETRY, deskew)
         await fx_cv_kit.profiles().set_default(actor, profile.id, is_default=True)
         fresh = await second_project(fx_cv_kit, actor)
         await fx_cv_kit.service().recipe(actor, fresh.id, Stage.GEOMETRY)

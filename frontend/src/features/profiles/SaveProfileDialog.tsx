@@ -74,7 +74,14 @@ export function SaveProfileDialog({
           onSubmit={(event) => {
             event.preventDefault();
             save.mutate(
-              { body: { stage, name: name.trim(), steps: bodyOf(steps) } },
+              {
+                body: {
+                  stage,
+                  name: name.trim(),
+                  steps: bodyOf(steps),
+                  order: processing.orderMode,
+                },
+              },
               {
                 onSuccess: (profile) => {
                   setOpen(false);

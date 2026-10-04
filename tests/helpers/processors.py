@@ -2,9 +2,11 @@
 
 from typing import TYPE_CHECKING, override
 
+from attrs import evolve
+
 from bookreviver.domain.enums import ColorMode, EditorKind, ProcessorScope, Stage, VersionOutput, WorkerPool
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
-from bookreviver.domain.values import ProcessorSpec
+from bookreviver.domain.values import OrderRule, ProcessorSpec
 from bookreviver.ports.processing import Processor, StepOutput, StepResult
 
 if TYPE_CHECKING:
@@ -152,4 +154,53 @@ class AutoSplitProcessor(FakeProcessor):
         scope=ProcessorScope.SPLIT,
         outputs=frozenset({VersionOutput.IMAGE}),
         editor=EditorKind.SPLIT,
+    )
+
+
+# The processors of the tests of the order of steps: each declares one place relative to the one before it
+OPENING_KEY: str = 'geometry.opening'
+FIRST_KEY: str = 'geometry.first'
+SECOND_KEY: str = 'geometry.second'
+THIRD_KEY: str = 'geometry.third'
+OPENING_REASON: str = 'Opening sets the page up for First, so it usually comes before First.'
+SECOND_REASON: str = 'Second reads what First leaves, so it usually comes after First.'
+THIRD_REASON: str = 'Third works on what Second leaves, so it cannot come before Second.'
+
+
+class OpeningProcessor(FakeProcessor):
+    """A processor that usually stands before ``geometry.first``."""
+
+    spec = evolve(
+        FakeProcessor.spec,
+        key=OPENING_KEY,
+        title='Opening',
+        before=(OrderRule(processor_key=FIRST_KEY, reason=OPENING_REASON),),
+    )
+
+
+class FirstProcessor(FakeProcessor):
+    """A processor that asks for no place."""
+
+    spec = evolve(FakeProcessor.spec, key=FIRST_KEY, title='First')
+
+
+class SecondProcessor(FakeProcessor):
+    """A processor that usually stands after ``geometry.first``."""
+
+    spec = evolve(
+        FakeProcessor.spec,
+        key=SECOND_KEY,
+        title='Second',
+        after=(OrderRule(processor_key=FIRST_KEY, reason=SECOND_REASON),),
+    )
+
+
+class ThirdProcessor(FakeProcessor):
+    """A processor that must stand after ``geometry.second``."""
+
+    spec = evolve(
+        FakeProcessor.spec,
+        key=THIRD_KEY,
+        title='Third',
+        requires_after=(OrderRule(processor_key=SECOND_KEY, reason=THIRD_REASON),),
     )

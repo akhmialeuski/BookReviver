@@ -16,6 +16,7 @@ from bookreviver.domain.enums import (
     JobKind,
     NewPageOrigin,
     NumberDisplay,
+    OrderMode,
     Orthography,
     PageFilter,
     ProcessorScope,
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
         FileType,
         IdentifierScheme,
         LabelStyle,
+        OrderRuleKind,
         PageKind,
         PlaceMode,
         RejectionReason,
@@ -489,6 +491,34 @@ class PageStageKey:
     stage: Stage
 
 
+def _steps_tuple(steps: list[Step] | tuple[Step, ...]) -> tuple[Step, ...]:
+    """Keep the steps of a draft as a tuple, whatever sequence they were given in.
+
+    attrs reads the signature of a converter when it builds the class, so the annotation names only types that exist
+    at runtime.
+
+    :param steps: The steps.
+    :type steps: list[Step] | tuple[Step, ...]
+    :returns: The steps as a tuple.
+    :rtype: tuple[Step, ...]
+    """
+    return tuple(steps)
+
+
+@frozen(kw_only=True)
+class RecipeDraft:
+    """The name and the steps of a recipe or a profile as a user gives them, with the order they are to be kept in.
+
+    :ivar name: Name the user sees.
+    :ivar steps: The steps in the order they run, not yet checked against their processors.
+    :ivar order: Whether a step that stands where it cannot work is refused or only warned of.
+    """
+
+    name: str = field(validator=validators.min_len(1))
+    steps: tuple[Step, ...] = field(converter=_steps_tuple)
+    order: OrderMode = OrderMode.USUAL
+
+
 @frozen
 class RecipeKey:
     """The address of a recipe: the stage it belongs to and its identifier, which a use case takes as one value.
@@ -881,6 +911,38 @@ class MailMessage:
 
 
 @frozen(kw_only=True)
+class OrderRule:
+    """The place a processor asks for among the steps of a recipe, relative to the steps of one other processor.
+
+    :ivar processor_key: Key of the other processor.
+    :ivar reason: One sentence for the reader that names both steps and says why the place matters.
+    """
+
+    processor_key: str = field(validator=validators.min_len(1))
+    reason: str = field(validator=validators.min_len(1))
+
+
+@frozen(kw_only=True)
+class OrderIssue:
+    """A step that stands where its processor does not want it, found in the steps of a recipe.
+
+    :ivar step_id: The step that is out of place, which is the one whose processor declared the rule.
+    :ivar processor_key: Key of its processor.
+    :ivar kind: Whether the place is the usual one, which a user may leave, or a required one.
+    :ivar other_step_id: The step the rule compares it with.
+    :ivar other_key: Key of the processor of that step.
+    :ivar reason: Why the place matters, which the interface shows.
+    """
+
+    step_id: StepId
+    processor_key: str
+    kind: OrderRuleKind
+    other_step_id: StepId
+    other_key: str
+    reason: str
+
+
+@frozen(kw_only=True)
 class ProcessorSpec:
     """What a processor says about itself, which the catalogue lists without running it.
 
@@ -898,6 +960,11 @@ class ProcessorSpec:
     :ivar pool: Class of worker the step runs on.
     :ivar by_page_side: Whether the step reads the side of the book its page lies on, so a page that moves to the other
                         side is made again.
+    :ivar after: Processors whose steps this step usually stands after. A step that stands before one of them is
+                 marked, and may stay.
+    :ivar before: Processors whose steps this step usually stands before, marked the same way.
+    :ivar requires_after: Processors whose steps this step must stand after, since it works on what they leave. A step
+                          that stands before one of them is refused, unless the recipe is saved in the free order.
     """
 
     key: str = field(validator=validators.min_len(1))
@@ -910,6 +977,9 @@ class ProcessorSpec:
     editor: EditorKind = EditorKind.NONE
     pool: WorkerPool = WorkerPool.CPU
     by_page_side: bool = False
+    after: tuple[OrderRule, ...] = ()
+    before: tuple[OrderRule, ...] = ()
+    requires_after: tuple[OrderRule, ...] = ()
 
     @property
     def ref(self) -> ProcessorRef:

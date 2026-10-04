@@ -11,7 +11,15 @@ from bookreviver.domain.enums import JobKind, JobState, PageKind, RuleCondition,
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.ids import PageId, RecipeId
-from bookreviver.domain.values import PageStageKey, RecipeKey, SliceRequest, StageRun, Step, StepPreview
+from bookreviver.domain.values import (
+    PageStageKey,
+    RecipeDraft,
+    RecipeKey,
+    SliceRequest,
+    StageRun,
+    Step,
+    StepPreview,
+)
 from bookreviver.services.recipe_picks import RecipePicker
 from tests.helpers.builders import make_page_stage
 from tests.helpers.fake_processing import RefusingJobQueue
@@ -225,9 +233,8 @@ class TestSaveRecipe:
         :type fx_kit: ProcessingKit
         """
         actor, project = await fx_kit.seed_project()
-        saved = await fx_kit.service().save_recipe(
-            actor, project.id, Stage.GEOMETRY, 'Strong', [Step(processor_key=FAKE_KEY, params={'strength': 5})]
-        )
+        draft = RecipeDraft(name='Strong', steps=[Step(processor_key=FAKE_KEY, params={'strength': 5})])
+        saved = await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, draft)
         expect(saved.name == 'Strong')
         expect(dict(saved.steps[0].params) == {'strength': 5, 'fail': False})
         assert_expectations()
@@ -257,7 +264,9 @@ class TestSaveRecipe:
         """
         actor, project = await fx_kit.seed_project()
         with pytest.raises(InvalidParametersError, match=match):
-            await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, 'Broken', steps)
+            await fx_kit.service().save_recipe(
+                actor, project.id, Stage.GEOMETRY, RecipeDraft(name='Broken', steps=steps)
+            )
 
     async def test_pages_the_recipe_processed_are_marked_stale_and_nothing_is_run(self, fx_kit: ProcessingKit) -> None:
         """Verify editing the active recipe marks its pages stale, announces them and queues no job.
@@ -272,9 +281,8 @@ class TestSaveRecipe:
         uow = fx_kit.uow()
         await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id))
         await uow.commit()
-        await fx_kit.service().save_recipe(
-            actor, project.id, Stage.GEOMETRY, 'Strong', [Step(processor_key=FAKE_KEY, params={'strength': 2})]
-        )
+        draft = RecipeDraft(name='Strong', steps=[Step(processor_key=FAKE_KEY, params={'strength': 2})])
+        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, draft)
         record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         expect(record.state is StageState.STALE)
         expect(any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
@@ -297,7 +305,9 @@ class TestSaveRecipe:
         await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id))
         await uow.commit()
         steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={'strength': 9}, enabled=False)]
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, 'One of two', steps)
+        await fx_kit.service().save_recipe(
+            actor, project.id, Stage.GEOMETRY, RecipeDraft(name='One of two', steps=steps)
+        )
         stored = await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
         record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         expect([(step.enabled, step.params['strength']) for step in stored.steps] == [(True, 1), (False, 9)])
@@ -315,9 +325,8 @@ class TestVariants:
         :type fx_kit: ProcessingKit
         """
         actor, project = await fx_kit.seed_project()
-        variant = await fx_kit.service().add_variant(
-            actor, project.id, Stage.GEOMETRY, 'Strong', [Step(processor_key=FAKE_KEY, params={'strength': 3})]
-        )
+        draft = RecipeDraft(name='Strong', steps=[Step(processor_key=FAKE_KEY, params={'strength': 3})])
+        variant = await fx_kit.service().add_variant(actor, project.id, Stage.GEOMETRY, draft)
         listed = await fx_kit.service().variants(actor, project.id, Stage.GEOMETRY, EVERYTHING)
         expect([recipe.name for recipe in listed.items] == ['Fake', 'Strong'])
         expect((variant.active, listed.total) == (False, 2))
@@ -330,9 +339,8 @@ class TestVariants:
         :type fx_kit: ProcessingKit
         """
         actor, project = await fx_kit.seed_project()
-        variant = await fx_kit.service().add_variant(
-            actor, project.id, Stage.GEOMETRY, 'Strong', [Step(processor_key=FAKE_KEY)]
-        )
+        draft = RecipeDraft(name='Strong', steps=[Step(processor_key=FAKE_KEY)])
+        variant = await fx_kit.service().add_variant(actor, project.id, Stage.GEOMETRY, draft)
         activated = await fx_kit.service().activate(actor, project.id, Stage.GEOMETRY, variant.id)
         recipes = await fx_kit.uow().recipes.list_for_stage(project.id, Stage.GEOMETRY)
         expect(activated.active)
@@ -349,9 +357,8 @@ class TestVariants:
         first, _ = await fx_kit.seed_scan_page(project, order_key='a0')
         second, _ = await fx_kit.seed_scan_page(project, order_key='a1')
         old = await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
-        variant = await fx_kit.service().add_variant(
-            actor, project.id, Stage.GEOMETRY, 'Strong', [Step(processor_key=FAKE_KEY)]
-        )
+        draft = RecipeDraft(name='Strong', steps=[Step(processor_key=FAKE_KEY)])
+        variant = await fx_kit.service().add_variant(actor, project.id, Stage.GEOMETRY, draft)
         uow = fx_kit.uow()
         await uow.page_stages.save(make_page_stage(page_id=first.id, recipe_id=old.id))
         await uow.page_stages.save(make_page_stage(page_id=second.id, recipe_id=variant.id))
@@ -392,19 +399,13 @@ class TestVariants:
         """
         actor, project = await fx_kit.seed_project()
         page, _ = await fx_kit.seed_scan_page(project)
-        variant = await fx_kit.service().add_variant(
-            actor, project.id, Stage.GEOMETRY, 'Strong', [Step(processor_key=FAKE_KEY)]
-        )
+        draft = RecipeDraft(name='Strong', steps=[Step(processor_key=FAKE_KEY)])
+        variant = await fx_kit.service().add_variant(actor, project.id, Stage.GEOMETRY, draft)
         uow = fx_kit.uow()
         await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=variant.id))
         await uow.commit()
-        await fx_kit.service().save_variant(
-            actor,
-            project.id,
-            RecipeKey(Stage.GEOMETRY, variant.id),
-            'Stronger',
-            [Step(processor_key=FAKE_KEY, params={'strength': 9})],
-        )
+        stronger = RecipeDraft(name='Stronger', steps=[Step(processor_key=FAKE_KEY, params={'strength': 9})])
+        await fx_kit.service().save_variant(actor, project.id, RecipeKey(Stage.GEOMETRY, variant.id), stronger)
         record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         assert record.state is StageState.STALE
 
@@ -415,13 +416,11 @@ class TestVariants:
         :type fx_kit: ProcessingKit
         """
         actor, project = await fx_kit.seed_project()
-        variant = await fx_kit.service().add_variant(
-            actor, project.id, Stage.GEOMETRY, 'Strong', [Step(processor_key=FAKE_KEY)]
-        )
+        draft = RecipeDraft(name='Strong', steps=[Step(processor_key=FAKE_KEY)])
+        variant = await fx_kit.service().add_variant(actor, project.id, Stage.GEOMETRY, draft)
+        hijacked = RecipeDraft(name='Hijacked', steps=[Step(processor_key=FAKE_KEY)])
         with pytest.raises(NotFoundError):
-            await fx_kit.service().save_variant(
-                actor, project.id, RecipeKey(Stage.CLEANUP, variant.id), 'Hijacked', [Step(processor_key=FAKE_KEY)]
-            )
+            await fx_kit.service().save_variant(actor, project.id, RecipeKey(Stage.CLEANUP, variant.id), hijacked)
         assert (await fx_kit.uow().recipes.get(variant.id)).name == 'Strong'
 
 

@@ -238,6 +238,46 @@ describe('RecipeSection', () => {
     });
   });
 
+  it('sends the order the recipe is kept in with its steps', async () => {
+    render(processing({ dirty: true, orderMode: 'free' }));
+
+    await act(async () => {
+      byId('recipe-save')?.click();
+    });
+
+    expect(sdk.save.mock.calls[0]?.[0]).toMatchObject({ body: { order: 'free' } });
+  });
+
+  it('does not let a step that stands where it cannot work be saved in the usual order', () => {
+    render(
+      processing({
+        dirty: true,
+        refused: [
+          {
+            stepId: 'step-0',
+            otherId: 'step-1',
+            kind: 'required',
+            reason: 'Margins cannot come before Select content.',
+          },
+        ],
+      }),
+    );
+
+    expect(byId('recipe-save')?.disabled).toBe(true);
+    expect(byId('recipe-order-blocked')?.textContent).toContain('cannot be saved');
+  });
+
+  it('turns the free order on and off with its switch', () => {
+    const setOrderMode = vi.fn();
+    render(processing({ setOrderMode }));
+    act(() => byId('order-free')?.click());
+    expect(setOrderMode).toHaveBeenLastCalledWith('free');
+
+    render(processing({ orderMode: 'free', setOrderMode }));
+    act(() => byId('order-free')?.click());
+    expect(setOrderMode).toHaveBeenLastCalledWith('usual');
+  });
+
   it('does not let a value outside its limits be saved', () => {
     render(processing({ dirty: true, valid: false }));
 

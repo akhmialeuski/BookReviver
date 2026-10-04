@@ -30,7 +30,7 @@ from bookreviver.domain.enums import (
     VersionOutput,
 )
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.values import ProcessorSpec
+from bookreviver.domain.values import OrderRule, ProcessorSpec
 from bookreviver.plugins.base import ModelProcessor, Params, labelled
 from bookreviver.plugins.cv_image import (
     BILEVEL_THRESHOLD,
@@ -91,6 +91,24 @@ class Eraser(ModelProcessor):
         outputs=frozenset({VersionOutput.IMAGE}),
         parameters=EraserParams.model_json_schema(),
         editor=EditorKind.BRUSH_MASK,
+        after=(
+            OrderRule(
+                processor_key='cleanup.binarize',
+                reason=(
+                    'Fill zones paints on the page as the cleaning left it, '
+                    'and a Binarization after it would work on the fill again, '
+                    'so it usually comes after Binarization.'
+                ),
+            ),
+            OrderRule(
+                processor_key='cleanup.despeckle',
+                reason=(
+                    'Fill zones paints on the page as the cleaning left it, '
+                    'and a Despeckle after it would take the specks of the fill for dust, '
+                    'so it usually comes after Despeckle.'
+                ),
+            ),
+        ),
     )
 
     @override

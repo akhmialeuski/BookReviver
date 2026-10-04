@@ -19,9 +19,11 @@ import {
   GripVerticalIcon,
   StepForwardIcon,
   Trash2Icon,
+  TriangleAlertIcon,
 } from 'lucide-react';
-import { useMemo } from 'react';
-import type { AppliesTo, ProcessorSchema } from '@/api';
+import { useMemo, useState } from 'react';
+import type { AppliesTo, OrderMode, ProcessorSchema } from '@/api';
+import type { OrderIssue } from '@/features/processing/order';
 import { ParamsForm } from '@/features/processing/ParamsForm';
 import { CONDITIONS, type StepDraft } from '@/features/processing/recipe';
 import { fitsSchema, formSchemaOf } from '@/features/processing/schema';
@@ -71,6 +73,51 @@ export interface StepRunControl {
   onRun: (index: number, scope: RunScope) => void;
 }
 
+/** What the list needs to mark the steps that are out of their place and to keep a step from a place it cannot work. */
+export interface StepOrder {
+  /** The order the recipe is saved in, which decides whether a place that breaks a required order is refused. */
+  mode: OrderMode;
+  /** The steps that stand off the place their processors ask for, by the identity of the step. */
+  issues: ReadonlyMap<string, readonly OrderIssue[]>;
+  /** The required place that dropping a step on another would break, if any. */
+  refusalOf: (activeId: string, overId: string) => OrderIssue | undefined;
+  /** Put the steps in their usual order. */
+  onRestore: () => void;
+}
+
+/** The place the dragged step is over, when it breaks a required order. */
+interface Hover {
+  overId: string;
+  issue: OrderIssue;
+}
+
+/** The line over the list that says why the place a step is held over is not allowed, or that the free order allows it. */
+export function OrderNotice({
+  mode,
+  issue,
+}: {
+  mode: OrderMode;
+  issue: Pick<OrderIssue, 'reason'>;
+}): React.JSX.Element {
+  return (
+    <p
+      role="alert"
+      className={cn(
+        'mb-2 rounded-md border px-3 py-2 text-xs',
+        mode === 'usual'
+          ? 'border-destructive text-destructive'
+          : 'border-status-attention text-status-attention',
+      )}
+      data-testid="order-refusal"
+      data-mode={mode}
+    >
+      {mode === 'usual'
+        ? labels.drag.refused(issue.reason)
+        : labels.drag.allowedInFree(issue.reason)}
+    </p>
+  );
+}
+
 function StepCard({
   step,
   number,
@@ -80,6 +127,9 @@ function StepCard({
   runnable,
   run,
   pageValues,
+  issues,
+  hover,
+  onRestore,
   onOpen,
   onToggle,
   onRemove,
@@ -98,6 +148,11 @@ function StepCard({
   run: StepRunControl | undefined;
   /** The fields the open page changes for this step, which its form marks. */
   pageValues: Readonly<Record<string, unknown>>;
+  /** What is wrong with the place of this step. */
+  issues: readonly OrderIssue[];
+  /** How a dragged step that is over this one is received, or null when nothing is held over it. */
+  hover: OrderMode | null;
+  onRestore: (() => void) | undefined;
   onOpen: (open: boolean) => void;
   onToggle: () => void;
   onRemove: () => void;
@@ -111,6 +166,7 @@ function StepCard({
   const marked = useMemo(() => new Set(Object.keys(pageValues)), [pageValues]);
   const outOfLimits =
     processor !== undefined && !fitsSchema(formSchemaOf(processor.parameters), step.params);
+  const kind = issues.some((issue) => issue.kind === 'required') ? 'required' : 'usual';
 
   return (
     <li
@@ -121,9 +177,11 @@ function StepCard({
         transition,
       }}
       className={cn(
-        'rounded-lg border bg-card text-card-foreground',
+        'min-w-0 rounded-lg border bg-card text-card-foreground',
         isDragging && 'z-10 opacity-80 shadow-lg',
         outOfLimits && 'border-destructive/60',
+        hover === 'usual' && 'border-destructive bg-destructive/10',
+        hover === 'free' && 'border-status-attention bg-status-attention/10',
       )}
       data-testid="recipe-step"
       data-processor={step.processorKey}
@@ -197,19 +255,75 @@ function StepCard({
           <Trash2Icon />
         </Button>
       </div>
-      {run === undefined || !step.enabled ? null : (
+      {issues.length === 0 && (run === undefined || !step.enabled) ? null : (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 pb-1.5 text-xs">
+          {run === undefined || !step.enabled ? null : (
+            <p
+              className="text-muted-foreground"
+              title={labels.passedHint}
+              data-testid="step-passed"
+            >
+              {labels.passed(run.passed(number - 1), run.total)}
+            </p>
+          )}
+          {issues.length === 0 ? null : (
+            <span
+              className={cn(
+                'flex shrink-0 items-center gap-1',
+                kind === 'required' ? 'text-destructive' : 'text-status-attention',
+              )}
+              title={issues.map((issue) => issue.reason).join(' ')}
+              data-testid="step-order-mark"
+              data-kind={kind}
+            >
+              <TriangleAlertIcon className="size-3.5" aria-hidden="true" />
+              {labels.order.marks[kind]}
+            </span>
+          )}
+        </div>
+      )}
+      {issues.length === 0 || open ? null : (
         <p
-          className="px-3 pb-1.5 text-xs text-muted-foreground"
-          title={labels.passedHint}
-          data-testid="step-passed"
+          className={cn(
+            'px-3 pb-1.5 text-xs break-words',
+            kind === 'required' ? 'text-destructive' : 'text-status-attention',
+          )}
+          data-testid="step-order-reason"
         >
-          {labels.passed(run.passed(number - 1), run.total)}
+          {issues[0]?.reason}
         </p>
       )}
       {open ? (
         <div className="grid gap-2 border-t px-3 py-3">
           {step.enabled ? null : (
             <p className="text-xs text-muted-foreground">{labels.switchedOff}</p>
+          )}
+          {issues.length === 0 ? null : (
+            <div className="grid gap-2" data-testid="step-order-details">
+              {issues.map((issue) => (
+                <p
+                  key={`${issue.otherId}|${issue.reason}`}
+                  className={cn(
+                    'text-xs break-words',
+                    issue.kind === 'required' ? 'text-destructive' : 'text-status-attention',
+                  )}
+                >
+                  {issue.reason}
+                </p>
+              ))}
+              {onRestore === undefined ? null : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-fit"
+                  title={labels.order.restoreHint}
+                  data-testid="step-restore-order"
+                  onClick={onRestore}
+                >
+                  {labels.order.restore}
+                </Button>
+              )}
+            </div>
           )}
           <label className="grid gap-1 text-xs text-muted-foreground" title={labels.condition.hint}>
             {labels.condition.label(title)}
@@ -251,6 +365,7 @@ export function StepList({
   extraOf,
   run,
   pageValuesOf,
+  order,
   onOpen,
   onMove,
   onToggle,
@@ -267,6 +382,8 @@ export function StepList({
   run?: StepRunControl;
   /** The fields the open page changes for a step, or absent when no page is open. */
   pageValuesOf?: (step: StepDraft) => Readonly<Record<string, unknown>>;
+  /** The order the steps are kept in, or absent for a list that does not guard it. */
+  order?: StepOrder;
   onOpen: (id: string | undefined) => void;
   onMove: (activeId: string, overId: string) => void;
   onToggle: (id: string) => void;
@@ -283,10 +400,25 @@ export function StepList({
     const step = steps.find((entry) => entry.id === id);
     return catalogue.find((entry) => entry.key === step?.processorKey)?.title ?? String(id);
   };
+  const [hover, setHover] = useState<Hover | null>(null);
+  // A step dropped on a place that breaks a required order does not move, unless the order is free
+  const refused = (activeId: string | number, overId: string | number): OrderIssue | undefined =>
+    order?.refusalOf(String(activeId), String(overId));
   const announcements: Announcements = {
     onDragStart: ({ active }) => labels.drag.pickedUp(nameOf(active.id)),
-    onDragOver: ({ over }) => (over === null ? undefined : labels.drag.over(nameOf(over.id))),
-    onDragEnd: ({ active }) => labels.drag.dropped(nameOf(active.id)),
+    onDragOver: ({ active, over }) => {
+      if (over === null) {
+        return undefined;
+      }
+      const issue = refused(active.id, over.id);
+      return issue !== undefined && order?.mode === 'usual'
+        ? labels.drag.refused(issue.reason)
+        : labels.drag.over(nameOf(over.id));
+    },
+    onDragEnd: ({ active, over }) =>
+      over !== null && order?.mode === 'usual' && refused(active.id, over.id) !== undefined
+        ? labels.drag.cancelled
+        : labels.drag.dropped(nameOf(active.id)),
     onDragCancel: () => labels.drag.cancelled,
   };
 
@@ -301,14 +433,26 @@ export function StepList({
         announcements,
         screenReaderInstructions: { draggable: labels.drag.instructions },
       }}
+      onDragOver={({ active, over }) => {
+        const issue = over === null ? undefined : refused(active.id, over.id);
+        setHover(over === null || issue === undefined ? null : { overId: String(over.id), issue });
+      }}
+      onDragCancel={() => setHover(null)}
       onDragEnd={({ active, over }) => {
-        if (over !== null) {
+        setHover(null);
+        if (
+          over !== null &&
+          !(order?.mode === 'usual' && refused(active.id, over.id) !== undefined)
+        ) {
           onMove(String(active.id), String(over.id));
         }
       }}
     >
+      {hover === null || order === undefined ? null : (
+        <OrderNotice mode={order.mode} issue={hover.issue} />
+      )}
       <SortableContext items={steps.map((step) => step.id)} strategy={verticalListSortingStrategy}>
-        <ol aria-label={labels.title} className="grid gap-2" data-testid="recipe-steps">
+        <ol aria-label={labels.title} className="grid grid-cols-1 gap-2" data-testid="recipe-steps">
           {steps.map((step, index) => (
             <StepCard
               key={step.id}
@@ -320,6 +464,9 @@ export function StepList({
               runnable={canRunThrough(steps, index)}
               run={steps.length > 1 ? run : undefined}
               pageValues={pageValuesOf?.(step) ?? NO_PAGE_VALUES}
+              issues={order?.issues.get(step.id) ?? []}
+              hover={hover?.overId === step.id ? (order?.mode ?? null) : null}
+              onRestore={order?.onRestore}
               onOpen={(open) => onOpen(open ? step.id : undefined)}
               onToggle={() => onToggle(step.id)}
               onRemove={() => onRemove(step.id)}

@@ -33,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from '@/shared/ui/dropdown-menu';
 import { ErrorAlert } from '@/shared/ui/error-alert';
+import { Switch } from '@/shared/ui/switch';
 
 /**
  * The recipe of a stage in the panel: which recipe is shown, its steps with their settings, the steps that can be added
@@ -93,7 +94,7 @@ export function RecipeSection({
         };
 
   return (
-    <section className="grid gap-3" aria-label={labels.recipe.label}>
+    <section className="grid grid-cols-1 gap-3" aria-label={labels.recipe.label}>
       <div className="flex min-h-6 items-center justify-between gap-2">
         <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           {labels.recipe.label}
@@ -137,7 +138,11 @@ export function RecipeSection({
             create.mutate(
               {
                 path: { project_id: projectId, stage },
-                body: { name: labels.recipe.copyName(recipe.name), steps: bodyOf(steps) },
+                body: {
+                  name: labels.recipe.copyName(recipe.name),
+                  steps: bodyOf(steps),
+                  order: processing.orderMode,
+                },
               },
               { onSuccess: (created) => processing.chooseRecipe(created.id) },
             )
@@ -173,9 +178,23 @@ export function RecipeSection({
         pages={processedBy(recipe.id)}
       />
 
-      <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-        {labels.steps.title}
-      </h3>
+      <div className="flex min-h-6 items-center justify-between gap-2">
+        <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+          {labels.steps.title}
+        </h3>
+        <div
+          className="flex items-center gap-2 text-xs text-muted-foreground"
+          title={labels.steps.order.modeHint}
+        >
+          <span>{labels.steps.order.modeLabel}</span>
+          <Switch
+            checked={processing.orderMode === 'free'}
+            aria-label={labels.steps.order.modeLabel}
+            data-testid="order-free"
+            onCheckedChange={(free) => processing.setOrderMode(free ? 'free' : 'usual')}
+          />
+        </div>
+      </div>
       <StepList
         steps={steps}
         catalogue={catalogue}
@@ -200,6 +219,12 @@ export function RecipeSection({
           pageId === undefined ? undefined : (step) => pageValuesOf(pageSettings.data, step.stepId)
         }
         run={stepRun}
+        order={{
+          mode: processing.orderMode,
+          issues: processing.orderIssues,
+          refusalOf: processing.refusalOf,
+          onRestore: processing.restoreOrder,
+        }}
         onOpen={processing.open}
         onMove={processing.move}
         onToggle={processing.toggle}
@@ -249,15 +274,20 @@ export function RecipeSection({
           {processing.valid ? null : (
             <p className="text-sm text-destructive">{labels.steps.outOfLimits}</p>
           )}
+          {processing.refused.length === 0 ? null : (
+            <p className="text-sm text-destructive" data-testid="recipe-order-blocked">
+              {labels.steps.order.blocked}
+            </p>
+          )}
           <div className="flex gap-2">
             <Button
               size="sm"
-              disabled={!processing.valid || save.isPending}
+              disabled={!processing.valid || processing.refused.length > 0 || save.isPending}
               data-testid="recipe-save"
               onClick={() =>
                 save.mutate({
                   path: { project_id: projectId, stage, recipe_id: recipe.id },
-                  body: { name: recipe.name, steps: bodyOf(steps) },
+                  body: { name: recipe.name, steps: bodyOf(steps), order: processing.orderMode },
                 })
               }
             >

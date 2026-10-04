@@ -28,6 +28,8 @@ from bookreviver.api.schemas.types import (
 from bookreviver.domain.enums import (
     AppliesTo,
     EditorKind,
+    OrderMode,
+    OrderRuleKind,
     ProcessorScope,
     Rendition,
     ReviewReason,
@@ -42,14 +44,28 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId, StepId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PIN_NEEDS_RECIPE, StageRun, Step, StepPreview, VersionFilter
+from bookreviver.domain.values import PIN_NEEDS_RECIPE, RecipeDraft, StageRun, Step, StepPreview, VersionFilter
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from starlette.requests import Request
 
-    from bookreviver.domain.entities import PageStage, PageVersion
+    from bookreviver.domain.entities import PageStage, PageVersion, Recipe
+    from bookreviver.domain.values import OrderIssue
 
 STEP_INDEX_OUT_OF_RANGE: str = 'The step index must name one of the steps.'
+
+
+class OrderRuleSchema(ResponseModel):
+    """The place a processor asks for relative to the steps of another processor.
+
+    :ivar processor_key: Key of the other processor.
+    :ivar reason: One sentence that says why the place matters.
+    """
+
+    processor_key: str
+    reason: str
 
 
 class ProcessorSchema(ResponseModel):
@@ -64,6 +80,9 @@ class ProcessorSchema(ResponseModel):
     :ivar parameters: JSON Schema of its parameters, from which the interface builds the form.
     :ivar editor: Editor of the manual edit it reads.
     :ivar pool: Class of worker it runs on.
+    :ivar after: Processors whose steps its step usually stands after.
+    :ivar before: Processors whose steps its step usually stands before.
+    :ivar requires_after: Processors whose steps its step must stand after, which the interface keeps it from leaving.
     """
 
     key: str
@@ -75,6 +94,9 @@ class ProcessorSchema(ResponseModel):
     parameters: dict[str, Any]
     editor: EditorKind
     pool: WorkerPool
+    after: list[OrderRuleSchema]
+    before: list[OrderRuleSchema]
+    requires_after: list[OrderRuleSchema]
 
 
 class StepSchema(ResponseModel):
@@ -94,6 +116,25 @@ class StepSchema(ResponseModel):
     applies_to: AppliesTo
 
 
+class OrderIssueSchema(ResponseModel):
+    """A step that stands where its processor does not want it.
+
+    :ivar step_id: The step that is out of place.
+    :ivar processor_key: Key of its processor.
+    :ivar kind: Whether the place is the usual one, which the step may leave, or a required one.
+    :ivar other_step_id: The step it is compared with.
+    :ivar other_key: Key of the processor of that step.
+    :ivar reason: One sentence that says why the place matters.
+    """
+
+    step_id: StepId
+    processor_key: str
+    kind: OrderRuleKind
+    other_step_id: StepId
+    other_key: str
+    reason: str
+
+
 class RecipeSchema(ResponseModel):
     """A recipe: the ordered steps of one stage, active or a variant.
 
@@ -105,6 +146,8 @@ class RecipeSchema(ResponseModel):
     :ivar active: Whether the recipe is the one the stage runs by default.
     :ivar created_at: When the recipe was created.
     :ivar updated_at: When the recipe was last changed.
+    :ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual
+                        order. A required place appears here only for a recipe saved in the free order.
     """
 
     id: RecipeId
@@ -115,6 +158,22 @@ class RecipeSchema(ResponseModel):
     active: bool
     created_at: datetime
     updated_at: datetime
+    order_issues: list[OrderIssueSchema] = Field(default_factory=list)
+
+    @classmethod
+    def of(cls, recipe: Recipe, issues: Sequence[OrderIssue]) -> Self:
+        """Build the schema of a recipe with the order issues its steps have.
+
+        :param recipe: The recipe.
+        :type recipe: Recipe
+        :param issues: The steps of the recipe that stand off the place their processors ask for.
+        :type issues: Sequence[OrderIssue]
+        :returns: The schema.
+        :rtype: Self
+        """
+        return cls.model_validate(recipe).model_copy(
+            update={'order_issues': [OrderIssueSchema.model_validate(issue) for issue in issues]}
+        )
 
 
 class StepBody(RequestModel):
@@ -151,18 +210,21 @@ class RecipeBody(RequestModel):
 
     :ivar name: Name of the recipe.
     :ivar steps: Its steps in the order they run, each checked against its processor.
+    :ivar order: ``usual`` refuses a step that stands where it cannot work, with the reason as the detail of a 422, and
+                 ``free`` saves it and reports it in the answer. A step off its usual place is saved either way.
     """
 
     name: RecipeName
     steps: Annotated[list[StepBody], Field(min_length=1, max_length=RECIPE_STEPS_MAX_LENGTH)]
+    order: OrderMode = OrderMode.USUAL
 
-    def to_steps(self) -> list[Step]:
-        """Return the steps as the domain states them.
+    def to_draft(self) -> RecipeDraft:
+        """Return the name, the steps and the order as the domain states them.
 
-        :returns: The steps.
-        :rtype: list[Step]
+        :returns: The draft.
+        :rtype: RecipeDraft
         """
-        return [step.to_step() for step in self.steps]
+        return RecipeDraft(name=self.name, steps=[step.to_step() for step in self.steps], order=self.order)
 
 
 class StageRunBody(RequestModel):
