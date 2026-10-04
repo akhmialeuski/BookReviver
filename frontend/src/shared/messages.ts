@@ -26,6 +26,7 @@ import type {
   Script,
   Stage,
   StageStatus,
+  StepFlag,
   VersionOrigin,
 } from '@/api';
 import type { Problem } from '@/features/about/fields';
@@ -39,6 +40,14 @@ import type { PageFilter } from '@/features/workspace/params';
 import type { ConditionMark } from '@/features/workspace/steps';
 import { ProblemCode } from '@/shared/http/codes';
 import { pluralize } from '@/shared/lib/format';
+
+/** The names of the reasons a page asks for a look at a step, which the filter of the strip and the counts both use. */
+const STEP_FLAG_NAMES = {
+  unsure: 'Step unsure',
+  unusual: 'Differs from the book',
+  'by-hand': 'Set by hand',
+  skipped: 'Skipped by the condition',
+} satisfies Record<StepFlag, string>;
 
 /**
  * Every text the interface shows, in one place.
@@ -590,6 +599,12 @@ export const MESSAGES = {
         all: 'Any step',
         option: (number: number, pages: number) => `Stopped at step ${number} · ${pages}`,
       },
+      flag: {
+        label: 'Pages of the step',
+        all: 'Any page',
+        empty: 'No page of the book carries this reason at the open step.',
+        option: (flag: StepFlag, pages: number) => `${STEP_FLAG_NAMES[flag]} · ${pages}`,
+      },
       variant: {
         label: 'Variant',
         all: 'All variants',
@@ -697,9 +712,10 @@ export const MESSAGES = {
       book: 'This step on the book',
       counts: {
         found: 'Found',
-        byHand: 'Set by hand',
+        byHand: STEP_FLAG_NAMES['by-hand'],
         check: 'To check',
-        skipped: 'Skipped by the condition',
+        unusual: STEP_FLAG_NAMES.unusual,
+        skipped: STEP_FLAG_NAMES.skipped,
         notRun: 'Not run yet',
       },
       pages: (count: number) => `${count} ${pluralize(count, 'page', 'pages')}`,

@@ -3764,6 +3764,15 @@ export type StepBody = {
 };
 
 /**
+ * StepFlag
+ *
+ * Why a page asks for a look at one step of a stage, which the strip of an open step narrows its pages by.
+ *
+ * A page can carry several. ``SKIPPED`` repeats the state of the shape, so a client filters by the flags alone.
+ */
+export type StepFlag = 'unsure' | 'unusual' | 'by-hand' | 'skipped';
+
+/**
  * StepLayer
  *
  * One of the three layers a page keeps for a step, which a change of the history names.
@@ -3781,6 +3790,8 @@ export type StepLayer = 'settings' | 'found' | 'hand';
  * :ivar input_version: The version the step reads on the page, which the canvas of the step shows, or None when the
  * page has not come as far as the step or is not run.
  * :ivar version: The version the step made on the page, or None when the page was not run through the step.
+ * :ivar flags: Why the page asks for a look at the step: the step is unsure of it, what it found departs from the
+ * book, it is set by hand, or the condition skipped it. The strip of the open step lists pages by these.
  */
 export type StepPageSchema = {
     /**
@@ -3790,6 +3801,10 @@ export type StepPageSchema = {
     state: FigureState;
     input_version: PageVersionSchema | null;
     version: PageVersionSchema | null;
+    /**
+     * Flags
+     */
+    flags: Array<StepFlag>;
 };
 
 /**

@@ -9,6 +9,7 @@ from bookreviver.domain.enums import (
     EditorKind,
     ProcessorScope,
     Stage,
+    StepMeasure,
     VersionData,
     VersionOutput,
     WorkerPool,
@@ -120,6 +121,53 @@ class FakeProcessor(Processor):
                 )
             ]
         )
+
+
+# The key of the processor that finds an angle on each page
+MEASURING_KEY: str = 'geometry.measuring'
+
+
+class MeasuringProcessor(FakeProcessor):
+    """A processor that records its strength as the angle it found, so a page that sets another strength departs."""
+
+    spec = evolve(FakeProcessor.spec, key=MEASURING_KEY, title='Measuring', measure=StepMeasure.ANGLE)
+
+    @override
+    def run(self, step_input: StepInput) -> StepResult:
+        """Run the fake step and record the strength as the angle.
+
+        :param step_input: What the step reads.
+        :type step_input: StepInput
+        :returns: One output holding the input image and the angle.
+        :rtype: StepResult
+        """
+        return self._found(super().run(step_input), step_input)
+
+    @override
+    def preview(self, step_input: StepInput) -> StepResult:
+        """Preview the fake step and record the strength as the angle.
+
+        :param step_input: What the step reads.
+        :type step_input: StepInput
+        :returns: One output holding the input image and the angle.
+        :rtype: StepResult
+        """
+        return self._found(super().preview(step_input), step_input)
+
+    @staticmethod
+    def _found(result: StepResult, step_input: StepInput) -> StepResult:
+        """Add the angle to the data of the one output of a result.
+
+        :param result: The result of the fake step.
+        :type result: StepResult
+        :param step_input: What the step read, whose strength is the angle.
+        :type step_input: StepInput
+        :returns: The result with the angle in the data.
+        :rtype: StepResult
+        """
+        [output] = result.outputs
+        found: dict[str, object] = {VersionData.ANGLE.value: float(step_input.params[STRENGTH_PARAMETER])}
+        return StepResult(outputs=[evolve(output, data={**output.data, **found})])
 
 
 class GpuProcessor(FakeProcessor):

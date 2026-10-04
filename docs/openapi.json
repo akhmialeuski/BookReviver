@@ -15186,6 +15186,17 @@
         "title": "StepBody",
         "description": "A step of a recipe or of a preview as the interface sends it.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which the processor checks and fills in.\n:ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.\n:ivar step_id: Identifier of a step that already exists, which the interface sends back to keep its edits, or\n               omitted for a step that is added, which gets a new one.\n:ivar applies_to: Which pages the step processes, all of them unless the interface says otherwise."
       },
+      "StepFlag": {
+        "type": "string",
+        "enum": [
+          "unsure",
+          "unusual",
+          "by-hand",
+          "skipped"
+        ],
+        "title": "StepFlag",
+        "description": "Why a page asks for a look at one step of a stage, which the strip of an open step narrows its pages by.\n\nA page can carry several. ``SKIPPED`` repeats the state of the shape, so a client filters by the flags alone."
+      },
       "StepLayer": {
         "type": "string",
         "enum": [
@@ -15225,6 +15236,13 @@
                 "type": "null"
               }
             ]
+          },
+          "flags": {
+            "items": {
+              "$ref": "#/components/schemas/StepFlag"
+            },
+            "type": "array",
+            "title": "Flags"
           }
         },
         "type": "object",
@@ -15232,10 +15250,11 @@
           "step_id",
           "state",
           "input_version",
-          "version"
+          "version",
+          "flags"
         ],
         "title": "StepPageSchema",
-        "description": "One page of a book at one step of a stage: what the step read and made, and where its shape comes from.\n\n:ivar step_id: The step of the recipe.\n:ivar state: Where the shape of the step on the page comes from: the default, found by the step, set by hand, or\n             skipped because the page does not meet the condition of the step.\n:ivar input_version: The version the step reads on the page, which the canvas of the step shows, or None when the\n                     page has not come as far as the step or is not run.\n:ivar version: The version the step made on the page, or None when the page was not run through the step."
+        "description": "One page of a book at one step of a stage: what the step read and made, and where its shape comes from.\n\n:ivar step_id: The step of the recipe.\n:ivar state: Where the shape of the step on the page comes from: the default, found by the step, set by hand, or\n             skipped because the page does not meet the condition of the step.\n:ivar input_version: The version the step reads on the page, which the canvas of the step shows, or None when the\n                     page has not come as far as the step or is not run.\n:ivar version: The version the step made on the page, or None when the page was not run through the step.\n:ivar flags: Why the page asks for a look at the step: the step is unsure of it, what it found departs from the\n             book, it is set by hand, or the condition skipped it. The strip of the open step lists pages by these."
       },
       "StepPagesSchema": {
         "properties": {

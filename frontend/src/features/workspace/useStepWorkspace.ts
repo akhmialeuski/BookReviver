@@ -37,6 +37,8 @@ export interface StepWorkspace {
   page: StepPageSchema | null;
   /** How the pages of the book stand at the open step, or null while they are read. */
   counts: StepCounts | null;
+  /** The rows of every page of the book at the open step, with the flags the server put on them, or null while read. */
+  rows: readonly StagePageSchema[] | null;
   neighbours: Neighbours;
 }
 
@@ -75,8 +77,7 @@ export function useStepWorkspace(
 
   const rowOfPage: StagePageSchema | undefined = rows.data?.find((row) => row.page_id === pageId);
   const counts = useMemo(
-    () =>
-      rows.data === undefined || open === null ? null : countStep(rows.data, open.processorKey),
+    () => (rows.data === undefined || open === null ? null : countStep(rows.data)),
     [rows.data, open],
   );
   const states = useMemo(() => {
@@ -95,6 +96,7 @@ export function useStepWorkspace(
     states,
     page: rowOfPage?.step ?? null,
     counts,
+    rows: open === null ? null : (rows.data ?? null),
     neighbours: open === null ? NO_NEIGHBOURS : neighboursOf(steps, open),
   };
 }

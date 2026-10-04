@@ -2,9 +2,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FigureState, StagePageSchema } from '@/api';
+import type { FigureState, StagePageSchema, StepFlag } from '@/api';
 import { deskew, processing, processor, recipe, step } from '@/features/processing/fixtures';
-import { page, row } from '@/features/workspace/fixtures';
+import { page, row, stepPage } from '@/features/workspace/fixtures';
 import type { StripItem } from '@/features/workspace/strip';
 import { type StepWorkspace, useStepWorkspace } from '@/features/workspace/useStepWorkspace';
 
@@ -42,9 +42,9 @@ const CURRENT: StripItem = { page: page('p2', { position: 1 }), row: row('p2') }
 type States = Record<string, Record<string, FigureState>>;
 
 function stepRow(stepId: string, pageId: string, state: FigureState): StagePageSchema {
-  return row(pageId, {
-    step: { step_id: stepId, state, input_version: null, version: null },
-  });
+  const flags: StepFlag[] =
+    state === 'by-hand' ? ['by-hand'] : state === 'skipped' ? ['skipped'] : [];
+  return row(pageId, { step: stepPage(stepId, state, { flags }) });
 }
 
 describe('useStepWorkspace', () => {
@@ -148,7 +148,14 @@ describe('useStepWorkspace', () => {
   it('counts the pages of the book at the open step', async () => {
     await render('b');
 
-    expect(seen?.counts).toEqual({ found: 1, byHand: 1, skipped: 1, notRun: 0, check: 0 });
+    expect(seen?.counts).toEqual({
+      found: 1,
+      byHand: 1,
+      skipped: 1,
+      notRun: 0,
+      check: 0,
+      unusual: 0,
+    });
   });
 
   it('moves to another step without reading the book again for the one it leaves', async () => {
@@ -157,7 +164,14 @@ describe('useStepWorkspace', () => {
 
     expect(seen?.open?.stepId).toBe('c');
     expect(seen?.page?.state).toBe('skipped');
-    expect(seen?.counts).toEqual({ found: 1, byHand: 0, skipped: 2, notRun: 0, check: 0 });
+    expect(seen?.counts).toEqual({
+      found: 1,
+      byHand: 0,
+      skipped: 2,
+      notRun: 0,
+      check: 0,
+      unusual: 0,
+    });
     const wholeBook = requests().filter((query) => query.size === 1000);
     expect(wholeBook.map((query) => query.step)).toEqual(['b', 'c']);
   });
@@ -198,8 +212,47 @@ describe('useStepWorkspace', () => {
     expect([...(seen?.states ?? [])].map(([, state]) => state)).toEqual([null, null, null]);
   });
 
+  it('gives the rows of the open step with the flags the server put on them, and none when no step is open', async () => {
+    await render('b');
+    const withStep = seen?.rows?.map((entry) => [entry.page_id, entry.step?.flags]);
+    await render(undefined);
+
+    expect(withStep).toEqual([
+      ['p1', []],
+      ['p2', ['by-hand']],
+      ['p3', ['skipped']],
+    ]);
+    expect(seen?.rows).toBeNull();
+  });
+
+  it('has the bar of steps for Cleanup as it has for Geometry', async () => {
+    const cleanup = recipe('c1', {
+      stage: 'cleanup',
+      steps: [
+        step('cleanup.binarize', { step_id: 'a', applies_to: 'text' }),
+        step('cleanup.thickness', { step_id: 'b', applies_to: 'text' }),
+      ],
+    });
+    await render('b', {
+      ...STATE,
+      stage: 'cleanup',
+      catalogue: [
+        processor('cleanup.binarize', { title: 'Binarization', stage: 'cleanup' }),
+        processor('cleanup.thickness', { title: 'Thickness', stage: 'cleanup' }),
+      ],
+      recipes: [cleanup],
+      recipe: cleanup,
+    });
+
+    expect(seen?.steps.map((entry) => entry.title)).toEqual(['Binarization', 'Thickness']);
+    expect(seen?.open?.title).toBe('Thickness');
+    expect(requests()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ step: 'b', size: 1000 })]),
+    );
+  });
+
   it('reads nothing for a stage that has no bar of steps', async () => {
-    await render('b', { ...STATE, stage: 'cleanup' });
+    await render('b', { ...STATE, stage: 'page-split' });
 
     expect(sdk.rows).not.toHaveBeenCalled();
     expect(seen?.steps).toEqual([]);

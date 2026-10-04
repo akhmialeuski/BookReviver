@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { TriangleAlertIcon } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
-import type { PageSchema, ScanSchema, Stage, StagePageSchema } from '@/api';
+import type { PageSchema, ScanSchema, Stage, StagePageSchema, StepFlag } from '@/api';
 import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-query.gen';
 import { EDITOR_ROOM_SHARE } from '@/features/editors/scene';
 import { useEditorSession } from '@/features/editors/useEditorSession';
@@ -55,9 +55,13 @@ import {
 import { hasStepBar } from '@/features/workspace/steps';
 import {
   applyFilter,
+  applyFlag,
   applyStopped,
   canvasSourceOf,
   countFilters,
+  type FlagView,
+  flagOptions,
+  flagsOf,
   joinRows,
   needsCheck,
   type StopView,
@@ -252,10 +256,28 @@ export function StageScreen({
           selected: stopStep,
           onSelect: (step) => setStopPick({ stage, step }),
         };
-  const filtered = useMemo(
-    () => applyStopped(applyVariant(listed, variantId), stopStep),
-    [listed, variantId, stopStep],
+  // The flags the server put on the pages at the open step narrow the list too; the choice belongs to one step
+  const [flagPick, setFlagPick] = useState<{ step: string | undefined; flag: StepFlag | null }>({
+    step: undefined,
+    flag: null,
+  });
+  const flags = useMemo(
+    () => (workspace.rows === null ? null : flagsOf(workspace.rows)),
+    [workspace.rows],
   );
+  const flag = flagPick.step === openStep?.stepId ? flagPick.flag : null;
+  const flagged: FlagView | undefined =
+    flags === null
+      ? undefined
+      : {
+          options: flagOptions(flags),
+          selected: flag,
+          onSelect: (value) => setFlagPick({ step: openStep?.stepId, flag: value }),
+        };
+  const filtered = useMemo(() => {
+    const narrowed = applyStopped(applyVariant(listed, variantId), stopStep);
+    return flags === null ? narrowed : applyFlag(narrowed, flags, flag);
+  }, [listed, variantId, stopStep, flags, flag]);
   const reasons = useMemo(
     () => reasonWithStep(processing.recipes, processing.catalogue),
     [processing.recipes, processing.catalogue],
@@ -279,7 +301,7 @@ export function StageScreen({
 
   // The grid over the page of the steps of Geometry, which the Deskew step shows until the reader chooses; it is not the
   // grid of pages, which is a way to lay out the strip
-  const hasLevelGrid = hasStepBar(stage);
+  const hasLevelGrid = stage === 'geometry';
   const [levelGridOn, toggleLevelGrid] = useGrid(projectId, openStep?.processorKey === DESKEW_KEY);
   useGridKey(toggleLevelGrid, hasLevelGrid && !grid);
 
@@ -519,6 +541,7 @@ export function StageScreen({
                 withWide={stage === 'page-split'}
                 variants={variants}
                 stopped={stopped}
+                flagged={flagged}
               />
             )
           }
@@ -563,6 +586,7 @@ export function StageScreen({
                 withWide={stage === 'page-split'}
                 variants={variants}
                 stopped={stopped}
+                flagged={flagged}
               />
             ) : processed ? (
               <div className="flex size-full flex-col">

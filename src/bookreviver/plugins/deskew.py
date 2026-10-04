@@ -42,6 +42,7 @@ from bookreviver.domain.enums import (
     ProcessorScope,
     ReviewReason,
     Stage,
+    StepMeasure,
     TransformKind,
     VersionData,
     VersionOutput,
@@ -205,6 +206,7 @@ class Deskew(ModelProcessor):
         outputs=frozenset({VersionOutput.IMAGE}),
         parameters=DeskewParams.model_json_schema(),
         editor=Rotation.editor,
+        measure=StepMeasure.ANGLE,
         after=(
             OrderRule(
                 processor_key='geometry.perspective',

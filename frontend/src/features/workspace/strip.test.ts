@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { StagePageSchema } from '@/api';
-import { images, page, row } from '@/features/workspace/fixtures';
+import { images, page, row, stepPage } from '@/features/workspace/fixtures';
 import { PageFilter } from '@/features/workspace/params';
 import {
   applyFilter,
+  applyFlag,
   applyStopped,
   canvasSourceOf,
   countFilters,
+  flagOptions,
+  flagsOf,
   isLeftOut,
   isMarkedBad,
   joinRows,
@@ -28,6 +31,51 @@ describe('joinRows', () => {
 
   it('is empty for a book without pages, whatever rows it is given', () => {
     expect(joinRows([], [row('a')])).toEqual([]);
+  });
+});
+
+describe('the flags of the pages at a step', () => {
+  const rows = [
+    row('a', { step: stepPage('s', 'found', { flags: ['unsure', 'by-hand'] }) }),
+    row('b', { step: stepPage('s', 'skipped', { flags: ['skipped'] }) }),
+    row('c', { step: stepPage('s', 'found') }),
+    row('d', { step: stepPage('s', 'found', { flags: ['unusual'] }) }),
+    row('e'),
+  ];
+  const items = joinRows([page('a'), page('b'), page('c'), page('d'), page('e')], rows);
+
+  it('reads the flags the server put on each row, and leaves out a row asked for no step', () => {
+    expect([...flagsOf(rows)]).toEqual([
+      ['a', ['unsure', 'by-hand']],
+      ['b', ['skipped']],
+      ['c', []],
+      ['d', ['unusual']],
+    ]);
+  });
+
+  it('lists every flag in a fixed order with the pages that carry it', () => {
+    expect(flagOptions(flagsOf(rows))).toEqual([
+      { flag: 'unsure', pages: 1 },
+      { flag: 'unusual', pages: 1 },
+      { flag: 'by-hand', pages: 1 },
+      { flag: 'skipped', pages: 1 },
+    ]);
+  });
+
+  it('lists every flag with no pages for a book none of whose pages carry one', () => {
+    expect(flagOptions(new Map()).map((option) => option.pages)).toEqual([0, 0, 0, 0]);
+  });
+
+  it('keeps the pages that carry the flag, and every page for no flag', () => {
+    const flags = flagsOf(rows);
+
+    expect(applyFlag(items, flags, 'by-hand').map((item) => item.page.id)).toEqual(['a']);
+    expect(applyFlag(items, flags, 'skipped').map((item) => item.page.id)).toEqual(['b']);
+    expect(applyFlag(items, flags, null)).toBe(items);
+  });
+
+  it('keeps no page for a flag that no page carries', () => {
+    expect(applyFlag(items, new Map(), 'unsure')).toEqual([]);
   });
 });
 

@@ -39,8 +39,17 @@ GEOMETRY_STEPS: tuple[str, ...] = (
     'geometry.crop',
     'geometry.normalize',
 )
-# The Cleanup steps in the order they run, and the strength of the despeckling of the two variants that have it
+# The Cleanup steps of the Mixed variant in the order they run, which the Text variant has the thickness between the
+# despeckling and the eraser added to, and the strength of the despeckling of the two variants that have it
 CLEANUP_STEPS: tuple[str, ...] = ('cleanup.binarize', 'cleanup.despeckle', 'cleanup.eraser')
+TEXT_CLEANUP_STEPS: tuple[str, ...] = (
+    'cleanup.binarize',
+    'cleanup.despeckle',
+    'cleanup.thickness',
+    'cleanup.eraser',
+)
+# The steps of the Text variant that process the pages of text only, since the others are sent to the other variants
+TEXT_ONLY_STEPS: frozenset[str] = frozenset({'cleanup.binarize', 'cleanup.despeckle', 'cleanup.thickness'})
 TEXT_STRENGTH: int = 2
 MIXED_STRENGTH: int = 1
 EVERYTHING: SliceRequest = SliceRequest(limit=100)
@@ -131,9 +140,10 @@ class TestRecipe:
     ) -> None:
         """Verify a new book gets the three variants of the Cleanup stage, the text one active, and their rules.
 
-        The steps run in the order binarize, despeckle, eraser. Plates are gray and not despeckled, the mixed variant
-        keeps pictures in tones and despeckles gently, and the rules send plates and frontispieces to Plates and the
-        pages with illustrations to Mixed.
+        The steps of the text variant run in the order binarize, despeckle, thickness, eraser, and the first three of
+        them process the pages of text only. Plates are gray and not despeckled, the mixed variant keeps pictures in
+        tones and despeckles gently, and the rules send plates and frontispieces to Plates and the pages with
+        illustrations to Mixed.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
@@ -145,7 +155,12 @@ class TestRecipe:
         rules = await fx_cv_kit.rules().rules(actor, project.id, Stage.CLEANUP, EVERYTHING)
         expect(active.name == 'Text')
         expect(sorted(by_name) == ['Mixed', 'Plates', 'Text'])
-        expect([step.processor_key for step in by_name['Text'].steps] == list(CLEANUP_STEPS))
+        expect([step.processor_key for step in by_name['Text'].steps] == list(TEXT_CLEANUP_STEPS))
+        expect(
+            {step.processor_key for step in by_name['Text'].steps if step.applies_to is AppliesTo.TEXT}
+            == TEXT_ONLY_STEPS
+        )
+        expect(all(step.applies_to is AppliesTo.ALL for step in by_name['Mixed'].steps))
         expect([step.processor_key for step in by_name['Plates'].steps] == [CLEANUP_STEPS[0], CLEANUP_STEPS[2]])
         expect([step.processor_key for step in by_name['Mixed'].steps] == list(CLEANUP_STEPS))
         expect(

@@ -848,6 +848,25 @@ class FigureState(LabeledStrEnum):
     SKIPPED = 'skipped', 'Skipped by the condition of the step'
 
 
+class StepFlag(LabeledStrEnum):
+    """Why a page asks for a look at one step of a stage, which the strip of an open step narrows its pages by.
+
+    A page can carry several. ``SKIPPED`` repeats the state of the shape, so a client filters by the flags alone.
+    """
+
+    UNSURE = 'unsure', 'The step was not sure of its result'
+    UNUSUAL = 'unusual', 'What the step found differs notably from the rest of the book'
+    BY_HAND = 'by-hand', 'Set by hand: a setting of the page or a shape the user drew'
+    SKIPPED = 'skipped', 'Skipped by the condition of the step'
+
+
+class StepMeasure(LabeledStrEnum):
+    """What a step finds on each page that can be compared with the rest of the book, to tell a page that departs."""
+
+    ANGLE = 'angle', 'Angle the page was turned by'
+    FRAME_SIZE = 'frame-size', 'Width and height of the frame of the content'
+
+
 class StageStatus(LabeledStrEnum):
     """Where a whole stage stands in a book, summed over its pages."""
 

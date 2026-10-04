@@ -1498,7 +1498,7 @@ class TestStepRows:
         response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
         step = response.json()[ITEMS][0]['step']
         expect(response.status_code == status.HTTP_200_OK)
-        expect(step == {'step_id': step_id, 'state': 'default', 'input_version': None, 'version': None})
+        expect(step == {'step_id': step_id, 'state': 'default', 'input_version': None, 'version': None, 'flags': []})
         assert_expectations()
 
     async def test_a_page_run_through_the_step_has_what_the_step_found_and_read(
@@ -1539,7 +1539,28 @@ class TestStepRows:
             f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
         )
         response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
-        assert response.json()[ITEMS][0]['step']['state'] == 'by-hand'
+        step = response.json()[ITEMS][0]['step']
+        expect(step['state'] == 'by-hand')
+        expect(step['flags'] == ['by-hand'])
+        assert_expectations()
+
+    async def test_a_setting_of_the_page_for_the_step_raises_the_flag_set_by_hand(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a field the page changes for the step is a flag of its row, and leaves the shape as it was.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        changed = await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 2})
+        response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
+        step = response.json()[ITEMS][0]['step']
+        expect(changed.status_code == status.HTTP_200_OK)
+        expect((step['state'], step['flags']) == ('default', ['by-hand']))
+        assert_expectations()
 
     async def test_rows_asked_for_no_step_carry_none(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
         """Verify the list of the stage alone holds a null where the step would be.

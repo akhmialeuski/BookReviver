@@ -70,6 +70,7 @@ bookreviver-openapi = "bookreviver.app.openapi:main"
 "cleanup.binarize" = "bookreviver.plugins.binarize:Binarize"
 "cleanup.despeckle" = "bookreviver.plugins.despeckle:Despeckle"
 "cleanup.eraser" = "bookreviver.plugins.eraser:Eraser"
+"cleanup.thickness" = "bookreviver.plugins.thickness:Thickness"
 
 [project.optional-dependencies]
 cv = [

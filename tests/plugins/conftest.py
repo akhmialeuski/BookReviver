@@ -144,6 +144,18 @@ def fx_despeckle() -> Processor:
 
 
 @pytest.fixture
+def fx_thickness() -> Processor:
+    """Build the thickness processor, or skip the test where OpenCV is not installed.
+
+    :returns: The processor ``cleanup.thickness``.
+    :rtype: Processor
+    """
+    processor = pytest.importorskip('bookreviver.plugins.thickness', reason=CV_MISSING).Thickness()
+    assert isinstance(processor, Processor)
+    return processor
+
+
+@pytest.fixture
 def fx_eraser() -> Processor:
     """Build the eraser processor, or skip the test where OpenCV is not installed.
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { StepPageSchema } from '@/api';
 import { deskew, processor, recipe, step } from '@/features/processing/fixtures';
-import { row } from '@/features/workspace/fixtures';
+import { row, stepPage } from '@/features/workspace/fixtures';
 import {
   type BarStep,
   barStepsOf,
@@ -28,8 +28,11 @@ const RECIPE = recipe('r', {
   ],
 });
 
-function placed(state: StepPageSchema['state']): StepPageSchema {
-  return { step_id: 'b', state, input_version: null, version: null };
+function placed(
+  state: StepPageSchema['state'],
+  flags: StepPageSchema['flags'] = [],
+): StepPageSchema {
+  return stepPage('b', state, { flags });
 }
 
 describe('barStepsOf', () => {
@@ -89,36 +92,36 @@ describe('openStepOf and neighboursOf', () => {
 });
 
 describe('countStep', () => {
-  it('counts the pages by what the step did on them', () => {
+  it('counts the pages by what the step did on them and by the flags the server raised', () => {
     const rows = [
       row('1', { step: placed('found') }),
-      row('2', { step: placed('found') }),
-      row('3', { step: placed('by-hand') }),
-      row('4', { step: placed('skipped') }),
+      row('2', { step: placed('found', ['unusual']) }),
+      row('3', { step: placed('by-hand', ['by-hand']) }),
+      row('4', { step: placed('skipped', ['skipped']) }),
       row('5', { step: placed('default') }),
     ];
 
-    expect(countStep(rows, 'geometry.deskew')).toEqual({
+    expect(countStep(rows)).toEqual({
       found: 2,
       byHand: 1,
       skipped: 1,
       notRun: 1,
       check: 0,
+      unusual: 1,
     });
   });
 
-  it('counts the pages this step marked as unsure, and leaves out those it skipped and those another step marked', () => {
+  it('counts a page with a setting of its own as set by hand, though the step found its shape', () => {
+    const counts = countStep([row('1', { step: placed('found', ['by-hand']) })]);
+
+    expect(counts.found).toBe(1);
+    expect(counts.byHand).toBe(1);
+  });
+
+  it('counts the pages the step was unsure of by the flag, whichever step marked them first', () => {
     const rows = [
-      row('1', {
-        step: placed('found'),
-        review: 'low-confidence',
-        review_processor: 'geometry.deskew',
-      }),
-      row('2', {
-        step: placed('skipped'),
-        review: 'low-confidence',
-        review_processor: 'geometry.deskew',
-      }),
+      row('1', { step: placed('found', ['unsure']) }),
+      row('2', { step: placed('skipped', ['skipped']) }),
       row('3', {
         step: placed('found'),
         review: 'low-confidence',
@@ -126,24 +129,26 @@ describe('countStep', () => {
       }),
     ];
 
-    expect(countStep(rows, 'geometry.deskew').check).toBe(1);
+    expect(countStep(rows).check).toBe(1);
   });
 
   it('leaves out a row that was not asked for a step', () => {
-    expect(countStep([row('1')], 'geometry.deskew')).toEqual({
+    expect(countStep([row('1')])).toEqual({
       found: 0,
       byHand: 0,
       skipped: 0,
       notRun: 0,
       check: 0,
+      unusual: 0,
     });
   });
 });
 
 describe('hasStepBar', () => {
-  it('is for the Geometry stage, and not yet for the others', () => {
+  it('is for the Geometry and the Cleanup stages, and not for the others', () => {
     expect(hasStepBar('geometry')).toBe(true);
+    expect(hasStepBar('cleanup')).toBe(true);
     expect(hasStepBar('page-split')).toBe(false);
-    expect(hasStepBar('cleanup')).toBe(false);
+    expect(hasStepBar('recognition')).toBe(false);
   });
 });

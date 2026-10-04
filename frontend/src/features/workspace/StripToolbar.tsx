@@ -1,6 +1,7 @@
 import { LayoutGridIcon, ListIcon, TriangleAlertIcon } from 'lucide-react';
+import type { StepFlag } from '@/api';
 import { PageFilter } from '@/features/workspace/params';
-import type { FilterCounts, StopView, VariantView } from '@/features/workspace/strip';
+import type { FilterCounts, FlagView, StopView, VariantView } from '@/features/workspace/strip';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 
@@ -18,6 +19,7 @@ export function StripToolbar({
   withWide = false,
   variants,
   stopped,
+  flagged,
   onFilter,
   onSwitchView,
 }: {
@@ -35,6 +37,8 @@ export function StripToolbar({
   variants?: VariantView;
   /** The steps a run stopped at, which narrow the pages to those stopped at one. Absent when no run stopped short. */
   stopped?: StopView;
+  /** The reasons a page asks for a look at the open step, which narrow the pages to those with one. Absent for no step. */
+  flagged?: FlagView;
   onFilter: (filter: PageFilter) => void;
   onSwitchView: () => void;
 }): React.JSX.Element {
@@ -100,6 +104,24 @@ export function StripToolbar({
             {stopped.options.map((option) => (
               <option key={option.step} value={option.step}>
                 {labels.stopped.option(option.step + 1, option.pages)}
+              </option>
+            ))}
+          </select>
+        )}
+        {flagged === undefined ? null : (
+          <select
+            aria-label={labels.flag.label}
+            data-testid="strip-step-filter"
+            className="h-8 max-w-44 min-w-0 rounded-md border border-input bg-background px-2 text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            value={flagged.selected ?? ''}
+            onChange={(event) =>
+              flagged.onSelect(event.target.value === '' ? null : (event.target.value as StepFlag))
+            }
+          >
+            <option value="">{labels.flag.all}</option>
+            {flagged.options.map((option) => (
+              <option key={option.flag} value={option.flag}>
+                {labels.flag.option(option.flag, option.pages)}
               </option>
             ))}
           </select>

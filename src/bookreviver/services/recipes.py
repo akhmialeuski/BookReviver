@@ -106,9 +106,11 @@ class RecipeTemplate:
 
 
 # The steps of the Cleanup stage in the order they run: the page is made black and white first, so that what is left
-# of the dust is separate small spots, which are then removed, and the user's eraser comes last
+# of the dust is separate small spots, which are then removed, the strokes are made thinner or thicker, and the user's
+# eraser comes last
 BINARIZE_KEY: str = 'cleanup.binarize'
 DESPECKLE_KEY: str = 'cleanup.despeckle'
+THICKNESS_KEY: str = 'cleanup.thickness'
 ERASER_KEY: str = 'cleanup.eraser'
 # The parameters the templates of the stage set
 MODE_PARAM: str = 'mode'
@@ -154,13 +156,14 @@ class DefaultRecipes:
         Stage.CLEANUP: (
             RecipeTemplate(
                 name='Text',
-                processor_keys=(BINARIZE_KEY, DESPECKLE_KEY, ERASER_KEY),
+                processor_keys=(BINARIZE_KEY, DESPECKLE_KEY, THICKNESS_KEY, ERASER_KEY),
                 params={
                     BINARIZE_KEY: {MODE_PARAM: OutputMode.BW, METHOD_PARAM: BinarizationMethod.SAUVOLA},
                     DESPECKLE_KEY: {STRENGTH_PARAM: 2},
                 },
-                # The two make a page black and white and clean it of specks, which a picture in tones must not meet
-                applies_to={BINARIZE_KEY: AppliesTo.TEXT, DESPECKLE_KEY: AppliesTo.TEXT},
+                # The three make a page black and white, clean it of specks and change the strokes, which a picture in
+                # tones must not meet
+                applies_to={BINARIZE_KEY: AppliesTo.TEXT, DESPECKLE_KEY: AppliesTo.TEXT, THICKNESS_KEY: AppliesTo.TEXT},
             ),
             RecipeTemplate(
                 name='Plates',

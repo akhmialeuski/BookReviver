@@ -35,6 +35,7 @@ from bookreviver.domain.enums import (
     ReviewReason,
     SheetEdge,
     Stage,
+    StepMeasure,
     TransformKind,
     VersionData,
     VersionOutput,
@@ -282,6 +283,7 @@ class Crop(ModelProcessor):
         outputs=frozenset({VersionOutput.IMAGE}),
         parameters=CropParams.model_json_schema(),
         editor=Rect.editor,
+        measure=StepMeasure.FRAME_SIZE,
         after=(
             OrderRule(
                 processor_key='geometry.perspective',
