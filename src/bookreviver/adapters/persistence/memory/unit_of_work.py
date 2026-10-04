@@ -1527,10 +1527,11 @@ class InMemoryRecipeRepository(InMemoryRepository[Recipe, RecipeId], RecipeRepos
 
         :param entity: Recipe about to be stored.
         :type entity: Recipe
-        :raises NotFoundError: If the project is not stored.
+        :raises NotFoundError: If the project, or the profile the recipe refers to, is not stored.
         :raises ConflictError: If the recipe is active and another recipe of the stage is too.
         """
         require(self._tables.projects, entity.project_id)
+        require(self._tables.recipe_profiles, entity.profile_id)
         if entity.active:
             self._require_unique(
                 entity, lambda recipe: (recipe.project_id, recipe.stage) if recipe.active else recipe.id
@@ -1649,6 +1650,16 @@ class InMemoryRecipeProfileRepository(InMemoryRepository[RecipeProfile, RecipePr
         :type tables: InMemoryTables
         """
         super().__init__(tables.recipe_profiles, tables)
+
+    @override
+    def _cascade(self, entity: RecipeProfile) -> None:
+        """Leave the recipes made from the profile without their profile, as the database's ``SET NULL`` does.
+
+        :param entity: Profile just removed.
+        :type entity: RecipeProfile
+        """
+        for recipe in [recipe for recipe in self._tables.recipes.values() if recipe.profile_id == entity.id]:
+            self._tables.recipes[recipe.id] = evolve(recipe, profile_id=None)
 
     @override
     def _check(self, entity: RecipeProfile) -> None:

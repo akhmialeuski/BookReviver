@@ -16,6 +16,7 @@ from bookreviver.domain.enums import (
     JobKind,
     JobState,
     NumberDisplay,
+    OrderMode,
     PageFilter,
     PageKind,
     PageOrigin,
@@ -576,6 +577,9 @@ class Recipe:
     :ivar name: Name the user sees, such as ``Spread``.
     :ivar steps: The steps in the order they run, each a processor with its parameters.
     :ivar active: Whether the recipe is the one the stage runs by default, which no variant is.
+    :ivar profile_id: The profile of the account the recipe was made from, or None for a recipe that was not. The
+                      steps may have changed since, and the link survives that, so the book can tell how it differs
+                      from the profile. Deleting the profile clears it.
     :ivar created_at: When the recipe was created.
     :ivar updated_at: When the recipe was last changed.
     """
@@ -586,6 +590,7 @@ class Recipe:
     name: str = field(validator=validators.min_len(1))
     steps: tuple[Step, ...]
     active: bool = False
+    profile_id: RecipeProfileId | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -636,6 +641,8 @@ class RecipeProfile:
     :ivar stage: Stage whose recipes the profile can be applied to.
     :ivar name: Name the user sees, such as ``Photographed book``.
     :ivar steps: The steps in the order they run, each a processor with its parameters.
+    :ivar order: Whether the steps were saved in the usual order, which refuses a step where it cannot work, or in the
+                 free order, which lets it stand with a warning. A book opened from the profile starts in this mode.
     :ivar is_default: Whether a new book of the account starts the stage with this profile.
     :ivar created_at: When the profile was saved.
     :ivar updated_at: When the profile was last changed.
@@ -646,6 +653,7 @@ class RecipeProfile:
     stage: Stage
     name: str = field(validator=validators.min_len(1))
     steps: tuple[Step, ...]
+    order: OrderMode = OrderMode.USUAL
     is_default: bool = False
     created_at: datetime
     updated_at: datetime

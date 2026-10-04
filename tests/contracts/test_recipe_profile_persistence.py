@@ -1,8 +1,9 @@
 """Contract of the persistence port of the recipe profiles of the accounts.
 
 Every test runs against each adapter registered in the conftest, the in-memory one and the SQL one, so both keep the
-promises of the port: the steps come back in their order with their parameters and their switch, a listing holds the
-profiles of one account in the order of the stages, and an account has one default profile for each stage.
+promises of the port: the steps come back in their order with their parameters and their switch, a profile keeps the
+order it was saved in, a listing holds the profiles of one account in the order of the stages, an account has one
+default profile for each stage, and a recipe that refers to a profile loses the reference when the profile is deleted.
 """
 
 from typing import TYPE_CHECKING
@@ -10,10 +11,10 @@ from typing import TYPE_CHECKING
 import pytest
 from attrs import evolve
 
-from bookreviver.domain.enums import Stage
+from bookreviver.domain.enums import OrderMode, Stage
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.values import Step
-from tests.helpers.builders import make_recipe_profile
+from tests.helpers.builders import make_project, make_recipe, make_recipe_profile
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import RecipeProfile
@@ -219,3 +220,93 @@ class TestRecipeProfileRepository:
         assert await reading.recipe_profiles.list_for_account(account_id) == [kept]
         with pytest.raises(NotFoundError):
             await reading.recipe_profiles.get(gone.id)
+
+    async def test_a_profile_reads_back_in_the_order_it_was_saved_in(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the free order survives a round trip, and the usual order is what a profile has by default.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        account_id = await fx_new_owner()
+        free = evolve(make_recipe_profile(account_id=account_id), order=OrderMode.FREE)
+        usual = make_recipe_profile(account_id=account_id, minutes=FIRST_MINUTE)
+        uow = await _store(fx_uow_factory, free, usual)
+        assert [(await uow.recipe_profiles.get(profile.id)).order for profile in (free, usual)] == [
+            OrderMode.FREE,
+            OrderMode.USUAL,
+        ]
+
+    async def test_a_recipe_reads_back_with_the_profile_it_was_made_from(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the reference of a recipe to a profile is stored, and a recipe made from none reads back with none.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        profile = make_recipe_profile(account_id=owner_id)
+        project = make_project(owner_id=owner_id)
+        linked = evolve(make_recipe(project_id=project.id, active=True), profile_id=profile.id)
+        unlinked = make_recipe(project_id=project.id, name='Unlinked', stage=Stage.CLEANUP, active=True)
+        uow = await fx_uow_factory()
+        await uow.recipe_profiles.add(profile)
+        await uow.projects.add(project)
+        await uow.recipes.add_many([linked, unlinked])
+        await uow.commit()
+        reading = await fx_uow_factory()
+        assert [(await reading.recipes.get(recipe.id)).profile_id for recipe in (linked, unlinked)] == [
+            profile.id,
+            None,
+        ]
+
+    async def test_a_recipe_cannot_refer_to_a_profile_that_is_not_stored(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Reject a recipe whose profile does not exist, as a foreign key does.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        stray = evolve(
+            make_recipe(project_id=project.id, active=True),
+            profile_id=make_recipe_profile(account_id=project.owner_id).id,
+        )
+        uow = await fx_uow_factory()
+        await uow.projects.add(project)
+        await uow.commit()
+        with pytest.raises(NotFoundError):
+            await uow.recipes.add(stray)
+
+    async def test_deleting_a_profile_empties_the_reference_of_its_recipes_and_keeps_them(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a recipe made from a profile outlives it, and no longer names it.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        profile = make_recipe_profile(account_id=owner_id)
+        project = make_project(owner_id=owner_id)
+        recipe = evolve(make_recipe(project_id=project.id, active=True), profile_id=profile.id)
+        uow = await fx_uow_factory()
+        await uow.recipe_profiles.add(profile)
+        await uow.projects.add(project)
+        await uow.recipes.add(recipe)
+        await uow.commit()
+        deleting = await fx_uow_factory()
+        await deleting.recipe_profiles.delete(profile.id)
+        await deleting.commit()
+        assert (await (await fx_uow_factory()).recipes.get(recipe.id)) == evolve(recipe, profile_id=None)

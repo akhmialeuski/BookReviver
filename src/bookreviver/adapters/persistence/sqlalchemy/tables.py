@@ -15,10 +15,10 @@ A project owns its sources, scans, pages, recipes and jobs, a source owns its sc
 its stage records, its step states and its history. The foreign keys carry ``ON DELETE CASCADE``, so the database
 removes them with their owner. An optional reference carries ``ON DELETE SET NULL`` instead: a page keeps its row
 when its scan is deleted, a source when its import job is, a version when its input version is, and a stage record
-when its head version or its recipe is, because a page of the book holds its own copy of its image. The relationships
-use ``passive_deletes=True`` to leave that deletion to the database, and ``lazy="raise"`` because an
-``AsyncSession`` cannot load a relationship implicitly on attribute access. Unique keys are declared with their table,
-and the shared naming convention names them.
+when its head version or its recipe is, a recipe when its profile is, because a page of the book holds its own copy of
+its image. The relationships use ``passive_deletes=True`` to leave that deletion to the database, and ``lazy="raise"``
+because an ``AsyncSession`` cannot load a relationship implicitly on attribute access. Unique keys are declared with
+their table, and the shared naming convention names them.
 
 The owner of a project refers to the ``user`` table of fastapi-users with ``ON DELETE RESTRICT``. A cascade would
 remove the rows of the owner's projects but not their files, so an account is deleted only after its projects have
@@ -49,6 +49,7 @@ from bookreviver.domain.enums import (
     JobState,
     LabelStyle,
     NumberDisplay,
+    OrderMode,
     Orthography,
     PageFilter,
     PageKind,
@@ -796,6 +797,7 @@ class RecipeRow(DefaultBase):
     :ivar name: Name the user sees.
     :ivar steps: The steps in order, as JSON.
     :ivar active: Whether the recipe is the one the stage runs by default.
+    :ivar profile_id: Profile of the account the recipe was made from, emptied when the profile is deleted.
     :ivar created_at: Time the recipe was created.
     :ivar updated_at: Time the recipe last changed.
     :ivar project: Project owning the recipe, never loaded implicitly.
@@ -821,6 +823,9 @@ class RecipeRow(DefaultBase):
     name: Mapped[str]
     steps: Mapped[list[dict[str, Any]]] = mapped_column(JsonB)
     active: Mapped[bool]
+    profile_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(f'{RECIPE_PROFILES_TABLE}.id', ondelete=SET_NULL), index=True
+    )
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
 
@@ -857,14 +862,17 @@ class RecipeRuleRow(DefaultBase):
 class RecipeProfileRow(DefaultBase):
     """Row of one recipe profile of an account, of which at most one per stage is the default.
 
-    The steps are a JSON list of ``{processor_key, params, enabled}`` objects, as in a recipe. No column refers to a
-    book, so a profile outlives every recipe made from it and is removed only with its account.
+    The steps are a JSON list of ``{processor_key, params, enabled}`` objects, as in a recipe. No column of the profile
+    refers to a book. A recipe may refer to the profile it was made from, and the database empties that reference when
+    the profile is deleted, so a profile outlives every recipe made from it and is removed only with its account or by
+    its owner.
 
     :ivar id: Profile identifier, assigned by the domain.
     :ivar account_id: Account owning the profile, whose deletion removes the profile.
     :ivar stage: Stage whose recipes the profile can be applied to, stored by value.
     :ivar name: Name the user sees.
     :ivar steps: The steps in order, as JSON.
+    :ivar order: Whether the steps were saved in the usual order or the free one, stored by value.
     :ivar is_default: Whether a new book of the account starts the stage with this profile.
     :ivar created_at: Time the profile was saved.
     :ivar updated_at: Time the profile last changed.
@@ -888,6 +896,7 @@ class RecipeProfileRow(DefaultBase):
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
     name: Mapped[str]
     steps: Mapped[list[dict[str, Any]]] = mapped_column(JsonB)
+    order: Mapped[OrderMode] = mapped_column(enum_by_value(OrderMode), server_default=OrderMode.USUAL.value)
     is_default: Mapped[bool]
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]

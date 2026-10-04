@@ -1,8 +1,9 @@
 """The recipe profiles of the signed-in account: saving the steps of a recipe, applying them to a book, the default.
 
-A profile is the account's, so these routes take no project except the one that applies a profile to a book. A profile
-of another account answers 404 like a missing one. Applying a profile runs nothing and processes no page; like adding
-a variant, it only stores a recipe, and making it the active one marks the pages the old active recipe processed stale.
+A profile is the account's, so these routes take no project except the ones that apply a profile to a book and that
+record which profile a recipe of a book was made from. A profile of another account answers 404 like a missing one.
+Applying a profile runs nothing and processes no page; like adding a variant, it only stores a recipe, and making it
+the active one marks the pages the old active recipe processed stale.
 """
 
 from dataclasses import dataclass
@@ -14,11 +15,12 @@ from fastapi_pagination import Page
 
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
-from bookreviver.api.routers.processing import PROJECT_ID_DESCRIPTION
-from bookreviver.api.schemas.processing import RecipeSchema
+from bookreviver.api.routers.processing import PROJECT_ID_DESCRIPTION, VariantPath
+from bookreviver.api.schemas.processing import RecipeBody, RecipeSchema
 from bookreviver.api.schemas.profiles import (
     AppliedProfileSchema,
     ApplyProfileBody,
+    ProfileLinkBody,
     ProfileQuery,
     RecipeProfileBody,
     RecipeProfileName,
@@ -26,6 +28,7 @@ from bookreviver.api.schemas.profiles import (
 )
 from bookreviver.domain.entities import RecipeProfile
 from bookreviver.domain.ids import ProjectId, RecipeProfileId
+from bookreviver.domain.values import RecipeKey
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import RecipeProfiles
 
@@ -34,6 +37,7 @@ PROFILES_PATH: str = '/recipe-profiles'
 PROFILE_PATH: str = PROFILES_PATH + '/{profile_id}'
 DEFAULT_PATH: str = PROFILE_PATH + '/default'
 APPLY_PATH: str = '/projects/{project_id}' + PROFILES_PATH + '/{profile_id}/apply'
+LINK_PATH: str = '/projects/{project_id}/stages/{stage}/variants/{recipe_id}/profile'
 
 router = APIRouter(tags=['profiles'], route_class=DishkaRoute)
 
@@ -93,6 +97,32 @@ async def create_profile(
     """
     profile = await profiles.save(actor, body.stage, body.to_draft())
     return RecipeProfileSchema.model_validate(profile)
+
+
+@router.put(PROFILE_PATH)
+async def put_profile(
+    profile_id: ProfilePath, body: RecipeBody, actor: ActorDep, profiles: FromDishka[RecipeProfiles]
+) -> RecipeProfileSchema:
+    """Replace the name, the steps and the order of a profile, which is how a book saves its changes to its profile.
+
+    The stage and the default mark stay. The recipes made from the profile are not changed. A step whose processor is
+    unknown or of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it
+    cannot work, unless the body asks for the free order.
+
+    \N{FORM FEED}
+    :param profile_id: Identifier of the profile.
+    :type profile_id: RecipeProfileId
+    :param body: The new name, steps and order.
+    :type body: RecipeBody
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param profiles: Profiles service of the request.
+    :type profiles: RecipeProfiles
+    :returns: The profile as stored.
+    :rtype: RecipeProfileSchema
+    """
+    replaced = await profiles.replace(actor, profile_id, body.to_draft())
+    return RecipeProfileSchema.model_validate(replaced)
 
 
 @router.patch(PROFILE_PATH)
@@ -204,3 +234,36 @@ async def apply_profile(
         recipe=RecipeSchema.of(applied.recipe, order.issues(applied.recipe.steps)),
         missing_processors=list(applied.missing_processors),
     )
+
+
+@router.put(LINK_PATH)
+async def put_recipe_profile(
+    address: Annotated[VariantPath, Depends()],
+    body: ProfileLinkBody,
+    actor: ActorDep,
+    profiles: FromDishka[RecipeProfiles],
+    order: FromDishka[RecipeOrder],
+) -> RecipeSchema:
+    """Record which profile a recipe of a book was made from, so the book can tell how its steps differ from it.
+
+    The steps do not change and no page goes stale. A profile of another account answers 404, and so does a recipe the
+    project does not have, and a profile of another stage answers 422.
+
+    \N{FORM FEED}
+    :param address: Identifiers of the project, the stage and the recipe.
+    :type address: VariantPath
+    :param body: The profile, or null to unlink the recipe.
+    :type body: ProfileLinkBody
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param profiles: Profiles service of the request.
+    :type profiles: RecipeProfiles
+    :param order: Finder of the steps that stand off the place their processors ask for.
+    :type order: RecipeOrder
+    :returns: The recipe, with the steps that are out of their place.
+    :rtype: RecipeSchema
+    """
+    linked = await profiles.link(
+        actor, address.project_id, RecipeKey(address.stage, address.recipe_id), body.profile_id
+    )
+    return RecipeSchema.of(linked, order.issues(linked.steps))

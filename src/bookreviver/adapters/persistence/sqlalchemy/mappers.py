@@ -913,6 +913,7 @@ class RecipeMapper(RowMapper[Recipe, RecipeRow]):
             name=row.name,
             steps=tuple(Step.from_map(step) for step in row.steps),
             active=row.active,
+            profile_id=None if row.profile_id is None else RecipeProfileId(row.profile_id),
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
@@ -933,6 +934,7 @@ class RecipeMapper(RowMapper[Recipe, RecipeRow]):
             name=entity.name,
             steps=[step.to_map() for step in entity.steps],
             active=entity.active,
+            profile_id=entity.profile_id,
             created_at=entity.created_at,
             updated_at=entity.updated_at,
         )
@@ -956,6 +958,7 @@ class RecipeProfileMapper(RowMapper[RecipeProfile, RecipeProfileRow]):
             stage=row.stage,
             name=row.name,
             steps=tuple(Step.from_map(step) for step in row.steps),
+            order=row.order,
             is_default=row.is_default,
             created_at=row.created_at,
             updated_at=row.updated_at,
@@ -976,6 +979,7 @@ class RecipeProfileMapper(RowMapper[RecipeProfile, RecipeProfileRow]):
             stage=entity.stage,
             name=entity.name,
             steps=[step.to_map() for step in entity.steps],
+            order=entity.order,
             is_default=entity.is_default,
             created_at=entity.created_at,
             updated_at=entity.updated_at,

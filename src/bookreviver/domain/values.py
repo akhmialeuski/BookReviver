@@ -53,7 +53,7 @@ if TYPE_CHECKING:
         VersionScale,
     )
     from bookreviver.domain.geometry import EditGeometry
-    from bookreviver.domain.ids import AccountId, ProjectId, ScanId, SourceId
+    from bookreviver.domain.ids import AccountId, ProjectId, RecipeProfileId, ScanId, SourceId
 
 # JSON-compatible metadata as read from a source file
 type MetadataMap = Mapping[str, Any]
@@ -512,11 +512,14 @@ class RecipeDraft:
     :ivar name: Name the user sees.
     :ivar steps: The steps in the order they run, not yet checked against their processors.
     :ivar order: Whether a step that stands where it cannot work is refused or only warned of.
+    :ivar profile_id: The profile the steps come from, which a recipe added from the draft is linked to. A recipe that
+                      is rewritten keeps the link it has, and a profile ignores it.
     """
 
     name: str = field(validator=validators.min_len(1))
     steps: tuple[Step, ...] = field(converter=_steps_tuple)
     order: OrderMode = OrderMode.USUAL
+    profile_id: RecipeProfileId | None = None
 
 
 @frozen

@@ -42,7 +42,7 @@ from bookreviver.domain.enums import (
     VersionState,
     WorkerPool,
 )
-from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId, StepId
+from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId, RecipeProfileId, StepId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import PIN_NEEDS_RECIPE, RecipeDraft, StageRun, Step, StepPreview, VersionFilter
 
@@ -144,6 +144,7 @@ class RecipeSchema(ResponseModel):
     :ivar name: Name the user sees.
     :ivar steps: The steps in the order they run.
     :ivar active: Whether the recipe is the one the stage runs by default.
+    :ivar profile_id: The profile of the account the recipe was made from, or null for a recipe that was not.
     :ivar created_at: When the recipe was created.
     :ivar updated_at: When the recipe was last changed.
     :ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual
@@ -156,6 +157,7 @@ class RecipeSchema(ResponseModel):
     name: str
     steps: list[StepSchema]
     active: bool
+    profile_id: RecipeProfileId | None
     created_at: datetime
     updated_at: datetime
     order_issues: list[OrderIssueSchema] = Field(default_factory=list)

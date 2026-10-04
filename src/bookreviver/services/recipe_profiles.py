@@ -1,8 +1,9 @@
 """The recipe profiles of an account: saving the steps of a recipe, applying them to a book, and choosing the default.
 
-A profile belongs to the account and no book refers to it, so a recipe made from a profile is a recipe like any other
-and deleting the profile changes no book. Another account's profile is reported exactly like a missing one, as another
-account's project is, so the identifiers of profiles cannot be probed.
+A profile belongs to the account. A recipe made from a profile remembers it (``Recipe.profile_id``), so the book can
+tell how its steps differ from the profile, but it is a recipe like any other: deleting the profile only clears the
+link and changes no book. Another account's profile is reported exactly like a missing one, as another account's
+project is, so the identifiers of profiles cannot be probed.
 
 Applying a profile adds a variant to the book and, when asked, makes it the active recipe, through the use cases of
 ``ProcessingService``, which also mark the pages the old active recipe processed stale. A processor that is not
@@ -21,18 +22,20 @@ from bookreviver.domain.enums import OrderMode
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import RecipeProfileId
 from bookreviver.domain.values import RecipeDraft, Slice
+from bookreviver.services.projects import owned_project
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Recipe
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import ProjectId
-    from bookreviver.domain.values import SliceRequest
+    from bookreviver.domain.values import RecipeKey, SliceRequest
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock
     from bookreviver.services.processing import ProcessingService
     from bookreviver.services.recipes import RecipeBook
 
 NOTHING_TO_APPLY: str = 'No step of the profile can run here, since no processor is installed for {keys}.'
+OTHER_STAGE: str = 'The profile {name} is for the {actual} stage, not for the {expected} stage.'
 
 
 @frozen(kw_only=True)
@@ -104,12 +107,79 @@ class RecipeProfiles:
                 stage=stage,
                 name=draft.name,
                 steps=await self._recipes.check(stage, draft.steps, order=draft.order),
+                order=draft.order,
                 created_at=moment,
                 updated_at=moment,
             )
         )
         await self._uow.commit()
         return profile
+
+    async def replace(self, actor: Actor, profile_id: RecipeProfileId, draft: RecipeDraft) -> RecipeProfile:
+        """Replace the name, the steps and the order of a profile, which is how a book saves its changes to its profile.
+
+        The recipes made from the profile are not changed. They differ from it from now on, until each is saved to
+        match it or reverted to it.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param profile_id: Identifier of the profile.
+        :type profile_id: RecipeProfileId
+        :param draft: New name, steps and order, which are checked against the processors of the profile's stage and
+                      their order.
+        :type draft: RecipeDraft
+        :returns: The profile as stored, with the same stage and the same default mark.
+        :rtype: RecipeProfile
+        :raises NotFoundError: If the account has no such profile.
+        :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
+                                        usual order.
+        """
+        profile = await self._owned(actor, profile_id)
+        replaced = await self._uow.recipe_profiles.update(
+            evolve(
+                profile,
+                name=draft.name,
+                steps=await self._recipes.check(profile.stage, draft.steps, order=draft.order),
+                order=draft.order,
+                updated_at=self._clock.now(),
+            )
+        )
+        await self._uow.commit()
+        return replaced
+
+    async def link(
+        self, actor: Actor, project_id: ProjectId, key: RecipeKey, profile_id: RecipeProfileId | None
+    ) -> Recipe:
+        """Record which profile a recipe of a book was made from, or that it was made from none.
+
+        The steps of the recipe do not change and no page goes stale. A book that saves its steps as a new profile uses
+        this to make the profile the one it is compared with.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param key: The stage and the identifier of the recipe, which must belong to that stage.
+        :type key: RecipeKey
+        :param profile_id: Identifier of the profile, or None to unlink the recipe.
+        :type profile_id: RecipeProfileId | None
+        :returns: The recipe as stored.
+        :rtype: Recipe
+        :raises NotFoundError: If the actor has no such project, the project has no such recipe of the stage, or the
+                               account has no such profile.
+        :raises InvalidParametersError: If the profile is for another stage than the recipe.
+        """
+        await owned_project(self._uow.projects, actor, project_id)
+        recipe = await self._recipes.get(project_id, key.recipe_id, stage=key.stage)
+        if profile_id is not None:
+            profile = await self._owned(actor, profile_id)
+            if profile.stage is not recipe.stage:
+                raise InvalidParametersError(
+                    OTHER_STAGE.format(name=profile.name, actual=profile.stage.label, expected=recipe.stage.label)
+                )
+        linked = await self._uow.recipes.update(evolve(recipe, profile_id=profile_id))
+        await self._uow.commit()
+        return linked
 
     async def rename(self, actor: Actor, profile_id: RecipeProfileId, name: str) -> RecipeProfile:
         """Give a profile another name.
@@ -181,8 +251,8 @@ class RecipeProfiles:
         :type profile_id: RecipeProfileId
         :param activate: Whether the variant becomes the active recipe of the stage.
         :type activate: bool
-        :returns: The recipe, which is the variant, or the active recipe when ``activate`` is set, and the processors
-                  whose steps were left out.
+        :returns: The recipe, which is the variant linked to the profile, or the active recipe when ``activate`` is set,
+                  and the processors whose steps were left out.
         :rtype: AppliedProfile
         :raises NotFoundError: If the account has no such profile or project, or the stage has no recipe.
         :raises InvalidParametersError: If no step of the profile can run here, or a step no longer fits its processor.
@@ -192,7 +262,7 @@ class RecipeProfiles:
         if missing and not any(step.enabled for step in steps):
             raise InvalidParametersError(NOTHING_TO_APPLY.format(keys=', '.join(missing)))
         # The steps were checked when the profile was saved, and rules may have been added to the processors since
-        draft = RecipeDraft(name=profile.name, steps=steps, order=OrderMode.FREE)
+        draft = RecipeDraft(name=profile.name, steps=steps, order=OrderMode.FREE, profile_id=profile.id)
         recipe = await self._processing.add_variant(actor, project_id, profile.stage, draft)
         if activate:
             recipe = await self._processing.activate(actor, project_id, profile.stage, recipe.id)

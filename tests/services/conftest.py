@@ -14,6 +14,13 @@ from tests.helpers.builders import EPOCH
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.page_services import make_page_service
 from tests.helpers.processing import CV_DEFAULTS, ProcessingKit
+from tests.helpers.processors import (
+    CleanupProcessor,
+    FakeProcessor,
+    FirstProcessor,
+    SecondProcessor,
+    ThirdProcessor,
+)
 from tests.helpers.samples import CV_MISSING
 
 if TYPE_CHECKING:
@@ -204,3 +211,23 @@ def fx_cv_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
         ],
         defaults=CV_DEFAULTS,
     )
+
+
+@pytest.fixture
+def fx_ordered_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
+    """Build the processing kit over processors that declare a place.
+
+    :param fx_asset_store: Local asset store over the test's storage root.
+    :type fx_asset_store: LocalAssetStore
+    :returns: The kit whose catalogue holds the fakes of the tests and the processors that ask for a place.
+    :rtype: ProcessingKit
+    """
+    processors = [
+        SplitNone(),
+        FakeProcessor(),
+        CleanupProcessor(),
+        FirstProcessor(),
+        SecondProcessor(),
+        ThirdProcessor(),
+    ]
+    return ProcessingKit(fx_asset_store, processors=processors)
