@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSaveRecipe } from '@/features/processing/queries';
 import { bodyOf } from '@/features/processing/recipe';
 import type { Processing } from '@/features/processing/useProcessing';
@@ -47,6 +47,19 @@ export function SaveProfileDialog({
   const save = useSaveProfile();
   const link = useLinkProfile(projectId, stage);
   const saveRecipe = useSaveRecipe(projectId, stage);
+  const recipeName = recipe?.name;
+  const { reset: resetSave } = save;
+  const { reset: resetLink } = link;
+  const { reset: resetSaveRecipe } = saveRecipe;
+  // The menu opens the dialog by setting `open`, which Radix does not report as a change, so the name starts here
+  useEffect(() => {
+    if (open) {
+      setName(recipeName ?? '');
+      resetSave();
+      resetLink();
+      resetSaveRecipe();
+    }
+  }, [open, recipeName, resetSave, resetLink, resetSaveRecipe]);
   if (recipe === undefined) {
     return null;
   }
@@ -80,18 +93,7 @@ export function SaveProfileDialog({
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (next) {
-          setName(recipe.name);
-          save.reset();
-          link.reset();
-          saveRecipe.reset();
-        }
-        onOpenChange(next);
-      }}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <form
           className="grid gap-4"
