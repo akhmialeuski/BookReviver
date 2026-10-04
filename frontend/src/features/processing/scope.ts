@@ -1,5 +1,4 @@
-import type { AppliesTo } from '@/api';
-import { conditionOfKind } from '@/features/processing/variants';
+import type { AppliesTo, ContentType } from '@/api';
 import type { StripItem } from '@/features/workspace/strip';
 import { MESSAGES } from '@/shared/messages';
 
@@ -81,22 +80,32 @@ export function pageIdsFor(
 }
 
 /**
- * Give the pages a step with a condition goes over, which are the ones that have an image and may meet the condition.
+ * Give the pages a step with a condition goes over, which are the ones that have an image and show what the condition
+ * names.
  *
- * The server decides which pages a step processes and passes the rest unchanged. What it needs the colour of the image
- * for, the pictures in colour and the pictures in black and white, is not known here, so those two conditions list every
- * picture, and a run over them leaves the pictures of the other colour as they were.
+ * What a page shows is the server's to say, since it follows what the reader set, what the program found and the kind
+ * of the page, so the condition is read off the page as the manifest has it. The colour of a plate nobody detected is the
+ * colour of the image its stage starts from, which the server reads when it runs, so a run over such a page may still
+ * leave it as it was.
  *
  * @param items Every page of the book with where it stands in the stage.
  * @param condition The condition of the step.
  */
 export function pagesOfCondition(items: readonly StripItem[], condition: AppliesTo): StripItem[] {
   const processable = items.filter(hasImage);
-  if (condition === 'all') {
-    return processable;
+  const shows = (item: StripItem, type: ContentType): boolean => item.page.content_type === type;
+  switch (condition) {
+    case 'all':
+      return processable;
+    case 'text':
+      return processable.filter((item) => shows(item, 'text'));
+    case 'pictures':
+      return processable.filter((item) => !shows(item, 'text'));
+    case 'color-pictures':
+      return processable.filter((item) => shows(item, 'color-picture'));
+    case 'bw-pictures':
+      return processable.filter((item) => shows(item, 'bw-picture'));
   }
-  const isPicture = (item: StripItem): boolean => conditionOfKind(item.page.kind) === 'plates';
-  return processable.filter((item) => isPicture(item) === (condition !== 'text'));
 }
 
 /**

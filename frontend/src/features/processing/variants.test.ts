@@ -4,10 +4,11 @@ import { recipe } from '@/features/processing/fixtures';
 import {
   applyVariant,
   conditionOfKind,
+  conditionOfPage,
   countsOf,
   markOf,
   optionsOf,
-  pagesLikeKind,
+  pagesLikePage,
   ruleFor,
   rulesOf,
   toneOf,
@@ -40,9 +41,9 @@ function rule(id: string, overrides: Partial<RecipeRuleSchema> = {}): RecipeRule
 const ITEMS = joinRows(
   [
     page('a', { position: 0 }),
-    page('b', { position: 1, kind: 'plate' }),
-    page('c', { position: 2, kind: 'frontispiece' }),
-    page('d', { position: 3, kind: 'plate', origin: 'placeholder' }),
+    page('b', { position: 1, kind: 'plate', content_type: 'color-picture' }),
+    page('c', { position: 2, kind: 'frontispiece', content_type: 'bw-picture' }),
+    page('d', { position: 3, kind: 'plate', content_type: 'color-picture', origin: 'placeholder' }),
     page('e', { position: 4, kind: 'cover' }),
   ],
   [
@@ -123,14 +124,37 @@ describe('kinds of page and the rules that name them', () => {
     expect(conditionOfKind('text')).toBeNull();
   });
 
-  it('lists the pages of the same group of kinds, without a placeholder that has no image', () => {
+  it('names the plates for a page that shows a picture, whatever its kind, and none for text', () => {
+    expect(conditionOfPage({ kind: 'text', content_type: 'bw-picture' })).toBe('plates');
+    expect(conditionOfPage({ kind: 'plate', content_type: 'color-picture' })).toBe('plates');
+    expect(conditionOfPage({ kind: 'plate', content_type: 'text' })).toBeNull();
+    expect(conditionOfPage({ kind: 'cover', content_type: 'text' })).toBe('covers');
+    expect(conditionOfPage({ kind: 'text', content_type: 'text' })).toBeNull();
+  });
+
+  it('lists the pages the rule that names a page sends to its variant, without a placeholder', () => {
     const [, plate] = ITEMS;
 
-    expect(plate && pagesLikeKind(ITEMS, plate.page.kind).map((item) => item.page.id)).toEqual([
+    expect(plate && pagesLikePage(ITEMS, plate.page).map((item) => item.page.id)).toEqual([
       'b',
       'c',
     ]);
-    expect(pagesLikeKind(ITEMS, 'text')).toEqual([]);
+    expect(pagesLikePage(ITEMS, { kind: 'text', content_type: 'text' })).toEqual([]);
+  });
+
+  it('lists the pages that show a picture together with the plates, as the rule does', () => {
+    const found = joinRows(
+      [
+        page('plate', { kind: 'plate', content_type: 'color-picture' }),
+        page('found', { content_type: 'bw-picture', content_source: 'detected' }),
+        page('text'),
+      ],
+      [],
+    );
+
+    expect(
+      pagesLikePage(found, { kind: 'text', content_type: 'bw-picture' }).map((i) => i.page.id),
+    ).toEqual(['plate', 'found']);
   });
 
   it('finds the rules of a variant, and the rule of a condition and of a group', () => {

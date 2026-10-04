@@ -197,3 +197,84 @@ export function sheetPng(
   }
   return encode(width, height, Buffer.concat(rows));
 }
+
+// Where the picture of a plate lies on the page, as shares of its width and height, and how its tones are drawn: their
+// mean, how far they swing, the noise of the sensor, and the darkest and the lightest tone
+const PLATE_COLUMNS: readonly [number, number] = [0.1, 0.9];
+const PLATE_ROWS: readonly [number, number] = [0.08, 0.92];
+const PLATE_MEAN = 120;
+const PLATE_SWING = 80;
+const PLATE_NOISE = 10;
+const PLATE_DARKEST = 20;
+const PLATE_LIGHTEST = 235;
+const TONE_RANGE = 255;
+// The wavelengths of the tones, in pixels of a plate 600 pixels wide, along the columns and along the rows, and of the
+// share of red in a colour picture
+const PLATE_WAVE_COLUMNS_PX = 25;
+const PLATE_WAVE_ROWS_PX = 18;
+const COLOUR_WAVE_PX = 40;
+const PLATE_WIDTH_PX = 600;
+// How much of each plane a colour picture keeps where the tone is lightest
+const RED_SHARE = 0.5;
+const GREEN_SHARE = 0.8;
+const BLUE_SHARE = 0.4;
+const YELLOWED_PAPER: Color = [236, 222, 190];
+
+/**
+ * Encode a PNG of a plate: a picture of continuous tones on paper, which covers most of the page and has a caption's
+ * worth of paper round it, as a plate of an old book has.
+ *
+ * A picture in black and white is the paper darkened by the tone of each pixel, so every pixel has the tint of the
+ * paper, as a print on yellowed paper has. A picture in colour has a colour of its own at each pixel.
+ *
+ * @param width Width of the scan in pixels.
+ * @param height Height of the scan in pixels.
+ * @param seed A number that decides the noise, so two plates are not duplicates of each other.
+ * @param colour Whether the picture is in colour.
+ */
+export function platePng(width: number, height: number, seed: number, colour = false): Buffer {
+  const scale = width / PLATE_WIDTH_PX;
+  const [left, right] = [width * PLATE_COLUMNS[0], width * PLATE_COLUMNS[1]];
+  const [top, bottom] = [height * PLATE_ROWS[0], height * PLATE_ROWS[1]];
+  let state = seed;
+  const next = (): number => {
+    state = (state * 1103515245 + 12345) % 2147483648;
+    return state / 2147483648;
+  };
+  const rows: Buffer[] = [];
+  for (let y = 0; y < height; y += 1) {
+    const row = Buffer.alloc(1 + width * 3);
+    row[0] = FILTER_NONE;
+    for (let x = 0; x < width; x += 1) {
+      let pixel: Color = YELLOWED_PAPER;
+      if (x >= left && x < right && y >= top && y < bottom) {
+        const column = x - left;
+        const line = y - top;
+        const tone =
+          PLATE_MEAN +
+          PLATE_SWING *
+            Math.sin(column / (PLATE_WAVE_COLUMNS_PX * scale)) *
+            Math.cos(line / (PLATE_WAVE_ROWS_PX * scale)) +
+          (next() * 2 - 1) * PLATE_NOISE;
+        const darkness = Math.min(Math.max(tone, PLATE_DARKEST), PLATE_LIGHTEST) / TONE_RANGE;
+        if (colour) {
+          const wave = 0.5 + 0.5 * Math.sin(column / (COLOUR_WAVE_PX * scale));
+          pixel = [
+            Math.round(wave * RED_SHARE * darkness * TONE_RANGE),
+            Math.round(GREEN_SHARE * darkness * TONE_RANGE),
+            Math.round(BLUE_SHARE * darkness * TONE_RANGE),
+          ];
+        } else {
+          pixel = [
+            Math.round(YELLOWED_PAPER[0] * darkness),
+            Math.round(YELLOWED_PAPER[1] * darkness),
+            Math.round(YELLOWED_PAPER[2] * darkness),
+          ];
+        }
+      }
+      row.set(pixel, 1 + x * 3);
+    }
+    rows.push(row);
+  }
+  return encode(width, height, Buffer.concat(rows));
+}
