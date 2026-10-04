@@ -21,6 +21,7 @@ from bookreviver.domain.entities import (
     Recipe,
     RecipeProfile,
     RecipeRule,
+    ResultMarkChange,
     Scan,
     Source,
 )
@@ -34,6 +35,7 @@ from bookreviver.domain.ids import (
     RecipeId,
     RecipeProfileId,
     RecipeRuleId,
+    ResultMarkChangeId,
     ScanId,
     SourceId,
 )
@@ -721,6 +723,24 @@ class PageStepChangeRepository(Repository[PageStepChange, PageStepChangeId]):
         """
 
 
+class ResultMarkChangeRepository(Repository[ResultMarkChange, ResultMarkChangeId]):
+    """The log of the marks and comments of the results. A change is added once and never rewritten.
+
+    Deleting a version removes its log. ``add`` numbers the changes of a version from one in the order they are written,
+    whatever their ``sequence``, and returns them as stored.
+    """
+
+    @abstractmethod
+    async def list_for_version(self, version_id: PageVersionId) -> Sequence[ResultMarkChange]:
+        """Return the changes of the mark and the comment of one version, in the order they were written.
+
+        :param version_id: Version the changes were made on.
+        :type version_id: PageVersionId
+        :returns: The changes of the version, by sequence.
+        :rtype: Sequence[ResultMarkChange]
+        """
+
+
 class RecipeRepository(Repository[Recipe, RecipeId]):
     """Recipes of the projects; a stage of a project has at most one active recipe, which the database keeps.
 
@@ -924,6 +944,7 @@ class UnitOfWork(ABC):
     :ivar page_stages: Page stage repository of this transaction.
     :ivar page_step_states: Repository of the settings and manual edits of the steps of the pages, of this transaction.
     :ivar page_step_changes: Repository of the history of the steps of the pages, of this transaction.
+    :ivar result_mark_changes: Repository of the log of the marks and comments of the results, of this transaction.
     :ivar recipes: Recipe repository of this transaction.
     :ivar recipe_rules: Repository of the rules that send pages to recipes, of this transaction.
     :ivar recipe_profiles: Repository of the recipe profiles of the accounts, of this transaction.
@@ -940,6 +961,7 @@ class UnitOfWork(ABC):
     page_stages: PageStageRepository
     page_step_states: PageStepStateRepository
     page_step_changes: PageStepChangeRepository
+    result_mark_changes: ResultMarkChangeRepository
     recipes: RecipeRepository
     recipe_rules: RecipeRuleRepository
     recipe_profiles: RecipeProfileRepository

@@ -45,6 +45,7 @@ from bookreviver.domain.entities import (
     Recipe,
     RecipeProfile,
     RecipeRule,
+    ResultMarkChange,
     Scan,
     Source,
 )
@@ -60,6 +61,7 @@ from bookreviver.domain.ids import (
     RecipeId,
     RecipeProfileId,
     RecipeRuleId,
+    ResultMarkChangeId,
     ScanId,
     SourceId,
 )
@@ -80,6 +82,7 @@ from bookreviver.ports.persistence import (
     RecipeRepository,
     RecipeRuleRepository,
     Repository,
+    ResultMarkChangeRepository,
     ScanRepository,
     SourceRepository,
     UnitOfWork,
@@ -120,6 +123,7 @@ class InMemoryTables:
     :ivar page_stages: Page stage records by page and stage.
     :ivar page_step_states: Settings and manual edits of the steps by page, stage and step.
     :ivar page_step_changes: Changes of the layers of the steps of the pages by identifier.
+    :ivar result_mark_changes: Changes of the marks and comments of the results by identifier.
     :ivar recipes: Recipes by identifier.
     :ivar recipe_rules: Rules of the stages by identifier.
     :ivar recipe_profiles: Recipe profiles of the accounts by identifier.
@@ -136,6 +140,7 @@ class InMemoryTables:
     page_stages: dict[PageStageKey, PageStage] = field(factory=dict)
     page_step_states: dict[PageStepKey, PageStepState] = field(factory=dict)
     page_step_changes: dict[PageStepChangeId, PageStepChange] = field(factory=dict)
+    result_mark_changes: dict[ResultMarkChangeId, ResultMarkChange] = field(factory=dict)
     recipes: dict[RecipeId, Recipe] = field(factory=dict)
     recipe_rules: dict[RecipeRuleId, RecipeRule] = field(factory=dict)
     recipe_profiles: dict[RecipeProfileId, RecipeProfile] = field(factory=dict)
@@ -340,6 +345,8 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
         :type entity: Project
         """
         doomed_pages = {page.id for page in self._tables.pages.values() if page.project_id == entity.id}
+        doomed_versions = {v.id for v in self._tables.page_versions.values() if v.page_id in doomed_pages}
+        remove_where(self._tables.result_mark_changes, lambda change: change.version_id in doomed_versions)
         remove_where(self._tables.page_versions, lambda version: version.page_id in doomed_pages)
         remove_where(self._tables.page_stages, lambda stage: stage.page_id in doomed_pages)
         remove_where(self._tables.page_step_states, lambda state: state.page_id in doomed_pages)
@@ -622,6 +629,8 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         :type entity: Page
         """
         remove_where(self._tables.pagination_sections, lambda section: section.first_page_id == entity.id)
+        doomed_versions = {v.id for v in self._tables.page_versions.values() if v.page_id == entity.id}
+        remove_where(self._tables.result_mark_changes, lambda change: change.version_id in doomed_versions)
         remove_where(self._tables.page_versions, lambda version: version.page_id == entity.id)
         remove_where(self._tables.page_stages, lambda stage: stage.page_id == entity.id)
         remove_where(self._tables.page_step_states, lambda state: state.page_id == entity.id)
@@ -888,11 +897,14 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
 
     @override
     def _cascade(self, entity: PageVersion) -> None:
-        """Leave the versions the removed one fed, and the stages it headed, without it, as ``SET NULL`` does.
+        """Remove the log of the removed version, and leave the versions it fed and the stages it headed without it.
+
+        The log goes as ``CASCADE`` does, and the others as ``SET NULL`` does.
 
         :param entity: Version just removed.
         :type entity: PageVersion
         """
+        remove_where(self._tables.result_mark_changes, lambda change: change.version_id == entity.id)
         for version in [version for version in self._rows.values() if version.input_id == entity.id]:
             self._rows[version.id] = evolve(version, input_id=None)
         for stage in [stage for stage in self._tables.page_stages.values() if stage.head_version_id == entity.id]:
@@ -1460,6 +1472,59 @@ class InMemoryPageStepChangeRepository(InMemoryRepository[PageStepChange, PageSt
         )
 
 
+class InMemoryResultMarkChangeRepository(
+    InMemoryRepository[ResultMarkChange, ResultMarkChangeId], ResultMarkChangeRepository
+):
+    """The log of the marks and comments of the results."""
+
+    def __init__(self, tables: InMemoryTables) -> None:
+        """Work on the result mark change table of the unit of work's copy, checking changes against versions.
+
+        :param tables: Every table of the working copy.
+        :type tables: InMemoryTables
+        """
+        super().__init__(tables.result_mark_changes, tables)
+
+    @override
+    async def add(self, entity: ResultMarkChange) -> ResultMarkChange:
+        """Store a change, numbering it after the last change of its version.
+
+        :param entity: Change to store.
+        :type entity: ResultMarkChange
+        :returns: The change as stored, with its sequence.
+        :rtype: ResultMarkChange
+        :raises ConflictError: If a change with this identifier is stored already.
+        :raises NotFoundError: If the version is not stored.
+        """
+        last = max(
+            (change.sequence for change in self._rows.values() if change.version_id == entity.version_id), default=0
+        )
+        return await super().add(evolve(entity, sequence=last + 1))
+
+    @override
+    def _check(self, entity: ResultMarkChange) -> None:
+        """Require the version of the change.
+
+        :param entity: Change about to be stored.
+        :type entity: ResultMarkChange
+        :raises NotFoundError: If the version is not stored.
+        """
+        require(self._tables.page_versions, entity.version_id)
+
+    @override
+    async def list_for_version(self, version_id: PageVersionId) -> Sequence[ResultMarkChange]:
+        """Return the changes of one version, by their sequence.
+
+        :param version_id: Version the changes were made on.
+        :type version_id: PageVersionId
+        :returns: The changes of the version.
+        :rtype: Sequence[ResultMarkChange]
+        """
+        return sorted(
+            (change for change in self._rows.values() if change.version_id == version_id), key=attrgetter('sequence')
+        )
+
+
 class InMemoryBookPlaceRepository(InMemoryRepository[BookPlace, BookPlaceKey], BookPlaceRepository):
     """The places accounts left books at."""
 
@@ -1875,6 +1940,7 @@ class InMemoryUnitOfWork(UnitOfWork):
     :ivar page_stages: Page stage repository over the working copy.
     :ivar page_step_states: Page step state repository over the working copy.
     :ivar page_step_changes: Page step change repository over the working copy.
+    :ivar result_mark_changes: Result mark change repository over the working copy.
     :ivar recipes: Recipe repository over the working copy.
     :ivar recipe_rules: Recipe rule repository over the working copy.
     :ivar recipe_profiles: Recipe profile repository over the working copy.
@@ -1918,6 +1984,7 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.page_stages = InMemoryPageStageRepository(self._tables)
         self.page_step_states = InMemoryPageStepStateRepository(self._tables)
         self.page_step_changes = InMemoryPageStepChangeRepository(self._tables)
+        self.result_mark_changes = InMemoryResultMarkChangeRepository(self._tables)
         self.recipes = InMemoryRecipeRepository(self._tables)
         self.recipe_rules = InMemoryRecipeRuleRepository(self._tables)
         self.recipe_profiles = InMemoryRecipeProfileRepository(self._tables)

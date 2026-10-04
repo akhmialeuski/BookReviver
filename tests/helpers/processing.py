@@ -40,6 +40,7 @@ from bookreviver.services.processing_parts import ProcessingConfig, ProcessingPa
 from bookreviver.services.recipe_profiles import RecipeProfiles
 from bookreviver.services.recipe_rules import RecipeRules
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
+from bookreviver.services.result_marks import ResultMarksService
 from bookreviver.services.stage_runs import StageRuntime
 from bookreviver.services.stage_summaries import StageSummaries
 from bookreviver.services.steps import StepRunner
@@ -250,6 +251,14 @@ class ProcessingKit:
         for queued in list(self.recording.enqueued):
             if not (await self.uow().jobs.get(queued.id)).state.is_final:
                 await getattr(self.jobs(), methods[queued.kind])(queued.id)
+
+    def result_marks(self) -> ResultMarksService:
+        """Build the result marks service over a new unit of work.
+
+        :returns: The service.
+        :rtype: ResultMarksService
+        """
+        return ResultMarksService(uow=InMemoryUnitOfWork(self.database), clock=self.clock)
 
     def edits(self) -> EditService:
         """Build the edit service over a new unit of work.

@@ -38,10 +38,19 @@ from bookreviver.app.container import build_container
 from bookreviver.app.main import create_app
 from bookreviver.app.providers.database import MIGRATE_COMMAND, MIGRATE_DOWNGRADE_COMMAND
 from bookreviver.app.settings import PersistenceBackend
-from bookreviver.domain.enums import EditorKind, OrderMode, Rendition
-from bookreviver.domain.ids import RecipeId, RecipeProfileId
+from bookreviver.domain.enums import EditorKind, OrderMode, Rendition, ResultMark
+from bookreviver.domain.ids import PageVersionId, RecipeId, RecipeProfileId
 from bookreviver.domain.values import Renditions
-from tests.helpers.builders import EPOCH, make_job, make_page, make_page_version, make_project, make_scan, make_source
+from tests.helpers.builders import (
+    EPOCH,
+    make_job,
+    make_page,
+    make_page_version,
+    make_project,
+    make_result_mark_change,
+    make_scan,
+    make_source,
+)
 from tests.helpers.seeding import commit_account
 
 if TYPE_CHECKING:
@@ -131,6 +140,15 @@ INSERT_CHANGE: str = (
     'INSERT INTO page_step_changes (id, page_id, stage, step_id, layer, before, after, source, created_at, sequence) '
     "VALUES (:id, :page_id, 'geometry', :step_id, 'settings', NULL, '{\"method\": \"otsu\"}', 'user', "
     "'2026-01-01 00:00:00', 1)"
+)
+# The revision before the one that adds the mark and the comment of a result
+BEFORE_MARKS_REVISION: str = '8cf44472edb6'
+OLD_VERSION_ID: PageVersionId = PageVersionId('0123456789abcdef')
+# A version as the revision before the marks wrote it, which has no mark and no comment column
+INSERT_VERSION: str = (
+    'INSERT INTO page_versions (id, page_id, stage, processor_key, processor_version, params, transform, data, state,'
+    " created_at) VALUES (:id, :page_id, 'page-split', 'split.none', '1', '{}', '{\"kind\": \"identity\"}', '{}',"
+    " 'ready', '2026-01-01 00:00:00')"
 )
 # The tables holding the rows of a book, each of which refers to the project or to a row that does
 BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (ProjectRow, SourceRow, ScanRow, PageRow, PageVersionRow, JobRow)
@@ -710,6 +728,63 @@ class TestProfileLinkRevision:
         expect('profile_id' not in recipe_columns)
         expect('order' not in profile_columns)
         expect(sorted(row[0] for row in names) == ['Photographed book', 'Text'])
+        assert_expectations()
+
+
+class TestResultMarksRevision:
+    """Tests for the revision that adds the mark and the comment of a result and the log of their changes."""
+
+    async def test_a_version_stored_before_has_no_mark_and_the_log_works(self, fx_empty_database: SqlDatabase) -> None:
+        """Verify an old version reads without a mark or a comment, and a change of it can be logged.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, BEFORE_MARKS_REVISION)
+        project = make_project(owner_id=await commit_account(fx_empty_database))
+        page = make_page(project_id=project.id)
+        async with fx_empty_database.sessions() as session:
+            uow = SqlAlchemyUnitOfWork(session)
+            await uow.projects.add(project)
+            await uow.pages.add(page)
+            await uow.commit()
+            # Plain SQL, since the version of the ORM has the columns this revision adds
+            await session.execute(text(INSERT_VERSION), {'id': OLD_VERSION_ID, 'page_id': page.id.bytes})
+            await session.commit()
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        async with fx_empty_database.sessions() as session:
+            uow = SqlAlchemyUnitOfWork(session)
+            version = await uow.page_versions.get(OLD_VERSION_ID)
+            await uow.result_mark_changes.add(
+                make_result_mark_change(version_id=version.id, mark_after=ResultMark.BAD, comment_after='soft')
+            )
+            await uow.commit()
+            log = await uow.result_mark_changes.list_for_version(version.id)
+        assert ((version.mark, version.comment), [(c.mark_after, c.sequence) for c in log]) == (
+            (None, ''),
+            [(ResultMark.BAD, 1)],
+        )
+
+    async def test_downgrade_drops_the_log_and_keeps_the_version(self, fx_empty_database: SqlDatabase) -> None:
+        """Verify a downgrade removes the log table and the two columns, and leaves the rows of the versions.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        await _commit_book(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.downgrade, BEFORE_MARKS_REVISION)
+        async with fx_empty_database.engine.connect() as connection:
+            tables = await connection.run_sync(lambda sync: inspect(sync).get_table_names())
+            columns = await connection.run_sync(
+                lambda sync: [column['name'] for column in inspect(sync).get_columns('page_versions')]
+            )
+            versions = (await connection.execute(select(func.count()).select_from(text('page_versions')))).scalar_one()
+        expect('result_mark_changes' not in tables)
+        expect('mark' not in columns and 'comment' not in columns)
+        expect(versions == 1)
         assert_expectations()
 
 

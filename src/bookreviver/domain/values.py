@@ -53,6 +53,7 @@ if TYPE_CHECKING:
         PageKind,
         PlaceMode,
         RejectionReason,
+        ResultMark,
         Side,
         SourceKind,
         VersionScale,
@@ -1096,6 +1097,18 @@ class VersionFilter:
 
     stage: Stage | None = None
     scale: VersionScale | None = None
+
+
+@frozen(kw_only=True)
+class ResultNote:
+    """What the user notes on a result: a mark and a comment, which are set and replaced together.
+
+    :ivar mark: Good or bad, or None for a result without a mark.
+    :ivar comment: The comment, one line or several, or empty for none.
+    """
+
+    mark: ResultMark | None = None
+    comment: str = ''
 
 
 @frozen(kw_only=True)

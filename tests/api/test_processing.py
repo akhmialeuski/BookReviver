@@ -27,6 +27,7 @@ from bookreviver.api.schemas.processing import (
     RecipeSchema,
     StageRunBody,
 )
+from bookreviver.api.schemas.result_marks import ResultMarkChangeSchema
 from bookreviver.api.schemas.rules import RecipeRuleSchema
 from bookreviver.api.schemas.types import RECIPE_STEPS_MAX_LENGTH
 from bookreviver.domain.enums import (
@@ -34,6 +35,7 @@ from bookreviver.domain.enums import (
     JobKind,
     JobState,
     Rendition,
+    ResultMark,
     RuleCondition,
     RunMode,
     Stage,
@@ -1571,3 +1573,107 @@ class TestStepRows:
         """
         response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': 'second'})
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+class TestResultMarks:
+    """Tests for the mark and the comment of a result and the log of their changes."""
+
+    @staticmethod
+    async def version_path(client: httpx.AsyncClient, broker: InMemoryBroker, book: Book) -> str:
+        """Run the page split and return the path of the version it made.
+
+        :param client: Client of the running application.
+        :type client: httpx.AsyncClient
+        :param broker: In-process broker running the job.
+        :type broker: InMemoryBroker
+        :param book: Book of the signed-in account.
+        :type book: Book
+        :returns: The path of the version.
+        :rtype: str
+        """
+        await run_stage(client, broker, book, 'page-split')
+        stages = await client.get(f'{book.page_path}/stages')
+        return f'{book.page_path}/versions/{stages.json()[ITEMS][0]["head_version_id"]}'
+
+    async def test_put_sets_the_mark_and_the_comment_and_the_version_carries_them(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify PUT answers with the version, and a later GET of the version shows the same mark and comment.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the job.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        path = await self.version_path(fx_client, fx_broker, fx_book)
+        before = PageVersionSchema.model_validate_json((await fx_client.get(path)).content)
+        response = await fx_client.put(f'{path}/mark', json={'mark': 'bad', 'comment': 'Cut too tight.\nTry again.'})
+        answered = PageVersionSchema.model_validate_json(response.content)
+        read = PageVersionSchema.model_validate_json((await fx_client.get(path)).content)
+        expect(response.status_code == status.HTTP_200_OK)
+        expect((before.mark, before.comment) == (None, ''))
+        expect((answered.mark, answered.comment) == (ResultMark.BAD, 'Cut too tight.\nTry again.'))
+        expect(read == answered)
+        expect(answered.id == before.id)
+        assert_expectations()
+
+    async def test_a_body_without_a_mark_takes_the_mark_off_and_the_log_lists_the_changes(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify the log lists a set and a take-off, and a repeated body adds no entry.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the job.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        path = await self.version_path(fx_client, fx_broker, fx_book)
+        await fx_client.put(f'{path}/mark', json={'mark': 'good', 'comment': ''})
+        await fx_client.put(f'{path}/mark', json={'mark': 'good', 'comment': ''})
+        await fx_client.put(f'{path}/mark', json={'mark': None})
+        listed = await fx_client.get(f'{path}/mark-changes')
+        log = [ResultMarkChangeSchema.model_validate(item) for item in listed.json()[ITEMS]]
+        expect(listed.json()['total'] == 2)
+        expect(
+            [(c.sequence, c.mark_before, c.mark_after) for c in log]
+            == [(1, None, ResultMark.GOOD), (2, ResultMark.GOOD, None)]
+        )
+        assert_expectations()
+
+    async def test_a_mark_that_is_neither_good_nor_bad_is_a_422(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify the body is checked before the route runs, and a body without a mark field is refused.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the job.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        path = await self.version_path(fx_client, fx_broker, fx_book)
+        wrong = await fx_client.put(f'{path}/mark', json={'mark': 'fine', 'comment': ''})
+        absent = await fx_client.put(f'{path}/mark', json={'comment': 'x'})
+        expect(wrong.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
+        expect(absent.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
+        assert_expectations()
+
+    async def test_a_version_that_does_not_exist_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify PUT and GET of the log of an unknown version answer 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        path = f'{fx_book.page_path}/versions/{"0" * 16}'
+        put = await fx_client.put(f'{path}/mark', json={'mark': 'good', 'comment': ''})
+        listed = await fx_client.get(f'{path}/mark-changes')
+        expect(put.status_code == status.HTTP_404_NOT_FOUND)
+        expect(listed.status_code == status.HTTP_404_NOT_FOUND)
+        assert_expectations()

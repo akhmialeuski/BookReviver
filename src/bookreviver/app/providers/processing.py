@@ -32,6 +32,7 @@ from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import RecipeProfiles
 from bookreviver.services.recipe_rules import RecipeRules
 from bookreviver.services.recipes import DefaultRecipes
+from bookreviver.services.result_marks import ResultMarksService
 from bookreviver.services.run_plans import RunImpactService
 from bookreviver.services.stage_runs import StageRuntime
 from bookreviver.services.step_resets import StepResetService
@@ -351,3 +352,16 @@ class ProcessingProvider(Provider):
         :rtype: PageHistoryService
         """
         return PageHistoryService(uow=uow, records=parts.records, clock=clock)
+
+    @provide(scope=Scope.REQUEST)
+    def result_marks_service(self, uow: UnitOfWork, clock: Clock) -> ResultMarksService:
+        """Build the result marks service of a request.
+
+        :param uow: Unit of work of the current request.
+        :type uow: UnitOfWork
+        :param clock: Clock of the application.
+        :type clock: Clock
+        :returns: The result marks service.
+        :rtype: ResultMarksService
+        """
+        return ResultMarksService(uow=uow, clock=clock)

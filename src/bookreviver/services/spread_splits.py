@@ -402,7 +402,11 @@ class SpreadSplit:
             # The new half takes its place in the numbering, which moves the pages after it on
             await self._labels.recompute(self._project.id)
         for version, earlier in zip(made, stored, strict=False):
-            await (self._uow.page_versions.add(version) if earlier is None else self._uow.page_versions.update(version))
+            if earlier is None:
+                await self._uow.page_versions.add(version)
+            else:
+                # The notes of the user on the result stay with it when it is made again
+                await self._uow.page_versions.update(evolve(version, mark=earlier.mark, comment=earlier.comment))
         changed = [
             record
             for page, version in zip(pages, made, strict=True)

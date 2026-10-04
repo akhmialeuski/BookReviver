@@ -885,6 +885,13 @@ class VersionScale(LabeledStrEnum):
     PREVIEW = 'preview', 'Preview image'
 
 
+class ResultMark(LabeledStrEnum):
+    """What the user judged of a result, a page version, which a result without a judgement does not have."""
+
+    GOOD = 'good', 'Good'
+    BAD = 'bad', 'Bad'
+
+
 class ProcessorScope(LabeledStrEnum):
     """How many outputs a processor makes from its input."""
 

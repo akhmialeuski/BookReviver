@@ -33,6 +33,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     RecipeProfileRow,
     RecipeRow,
     RecipeRuleRow,
+    ResultMarkChangeRow,
     ScanRow,
     SourceRow,
 )
@@ -50,6 +51,7 @@ from bookreviver.domain.entities import (
     Recipe,
     RecipeProfile,
     RecipeRule,
+    ResultMarkChange,
     Scan,
     Source,
 )
@@ -67,6 +69,7 @@ from bookreviver.domain.ids import (
     RecipeId,
     RecipeProfileId,
     RecipeRuleId,
+    ResultMarkChangeId,
     ScanId,
     SourceId,
     StepId,
@@ -425,6 +428,8 @@ class PageVersionMapper(RowMapper[PageVersion, PageVersionRow]):
             tiles_ready=row.tiles_ready,
             created_at=row.created_at,
             files_removed_at=row.files_removed_at,
+            mark=row.mark,
+            comment=row.comment,
         )
 
     @override
@@ -455,6 +460,8 @@ class PageVersionMapper(RowMapper[PageVersion, PageVersionRow]):
             tiles_ready=entity.tiles_ready,
             created_at=entity.created_at,
             files_removed_at=entity.files_removed_at,
+            mark=entity.mark,
+            comment=entity.comment,
         )
 
     @staticmethod
@@ -830,6 +837,50 @@ class PageStepChangeMapper(RowMapper[PageStepChange, PageStepChangeRow]):
             source=entity.source,
             batch_id=entity.batch_id,
             undoes_id=entity.undoes,
+            created_at=entity.created_at,
+            sequence=entity.sequence,
+        )
+
+
+class ResultMarkChangeMapper(RowMapper[ResultMarkChange, ResultMarkChangeRow]):
+    """Translation of a change of the mark or the comment of a result, which is one row of plain columns."""
+
+    @override
+    def to_entity(self, row: ResultMarkChangeRow) -> ResultMarkChange:
+        """Build the change stored in ``row``.
+
+        :param row: Result mark change row loaded from the database.
+        :type row: ResultMarkChangeRow
+        :returns: The change.
+        :rtype: ResultMarkChange
+        """
+        return ResultMarkChange(
+            id=ResultMarkChangeId(row.id),
+            version_id=PageVersionId(row.version_id),
+            mark_before=row.mark_before,
+            mark_after=row.mark_after,
+            comment_before=row.comment_before,
+            comment_after=row.comment_after,
+            created_at=row.created_at,
+            sequence=row.sequence,
+        )
+
+    @override
+    def to_row(self, entity: ResultMarkChange) -> ResultMarkChangeRow:
+        """Build the row of ``entity``.
+
+        :param entity: Change to store.
+        :type entity: ResultMarkChange
+        :returns: Transient result mark change row.
+        :rtype: ResultMarkChangeRow
+        """
+        return ResultMarkChangeRow(
+            id=entity.id,
+            version_id=entity.version_id,
+            mark_before=entity.mark_before,
+            mark_after=entity.mark_after,
+            comment_before=entity.comment_before,
+            comment_after=entity.comment_after,
             created_at=entity.created_at,
             sequence=entity.sequence,
         )

@@ -21,6 +21,7 @@ from bookreviver.domain.entities import (
     Recipe,
     RecipeProfile,
     RecipeRule,
+    ResultMarkChange,
     Scan,
     Source,
 )
@@ -40,6 +41,7 @@ from bookreviver.domain.enums import (
     PageKind,
     PageOrigin,
     PlaceMode,
+    ResultMark,
     RightsStatus,
     RuleCondition,
     Script,
@@ -61,6 +63,7 @@ from bookreviver.domain.ids import (
     RecipeId,
     RecipeProfileId,
     RecipeRuleId,
+    ResultMarkChangeId,
     ScanId,
     SourceId,
     StepId,
@@ -620,5 +623,39 @@ def make_page_step_change(
         before=before,
         after=after,
         source=ChangeSource.USER,
+        created_at=created_at,
+    )
+
+
+def make_result_mark_change(
+    *,
+    version_id: PageVersionId,
+    mark_before: ResultMark | None = None,
+    mark_after: ResultMark | None = ResultMark.GOOD,
+    comment_after: str = '',
+    created_at: datetime = EPOCH,
+) -> ResultMarkChange:
+    """Build a change of the mark and the comment of a result.
+
+    :param version_id: Version the change was made on.
+    :type version_id: PageVersionId
+    :param mark_before: The mark before the change.
+    :type mark_before: ResultMark | None
+    :param mark_after: The mark after the change.
+    :type mark_after: ResultMark | None
+    :param comment_after: The comment after the change.
+    :type comment_after: str
+    :param created_at: When the change was made.
+    :type created_at: datetime
+    :returns: A change with a new identifier.
+    :rtype: ResultMarkChange
+    """
+    return ResultMarkChange(
+        id=ResultMarkChangeId(uuid4()),
+        version_id=version_id,
+        mark_before=mark_before,
+        mark_after=mark_after,
+        comment_before='',
+        comment_after=comment_after,
         created_at=created_at,
     )
