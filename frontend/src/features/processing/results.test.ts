@@ -72,7 +72,43 @@ describe('readResult', () => {
       threshold: null,
       zones: null,
       specks: null,
+      contentBox: null,
+      marginBox: null,
+      blockScale: null,
+      marginSettings: null,
     });
+  });
+
+  it('reads the content box, the border grown by the margins and the settings of the margins', () => {
+    const result = readResult({
+      data: {
+        content_box: { left: 100, top: 200, width: 300, height: 400 },
+        margin_box: { left: 50, top: 150, width: 400, height: 520 },
+        block_scale: 0.8,
+        margin_params: {
+          left: 'margin_inner',
+          top: 'margin_top',
+          right: 'margin_outer',
+          bottom: 'margin_bottom',
+        },
+      },
+    });
+
+    expect(result.contentBox).toEqual({ left: 100, top: 200, width: 300, height: 400 });
+    expect(result.marginBox).toEqual({ left: 50, top: 150, width: 400, height: 520 });
+    expect(result.blockScale).toBe(0.8);
+    expect(result.marginSettings).toEqual({
+      left: 'margin_inner',
+      top: 'margin_top',
+      right: 'margin_outer',
+      bottom: 'margin_bottom',
+    });
+  });
+
+  it('leaves the settings of the margins out when the step named only some of the sides', () => {
+    expect(readResult({ data: { margin_params: { left: 'margin_inner' } } }).marginSettings).toBe(
+      null,
+    );
   });
 
   it('reads the curves a dewarping followed, how bent the lines were and how many there were', () => {

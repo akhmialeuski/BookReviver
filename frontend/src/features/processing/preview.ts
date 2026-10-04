@@ -1,4 +1,5 @@
 import type { PageVersionSchema, StepBody } from '@/api';
+import { isPlacement } from '@/features/editors/placement';
 
 /**
  * What a preview asks for, how two asks are told apart, and whether a version the server announced is the answer to
@@ -50,6 +51,12 @@ export function previewKey(request: PreviewRequest): string {
   );
 }
 
+/**
+ * The settings of the Margins step that a page size or a line height of 0 leaves to the book, so a preview records the
+ * value the book gave and not the 0 the ask names.
+ */
+const BOOK_FIELDS: ReadonlySet<string> = new Set(['page_width', 'page_height', 'line_height']);
+
 /** Give the processor of the last step a preview runs, which is the step its version belongs to. */
 function lastStepOf(request: PreviewRequest): StepBody | undefined {
   return request.steps.slice(0, request.stepIndex + 1).findLast((step) => step.enabled !== false);
@@ -82,8 +89,10 @@ export function answersPreview(version: PageVersionSchema, request: PreviewReque
     return true;
   }
   const asked = last.params ?? {};
+  const byTheBook = isPlacement(last.processor_key);
   return Object.entries(asked).every(
     ([name, value]) =>
+      (byTheBook && BOOK_FIELDS.has(name) && value === 0) ||
       JSON.stringify(canonical(version.params[name])) === JSON.stringify(canonical(value)),
   );
 }

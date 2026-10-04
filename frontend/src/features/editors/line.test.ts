@@ -38,6 +38,10 @@ describe('cutLine', () => {
     threshold: null,
     zones: null,
     specks: null,
+    contentBox: null,
+    marginBox: null,
+    blockScale: null,
+    marginSettings: null,
   };
 
   it('follows the slanted cut a step reported by its two ends', () => {

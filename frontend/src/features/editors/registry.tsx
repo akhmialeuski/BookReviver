@@ -1,6 +1,7 @@
 import type { EditorKind, ProcessorSchema, RecipeSchema, StepSchema } from '@/api';
 import { brushEditor } from '@/features/editors/brushEditor';
 import { lineEditor } from '@/features/editors/lineEditor';
+import { marginsEditor } from '@/features/editors/marginsEditor';
 import { meshEditor } from '@/features/editors/meshEditor';
 import { quadEditor } from '@/features/editors/quadEditor';
 import { rectEditor } from '@/features/editors/rectEditor';
@@ -90,6 +91,7 @@ const EDITORS: Readonly<Record<EditableKind, RegisteredEditor>> = {
   mesh: register<'mesh'>(meshEditor),
   regions: register<'regions'>(regionsEditor),
   'brush-mask': register<'brush-mask'>(brushEditor),
+  'content-box': register<'content-box'>(marginsEditor),
 };
 
 /** Tell whether the kind of editor of a processor has a component. */

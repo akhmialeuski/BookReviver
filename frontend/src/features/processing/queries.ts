@@ -396,14 +396,19 @@ export function useDeleteEdit(projectId: string, stage: Stage) {
 }
 
 /** Read the settings one stage holds for the steps of a page: the fields the page changes, by step. */
-export function usePageSettings(projectId: string, pageId: string | undefined, stage: Stage) {
+export function usePageSettings(
+  projectId: string,
+  pageId: string | undefined,
+  stage: Stage,
+  enabled = true,
+) {
   return useQuery({
     ...listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetOptions({
       path: { project_id: projectId, page_id: pageId ?? '', stage },
       query: { size: LIST_SIZE },
     }),
     select: (page) => page.items,
-    enabled: pageId !== undefined,
+    enabled: enabled && pageId !== undefined,
   });
 }
 

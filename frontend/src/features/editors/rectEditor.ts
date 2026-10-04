@@ -11,9 +11,6 @@ import { sourceSize } from '@/features/processing/results';
  * For the crop step it lies on the picture the step reads, which is the page after the steps before it, and not on the scan.
  * Until the reader moves a handle the editor starts from the frame the step found, or from the page less a free margin when
  * it found none. The margin the step adds round the frame is not part of it.
- *
- * For the step that places the block of text on a page of the book it lies on the page the step made, and the frame is the
- * place and the size of the block on it, which the step starts from where its parameters put the block. See `placement.ts`.
  */
 
 export const rectEditor: EditorDefinition<RectShape> = {

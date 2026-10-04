@@ -98,6 +98,12 @@ export interface BrushShape {
   strokes: StrokeShape[];
 }
 
+/**
+ * The box of the content of a page, which the Margins step places on the page of the book: the same four numbers as a
+ * frame, but the box is the one the reader draws over what the step reads, and not a frame that cuts it.
+ */
+export type ContentBoxShape = RectShape;
+
 /** The shape of each editor that has a component, by the name of its kind. */
 export interface EditorShapes {
   line: LineShape;
@@ -108,6 +114,7 @@ export interface EditorShapes {
   mesh: MeshShape;
   regions: RegionsShape;
   'brush-mask': BrushShape;
+  'content-box': ContentBoxShape;
 }
 
 /** The kinds of editor that have a component. */
@@ -222,6 +229,12 @@ export function readRect(geometry: Geometry | null): RectShape | null {
 export function writeRect(rect: RectShape): Geometry {
   return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
 }
+
+/** Read a content box from the geometry of an edit, which holds the same numbers as a frame. */
+export const readContentBox: (geometry: Geometry | null) => ContentBoxShape | null = readRect;
+
+/** Write a content box the way the server reads it. */
+export const writeContentBox: (box: ContentBoxShape) => Geometry = writeRect;
 
 /** The fewest rows a mesh has, the top curve and the bottom curve, and the fewest nodes of a row. */
 const MESH_MIN_NODES = 2;

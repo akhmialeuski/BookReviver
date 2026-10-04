@@ -63,6 +63,33 @@ export interface PageResult {
   zones: ZoneShape[] | null;
   /** How many specks the step removed. */
   specks: number | null;
+  /** The box of the content the step placed on the page, in the pixels of the full image it read. */
+  contentBox: RectShape | null;
+  /** The box of the content grown by the margins of the page, in the pixels of the full image the step read. */
+  marginBox: RectShape | null;
+  /** The factor the step scaled the box of the content by, which the margins of the page are divided by. */
+  blockScale: number | null;
+  /** The setting that holds the margin of each side of the page, which depends on the side of the book. */
+  marginSettings: MarginSettings | null;
+}
+
+/** The sides of a page that have a margin. */
+export const MARGIN_SIDES = ['left', 'top', 'right', 'bottom'] as const;
+
+/** One side of a page that has a margin (derived from {@link MARGIN_SIDES}). */
+export type MarginSide = (typeof MARGIN_SIDES)[number];
+
+/** The name of the setting that holds the margin of each side of the page. */
+export type MarginSettings = Readonly<Record<MarginSide, string>>;
+
+function marginSettingsOf(value: unknown): MarginSettings | null {
+  const record = recordOf(value);
+  const names = MARGIN_SIDES.map((side) => record?.[side]);
+  return names.every((name) => typeof name === 'string')
+    ? (Object.fromEntries(
+        MARGIN_SIDES.map((side, index) => [side, names[index]]),
+      ) as MarginSettings)
+    : null;
 }
 
 function numberOf(value: unknown): number | null {
@@ -111,6 +138,10 @@ export function readResult(version: Pick<PageVersionSchema, 'data'>): PageResult
       ? data.zones.map(readZone).filter((zone) => zone !== null)
       : null,
     specks: numberOf(data.specks),
+    contentBox: readRect(recordOf(data.content_box)),
+    marginBox: readRect(recordOf(data.margin_box)),
+    blockScale: numberOf(data.block_scale),
+    marginSettings: marginSettingsOf(data.margin_params),
   };
 }
 
@@ -163,6 +194,10 @@ export function readChainResult(
     threshold: nearest('threshold'),
     zones: nearest('zones'),
     specks: nearest('specks'),
+    contentBox: nearest('contentBox'),
+    marginBox: nearest('marginBox'),
+    blockScale: nearest('blockScale'),
+    marginSettings: nearest('marginSettings'),
   };
 }
 

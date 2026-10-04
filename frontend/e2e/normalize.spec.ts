@@ -10,16 +10,15 @@ import {
   waitForIdleJobs,
   writeScaledSheetsFolder,
 } from './support/account';
-import { numbersOf } from './support/layer';
 
 /**
- * Making the pages of a book alike: the book is measured, the Geometry stage puts the block of text of every page on a page of
- * one size with the lines at one distance, and the reader moves the block of one page by hand.
+ * Making the pages of a book alike: the book is measured and the Geometry stage puts the content box of every page on a page of
+ * one size with the lines at one distance.
  *
  * The two scans show the same kind of sheet at two scales of the text, as a scan and a photograph of one book do. Measuring the
- * book writes the median line height and the size of a page into the settings of the normalize step, a run of the stage on all
- * pages then gives every page that size, and the move of the block of one page is saved as an edit of that page, which
- * survives a run on all pages until "Auto" takes it away.
+ * book writes the median line height and the size of the largest box into the settings of the Margins step, and a run of the
+ * stage on all pages then gives every page that size. The editor of the box and the margins has a scenario of its own, in
+ * `margins-content-box.spec.ts`.
  */
 
 const SCENARIO_TIMEOUT_MS = 240_000;
@@ -28,11 +27,9 @@ const SCALES = [1, 1.2] as const;
 const PAGES = SCALES.length;
 // What the settings of the step hold before the book is measured: 0 makes each page its block and its margins
 const DEFAULT_PAGE_WIDTH = '0';
-const NUDGE_KEYS = 2;
 const LINE_TOLERANCE = 0.02;
 // How many pixels the top margin is made larger than the measured one, to tell it from a measured value
 const HAND_MARGIN_GROWTH = 25;
-const PLACEMENT = 'Block on the page';
 const NORMALIZE = '[data-testid="recipe-step"][data-processor="geometry.normalize"]';
 
 /** What the server holds about the current result of the Geometry stage of one page. */
@@ -80,26 +77,17 @@ async function resultsOf(page: Page, projectId: string): Promise<Result[]> {
   return results;
 }
 
-test('the book is measured, its pages come out of one size, and the block of a page is moved by hand', async ({
+test('the book is measured and its pages come out of one size with the lines at one distance', async ({
   page,
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writeScaledSheetsFolder(SCALES);
-  const layer = page.getByTestId('editor-layer');
-  const steps = page.getByTestId('editor-step');
-  const stepOf = (title: string) => steps.filter({ hasText: title });
   const normalize = page.locator(NORMALIZE);
   const field = (name: string) => normalize.locator(`#root_${name}`);
-  // An edit starts a run of the stage on the page, and the next change waits until that run is over
-  const settled = async (): Promise<void> => {
-    await expect(page.getByTestId('editor-busy')).toHaveCount(0);
-    await waitForIdleJobs(page, openProjectId(page));
-  };
   let pageWidth = 0;
   let pageHeight = 0;
   let lineHeight = 0;
   let projectId = '';
-  let block: number[] = [];
 
   await test.step('the stage runs on the scans with the settings a book starts with', async () => {
     await registerAndSignIn(page);
@@ -180,65 +168,6 @@ test('the book is measured, its pages come out of one size, and the block of a p
       expect([result.width, result.height]).toEqual([pageWidth, pageHeight]);
       expect(Math.abs(result.lineHeight - lineHeight) / lineHeight).toBeLessThan(LINE_TOLERANCE);
     }
-  });
-
-  await test.step('the block of the first page is shown on the page of the book, with its frame', async () => {
-    await page.getByRole('button', { name: 'Set by hand' }).click();
-    await expect(layer).toBeVisible();
-    await stepOf(PLACEMENT).click();
-    await expect(layer).toHaveAttribute('aria-label', 'Block of text on the page');
-    await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
-    block = await numbersOf(layer, 'data-rect');
-    const [, , width = 0, height = 0] = block;
-    expect(width).toBeGreaterThan(0);
-    expect(height).toBeGreaterThan(0);
-    // The frame lies on a page of the size the step made, and not on the block the crop cut
-    expect(width).toBeLessThan(pageWidth);
-    expect(height).toBeLessThan(pageHeight);
-    await expect(page.getByTestId('rect-hint')).toBeVisible();
-    await snap(page, 'normalize-block-frame');
-  });
-
-  await test.step('moving the block with the keys is saved for the page and places it again', async () => {
-    await layer.focus();
-    for (let key = 0; key < NUDGE_KEYS; key += 1) {
-      await page.keyboard.press('Shift+ArrowRight');
-      await page.keyboard.press('Shift+ArrowDown');
-    }
-    await expect(stepOf(PLACEMENT)).toHaveAttribute('data-manual', 'true', {
-      timeout: RUN_TIMEOUT_MS,
-    });
-    await settled();
-    const moved = await numbersOf(layer, 'data-rect');
-    expect(moved[0]).toBeGreaterThan(block[0] ?? 0);
-    expect(moved[1]).toBeGreaterThan(block[1] ?? 0);
-    expect([moved[2], moved[3]]).toEqual([block[2], block[3]]);
-    await expect.poll(async () => (await resultsOf(page, projectId))[0]?.frame).toEqual(moved);
-    await snap(page, 'normalize-block-moved');
-  });
-
-  await test.step('the move outlives a run on all pages, and the other page is placed by the settings', async () => {
-    const moved = await numbersOf(layer, 'data-rect');
-    await runAll(page);
-    await expect(stepOf(PLACEMENT)).toHaveAttribute('data-manual', 'true');
-    await expect(layer).toHaveAttribute('data-rect', moved.join(','));
-    const results = await resultsOf(page, projectId);
-    expect(results[0]?.frame).toEqual(moved);
-    expect(results[1]?.frame).not.toEqual(moved);
-    for (const result of results) {
-      expect([result.width, result.height]).toEqual([pageWidth, pageHeight]);
-    }
-  });
-
-  await test.step('Auto takes the move away and the block goes back to where the settings put it', async () => {
-    await page.getByTestId('editor-auto').click();
-    await expect(stepOf(PLACEMENT)).toHaveAttribute('data-manual', 'false', {
-      timeout: RUN_TIMEOUT_MS,
-    });
-    await settled();
-    await expect(layer).toHaveAttribute('data-rect', block.join(','));
-    await expect(page.getByTestId('editor-auto')).toBeDisabled();
-    await snap(page, 'normalize-after-auto');
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });
