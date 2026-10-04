@@ -130,7 +130,8 @@ export function addStep(steps: readonly StepDraft[], processor: ProcessorSchema)
   ];
 }
 
-function sameValue(a: unknown, b: unknown): boolean {
+/** Tell whether two JSON values are equal, whatever the order of the keys of the objects in them. */
+export function sameValue(a: unknown, b: unknown): boolean {
   if (Array.isArray(a) || Array.isArray(b)) {
     return (
       Array.isArray(a) &&

@@ -2198,6 +2198,20 @@ export type ProcessorSchema = {
 export type ProcessorScope = 'page' | 'split';
 
 /**
+ * ProfileLinkBody
+ *
+ * The profile a recipe of a book was made from.
+ *
+ * :ivar profile_id: Identifier of the profile, or null to say the recipe was made from none.
+ */
+export type ProfileLinkBody = {
+    /**
+     * Profile Id
+     */
+    profile_id: string | null;
+};
+
+/**
  * ProgressSchema
  *
  * How far a job has come.
@@ -2599,6 +2613,7 @@ export type RecipeBody = {
  *
  * :ivar name: Name of the profile.
  * :ivar steps: Its steps in the order they run, each checked against its processor.
+ * :ivar order: The order the profile is saved in, which a book opened from it starts in.
  * :ivar stage: Stage whose recipes the profile can be applied to.
  */
 export type RecipeProfileBody = {
@@ -2637,6 +2652,7 @@ export type RecipeProfileName = {
  * :ivar stage: Stage whose recipes the profile can be applied to.
  * :ivar name: Name the user sees.
  * :ivar steps: The steps in the order they run, each with its parameters and its switch.
+ * :ivar order: ``usual`` if the steps were saved with a step off a required place refused, ``free`` if it may stand.
  * :ivar is_default: Whether a new book starts the stage with this profile.
  * :ivar created_at: When the profile was saved.
  * :ivar updated_at: When the profile was last changed.
@@ -2655,6 +2671,7 @@ export type RecipeProfileSchema = {
      * Steps
      */
     steps: Array<StepSchema>;
+    order: OrderMode;
     /**
      * Is Default
      */
@@ -2753,6 +2770,7 @@ export type RecipeRuleTarget = {
  * :ivar name: Name the user sees.
  * :ivar steps: The steps in the order they run.
  * :ivar active: Whether the recipe is the one the stage runs by default.
+ * :ivar profile_id: The profile of the account the recipe was made from, or null for a recipe that was not.
  * :ivar created_at: When the recipe was created.
  * :ivar updated_at: When the recipe was last changed.
  * :ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual
@@ -2780,6 +2798,10 @@ export type RecipeSchema = {
      * Active
      */
     active: boolean;
+    /**
+     * Profile Id
+     */
+    profile_id: string | null;
     /**
      * Created At
      */
@@ -6159,6 +6181,46 @@ export type RenameProfileApiV1RecipeProfilesProfileIdPatchResponses = {
 
 export type RenameProfileApiV1RecipeProfilesProfileIdPatchResponse = RenameProfileApiV1RecipeProfilesProfileIdPatchResponses[keyof RenameProfileApiV1RecipeProfilesProfileIdPatchResponses];
 
+export type PutProfileApiV1RecipeProfilesProfileIdPutData = {
+    body: RecipeBody;
+    path: {
+        /**
+         * Profile Id
+         *
+         * Identifier of the recipe profile
+         */
+        profile_id: string;
+    };
+    query?: never;
+    url: '/api/v1/recipe-profiles/{profile_id}';
+};
+
+export type PutProfileApiV1RecipeProfilesProfileIdPutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type PutProfileApiV1RecipeProfilesProfileIdPutError = PutProfileApiV1RecipeProfilesProfileIdPutErrors[keyof PutProfileApiV1RecipeProfilesProfileIdPutErrors];
+
+export type PutProfileApiV1RecipeProfilesProfileIdPutResponses = {
+    /**
+     * Successful Response
+     */
+    200: RecipeProfileSchema;
+};
+
+export type PutProfileApiV1RecipeProfilesProfileIdPutResponse = PutProfileApiV1RecipeProfilesProfileIdPutResponses[keyof PutProfileApiV1RecipeProfilesProfileIdPutResponses];
+
 export type DeleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteData = {
     body?: never;
     path: {
@@ -6284,6 +6346,56 @@ export type ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostRe
 };
 
 export type ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostResponse = ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostResponses[keyof ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostResponses];
+
+export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutData = {
+    body: ProfileLinkBody;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+        /**
+         * Recipe Id
+         *
+         * Identifier of the recipe
+         */
+        recipe_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}/profile';
+};
+
+export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutError = PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutErrors[keyof PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutErrors];
+
+export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutResponses = {
+    /**
+     * Successful Response
+     */
+    200: RecipeSchema;
+};
+
+export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutResponse = PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutResponses[keyof PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutResponses];
 
 export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData = {
     body?: never;

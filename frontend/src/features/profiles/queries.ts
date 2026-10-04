@@ -8,13 +8,15 @@ import {
   listProfilesApiV1RecipeProfilesGetOptions,
   listProfilesApiV1RecipeProfilesGetQueryKey,
   putDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutMutation,
+  putProfileApiV1RecipeProfilesProfileIdPutMutation,
+  putRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutMutation,
   renameProfileApiV1RecipeProfilesProfileIdPatchMutation,
 } from '@/api/@tanstack/react-query.gen';
 import { refreshStage } from '@/features/processing/queries';
 
 /**
  * The queries and changes behind the recipe profiles of the account: the list of them, by stage or all, and the saving,
- * renaming, choosing as the default, deleting and applying to a book.
+ * replacing, renaming, choosing as the default, deleting, applying to a book and linking a recipe to one.
  *
  * Every change of a profile reads the lists again, since a new default takes the mark off the one before it. Applying a
  * profile changes the recipes of one stage of one book, not the profiles, so it marks that stage stale.
@@ -50,6 +52,27 @@ export function useSaveProfile() {
   return useMutation({
     ...createProfileApiV1RecipeProfilesPostMutation(),
     onSettled: () => refreshProfiles(queryClient),
+  });
+}
+
+/** Replace the name, the steps and the order of a profile, which is how a book saves its changes to its profile. */
+export function useReplaceProfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...putProfileApiV1RecipeProfilesProfileIdPutMutation(),
+    onSettled: () => refreshProfiles(queryClient),
+  });
+}
+
+/**
+ * Record which profile a recipe of a book was made from. The steps of the recipe do not change, so no page goes stale,
+ * but the recipes are read again, since they carry the link.
+ */
+export function useLinkProfile(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...putRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutMutation(),
+    onSettled: () => refreshStage(queryClient, projectId, stage),
   });
 }
 
