@@ -14,6 +14,7 @@ from PIL import Image
 
 from bookreviver.domain.enums import NormalizeParam, Stage, TransformKind, VersionData
 from bookreviver.domain.geometry import ContentBox, Rect
+from bookreviver.domain.margins import NOMINAL_BLOCK_MM
 from bookreviver.domain.values import NewPageEdit, RecipeDraft, StageRun, Step
 from tests.helpers.samples import PAPER, png_bytes, text_page
 from tests.helpers.spreads import book_of, head_of, run_stage, use_recipe
@@ -39,7 +40,7 @@ LARGEST: int = 1
 CHANGED: int = 0
 # How far a measure by the box may be from the pixels a block takes, which keep a little paper round the ink
 BOX_TOLERANCE_PX: float = 12.0
-MARGIN_TOP_BY_HAND: int = 77
+MARGIN_TOP_BY_HAND: float = 30.0
 MANUAL_BOX: ContentBox = ContentBox(left=150, top=170, width=200, height=300)
 # The frame of Select content that the user gave, which is smaller than the block of the page that is changed
 HAND_FRAME: Rect = Rect(left=130, top=160, width=140, height=420)
@@ -122,15 +123,13 @@ class TestOnePageSizeForTheBook:
         params = (await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)).steps[0].params
         width, height = next(iter(sizes))
         expect(len(sizes) == 1)
-        # The margins of a book that is not measured are the ones the step starts with
-        expect(
-            abs(width - (largest.width + params[NormalizeParam.MARGIN_INNER] + params[NormalizeParam.MARGIN_OUTER]))
-            <= BOX_TOLERANCE_PX
-        )
-        expect(
-            abs(height - (largest.height + params[NormalizeParam.MARGIN_TOP] + params[NormalizeParam.MARGIN_BOTTOM]))
-            <= BOX_TOLERANCE_PX
-        )
+        # The margins of a book that is not measured are the ones the step starts with, in millimetres of a block that is
+        # taken for NOMINAL_BLOCK_MM wide, since the sheets carry no resolution
+        pixels_per_mm = largest.width / NOMINAL_BLOCK_MM
+        sides = params[NormalizeParam.MARGIN_INNER] + params[NormalizeParam.MARGIN_OUTER]
+        vertical = params[NormalizeParam.MARGIN_TOP] + params[NormalizeParam.MARGIN_BOTTOM]
+        expect(abs(width - (largest.width + sides * pixels_per_mm)) <= BOX_TOLERANCE_PX)
+        expect(abs(height - (largest.height + vertical * pixels_per_mm)) <= BOX_TOLERANCE_PX)
         # The size is not written into the recipe, so it follows the pages when they change
         expect(params[NormalizeParam.PAGE_WIDTH] == 0 and params[NormalizeParam.PAGE_HEIGHT] == 0)
         assert_expectations()

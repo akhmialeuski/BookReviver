@@ -598,10 +598,10 @@ class NormalizeParam(LabeledStrEnum):
     LINE_HEIGHT = 'line_height', 'Distance between the lines of text, in pixels'
     PAGE_WIDTH = 'page_width', 'Width of the page, in pixels'
     PAGE_HEIGHT = 'page_height', 'Height of the page, in pixels'
-    MARGIN_TOP = 'margin_top', 'Margin at the top, in pixels'
-    MARGIN_BOTTOM = 'margin_bottom', 'Margin at the bottom, in pixels'
-    MARGIN_INNER = 'margin_inner', 'Margin at the gutter, in pixels'
-    MARGIN_OUTER = 'margin_outer', 'Margin at the outer edge, in pixels'
+    MARGIN_TOP = 'margin_top', 'Margin at the top, in millimetres'
+    MARGIN_BOTTOM = 'margin_bottom', 'Margin at the bottom, in millimetres'
+    MARGIN_INNER = 'margin_inner', 'Margin at the gutter, in millimetres'
+    MARGIN_OUTER = 'margin_outer', 'Margin at the outer edge, in millimetres'
 
 
 class BlankParam(LabeledStrEnum):
@@ -801,6 +801,10 @@ class VersionData(LabeledStrEnum):
     MARGIN_PARAMS = (
         'margin_params',
         'Names of the parameters that hold the margin of each side of the page, which the side of the book decides',
+    )
+    MARGIN_PIXELS_PER_MM = (
+        'margin_pixels_per_mm',
+        'Pixels of the full image the step read in a millimetre of the margins of the page',
     )
 
 

@@ -15,12 +15,16 @@ target than ``max_scale_change`` percent of it is placed unscaled and marked for
 the lines were not measured right. The line height comes from the data ``geometry.crop`` wrote when the box is its
 own, or else it is measured on the box here.
 
-The page has a margin on each of its four sides. The two at the sides are told apart by the side of the book the page
-lies on: the inner margin is the one at the gutter, on the left of a right page and on the right of a left page, so the
-margins of the two pages of a spread mirror. A book without spreads asks for the left and the right margin instead,
-which are the same on every page. A box narrower or lower than the work area inside the margins stands at the edge
-the alignment names, which is how the last page of a chapter keeps its first line where the first line of every other
-page is. The rest of the page is filled with the median colour of the paper of the box, or with white.
+The page has a margin on each of its four sides, in millimetres of the paper, which the step turns into pixels by the
+resolution of the page after the box is scaled, so a scan at 300 dpi, one at 600 dpi and a photograph get the same
+margin. A page whose resolution is unknown takes the width of the content box of the book for a block of
+``NOMINAL_BLOCK_MM`` millimetres, which keeps the margins in proportion to the text. The two margins at the sides are
+told apart by the side of the book the page lies on: the inner margin is the one at the gutter, on the left of a right
+page and on the right of a left page, so the margins of the two pages of a spread mirror. A book without spreads asks
+for the left and the right margin instead, which are the same on every page. A box narrower or lower than the work area
+inside the margins stands at the edge the alignment names, which is how the last page of a chapter keeps its first line
+where the first line of every other page is. The rest of the page is filled with the median colour of the paper of the
+box, or with white.
 
 The step records what a reader of the page and the measure of the book need: the box it placed and its place on the
 page, the factor it scaled the box by, and the box grown by the margins of the page, all in the pixels of the full image
@@ -54,6 +58,7 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import ContentBox, Rect, Transform
+from bookreviver.domain.margins import DEFAULT_MARGINS_MM, MarginScale
 from bookreviver.domain.values import OrderRule, ProcessorSpec
 from bookreviver.plugins.base import ModelProcessor, Params
 from bookreviver.plugins.crop import CropParams, FrameSearch, cut_edges_of
@@ -87,7 +92,7 @@ HALF: float = 2.0
 # The bounds of the sizes in pixels, wide enough for a scan of a large page at a high resolution
 MAX_PAGE_PX: int = 20_000
 MIN_PAGE_PX: int = 64
-MAX_MARGIN_PX: int = 10_000
+MAX_MARGIN_MM: float = 50.0
 MAX_LINE_HEIGHT_PX: float = 1_000.0
 NO_ROOM: str = 'The margins leave no room for text on the page: they take {margins} of {page} pixels.'
 TOO_SMALL: str = 'A page of {page} pixels is too small: give at least {smallest} pixels, or 0 to size it by the book.'
@@ -104,10 +109,11 @@ class NormalizeParams(Params):
                             the page is left unscaled and marked for review.
     :ivar page_width: Width of the page in pixels, 0 for the width by the book.
     :ivar page_height: Height of the page in pixels, 0 for the height by the book.
-    :ivar margin_top: Margin at the top of the page in pixels.
-    :ivar margin_bottom: Margin at the bottom of the page in pixels.
-    :ivar margin_inner: Margin at the gutter in pixels, or the left margin when the margins are by left and right.
-    :ivar margin_outer: Margin at the outer edge in pixels, or the right margin when the margins are by left and right.
+    :ivar margin_top: Margin at the top of the page in millimetres.
+    :ivar margin_bottom: Margin at the bottom of the page in millimetres.
+    :ivar margin_inner: Margin at the gutter in millimetres, or the left margin when the margins are by left and right.
+    :ivar margin_outer: Margin at the outer edge in millimetres, or the right margin when the margins are by left and
+                        right.
     :ivar margins_by: Whether the side margins are inner and outer, by the side of the book, or left and right.
     :ivar align_vertical: Where a box lower than the work area stands.
     :ivar align_horizontal: Where a box narrower than the work area stands.
@@ -152,25 +158,35 @@ class NormalizeParams(Params):
         description='Height of the page, in pixels; 0 takes the largest content box of the book and the top and '
         'bottom margins. Measure the book fills it in',
     )
-    margin_top: int = Field(
-        default=150, ge=0, le=MAX_MARGIN_PX, title='Top margin', description='Margin at the top, in pixels'
-    )
-    margin_bottom: int = Field(
-        default=200, ge=0, le=MAX_MARGIN_PX, title='Bottom margin', description='Margin at the bottom, in pixels'
-    )
-    margin_inner: int = Field(
-        default=200,
+    margin_top: float = Field(
+        default=DEFAULT_MARGINS_MM[NormalizeParam.MARGIN_TOP],
         ge=0,
-        le=MAX_MARGIN_PX,
-        title='Inner margin',
-        description='Margin at the gutter, in pixels; the left margin when the margins are by left and right',
+        le=MAX_MARGIN_MM,
+        title='Top margin, mm',
+        description='Margin at the top, in millimetres of the paper',
     )
-    margin_outer: int = Field(
-        default=150,
+    margin_bottom: float = Field(
+        default=DEFAULT_MARGINS_MM[NormalizeParam.MARGIN_BOTTOM],
         ge=0,
-        le=MAX_MARGIN_PX,
-        title='Outer margin',
-        description='Margin at the outer edge, in pixels; the right margin when the margins are by left and right',
+        le=MAX_MARGIN_MM,
+        title='Bottom margin, mm',
+        description='Margin at the bottom, in millimetres of the paper',
+    )
+    margin_inner: float = Field(
+        default=DEFAULT_MARGINS_MM[NormalizeParam.MARGIN_INNER],
+        ge=0,
+        le=MAX_MARGIN_MM,
+        title='Inner margin, mm',
+        description='Margin at the gutter, in millimetres of the paper; the left margin when the margins are by left '
+        'and right',
+    )
+    margin_outer: float = Field(
+        default=DEFAULT_MARGINS_MM[NormalizeParam.MARGIN_OUTER],
+        ge=0,
+        le=MAX_MARGIN_MM,
+        title='Outer margin, mm',
+        description='Margin at the outer edge, in millimetres of the paper; the right margin when the margins are by '
+        'left and right',
     )
     margins_by: MarginsBy = Field(
         default=MarginsBy.INNER_OUTER,
@@ -194,26 +210,19 @@ class NormalizeParams(Params):
     )
 
     @model_validator(mode='after')
-    def check_room_for_text(self) -> Self:
-        """Check that a size of the page that is given is not too small and leaves some of it for the text.
+    def check_page_size(self) -> Self:
+        """Check that a size of the page that is given is not too small.
 
-        A size of 0 is the one by the book, which always has room for the box.
+        A size of 0 is the one by the book, which always has room for the box. Whether the margins leave room on a page
+        of the size given depends on the resolution of the page, so the step checks that when it places the box.
 
         :returns: The parameters.
         :rtype: Self
-        :raises ValueError: If a size of the page is below the smallest one, or the margins of a direction take the
-                            whole page.
+        :raises ValueError: If a size of the page is below the smallest one.
         """
-        for margins, page in (
-            (self.margin_top + self.margin_bottom, self.page_height),
-            (self.margin_inner + self.margin_outer, self.page_width),
-        ):
-            if page == 0:
-                continue
-            if page < MIN_PAGE_PX:
+        for page in (self.page_height, self.page_width):
+            if 0 < page < MIN_PAGE_PX:
                 raise ValueError(TOO_SMALL.format(page=page, smallest=MIN_PAGE_PX))
-            if margins >= page:
-                raise ValueError(NO_ROOM.format(margins=margins, page=page))
         return self
 
 
@@ -254,11 +263,13 @@ class PagePlan:
 
     :ivar size: Width and height of the page, as the parameters give them or else as the box and its margins make.
     :ivar area: The room the margins leave on the page.
-    :ivar margins: Left, top, right and bottom margin of the page, by the side of the book the page lies on.
+    :ivar margins: Left, top, right and bottom margin of the page in pixels, by the side of the book the page lies on.
     :ivar margin_names: The parameter that holds the margin of each side of the page, by the name of the side.
     """
 
-    def __init__(self, params: NormalizeParams, side: PageSide | None, block: tuple[float, float]) -> None:
+    def __init__(
+        self, params: NormalizeParams, side: PageSide | None, block: tuple[float, float], dpi: float | None
+    ) -> None:
         """Work out the size of the page of a side of the book and the room its margins leave.
 
         :param params: The parameters of the step.
@@ -268,13 +279,26 @@ class PagePlan:
         :param block: Width and height of the box as it is placed, which make a size of the page the parameters leave
                       at 0.
         :type block: tuple[float, float]
+        :param dpi: Resolution of the page after the box is scaled, or None when the page has none.
+        :type dpi: float | None
+        :raises ConflictError: If the margins take the whole of a size of the page that the parameters give.
         """
         self._params = params
         # The gutter is on the left of a right page, and the left margin of a book without spreads is the inner one
         self._inner_left = params.margins_by is MarginsBy.LEFT_RIGHT or side is not PageSide.LEFT
-        left = params.margin_inner if self._inner_left else params.margin_outer
-        right = params.margin_outer if self._inner_left else params.margin_inner
-        self.margins = (float(left), float(params.margin_top), float(right), float(params.margin_bottom))
+        left_mm = params.margin_inner if self._inner_left else params.margin_outer
+        right_mm = params.margin_outer if self._inner_left else params.margin_inner
+        if dpi is not None:
+            scale = MarginScale.from_dpi(dpi)
+        elif params.page_width:
+            scale = MarginScale.from_page(params.page_width, left_mm + right_mm)
+        else:
+            scale = MarginScale.from_block(block[0])
+        self.pixels_per_mm = scale.pixels_per_mm
+        left, top, right, bottom = (
+            scale.pixels(mm) for mm in (left_mm, params.margin_top, right_mm, params.margin_bottom)
+        )
+        self.margins = (left, top, right, bottom)
         left_name, right_name = (
             (NormalizeParam.MARGIN_INNER, NormalizeParam.MARGIN_OUTER)
             if self._inner_left
@@ -287,14 +311,12 @@ class PagePlan:
             'bottom': NormalizeParam.MARGIN_BOTTOM.value,
         }
         width = params.page_width or math.ceil(left + block[0] + right)
-        height = params.page_height or math.ceil(params.margin_top + block[1] + params.margin_bottom)
+        height = params.page_height or math.ceil(top + block[1] + bottom)
+        for taken, page in ((left + right, width), (top + bottom, height)):
+            if taken >= page:
+                raise ConflictError(NO_ROOM.format(margins=math.ceil(taken), page=page))
         self.size = (width, height)
-        self.area = Rect(
-            left=left,
-            top=params.margin_top,
-            width=width - left - right,
-            height=height - params.margin_top - params.margin_bottom,
-        )
+        self.area = Rect(left=left, top=top, width=width - left - right, height=height - top - bottom)
 
     def place(self, width: float, height: float) -> Rect:
         """Put a box on the page by the alignment of the parameters.
@@ -371,7 +393,11 @@ class Placing:
                 self.factor = wanted / self._measured
         # The box as it is placed, in the pixels of the full page
         block = ((right - left) / self._scale * self.factor, (bottom - top) / self._scale * self.factor)
-        self._plan = PagePlan(params, step_input.side, block)
+        dpi = step_input.input_data.get(VersionData.DPI)
+        # The resolution of the box changes with its size, and the margins of the page are lengths of the paper
+        self._plan = PagePlan(
+            params, step_input.side, block, dpi * self.factor if isinstance(dpi, int | float) and dpi > 0 else None
+        )
         self.target = self._plan.place(*block)
         # The place of the box and the size of the page in the pixels of this run
         self._box = (
@@ -455,6 +481,8 @@ class Placing:
                 VersionData.CONTENT_BOX: found.to_data(),
                 VersionData.BLOCK_SCALE: self.factor,
                 VersionData.MARGIN_PARAMS: self._plan.margin_names,
+                # A distance on the image read is this many pixels to a millimetre of margin, which the editor needs
+                VersionData.MARGIN_PIXELS_PER_MM: self._plan.pixels_per_mm / self.factor,
                 # The margins are on the page, so they are brought back to the image the box was found on
                 VersionData.MARGIN_BOX: Rect(
                     left=found.left - margin_left / self.factor,
@@ -477,7 +505,7 @@ class Normalize(ModelProcessor):
     params_model = NormalizeParams
     spec = ProcessorSpec(
         key='geometry.normalize',
-        version='2',
+        version='3',
         title=MARGINS_TITLE,
         summary='One page size, scale and margins for the book',
         stage=Stage.GEOMETRY,
