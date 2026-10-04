@@ -1,4 +1,11 @@
-import { CircleXIcon, EyeOffIcon, PencilIcon, PinIcon, ThumbsDownIcon, TriangleAlertIcon } from 'lucide-react';
+import {
+  CircleXIcon,
+  EyeOffIcon,
+  PencilIcon,
+  PinIcon,
+  ThumbsDownIcon,
+  TriangleAlertIcon,
+} from 'lucide-react';
 import { PageThumbnail } from '@/features/pages/PageThumbnail';
 import { PAGE_STATUS_TONE } from '@/features/stages/stages';
 import { describeContent, markOfContent } from '@/features/workspace/content';
