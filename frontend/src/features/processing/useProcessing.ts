@@ -120,12 +120,15 @@ function previewIndex(steps: readonly StepDraft[], openId: string | undefined): 
  * @param stage The stage.
  * @param current The page open on the canvas, which a preview is made of.
  * @param onPreviewStart Called when the reader turns the preview on, so the canvas can show the picture after.
+ * @param focusStepId The saved step open in the step workspace, which a preview is wanted of in place of the step open in
+ * the list, or undefined when no step is open there.
  */
 export function useProcessing(
   projectId: string,
   stage: Stage,
   current: StripItem | undefined,
   onPreviewStart: () => void,
+  focusStepId?: string,
 ): Processing {
   const processors = useProcessors();
   const catalogue = useMemo(
@@ -188,7 +191,8 @@ export function useProcessing(
   const refused = orderMode === 'free' ? [] : issues.filter((issue) => issue.kind === 'required');
 
   const [previewOn, setPreviewOn] = useState(false);
-  const index = previewIndex(steps, openId);
+  const focused = steps.find((step) => step.stepId === focusStepId)?.id;
+  const index = previewIndex(steps, focused ?? openId);
   let blocked: PreviewBlock | null = null;
   if (current === undefined) {
     blocked = PreviewBlock.NoPage;

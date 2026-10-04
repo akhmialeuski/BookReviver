@@ -996,3 +996,98 @@ class TestPinAndGroups:
         expect(grouped.json()['group_label'] == 'Engravings')
         expect(cleared.json()['group_label'] == '')
         assert_expectations()
+
+
+class TestStepRows:
+    """Tests for the rows of a stage asked for a step: GET /stages/{stage}/pages?step=."""
+
+    async def test_a_page_not_run_has_the_default_shape_at_the_step(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify the row says which step it was placed at, with the default shape and no versions.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
+        step = response.json()[ITEMS][0]['step']
+        expect(response.status_code == status.HTTP_200_OK)
+        expect(step == {'step_id': step_id, 'state': 'default', 'input_version': None, 'version': None})
+        assert_expectations()
+
+    async def test_a_page_run_through_the_step_has_what_the_step_found_and_read(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify the row of a step that ran holds the version it made and the version of the stage before it read.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the job.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        await run_stage(fx_client, fx_broker, fx_book, 'geometry')
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
+        row = response.json()[ITEMS][0]
+        step = row['step']
+        expect(step['state'] == 'found')
+        expect(step['version']['id'] == row['version']['id'])
+        expect(step['input_version']['stage'] == 'page-split')
+        assert_expectations()
+
+    async def test_an_edit_of_the_step_makes_the_shape_set_by_hand(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a saved edit of the step is what the state of the row names, before any run.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        await fx_client.put(
+            f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
+        )
+        response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
+        assert response.json()[ITEMS][0]['step']['state'] == 'by-hand'
+
+    async def test_rows_asked_for_no_step_carry_none(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify the list of the stage alone holds a null where the step would be.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages')
+        assert response.json()[ITEMS][0]['step'] is None
+
+    async def test_a_step_no_recipe_has_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify an identifier that is the step of no recipe of the stage answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': str(uuid4())})
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_a_step_that_is_not_an_identifier_is_a_422(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify the query is checked before the route runs.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': 'second'})
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT

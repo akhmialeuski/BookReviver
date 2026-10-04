@@ -28,12 +28,19 @@ export const ROWS_PAGE_SIZE = 1000;
 /** How many jobs the list of the activity shows, the newest first. */
 export const JOBS_LISTED = 20;
 
-/** Query options of the whole manifest of rows of one stage. */
-export function stageRowsOptions(projectId: string, stage: Stage) {
+/**
+ * Query options of the whole manifest of rows of one stage.
+ *
+ * @param projectId The book.
+ * @param stage The stage.
+ * @param step A step of the recipe to place every page at, or undefined for the rows of the stage alone.
+ */
+export function stageRowsOptions(projectId: string, stage: Stage, step?: string) {
+  const extra = step === undefined ? {} : { step };
   return queryOptions({
     queryKey: listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey({
       path: { project_id: projectId, stage },
-      query: { size: ROWS_PAGE_SIZE },
+      query: { size: ROWS_PAGE_SIZE, ...extra },
     }),
     queryFn: async ({ signal }): Promise<StagePageSchema[]> => {
       const rows: StagePageSchema[] = [];
@@ -42,7 +49,7 @@ export function stageRowsOptions(projectId: string, stage: Stage) {
       while (page <= total) {
         const { data } = await listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet({
           path: { project_id: projectId, stage },
-          query: { page, size: ROWS_PAGE_SIZE },
+          query: { page, size: ROWS_PAGE_SIZE, ...extra },
           signal,
           throwOnError: true,
         });
@@ -58,6 +65,15 @@ export function stageRowsOptions(projectId: string, stage: Stage) {
 /** Read where every page of the book stands in one stage. */
 export function useStageRows(projectId: string, stage: Stage): UseQueryResult<StagePageSchema[]> {
   return useQuery(stageRowsOptions(projectId, stage));
+}
+
+/** Read where every page of the book stands at one step of a stage; nothing is read while no step is open. */
+export function useStepRows(
+  projectId: string,
+  stage: Stage,
+  step: string | undefined,
+): UseQueryResult<StagePageSchema[]> {
+  return useQuery({ ...stageRowsOptions(projectId, stage, step), enabled: step !== undefined });
 }
 
 /** Read the summary of every stage of the book, in the order of the pipeline. */
@@ -103,4 +119,32 @@ export function useActiveJobs(projectId: string): UseQueryResult<JobSchema[]> {
 /** Read the latest jobs of the book in every state, for the list of the activity when it is open. */
 export function useRecentJobs(projectId: string, enabled: boolean): UseQueryResult<JobSchema[]> {
   return useQuery({ ...jobsOptions(projectId, false), enabled });
+}
+
+/**
+ * Query options of one row of a stage at one step: the page at a place in the book, which a request of a single row
+ * reads, so the step bar can tell the state of every step on the open page without reading the whole book for each.
+ *
+ * @param projectId The book.
+ * @param stage The stage.
+ * @param step The step of the recipe to place the page at.
+ * @param position Place of the page in the book from zero.
+ */
+export function stepRowOptions(projectId: string, stage: Stage, step: string, position: number) {
+  const query = { step, page: position + 1, size: 1 };
+  return queryOptions({
+    queryKey: listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey({
+      path: { project_id: projectId, stage },
+      query,
+    }),
+    queryFn: async ({ signal }): Promise<StagePageSchema | null> => {
+      const { data } = await listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet({
+        path: { project_id: projectId, stage },
+        query,
+        signal,
+        throwOnError: true,
+      });
+      return data.items[0] ?? null;
+    },
+  });
 }

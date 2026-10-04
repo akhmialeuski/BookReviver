@@ -24,6 +24,7 @@ import { Route as AuthenticatedProjectsProjectIdIndexRouteImport } from './route
 import { Route as AuthenticatedProjectsProjectIdAboutRouteImport } from './routes/_authenticated/projects/$projectId/about'
 import { Route as AuthenticatedProjectsProjectIdViewerRouteImport } from './routes/_authenticated/projects/$projectId/viewer'
 import { Route as AuthenticatedProjectsProjectIdStagesStageRouteImport } from './routes/_authenticated/projects/$projectId/stages.$stage'
+import { Route as AuthenticatedProjectsProjectIdStagesStageStepsStepIdRouteImport } from './routes/_authenticated/projects/$projectId/stages.$stage.steps.$stepId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -106,6 +107,12 @@ const AuthenticatedProjectsProjectIdStagesStageRoute =
     path: '/stages/$stage',
     getParentRoute: () => AuthenticatedProjectsProjectIdRouteRoute,
   } as any)
+const AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute =
+  AuthenticatedProjectsProjectIdStagesStageStepsStepIdRouteImport.update({
+    id: '/steps/$stepId',
+    path: '/steps/$stepId',
+    getParentRoute: () => AuthenticatedProjectsProjectIdStagesStageRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -121,7 +128,8 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/about': typeof AuthenticatedProjectsProjectIdAboutRoute
   '/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
   '/projects/$projectId/': typeof AuthenticatedProjectsProjectIdIndexRoute
-  '/projects/$projectId/stages/$stage': typeof AuthenticatedProjectsProjectIdStagesStageRoute
+  '/projects/$projectId/stages/$stage': typeof AuthenticatedProjectsProjectIdStagesStageRouteWithChildren
+  '/projects/$projectId/stages/$stage/steps/$stepId': typeof AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -136,7 +144,8 @@ export interface FileRoutesByTo {
   '/projects/$projectId/about': typeof AuthenticatedProjectsProjectIdAboutRoute
   '/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdIndexRoute
-  '/projects/$projectId/stages/$stage': typeof AuthenticatedProjectsProjectIdStagesStageRoute
+  '/projects/$projectId/stages/$stage': typeof AuthenticatedProjectsProjectIdStagesStageRouteWithChildren
+  '/projects/$projectId/stages/$stage/steps/$stepId': typeof AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -154,7 +163,8 @@ export interface FileRoutesById {
   '/_authenticated/projects/$projectId/about': typeof AuthenticatedProjectsProjectIdAboutRoute
   '/_authenticated/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
   '/_authenticated/projects/$projectId/': typeof AuthenticatedProjectsProjectIdIndexRoute
-  '/_authenticated/projects/$projectId/stages/$stage': typeof AuthenticatedProjectsProjectIdStagesStageRoute
+  '/_authenticated/projects/$projectId/stages/$stage': typeof AuthenticatedProjectsProjectIdStagesStageRouteWithChildren
+  '/_authenticated/projects/$projectId/stages/$stage/steps/$stepId': typeof AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -173,6 +183,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/viewer'
     | '/projects/$projectId/'
     | '/projects/$projectId/stages/$stage'
+    | '/projects/$projectId/stages/$stage/steps/$stepId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -188,6 +199,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/viewer'
     | '/projects/$projectId'
     | '/projects/$projectId/stages/$stage'
+    | '/projects/$projectId/stages/$stage/steps/$stepId'
   id:
     | '__root__'
     | '/'
@@ -205,6 +217,7 @@ export interface FileRouteTypes {
     | '/_authenticated/projects/$projectId/viewer'
     | '/_authenticated/projects/$projectId/'
     | '/_authenticated/projects/$projectId/stages/$stage'
+    | '/_authenticated/projects/$projectId/stages/$stage/steps/$stepId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -325,14 +338,36 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProjectsProjectIdStagesStageRouteImport
       parentRoute: typeof AuthenticatedProjectsProjectIdRouteRoute
     }
+    '/_authenticated/projects/$projectId/stages/$stage/steps/$stepId': {
+      id: '/_authenticated/projects/$projectId/stages/$stage/steps/$stepId'
+      path: '/steps/$stepId'
+      fullPath: '/projects/$projectId/stages/$stage/steps/$stepId'
+      preLoaderRoute: typeof AuthenticatedProjectsProjectIdStagesStageStepsStepIdRouteImport
+      parentRoute: typeof AuthenticatedProjectsProjectIdStagesStageRoute
+    }
   }
 }
+
+interface AuthenticatedProjectsProjectIdStagesStageRouteChildren {
+  AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute: typeof AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute
+}
+
+const AuthenticatedProjectsProjectIdStagesStageRouteChildren: AuthenticatedProjectsProjectIdStagesStageRouteChildren =
+  {
+    AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute:
+      AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute,
+  }
+
+const AuthenticatedProjectsProjectIdStagesStageRouteWithChildren =
+  AuthenticatedProjectsProjectIdStagesStageRoute._addFileChildren(
+    AuthenticatedProjectsProjectIdStagesStageRouteChildren,
+  )
 
 interface AuthenticatedProjectsProjectIdRouteRouteChildren {
   AuthenticatedProjectsProjectIdAboutRoute: typeof AuthenticatedProjectsProjectIdAboutRoute
   AuthenticatedProjectsProjectIdViewerRoute: typeof AuthenticatedProjectsProjectIdViewerRoute
   AuthenticatedProjectsProjectIdIndexRoute: typeof AuthenticatedProjectsProjectIdIndexRoute
-  AuthenticatedProjectsProjectIdStagesStageRoute: typeof AuthenticatedProjectsProjectIdStagesStageRoute
+  AuthenticatedProjectsProjectIdStagesStageRoute: typeof AuthenticatedProjectsProjectIdStagesStageRouteWithChildren
 }
 
 const AuthenticatedProjectsProjectIdRouteRouteChildren: AuthenticatedProjectsProjectIdRouteRouteChildren =
@@ -344,7 +379,7 @@ const AuthenticatedProjectsProjectIdRouteRouteChildren: AuthenticatedProjectsPro
     AuthenticatedProjectsProjectIdIndexRoute:
       AuthenticatedProjectsProjectIdIndexRoute,
     AuthenticatedProjectsProjectIdStagesStageRoute:
-      AuthenticatedProjectsProjectIdStagesStageRoute,
+      AuthenticatedProjectsProjectIdStagesStageRouteWithChildren,
   }
 
 const AuthenticatedProjectsProjectIdRouteRouteWithChildren =

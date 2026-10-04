@@ -28,7 +28,9 @@ const RUN_TIMEOUT_MS = 90_000;
 const PAGES = 2;
 // The steps of the default recipe: the sheet, the angle, the curves, the frame and the block on the page
 const STEPS = 5;
-const SHEET_DRAG = { x: 24, y: 18 };
+// Outward, into the margin of the scan: a drag inward by screen pixels cuts into the text at a smaller zoom, and the frame
+// the later step finds would then touch the edge of the page
+const SHEET_DRAG = { x: -12, y: -9 };
 const FRAME_DRAG_PX = 30;
 const ANGLE_DEG = '1.5';
 

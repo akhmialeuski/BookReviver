@@ -870,7 +870,9 @@ export const listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey = (
  * List the pages of a book in book order, each with where it stands in a stage and the version that is its result.
  *
  * A page the stage has not run on has the status ``not-run`` and no version. A page holds up to a thousand rows, as
- * the page manifest does, so a strip of a whole book takes few requests.
+ * the page manifest does, so a strip of a whole book takes few requests. With ``step`` every row also says what that
+ * step read and made on its page and where the shape of the step comes from; a step no recipe of the stage has is a
+ * 404.
  */
 export const listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetOptions = (options: Options<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData>) => queryOptions<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponse, ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetError, ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponse, ReturnType<typeof listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -893,7 +895,9 @@ export const listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetInfiniteQuer
  * List the pages of a book in book order, each with where it stands in a stage and the version that is its result.
  *
  * A page the stage has not run on has the status ``not-run`` and no version. A page holds up to a thousand rows, as
- * the page manifest does, so a strip of a whole book takes few requests.
+ * the page manifest does, so a strip of a whole book takes few requests. With ``step`` every row also says what that
+ * step read and made on its page and where the shape of the step comes from; a step no recipe of the stage has is a
+ * 404.
  */
 export const listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetInfiniteOptions = (options: Options<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData>) => {
     const opts = infiniteQueryOptions<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponse, ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetError, InfiniteData<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponse>, QueryKey<Options<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData>>, number | Pick<QueryKey<Options<ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(

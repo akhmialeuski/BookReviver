@@ -1,12 +1,17 @@
 """Tests for the sums of the stages of books: the summary of a book, the rows of a stage and the progress in a list."""
 
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import (
+    AppliesTo,
+    EditorKind,
+    FigureState,
+    PageKind,
     PageStageStatus,
     ReviewReason,
     Stage,
@@ -14,8 +19,13 @@ from bookreviver.domain.enums import (
     StageStatus,
     VersionState,
 )
-from bookreviver.domain.values import ProcessorRef, SliceRequest, StageRun
+from bookreviver.domain.errors import NotFoundError
+from bookreviver.domain.geometry import Rotation
+from bookreviver.domain.ids import StepId
+from bookreviver.domain.values import NewPageEdit, PageStepKey, ProcessorRef, RecipeDraft, SliceRequest, StageRun, Step
 from tests.helpers.builders import make_page_stage, make_page_version
+from tests.helpers.processors import FakeProcessor
+from tests.helpers.spreads import run_stage
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Page, Project
@@ -27,6 +37,8 @@ pytestmark = pytest.mark.anyio
 # The stages the fake catalogue of the kit has a processor for, which are available with the ones done by hand
 STAGES_WITH_A_PROCESSOR: frozenset[Stage] = frozenset({Stage.PAGE_SPLIT, Stage.GEOMETRY, Stage.CLEANUP})
 PAGE_KEYS: tuple[str, ...] = ('a0', 'a1', 'a2')
+FAKE_KEY: str = FakeProcessor.spec.key
+ROTATION: NewPageEdit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=1.5))
 
 
 async def seed_book(kit: ProcessingKit) -> tuple[Actor, Project, list[Page]]:
@@ -371,3 +383,136 @@ class TestWithProgress:
         :type fx_kit: ProcessingKit
         """
         assert await fx_kit.stages().with_progress([]) == []
+
+
+async def seed_text_and_plate(kit: ProcessingKit) -> tuple[Actor, Project, Page, Page]:
+    """Seed a project of a text page and a plate, each with its base version, and save a recipe of two steps for them.
+
+    The first step processes the pages of text and the second the pictures, so each page passes one of them unchanged.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :returns: The actor, the project, the text page and the plate.
+    :rtype: tuple[Actor, Project, Page, Page]
+    """
+    actor, project = await kit.seed_project()
+    text, _ = await kit.seed_scan_page(project, order_key='a0')
+    plate, _ = await kit.seed_scan_page(project, order_key='a1', kind=PageKind.PLATE)
+    for page in (text, plate):
+        await kit.seed_base_version(page)
+    steps = [
+        Step(processor_key=FAKE_KEY, applies_to=AppliesTo.TEXT),
+        Step(processor_key=FAKE_KEY, applies_to=AppliesTo.PICTURES),
+    ]
+    await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, RecipeDraft(name='Two', steps=steps))
+    return actor, project, text, plate
+
+
+async def step_ids_of(kit: ProcessingKit, project: Project) -> list[StepId]:
+    """Read the identifiers of the steps of the active recipe of the geometry stage, in order.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param project: The project.
+    :type project: Project
+    :returns: The identifiers of the steps.
+    :rtype: list[StepId]
+    """
+    recipe = await kit.uow().recipes.find_active(project.id, Stage.GEOMETRY)
+    assert recipe is not None
+    return [step.step_id for step in recipe.steps]
+
+
+class TestStepRows:
+    """Tests for StageSummaries.rows asked for a step."""
+
+    async def test_a_page_the_stage_has_not_run_on_holds_the_default_shape_at_every_step(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify the rows of a step before any run say nothing of the step but its default shape.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, project, _, _ = await seed_text_and_plate(fx_kit)
+        first, _ = await step_ids_of(fx_kit, project)
+        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
+        assert [(row.step.state, row.step.version) for row in rows.items if row.step is not None] == [
+            (FigureState.DEFAULT, None),
+            (FigureState.DEFAULT, None),
+        ]
+
+    async def test_a_row_without_a_step_has_no_step(self, fx_kit: ProcessingKit) -> None:
+        """Verify the rows of the stage alone are the rows they were, so a strip that asks for no step pays nothing.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, project, _, _ = await seed_text_and_plate(fx_kit)
+        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
+        assert [row.step for row in rows.items] == [None, None]
+
+    async def test_each_page_has_found_the_shape_of_the_step_that_ran_on_it_and_skipped_the_other(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a step that ran is found, a step that passed the page by its condition is skipped, per step.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, _, _ = await seed_text_and_plate(fx_kit)
+        first, second = await step_ids_of(fx_kit, project)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        by_first = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
+        by_second = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), second)
+        expect([row.step.state for row in by_first.items if row.step] == [FigureState.FOUND, FigureState.SKIPPED])
+        expect([row.step.state for row in by_second.items if row.step] == [FigureState.SKIPPED, FigureState.FOUND])
+        assert_expectations()
+
+    async def test_the_second_step_reads_what_the_first_made_and_the_first_reads_the_stage_before(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify the input of a step is the version of the step before it, and for the first step the earlier stage's.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, text, _ = await seed_text_and_plate(fx_kit)
+        first, second = await step_ids_of(fx_kit, project)
+        base = (await fx_kit.uow().page_versions.list_for_page(text.id))[0]
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        by_first = (await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)).items[0].step
+        by_second = (await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), second)).items[0].step
+        assert by_first is not None
+        assert by_second is not None
+        assert by_first.input_version is not None
+        expect(by_first.input_version.id == base.id)
+        expect(by_second.input_version == by_first.version)
+        assert_expectations()
+
+    async def test_an_edit_of_the_step_makes_its_shape_set_by_hand_on_that_page_only(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify an edit belongs to its step: the other step of the same processor still has the default shape.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, text, _ = await seed_text_and_plate(fx_kit)
+        first, second = await step_ids_of(fx_kit, project)
+        await fx_kit.edits().save(actor, project.id, PageStepKey(text.id, Stage.GEOMETRY, first), ROTATION, None)
+        by_first = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
+        by_second = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), second)
+        expect([row.step.state for row in by_first.items if row.step] == [FigureState.BY_HAND, FigureState.DEFAULT])
+        expect([row.step.state for row in by_second.items if row.step] == [FigureState.DEFAULT, FigureState.DEFAULT])
+        assert_expectations()
+
+    async def test_a_step_no_recipe_of_the_stage_has_is_not_found(self, fx_kit: ProcessingKit) -> None:
+        """Verify an identifier that is the step of no recipe is refused, not answered with default shapes.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, project, _, _ = await seed_text_and_plate(fx_kit)
+        with pytest.raises(NotFoundError):
+            await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), StepId(uuid4()))

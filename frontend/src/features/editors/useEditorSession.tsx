@@ -62,6 +62,7 @@ export function useEditorSession({
   items,
   scans,
   before,
+  focusStepId,
 }: {
   processing: Processing;
   current: StripItem | undefined;
@@ -69,6 +70,11 @@ export function useEditorSession({
   scans: readonly ScanSchema[];
   /** The picture before the stage on the open page. */
   before: ImageSource | null;
+  /**
+   * The step open in the step workspace, whose editor is the one shown, or none when that step has no editor. Absent when
+   * no step is open, and the reader then picks from the steps that have one.
+   */
+  focusStepId?: string;
 }): EditorSession | null {
   const { projectId, stage, catalogue } = processing;
   const queryClient = useQueryClient();
@@ -82,7 +88,10 @@ export function useEditorSession({
   const recipe = processing.recipe;
   const editable = editableStepsOf(recipe, catalogue);
   const [chosen, setChosen] = useState<string | null>(null);
-  const entry = editable.find((candidate) => candidate.step.step_id === chosen) ?? editable[0];
+  const entry =
+    focusStepId === undefined
+      ? (editable.find((candidate) => candidate.step.step_id === chosen) ?? editable[0])
+      : editable.find((candidate) => candidate.step.step_id === focusStepId);
   const processor = entry?.processor;
   const step = entry?.step;
   const kind = processor?.editor;

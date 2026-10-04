@@ -10,14 +10,14 @@ from typing import TYPE_CHECKING, Self
 
 from bookreviver.api.schemas.base import ResponseModel
 from bookreviver.api.schemas.processing import PageVersionSchema
-from bookreviver.domain.enums import PageStageStatus, ReviewReason, Stage, StageStatus
-from bookreviver.domain.ids import PageId, RecipeId
+from bookreviver.domain.enums import FigureState, PageStageStatus, ReviewReason, Stage, StageStatus
+from bookreviver.domain.ids import PageId, RecipeId, StepId
 
 if TYPE_CHECKING:
     from starlette.requests import Request
 
     from bookreviver.domain.ids import ProjectId
-    from bookreviver.domain.stage_summaries import StageRow
+    from bookreviver.domain.stage_summaries import StageRow, StepRow
 
 
 class VariantPagesSchema(ResponseModel):
@@ -78,6 +78,45 @@ class StageSummarySchema(ResponseModel):
     stopped: list[StepPagesSchema]
 
 
+class StepPageSchema(ResponseModel):
+    """One page of a book at one step of a stage: what the step read and made, and where its shape comes from.
+
+    :ivar step_id: The step of the recipe.
+    :ivar state: Where the shape of the step on the page comes from: the default, found by the step, set by hand, or
+                 skipped because the page does not meet the condition of the step.
+    :ivar input_version: The version the step reads on the page, which the canvas of the step shows, or None when the
+                         page has not come as far as the step or is not run.
+    :ivar version: The version the step made on the page, or None when the page was not run through the step.
+    """
+
+    step_id: StepId
+    state: FigureState
+    input_version: PageVersionSchema | None
+    version: PageVersionSchema | None
+
+    @classmethod
+    def of(cls, row: StepRow, project_id: ProjectId, request: Request) -> Self:
+        """Build the schema of the row of a page at a step.
+
+        :param row: The row.
+        :type row: StepRow
+        :param project_id: Project owning the page, whose keys place the files of the versions.
+        :type project_id: ProjectId
+        :param request: The request, whose application knows the route that serves the images.
+        :type request: Request
+        :returns: The schema.
+        :rtype: Self
+        """
+        return cls(
+            step_id=row.step_id,
+            state=row.state,
+            input_version=None
+            if row.input_version is None
+            else PageVersionSchema.of(row.input_version, project_id, request),
+            version=None if row.version is None else PageVersionSchema.of(row.version, project_id, request),
+        )
+
+
 class StagePageSchema(ResponseModel):
     """One page of a book in one stage: where it stands there and the version that is its result.
 
@@ -90,6 +129,7 @@ class StagePageSchema(ResponseModel):
     :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
                         that is on, so the page is not ready for the next stage, or None.
     :ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.
+    :ivar step: The page at the step the list was asked for, or None for a list of the stage alone.
     """
 
     page_id: PageId
@@ -100,6 +140,7 @@ class StagePageSchema(ResponseModel):
     version: PageVersionSchema | None
     through_step: int | None
     review_processor: str | None
+    step: StepPageSchema | None
 
     @classmethod
     def of(cls, row: StageRow, project_id: ProjectId, request: Request) -> Self:
@@ -124,6 +165,7 @@ class StagePageSchema(ResponseModel):
             version=version,
             through_step=row.through_step,
             review_processor=row.review_processor,
+            step=None if row.step is None else StepPageSchema.of(row.step, project_id, request),
         )
 
 

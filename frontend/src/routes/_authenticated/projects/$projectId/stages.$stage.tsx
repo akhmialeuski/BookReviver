@@ -1,4 +1,4 @@
-import { createFileRoute, notFound } from '@tanstack/react-router';
+import { createFileRoute, notFound, useParams } from '@tanstack/react-router';
 import { useMemo } from 'react';
 import { ImportScreen } from '@/features/import/ImportScreen';
 import { OrderScreen } from '@/features/order/OrderScreen';
@@ -6,15 +6,17 @@ import type { PlaceAddress } from '@/features/place/address';
 import { loadPlace } from '@/features/place/open';
 import { PlaceWriterContext, useBookPlaceWriter } from '@/features/place/PlaceWriterContext';
 import { parseStage } from '@/features/stages/parse';
+import { parseIdentifier } from '@/features/viewer/params';
 import { parseStageSearch, type StageSearch } from '@/features/workspace/params';
 import { StageScreen } from '@/features/workspace/StageScreen';
 import { MESSAGES } from '@/shared/messages';
 
 /**
- * One stage of one book, `/projects/<id>/stages/<stage>?page=&scan=&source=&view=&compare=&filter=`.
+ * One stage of one book, `/projects/<id>/stages/<stage>?page=&scan=&source=&view=&compare=&filter=`, and with a step
+ * open `/projects/<id>/stages/<stage>/steps/<step>?...`.
  *
- * The stage is a segment of the path and the rest of the view is in the search params, so any view can be linked and
- * reloaded. A segment that names no stage answers with the not-found screen inside the layout of the book, which
+ * The stage is a segment of the path, the step a child segment, and the rest of the view is in the search params, so any
+ * view can be linked and reloaded. The child route draws nothing, so moving between steps leaves this screen mounted. A segment that names no stage answers with the not-found screen inside the layout of the book, which
  * keeps the header and the stage bar on screen. The screen keeps the place of the reader in the book as they move, so
  * the book opens here again.
  */
@@ -45,6 +47,7 @@ function StageOfBook({ projectId }: { projectId: string }): React.JSX.Element {
   const { stage } = Route.useParams();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
+  const stepId = parseIdentifier(useParams({ strict: false }).stepId);
   const known = parseStage(stage);
   const address = useMemo<PlaceAddress | null>(
     () => (known === null ? null : { mode: 'workspace', stage: known, ...search }),
@@ -57,17 +60,44 @@ function StageOfBook({ projectId }: { projectId: string }): React.JSX.Element {
   }
   // The stage is named in the call, because a move made while the router is already on its way to a screen that has no
   // stage, such as the reading mode that is still loading, would otherwise read the stage from there and go to `undefined`
-  const onSearchChange = (changes: Partial<StageSearch>): void =>
-    void navigate({
-      params: (previous) => ({ ...previous, stage: known }),
-      search: (previous) => ({ ...previous, ...changes }),
-    });
+  const onSearchChange = (changes: Partial<StageSearch>): void => {
+    if (stepId === undefined) {
+      void navigate({
+        params: (previous) => ({ ...previous, stage: known }),
+        search: (previous) => ({ ...previous, ...changes }),
+      });
+    } else {
+      // A change of the page or of the layout keeps the step that is open
+      void navigate({
+        to: '/projects/$projectId/stages/$stage/steps/$stepId',
+        params: (previous) => ({ ...previous, stage: known, stepId }),
+        search: (previous) => ({ ...previous, ...changes }),
+      });
+    }
+  };
+  const onStepChange = (next: string | undefined): void => {
+    if (next === undefined) {
+      void navigate({
+        to: '/projects/$projectId/stages/$stage',
+        params: (previous) => ({ ...previous, stage: known }),
+        search: (previous) => previous,
+      });
+    } else {
+      void navigate({
+        to: '/projects/$projectId/stages/$stage/steps/$stepId',
+        params: (previous) => ({ ...previous, stage: known, stepId: next }),
+        search: (previous) => previous,
+      });
+    }
+  };
   let screen = (
     <StageScreen
       projectId={projectId}
       stage={known}
       search={search}
+      stepId={stepId}
       onSearchChange={onSearchChange}
+      onStepChange={onStepChange}
     />
   );
   // Import works on files and scans, and the Order stage is a grid of pages with its own panel

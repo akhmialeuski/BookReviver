@@ -7,7 +7,7 @@ import {
   type ImageSource,
   SourceKind,
 } from '@/features/processing/compare';
-import { PAGE_HEIGHT } from '@/features/viewer/layout';
+import { PAGE_HEIGHT, TOOLBAR_INSET_PX, withBottomInset } from '@/features/viewer/layout';
 import { addedItem, nameWholeImageTile, type StageHooks } from '@/features/viewer/stage';
 import { CompareMode } from '@/features/workspace/params';
 
@@ -260,8 +260,25 @@ export class CompareStage {
   fit(immediately = false): void {
     const rect = this.fitRect();
     this.atFit = true;
-    this.first.viewport.fitBounds(rect, immediately);
-    this.second?.viewport.fitBounds(rect, immediately);
+    // The toolbar floats over the bottom of the canvas, so the picture is fitted to the part above it
+    for (const viewer of [this.first, this.second]) {
+      if (viewer !== null) {
+        const container = viewer.viewport.getContainerSize();
+        const size = { width: container.x, height: container.y };
+        const world = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        // The room an editor asks round the page already keeps the page off the bottom edge, so only what the toolbar
+        // covers beyond it is added, which keeps the zoom of the editors as near as it can to what it was
+        const roomPx =
+          Math.min(size.width / world.width, size.height / world.height) *
+          this.padding *
+          PAGE_HEIGHT;
+        const room = withBottomInset(world, size, Math.max(0, TOOLBAR_INSET_PX - roomPx));
+        viewer.viewport.fitBounds(
+          new OpenSeadragon.Rect(room.x, room.y, room.width, room.height),
+          immediately,
+        );
+      }
+    }
   }
 
   /**

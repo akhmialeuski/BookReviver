@@ -728,6 +728,35 @@ class TestPageStepStateRepository:
         states = (await fx_uow_factory()).page_step_states
         assert (await states.find(first.key), await states.find(second.key)) == (first, second)
 
+    async def test_list_for_step_reads_one_step_over_several_pages(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the states of one step on the asked pages are listed, and those of other steps or pages are not.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        _, first_page = await _store_page(fx_uow_factory, fx_new_owner)
+        _, second_page = await _store_page(fx_uow_factory, fx_new_owner)
+        on_first = make_page_step_state(page_id=first_page, params={'max_angle_deg': 1})
+        on_second = make_page_step_state(page_id=second_page, params={'max_angle_deg': 2})
+        other_step = make_page_step_state(page_id=first_page, step_id=StepId(uuid4()), params={'max_angle_deg': 3})
+        uow = await fx_uow_factory()
+        for state in (on_first, on_second, other_step):
+            await uow.page_step_states.save(state)
+        await uow.commit()
+        states = (await fx_uow_factory()).page_step_states
+        listed = await states.list_for_step([first_page], Stage.GEOMETRY, DESKEW_STEP_ID)
+        both = await states.list_for_step([first_page, second_page], Stage.GEOMETRY, DESKEW_STEP_ID)
+        wrong_stage = await states.list_for_step([first_page], Stage.CLEANUP, DESKEW_STEP_ID)
+        assert (listed, sorted(both, key=lambda state: str(state.page_id)), wrong_stage) == (
+            [on_first],
+            sorted([on_first, on_second], key=lambda state: str(state.page_id)),
+            [],
+        )
+
     async def test_state_of_a_missing_page_is_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
         """Reject a state whose page is not stored.
 

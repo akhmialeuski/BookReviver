@@ -124,7 +124,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
     from bookreviver.domain.enums import JobState
-    from bookreviver.domain.ids import AccountId
+    from bookreviver.domain.ids import AccountId, StepId
     from bookreviver.domain.values import SliceRequest
 
 
@@ -1424,6 +1424,29 @@ class SqlAlchemyPageStepStateRepository(
         order = list(Stage)
         states = [self._mapper.to_entity(row) for row in await self._rows.get_many(**filters)]
         return sorted(states, key=lambda state: (order.index(state.stage), str(state.step_id)))
+
+    @override
+    async def list_for_step(
+        self, page_ids: Collection[PageId], stage: Stage, step_id: StepId
+    ) -> Sequence[PageStepState]:
+        """Return the states one step of a stage has on several pages in one ``IN`` query, by page identifier.
+
+        :param page_ids: Pages whose states are read.
+        :type page_ids: Collection[PageId]
+        :param stage: Stage of the step.
+        :type stage: Stage
+        :param step_id: The step of a recipe.
+        :type step_id: StepId
+        :returns: The states of the step on those of the pages that have one.
+        :rtype: Sequence[PageStepState]
+        """
+        rows = await self._rows.get_many(
+            CollectionFilter(field_name=PageStepStateRow.page_id, values=page_ids),
+            order_by=PageStepStateRow.page_id.asc(),
+            stage=stage,
+            step_id=step_id,
+        )
+        return [self._mapper.to_entity(row) for row in rows]
 
 
 class SqlAlchemyPageStepChangeRepository(

@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import ProjectOverview
     from bookreviver.domain.enums import JobState, Side, Stage, VersionScale
-    from bookreviver.domain.ids import AccountId
+    from bookreviver.domain.ids import AccountId, StepId
     from bookreviver.domain.stage_summaries import StageTally, StepTally, VariantTally
     from bookreviver.domain.values import PageSize, Slice, SliceRequest
 
@@ -661,6 +661,22 @@ class PageStepStateRepository(Repository[PageStepState, PageStepKey]):
         :param stage: Stage whose states are listed, or None for every stage.
         :type stage: Stage | None
         :returns: The states of the page.
+        :rtype: Sequence[PageStepState]
+        """
+
+    @abstractmethod
+    async def list_for_step(
+        self, page_ids: Collection[PageId], stage: Stage, step_id: StepId
+    ) -> Sequence[PageStepState]:
+        """Return the states one step of a stage has on several pages, in one read, by page identifier.
+
+        :param page_ids: Pages whose states are read.
+        :type page_ids: Collection[PageId]
+        :param stage: Stage of the step.
+        :type stage: Stage
+        :param step_id: The step of a recipe.
+        :type step_id: StepId
+        :returns: The states of the step on those of the pages that have one.
         :rtype: Sequence[PageStepState]
         """
 

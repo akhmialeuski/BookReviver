@@ -89,7 +89,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Hashable, Iterable, Mapping, Sequence
     from datetime import datetime
 
-    from bookreviver.domain.ids import AccountId
+    from bookreviver.domain.ids import AccountId, StepId
 
 # Attribute holding the identifier of every entity addressed by one
 ID_ATTRIBUTE: str = 'id'
@@ -1348,6 +1348,30 @@ class InMemoryPageStepStateRepository(InMemoryRepository[PageStepState, PageStep
                 if state.page_id == page_id and (stage is None or state.stage == stage)
             ),
             key=lambda state: (order.index(state.stage), str(state.step_id)),
+        )
+
+    @override
+    async def list_for_step(
+        self, page_ids: Collection[PageId], stage: Stage, step_id: StepId
+    ) -> Sequence[PageStepState]:
+        """Return the states one step of a stage has on several pages, by page identifier.
+
+        :param page_ids: Pages whose states are read.
+        :type page_ids: Collection[PageId]
+        :param stage: Stage of the step.
+        :type stage: Stage
+        :param step_id: The step of a recipe.
+        :type step_id: StepId
+        :returns: The states of the step on those of the pages that have one.
+        :rtype: Sequence[PageStepState]
+        """
+        return sorted(
+            (
+                state
+                for state in self._rows.values()
+                if state.page_id in page_ids and state.stage == stage and state.step_id == step_id
+            ),
+            key=lambda state: str(state.page_id),
         )
 
 

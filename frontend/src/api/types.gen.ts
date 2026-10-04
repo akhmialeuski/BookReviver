@@ -587,6 +587,17 @@ export type ErrorModel = {
 };
 
 /**
+ * FigureState
+ *
+ * Where the shape of one step on one page comes from, which the step bar paints as a dot.
+ *
+ * A page that was never run through the step holds the default shape, which computes nothing. A step that ran leaves
+ * the shape it found, a manual edit puts the shape the user set and outlives the next run, and a page that did not
+ * meet the condition of the step passes it with no shape at all.
+ */
+export type FigureState = 'default' | 'found' | 'by-hand' | 'skipped';
+
+/**
  * FileType
  *
  * A file type accepted as a book source.
@@ -2991,6 +3002,7 @@ export type Stage = 'import' | 'page-split' | 'page-order' | 'geometry' | 'clean
  * :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
  * that is on, so the page is not ready for the next stage, or None.
  * :ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.
+ * :ivar step: The page at the step the list was asked for, or None for a list of the stage alone.
  */
 export type StagePageSchema = {
     /**
@@ -3016,6 +3028,7 @@ export type StagePageSchema = {
      * Review Processor
      */
     review_processor: string | null;
+    step: StepPageSchema | null;
 };
 
 /**
@@ -3192,6 +3205,28 @@ export type StepBody = {
      */
     step_id?: string | null;
     applies_to?: AppliesTo;
+};
+
+/**
+ * StepPageSchema
+ *
+ * One page of a book at one step of a stage: what the step read and made, and where its shape comes from.
+ *
+ * :ivar step_id: The step of the recipe.
+ * :ivar state: Where the shape of the step on the page comes from: the default, found by the step, set by hand, or
+ * skipped because the page does not meet the condition of the step.
+ * :ivar input_version: The version the step reads on the page, which the canvas of the step shows, or None when the
+ * page has not come as far as the step or is not run.
+ * :ivar version: The version the step made on the page, or None when the page was not run through the step.
+ */
+export type StepPageSchema = {
+    /**
+     * Step Id
+     */
+    step_id: string;
+    state: FigureState;
+    input_version: PageVersionSchema | null;
+    version: PageVersionSchema | null;
 };
 
 /**
@@ -4673,6 +4708,12 @@ export type ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData = {
         stage: Stage;
     };
     query?: {
+        /**
+         * Step
+         *
+         * A step of a recipe of the stage to place every page at
+         */
+        step?: string | null;
         /**
          * Page
          */
