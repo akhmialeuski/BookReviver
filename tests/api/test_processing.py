@@ -693,6 +693,101 @@ class TestPageSettings:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
+class TestPageHistory:
+    """Tests for the endpoints of the history of a step on a page and of its undo."""
+
+    async def test_changes_are_listed_newest_first_and_an_undo_marks_what_it_took_back(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a setting and an edit are listed newest first, and one undo takes back the edit and nothing else.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        history = f'{fx_book.page_path}/history/geometry/{step_id}'
+        await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 2})
+        await fx_client.put(
+            f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
+        )
+        listed = await fx_client.get(history)
+        undone = await fx_client.post(f'{history}/undo', json={})
+        after = await fx_client.get(history)
+        edit = await fx_client.get(f'{fx_book.page_path}/edits/geometry')
+        expect([item['layer'] for item in listed.json()[ITEMS]] == ['hand', 'settings'])
+        expect([item['undone'] for item in listed.json()[ITEMS]] == [False, False])
+        expect(undone.status_code == status.HTTP_200_OK)
+        expect([(change['layer'], change['source']) for change in undone.json()['changes']] == [('hand', 'undo')])
+        expect(
+            [(item['source'], item['undone']) for item in after.json()[ITEMS]]
+            == [('undo', False), ('user', True), ('user', False)]
+        )
+        expect(edit.json()['total'] == 0)
+        assert_expectations()
+
+    async def test_undo_back_to_a_change_takes_it_and_the_later_ones(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify an undo that names the oldest change takes back every change from it, and the page has none left.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        history = f'{fx_book.page_path}/history/geometry/{step_id}'
+        await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 2})
+        await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 3})
+        oldest = (await fx_client.get(history)).json()[ITEMS][-1]
+        undone = await fx_client.post(f'{history}/undo', json={'change_id': oldest['id']})
+        settings = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
+        expect(len(undone.json()['changes']) == 2)
+        expect(settings.json()['total'] == 0)
+        assert_expectations()
+
+    async def test_undo_with_nothing_to_take_back_answers_200_with_no_changes(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify an undo of an empty history is not an error, so a key press on a page that has no change is quiet.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.post(f'{fx_book.page_path}/history/geometry/{step_id}/undo', json={})
+        assert (response.status_code, response.json()) == (status.HTTP_200_OK, {'changes': []})
+
+    async def test_undo_back_to_an_unknown_change_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify naming a change the step does not have answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.post(
+            f'{fx_book.page_path}/history/geometry/{step_id}/undo', json={'change_id': str(uuid4())}
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_history_of_a_page_of_no_book_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify the history of a page that is not in the book answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.get(f'{fx_book.path}/pages/{uuid4()}/history/geometry/{uuid4()}')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
 class TestEditForm:
     """Tests for the form of an edit, for the shapes the split editor draws."""
 
