@@ -1,0 +1,210 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { type PairPlacement, Side, SourceKind } from '@/features/processing/compare';
+import { CompareStage } from '@/features/processing/compareStage';
+import { CompareMode } from '@/features/workspace/params';
+
+/**
+ * Where the compare stage puts its two pictures in the world: as tall as a page at the origin, or one inside the other where
+ * the transform of the step places it.
+ *
+ * OpenSeadragon needs a canvas that jsdom does not have, so it is a stand-in whose pictures know their size in pixels and
+ * keep the height and the position they are given. The pictures drawn by a real browser are checked by the end-to-end
+ * scenario of the margins.
+ */
+
+const fake = vi.hoisted(() => {
+  /** The size in pixels of each picture by its address. */
+  const sizes = new Map<string, { x: number; y: number }>();
+
+  class Point {
+    x: number;
+    y: number;
+    constructor(x: number, y: number) {
+      this.x = x;
+      this.y = y;
+    }
+  }
+
+  class Rect {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    constructor(x: number, y: number, width: number, height: number) {
+      this.x = x;
+      this.y = y;
+      this.width = width;
+      this.height = height;
+    }
+  }
+
+  class Item {
+    height = 1;
+    position = new Point(0, 0);
+    opacity = 0;
+    readonly size: { x: number; y: number };
+    constructor(size: { x: number; y: number }) {
+      this.size = size;
+    }
+    setHeight(height: number): void {
+      this.height = height;
+    }
+    setPosition(position: Point): void {
+      this.position = position;
+    }
+    setOpacity(opacity: number): void {
+      this.opacity = opacity;
+    }
+    setClip = vi.fn();
+    getContentSize(): { x: number; y: number } {
+      return this.size;
+    }
+    getBounds(): Rect {
+      return new Rect(
+        this.position.x,
+        this.position.y,
+        (this.height * this.size.x) / this.size.y,
+        this.height,
+      );
+    }
+  }
+
+  const viewers: unknown[] = [];
+
+  function viewer() {
+    const items: Item[] = [];
+    const made = {
+      items,
+      world: {
+        getItemCount: () => items.length,
+        setItemIndex: vi.fn(),
+        removeItem: vi.fn(),
+      },
+      viewport: {
+        getContainerSize: () => new Point(1000, 800),
+        fitBounds: vi.fn(),
+        getBounds: () => new Rect(0, 0, 1, 1),
+        getAspectRatio: () => 1.25,
+        getZoom: () => 1,
+        getCenter: () => new Point(0.5, 0.5),
+        pointFromPixel: (point: Point) => point,
+        zoomTo: vi.fn(),
+        panTo: vi.fn(),
+        applyConstraints: vi.fn(),
+      },
+      addHandler: vi.fn(),
+      addTiledImage: (options: {
+        tileSource: { url: string };
+        success: (event: { item: Item }) => void;
+      }) => {
+        const item = new Item(sizes.get(options.tileSource.url) ?? { x: 100, y: 100 });
+        items.push(item);
+        options.success({ item });
+      },
+      forceResize: vi.fn(),
+      isDestroyed: () => false,
+      destroy: vi.fn(),
+    };
+    viewers.push(made);
+    return made;
+  }
+
+  return { sizes, Point, Rect, viewer, viewers };
+});
+
+vi.mock('openseadragon', () => ({
+  default: Object.assign(fake.viewer, { Point: fake.Point, Rect: fake.Rect }),
+}));
+
+const BEFORE = { kind: SourceKind.Image, url: '/before.png' } as const;
+const AFTER = { kind: SourceKind.Image, url: '/after.png' } as const;
+const WIDTH = 1600;
+const HEIGHT = 2800;
+
+describe('CompareStage', () => {
+  let element: HTMLDivElement;
+  let stage: CompareStage;
+
+  const picture = (index: number) =>
+    (fake.viewers[0] as { items: unknown[] }).items[index] as {
+      height: number;
+      position: { x: number; y: number };
+      getBounds: () => { x: number; y: number; width: number; height: number };
+    };
+
+  beforeEach(() => {
+    fake.viewers.length = 0;
+    fake.sizes.clear();
+    // The block of 1276 by 2645 pixels, and the page of the margins
+    fake.sizes.set(BEFORE.url, { x: 1276, y: 2645 });
+    fake.sizes.set(AFTER.url, { x: WIDTH, y: HEIGHT });
+    element = document.createElement('div');
+    stage = new CompareStage(element, document.createElement('div'));
+  });
+
+  it('draws both pictures as tall as a page at the origin when there is no place for them', async () => {
+    await stage.show(BEFORE, AFTER, 'p1');
+
+    // The picture after is added first, then the picture before
+    for (const index of [0, 1]) {
+      expect(picture(index).height).toBe(1);
+      expect(picture(index).position).toMatchObject({ x: 0, y: 0 });
+    }
+  });
+
+  it('draws the page of the margins whole and the block inside it where the transform puts it', async () => {
+    const placement: PairPlacement = {
+      base: Side.After,
+      left: 162 / WIDTH,
+      top: 60 / HEIGHT,
+      width: 1276 / WIDTH,
+      height: 2645 / HEIGHT,
+    };
+    await stage.show(BEFORE, AFTER, 'p1', placement);
+
+    const page = picture(0).getBounds();
+    const block = picture(1).getBounds();
+    expect(page).toMatchObject({ x: 0, y: 0, height: 1 });
+    expect(block.x).toBeCloseTo((162 / WIDTH) * page.width);
+    expect(block.y).toBeCloseTo(60 / HEIGHT);
+    expect(block.height).toBeCloseTo(2645 / HEIGHT);
+    // The block is drawn at the scale of the page: its width over its height is that of its pixels
+    expect(block.width / block.height).toBeCloseTo(1276 / 2645);
+    expect(element.dataset.afterBox).toBe('0.0000,0.0000,0.5714,1.0000');
+  });
+
+  it('draws the input whole and the result inside it for a page that was cut', async () => {
+    fake.sizes.set(BEFORE.url, { x: 1695, y: 2795 });
+    fake.sizes.set(AFTER.url, { x: 1277, y: 2645 });
+    await stage.show(BEFORE, AFTER, 'p1', {
+      base: Side.Before,
+      left: 237 / 1695,
+      top: 150 / 2795,
+      width: 1277 / 1695,
+      height: 2645 / 2795,
+    });
+
+    const input = picture(1).getBounds();
+    const result = picture(0).getBounds();
+    expect(input).toMatchObject({ x: 0, y: 0, height: 1 });
+    expect(result.x).toBeCloseTo((237 / 1695) * input.width);
+    expect(result.y).toBeCloseTo(150 / 2795);
+    expect(result.height).toBeCloseTo(2645 / 2795);
+  });
+
+  it('keeps the picture after in the second viewer where it stands in the first, in the side by side mode', async () => {
+    await stage.show(BEFORE, AFTER, 'p1', {
+      base: Side.After,
+      left: 0.1,
+      top: 0.05,
+      width: 0.8,
+      height: 0.9,
+    });
+    stage.setMode(CompareMode.Side);
+    await vi.waitFor(() => expect(fake.viewers).toHaveLength(2));
+    await vi.waitFor(() => expect((fake.viewers[1] as { items: unknown[] }).items).toHaveLength(1));
+
+    const [, aside] = fake.viewers as { items: { getBounds: () => unknown }[] }[];
+    expect(aside?.items[0]?.getBounds()).toEqual(picture(0).getBounds());
+  });
+});

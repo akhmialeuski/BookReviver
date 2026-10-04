@@ -2,7 +2,12 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CompareCanvas } from '@/features/processing/CompareCanvas';
-import { type ComparePair, SourceKind } from '@/features/processing/compare';
+import {
+  type ComparePair,
+  type PairPlacement,
+  Side,
+  SourceKind,
+} from '@/features/processing/compare';
 import { CompareMode } from '@/features/workspace/params';
 
 /**
@@ -57,7 +62,10 @@ describe('CompareCanvas', () => {
     mode: CompareMode,
     pairs: ComparePair = { before: BEFORE, after: AFTER },
     notice: { text: string; working: boolean } | null = null,
-    editor: Pick<React.ComponentProps<typeof CompareCanvas>, 'overlay' | 'roomShare'> = {},
+    editor: Pick<
+      React.ComponentProps<typeof CompareCanvas>,
+      'overlay' | 'roomShare' | 'placement'
+    > = {},
   ): void {
     act(() =>
       root.render(
@@ -107,10 +115,32 @@ describe('CompareCanvas', () => {
 
     expect(stage.instances).toHaveLength(1);
     expect(stage.show).toHaveBeenCalledTimes(1);
-    expect(stage.show).toHaveBeenCalledWith(BEFORE, AFTER, 'p1');
+    expect(stage.show).toHaveBeenCalledWith(BEFORE, AFTER, 'p1', null);
     expect(
       container.querySelector('[data-testid="viewer-canvas"]')?.getAttribute('data-state'),
     ).toBe('ready');
+  });
+
+  it('hands the place of the two pictures to the stage, and shows them again only when the place changes', async () => {
+    const place: PairPlacement = {
+      base: Side.After,
+      left: 0.1,
+      top: 0.05,
+      width: 0.8,
+      height: 0.9,
+    };
+    render(CompareMode.Swipe, undefined, null, { placement: place });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(stage.show).toHaveBeenLastCalledWith(BEFORE, AFTER, 'p1', place);
+
+    // The same numbers in a new object are the same place
+    render(CompareMode.Swipe, undefined, null, { placement: { ...place } });
+    expect(stage.show).toHaveBeenCalledTimes(1);
+
+    render(CompareMode.Swipe, undefined, null, { placement: { ...place, left: 0.2 } });
+    expect(stage.show).toHaveBeenCalledTimes(2);
   });
 
   it('draws an editor over the picture once it is loaded, with the viewer and the picture it lies on', async () => {

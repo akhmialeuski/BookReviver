@@ -11,6 +11,7 @@ import { CompareCanvas } from '@/features/processing/CompareCanvas';
 import {
   beforeSourceOf,
   type ImageSource,
+  placementOf,
   SourceKind,
   sourceOfPreview,
   sourceOfResult,
@@ -420,6 +421,15 @@ export function StageScreen({
   const compareMode = compareBlocked === null ? compareChoice : CompareMode.Off;
   const editing =
     editor?.active && (!editor.focused || compareMode === CompareMode.Off) ? editor : null;
+  // A step that moves and scales its input, such as the margins, makes a picture that stands inside the other, or the other
+  // way round; the version that is drawn after is the preview while one is on
+  const placement =
+    editing !== null || openStep === null || compareMode === CompareMode.Off
+      ? null
+      : placementOf(
+          sourceOfPreview(previewShown) === null ? workspace.page?.version : previewShown,
+          workspace.page?.input_version,
+        );
   const stepLabels = MESSAGES.workspace.steps.canvas;
   const stageName = MESSAGES.stages.names[stage];
   const stageBeforeThis = stageBefore(stage);
@@ -481,6 +491,7 @@ export function StageScreen({
             handle={canvas}
             overlay={editing === null ? undefined : (scene) => editing.renderCanvas(scene)}
             roomShare={editing === null ? 0 : EDITOR_ROOM_SHARE}
+            placement={placement}
           />
         ) : (
           <PageCanvas view={view} around={around} fitMode={FitMode.Page} handle={canvas} />
