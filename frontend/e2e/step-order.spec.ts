@@ -112,23 +112,16 @@ test('a step off its usual place is marked and put back, a place where it cannot
     const mark = stepOf(page, CROP).getByTestId('step-order-mark');
     await expect(mark).toHaveText('Out of place');
     await expect(mark).toHaveAttribute('data-kind', 'usual');
-    // The first step of the list is the one that is open, so the reason is on the line of a closed card or, once the step
-    // has moved to the top, in its settings
-    await expect(
-      stepOf(page, CROP).locator(
-        '[data-testid="step-order-reason"], [data-testid="step-order-details"]',
-      ),
-    ).toContainText('Select content');
+    // The first step of the list is the open one, so the step moved to the top shows the reason in its open settings
+    await expect(stepOf(page, CROP).getByTestId('step-order-details')).toContainText(
+      'Select content',
+    );
     await expect(page.getByTestId('step-order-mark')).toHaveCount(1);
     await snap(page, 'step-out-of-its-usual-place');
   });
 
   await test.step('"Restore the usual order" in the settings of the step puts every step back and changes no setting', async () => {
-    const details = stepOf(page, CROP).getByTestId('step-order-details');
-    if ((await details.count()) === 0) {
-      await stepOf(page, CROP).getByTestId('step-toggle').click();
-    }
-    await expect(details).toBeVisible();
+    await expect(stepOf(page, CROP).getByTestId('step-order-details')).toBeVisible();
     await stepOf(page, CROP).getByTestId('step-restore-order').click();
     expect(await processorsOnScreen(page)).toEqual(BUILT_IN);
     await expect(page.getByTestId('step-order-mark')).toHaveCount(0);
