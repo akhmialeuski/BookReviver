@@ -3,7 +3,8 @@
 The history only grows. A change is taken back by a later change whose source is an undo and which names it, so the
 changes that still stand are those no undo names, and the undos themselves are never taken back. What can be undone is
 the newest change that stands, then the one before it, which is how a Ctrl+Z works, and a change of a batch is taken
-back together with the rest of its batch. A carry-over of a setting to other pages is such a batch.
+back together with the rest of its batch. A carry-over of a setting to other pages and a reset of steps to their
+defaults are such batches.
 """
 
 from typing import TYPE_CHECKING
@@ -71,3 +72,15 @@ class CarryOver:
     batch_id: ChangeBatchId
     changes: tuple[PageStepChange, ...]
     skipped: tuple[PageId, ...]
+
+
+@frozen
+class StepReset:
+    """What a reset of steps to their defaults did, which is one batch of the history.
+
+    :ivar batch_id: The batch the changes share, so taking back one of them takes back all of them.
+    :ivar changes: The changes written, one for each layer a page lost, which are none when nothing was set.
+    """
+
+    batch_id: ChangeBatchId
+    changes: tuple[PageStepChange, ...]

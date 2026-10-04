@@ -163,6 +163,14 @@ describe('PageStepSettings', () => {
     expect(container.querySelectorAll('[data-testid="carry-menu"]')).toHaveLength(2);
   });
 
+  it('offers the reset of the step under its settings, and none for a step that is not saved yet', () => {
+    render();
+    expect(byId('reset-menu')?.getAttribute('aria-label')).toBe('Reset Deskew to the defaults');
+
+    render({ ...SAVED, stepId: null });
+    expect(byId('reset-menu')).toBeNull();
+  });
+
   it('offers no settings for a step that is not saved yet', () => {
     render({ ...SAVED, stepId: null });
 

@@ -7,6 +7,7 @@ import { CarryOver } from '@/features/processing/CarryOver';
 import { ParamsForm } from '@/features/processing/ParamsForm';
 import { CONDITIONS } from '@/features/processing/recipe';
 import { readResult } from '@/features/processing/results';
+import { StepReset } from '@/features/processing/StepReset';
 import { pagesOfCondition, RunScope } from '@/features/processing/scope';
 import { canRunThrough } from '@/features/processing/stepRuns';
 import type { Processing } from '@/features/processing/useProcessing';
@@ -24,7 +25,8 @@ import { CheckboxField } from '@/shared/ui/checkbox-field';
  * book stand at it, the button that runs the recipe up to it on every page, and the way to the steps either side of it.
  *
  * It stands above the sections of the recipe and of the open page and takes none of them away. The settings are the
- * draft of the step the recipe section edits, so a change made here is the change made there.
+ * draft of the step the recipe section edits, so a change made here is the change made there. Under the buttons of
+ * "Auto" is the menu that resets the step to its defaults.
  */
 
 const labels = MESSAGES.workspace.stepPanel;
@@ -298,6 +300,8 @@ export function StepPanel({
           {run.dirty ? labels.saveFirst : labels.autoHint}
         </p>
       </div>
+
+      <StepReset processing={processing} pageId={pageId} stepId={step.stepId} title={step.title} />
 
       <nav className="flex gap-2" aria-label={labels.moves}>
         {neighbours.previous === null ? null : (

@@ -21,6 +21,7 @@ from bookreviver.domain.enums import (
     PageFilter,
     ProcessorScope,
     Rendition,
+    ResetScope,
     RightsStatus,
     RunMode,
     Script,
@@ -37,10 +38,11 @@ from bookreviver.domain.errors import InvalidIdentifierError, InvalidParametersE
 from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StepId
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from attrs import Attribute
 
+    from bookreviver.domain.entities import PageStepState
     from bookreviver.domain.enums import (
         CarryScope,
         ColorMode,
@@ -78,6 +80,8 @@ THROUGH_STEP_KEY: str = 'through_step'
 REMAKE_KEY: str = 'remake'
 REMAKE_ONE_PAGE: str = 'A run that makes a version again names no recipe and exactly one page.'
 REMAKE_KEEPS: str = 'A run that makes a version again keeps the settings and edits of the page.'
+RESET_NEEDS_PAGE: str = 'A reset of the open page names the page.'
+RESET_NEEDS_STEP: str = 'A reset of one step names the step.'
 # Keys of the mode and of its confirmation in the stored parameters of a ``run-stage`` job
 MODE_KEY: str = 'mode'
 CONFIRM_OVERWRITE_KEY: str = 'confirm_overwrite'
@@ -1206,6 +1210,88 @@ class RunImpact:
                 return self.hand_pages
             case RunMode.RESET_SETTINGS:
                 return self.settings_pages
+
+
+@frozen(kw_only=True)
+class ResetRequest:
+    """What a reset of the steps of a stage to their defaults asks for: where it goes, and whether it was confirmed.
+
+    A reset removes the settings a page changed for a step and the manual edit the step reads on it, so the page uses
+    the values of the recipe again and the automatic run finds the shape anew.
+
+    :ivar stage: The stage whose steps are reset.
+    :ivar scope: The steps and the pages the reset goes over.
+    :ivar page_id: The open page, which the scopes of one page name and the others ignore.
+    :ivar step_id: The step, which the scopes of one step name and the others ignore.
+    :ivar confirm: Whether the user confirmed that a reset that reaches other pages takes the work of them, which a
+                   request for such a reset refuses without.
+    """
+
+    stage: Stage
+    scope: ResetScope
+    page_id: PageId | None = None
+    step_id: StepId | None = None
+    confirm: bool = False
+
+    def __attrs_post_init__(self) -> None:
+        """Check that the scope has the page and the step it needs.
+
+        :raises ValueError: If a scope of one page names no page, or a scope of one step names no step.
+        """
+        if self.scope in {ResetScope.PAGE_STEP, ResetScope.PAGE} and self.page_id is None:
+            raise ValueError(RESET_NEEDS_PAGE)
+        if self.scope in {ResetScope.PAGE_STEP, ResetScope.STEP} and self.step_id is None:
+            raise ValueError(RESET_NEEDS_STEP)
+
+    @property
+    def open_page(self) -> PageId | None:
+        """The page the reset goes over, or None for a scope that goes over every page of the book."""
+        return self.page_id if self.scope in {ResetScope.PAGE_STEP, ResetScope.PAGE} else None
+
+    @property
+    def chosen_step(self) -> StepId | None:
+        """The step the reset goes over, or None for a scope that goes over every step of the stage."""
+        return self.step_id if self.scope in {ResetScope.PAGE_STEP, ResetScope.STEP} else None
+
+    @property
+    def reaches_other_pages(self) -> bool:
+        """Whether the reset may take the work of pages other than the open one, which asks for a confirmation."""
+        return self.scope in {ResetScope.STEP, ResetScope.STAGE}
+
+
+@frozen(kw_only=True)
+class ResetImpact:
+    """What a reset would take away, counted over the steps and the pages it goes over.
+
+    :ivar scope: The scope of the reset.
+    :ivar hand_pages: How many pages have a manual edit on a step the reset goes over.
+    :ivar settings_pages: How many pages change at least one field of a step the reset goes over.
+    :ivar affected: How many pages lose work, which is a page with an edit, a setting or both counted once.
+    """
+
+    scope: ResetScope
+    hand_pages: int
+    settings_pages: int
+    affected: int
+
+    @classmethod
+    def of(cls, scope: ResetScope, states: Iterable[PageStepState]) -> Self:
+        """Count what a reset would take away from the states it goes over.
+
+        :param scope: The scope of the reset.
+        :type scope: ResetScope
+        :param states: The states of the steps the reset goes over, which are those that hold a setting or an edit.
+        :type states: Iterable[PageStepState]
+        :returns: The count.
+        :rtype: Self
+        """
+        held = list(states)
+        return cls(
+            scope=scope,
+            hand_pages=len({state.page_id for state in held if state.edit is not None}),
+            settings_pages=len({state.page_id for state in held if state.params}),
+            affected=len({state.page_id for state in held}),
+        )
 
 
 @frozen(kw_only=True)

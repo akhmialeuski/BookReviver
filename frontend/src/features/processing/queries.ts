@@ -44,6 +44,8 @@ import {
   putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation,
   remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostMutation,
   resetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostMutation,
+  resetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostMutation,
+  resetStepsApiV1ProjectsProjectIdStagesStageResetPostMutation,
   runImpactApiV1ProjectsProjectIdStagesStageRunImpactPostMutation,
   runStageApiV1ProjectsProjectIdStagesStageRunPostMutation,
   unpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteMutation,
@@ -450,6 +452,33 @@ export function useCarryShape(projectId: string, stage: Stage) {
 /** Count the pages a mode of a run would take work from, which nothing is written for. */
 export function useRunImpact() {
   return useMutation(runImpactApiV1ProjectsProjectIdStagesStageRunImpactPostMutation());
+}
+
+/** Count the pages a reset of steps to their defaults would take work from, which nothing is written for. */
+export function useResetImpact() {
+  return useMutation(resetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostMutation());
+}
+
+/**
+ * Reset steps to their defaults on one page or on every page, as one batch, which marks the stages of the pages that
+ * lost work out of date.
+ *
+ * It shares the mutation scope of the edits of the book with the undo, so it reaches the server after the edit that was
+ * saved just before it. The settings, the edits and the histories of the pages are read again, since a reset may reach
+ * every page of the book.
+ */
+export function useResetSteps(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...resetStepsApiV1ProjectsProjectIdStagesStageResetPostMutation(),
+    scope: { id: `page-edits:${projectId}` },
+    onSettled: () =>
+      Promise.all([
+        invalidatePageLayers(queryClient),
+        invalidateStageRows(queryClient, projectId, stage),
+        invalidateStageSummary(queryClient, projectId),
+      ]),
+  });
 }
 
 /** Take the pinned variant off a page, so a run of the stage chooses its variant by the rules again. */

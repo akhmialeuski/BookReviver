@@ -3,7 +3,9 @@
 A field is set or taken back one at a time. Setting or taking back a field marks the stage of the page stale and
 processes nothing, and the value is checked against the parameters of the processor of the step before the route
 answers, so a field the processor does not have, or a value out of its range, is a 422. The value a page has for a
-field may be carried over to other pages in one batch, which one undo takes back from every page.
+field may be carried over to other pages in one batch, which one undo takes back from every page. The settings and the
+manual edits of the steps of a stage are taken away from one page or from every page by a reset, which is one batch as
+well.
 """
 
 from dataclasses import dataclass
@@ -15,14 +17,24 @@ from fastapi_pagination import Page, Params
 
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
+from bookreviver.api.routers.processing import StagePath
 from bookreviver.api.schemas.page_history import PageStepChangeSchema
-from bookreviver.api.schemas.page_settings import CarryForm, CarryOverSchema, PageSettingForm, PageStepSettingsSchema
+from bookreviver.api.schemas.page_settings import (
+    CarryForm,
+    CarryOverSchema,
+    PageSettingForm,
+    PageStepSettingsSchema,
+    ResetBody,
+    ResetImpactSchema,
+    StepResetSchema,
+)
 from bookreviver.domain.entities import PageStepState
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import PageId, ProjectId, StepId
 from bookreviver.domain.values import PageStepKey, Slice
 from bookreviver.services.page_carry import CarryOverService
 from bookreviver.services.page_settings import PageSettingsService
+from bookreviver.services.step_resets import StepResetService
 
 router = APIRouter(prefix='/projects', tags=['page-settings'], route_class=DishkaRoute)
 
@@ -177,3 +189,64 @@ async def carry_over_setting(
         changes=[PageStepChangeSchema.model_validate(change) for change in carried.changes],
         skipped=list(carried.skipped),
     )
+
+
+@router.post('/{project_id}/stages/{stage}/reset')
+async def reset_steps(
+    address: Annotated[StagePath, Depends()],
+    body: ResetBody,
+    actor: ActorDep,
+    resets: FromDishka[StepResetService],
+) -> StepResetSchema:
+    """Take the settings and the manual edits of steps away from one page or from every page, and mark the stages stale.
+
+    The scope is the step on the open page, every step of the stage on the open page, the step on every page, or every
+    step of the stage on every page. The pages use the values of the recipe again, which stays as it is, and the next
+    run of the stage finds the shapes anew. The changes of the history share a batch from a reset, so one undo gives
+    the work back on every page. A reset that reaches other pages and takes work from some of them answers 409 until the
+    body confirms it. The answer is 404 for a step that no recipe of the stage has, and 422 for a scope without the page
+    or the step it needs.
+
+    \N{FORM FEED}
+    :param address: Identifiers of the project and the stage.
+    :type address: StagePath
+    :param body: The scope, the page and the step it needs, and the confirmation.
+    :type body: ResetBody
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param resets: Step reset service of the request.
+    :type resets: StepResetService
+    :returns: The batch and the changes written.
+    :rtype: StepResetSchema
+    """
+    done = await resets.reset(actor, address.project_id, body.to_request(address.stage))
+    return StepResetSchema(
+        batch_id=done.batch_id, changes=[PageStepChangeSchema.model_validate(c) for c in done.changes]
+    )
+
+
+@router.post('/{project_id}/stages/{stage}/reset-impact')
+async def reset_impact(
+    address: Annotated[StagePath, Depends()],
+    body: ResetBody,
+    actor: ActorDep,
+    resets: FromDishka[StepResetService],
+) -> ResetImpactSchema:
+    """Count the pages a reset would take work from, so the user can confirm it before it is sent.
+
+    The body is the one of the reset. Nothing is written.
+
+    \N{FORM FEED}
+    :param address: Identifiers of the project and the stage.
+    :type address: StagePath
+    :param body: The reset.
+    :type body: ResetBody
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param resets: Step reset service of the request.
+    :type resets: StepResetService
+    :returns: The pages that have an edit, the pages that have settings, and the pages that lose work.
+    :rtype: ResetImpactSchema
+    """
+    counted = await resets.impact(actor, address.project_id, body.to_request(address.stage))
+    return ResetImpactSchema.model_validate(counted)

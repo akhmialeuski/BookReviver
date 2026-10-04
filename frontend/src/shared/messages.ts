@@ -15,6 +15,7 @@ import type {
   PageKind,
   PageStageStatus,
   RejectionReason,
+  ResetScope,
   ReviewReason,
   RightsStatus,
   RuleCondition,
@@ -1498,6 +1499,30 @@ export const MESSAGES = {
             : `${pages} ${pluralize(pages, 'page goes', 'pages go')} back to the settings of the recipe on the steps of this run.`,
         undo: 'The change is written to the history of each page, and one undo gives it back.',
         confirm: 'Run anyway',
+        cancel: 'Cancel',
+      },
+    },
+    reset: {
+      label: 'Reset',
+      ofStep: (title: string) => `Reset ${title} to the defaults`,
+      hint: 'A reset takes away the settings of the page and the hand edits, so the page uses the recipe again and the next run finds the shape anew. One undo gives them back.',
+      scopes: {
+        'page-step': 'This step on this page',
+        page: 'Every step on this page',
+        step: 'This step on every page',
+        stage: 'Every step of the stage on every page',
+      } satisfies Record<ResetScope, string>,
+      done: (changes: number, pages: number) =>
+        changes === 0
+          ? 'There was nothing to reset.'
+          : `Reset ${changes} ${pluralize(changes, 'layer', 'layers')} on ${pages} ${pluralize(pages, 'page', 'pages')}.`,
+      undo: 'Undo the reset',
+      warning: {
+        title: 'Reset to the defaults?',
+        body: (scope: string, affected: number, hand: number, settings: number) =>
+          `${scope}. ${affected} ${pluralize(affected, 'page loses', 'pages lose')} work of their own: ${hand} ${pluralize(hand, 'page has', 'pages have')} a hand edit and ${settings} ${pluralize(settings, 'page changes', 'pages change')} a setting.`,
+        undo: 'The reset is written to the history of each page, and one undo gives it back.',
+        confirm: 'Reset',
         cancel: 'Cancel',
       },
     },

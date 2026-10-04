@@ -3,9 +3,9 @@
 The catalogue and the runner of processors keep no per-request state, so one of each serves the whole application, and
 the catalogue loads the plugins of the pools the settings name when it is built. Everything that works through a
 unit of work is built per request or job: the parts the use cases share, the service of the requests, the jobs of the
-workers and the services of the manual edits, of the settings of pages, of carrying them over and of what a run
-takes away. The IIIF root comes from the mount point of the IIIF routes, which only ``api`` knows, as it does for the
-import.
+workers and the services of the manual edits, of the settings of pages, of carrying them over, of what a run takes
+away and of the resets of steps. The IIIF root comes from the mount point of the IIIF routes, which only ``api``
+knows, as it does for the import.
 """
 
 from datetime import timedelta
@@ -34,6 +34,7 @@ from bookreviver.services.recipe_rules import RecipeRules
 from bookreviver.services.recipes import DefaultRecipes
 from bookreviver.services.run_plans import RunImpactService
 from bookreviver.services.stage_runs import StageRuntime
+from bookreviver.services.step_resets import StepResetService
 from bookreviver.services.steps import StepRunner
 
 
@@ -322,6 +323,19 @@ class ProcessingProvider(Provider):
         :rtype: CarryOverService
         """
         return CarryOverService(uow=uow, catalogue=catalogue, records=parts.records, clock=clock)
+
+    @provide(scope=Scope.REQUEST)
+    def step_reset_service(self, uow: UnitOfWork, parts: ProcessingParts) -> StepResetService:
+        """Build the service of the resets of steps of a request.
+
+        :param uow: Unit of work of the current request.
+        :type uow: UnitOfWork
+        :param parts: The parts the processing use cases share, of which the stage records and the clock are used.
+        :type parts: ProcessingParts
+        :returns: The step reset service.
+        :rtype: StepResetService
+        """
+        return StepResetService(uow=uow, records=parts.records, clock=parts.clock)
 
     @provide(scope=Scope.REQUEST)
     def page_history_service(self, uow: UnitOfWork, parts: ProcessingParts, clock: Clock) -> PageHistoryService:

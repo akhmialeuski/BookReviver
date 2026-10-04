@@ -7174,6 +7174,202 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/stages/{stage}/reset": {
+      "post": {
+        "tags": [
+          "page-settings"
+        ],
+        "summary": "Reset Steps",
+        "description": "Take the settings and the manual edits of steps away from one page or from every page, and mark the stages stale.\n\nThe scope is the step on the open page, every step of the stage on the open page, the step on every page, or every\nstep of the stage on every page. The pages use the values of the recipe again, which stays as it is, and the next\nrun of the stage finds the shapes anew. The changes of the history share a batch from a reset, so one undo gives\nthe work back on every page. A reset that reaches other pages and takes work from some of them answers 409 until the\nbody confirms it. The answer is 404 for a step that no recipe of the stage has, and 422 for a scope without the page\nor the step it needs.",
+        "operationId": "reset_steps_api_v1_projects__project_id__stages__stage__reset_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StepResetSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/stages/{stage}/reset-impact": {
+      "post": {
+        "tags": [
+          "page-settings"
+        ],
+        "summary": "Reset Impact",
+        "description": "Count the pages a reset would take work from, so the user can confirm it before it is sent.\n\nThe body is the one of the reset. Nothing is written.",
+        "operationId": "reset_impact_api_v1_projects__project_id__stages__stage__reset_impact_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResetImpactSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project_id}/pages/{page_id}/history/{stage}/{step_id}": {
       "get": {
         "tags": [
@@ -13587,6 +13783,88 @@
         "title": "RejectionReason",
         "description": "Why one file of an upload was not imported, while the other files of the upload were."
       },
+      "ResetBody": {
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/ResetScope"
+          },
+          "page_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Id"
+          },
+          "step_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Id"
+          },
+          "confirm": {
+            "type": "boolean",
+            "title": "Confirm",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scope"
+        ],
+        "title": "ResetBody",
+        "description": "What a reset of steps to their defaults goes over; the stage is in the address.\n\n:ivar scope: The step on the open page, every step of the stage on the open page, the step on every page, or every\n             step of the stage on every page.\n:ivar page_id: The open page, which the scopes of one page need and the others ignore.\n:ivar step_id: The step, which the scopes of one step need and the others ignore.\n:ivar confirm: Confirmation that a reset that reaches other pages takes the settings and the edits of the pages that\n               have any, without which such a reset is refused with 409. A reset of the open page needs none."
+      },
+      "ResetImpactSchema": {
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/ResetScope"
+          },
+          "hand_pages": {
+            "type": "integer",
+            "title": "Hand Pages"
+          },
+          "settings_pages": {
+            "type": "integer",
+            "title": "Settings Pages"
+          },
+          "affected": {
+            "type": "integer",
+            "title": "Affected"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "hand_pages",
+          "settings_pages",
+          "affected"
+        ],
+        "title": "ResetImpactSchema",
+        "description": "How many pages a reset would take work from.\n\n:ivar scope: The scope of the reset.\n:ivar hand_pages: How many pages have a manual edit on a step the reset goes over.\n:ivar settings_pages: How many pages change at least one field of a step the reset goes over.\n:ivar affected: How many pages lose work, a page with both counted once."
+      },
+      "ResetScope": {
+        "type": "string",
+        "enum": [
+          "page-step",
+          "page",
+          "step",
+          "stage"
+        ],
+        "title": "ResetScope",
+        "description": "The pages and the steps a reset to the defaults goes over, which are the settings and the edits of the pages."
+      },
       "ReviewReason": {
         "type": "string",
         "enum": [
@@ -14434,6 +14712,29 @@
         ],
         "title": "StepPreviewBody",
         "description": "The steps of a form to preview on one page, up to one of them; the stage is in the address.\n\n:ivar page_id: Page to preview on.\n:ivar steps: The steps as the form has them.\n:ivar step_index: Index of the last step whose result is wanted."
+      },
+      "StepResetSchema": {
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Batch Id"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/PageStepChangeSchema"
+            },
+            "type": "array",
+            "title": "Changes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "batch_id",
+          "changes"
+        ],
+        "title": "StepResetSchema",
+        "description": "What a reset did, which is one batch of the history.\n\n:ivar batch_id: The batch the changes share, which an undo of any of them takes back as a whole.\n:ivar changes: The changes written, one for each layer a page lost."
       },
       "StepSchema": {
         "properties": {

@@ -3018,6 +3018,67 @@ export type RejectedFileSchema = {
 export type RejectionReason = 'duplicate' | 'unreadable' | 'unsupported-type' | 'system-file';
 
 /**
+ * ResetBody
+ *
+ * What a reset of steps to their defaults goes over; the stage is in the address.
+ *
+ * :ivar scope: The step on the open page, every step of the stage on the open page, the step on every page, or every
+ * step of the stage on every page.
+ * :ivar page_id: The open page, which the scopes of one page need and the others ignore.
+ * :ivar step_id: The step, which the scopes of one step need and the others ignore.
+ * :ivar confirm: Confirmation that a reset that reaches other pages takes the settings and the edits of the pages that
+ * have any, without which such a reset is refused with 409. A reset of the open page needs none.
+ */
+export type ResetBody = {
+    scope: ResetScope;
+    /**
+     * Page Id
+     */
+    page_id?: string | null;
+    /**
+     * Step Id
+     */
+    step_id?: string | null;
+    /**
+     * Confirm
+     */
+    confirm?: boolean;
+};
+
+/**
+ * ResetImpactSchema
+ *
+ * How many pages a reset would take work from.
+ *
+ * :ivar scope: The scope of the reset.
+ * :ivar hand_pages: How many pages have a manual edit on a step the reset goes over.
+ * :ivar settings_pages: How many pages change at least one field of a step the reset goes over.
+ * :ivar affected: How many pages lose work, a page with both counted once.
+ */
+export type ResetImpactSchema = {
+    scope: ResetScope;
+    /**
+     * Hand Pages
+     */
+    hand_pages: number;
+    /**
+     * Settings Pages
+     */
+    settings_pages: number;
+    /**
+     * Affected
+     */
+    affected: number;
+};
+
+/**
+ * ResetScope
+ *
+ * The pages and the steps a reset to the defaults goes over, which are the settings and the edits of the pages.
+ */
+export type ResetScope = 'page-step' | 'page' | 'step' | 'stage';
+
+/**
  * ReviewReason
  *
  * Why a processed page is marked for a second look, though its step finished without an error.
@@ -3624,6 +3685,25 @@ export type StepPreviewBody = {
      * Step Index
      */
     step_index: number;
+};
+
+/**
+ * StepResetSchema
+ *
+ * What a reset did, which is one batch of the history.
+ *
+ * :ivar batch_id: The batch the changes share, which an undo of any of them takes back as a whole.
+ * :ivar changes: The changes written, one for each layer a page lost.
+ */
+export type StepResetSchema = {
+    /**
+     * Batch Id
+     */
+    batch_id: string;
+    /**
+     * Changes
+     */
+    changes: Array<PageStepChangeSchema>;
 };
 
 /**
@@ -7298,6 +7378,94 @@ export type CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepId
 };
 
 export type CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostResponse = CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostResponses[keyof CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostResponses];
+
+export type ResetStepsApiV1ProjectsProjectIdStagesStageResetPostData = {
+    body: ResetBody;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/{stage}/reset';
+};
+
+export type ResetStepsApiV1ProjectsProjectIdStagesStageResetPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ResetStepsApiV1ProjectsProjectIdStagesStageResetPostError = ResetStepsApiV1ProjectsProjectIdStagesStageResetPostErrors[keyof ResetStepsApiV1ProjectsProjectIdStagesStageResetPostErrors];
+
+export type ResetStepsApiV1ProjectsProjectIdStagesStageResetPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: StepResetSchema;
+};
+
+export type ResetStepsApiV1ProjectsProjectIdStagesStageResetPostResponse = ResetStepsApiV1ProjectsProjectIdStagesStageResetPostResponses[keyof ResetStepsApiV1ProjectsProjectIdStagesStageResetPostResponses];
+
+export type ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostData = {
+    body: ResetBody;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/{stage}/reset-impact';
+};
+
+export type ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostError = ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostErrors[keyof ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostErrors];
+
+export type ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: ResetImpactSchema;
+};
+
+export type ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostResponse = ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostResponses[keyof ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostResponses];
 
 export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetData = {
     body?: never;
