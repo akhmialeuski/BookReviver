@@ -22,7 +22,7 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import StepId
-from bookreviver.domain.values import NewPageEdit, PageStepKey, ProcessorRef, SliceRequest, StageRun, Step
+from bookreviver.domain.values import NewPageEdit, PageStepKey, ProcessorRef, RecipeDraft, SliceRequest, StageRun, Step
 from tests.helpers.builders import make_page_stage, make_page_version
 from tests.helpers.processors import FakeProcessor
 from tests.helpers.spreads import run_stage
@@ -404,7 +404,7 @@ async def seed_text_and_plate(kit: ProcessingKit) -> tuple[Actor, Project, Page,
         Step(processor_key=FAKE_KEY, applies_to=AppliesTo.TEXT),
         Step(processor_key=FAKE_KEY, applies_to=AppliesTo.PICTURES),
     ]
-    await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, 'Two', steps)
+    await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, RecipeDraft(name='Two', steps=steps))
     return actor, project, text, plate
 
 
