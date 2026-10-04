@@ -100,6 +100,7 @@ export function SelectionPanel({
   onAttach,
   onDelete,
   onShowPlace,
+  pagination,
 }: {
   projectId: string;
   /** The selected pages in book order. */
@@ -118,6 +119,8 @@ export function SelectionPanel({
   onDelete: () => void;
   /** Called with the index into `places` of the one to bring into view. */
   onShowPlace: (index: number) => void;
+  /** The pagination of the book, which stands at the top of the panel whether or not pages are selected. */
+  pagination: React.ReactNode;
 }): React.JSX.Element {
   const text = MESSAGES.order.panel;
   const update = useUpdatePages(projectId);
@@ -189,6 +192,7 @@ export function SelectionPanel({
     return (
       <StagePanel stage="page-order" available>
         <div className="grid gap-4">
+          {pagination}
           <p className="text-sm text-muted-foreground">{text.nothing}</p>
           {placesBox}
         </div>
@@ -199,6 +203,7 @@ export function SelectionPanel({
   return (
     <StagePanel stage="page-order" available>
       <div className="grid gap-4" data-testid="selection-panel">
+        {pagination}
         <div className="flex items-center justify-between gap-2">
           <h3
             className="text-xs font-medium tracking-wide text-muted-foreground uppercase"

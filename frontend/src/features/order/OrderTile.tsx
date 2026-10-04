@@ -1,7 +1,9 @@
 import { useSortable } from '@dnd-kit/sortable';
-import { CheckIcon, EyeOffIcon, SquareDashedIcon } from 'lucide-react';
+import { CheckIcon, EyeOffIcon, PencilIcon, SquareDashedIcon } from 'lucide-react';
 import { useRef } from 'react';
 import type { PageSchema } from '@/api';
+import type { SectionSpan } from '@/features/order/sections';
+import { sectionName } from '@/features/order/sections';
 import { AnchorSide } from '@/features/pages/order';
 import { PageThumbnail } from '@/features/pages/PageThumbnail';
 import { cn } from '@/shared/lib/utils';
@@ -17,6 +19,9 @@ import { Badge } from '@/shared/ui/badge';
  * Shift or Ctrl it extends or adds to the selection, and so does Enter on the focused tile. Space picks the tile up
  * for the keyboard, since the sensor is set to listen for it. While a numbering is previewed, a tile whose number
  * changes shows the old number struck out and the new one in blue.
+ *
+ * The number stands in a pill ringed in the colour of the section the page belongs to, so the boundary between two
+ * sections is visible along the grid, and a number written by hand carries a pencil.
  */
 
 export interface TileClick {
@@ -31,6 +36,7 @@ export function OrderTile({
   selected,
   dropSide,
   previewLabel,
+  section,
   onSelect,
   onOpen,
 }: {
@@ -40,6 +46,8 @@ export function OrderTile({
   dropSide: AnchorSide | null;
   /** The label a numbering in preview would give the page, which is undefined when it gives none. */
   previewLabel: string | undefined;
+  /** The pagination section the page belongs to, or undefined for a page before the first section. */
+  section: SectionSpan | undefined;
   onSelect: (click: TileClick) => void;
   onOpen: () => void;
 }): React.JSX.Element {
@@ -73,6 +81,7 @@ export function OrderTile({
       data-page-id={page.id}
       data-cell={page.id}
       data-selected={selected}
+      data-section-id={section?.section.id}
       data-check={missing && page.included ? 'true' : undefined}
       className={cn(
         'relative grid min-w-0 flex-1 cursor-pointer gap-1 rounded-md p-1 text-xs outline-none select-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
@@ -114,7 +123,12 @@ export function OrderTile({
         )}
       </span>
       <span className="flex items-center justify-center gap-1.5">
-        <NumberText label={page.label} previewLabel={changed ? previewLabel : undefined} />
+        <NumberText
+          label={page.label}
+          manual={page.label_manual}
+          section={section}
+          previewLabel={changed ? previewLabel : undefined}
+        />
         <Badge variant="outline" className="shrink-0 font-normal">
           {missing ? MESSAGES.order.tile.missing : MESSAGES.pages.kinds[page.kind]}
         </Badge>
@@ -130,17 +144,38 @@ export function OrderTile({
 /** The printed number of a page, or the words for a page without one, or the old and the new number of a preview. */
 function NumberText({
   label,
+  manual,
+  section,
   previewLabel,
 }: {
   label: string;
+  /** Whether the number was written by hand, which no section takes back. */
+  manual: boolean;
+  section: SectionSpan | undefined;
   /** The label a numbering would write, set only when it differs from the label the page has. */
   previewLabel: string | undefined;
 }): React.JSX.Element {
   const old = label === '' ? MESSAGES.order.tile.noNumber : MESSAGES.order.tile.printed(label);
   if (previewLabel === undefined) {
+    const name = section === undefined ? undefined : sectionName(section);
     return (
-      <span className={cn('truncate font-medium', label === '' ? 'text-muted-foreground' : '')}>
-        {old}
+      <span
+        className={cn(
+          'inline-flex min-w-0 items-center gap-1 rounded-full border-2 px-2 font-medium',
+          section?.tone.ring ?? 'border-transparent',
+          label === '' ? 'text-muted-foreground' : '',
+        )}
+        title={name === undefined ? undefined : MESSAGES.order.tile.section(name)}
+        data-testid="page-number"
+        data-manual={manual && label !== '' ? 'true' : undefined}
+      >
+        <span className="truncate">{old}</span>
+        {manual && label !== '' ? (
+          <>
+            <PencilIcon className="size-3 shrink-0" aria-hidden="true" />
+            <span className="sr-only">{MESSAGES.order.tile.manual}</span>
+          </>
+        ) : null}
       </span>
     );
   }

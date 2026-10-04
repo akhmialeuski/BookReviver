@@ -24,6 +24,7 @@ import { carriedBy, dropPlace } from '@/features/order/drag';
 import { GapCard } from '@/features/order/GapCard';
 import { columnsOf, layoutOf, rowOfCells, rowsOf } from '@/features/order/layout';
 import { OrderTile, type TileClick } from '@/features/order/OrderTile';
+import type { SectionSpan } from '@/features/order/sections';
 import type { LabelGap } from '@/features/pages/gaps';
 import { shortName } from '@/features/pages/names';
 import type { PageAnchor } from '@/features/pages/order';
@@ -76,6 +77,7 @@ export function OrderGrid({
   spread,
   size,
   previewLabels,
+  sectionOfPage,
   addingGapKey,
   moveError,
   busy,
@@ -94,6 +96,8 @@ export function OrderGrid({
   size: number;
   /** The labels a numbering in preview would write, by page, or undefined when none is previewed. */
   previewLabels: ReadonlyMap<string, string> | undefined;
+  /** The pagination section of each page by its id, which colours the number of the page. */
+  sectionOfPage: ReadonlyMap<string, SectionSpan>;
   /** The key of the gap whose placeholders are being added, or null. */
   addingGapKey: string | null;
   /** The words for the last move the server refused, or null. */
@@ -317,6 +321,7 @@ export function OrderGrid({
                               selected={selected.has(page.id)}
                               dropSide={target?.pageId === page.id ? target.side : null}
                               previewLabel={previewLabels?.get(page.id)}
+                              section={sectionOfPage.get(page.id)}
                               onSelect={(click) => onSelect(page.id, click)}
                               onOpen={() => onOpen(page.id)}
                             />
