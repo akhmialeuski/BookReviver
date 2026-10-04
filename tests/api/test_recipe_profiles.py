@@ -600,9 +600,8 @@ class TestLibrary:
         expect(response.status_code == status.HTTP_200_OK)
         expect(response.json()[VERSION_FIELD] == FILE_VERSION)
         expect((exported.name, exported.stage, exported.order) == (PROFILE_NAME, Stage.GEOMETRY, 'usual'))
-        expect(
-            [(step.params, step.enabled) for step in exported.steps] == [({STRENGTH: 3}, False), ({STRENGTH: 2}, True)]
-        )
+        # Saving fills in the defaults of the processor, so the file holds more parameters than the body gave
+        expect([(step.params[STRENGTH], step.enabled) for step in exported.steps] == [(3, False), (2, True)])
         expect(all('step_id' not in step for step in response.json()[STEPS_FIELD]))
         assert_expectations()
 
