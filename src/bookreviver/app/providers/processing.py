@@ -3,8 +3,9 @@
 The catalogue and the runner of processors keep no per-request state, so one of each serves the whole application, and
 the catalogue loads the plugins of the pools the settings name when it is built. Everything that works through a
 unit of work is built per request or job: the parts the use cases share, the service of the requests, the jobs of the
-workers and the services of the manual edits and of the settings of pages. The IIIF root comes from the mount point
-of the IIIF routes, which only ``api`` knows, as it does for the import.
+workers and the services of the manual edits, of the settings of pages, of carrying them over and of what a run
+takes away. The IIIF root comes from the mount point of the IIIF routes, which only ``api`` knows, as it does for the
+import.
 """
 
 from datetime import timedelta
@@ -21,6 +22,7 @@ from bookreviver.ports.processing import ProcessorCatalog, ProcessorSettings
 from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
 from bookreviver.ports.storage import AssetStore
 from bookreviver.services.edits import EditService
+from bookreviver.services.page_carry import CarryOverService
 from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService
 from bookreviver.services.processing import ProcessingService
@@ -30,6 +32,7 @@ from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import RecipeProfiles
 from bookreviver.services.recipe_rules import RecipeRules
 from bookreviver.services.recipes import DefaultRecipes
+from bookreviver.services.run_plans import RunImpactService
 from bookreviver.services.stage_runs import StageRuntime
 from bookreviver.services.steps import StepRunner
 
@@ -287,6 +290,38 @@ class ProcessingProvider(Provider):
         :rtype: PageSettingsService
         """
         return PageSettingsService(uow=uow, catalogue=catalogue, records=parts.records, clock=clock)
+
+    @provide(scope=Scope.REQUEST)
+    def run_impact_service(self, uow: UnitOfWork, parts: ProcessingParts) -> RunImpactService:
+        """Build the run impact service of a request.
+
+        :param uow: Unit of work of the current request.
+        :type uow: UnitOfWork
+        :param parts: The parts the processing use cases share, of which the recipes and the clock are used.
+        :type parts: ProcessingParts
+        :returns: The run impact service.
+        :rtype: RunImpactService
+        """
+        return RunImpactService(uow=uow, recipes=parts.recipes, clock=parts.clock)
+
+    @provide(scope=Scope.REQUEST)
+    def carry_over_service(
+        self, uow: UnitOfWork, catalogue: ProcessorCatalog, parts: ProcessingParts, clock: Clock
+    ) -> CarryOverService:
+        """Build the carry-over service of a request.
+
+        :param uow: Unit of work of the current request.
+        :type uow: UnitOfWork
+        :param catalogue: The processors the application can run.
+        :type catalogue: ProcessorCatalog
+        :param parts: The parts the processing use cases share, of which the stage records are used.
+        :type parts: ProcessingParts
+        :param clock: Clock of the application.
+        :type clock: Clock
+        :returns: The carry-over service.
+        :rtype: CarryOverService
+        """
+        return CarryOverService(uow=uow, catalogue=catalogue, records=parts.records, clock=clock)
 
     @provide(scope=Scope.REQUEST)
     def page_history_service(self, uow: UnitOfWork, parts: ProcessingParts, clock: Clock) -> PageHistoryService:

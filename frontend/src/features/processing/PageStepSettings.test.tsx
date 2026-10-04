@@ -146,6 +146,23 @@ describe('PageStepSettings', () => {
     });
   });
 
+  it('offers a carry-over for each field the page changes, and none when it changes nothing', () => {
+    render();
+    expect(container.querySelectorAll('[data-testid="carry-menu"]')).toHaveLength(1);
+    expect(byId('carry-overwrite')).not.toBeNull();
+
+    render(SAVED, {});
+
+    expect(byId('carry-menu')).toBeNull();
+    expect(byId('carry-overwrite')).toBeNull();
+  });
+
+  it('offers a carry-over for every field the page changes', () => {
+    render(SAVED, { max_angle: 3, min_confidence: 0.5 });
+
+    expect(container.querySelectorAll('[data-testid="carry-menu"]')).toHaveLength(2);
+  });
+
   it('offers no settings for a step that is not saved yet', () => {
     render({ ...SAVED, stepId: null });
 

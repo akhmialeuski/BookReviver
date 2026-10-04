@@ -250,12 +250,14 @@ class ProcessingParts:
     :ivar records: Writer of the stage records.
     :ivar tracker: The life of a job on a worker.
     :ivar starter: Recorder and queuer of new jobs.
+    :ivar clock: Clock stamping what a use case writes, such as the changes a run makes to the pages.
     """
 
     recipes: RecipeBook
     records: StageRecords
     tracker: JobTracker
     starter: JobStarter
+    clock: Clock
 
     @classmethod
     def build(
@@ -289,4 +291,5 @@ class ProcessingParts:
             records=StageRecords(uow=uow, publisher=runtime.publisher, clock=runtime.clock),
             tracker=JobTracker(uow=uow, publisher=runtime.publisher, clock=runtime.clock, hand_off=starter.hand_off),
             starter=starter,
+            clock=runtime.clock,
         )

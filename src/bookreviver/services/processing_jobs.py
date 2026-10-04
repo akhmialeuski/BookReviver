@@ -5,12 +5,14 @@ that reports its progress does, through ``JobTracker``. The parameters of a job 
 a job whose parameters are not valid fails with the reason.
 
 A run goes by the pages of the stage and the steps of the recipe. A run that names no recipe gives each page its own,
-the pinned one, else the one of the first matching rule, else the active one (``RecipePicker``). It reads the current
-version of the nearest earlier stage of a page, finds the versions it made before by their identifier, makes only what
-is new, and makes the last version the current one of the stage. A page that fails is recorded as failed and the job
-goes on to the next, and the job succeeds when it processed at least one page. When it ends it queues a collection of
-the project's old versions, so old versions go by their age without the user asking. The collection is stored in the
-same commit as the end of the run, so the project is never free between the two.
+the pinned one, else the one of the first matching rule, else the active one (``RecipePicker``). The mode of the run
+says what it does first with the settings and the manual edits of the pages (``RunPlan``), which it keeps unless it was
+asked to take them away. It reads the current version of the nearest earlier stage of a page, finds the versions it
+made before by their identifier, makes only what is new, and makes the last version the current one of the stage. A
+page that fails is recorded as failed and the job goes on to the next, and the job succeeds when it processed at least
+one page. When it ends it queues a collection of the project's old versions, so old versions go by their age without
+the user asking. The collection is stored in the same commit as the end of the run, so the project is never free
+between the two.
 
 A measure of the book reads the versions of the crop of every page and writes the parameters of the normalize step of
 the active Geometry recipe, which marks the pages of that recipe stale.
@@ -31,20 +33,18 @@ from typing import TYPE_CHECKING
 
 from attrs import evolve
 
-from bookreviver.domain.enums import JobState, PageOrigin, RunOutcome, VersionData, VersionScale, VersionState
+from bookreviver.domain.enums import JobState, RunOutcome, VersionData, VersionScale, VersionState
 from bookreviver.domain.errors import DomainError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import SliceRequest, StageRun, StepPreview, TileCut, VersionCollection
+from bookreviver.domain.values import StageRun, StepPreview, TileCut, VersionCollection
 from bookreviver.services.book_measure import BookMeasure
-from bookreviver.services.recipe_picks import PAGE_WINDOW, RecipePicker
+from bookreviver.services.run_plans import RunPlan
 from bookreviver.services.stage_runs import PreviewRun, RecipeRun
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from bookreviver.domain.entities import Job, Page, Recipe
-    from bookreviver.domain.ids import JobId, ProjectId
+    from bookreviver.domain.ids import JobId
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.storage import AssetStore
     from bookreviver.services.processing_parts import ProcessingParts
@@ -77,7 +77,7 @@ class ProcessingJobs:
         self._runtime = runtime
         self._recipes = parts.recipes
         self._records = parts.records
-        self._picker = RecipePicker(uow=uow, recipes=parts.recipes)
+        self._clock = parts.clock
         self._measure = BookMeasure(uow=uow, recipes=parts.recipes, records=parts.records)
         self._tracker = parts.tracker
         self._starter = parts.starter
@@ -207,7 +207,8 @@ class ProcessingJobs:
         """
         run = StageRun.from_map(job.params)
         project = await self._uow.projects.get(job.project_id)
-        pages = await self._pages_to_run(project.id, run)
+        plan = RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, project_id=project.id, run=run)
+        pages = await plan.pages()
         executor = RecipeRun(
             project=project, uow=self._uow, runtime=self._runtime, recipes=self._recipes, records=self._records
         )
@@ -220,11 +221,9 @@ class ProcessingJobs:
             outcome = await executor.remake(pages[0], run.remake)
             made = outcome is RunOutcome.DONE
             return int(made), int(not made), 1
-        if run.recipe_id is None:
-            recipes = await self._picker.pick(project.id, run.stage, pages)
-        else:
-            named = await self._recipes.get(project.id, run.recipe_id, stage=run.stage)
-            recipes = dict.fromkeys((page.id for page in pages), named)
+        recipes = await plan.recipes()
+        # The work the mode takes away goes first, as one batch, so one undo gives it back on every page
+        await plan.apply_mode()
         outcomes: list[RunOutcome] = []
         for page in pages:
             if (saved := await self._tracker.advance(job, done=len(outcomes), total=len(pages))) is None:
@@ -260,29 +259,6 @@ class ProcessingJobs:
             await self._uow.commit()
             await self._records.announce(page.project_id, [record])
             return RunOutcome.FAILED
-
-    async def _pages_to_run(self, project_id: ProjectId, run: StageRun) -> Sequence[Page]:
-        """Choose the pages a run goes over: the ones it names, or every page of the book that has an image.
-
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
-        :param run: What the job was asked to run.
-        :type run: StageRun
-        :returns: The pages in book order, without the placeholders, which have no image.
-        :rtype: Sequence[Page]
-        """
-        if run.page_ids is not None:
-            pages = list(await self._uow.pages.list_by_ids(project_id, run.page_ids))
-        else:
-            pages = []
-            while True:
-                window = await self._uow.pages.list_for_project(
-                    project_id, SliceRequest(offset=len(pages), limit=PAGE_WINDOW)
-                )
-                pages.extend(window.items)
-                if len(pages) >= window.total or not window.items:
-                    break
-        return [page for page in pages if page.origin is not PageOrigin.PLACEHOLDER]
 
     async def _preview(self, job: Job) -> None:
         """Run the steps of a ``preview-step`` job.

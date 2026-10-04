@@ -106,6 +106,9 @@ describe('StepPanel', () => {
       confirming: false,
       confirm: vi.fn(),
       cancel: vi.fn(),
+      overwriting: null,
+      confirmOverwrite: vi.fn(),
+      cancelOverwrite: vi.fn(),
       ...overrides,
     };
   }

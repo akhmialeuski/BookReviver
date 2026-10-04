@@ -3458,7 +3458,7 @@
           "processing"
         ],
         "summary": "Run Stage",
-        "description": "Run a stage over some pages by a recipe, in the background, and answer with the queued job.\n\nThe job makes a version for every step on every page and reports one step of progress for each page. A project runs\none stage at a time, and another run while one is queued or running answers 409.",
+        "description": "Run a stage over some pages by a recipe, in the background, and answer with the queued job.\n\nThe job makes a version for every step on every page and reports one step of progress for each page. A project runs\none stage at a time, and another run while one is queued or running answers 409. A run keeps the settings the pages\nchanged for its steps and the manual edits they read. A mode that takes the edits or the settings away answers 409\nuntil the body confirms it, when it would take them from any page.",
         "operationId": "run_stage_api_v1_projects__project_id__stages__stage__run_post",
         "parameters": [
           {
@@ -3501,6 +3501,104 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/JobSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/stages/{stage}/run-impact": {
+      "post": {
+        "tags": [
+          "processing"
+        ],
+        "summary": "Run Impact",
+        "description": "Count the pages a run would take work from, so the user can confirm the run before it is sent.\n\nThe body is the one of the run. A run that keeps the settings and edits of the pages takes work from none. A run\nthat replaces the hand settings takes the manual edits of the steps it goes over, and a run that resets the page\nsettings takes the fields the pages changed for them. Nothing is written and nothing is queued.",
+        "operationId": "run_impact_api_v1_projects__project_id__stages__stage__run_impact_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the pipeline"
+            },
+            "description": "Stage of the pipeline"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StageRunBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunImpactSchema"
                 }
               }
             }
@@ -6720,6 +6818,140 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/pages/{page_id}/settings/{stage}/{step_id}/{name}/carry-over": {
+      "post": {
+        "tags": [
+          "page-settings"
+        ],
+        "summary": "Carry Over Setting",
+        "description": "Carry the value this page has for a field of a step over to other pages, as one batch, and mark them stale.\n\nThe pages are the following ones, the selected ones, or every page of the condition of the step. A page that has a\nvalue of its own for the field is left as it is and listed as skipped, unless the form asks to write over it. Each\npage that takes the value changes this one field and no other, and the changes share a batch, so one undo takes the\nvalue back from every page. The answer is 404 when this page does not change the field, and 422 for a carry-over to\nthe selected pages that names none, or a value out of range for another field of a page.",
+        "operationId": "carry_over_setting_api_v1_projects__project_id__pages__page_id__settings__stage___step_id___name__carry_over_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the step the settings are for"
+            },
+            "description": "Stage of the step the settings are for"
+          },
+          {
+            "name": "step_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the step of a recipe",
+              "title": "Step Id"
+            },
+            "description": "Identifier of the step of a recipe"
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Name of the field in the parameters of the step",
+              "title": "Name"
+            },
+            "description": "Name of the field in the parameters of the step"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CarryForm"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CarryOverSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project_id}/pages/{page_id}/history/{stage}/{step_id}": {
       "get": {
         "tags": [
@@ -9402,6 +9634,84 @@
         ],
         "title": "CanvasPositionSchema",
         "description": "Where the canvas looked.\n\n:ivar zoom: Multiple of the zoom that fits the whole view into the canvas.\n:ivar centre_x: Horizontal coordinate of the centre in page heights, from the left edge of the view.\n:ivar centre_y: Vertical coordinate of the centre in page heights, from the top edge of the view."
+      },
+      "CarryForm": {
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/CarryScope"
+          },
+          "page_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array",
+                "maxItems": 2000,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Ids"
+          },
+          "overwrite": {
+            "type": "boolean",
+            "title": "Overwrite",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scope"
+        ],
+        "title": "CarryForm",
+        "description": "The pages a setting of one page is carried over to.\n\n:ivar scope: The following pages, the selected pages, or every page of the condition of the step.\n:ivar page_ids: The selected pages, which the scope of the selected pages needs and the other scopes ignore.\n:ivar overwrite: Whether a page that has another value of its own for the field takes the value as well, instead of\n                 being skipped."
+      },
+      "CarryOverSchema": {
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Batch Id"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/PageStepChangeSchema"
+            },
+            "type": "array",
+            "title": "Changes"
+          },
+          "skipped": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Skipped"
+          }
+        },
+        "type": "object",
+        "required": [
+          "batch_id",
+          "changes",
+          "skipped"
+        ],
+        "title": "CarryOverSchema",
+        "description": "What a carry-over did, which is one batch of the history.\n\n:ivar batch_id: The batch the changes share, which an undo of any of them takes back as a whole.\n:ivar changes: The changes written, one on each page that took the value.\n:ivar skipped: The pages left as they were because they have a value of their own for the field."
+      },
+      "CarryScope": {
+        "type": "string",
+        "enum": [
+          "following",
+          "selected",
+          "condition"
+        ],
+        "title": "CarryScope",
+        "description": "The pages a setting of one page is carried over to."
       },
       "ChangeSource": {
         "type": "string",
@@ -13089,6 +13399,49 @@
         "title": "RuleCondition",
         "description": "What a rule of a stage asks of a page, to give the page the variant of the rule.\n\nThe set is closed: a rule never carries a free-form test. ``GROUP`` is the one condition with an argument, the\nlabel of the group that the user wrote on the pages. ``ILLUSTRATED`` is declared so that rules and clients can name\nit, but it matches no page yet: the Layout stage, which finds the illustrations of a page, does not exist, and a\nrule on it takes effect the day that stage records them."
       },
+      "RunImpactSchema": {
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/RunMode"
+          },
+          "pages": {
+            "type": "integer",
+            "title": "Pages"
+          },
+          "hand_pages": {
+            "type": "integer",
+            "title": "Hand Pages"
+          },
+          "settings_pages": {
+            "type": "integer",
+            "title": "Settings Pages"
+          },
+          "affected": {
+            "type": "integer",
+            "title": "Affected"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode",
+          "pages",
+          "hand_pages",
+          "settings_pages",
+          "affected"
+        ],
+        "title": "RunImpactSchema",
+        "description": "How many pages a run would take work from, by its mode.\n\n:ivar mode: The mode of the run.\n:ivar pages: How many pages the run goes over.\n:ivar hand_pages: How many of them have a manual edit on a step the run goes over.\n:ivar settings_pages: How many of them change at least one field of a step the run goes over.\n:ivar affected: How many pages lose work to the mode, which is none for a run that keeps the work."
+      },
+      "RunMode": {
+        "type": "string",
+        "enum": [
+          "keep",
+          "replace-hand",
+          "reset-page-settings"
+        ],
+        "title": "RunMode",
+        "description": "What a run of a stage does with the work the pages already have for its steps.\n\nThe work is the settings a page changes for a step and the manual edit a step reads on it. A run keeps both unless\nit is asked to take one of them away, which is written to the history of each page like any other change."
+      },
       "ScanAttach": {
         "properties": {
           "scan_id": {
@@ -13580,12 +13933,21 @@
               }
             ],
             "title": "Through Step"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/RunMode",
+            "default": "keep"
+          },
+          "confirm_overwrite": {
+            "type": "boolean",
+            "title": "Confirm Overwrite",
+            "default": false
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "StageRunBody",
-        "description": "What a run of a stage is asked to do; the stage is in the address.\n\n:ivar recipe_id: Recipe to run it by, or omitted for the active recipe.\n:ivar page_ids: Pages to run it on, or omitted for every page with an image.\n:ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a\n                       run that would do so leaves that page failed.\n:ivar pin: Whether to pin the recipe to the pages of the run, so a later run without a recipe keeps it there. It is\n           given with a recipe, since a run that chooses the recipes pins nothing.\n:ivar through_step: Index in the recipe of the last step to run, from zero, or omitted to run through the last step\n                    that is on. The steps before it come from the cache of versions when their inputs did not\n                    change."
+        "description": "What a run of a stage is asked to do; the stage is in the address.\n\n:ivar recipe_id: Recipe to run it by, or omitted for the active recipe.\n:ivar page_ids: Pages to run it on, or omitted for every page with an image.\n:ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a\n                       run that would do so leaves that page failed.\n:ivar pin: Whether to pin the recipe to the pages of the run, so a later run without a recipe keeps it there. It is\n           given with a recipe, since a run that chooses the recipes pins nothing.\n:ivar through_step: Index in the recipe of the last step to run, from zero, or omitted to run through the last step\n                    that is on. The steps before it come from the cache of versions when their inputs did not\n                    change.\n:ivar mode: What the run does with the settings the pages changed for its steps and with the manual edits they\n            read: it keeps them, which is the usual run, or takes the edits or the settings away first.\n:ivar confirm_overwrite: Confirmation that a mode that takes work away does so on the pages it affects, without\n                         which such a run is refused with 409. A run that keeps the work needs none."
       },
       "StageState": {
         "type": "string",

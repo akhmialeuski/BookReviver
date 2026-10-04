@@ -55,6 +55,7 @@ export function RecipeSection({
   run,
   pageId,
   onManageProfiles,
+  selected,
 }: {
   processing: Processing;
   rows: readonly StagePageSchema[];
@@ -64,6 +65,8 @@ export function RecipeSection({
   pageId?: string;
   /** Opens the library of profiles, which the profile menu offers when it is given. */
   onManageProfiles?: () => void;
+  /** The pages selected in the grid, which a setting of the open page can be carried over to. */
+  selected?: ReadonlySet<string>;
 }): React.JSX.Element | null {
   const { projectId, stage, recipe, steps, catalogue } = processing;
   const save = useSaveRecipe(projectId, stage);
@@ -215,6 +218,7 @@ export function RecipeSection({
                 processor={catalogue.find((processor) => processor.key === step.processorKey)}
                 pageId={pageId}
                 pageValues={pageValuesOf(pageSettings.data, step.stepId)}
+                selected={selected}
               />
             )}
             {pageId === undefined ? null : (

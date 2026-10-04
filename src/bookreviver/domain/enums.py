@@ -916,6 +916,26 @@ class ChangeSource(LabeledStrEnum):
     UNDO = 'undo', 'An undo of an earlier change'
 
 
+class RunMode(LabeledStrEnum):
+    """What a run of a stage does with the work the pages already have for its steps.
+
+    The work is the settings a page changes for a step and the manual edit a step reads on it. A run keeps both unless
+    it is asked to take one of them away, which is written to the history of each page like any other change.
+    """
+
+    KEEP = 'keep', 'Keep the settings and edits of the pages'
+    REPLACE_HAND = 'replace-hand', 'Replace hand settings'
+    RESET_SETTINGS = 'reset-page-settings', 'Reset page settings'
+
+
+class CarryScope(LabeledStrEnum):
+    """The pages a setting of one page is carried over to."""
+
+    FOLLOWING = 'following', 'The following pages'
+    SELECTED = 'selected', 'The selected pages'
+    CONDITION = 'condition', 'All pages of the condition of the step'
+
+
 class TransformKind(LabeledStrEnum):
     """Kind of the coordinate transform a processing step applies from its input to its output."""
 

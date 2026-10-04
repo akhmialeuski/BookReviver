@@ -516,6 +516,59 @@ export type CanvasPositionSchema = {
 };
 
 /**
+ * CarryForm
+ *
+ * The pages a setting of one page is carried over to.
+ *
+ * :ivar scope: The following pages, the selected pages, or every page of the condition of the step.
+ * :ivar page_ids: The selected pages, which the scope of the selected pages needs and the other scopes ignore.
+ * :ivar overwrite: Whether a page that has another value of its own for the field takes the value as well, instead of
+ * being skipped.
+ */
+export type CarryForm = {
+    scope: CarryScope;
+    /**
+     * Page Ids
+     */
+    page_ids?: Array<string> | null;
+    /**
+     * Overwrite
+     */
+    overwrite?: boolean;
+};
+
+/**
+ * CarryOverSchema
+ *
+ * What a carry-over did, which is one batch of the history.
+ *
+ * :ivar batch_id: The batch the changes share, which an undo of any of them takes back as a whole.
+ * :ivar changes: The changes written, one on each page that took the value.
+ * :ivar skipped: The pages left as they were because they have a value of their own for the field.
+ */
+export type CarryOverSchema = {
+    /**
+     * Batch Id
+     */
+    batch_id: string;
+    /**
+     * Changes
+     */
+    changes: Array<PageStepChangeSchema>;
+    /**
+     * Skipped
+     */
+    skipped: Array<string>;
+};
+
+/**
+ * CarryScope
+ *
+ * The pages a setting of one page is carried over to.
+ */
+export type CarryScope = 'following' | 'selected' | 'condition';
+
+/**
  * ChangeSource
  *
  * What made a change of a layer of a step on a page.
@@ -2986,6 +3039,47 @@ export type RightsStatus = 'unknown' | 'public-domain' | 'in-copyright';
 export type RuleCondition = 'plates' | 'covers' | 'blanks' | 'illustrated' | 'odd' | 'even' | 'group';
 
 /**
+ * RunImpactSchema
+ *
+ * How many pages a run would take work from, by its mode.
+ *
+ * :ivar mode: The mode of the run.
+ * :ivar pages: How many pages the run goes over.
+ * :ivar hand_pages: How many of them have a manual edit on a step the run goes over.
+ * :ivar settings_pages: How many of them change at least one field of a step the run goes over.
+ * :ivar affected: How many pages lose work to the mode, which is none for a run that keeps the work.
+ */
+export type RunImpactSchema = {
+    mode: RunMode;
+    /**
+     * Pages
+     */
+    pages: number;
+    /**
+     * Hand Pages
+     */
+    hand_pages: number;
+    /**
+     * Settings Pages
+     */
+    settings_pages: number;
+    /**
+     * Affected
+     */
+    affected: number;
+};
+
+/**
+ * RunMode
+ *
+ * What a run of a stage does with the work the pages already have for its steps.
+ *
+ * The work is the settings a page changes for a step and the manual edit a step reads on it. A run keeps both unless
+ * it is asked to take one of them away, which is written to the history of each page like any other change.
+ */
+export type RunMode = 'keep' | 'replace-hand' | 'reset-page-settings';
+
+/**
  * ScanAttach
  *
  * The scan to bind to a placeholder.
@@ -3297,6 +3391,10 @@ export type StageProgressSchema = {
  * :ivar through_step: Index in the recipe of the last step to run, from zero, or omitted to run through the last step
  * that is on. The steps before it come from the cache of versions when their inputs did not
  * change.
+ * :ivar mode: What the run does with the settings the pages changed for its steps and with the manual edits they
+ * read: it keeps them, which is the usual run, or takes the edits or the settings away first.
+ * :ivar confirm_overwrite: Confirmation that a mode that takes work away does so on the pages it affects, without
+ * which such a run is refused with 409. A run that keeps the work needs none.
  */
 export type StageRunBody = {
     /**
@@ -3319,6 +3417,11 @@ export type StageRunBody = {
      * Through Step
      */
     through_step?: number | null;
+    mode?: RunMode;
+    /**
+     * Confirm Overwrite
+     */
+    confirm_overwrite?: boolean;
 };
 
 /**
@@ -5442,6 +5545,50 @@ export type RunStageApiV1ProjectsProjectIdStagesStageRunPostResponses = {
 
 export type RunStageApiV1ProjectsProjectIdStagesStageRunPostResponse = RunStageApiV1ProjectsProjectIdStagesStageRunPostResponses[keyof RunStageApiV1ProjectsProjectIdStagesStageRunPostResponses];
 
+export type RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostData = {
+    body: StageRunBody;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Stage of the pipeline
+         */
+        stage: Stage;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/stages/{stage}/run-impact';
+};
+
+export type RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostError = RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostErrors[keyof RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostErrors];
+
+export type RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: RunImpactSchema;
+};
+
+export type RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostResponse = RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostResponses[keyof RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostResponses];
+
 export type PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostData = {
     body: StepPreviewBody;
     path: {
@@ -6978,6 +7125,68 @@ export type PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePu
 };
 
 export type PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutResponse = PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutResponses[keyof PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutResponses];
+
+export type CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostData = {
+    body: CarryForm;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Stage of the step the settings are for
+         */
+        stage: Stage;
+        /**
+         * Step Id
+         *
+         * Identifier of the step of a recipe
+         */
+        step_id: string;
+        /**
+         * Name
+         *
+         * Name of the field in the parameters of the step
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/settings/{stage}/{step_id}/{name}/carry-over';
+};
+
+export type CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostError = CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostErrors[keyof CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostErrors];
+
+export type CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: CarryOverSchema;
+};
+
+export type CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostResponse = CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostResponses[keyof CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostResponses];
 
 export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetData = {
     body?: never;

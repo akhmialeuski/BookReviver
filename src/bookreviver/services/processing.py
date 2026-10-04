@@ -19,11 +19,12 @@ its picture and a run makes the picture again under the same identifier. Only a 
 import contextlib
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import JobKind, OrderMode, ProcessorScope, Stage, VersionScale, VersionState
+from bookreviver.domain.enums import JobKind, OrderMode, ProcessorScope, RunMode, Stage, VersionScale, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.values import PageStageKey, Slice, StageRun, StepPreview, TileCut
 from bookreviver.services.processing_parts import PROJECT_BUSY
 from bookreviver.services.projects import owned_project
+from bookreviver.services.run_plans import RunPlan
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -45,6 +46,9 @@ NOT_REMAKABLE: str = 'The picture of the version {version_id} cannot be made aga
 HAS_FILES: str = 'it still has its picture'
 SPLITS_A_SCAN: str = 'it was made by a step that splits a scan, which only a run of the whole stage applies'
 NO_IMAGE: str = 'The version {version_id} has no image.'
+NEEDS_CONFIRMATION: str = (
+    'The mode {mode} takes the work of {pages} pages away, which the run does only when it is confirmed.'
+)
 NO_STEP_TO_RUN_THROUGH: str = (
     'Step {index} of the recipe {name} does not exist, or it and every step before it are switched off.'
 )
@@ -68,6 +72,7 @@ class ProcessingService:
         self._recipes = parts.recipes
         self._records = parts.records
         self._starter = parts.starter
+        self._clock = parts.clock
 
     def processors(self) -> Sequence[ProcessorSpec]:
         """List what every processor of the catalogue says about itself.
@@ -218,7 +223,8 @@ class ProcessingService:
                                page.
         :raises ConflictError: If a run, a preview, a tile cutting, a collection or a measure of the project is queued
                                or running, or the run goes through a step the recipe has no such step for, or whose
-                               steps up to it are all switched off.
+                               steps up to it are all switched off, or its mode takes the work of pages away and it is
+                               not confirmed.
         """
         await owned_project(self._uow.projects, actor, project_id)
         if run.recipe_id is None:
@@ -231,7 +237,23 @@ class ProcessingService:
             raise ConflictError(NO_STEP_TO_RUN_THROUGH.format(index=run.through_step + 1, name=recipe.name))
         if run.page_ids is not None:
             await self._uow.pages.list_by_ids(project_id, run.page_ids)
+        if run.mode is not RunMode.KEEP and not run.confirm_overwrite:
+            affected = (await self._plan(project_id, run).impact()).affected
+            if affected:
+                raise ConflictError(NEEDS_CONFIRMATION.format(mode=run.mode.label, pages=affected))
         return await self._starter.enqueue(project_id, JobKind.RUN_STAGE, run.to_map())
+
+    def _plan(self, project_id: ProjectId, run: StageRun) -> RunPlan:
+        """Plan a run over the unit of work of the request.
+
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param run: The run.
+        :type run: StageRun
+        :returns: The pages and recipes of the run.
+        :rtype: RunPlan
+        """
+        return RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, project_id=project_id, run=run)
 
     async def start_measure(self, actor: Actor, project_id: ProjectId) -> Job:
         """Record a job that measures the book and writes the medians into the normalize step, and queue it.

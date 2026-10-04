@@ -92,6 +92,7 @@ export function ProcessingPanel({
           run={run}
           pageId={current?.page.id}
           onManageProfiles={() => setLibraryOpen(true)}
+          selected={selected}
         />
         {current === undefined ? null : (
           <ThisPageSection

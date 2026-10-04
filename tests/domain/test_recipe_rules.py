@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING
 import pytest
 from attrs import evolve
 
-from bookreviver.domain.enums import PageKind, RuleCondition, Stage
-from bookreviver.domain.ids import RecipeId
-from bookreviver.domain.values import THROUGH_STEP_KEY, StageRun
+from bookreviver.domain.enums import PageKind, RuleCondition, RunMode, Stage
+from bookreviver.domain.ids import PageId, PageVersionId, RecipeId
+from bookreviver.domain.values import THROUGH_STEP_KEY, RunImpact, StageRun
 from tests.helpers.builders import (
     make_page,
     make_page_stage,
@@ -194,3 +194,32 @@ class TestPageStagePin:
         """Reject a negative index of the last step."""
         with pytest.raises(ValueError, match=THROUGH_STEP_KEY):
             StageRun(stage=Stage.GEOMETRY, through_step=-1)
+
+
+class TestRunMode:
+    """Tests for the mode of a run and the count of the pages it takes work from."""
+
+    @pytest.mark.parametrize(
+        ('mode', 'affected'),
+        [(RunMode.KEEP, 0), (RunMode.REPLACE_HAND, 3), (RunMode.RESET_SETTINGS, 5)],
+        ids=['keep', 'replace-hand', 'reset-settings'],
+    )
+    def test_a_mode_takes_work_from_the_pages_it_names(self, mode: RunMode, affected: int) -> None:
+        """Verify the pages that lose work are the ones with an edit for one mode and with a setting for the other.
+
+        :param mode: Mode under test.
+        :type mode: RunMode
+        :param affected: How many pages lose work to it.
+        :type affected: int
+        """
+        assert RunImpact(mode=mode, pages=9, hand_pages=3, settings_pages=5).affected == affected
+
+    def test_a_run_that_makes_a_version_again_keeps_the_work_of_the_page(self) -> None:
+        """Reject a mode that takes work away on a run that makes a version again, which runs with what was stored."""
+        with pytest.raises(ValueError, match='keeps the settings'):
+            StageRun(
+                stage=Stage.GEOMETRY,
+                page_ids=(PageId(make_page(project_id=PROJECT_ID).id),),
+                remake=PageVersionId('0123456789abcdef'),
+                mode=RunMode.RESET_SETTINGS,
+            )

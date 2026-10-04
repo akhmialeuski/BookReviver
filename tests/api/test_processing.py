@@ -17,6 +17,7 @@ from PIL import Image
 from pydantic import ValidationError
 from taskiq import AsyncBroker, InMemoryBroker
 
+from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.api.schemas.edits import EditForm
 from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.processing import (
@@ -34,6 +35,7 @@ from bookreviver.domain.enums import (
     JobState,
     Rendition,
     RuleCondition,
+    RunMode,
     Stage,
     StageState,
     VersionScale,
@@ -788,6 +790,235 @@ class TestPageHistory:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
+async def add_page(database: InMemoryDatabase, book: Book, order_key: str) -> Page:
+    """Commit another page cut from a scan of the book, after the pages it has.
+
+    :param database: In-memory database of the application.
+    :type database: InMemoryDatabase
+    :param book: Book of the signed-in account.
+    :type book: Book
+    :param order_key: Order key of the page, which places it in the book.
+    :type order_key: str
+    :returns: The page.
+    :rtype: Page
+    """
+    source = make_source(project_id=book.project.id, name=f'{order_key}.pdf')
+    scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
+    page = make_page(project_id=book.project.id, order_key=order_key, scan=scan)
+    uow = InMemoryUnitOfWork(database)
+    await uow.sources.add(source)
+    await uow.scans.add(scan)
+    await uow.pages.add(page)
+    await uow.commit()
+    return page
+
+
+class TestCarryOver:
+    """Tests for the endpoint that carries a setting of a page over to other pages."""
+
+    async def test_a_setting_is_carried_to_the_following_pages_and_one_undo_takes_it_back(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase
+    ) -> None:
+        """Verify the value reaches the pages after the source in one batch, which one undo takes back from all.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        pages = [await add_page(fx_database, fx_book, order_key) for order_key in ('a1', 'a2')]
+        await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 2})
+        carried = await fx_client.post(
+            f'{fx_book.page_path}/settings/geometry/{step_id}/strength/carry-over', json={'scope': 'following'}
+        )
+        body = carried.json()
+        target = f'{fx_book.path}/pages/{pages[0].id}'
+        listed = await fx_client.get(f'{target}/settings/geometry')
+        undone = await fx_client.post(
+            f'{target}/history/geometry/{step_id}/undo', json={'change_id': body['changes'][0]['id']}
+        )
+        after = await fx_client.get(f'{fx_book.path}/pages/{pages[1].id}/settings/geometry')
+        expect(carried.status_code == status.HTTP_200_OK)
+        expect(sorted(change['page_id'] for change in body['changes']) == sorted(str(page.id) for page in pages))
+        expect({change['batch_id'] for change in body['changes']} == {body['batch_id']})
+        expect((body['skipped'], {change['source'] for change in body['changes']}) == ([], {'carry-over'}))
+        expect([item['params'] for item in listed.json()[ITEMS]] == [{'strength': 2}])
+        expect(len(undone.json()['changes']) == len(pages))
+        expect(after.json()['total'] == 0)
+        assert_expectations()
+
+    async def test_a_page_with_a_value_of_its_own_is_skipped_unless_the_form_overwrites(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase
+    ) -> None:
+        """Verify the page is listed as skipped and keeps its value, and overwriting takes it along.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        page = await add_page(fx_database, fx_book, 'a1')
+        own = f'{fx_book.path}/pages/{page.id}/settings/geometry/{step_id}/strength'
+        await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 2})
+        await fx_client.put(own, json={'value': 5})
+        path = f'{fx_book.page_path}/settings/geometry/{step_id}/strength/carry-over'
+        skipped = await fx_client.post(path, json={'scope': 'condition'})
+        kept = await fx_client.get(f'{fx_book.path}/pages/{page.id}/settings/geometry')
+        overwritten = await fx_client.post(path, json={'scope': 'condition', 'overwrite': True})
+        expect(skipped.json()['skipped'] == [str(page.id)] and skipped.json()['changes'] == [])
+        expect([item['params'] for item in kept.json()[ITEMS]] == [{'strength': 5}])
+        expect(overwritten.json()['skipped'] == [] and len(overwritten.json()['changes']) == 1)
+        assert_expectations()
+
+    async def test_the_selected_pages_take_the_value(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase
+    ) -> None:
+        """Verify only the pages the form names take the value.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        first, second = [await add_page(fx_database, fx_book, order_key) for order_key in ('a1', 'a2')]
+        await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 2})
+        carried = await fx_client.post(
+            f'{fx_book.page_path}/settings/geometry/{step_id}/strength/carry-over',
+            json={'scope': 'selected', 'page_ids': [str(second.id)]},
+        )
+        untouched = await fx_client.get(f'{fx_book.path}/pages/{first.id}/settings/geometry')
+        expect([change['page_id'] for change in carried.json()['changes']] == [str(second.id)])
+        expect(untouched.json()['total'] == 0)
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        'body',
+        [{'scope': 'selected'}, {'scope': 'selected', 'page_ids': []}, {'scope': 'everywhere'}, {}],
+        ids=['no-pages', 'empty-pages', 'unknown-scope', 'no-scope'],
+    )
+    async def test_a_form_that_does_not_fit_is_a_422(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, body: dict[str, object]
+    ) -> None:
+        """Verify the scope of the selected pages without pages, an unknown scope and no scope answer 422.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param body: Form under test.
+        :type body: dict[str, object]
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 2})
+        response = await fx_client.post(
+            f'{fx_book.page_path}/settings/geometry/{step_id}/strength/carry-over', json=body
+        )
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    async def test_a_field_the_page_does_not_change_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify carrying a field the source page keeps at the value of the recipe answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        response = await fx_client.post(
+            f'{fx_book.page_path}/settings/geometry/{step_id}/strength/carry-over', json={'scope': 'following'}
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+class TestRunModes:
+    """Tests for the mode of a run, and for the count that warns before a mode takes work away."""
+
+    async def test_the_impact_counts_the_pages_the_mode_takes_work_from(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify the count is of the pages the run goes over, with the setting of the page, by the mode asked for.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 2})
+        reset = await fx_client.post(f'{fx_book.path}/stages/geometry/run-impact', json={'mode': 'reset-page-settings'})
+        replace = await fx_client.post(f'{fx_book.path}/stages/geometry/run-impact', json={'mode': 'replace-hand'})
+        keep = await fx_client.post(f'{fx_book.path}/stages/geometry/run-impact', json={})
+        expect(
+            reset.json()
+            == {'mode': 'reset-page-settings', 'pages': 1, 'hand_pages': 0, 'settings_pages': 1, 'affected': 1}
+        )
+        expect((replace.json()['affected'], keep.json()['affected'], keep.json()['mode']) == (0, 0, 'keep'))
+        assert_expectations()
+
+    async def test_a_mode_that_takes_work_is_a_409_until_it_is_confirmed_and_then_a_job(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_broker: InMemoryBroker
+    ) -> None:
+        """Verify the run is refused with the number of pages, and queued with the confirmation, and takes the setting.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param fx_broker: In-process broker running the job.
+        :type fx_broker: InMemoryBroker
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 2})
+        path = f'{fx_book.path}/stages/geometry/run'
+        refused = await fx_client.post(path, json={'mode': 'reset-page-settings'})
+        accepted = await fx_client.post(path, json={'mode': 'reset-page-settings', 'confirm_overwrite': True})
+        await fx_broker.wait_all()
+        settings = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
+        expect(refused.status_code == status.HTTP_409_CONFLICT and '1 pages' in refused.json()['detail'])
+        expect(accepted.status_code == status.HTTP_202_ACCEPTED)
+        expect(settings.json()['total'] == 0)
+        assert_expectations()
+
+    async def test_a_run_keeps_the_settings_by_default(
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_broker: InMemoryBroker
+    ) -> None:
+        """Verify a run that names no mode leaves the setting of the page as it is.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param fx_broker: In-process broker running the job.
+        :type fx_broker: InMemoryBroker
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 2})
+        await run_stage(fx_client, fx_broker, fx_book, 'geometry')
+        settings = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
+        assert [item['params'] for item in settings.json()[ITEMS]] == [{'strength': 2}]
+
+    async def test_a_mode_that_does_not_exist_is_a_422(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify the body of a run and of its count refuse a mode the application does not have.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        run = await fx_client.post(f'{fx_book.path}/stages/geometry/run', json={'mode': 'wipe'})
+        impact = await fx_client.post(f'{fx_book.path}/stages/geometry/run-impact', json={'mode': 'wipe'})
+        assert (run.status_code, impact.status_code) == (status.HTTP_422_UNPROCESSABLE_CONTENT,) * 2
+
+
 class TestEditForm:
     """Tests for the form of an edit, for the shapes the split editor draws."""
 
@@ -852,6 +1083,22 @@ class TestStageRunBody:
         """
         run = StageRunBody(confirm_unsplit=confirmed).to_run(Stage.PAGE_SPLIT)
         assert (run.confirm_unsplit, StageRun.from_map(run.to_map()).confirm_unsplit) == (confirmed, confirmed)
+
+    @pytest.mark.parametrize('mode', list(RunMode), ids=[mode.value for mode in RunMode])
+    def test_the_mode_and_its_confirmation_reach_the_run_and_the_job_that_stores_it(self, mode: RunMode) -> None:
+        """Verify the mode and the confirmation to overwrite are in the run the body states, and survive the job.
+
+        :param mode: Mode under test.
+        :type mode: RunMode
+        """
+        run = StageRunBody(mode=mode, confirm_overwrite=True).to_run(Stage.GEOMETRY)
+        stored = StageRun.from_map(run.to_map())
+        assert (run.mode, stored.mode, stored.confirm_overwrite) == (mode, mode, True)
+
+    def test_a_job_stored_before_the_modes_runs_in_the_usual_mode(self) -> None:
+        """Verify the parameters of a job without a mode are read as a run that keeps the work of the pages."""
+        old = {key: value for key, value in StageRun(stage=Stage.GEOMETRY).to_map().items() if key != 'mode'}
+        assert StageRun.from_map(old).mode is RunMode.KEEP
 
 
 async def create_variant(client: httpx.AsyncClient, book: Book, name: str) -> RecipeSchema:
