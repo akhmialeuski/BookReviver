@@ -11,11 +11,13 @@ button to have one page size.
 
 A page whose lines were photographed larger than another's has a larger block too, so each block is brought to the
 median line height before the blocks are compared, as the normalize step will bring it. The page is the largest of those
-blocks with the margins round it, so no page has a block that does not fit. While the margins are measured they are
-shares of that block, written in pixels; once the user sets one by hand the margins are left as they are, and the page
-is the largest block with the margins the step has. The line height and the page size are written either way. Changing
-the parameters of a recipe marks the pages it processed stale by the rules every change of a recipe follows, and runs
-nothing.
+blocks with the margins round it, so no page has a block that does not fit. The margins are lengths of the paper, in
+millimetres, which the step turns into pixels by the resolution of each page; the page is sized by the largest of those
+resolutions, or by the width of the block for pages that have none, as ``MarginScale`` works it out for the step too.
+While the margins are measured they are shares of the block, written in millimetres; once the user sets one by hand the
+margins are left as they are, and the page is the largest block with the margins the step has. The line height and the
+page size are written either way. Changing the parameters of a recipe marks the pages it processed stale by the rules
+every change of a recipe follows, and runs nothing.
 """
 
 import math
@@ -28,6 +30,7 @@ from attrs import evolve, frozen
 from bookreviver.domain.enums import MarginsSource, NormalizeParam, OrderMode, Stage, VersionData, VersionState
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Rect
+from bookreviver.domain.margins import DEFAULT_MARGINS_MM, MarginScale
 from bookreviver.domain.values import RecipeDraft
 
 if TYPE_CHECKING:
@@ -72,11 +75,13 @@ class BlockMeasure:
     :ivar width: Width of the content box in pixels of the full image the step read.
     :ivar height: Height of the content box in the same pixels.
     :ivar line_height: Distance between the lines of the box in those pixels, or None when the step found none.
+    :ivar dpi: Resolution of the pixels of the full image, or None when the page has none.
     """
 
     width: float
     height: float
     line_height: float | None
+    dpi: float | None = None
 
     @classmethod
     def of(cls, version: PageVersion) -> Self | None:
@@ -93,11 +98,16 @@ class BlockMeasure:
         rect = Rect.from_data(box)
         recorded = version.data.get(VersionData.LINE_HEIGHT_PX)
         factor = version.data.get(VersionData.BLOCK_SCALE)
-        line_height = None
-        # The step records the distance after it scaled the box, so it is brought back to the pixels of the page itself
-        if isinstance(recorded, int | float) and isinstance(factor, int | float) and recorded > 0 and factor > 0:
-            line_height = float(recorded) / float(factor)
-        return cls(width=rect.width, height=rect.height, line_height=line_height)
+        recorded_dpi = version.data.get(VersionData.DPI)
+        line_height = dpi = None
+        # The step records the distance and the resolution after it scaled the box, so they are brought back to the
+        # pixels of the page itself
+        if isinstance(factor, int | float) and factor > 0:
+            if isinstance(recorded, int | float) and recorded > 0:
+                line_height = float(recorded) / float(factor)
+            if isinstance(recorded_dpi, int | float) and recorded_dpi > 0:
+                dpi = float(recorded_dpi) / float(factor)
+        return cls(width=rect.width, height=rect.height, line_height=line_height, dpi=dpi)
 
 
 @frozen(kw_only=True)
@@ -138,18 +148,28 @@ class PageSetting:
         return cls(line_height=float(line_height), width=width, height=height)
 
 
+@frozen(kw_only=True)
+class BookBlock:
+    """The box that holds the content box of every page of a book, once each is brought to one line height.
+
+    :ivar width: Width of the box in pixels of the page of the book.
+    :ivar height: Height of the box in the same pixels.
+    :ivar scale: The pixels of the page of the book in a millimetre of its paper.
+    """
+
+    width: float
+    height: float
+    scale: MarginScale
+
+
 class BookSize:
     """Works the target line height and the size of the page out of the content boxes of a book."""
 
-    MARGIN_TOP_PERCENT: ClassVar[float] = 8.0
-    MARGIN_BOTTOM_PERCENT: ClassVar[float] = 10.0
-    MARGIN_INNER_PERCENT: ClassVar[float] = 10.0
-    MARGIN_OUTER_PERCENT: ClassVar[float] = 8.0
-    DEFAULT_MARGINS: ClassVar[Mapping[NormalizeParam, int]] = {
-        NormalizeParam.MARGIN_TOP: 150,
-        NormalizeParam.MARGIN_BOTTOM: 200,
-        NormalizeParam.MARGIN_INNER: 200,
-        NormalizeParam.MARGIN_OUTER: 150,
+    MARGIN_SHARES: ClassVar[Mapping[NormalizeParam, float]] = {
+        NormalizeParam.MARGIN_TOP: 8.0,
+        NormalizeParam.MARGIN_BOTTOM: 10.0,
+        NormalizeParam.MARGIN_INNER: 10.0,
+        NormalizeParam.MARGIN_OUTER: 8.0,
     }
 
     def __init__(self, measures: Sequence[BlockMeasure]) -> None:
@@ -167,32 +187,24 @@ class BookSize:
 
         :param current: The parameters the step has now, whose margins are kept when the user set them.
         :type current: MetadataMap
-        :returns: The line height when any page has one, the size of the page, and the margins when the measure sets
-                  them.
+        :returns: The line height when any page has one, the size of the page, and the margins, in millimetres, when the
+                  measure sets them.
         :rtype: MetadataMap
         """
-        block_width, block_height = self._block(self._median_line_height)
-        margins: dict[str, int] = {
-            NormalizeParam.MARGIN_TOP: math.ceil(block_height * self.MARGIN_TOP_PERCENT / PERCENT),
-            NormalizeParam.MARGIN_BOTTOM: math.ceil(block_height * self.MARGIN_BOTTOM_PERCENT / PERCENT),
-            NormalizeParam.MARGIN_INNER: math.ceil(block_width * self.MARGIN_INNER_PERCENT / PERCENT),
-            NormalizeParam.MARGIN_OUTER: math.ceil(block_width * self.MARGIN_OUTER_PERCENT / PERCENT),
+        block = self._block(self._median_line_height)
+        along = {NormalizeParam.MARGIN_TOP: block.height, NormalizeParam.MARGIN_BOTTOM: block.height}
+        # The margins are shares of the block, in the millimetres of the paper, to a tenth of a millimetre
+        margins: dict[str, float] = {
+            name: round(block.scale.millimetres(along.get(name, block.width) * share / PERCENT), 1)
+            for name, share in self.MARGIN_SHARES.items()
         }
         # The margins the user set stay, and the page is the largest block with them
         if current.get(NormalizeParam.MARGINS_SOURCE) == MarginsSource.MANUAL:
-            margins = {name: int(current[name]) for name in margins}
-            written: dict[str, int] = {}
+            margins = {name: float(current[name]) for name in margins}
+            written: dict[str, float] = {}
         else:
             written = margins
-        parameters: dict[str, object] = {
-            NormalizeParam.PAGE_WIDTH: math.ceil(
-                block_width + margins[NormalizeParam.MARGIN_INNER] + margins[NormalizeParam.MARGIN_OUTER]
-            ),
-            NormalizeParam.PAGE_HEIGHT: math.ceil(
-                block_height + margins[NormalizeParam.MARGIN_TOP] + margins[NormalizeParam.MARGIN_BOTTOM]
-            ),
-            **written,
-        }
+        parameters: dict[str, object] = {**self._page(block, margins), **written}
         if self._median_line_height is not None:
             parameters[NormalizeParam.LINE_HEIGHT] = round(self._median_line_height, 1)
         return parameters
@@ -222,33 +234,66 @@ class BookSize:
             line_height = self._median_line_height
         # The page is placed with the line height it is written with, which has a tenth of a pixel
         line_height = None if line_height is None else round(line_height, 1)
-        block_width, block_height = self._block(line_height)
-        margins = {name: int(current.get(name, default)) for name, default in self.DEFAULT_MARGINS.items()}
-        width = math.ceil(block_width + margins[NormalizeParam.MARGIN_INNER] + margins[NormalizeParam.MARGIN_OUTER])
-        height = math.ceil(block_height + margins[NormalizeParam.MARGIN_TOP] + margins[NormalizeParam.MARGIN_BOTTOM])
+        margins: dict[str, float] = {
+            name: float(current.get(name, default)) for name, default in DEFAULT_MARGINS_MM.items()
+        }
+        page = self._page(self._block(line_height), margins)
         sizes: dict[str, object] = {
-            NormalizeParam.PAGE_WIDTH: width if held is None else max(width, held.width),
-            NormalizeParam.PAGE_HEIGHT: height if held is None else max(height, held.height),
+            NormalizeParam.PAGE_WIDTH: page[NormalizeParam.PAGE_WIDTH]
+            if held is None
+            else max(page[NormalizeParam.PAGE_WIDTH], held.width),
+            NormalizeParam.PAGE_HEIGHT: page[NormalizeParam.PAGE_HEIGHT]
+            if held is None
+            else max(page[NormalizeParam.PAGE_HEIGHT], held.height),
         }
         if line_height is not None:
             sizes[NormalizeParam.LINE_HEIGHT] = line_height
         return {name: value for name, value in sizes.items() if not current.get(name)}
 
-    def _block(self, line_height: float | None) -> tuple[float, float]:
+    @staticmethod
+    def _page(block: BookBlock, margins: Mapping[str, float]) -> dict[str, int]:
+        """Give the size of the page that holds a box with margins round it.
+
+        :param block: The box of the book.
+        :type block: BookBlock
+        :param margins: The four margins in millimetres, by the name of the parameter that holds each.
+        :type margins: Mapping[str, float]
+        :returns: The width and the height of the page in pixels, by the name of the parameter that holds each.
+        :rtype: dict[str, int]
+        """
+        side = block.scale.pixels(margins[NormalizeParam.MARGIN_INNER] + margins[NormalizeParam.MARGIN_OUTER])
+        vertical = block.scale.pixels(margins[NormalizeParam.MARGIN_TOP] + margins[NormalizeParam.MARGIN_BOTTOM])
+        return {
+            NormalizeParam.PAGE_WIDTH: math.ceil(block.width + side),
+            NormalizeParam.PAGE_HEIGHT: math.ceil(block.height + vertical),
+        }
+
+    def _block(self, line_height: float | None) -> BookBlock:
         """Give the largest content box of the book once every box is brought to a line height.
+
+        The pixels in a millimetre are those of the page that has the most of them, whose margins are the longest, so
+        no page of the book has a margin that does not fit the page. Pages that have no resolution take the width of
+        the box for ``NOMINAL_BLOCK_MM`` millimetres.
 
         :param line_height: The distance between the lines the boxes are brought to, or None to leave them as they are.
         :type line_height: float | None
-        :returns: The width and the height of the box that holds every box, which are those of the largest of each.
-        :rtype: tuple[float, float]
+        :returns: The box that holds every box, which has the width and the height of the largest of each.
+        :rtype: BookBlock
         """
         factors = [
             1.0 if line_height is None or measure.line_height is None else line_height / measure.line_height
             for measure in self._measures
         ]
-        return (
-            max(measure.width * factor for measure, factor in zip(self._measures, factors, strict=True)),
-            max(measure.height * factor for measure, factor in zip(self._measures, factors, strict=True)),
+        width = max(measure.width * factor for measure, factor in zip(self._measures, factors, strict=True))
+        height = max(measure.height * factor for measure, factor in zip(self._measures, factors, strict=True))
+        # The resolution of a box after it is brought to the line height
+        dpis = [
+            measure.dpi * factor
+            for measure, factor in zip(self._measures, factors, strict=True)
+            if measure.dpi is not None
+        ]
+        return BookBlock(
+            width=width, height=height, scale=MarginScale.from_dpi(max(dpis)) if dpis else MarginScale.from_block(width)
         )
 
 

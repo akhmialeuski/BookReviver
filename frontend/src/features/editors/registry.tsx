@@ -66,6 +66,7 @@ function register<K extends EditableKind>(
     owner: definition.owner,
     size: definition.size,
     runsAfterEdit: definition.runsAfterEdit,
+    reach: definition.reach ?? (() => null),
     fallback: (context) => definition.write(definition.fallback(context)),
     mask:
       mask === undefined

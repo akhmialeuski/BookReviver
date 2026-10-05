@@ -192,6 +192,59 @@ describe('CompareStage', () => {
     expect(result.height).toBeCloseTo(2645 / 2795);
   });
 
+  describe('fitted to hold what the editor draws beyond the page', () => {
+    // The picture after is 1600 by 2800 pixels, so it is 0.5714 wide and one tall in the world
+    const BORDER = { left: -160, top: -280, width: 1920, height: 3360 };
+
+    const lastFit = (): { x: number; y: number; width: number; height: number } => {
+      const [first] = fake.viewers as {
+        viewport: {
+          fitBounds: {
+            mock: { lastCall?: [{ x: number; y: number; width: number; height: number }] };
+          };
+        };
+      }[];
+      const call = first?.viewport.fitBounds.mock.lastCall;
+      if (call === undefined) {
+        throw new Error('the view was not fitted');
+      }
+      return call[0];
+    };
+
+    it('holds the border that lies beyond the picture on every side, with the room for its handles', async () => {
+      await stage.show(null, AFTER, 'p1');
+      stage.setPadding(0.08);
+      stage.setReach({ rect: BORDER, size: { width: WIDTH, height: HEIGHT } });
+
+      const fit = lastFit();
+      const aspect = WIDTH / HEIGHT;
+      // The border reaches a tenth of the page past the picture on every side, and the room for the handles lies beyond it
+      expect(fit.x).toBeCloseTo(-0.1 * aspect - 0.08);
+      expect(fit.y).toBeCloseTo(-0.1 - 0.08);
+      expect(fit.x + fit.width).toBeGreaterThanOrEqual(aspect * 1.1 + 0.08 - 1e-9);
+      expect(fit.y + fit.height).toBeGreaterThanOrEqual(1.1 + 0.08 - 1e-9);
+    });
+
+    it('fits the picture alone while the editor draws nothing beyond it', async () => {
+      await stage.show(null, AFTER, 'p1');
+      stage.setPadding(0.08);
+
+      expect(lastFit().x).toBeCloseTo(-0.08);
+    });
+
+    it('leaves a view the reader moved where it is when the border changes', async () => {
+      await stage.show(null, AFTER, 'p1');
+      stage.setPadding(0.08);
+      const [first] = fake.viewers as { addHandler: { mock: { calls: [string, () => void][] } } }[];
+      const drag = first?.addHandler.mock.calls.find(([name]) => name === 'canvas-drag');
+      drag?.[1]();
+      const before = lastFit();
+      stage.setReach({ rect: BORDER, size: { width: WIDTH, height: HEIGHT } });
+
+      expect(lastFit()).toBe(before);
+    });
+  });
+
   it('keeps the picture after in the second viewer where it stands in the first, in the side by side mode', async () => {
     await stage.show(BEFORE, AFTER, 'p1', {
       base: Side.After,

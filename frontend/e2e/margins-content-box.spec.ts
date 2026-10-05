@@ -32,8 +32,18 @@ const STEP_ADDRESS = /\/stages\/geometry\/steps\/[0-9a-f-]{36}(\?|$)/;
 const DRAG_PX = 30;
 // How far a box found by a run of a page may stand from the one a preview found, in pixels of the picture
 const FOUND_TOLERANCE_PX = 12;
-const SMALL_MARGIN_PX = 20;
-const MARGIN_FIELDS = ['Top margin', 'Bottom margin', 'Inner margin', 'Outer margin'];
+// What the margins of the step are in the form, in millimetres, which the scans of this scenario meet unchanged
+const MARGIN_FIELDS = [
+  ['Top margin, mm', '10'],
+  ['Bottom margin, mm', '15'],
+  ['Inner margin, mm', '15'],
+  ['Outer margin, mm', '10'],
+] as const;
+const SIDES = ['left', 'right', 'top', 'bottom'] as const;
+// The height the toolbar over the bottom of the canvas covers, counted from the bottom edge
+const TOOLBAR_PX = 64;
+// How long the border of the page must stand still to be taken as read after a run
+const STILL_MS = 1_000;
 const LEFT_MARGIN_SETTINGS = ['margin_inner', 'margin_outer'];
 
 // Tall enough for the pictures of the key states to show the bar, the canvas and the panel
@@ -45,18 +55,27 @@ interface Size {
   height: number;
 }
 
-/** Read the size of the current result of the Geometry stage of every page of the book, in the order of the book. */
-async function sizesOf(page: Page, projectId: string): Promise<Size[]> {
-  const sizes: Size[] = [];
+/**
+ * Read the size of the current result of the Geometry stage of every page of the book, in the order of the book.
+ *
+ * A page the stage has not made a result for yet has no size, and is given as null.
+ */
+async function sizesOf(page: Page, projectId: string): Promise<(Size | null)[]> {
+  const sizes: (Size | null)[] = [];
   for (const id of await pageIds(page)) {
     const stages = (await (
       await page.request.get(`/api/v1/projects/${projectId}/pages/${id}/stages`)
     ).json()) as { items: { stage: string; head_version_id: string }[] };
     const head = stages.items.find((item) => item.stage === 'geometry')?.head_version_id;
+    if (head === undefined) {
+      sizes.push(null);
+      continue;
+    }
     const version = (await (
       await page.request.get(`/api/v1/projects/${projectId}/pages/${id}/versions/${head}`)
-    ).json()) as { data: { width_px: number; height_px: number } };
-    sizes.push({ width: version.data.width_px, height: version.data.height_px });
+    ).json()) as { data?: { width_px?: number; height_px?: number } };
+    const { width_px: width, height_px: height } = version.data ?? {};
+    sizes.push(width === undefined || height === undefined ? null : { width, height });
   }
   return sizes;
 }
@@ -91,6 +110,23 @@ test('the content box and the border of a page are found on opening, edited with
   const settled = async (): Promise<void> => {
     await expect(page.getByTestId('editor-busy')).toHaveCount(0, { timeout: RUN_TIMEOUT_MS });
     await waitForIdleJobs(page, projectId);
+  };
+
+  // The page is read again after a run, which the busy mark does not wait for, and the canvas is fitted again to hold the
+  // new border, so the handles stand still only once two readings a moment apart agree
+  const stillBorder = async (): Promise<void> => {
+    await expect(async () => {
+      const read = async (): Promise<string[]> =>
+        Promise.all(
+          ['data-outer', ...SIDES.map((side) => `data-side-${side}`)].map(
+            async (name) => (await layer.getAttribute(name)) ?? '',
+          ),
+        );
+      const first = await read();
+      await page.waitForTimeout(STILL_MS);
+      expect(await read()).toEqual(first);
+      expect(first.every((value) => value !== '')).toBe(true);
+    }).toPass({ timeout: RUN_TIMEOUT_MS });
   };
 
   await test.step('a book with two sheets of text opens on Geometry, with no page run yet', async () => {
@@ -140,30 +176,36 @@ test('the content box and the border of a page are found on opening, edited with
   });
 
   await test.step('dragging a side of the border sets that margin for the page alone', async () => {
-    // The margins a book starts with are 150 to 200 pixels, and the border is the page they make round the box, so it
-    // lies beyond a canvas that shows a scan this small. The recipe is given margins that fit, as a scan of a real size
-    // has, and the pages are run again with them
-    for (const name of MARGIN_FIELDS) {
-      await page
-        .getByTestId('step-panel-settings')
-        .getByRole('spinbutton', { name, exact: true })
-        .fill(String(SMALL_MARGIN_PX));
+    // The step keeps the margins a book starts with, which are lengths of the paper in millimetres, so the border lies at
+    // the same place on a scan of any size, and the canvas is fitted to hold it
+    for (const [name, millimetres] of MARGIN_FIELDS) {
+      await expect(
+        page.getByTestId('step-panel-settings').getByRole('spinbutton', { name, exact: true }),
+      ).toHaveValue(millimetres);
     }
-    await page.getByTestId('recipe-save').click();
-    await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
-    await waitForIdleJobs(page, projectId);
-    await runAll(page);
-    await waitForIdleJobs(page, projectId);
-    await expect(layer).toHaveAttribute('data-figure', 'by-hand', { timeout: RUN_TIMEOUT_MS });
     await expect
       .poll(async () => (await pairOf(layer, 'data-side-left')).x, { timeout: RUN_TIMEOUT_MS })
       .toBeGreaterThan(0);
+    await stillBorder();
+    // Every side of the border can be grabbed: its handle stands inside the canvas and above the toolbar that floats over
+    // the bottom of it, the places of the handles being counted from the corner of the layer
+    const view = await layer.boundingBox();
+    expect(view).not.toBeNull();
+    for (const side of SIDES) {
+      const handle = await pairOf(layer, `data-side-${side}`);
+      expect(handle.x).toBeGreaterThan(0);
+      expect(handle.x).toBeLessThan(view?.width ?? 0);
+      expect(handle.y).toBeGreaterThan(0);
+      expect(handle.y).toBeLessThan((view?.height ?? 0) - TOOLBAR_PX);
+    }
+    await snap(page, 'margins-border-in-view');
     const before = await numbersOf(layer, 'data-outer');
     const side = await pairOf(layer, 'data-side-left');
     await dragFrom(page, layer, side, { x: -DRAG_PX, y: 0 });
     await expect.poll(() => settingSaves.length, { timeout: RUN_TIMEOUT_MS }).toBe(1);
     expect(LEFT_MARGIN_SETTINGS.some((name) => settingSaves[0]?.endsWith(`/${name}`))).toBe(true);
     await settled();
+    await stillBorder();
     const after = await numbersOf(layer, 'data-outer');
     expect(after[0]).toBeLessThan(before[0] ?? 0);
     const [first = '', second = ''] = await pageIds(page);
@@ -185,9 +227,15 @@ test('the content box and the border of a page are found on opening, edited with
   await test.step('a run on all pages gives every page one size without measuring the book, and keeps the work on the page', async () => {
     await runAll(page);
     await waitForIdleJobs(page, projectId);
+    // The summary of the stage may say every page is up to date before the run has made a result for each page
+    await expect
+      .poll(async () => (await sizesOf(page, projectId)).every((size) => size !== null), {
+        timeout: RUN_TIMEOUT_MS,
+      })
+      .toBe(true);
     const sizes = await sizesOf(page, projectId);
     expect(sizes).toHaveLength(PAGES);
-    expect(new Set(sizes.map((size) => `${size.width}x${size.height}`)).size).toBe(1);
+    expect(new Set(sizes.map((size) => `${size?.width}x${size?.height}`)).size).toBe(1);
     const [first = ''] = await pageIds(page);
     expect(await countEdits(page, first)).toBe(1);
     await expect(layer).toHaveAttribute('data-figure', 'by-hand');

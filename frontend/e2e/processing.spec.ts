@@ -163,8 +163,8 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     await page.getByTestId('bar-step').filter({ hasText: 'Margins' }).click();
     await page
       .getByTestId('step-panel-settings')
-      .getByRole('spinbutton', { name: 'Top margin', exact: true })
-      .fill('160');
+      .getByRole('spinbutton', { name: 'Top margin, mm', exact: true })
+      .fill('12');
     await expect(page.getByTestId('recipe-stale-warning')).toContainText(
       `${PAGES} pages out of date`,
     );
@@ -193,7 +193,7 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
       timeout: RUN_TIMEOUT_MS,
     });
     await expect(entries.first()).toHaveAttribute('data-current', 'false');
-    await expect(entries.nth(1)).toContainText('Top margin 150');
+    await expect(entries.nth(1)).toContainText('Top margin, mm 10');
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

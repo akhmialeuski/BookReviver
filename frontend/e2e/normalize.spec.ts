@@ -29,8 +29,12 @@ const PAGES = SCALES.length;
 // What the settings of the step hold before the book is measured: 0 makes each page its block and its margins
 const DEFAULT_PAGE_WIDTH = '0';
 const LINE_TOLERANCE = 0.02;
-// How many pixels the top margin is made larger than the measured one, to tell it from a measured value
-const HAND_MARGIN_GROWTH = 25;
+// How many millimetres the top margin is made larger than the measured one, to tell it from a measured value
+const HAND_MARGIN_GROWTH_MM = 10;
+// The width of the block of a page with no resolution, which the margins in millimetres are counted against
+const NOMINAL_BLOCK_MM = 100;
+// How far the height of the page may be from what the grown margin makes it, in pixels
+const HEIGHT_TOLERANCE_PX = 2;
 const NORMALIZE_TITLE = 'Margins';
 
 /** What the server holds about the current result of the Geometry stage of one page. */
@@ -143,17 +147,29 @@ test('the book is measured and its pages come out of one size with the lines at 
       await waitForIdleJobs(page, projectId);
     };
     const measuredTop = Number(await field('margin_top').inputValue());
-    const handTop = measuredTop + HAND_MARGIN_GROWTH;
+    const handTop = Number((measuredTop + HAND_MARGIN_GROWTH_MM).toFixed(1));
     // Typing a margin switches the step to margins set by hand, and the form says so
     await expect(normalize.getByTestId('manual-margins')).toHaveCount(0);
     await field('margin_top').fill(String(handTop));
     await expect(normalize.getByTestId('manual-margins')).toBeVisible();
     await saveRecipe();
     await measureAgain();
-    // The page is the median block with the margin that was typed, which is higher by what the margin grew
-    await expect(field('page_height')).toHaveValue(String(pageHeight + HAND_MARGIN_GROWTH), {
-      timeout: RUN_TIMEOUT_MS,
-    });
+    // The page is the median block with the margin that was typed, which is higher by what the margin grew. The scans carry
+    // no resolution, so a millimetre is the width of the block over a hundred, which is the page over the block and the
+    // side margins
+    const sideMargins =
+      Number(await field('margin_inner').inputValue()) +
+      Number(await field('margin_outer').inputValue());
+    const pixelsPerMm = pageWidth / (NOMINAL_BLOCK_MM + sideMargins);
+    await expect
+      .poll(async () => Number(await field('page_height').inputValue()), {
+        timeout: RUN_TIMEOUT_MS,
+      })
+      .toBeGreaterThan(pageHeight);
+    const grown = Number(await field('page_height').inputValue()) - pageHeight;
+    expect(Math.abs(grown - HAND_MARGIN_GROWTH_MM * pixelsPerMm)).toBeLessThanOrEqual(
+      HEIGHT_TOLERANCE_PX,
+    );
     await expect(field('margin_top')).toHaveValue(String(handTop));
     await expect(field('page_width')).toHaveValue(String(pageWidth));
     await expect(field('line_height')).toHaveValue(String(lineHeight));

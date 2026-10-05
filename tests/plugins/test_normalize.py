@@ -3,7 +3,7 @@
 The tests need OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
 """
 
-from typing import TYPE_CHECKING, Unpack
+from typing import TYPE_CHECKING, ClassVar, Unpack
 
 import numpy as np
 import pytest
@@ -42,21 +42,31 @@ if TYPE_CHECKING:
 KEY_PATTERN: str = r'geometry\.normalize'
 BLOCK_NAME: str = 'block.png'
 SCALES: tuple[float, ...] = (0.8, 1.0, 1.2)
+# The resolution of the input of the tests, which makes ten pixels of a millimetre, so a margin in millimetres is that
+# many tens of pixels
+TEST_DPI: float = 254.0
+PIXELS_PER_MM: int = 10
 # The page the tests normalize to, and its margins, which leave a work area that the block of any scale fits in
 PAGE_WIDTH_PX: int = 1000
 PAGE_HEIGHT_PX: int = 1400
-MARGIN_TOP_PX: int = 100
-MARGIN_BOTTOM_PX: int = 150
-MARGIN_INNER_PX: int = 120
-MARGIN_OUTER_PX: int = 60
+MARGIN_TOP_MM: float = 10.0
+MARGIN_BOTTOM_MM: float = 15.0
+MARGIN_INNER_MM: float = 12.0
+MARGIN_OUTER_MM: float = 6.0
+MARGIN_TOP_PX: int = round(MARGIN_TOP_MM * PIXELS_PER_MM)
+MARGIN_BOTTOM_PX: int = round(MARGIN_BOTTOM_MM * PIXELS_PER_MM)
+MARGIN_INNER_PX: int = round(MARGIN_INNER_MM * PIXELS_PER_MM)
+MARGIN_OUTER_PX: int = round(MARGIN_OUTER_MM * PIXELS_PER_MM)
 PAGE: MetadataMap = {
     NormalizeParam.PAGE_WIDTH: PAGE_WIDTH_PX,
     NormalizeParam.PAGE_HEIGHT: PAGE_HEIGHT_PX,
-    NormalizeParam.MARGIN_TOP: MARGIN_TOP_PX,
-    NormalizeParam.MARGIN_BOTTOM: MARGIN_BOTTOM_PX,
-    NormalizeParam.MARGIN_INNER: MARGIN_INNER_PX,
-    NormalizeParam.MARGIN_OUTER: MARGIN_OUTER_PX,
+    NormalizeParam.MARGIN_TOP: MARGIN_TOP_MM,
+    NormalizeParam.MARGIN_BOTTOM: MARGIN_BOTTOM_MM,
+    NormalizeParam.MARGIN_INNER: MARGIN_INNER_MM,
+    NormalizeParam.MARGIN_OUTER: MARGIN_OUTER_MM,
 }
+# The input that carries the resolution, as the version of a scan does
+SCAN: MetadataMap = {VersionData.DPI: TEST_DPI}
 ALIGN_X: str = 'align_horizontal'
 ALIGN_Y: str = 'align_vertical'
 MARGINS_BY: str = 'margins_by'
@@ -171,7 +181,7 @@ def normalized(
     :returns: The output.
     :rtype: StepOutput
     """
-    extras['facts'] = {**crop_facts(block, extras.get('scale', 1.0)), **extras.get('facts', {})}
+    extras['facts'] = {**SCAN, **crop_facts(block, extras.get('scale', 1.0)), **extras.get('facts', {})}
     return run_on(processor, save(block, workdir / BLOCK_NAME), workdir, params={**PAGE, **(params or {})}, **extras)
 
 
@@ -193,7 +203,14 @@ class TestNormalize:
         :param scale: Size of the block over its size at the target line height.
         :type scale: float
         """
-        output = normalized(fx_normalize, text_block(scale), tmp_path, params={LINE_HEIGHT: TARGET_LINE_PX})
+        # A block drawn larger is a scan of the same paper at a higher resolution
+        output = normalized(
+            fx_normalize,
+            text_block(scale),
+            tmp_path,
+            params={LINE_HEIGHT: TARGET_LINE_PX},
+            facts={VersionData.DPI: TEST_DPI * scale},
+        )
         assert output.image is not None
         frame = Rect.from_data(output.data[VersionData.FRAME])
         with Image.open(output.image) as page:
@@ -502,7 +519,7 @@ class TestNormalize:
         edit = ContentBox(left=100, top=200, width=SHORT_BLOCK_PX[0], height=SHORT_BLOCK_PX[1])
         sheet = Image.new('L', SHEET_SIZE_PX, PAPER)
         sheet.paste(solid_block(*SHORT_BLOCK_PX), (100, 200))
-        output = run_on(fx_normalize, save(sheet, tmp_path / BLOCK_NAME), tmp_path, params=PAGE, edit=edit)
+        output = run_on(fx_normalize, save(sheet, tmp_path / BLOCK_NAME), tmp_path, params=PAGE, facts=SCAN, edit=edit)
         place = Rect.from_data(output.data[VersionData.FRAME])
         corner = output.transform.to_output(Point(x=edit.left + edit.width, y=edit.top + edit.height))
         back = output.transform.to_input(Point(x=place.left, y=place.top))
@@ -539,8 +556,7 @@ class TestNormalize:
         [
             {NormalizeParam.PAGE_WIDTH: 10},
             {NormalizeParam.MARGIN_TOP: -1},
-            {NormalizeParam.MARGIN_TOP: 1300, NormalizeParam.MARGIN_BOTTOM: 100},
-            {NormalizeParam.MARGIN_INNER: 600, NormalizeParam.MARGIN_OUTER: 600},
+            {NormalizeParam.MARGIN_TOP: 51},
             {'max_scale_change': 150},
             {ALIGN_Y: 'middle'},
             {MARGINS_BY: 'both'},
@@ -549,8 +565,7 @@ class TestNormalize:
         ids=[
             'page-too-small',
             'negative-margin',
-            'margins-take-the-height',
-            'margins-take-the-width',
+            'margin-beyond-the-bound',
             'change-over-a-hundred-percent',
             'unknown-vertical-alignment',
             'unknown-margins',
@@ -560,7 +575,7 @@ class TestNormalize:
     def test_parameters_that_do_not_fit_the_schema_are_rejected(
         self, fx_normalize: Processor, raw: MetadataMap
     ) -> None:
-        """Reject a page that is too small, a margin out of its range or one that leaves no room, and a name it lacks.
+        """Reject a page that is too small, a margin out of its range, and a name it lacks.
 
         :param fx_normalize: The processor under test.
         :type fx_normalize: Processor
@@ -580,6 +595,160 @@ class TestNormalize:
         """
         with pytest.raises(ConflictError, match=KEY_PATTERN):
             fx_normalize.run(StepInput(image=None, params=fx_normalize.validate_params({}), workdir=tmp_path))
+
+
+class TestNormalizeMillimetres:
+    """Tests for the margins as lengths of the paper: millimetres turned into pixels by the resolution of the page."""
+
+    BLOCK_PX: ClassVar[tuple[int, int]] = (300, 200)
+    EVEN_MARGINS: ClassVar[MetadataMap] = {
+        NormalizeParam.PAGE_WIDTH: 0,
+        NormalizeParam.PAGE_HEIGHT: 0,
+        NormalizeParam.MARGIN_TOP: 10.0,
+        NormalizeParam.MARGIN_BOTTOM: 10.0,
+        NormalizeParam.MARGIN_INNER: 10.0,
+        NormalizeParam.MARGIN_OUTER: 10.0,
+    }
+
+    @pytest.mark.parametrize(('dpi', 'pixels'), [(300.0, 118), (600.0, 236)], ids=['300-dpi', '600-dpi'])
+    def test_ten_millimetres_are_the_pixels_of_the_resolution(
+        self, fx_normalize: Processor, tmp_path: Path, dpi: float, pixels: int
+    ) -> None:
+        """Verify a margin of 10 mm is 118 pixels at 300 dpi and 236 pixels at 600 dpi on every side of the box.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param dpi: Resolution of the input.
+        :type dpi: float
+        :param pixels: The margin in pixels the resolution gives.
+        :type pixels: int
+        """
+        width, height = self.BLOCK_PX
+        output = normalized(
+            fx_normalize,
+            solid_block(width, height),
+            tmp_path,
+            params=self.EVEN_MARGINS,
+            facts={VersionData.DPI: dpi},
+            side=PageSide.RIGHT,
+        )
+        assert output.image is not None
+        left, top, right, bottom = ink_box(output.image)
+        # The box is centred in the room the margins leave, which is a pixel wider than the box at most
+        expect((left, top) == pytest.approx((pixels, pixels), abs=1))
+        expect(output.data[VersionData.WIDTH_PX] == pytest.approx(right + pixels, abs=1))
+        expect(output.data[VersionData.HEIGHT_PX] == pytest.approx(bottom + pixels, abs=1))
+        expect(output.data[VersionData.MARGIN_PIXELS_PER_MM] == pytest.approx(dpi / 25.4))
+        assert_expectations()
+
+    def test_two_pages_of_one_book_at_different_resolutions_have_equal_margins_in_millimetres(
+        self, fx_normalize: Processor, tmp_path: Path
+    ) -> None:
+        """Verify a scan at 300 dpi and the same paper scanned at 360 dpi get the same margins once the text is scaled.
+
+        The text of both is brought to one line height, so the pages are made of the same pixels, and the margin of 10 mm
+        is the same number of them. The larger scan is the largest the change of size the step allows.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        margins = []
+        for scale, dpi in ((1.0, 300.0), (1.2, 360.0)):
+            output = normalized(
+                fx_normalize,
+                text_block(scale),
+                tmp_path,
+                params={**self.EVEN_MARGINS, LINE_HEIGHT: TARGET_LINE_PX},
+                facts={VersionData.DPI: dpi},
+                side=PageSide.RIGHT,
+            )
+            assert output.image is not None
+            margins.append(ink_box(output.image)[:2])
+        expect(margins[0] == pytest.approx(margins[1], abs=3))
+        expect(margins[0] == pytest.approx((118, 118), abs=3))
+        assert_expectations()
+
+    def test_a_page_with_no_resolution_takes_a_share_of_the_width_of_the_box(
+        self, fx_normalize: Processor, tmp_path: Path
+    ) -> None:
+        """Verify with no resolution the box is taken for a block of 100 mm, so 10 mm is a tenth of its width.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        width, height = self.BLOCK_PX
+        block = solid_block(width, height)
+        output = run_on(
+            fx_normalize,
+            save(block, tmp_path / BLOCK_NAME),
+            tmp_path,
+            params=self.EVEN_MARGINS,
+            facts=crop_facts(block),
+            side=PageSide.RIGHT,
+        )
+        assert output.image is not None
+        share = width / 10
+        expect(ink_box(output.image)[:2] == pytest.approx((share, share), abs=1))
+        expect(output.data[VersionData.WIDTH_PX] == width + 2 * share)
+        expect(output.data[VersionData.MARGIN_PIXELS_PER_MM] == pytest.approx(width / 100))
+        assert_expectations()
+
+    def test_a_page_of_the_book_with_no_resolution_takes_the_scale_from_its_width(
+        self, fx_normalize: Processor, tmp_path: Path
+    ) -> None:
+        """Verify the pages of a book of the size by the book get one scale whatever the box of each is.
+
+        The page is 1200 pixels wide and holds 100 mm of box and 20 mm of margins, so a millimetre is 10 pixels, for a
+        narrow box and for a wide one.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        lefts = []
+        for width in (200, 500):
+            block = solid_block(width, 300)
+            output = run_on(
+                fx_normalize,
+                save(block, tmp_path / BLOCK_NAME),
+                tmp_path,
+                params={
+                    **self.EVEN_MARGINS,
+                    NormalizeParam.PAGE_WIDTH: 1_200,
+                    NormalizeParam.PAGE_HEIGHT: 1_000,
+                    ALIGN_X: HorizontalAlign.LEFT,
+                },
+                facts=crop_facts(block),
+                side=PageSide.RIGHT,
+            )
+            assert output.image is not None
+            lefts.append(ink_box(output.image)[0])
+        expect(lefts == [100, 100])
+        assert_expectations()
+
+    def test_margins_that_take_the_whole_page_are_refused(self, fx_normalize: Processor, tmp_path: Path) -> None:
+        """Verify the margins of a page of the size given that leave no room, at the resolution of the page, are refused.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        with pytest.raises(ConflictError, match='no room'):
+            normalized(
+                fx_normalize,
+                solid_block(*self.BLOCK_PX),
+                tmp_path,
+                params={**self.EVEN_MARGINS, NormalizeParam.PAGE_WIDTH: 200, NormalizeParam.PAGE_HEIGHT: 400},
+                facts={VersionData.DPI: 300.0},
+            )
 
 
 class TestNormalizeContentBox:
@@ -605,6 +774,7 @@ class TestNormalizeContentBox:
             save(sheet, tmp_path / BLOCK_NAME),
             tmp_path,
             params={**PAGE, LINE_HEIGHT: TARGET_LINE_PX, ALIGN_Y: VerticalAlign.TOP},
+            facts=SCAN,
         )
         assert output.image is not None
         left, top, right, bottom = ink_box(output.image)
@@ -633,7 +803,11 @@ class TestNormalizeContentBox:
         """
         blank = Image.new('L', SHEET_SIZE_PX, PAPER)
         output = run_on(
-            fx_normalize, save(blank, tmp_path / BLOCK_NAME), tmp_path, params={**PAGE, LINE_HEIGHT: TARGET_LINE_PX}
+            fx_normalize,
+            save(blank, tmp_path / BLOCK_NAME),
+            tmp_path,
+            params={**PAGE, LINE_HEIGHT: TARGET_LINE_PX},
+            facts=SCAN,
         )
         expect(output.review is ReviewReason.NOT_APPLIED)
         expect(Rect.from_data(output.data[VersionData.FRAME]).width == pytest.approx(SHEET_SIZE_PX[0]))
@@ -661,6 +835,7 @@ class TestNormalizeContentBox:
             save(sheet, tmp_path / BLOCK_NAME),
             tmp_path,
             params={**PAGE, LINE_HEIGHT: TARGET_LINE_PX},
+            facts=SCAN,
             edit=edit,
         )
         assert output.image is not None
@@ -685,6 +860,7 @@ class TestNormalizeContentBox:
             save(sheet_with(block), tmp_path / BLOCK_NAME),
             tmp_path,
             params={**PAGE, LINE_HEIGHT: TARGET_LINE_PX},
+            facts=SCAN,
             edit=Rect(left=0, top=0, width=50, height=50),
         )
         expect(abs(Rect.from_data(output.data[VersionData.CONTENT_BOX]).width - block.width) <= SEARCH_TOLERANCE_PX)
@@ -705,7 +881,14 @@ class TestNormalizeContentBox:
         """
         given = 1.2
         block = text_block(given)
-        output = normalized(fx_normalize, block, tmp_path, params={LINE_HEIGHT: TARGET_LINE_PX}, side=PageSide.RIGHT)
+        output = normalized(
+            fx_normalize,
+            block,
+            tmp_path,
+            params={LINE_HEIGHT: TARGET_LINE_PX},
+            facts={VersionData.DPI: TEST_DPI * given},
+            side=PageSide.RIGHT,
+        )
         grown = Rect.from_data(output.data[VersionData.MARGIN_BOX])
         factor = output.data[VersionData.BLOCK_SCALE]
         expect(factor == pytest.approx(1 / given, rel=LINE_TOLERANCE))
@@ -737,6 +920,7 @@ class TestNormalizeUncutInput:
         sheet = sheet_with(block)
         frame = Rect(left=BLOCK_AT_PX[0], top=BLOCK_AT_PX[1], width=block.width // 2, height=block.height)
         facts: MetadataMap = {
+            **SCAN,
             VersionData.WIDTH_PX: sheet.width,
             VersionData.HEIGHT_PX: sheet.height,
             VersionData.FRAME: frame.to_data(),
@@ -773,6 +957,7 @@ class TestNormalizeUncutInput:
         half = sheet.resize((sheet.width // 2, sheet.height // 2), Image.Resampling.LANCZOS)
         frame = Rect(left=BLOCK_AT_PX[0], top=BLOCK_AT_PX[1], width=block.width, height=block.height)
         facts: MetadataMap = {
+            **SCAN,
             VersionData.WIDTH_PX: half.width,
             VersionData.HEIGHT_PX: half.height,
             VersionData.CONTENT_FRAME: frame.to_data(),
@@ -807,6 +992,7 @@ class TestNormalizeUncutInput:
         sheet = sheet_with(block)
         frame = Rect(left=BLOCK_AT_PX[0], top=BLOCK_AT_PX[1], width=block.width, height=block.height)
         facts: MetadataMap = {
+            **SCAN,
             VersionData.WIDTH_PX: sheet.width,
             VersionData.HEIGHT_PX: sheet.height,
             VersionData.CONTENT_FRAME: frame.to_data(),

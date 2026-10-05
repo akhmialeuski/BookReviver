@@ -74,7 +74,7 @@ describe('readResult', () => {
       specks: null,
       contentBox: null,
       marginBox: null,
-      blockScale: null,
+      marginPixelsPerMm: null,
       marginSettings: null,
     });
   });
@@ -84,7 +84,7 @@ describe('readResult', () => {
       data: {
         content_box: { left: 100, top: 200, width: 300, height: 400 },
         margin_box: { left: 50, top: 150, width: 400, height: 520 },
-        block_scale: 0.8,
+        margin_pixels_per_mm: 4,
         margin_params: {
           left: 'margin_inner',
           top: 'margin_top',
@@ -96,7 +96,7 @@ describe('readResult', () => {
 
     expect(result.contentBox).toEqual({ left: 100, top: 200, width: 300, height: 400 });
     expect(result.marginBox).toEqual({ left: 50, top: 150, width: 400, height: 520 });
-    expect(result.blockScale).toBe(0.8);
+    expect(result.marginPixelsPerMm).toBe(4);
     expect(result.marginSettings).toEqual({
       left: 'margin_inner',
       top: 'margin_top',

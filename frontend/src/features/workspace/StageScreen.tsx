@@ -491,6 +491,7 @@ export function StageScreen({
             handle={canvas}
             overlay={editing === null ? undefined : (scene) => editing.renderCanvas(scene)}
             roomShare={editing === null ? 0 : EDITOR_ROOM_SHARE}
+            reach={editing?.reach ?? null}
             placement={placement}
           />
         ) : (

@@ -1209,7 +1209,7 @@ describe('useEditorSession', () => {
             data: {
               content_box: { left: 100, top: 200, width: 300, height: 400 },
               margin_box: { left: 70, top: 150, width: 380, height: 520 },
-              block_scale: 1,
+              margin_pixels_per_mm: 4,
               source_width_px: 1000,
               source_height_px: 1500,
             },

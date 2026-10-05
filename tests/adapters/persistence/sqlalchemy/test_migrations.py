@@ -9,7 +9,7 @@ import json
 import re
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 from uuid import UUID, uuid4
 
 import pytest
@@ -153,6 +153,7 @@ INSERT_VERSION: str = (
 )
 # The revision before the one that adds the content box editor and takes the frames of Margins away
 BEFORE_CONTENT_BOX_REVISION: str = 'a8b6015ddb1b'
+CONTENT_BOX_REVISION: str = '59387d89514e'
 NORMALIZE: str = 'geometry.normalize'
 FRAME: str = '{"left": 1, "top": 2, "width": 3, "height": 4}'
 # A state with an edit of the given editor and the given settings
@@ -165,6 +166,11 @@ INSERT_EDIT_STATE: str = (
 INSERT_LAYER_CHANGE: str = (
     'INSERT INTO page_step_changes (id, page_id, stage, step_id, layer, before, after, source, created_at, sequence) '
     "VALUES (:id, :page_id, 'geometry', :step_id, :layer, NULL, '{}', 'user', '2026-01-01 00:00:00', :sequence)"
+)
+# A change of the history of the settings of a step, with the layers before and after it given
+INSERT_MARGIN_CHANGE: str = (
+    'INSERT INTO page_step_changes (id, page_id, stage, step_id, layer, before, after, source, created_at, sequence) '
+    "VALUES (:id, :page_id, 'geometry', :step_id, :layer, :before, :after, 'user', '2026-01-01 00:00:00', :sequence)"
 )
 # The tables holding the rows of a book, each of which refers to the project or to a row that does
 BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (ProjectRow, SourceRow, ScanRow, PageRow, PageVersionRow, JobRow)
@@ -1214,7 +1220,7 @@ class TestContentBoxRevision:
         migrations = fx_empty_database.migrations
         await _migrate(fx_empty_database, migrations.upgrade, BEFORE_CONTENT_BOX_REVISION)
         pages, margins, crop = await self._seed(fx_empty_database)
-        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        await _migrate(fx_empty_database, migrations.upgrade, CONTENT_BOX_REVISION)
         async with fx_empty_database.sessions() as session:
             states = {
                 (row.page_id.bytes, row.step_id.bytes): row
@@ -1240,7 +1246,7 @@ class TestContentBoxRevision:
         migrations = fx_empty_database.migrations
         await _migrate(fx_empty_database, migrations.upgrade, BEFORE_CONTENT_BOX_REVISION)
         pages, margins, _crop = await self._seed(fx_empty_database)
-        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        await _migrate(fx_empty_database, migrations.upgrade, CONTENT_BOX_REVISION)
         async with fx_empty_database.sessions() as session:
             for page, params in ((pages[0], '{}'), (pages[1], '{"margin_top": 5}')):
                 await session.execute(text('DELETE FROM page_step_states WHERE page_id = :page_id'), {'page_id': page})
@@ -1262,4 +1268,197 @@ class TestContentBoxRevision:
             sorted((row[0], row[1], json.loads(row[2])) for row in rows)
             == sorted([(pages[1], None, {'margin_top': 5}), (pages[2], 'rect', {})])
         )
+        assert_expectations()
+
+
+class TestMillimetresRevision:
+    """Tests for the revision that counts the margins of Margins in millimetres instead of pixels."""
+
+    OLD_MARGINS: ClassVar[dict[str, Any]] = {
+        'margin_top': 150,
+        'margin_bottom': 200,
+        'margin_inner': 200,
+        'margin_outer': 150,
+        'page_width': 1400,
+        'align_vertical': 'top',
+    }
+    MILLIMETRES: ClassVar[dict[str, Any]] = {
+        'margin_top': 12.7,
+        'margin_bottom': 16.9,
+        'margin_inner': 16.9,
+        'margin_outer': 12.7,
+        'page_width': 1400,
+        'align_vertical': 'top',
+    }
+
+    @classmethod
+    def _steps(cls, step_id: bytes | None) -> str:
+        """Make the steps of a recipe or a profile: Margins with pixel margins, and a step of another processor.
+
+        :param step_id: Identifier of the Margins step, or None for a profile, whose steps have none.
+        :type step_id: bytes | None
+        :returns: The steps as JSON.
+        :rtype: str
+        """
+        margins: dict[str, Any] = {PROCESSOR: NORMALIZE, 'params': cls.OLD_MARGINS, 'enabled': True}
+        other: dict[str, Any] = {PROCESSOR: CROP, 'params': {'margin_top': 150}, 'enabled': True}
+        if step_id is not None:
+            margins['step_id'] = str(UUID(bytes=step_id))
+            other['step_id'] = str(uuid4())
+        return json.dumps([margins, other])
+
+    async def _seed(self, database: SqlDatabase) -> tuple[bytes, bytes, bytes]:
+        """Store a recipe and a profile of a Margins step, and the settings and history of a page for the step.
+
+        The page also has settings for a step of another processor that has a field of the same name, and a change of
+        its manual layer, which the revision leaves as they are.
+
+        :param database: Database migrated to the revision before.
+        :type database: SqlDatabase
+        :returns: The identifiers of the page, of the Margins step and of the other step, as bytes.
+        :rtype: tuple[bytes, bytes, bytes]
+        """
+        account = await commit_account(database)
+        project = make_project(owner_id=account)
+        page = make_page(project_id=project.id, order_key='a0')
+        margins = uuid4().bytes
+        steps = self._steps(margins)
+        other = UUID(json.loads(steps)[1]['step_id']).bytes
+        pixels = json.dumps({'margin_inner': 118})
+        async with database.sessions() as session:
+            await SqlAlchemyUnitOfWork(session).projects.add(project)
+            await session.commit()
+            await session.execute(
+                text(INSERT_RECIPE),
+                {'id': uuid4().bytes, 'project_id': project.id.bytes, 'name': 'Text', 'steps': steps, 'active': True},
+            )
+            await session.execute(
+                text(INSERT_PROFILE),
+                {'id': uuid4().bytes, 'account_id': str(account), 'name': 'Mine', 'steps': self._steps(None)},
+            )
+            await session.execute(
+                text(INSERT_PAGE), {'id': page.id.bytes, 'project_id': project.id.bytes, 'order_key': 'a0'}
+            )
+            for step_id in (margins, other):
+                await session.execute(
+                    text(INSERT_SETTINGS_ONLY), {'page_id': page.id.bytes, 'step_id': step_id, 'params': pixels}
+                )
+            changes = [
+                (margins, 'settings', None, pixels),
+                (margins, 'settings', pixels, json.dumps({'margin_inner': 118, 'margin_top': 59})),
+                (margins, 'hand', None, pixels),
+                (other, 'settings', None, pixels),
+            ]
+            for sequence, (step_id, layer, before, after) in enumerate(changes, start=1):
+                await session.execute(
+                    text(INSERT_MARGIN_CHANGE),
+                    {
+                        'id': uuid4().bytes,
+                        'page_id': page.id.bytes,
+                        'step_id': step_id,
+                        'layer': layer,
+                        'before': before,
+                        'after': after,
+                        'sequence': sequence,
+                    },
+                )
+            await session.commit()
+        return page.id.bytes, margins, other
+
+    @staticmethod
+    async def _stored(database: SqlDatabase) -> dict[str, Any]:
+        """Read every place the margins are stored in, with the identifiers left out.
+
+        :param database: Database to read.
+        :type database: SqlDatabase
+        :returns: The recipe steps, the profile steps, the settings of the page by step and the settings changes in order.
+        :rtype: dict[str, Any]
+        """
+        async with database.sessions() as session:
+            return {
+                'recipe': (await session.execute(select(RecipeRow.steps))).scalars().one(),
+                'profile': (await session.execute(select(RecipeProfileRow.steps))).scalars().one(),
+                'states': {
+                    row.step_id.bytes: row.params
+                    for row in (await session.execute(select(PageStepStateRow))).scalars().all()
+                },
+                'changes': [
+                    (row[0], row[1], json.loads(row[2]) if row[2] else None, json.loads(row[3]) if row[3] else None)
+                    for row in (
+                        await session.execute(
+                            text('SELECT step_id, layer, before, after FROM page_step_changes ORDER BY sequence')
+                        )
+                    ).all()
+                ],
+            }
+
+    async def test_the_margins_of_the_steps_and_of_the_pages_are_converted_at_300_dpi(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify every margin of a Margins step, in recipes, profiles, page settings and their history, becomes mm.
+
+        A margin of another processor, the other fields of the step and the manual layer stay as they are.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, CONTENT_BOX_REVISION)
+        _page, margins, other = await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        stored = await self._stored(fx_empty_database)
+        expect(stored['recipe'][0]['params'] == self.MILLIMETRES)
+        expect(stored['profile'][0]['params'] == self.MILLIMETRES)
+        expect(stored['recipe'][1]['params'] == {'margin_top': 150} == stored['profile'][1]['params'])
+        expect(stored['states'] == {margins: {'margin_inner': 10.0}, other: {'margin_inner': 118}})
+        expect(
+            stored['changes']
+            == [
+                (margins, 'settings', None, {'margin_inner': 10.0}),
+                (margins, 'settings', {'margin_inner': 10.0}, {'margin_inner': 10.0, 'margin_top': 5.0}),
+                (margins, 'hand', None, {'margin_inner': 118}),
+                (other, 'settings', None, {'margin_inner': 118}),
+            ]
+        )
+        assert_expectations()
+
+    async def test_a_downgrade_gives_back_the_pixels(self, fx_empty_database: SqlDatabase) -> None:
+        """Verify a downgrade converts the millimetres back to the pixels they were converted from.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, CONTENT_BOX_REVISION)
+        await self._seed(fx_empty_database)
+        before = await self._stored(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        await _migrate(fx_empty_database, migrations.downgrade, CONTENT_BOX_REVISION)
+        expect(await self._stored(fx_empty_database) == before)
+        assert_expectations()
+
+    async def test_a_margin_beyond_the_bound_is_held_at_it(self, fx_empty_database: SqlDatabase) -> None:
+        """Verify a margin of thousands of pixels does not leave a recipe the step would refuse.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, CONTENT_BOX_REVISION)
+        project = make_project(owner_id=await commit_account(fx_empty_database))
+        steps = json.dumps(
+            [{PROCESSOR: NORMALIZE, 'params': {'margin_top': 9000}, 'enabled': True, 'step_id': str(uuid4())}]
+        )
+        async with fx_empty_database.sessions() as session:
+            await SqlAlchemyUnitOfWork(session).projects.add(project)
+            await session.commit()
+            await session.execute(
+                text(INSERT_RECIPE),
+                {'id': uuid4().bytes, 'project_id': project.id.bytes, 'name': 'Text', 'steps': steps, 'active': True},
+            )
+            await session.commit()
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        async with fx_empty_database.sessions() as session:
+            [recipe] = (await session.execute(select(RecipeRow.steps))).scalars().all()
+        expect(recipe[0]['params'] == {'margin_top': 50.0})
         assert_expectations()

@@ -13,7 +13,7 @@ import { usePlaceWriter } from '@/features/place/PlaceWriterContext';
 import { Restore } from '@/features/place/writer';
 import type { ComparePair, PairPlacement } from '@/features/processing/compare';
 import { clampDivider, DIVIDER_CENTRE } from '@/features/processing/compare';
-import { CompareStage } from '@/features/processing/compareStage';
+import { CompareStage, type EditorReach } from '@/features/processing/compareStage';
 import { useHoldKey } from '@/features/processing/useHoldKey';
 import type { PageCanvasHandle } from '@/features/viewer/PageCanvas';
 import { CompareMode } from '@/features/workspace/params';
@@ -48,6 +48,7 @@ export function CompareCanvas({
   handle,
   overlay,
   roomShare = 0,
+  reach = null,
   placement = null,
 }: {
   pairs: ComparePair;
@@ -66,6 +67,8 @@ export function CompareCanvas({
   overlay?: (scene: EditorScene) => ReactNode;
   /** The room to leave round the page when it is fitted, as a share of its height. */
   roomShare?: number;
+  /** What the open editor draws beyond the page, which the fit holds too, or null for nothing. */
+  reach?: EditorReach | null;
   /** Where the two pictures stand in one world, or null for both as tall as a page. */
   placement?: PairPlacement | null;
 }): React.JSX.Element {
@@ -148,6 +151,9 @@ export function CompareCanvas({
   useEffect(() => stage?.setDivider(divider), [stage, divider]);
   useEffect(() => stage?.setHolding(holding), [stage, holding]);
   useEffect(() => stage?.setPadding(roomShare), [stage, roomShare]);
+  // The screen works the rectangle out on every render, so the effect follows the numbers it holds
+  const reachKey = JSON.stringify(reach);
+  useEffect(() => stage?.setReach(JSON.parse(reachKey) as EditorReach | null), [stage, reachKey]);
 
   useImperativeHandle(handle, () => ({
     fit: () => stage?.fit(),

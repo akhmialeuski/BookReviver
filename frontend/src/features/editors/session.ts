@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { FigureState } from '@/api';
 import type { EditorScene } from '@/features/editors/scene';
 import type { ImageSource } from '@/features/processing/compare';
+import type { EditorReach } from '@/features/processing/compareStage';
 
 /** One step of the recipe of a stage that has an editor, as the reader picks it from the list in the panel. */
 export interface StepChoice {
@@ -46,6 +47,8 @@ export interface EditorSession {
   close: () => void;
   /** Delete the edit and run the stage on the page again. */
   auto: () => void;
+  /** What the editor draws beyond the picture, which the fit of the canvas holds too, or null for nothing. */
+  reach: EditorReach | null;
   /** Draw the editor over the canvas. */
   renderCanvas: (scene: EditorScene) => ReactNode;
   /** Draw the part of the editor that lives in the panel. */

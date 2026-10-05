@@ -48,6 +48,7 @@ test('the compare of Margins draws the block of text inside the page at the plac
   const folder = await writeSheetsFolder(PAGES);
   const canvas = page.getByTestId('viewer-canvas');
   let facts: StepFacts | null = null;
+  let swipeBoxes: { before: number[]; after: number[] } = { before: [], after: [] };
 
   await test.step('the stage runs on a scan, so that Margins has a block and a page', async () => {
     await registerAndSignIn(page);
@@ -132,17 +133,45 @@ test('the compare of Margins draws the block of text inside the page at the plac
       canvas,
       'data-before-box',
     );
-    expect([pageLeft, pageTop, pageHeight]).toEqual([0, 0, 1]);
-    expect(pageWidth).toBeCloseTo(size.width / size.height, PRECISION_DIGITS);
-    // Select content leaves the page uncut, so the input of Margins is the whole page, and the matrix of the step carries
-    // it onto the page: its content box lands on the frame, and the rest of the input reaches past it
-    expect(left).toBeCloseTo((place.x / size.width) * pageWidth, PRECISION_DIGITS);
-    expect(top).toBeCloseTo(place.y / size.height, PRECISION_DIGITS);
-    expect(height).toBeCloseTo((input.height * place.d) / size.height, PRECISION_DIGITS);
-    expect(width).toBeCloseTo(((input.width * place.a) / size.width) * pageWidth, PRECISION_DIGITS);
-    expect(left).toBeLessThanOrEqual((frame.left / size.width) * pageWidth);
-    // The block keeps its own shape
+    // The picture that holds the other one is drawn whole at the origin, one page tall: the page of the book when the input
+    // lies inside it, and else the input, since the margins in millimetres may make the page smaller than the sheet
+    const pageIsBase = input.width * place.a <= size.width && input.height * place.d <= size.height;
+    if (pageIsBase) {
+      expect([pageLeft, pageTop, pageHeight]).toEqual([0, 0, 1]);
+      expect(pageWidth).toBeCloseTo(size.width / size.height, PRECISION_DIGITS);
+      // Select content leaves the page uncut, so the input of Margins is the whole page, and the matrix of the step carries
+      // it onto the page: its content box lands on the frame, and the rest of the input reaches past it
+      expect(left).toBeCloseTo((place.x / size.width) * pageWidth, PRECISION_DIGITS);
+      expect(top).toBeCloseTo(place.y / size.height, PRECISION_DIGITS);
+      expect(height).toBeCloseTo((input.height * place.d) / size.height, PRECISION_DIGITS);
+      expect(width).toBeCloseTo(
+        ((input.width * place.a) / size.width) * pageWidth,
+        PRECISION_DIGITS,
+      );
+      expect(left).toBeLessThanOrEqual((frame.left / size.width) * pageWidth);
+    } else {
+      // The input is the whole picture, and the page lies inside it where the inverse of the matrix puts it
+      expect([left, top, height]).toEqual([0, 0, 1]);
+      expect(width).toBeCloseTo(input.width / input.height, PRECISION_DIGITS);
+      expect(pageLeft).toBeCloseTo(-place.x / place.a / input.height, PRECISION_DIGITS);
+      expect(pageTop).toBeCloseTo(-place.y / place.d / input.height, PRECISION_DIGITS);
+      expect(pageWidth).toBeCloseTo(size.width / place.a / input.height, PRECISION_DIGITS);
+      expect(pageHeight).toBeCloseTo(size.height / place.d / input.height, PRECISION_DIGITS);
+      // The block of the frame lies inside both pictures
+      const frameLeft = pageLeft + (frame.left / size.width) * pageWidth;
+      expect(frameLeft).toBeGreaterThanOrEqual(left - 10 ** -PRECISION_DIGITS);
+      expect(frameLeft + (frame.width / size.width) * pageWidth).toBeLessThanOrEqual(
+        left + width + 10 ** -PRECISION_DIGITS,
+      );
+    }
+    // The page keeps its own shape
+    expect(pageWidth / pageHeight).toBeCloseTo(size.width / size.height, PRECISION_DIGITS);
+    // The input keeps its own shape
     expect(width / height).toBeCloseTo(input.width / input.height, PRECISION_DIGITS);
+    swipeBoxes = {
+      before: [left, top, width, height],
+      after: [pageLeft, pageTop, pageWidth, pageHeight],
+    };
     await snap(page, 'compare-placement-swipe');
   });
 
@@ -153,7 +182,9 @@ test('the compare of Margins draws the block of text inside the page at the plac
     await expect(page.getByTestId('viewer-canvas-after')).toBeVisible();
     const before = await boxOf(canvas, 'data-before-box');
     const after = await boxOf(canvas, 'data-after-box');
-    expect(before[2]).toBeLessThan(after[2] ?? 0);
+    // Each picture stands where it stood in the swipe, whichever of the two holds the other
+    expect(before).toEqual(swipeBoxes.before);
+    expect(after).toEqual(swipeBoxes.after);
     await snap(page, 'compare-placement-side');
   });
 

@@ -74,8 +74,8 @@ test('a result whose picture was collected is made again when it is used', async
     await page.getByTestId('bar-step').filter({ hasText: 'Margins' }).click();
     await page
       .getByTestId('step-panel-settings')
-      .getByRole('spinbutton', { name: 'Top margin', exact: true })
-      .fill('160');
+      .getByRole('spinbutton', { name: 'Top margin, mm', exact: true })
+      .fill('12');
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
     // The results of the stage are listed in the panel of the page, which the open step takes over for its own
@@ -125,7 +125,7 @@ test('a result whose picture was collected is made again when it is used', async
     });
     await expect(entries.first()).toHaveAttribute('data-current', 'false');
     await expect(entries.nth(1).getByTestId('history-removed')).toHaveCount(0);
-    await expect(entries.nth(1)).toContainText('Top margin 150');
+    await expect(entries.nth(1)).toContainText('Top margin, mm 10');
 
     // The run queues a collection after it, and the result it replaced is past the retention too, so only the one that
     // was used is sure to have its picture

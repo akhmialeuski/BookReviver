@@ -12,6 +12,7 @@ import {
 } from '@/features/processing/compare';
 import {
   FALLBACK_ASPECT,
+  holdingReach,
   PAGE_HEIGHT,
   TOOLBAR_INSET_PX,
   type WorldRect,
@@ -45,6 +46,14 @@ const SHAPE_DIGITS = 2;
 const LEAST_CLIP_PX = 0.5;
 /** Decimal digits of a place in the world that the scenarios read. */
 const PLACE_DIGITS = 4;
+
+/** A rectangle an editor draws that the fit must hold, in the pixels of the picture the editor lies on. */
+export interface EditorReach {
+  /** The rectangle, which may lie partly or wholly outside the picture. */
+  rect: { left: number; top: number; width: number; height: number };
+  /** The size of the picture in the pixels of the rectangle, or null when they are the picture's own. */
+  size: { width: number; height: number } | null;
+}
 
 /** What `show` found out about the pictures it put on the stage. */
 export interface ShownCompare {
@@ -97,6 +106,7 @@ export class CompareStage {
   /** Whether the pictures of the latest `show` are on the stage, so the position of the canvas belongs to them. */
   private settled = false;
   private padding = 0;
+  private reach: EditorReach | null = null;
   private readonly element: HTMLElement;
   private readonly hooks: StageHooks;
 
@@ -155,6 +165,21 @@ export class CompareStage {
   setPadding(share: number): void {
     if (share !== this.padding) {
       this.padding = share;
+      this.fit(true);
+    }
+  }
+
+  /**
+   * Make the fit hold a rectangle an editor draws, beyond the page, so that its handles can be reached.
+   *
+   * A view the reader has moved is left where it is, and one that is still the fit is made again to hold the rectangle.
+   *
+   * @param reach The rectangle and the size of the picture it is counted on, or null for the pictures alone.
+   */
+  setReach(reach: EditorReach | null): void {
+    const same = JSON.stringify(reach) === JSON.stringify(this.reach);
+    this.reach = reach;
+    if (!same && this.atFit) {
       this.fit(true);
     }
   }
@@ -326,12 +351,30 @@ export class CompareStage {
       width: FALLBACK_ASPECT * PAGE_HEIGHT,
       height: PAGE_HEIGHT,
     };
+    const held = this.holdingReach(world);
     const room = this.padding * PAGE_HEIGHT;
     return new OpenSeadragon.Rect(
-      world.x - room,
-      world.y - room,
-      world.width + 2 * room,
-      world.height + 2 * room,
+      held.x - room,
+      held.y - room,
+      held.width + 2 * room,
+      held.height + 2 * room,
+    );
+  }
+
+  /** Grow the rectangle of the pictures to hold what the editor draws beyond them. */
+  private holdingReach(world: WorldRect): WorldRect {
+    const picture = this.image;
+    const { reach } = this;
+    if (picture === null || reach === null) {
+      return world;
+    }
+    const content = picture.getContentSize();
+    const bounds = picture.getBounds(true);
+    return holdingReach(
+      world,
+      { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+      reach.size ?? { width: content.x, height: content.y },
+      { x: reach.rect.left, y: reach.rect.top, width: reach.rect.width, height: reach.rect.height },
     );
   }
 

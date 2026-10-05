@@ -1,5 +1,6 @@
 """Tests for the job that measures the book: the content boxes Margins placed, written into the normalize step."""
 
+import math
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -21,6 +22,7 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.geometry import Rect
 from bookreviver.domain.ids import PageVersionId
+from bookreviver.domain.margins import MM_PER_INCH
 from bookreviver.domain.values import PageStageKey, ProcessorRef, RecipeDraft, StageRun, Step
 from tests.helpers.builders import make_page_stage, make_page_version
 
@@ -39,14 +41,16 @@ BUSY_MESSAGE: str = 'project is busy'
 # to the median one, which is 30 pixels, so the block is 300 by 600 on all three
 BLOCKS: tuple[tuple[float, float, float], ...] = ((200, 400, 20), (300, 600, 30), (400, 800, 40))
 MEDIAN_LINE_HEIGHT_PX: float = 30.0
-# The block 300 by 600 plus the margins, which are 8, 10, 10 and 8 percent of the block, rounded up
-EXPECTED_PAGE: dict[str, int] = {
+# The block 300 by 600 plus the margins, which are 8, 10, 10 and 8 percent of the block. The pages carry no resolution,
+# so the block is taken for 100 mm wide, a millimetre is 3 pixels, and the margins are 16, 20, 10 and 8 mm
+PIXELS_PER_MM: int = 3
+EXPECTED_PAGE: dict[str, float] = {
     NormalizeParam.PAGE_WIDTH: 354,
     NormalizeParam.PAGE_HEIGHT: 708,
-    NormalizeParam.MARGIN_TOP: 48,
-    NormalizeParam.MARGIN_BOTTOM: 60,
-    NormalizeParam.MARGIN_INNER: 30,
-    NormalizeParam.MARGIN_OUTER: 24,
+    NormalizeParam.MARGIN_TOP: 16.0,
+    NormalizeParam.MARGIN_BOTTOM: 20.0,
+    NormalizeParam.MARGIN_INNER: 10.0,
+    NormalizeParam.MARGIN_OUTER: 8.0,
 }
 TOO_WIDE_PX: float = 30_000
 
@@ -98,7 +102,7 @@ async def placed_page(
     return page
 
 
-def block_data(width: float, height: float, line_height: float | None) -> dict[str, object]:
+def block_data(width: float, height: float, line_height: float | None, dpi: float | None = None) -> dict[str, object]:
     """Build the data the normalize step records for a page it placed at the scale of the page itself.
 
     :param width: Width of the content box in pixels.
@@ -107,8 +111,10 @@ def block_data(width: float, height: float, line_height: float | None) -> dict[s
     :type height: float
     :param line_height: Distance between the lines in pixels, or None when the step found none.
     :type line_height: float | None
-    :returns: The box, the factor 1, the confidence, that the page was not skipped, and the line height when there is
-              one.
+    :param dpi: Resolution of the page, or None for a page that has none.
+    :type dpi: float | None
+    :returns: The box, the factor 1, the confidence, that the page was not skipped, and the line height and the
+              resolution when there are some.
     :rtype: dict[str, object]
     """
     data: dict[str, object] = {
@@ -119,6 +125,8 @@ def block_data(width: float, height: float, line_height: float | None) -> dict[s
     }
     if line_height is not None:
         data[VersionData.LINE_HEIGHT_PX] = line_height
+    if dpi is not None:
+        data[VersionData.DPI] = dpi
     return data
 
 
@@ -206,6 +214,34 @@ class TestMeasureBook:
         )
         assert_expectations()
 
+    async def test_a_book_with_a_resolution_gets_its_margins_in_the_millimetres_of_that_resolution(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify scans at 300 and 600 dpi of one paper measure to one block in millimetres, and the page holds them.
+
+        The blocks are the same paper at two resolutions, so once their lines are brought to the median one both are
+        3000 by 4500 pixels of 450 dpi, and the margins, which are shares of that block, are the same in millimetres.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        for index, (width, height, line_height, dpi) in enumerate(((2000, 3000, 30, 300), (4000, 6000, 60, 600))):
+            data = block_data(width, height, line_height, dpi)
+            await placed_page(fx_cv_kit, project, recipe, f'a{index}', data)
+        await measure(fx_cv_kit, actor, project)
+        after = await normalize_params(fx_cv_kit, actor, project)
+        pixels_per_mm = 450 / MM_PER_INCH
+        # 10 percent of the width, 8 percent of the width, 8 percent of the height and 10 percent of the height
+        expect(after[NormalizeParam.MARGIN_INNER] == pytest.approx(300 / pixels_per_mm, abs=0.05))
+        expect(after[NormalizeParam.MARGIN_OUTER] == pytest.approx(240 / pixels_per_mm, abs=0.05))
+        expect(after[NormalizeParam.MARGIN_TOP] == pytest.approx(360 / pixels_per_mm, abs=0.05))
+        expect(after[NormalizeParam.MARGIN_BOTTOM] == pytest.approx(450 / pixels_per_mm, abs=0.05))
+        # The margins are rounded to a tenth of a millimetre, which is half a pixel at this resolution
+        expect(after[NormalizeParam.PAGE_WIDTH] == pytest.approx(3000 + 300 + 240, abs=2))
+        assert_expectations()
+
     async def test_the_page_holds_the_largest_block_of_the_book_in_each_direction(
         self, fx_cv_kit: ProcessingKit
     ) -> None:
@@ -220,9 +256,10 @@ class TestMeasureBook:
             await placed_page(fx_cv_kit, project, recipe, f'a{index}', block_data(width, height, MEDIAN_LINE_HEIGHT_PX))
         await measure(fx_cv_kit, actor, project)
         after = await normalize_params(fx_cv_kit, actor, project)
-        # The margins are 8, 10, 10 and 8 percent of the largest block, rounded up
-        expect(after[NormalizeParam.PAGE_WIDTH] == 300 + 30 + 24)
-        expect(after[NormalizeParam.PAGE_HEIGHT] == 640 + 52 + 64)
+        # The margins are 8, 10, 10 and 8 percent of the largest block, which is 300 pixels wide and 3 of them a millimetre:
+        # 10 and 8 mm at the sides, and 17.1 and 21.3 mm at the top and the bottom
+        expect(after[NormalizeParam.PAGE_WIDTH] == 300 + (10 + 8) * PIXELS_PER_MM)
+        expect(after[NormalizeParam.PAGE_HEIGHT] == math.ceil(640 + (17.1 + 21.3) * PIXELS_PER_MM))
         assert_expectations()
 
     async def test_the_pages_the_recipe_processed_go_out_of_date_and_are_announced(
@@ -383,10 +420,10 @@ class TestMarginsSource:
         for index, (width, height, line_height) in enumerate(BLOCKS):
             await placed_page(fx_cv_kit, project, recipe, f'a{index}', block_data(width, height, line_height))
         margins: dict[str, object] = {
-            NormalizeParam.MARGIN_TOP: 11,
-            NormalizeParam.MARGIN_BOTTOM: 22,
-            NormalizeParam.MARGIN_INNER: 33,
-            NormalizeParam.MARGIN_OUTER: 44,
+            NormalizeParam.MARGIN_TOP: 11.0,
+            NormalizeParam.MARGIN_BOTTOM: 22.0,
+            NormalizeParam.MARGIN_INNER: 33.0,
+            NormalizeParam.MARGIN_OUTER: 44.0,
         }
         await set_normalize_params(
             fx_cv_kit, actor, project, {NormalizeParam.MARGINS_SOURCE: MarginsSource.MANUAL, **margins}
@@ -397,9 +434,9 @@ class TestMarginsSource:
         expect({name: after[name] for name in margins} == margins)
         expect(after[NormalizeParam.MARGINS_SOURCE] == MarginsSource.MANUAL)
         expect(after[NormalizeParam.LINE_HEIGHT] == pytest.approx(MEDIAN_LINE_HEIGHT_PX))
-        # The block is 300 by 600
-        expect(after[NormalizeParam.PAGE_WIDTH] == 300 + 33 + 44)
-        expect(after[NormalizeParam.PAGE_HEIGHT] == 600 + 11 + 22)
+        # The block is 300 by 600, and a millimetre of it is 3 pixels
+        expect(after[NormalizeParam.PAGE_WIDTH] == 300 + (33 + 44) * PIXELS_PER_MM)
+        expect(after[NormalizeParam.PAGE_HEIGHT] == 600 + (11 + 22) * PIXELS_PER_MM)
         assert_expectations()
 
     async def test_measured_margins_are_written_again_once_the_source_is_switched_back(

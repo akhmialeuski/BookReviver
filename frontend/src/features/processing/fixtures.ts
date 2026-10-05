@@ -259,6 +259,32 @@ export const BINARIZE_PARAMETERS = {
   title: 'BinarizeParams',
 };
 
+/** The margin fields of `geometry.normalize`, which the server counts in millimetres. */
+const MARGINS_PARAMETERS = {
+  additionalProperties: false,
+  properties: {
+    margin_top: {
+      default: 10,
+      description: 'Margin at the top, in millimetres of the paper',
+      maximum: 50,
+      minimum: 0,
+      title: 'Top margin, mm',
+      type: 'number',
+    },
+    margin_inner: {
+      default: 15,
+      description:
+        'Margin at the gutter, in millimetres of the paper; the left margin when the margins are by left and right',
+      maximum: 50,
+      minimum: 0,
+      title: 'Inner margin, mm',
+      type: 'number',
+    },
+  },
+  title: 'NormalizeParams',
+  type: 'object',
+};
+
 /** A processor of the catalogue. */
 export function processor(key: string, overrides: Partial<ProcessorSchema> = {}): ProcessorSchema {
   return {
@@ -277,6 +303,16 @@ export function processor(key: string, overrides: Partial<ProcessorSchema> = {})
     requires_after: [],
     ...overrides,
   };
+}
+
+/** `geometry.normalize`, with its margin fields alone. */
+export function margins(overrides: Partial<ProcessorSchema> = {}): ProcessorSchema {
+  return processor('geometry.normalize', {
+    title: 'Margins',
+    parameters: MARGINS_PARAMETERS,
+    editor: 'content-box',
+    ...overrides,
+  });
 }
 
 /** `geometry.deskew`. */

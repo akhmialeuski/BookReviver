@@ -67,8 +67,8 @@ export interface PageResult {
   contentBox: RectShape | null;
   /** The box of the content grown by the margins of the page, in the pixels of the full image the step read. */
   marginBox: RectShape | null;
-  /** The factor the step scaled the box of the content by, which the margins of the page are divided by. */
-  blockScale: number | null;
+  /** The pixels of the full image the step read in a millimetre of the margins, which a distance on it is divided by. */
+  marginPixelsPerMm: number | null;
   /** The setting that holds the margin of each side of the page, which depends on the side of the book. */
   marginSettings: MarginSettings | null;
 }
@@ -140,7 +140,7 @@ export function readResult(version: Pick<PageVersionSchema, 'data'>): PageResult
     specks: numberOf(data.specks),
     contentBox: readRect(recordOf(data.content_box)),
     marginBox: readRect(recordOf(data.margin_box)),
-    blockScale: numberOf(data.block_scale),
+    marginPixelsPerMm: numberOf(data.margin_pixels_per_mm),
     marginSettings: marginSettingsOf(data.margin_params),
   };
 }
@@ -196,7 +196,7 @@ export function readChainResult(
     specks: nearest('specks'),
     contentBox: nearest('contentBox'),
     marginBox: nearest('marginBox'),
-    blockScale: nearest('blockScale'),
+    marginPixelsPerMm: nearest('marginPixelsPerMm'),
     marginSettings: nearest('marginSettings'),
   };
 }

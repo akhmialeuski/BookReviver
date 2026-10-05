@@ -25,6 +25,7 @@ const stage = vi.hoisted(() => ({
   setDivider: vi.fn(),
   setHolding: vi.fn(),
   setPadding: vi.fn(),
+  setReach: vi.fn(),
   destroy: vi.fn(),
   viewer: { name: 'viewer' },
   image: { name: 'image' } as { name: string } | null,
@@ -40,6 +41,7 @@ vi.mock('@/features/processing/compareStage', () => ({
     setDivider = stage.setDivider;
     setHolding = stage.setHolding;
     setPadding = stage.setPadding;
+    setReach = stage.setReach;
     destroy = stage.destroy;
     viewer = stage.viewer;
     get image() {
@@ -64,7 +66,7 @@ describe('CompareCanvas', () => {
     notice: { text: string; working: boolean } | null = null,
     editor: Pick<
       React.ComponentProps<typeof CompareCanvas>,
-      'overlay' | 'roomShare' | 'placement'
+      'overlay' | 'roomShare' | 'reach' | 'placement'
     > = {},
   ): void {
     act(() =>
@@ -94,6 +96,7 @@ describe('CompareCanvas', () => {
     stage.setDivider.mockReset();
     stage.setHolding.mockReset();
     stage.setPadding.mockReset();
+    stage.setReach.mockReset();
     stage.destroy.mockReset();
     stage.image = { name: 'image' };
     container = document.createElement('div');
@@ -158,6 +161,23 @@ describe('CompareCanvas', () => {
       JSON.stringify({ viewer: stage.viewer, image: stage.image }),
     );
     expect(stage.setPadding).toHaveBeenLastCalledWith(0.08);
+  });
+
+  it('hands what the editor draws beyond the page to the stage, and nothing when there is none', async () => {
+    const reach = { rect: { left: -10, top: -20, width: 120, height: 240 }, size: null };
+    render(CompareMode.Off, { before: null, after: AFTER }, null, { reach });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(stage.setReach).toHaveBeenLastCalledWith(reach);
+
+    render(CompareMode.Off, { before: null, after: AFTER }, null, { reach: null });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(stage.setReach).toHaveBeenLastCalledWith(null);
   });
 
   it('draws no editor when none is passed in, and leaves no room round the page', async () => {

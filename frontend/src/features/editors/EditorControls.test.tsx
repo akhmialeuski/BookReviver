@@ -22,6 +22,7 @@ function session(overrides: Partial<EditorSession> = {}): EditorSession {
     open: vi.fn(),
     close: vi.fn(),
     auto: vi.fn(),
+    reach: null,
     renderCanvas: () => null,
     renderPanel: () => <span data-testid="own-part">own</span>,
     ...overrides,

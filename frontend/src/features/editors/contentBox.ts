@@ -6,9 +6,9 @@ import { MARGIN_SIDES, type MarginSide, type PageResult } from '@/features/proce
  * The arithmetic of the Margins editor: the box of the content, the border of the page grown from it by the margins, and how
  * a side of the border sets the margin of that side.
  *
- * Everything here is in the pixels of the picture the step reads. The margins of the page are set in the pixels of the page,
- * where the box was scaled by the factor the step recorded, so a distance on the picture is multiplied by that factor to be a
- * setting. The step says which setting holds the margin of each side, since that depends on the side of the book.
+ * Everything here is in the pixels of the picture the step reads. The margins of the page are set in millimetres of the
+ * paper, so a distance on the picture is divided by the pixels of the picture in a millimetre, which the step recorded, to
+ * be a setting. The step says which setting holds the margin of each side, since that depends on the side of the book.
  */
 
 /** The distance of each side of the border from the box, in the pixels of the picture. */
@@ -75,9 +75,17 @@ export function marginAt(box: RectShape, side: MarginSide, to: Point): number {
   }
 }
 
-/** Turn a margin on the picture into the setting of the page, in the pixels of the page, as a whole number. */
-export function settingOf(margin: number, blockScale: number): number {
-  return Math.round(margin * blockScale);
+/** Digits of a millimetre a margin is kept to, which is as fine as the form of the step takes it. */
+const MILLIMETRE_DIGITS = 1;
+
+/**
+ * Turn a margin on the picture into the setting of the page, in millimetres, to a tenth.
+ *
+ * @param margin The distance on the picture the step read, in its pixels.
+ * @param pixelsPerMm The pixels of that picture in a millimetre of the margins, which the step recorded.
+ */
+export function settingOf(margin: number, pixelsPerMm: number): number {
+  return Number((margin / pixelsPerMm).toFixed(MILLIMETRE_DIGITS));
 }
 
 /** Give the margins of the sides a drag has moved over the ones the step found. */
