@@ -164,6 +164,41 @@ describe('RunControls', () => {
     );
   });
 
+  it('says the stage is running, with its progress, while a run of the stage is going', async () => {
+    sdk.jobs.mockResolvedValue({
+      data: {
+        items: [
+          {
+            id: 'run',
+            kind: 'run-stage',
+            stage: processing().stage,
+            state: 'running',
+            progress: { done: 2, total: 4 },
+          },
+        ],
+        total: 1,
+        page: 1,
+        size: 20,
+        pages: 1,
+      },
+    });
+    render(
+      processing(),
+      new Set(),
+      joinRows(
+        ITEMS.map((item) => item.page),
+        [row('a'), row('b')],
+      ),
+    );
+
+    // The pages read up to date while the run still places them, so the summary waits for the run to end
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-testid="run-summary"]')?.textContent).toBe(
+        'Running the stage: 2 of 4',
+      ),
+    );
+  });
+
   it('runs the open page alone for this page', async () => {
     render();
 

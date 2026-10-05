@@ -1525,6 +1525,8 @@ export const MESSAGES = {
     },
     footer: {
       allClear: 'Every page is up to date.',
+      running: (done: number, total: number) =>
+        total > 0 ? `Running the stage: ${done} of ${total}` : 'Running the stage',
       outOfDate: (pages: number) => `${pages} ${pluralize(pages, 'page', 'pages')} out of date`,
       failed: (pages: number) => `${pages} failed`,
       stoppedAt: (step: number, total: number, pages: number) =>
