@@ -71,10 +71,16 @@ test('a result whose picture was collected is made again when it is used', async
     await page.getByTestId('strip-page').first().click();
     await expect(entries).toHaveCount(1);
 
-    await page.getByRole('button', { name: 'Show the settings of the Margins step' }).click();
-    await page.getByRole('spinbutton', { name: 'Top margin', exact: true }).fill('160');
+    await page.getByTestId('bar-step').filter({ hasText: 'Margins' }).click();
+    await page
+      .getByTestId('step-panel-settings')
+      .getByRole('spinbutton', { name: 'Top margin', exact: true })
+      .fill('160');
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
+    // The results of the stage are listed in the panel of the page, which the open step takes over for its own
+    await page.getByTestId('step-close').click();
+    await expect(page.getByTestId('step-panel')).toHaveCount(0);
     // The page is marked to check, which the stale banner does not offer to run, so the stage is run on all pages
     await page.getByTestId('run-menu').click();
     await page.getByTestId('run-all').click();

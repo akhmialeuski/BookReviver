@@ -2,15 +2,15 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { deskew, processing, recipe, step } from '@/features/processing/fixtures';
+import { processing, recipe, step } from '@/features/processing/fixtures';
 import { RecipeSection } from '@/features/processing/RecipeSection';
 import { setStepParams, toggleStep } from '@/features/processing/recipe';
 import { profilePage } from '@/features/profiles/fixtures';
 import { row } from '@/features/workspace/fixtures';
 
 /**
- * The recipe in the panel: its steps with their settings, what a change of them costs, and the buttons that save it, copy
- * it and make it the one the stage runs by.
+ * The recipe in the panel: its steps with their settings on a stage that has no step bar, what a change of them costs, and
+ * the buttons that save it, copy it and make it the one the stage runs by. A stage with a bar lists no steps here.
  *
  * Radix measures the thumb of a slider, which jsdom cannot, so the observer it asks for is given a stand-in.
  */
@@ -39,6 +39,9 @@ class SizeObserverStandIn {
   unobserve(): void {}
   disconnect(): void {}
 }
+
+/** A stage without a step bar, which lists the steps of its recipe in the panel. */
+const LISTED = 'page-split';
 
 const SAVED = recipe('r1', {
   name: 'Deskew',
@@ -134,7 +137,7 @@ describe('RecipeSection', () => {
   });
 
   it('shows the recipe, whether it is active, and how many pages it has made', () => {
-    render(processing());
+    render(processing({ stage: LISTED }));
 
     expect(byId('recipe-select')?.textContent).toBe('Deskew · active · 1 page');
     expect(byId('recipe-active')?.textContent).toBe('Active · 1 page');
@@ -151,24 +154,31 @@ describe('RecipeSection', () => {
     expect(byId('profile-changed')).toBeNull();
   });
 
-  it('lists the steps that are coming under the steps that exist, and drops one the catalogue has', () => {
-    render(processing());
-    expect(container.querySelector('[data-testid="coming-steps"]')?.textContent).toContain(
-      'Dewarp by mesh',
-    );
+  it.each(['geometry', 'cleanup'] as const)(
+    'lists no steps on %s, whose steps are in the step bar, and keeps the rest of the recipe',
+    (stage) => {
+      render(processing({ stage, orderMode: 'free' }));
 
-    render(
-      processing({
-        catalogue: [deskew(), { ...deskew(), key: 'geometry.dewarp', title: 'Dewarp' }],
-      }),
-    );
-    expect(container.querySelector('[data-testid="coming-steps"]')?.textContent).not.toContain(
-      'Dewarp by mesh',
-    );
+      expect(byId('recipe-select')).not.toBeNull();
+      expect(byId('recipe-new')).not.toBeNull();
+      expect(byId('used-for')).not.toBeNull();
+      expect(byId('recipe-steps')).toBeNull();
+      expect(byId('recipe-step')).toBeNull();
+      expect(byId('step-add')).toBeNull();
+      expect(byId('order-free')).toBeNull();
+      expect(byId('coming-steps')).toBeNull();
+      expect(container.textContent).not.toContain('Add a step');
+    },
+  );
+
+  it('keeps the save bar of a changed recipe on a stage whose steps are in the step bar', () => {
+    render(processing({ dirty: true }));
+
+    expect(byId('recipe-save')?.disabled).toBe(false);
   });
 
   it('draws the settings of the open step from the schema, with the titles of its fields', () => {
-    const open = processing({ openId: 'step-0' });
+    const open = processing({ stage: LISTED, openId: 'step-0' });
     render(open);
 
     expect(container.querySelector('form')?.textContent).toContain('Largest slant');
@@ -280,11 +290,11 @@ describe('RecipeSection', () => {
 
   it('turns the free order on and off with its switch', () => {
     const setOrderMode = vi.fn();
-    render(processing({ setOrderMode }));
+    render(processing({ stage: LISTED, setOrderMode }));
     act(() => byId('order-free')?.click());
     expect(setOrderMode).toHaveBeenLastCalledWith('free');
 
-    render(processing({ orderMode: 'free', setOrderMode }));
+    render(processing({ stage: LISTED, orderMode: 'free', setOrderMode }));
     act(() => byId('order-free')?.click());
     expect(setOrderMode).toHaveBeenLastCalledWith('usual');
   });
@@ -298,7 +308,7 @@ describe('RecipeSection', () => {
 
   it('offers the processors of the stage in the menu of the steps to add, and adds the one chosen', async () => {
     const add = vi.fn();
-    render(processing({ add }));
+    render(processing({ stage: LISTED, add }));
 
     await act(async () => {
       const trigger = byId('step-add');

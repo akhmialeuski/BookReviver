@@ -166,7 +166,12 @@ describe('StepsWindow', () => {
 
     const mark = rowsOf()[1]?.querySelector('[data-testid="window-step-order-mark"]');
     expect(mark?.getAttribute('data-kind')).toBe('usual');
-    expect(mark?.getAttribute('title')).toBe('Deskew usually follows Perspective.');
+    expect(mark?.textContent).toBe('Out of place');
+    // The reason is written under the mark, and not only in a tooltip
+    expect(
+      rowsOf()[1]?.querySelector('[data-testid="window-step-order-reason"]')?.textContent,
+    ).toBe('Deskew usually follows Perspective.');
+    expect(rowsOf()[0]?.querySelector('[data-testid="window-step-order-reason"]')).toBeNull();
     expect(byId('window-restore-order')).not.toBeNull();
   });
 

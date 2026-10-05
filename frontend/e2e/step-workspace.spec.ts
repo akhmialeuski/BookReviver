@@ -29,6 +29,8 @@ const SCENARIO_TIMEOUT_MS = 240_000;
 const RUN_TIMEOUT_MS = 90_000;
 const DESKEW = 'geometry.deskew';
 const FIRST_DESKEW_INDEX = 1;
+// A step added from the catalogue stands where its processor usually does, which is right after the first one
+const SECOND_DESKEW_INDEX = 2;
 const STEP_ADDRESS = /\/stages\/geometry\/steps\/[0-9a-f-]{36}(\?|$)/;
 const STAGE_ADDRESS = /\/stages\/geometry(\?|$)/;
 const TEXT_PAGES = '2 pages';
@@ -61,7 +63,6 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
   const folder = await writePagesFolder(PAGES);
   const bar = page.getByTestId('step-bar');
   const barSteps = page.getByTestId('bar-step');
-  const recipeSteps = page.getByTestId('recipe-step');
   const panel = page.getByTestId('step-panel');
   let stepCount = 0;
 
@@ -76,13 +77,13 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
     // The rules of a stage are made with its recipes, when the stage is first opened, so they are taken away once the
     // recipe is on screen, which is when they exist
-    await expect(recipeSteps.first()).toBeVisible();
+    await expect(barSteps.first()).toBeVisible();
     await removeRules(page);
     await page.reload();
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
     await expect(page.getByTestId('page-strip').getByTestId('strip-page')).toHaveCount(PAGES);
-    await expect(recipeSteps.first()).toBeVisible();
-    stepCount = await recipeSteps.count();
+    await expect(barSteps.first()).toBeVisible();
+    stepCount = await barSteps.count();
 
     await expect(bar).toBeVisible();
     await expect(barSteps).toHaveCount(stepCount);
@@ -108,31 +109,39 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     ]) {
       await expect(page.getByTestId(id)).toBeVisible();
     }
-    await expect(recipeSteps).toHaveCount(stepCount);
+    // The steps are in the bar only, and the panel of the recipe lists none
+    await expect(page.getByTestId('recipe-steps')).toHaveCount(0);
+    await expect(page.getByTestId('step-add')).toHaveCount(0);
   });
 
   await test.step('a second Deskew is added for the pictures, and the first is kept for the text pages', async () => {
-    await page.getByTestId('step-add').click();
-    await page.getByRole('menuitem', { name: 'Deskew', exact: true }).click();
-    await expect(recipeSteps).toHaveCount(stepCount + 1);
-    await recipeSteps.nth(stepCount).getByTestId('step-condition').selectOption('pictures');
-    const first = recipeSteps.nth(FIRST_DESKEW_INDEX);
-    await expect(first).toHaveAttribute('data-processor', DESKEW);
-    await first.getByTestId('step-toggle').click();
-    await first.getByTestId('step-condition').selectOption('text');
+    await page.getByTestId('step-catalogue').click();
+    await page.getByTestId('step-catalogue-list').locator(`[data-processor="${DESKEW}"]`).click();
+    await expect(barSteps).toHaveCount(stepCount + 1);
+    await expect(barSteps.nth(SECOND_DESKEW_INDEX)).toContainText('Deskew');
+    // The added step is open, so its condition is set in its own panel
+    await expect(page).toHaveURL(STEP_ADDRESS);
+    await page.getByTestId('step-panel-condition').selectOption('pictures');
+    await barSteps.nth(FIRST_DESKEW_INDEX).click();
+    await expect(page.getByTestId('step-panel-title')).toHaveText(
+      `${FIRST_DESKEW_INDEX + 1} · Deskew`,
+    );
+    await page.getByTestId('step-panel-condition').selectOption('text');
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
     await expect(barSteps).toHaveCount(stepCount + 1);
     await expect(barSteps.nth(FIRST_DESKEW_INDEX).getByTestId('bar-step-mark')).toHaveText('¶');
-    await expect(barSteps.nth(stepCount).getByTestId('bar-step-mark')).toHaveText('▣');
+    await expect(barSteps.nth(SECOND_DESKEW_INDEX).getByTestId('bar-step-mark')).toHaveText('▣');
   });
 
   await test.step('the second Deskew is opened, and the recipe is run up to it on every page from its section', async () => {
     await waitForIdleJobs(page, openProjectId(page));
-    await barSteps.nth(stepCount).click();
+    await barSteps.nth(SECOND_DESKEW_INDEX).click();
     await expect(page).toHaveURL(STEP_ADDRESS);
-    await expect(page.getByTestId('step-panel-title')).toHaveText(`${stepCount + 1} · Deskew`);
-    await expect(barSteps.nth(stepCount)).toHaveAttribute('aria-current', 'step');
+    await expect(page.getByTestId('step-panel-title')).toHaveText(
+      `${SECOND_DESKEW_INDEX + 1} · Deskew`,
+    );
+    await expect(barSteps.nth(SECOND_DESKEW_INDEX)).toHaveAttribute('aria-current', 'step');
     const before = await finishedRuns(page);
     await page.getByTestId('step-auto').click();
     await expect.poll(() => finishedRuns(page), { timeout: RUN_TIMEOUT_MS }).toBe(before + 1);
@@ -146,20 +155,24 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
     await expect(page.getByTestId('step-panel-state')).toContainText('Found by the step');
     await expect(barSteps.nth(FIRST_DESKEW_INDEX)).toHaveAttribute('data-state', 'found');
-    await expect(barSteps.nth(stepCount)).toHaveAttribute('data-state', 'skipped');
+    await expect(barSteps.nth(SECOND_DESKEW_INDEX)).toHaveAttribute('data-state', 'skipped');
     await expect(page.getByTestId('step-count-found')).toContainText(TEXT_PAGES);
     await expect(page.getByTestId('step-count-skipped')).toContainText(PICTURE_PAGES);
     // The sections of the panel that were there before the step are under the section of the step
     await expect(page.getByTestId('this-page')).toBeVisible();
-    await expect(recipeSteps).toHaveCount(stepCount + 1);
+    await expect(barSteps).toHaveCount(stepCount + 1);
     await snap(page, 'first-deskew-open-on-a-page-of-text');
   });
 
   await test.step('the second Deskew is reached from the step before it, and skips the page of text', async () => {
-    await barSteps.nth(stepCount - 1).click();
-    await expect(page.getByTestId('step-panel-title')).toHaveText(new RegExp(`^${stepCount} · `));
+    // The first Deskew is the step before it, and is open from the step above
+    await expect(page.getByTestId('step-panel-title')).toHaveText(
+      `${FIRST_DESKEW_INDEX + 1} · Deskew`,
+    );
     await page.getByTestId('step-next').click();
-    await expect(page.getByTestId('step-panel-title')).toHaveText(`${stepCount + 1} · Deskew`);
+    await expect(page.getByTestId('step-panel-title')).toHaveText(
+      `${SECOND_DESKEW_INDEX + 1} · Deskew`,
+    );
     await expect(page.getByTestId('step-panel-state')).toContainText('Skipped on this page');
     await expect(page.getByTestId('step-count-found')).toContainText(PICTURE_PAGES);
     await expect(page.getByTestId('step-count-skipped')).toContainText(TEXT_PAGES);
@@ -172,16 +185,18 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await expect(page).toHaveURL(/page=/);
     await expect(page.getByTestId('step-panel-state')).toContainText('Found by the step');
     await expect(barSteps.nth(FIRST_DESKEW_INDEX)).toHaveAttribute('data-state', 'skipped');
-    await expect(barSteps.nth(stepCount)).toHaveAttribute('data-state', 'found');
+    await expect(barSteps.nth(SECOND_DESKEW_INDEX)).toHaveAttribute('data-state', 'found');
     await snap(page, 'second-deskew-open-on-the-plate');
   });
 
   await test.step('the address of the step opens it again after a reload, and a second press on the open step closes it', async () => {
     await page.reload();
-    await expect(page.getByTestId('step-panel-title')).toHaveText(`${stepCount + 1} · Deskew`);
-    await expect(barSteps.nth(stepCount)).toHaveAttribute('aria-current', 'step');
+    await expect(page.getByTestId('step-panel-title')).toHaveText(
+      `${SECOND_DESKEW_INDEX + 1} · Deskew`,
+    );
+    await expect(barSteps.nth(SECOND_DESKEW_INDEX)).toHaveAttribute('aria-current', 'step');
 
-    await barSteps.nth(stepCount).click();
+    await barSteps.nth(SECOND_DESKEW_INDEX).click();
     await expect(page).toHaveURL(STAGE_ADDRESS);
     await expect(panel).toHaveCount(0);
     await expect(page.getByTestId('this-page')).toBeVisible();

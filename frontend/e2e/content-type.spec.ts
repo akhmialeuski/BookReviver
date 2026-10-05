@@ -43,21 +43,27 @@ async function contentOf(page: Page): Promise<string[]> {
     .map((item) => `${item.content_type}:${item.content_source}`);
 }
 
-/**
- * Read the conditions of the first steps of the recipe in the panel. A step shows its condition among its settings, which
- * its toggle opens, and the first step of a recipe is open already, so a step is opened only when it is closed.
- */
-async function conditionsOf(page: Page, count: number): Promise<string[]> {
-  const conditions: string[] = [];
-  for (let index = 0; index < count; index += 1) {
-    const step = page.getByTestId('recipe-step').nth(index);
-    const toggle = step.getByTestId('step-toggle');
-    if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
-      await toggle.click();
-    }
-    conditions.push(await step.getByTestId('step-condition').inputValue());
-  }
-  return conditions;
+/** The steps of a recipe as the window of the gear lists them, with the pages each one processes. */
+interface StepConditions {
+  processors: (string | null)[];
+  conditions: string[];
+}
+
+/** Read the processors and the conditions of the steps of the recipe in the window of the gear, and close the window. */
+async function conditionsOf(page: Page): Promise<StepConditions> {
+  await page.getByTestId('steps-gear').click();
+  const window = page.getByTestId('steps-window');
+  await expect(window).toBeVisible();
+  const steps = window.getByTestId('window-step');
+  const processors = await steps.evaluateAll((items) =>
+    items.map((item) => item.getAttribute('data-processor')),
+  );
+  const conditions = await window
+    .getByTestId('window-step-condition')
+    .evaluateAll((selects) => selects.map((select) => (select as HTMLSelectElement).value));
+  await window.getByRole('button', { name: 'Close' }).click();
+  await expect(window).toHaveCount(0);
+  return { processors, conditions };
 }
 
 test('the program finds what each page shows, the strip marks it, and the selected pages are changed and given back at once', async ({
@@ -96,9 +102,9 @@ test('the program finds what each page shows, the strip marks it, and the select
   });
 
   await test.step('the steps of the first recipes process the pages they are for', async () => {
-    await expect(page.getByTestId('recipe-step').first()).toBeVisible();
+    await expect(page.getByTestId('bar-step').first()).toBeVisible();
     // Perspective, Deskew, Dewarp, Select content and Margins: the two that follow the lines of text are for text
-    expect(await conditionsOf(page, 5)).toEqual(['all', 'text', 'text', 'all', 'all']);
+    expect((await conditionsOf(page)).conditions).toEqual(['all', 'text', 'text', 'all', 'all']);
   });
 
   await test.step('two selected pages of different types are changed to text at once', async () => {
@@ -155,7 +161,7 @@ test('the program finds what each page shows, the strip marks it, and the select
   await rm(path.dirname(folder), { recursive: true, force: true });
 });
 
-test('the first recipe of the Cleanup stage keeps binarization and despeckling off the pictures', async ({
+test('the first recipe of the Cleanup stage keeps binarization, despeckling and thickness off the pictures', async ({
   page,
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
@@ -169,15 +175,16 @@ test('the first recipe of the Cleanup stage keeps binarization and despeckling o
   const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
   await page.goto(`${bookPath}/stages/cleanup`);
   await expect(page.getByTestId('stage-title')).toHaveText('Cleanup');
-  const steps = page.getByTestId('recipe-step');
-  await expect(steps.first()).toBeVisible();
+  await expect(page.getByTestId('bar-step').first()).toBeVisible();
 
-  const processors = await Promise.all(
-    [0, 1, 2].map((index) => steps.nth(index).getAttribute('data-processor')),
-  );
-  const conditions = await conditionsOf(page, 3);
-  expect(processors).toEqual(['cleanup.binarize', 'cleanup.despeckle', 'cleanup.eraser']);
-  expect(conditions).toEqual(['text', 'text', 'all']);
+  const { processors, conditions } = await conditionsOf(page);
+  expect(processors).toEqual([
+    'cleanup.binarize',
+    'cleanup.despeckle',
+    'cleanup.thickness',
+    'cleanup.eraser',
+  ]);
+  expect(conditions).toEqual(['text', 'text', 'text', 'all']);
   await snap(page, 'content-type-cleanup-conditions');
 
   await rm(path.dirname(folder), { recursive: true, force: true });

@@ -723,6 +723,7 @@ export const MESSAGES = {
       autoCondition: (count: number) =>
         `Auto on the pages of the step (${count} ${pluralize(count, 'page', 'pages')})`,
       auto: 'Auto on all pages',
+      autoMore: 'Auto on other pages',
       autoHint:
         'Run the recipe up to this step on every page. The steps before it come from the earlier run, and pages set by hand keep their shape.',
       saveFirst: 'Save the recipe to run it.',

@@ -7,6 +7,7 @@ import {
   uploadFolder,
   writePagesFolder,
 } from './support/account';
+import { closeStepsWindow, openStepsWindow, windowStepOf } from './support/steps';
 
 /**
  * A recipe set up in one book is kept as a profile of the account and applied in another: the steps are put in another
@@ -24,7 +25,7 @@ const DESKEW = 'geometry.deskew';
 const DEWARP = 'geometry.dewarp';
 const CROP = 'geometry.crop';
 const NORMALIZE = 'geometry.normalize';
-// The steps of the built-in recipe a new book starts the Geometry stage with, in their order, with the titles the list
+// The steps of the built-in recipe a new book starts the Geometry stage with, in their order, with the titles the window
 // announces while one of them is moved
 const BUILT_IN_STEPS = [
   { processor: PERSPECTIVE, title: 'Perspective' },
@@ -35,32 +36,40 @@ const BUILT_IN_STEPS = [
 ];
 const BUILT_IN = BUILT_IN_STEPS.map((step) => step.processor);
 
-// Tall enough for the pictures of the key states to show the recipe panel with its steps
+// Tall enough for the pictures of the key states to show the bar and the panel of the recipe
 test.use({ viewport: { width: 1280, height: 1000 } });
 
-/** A step as the panel draws it: the processor and whether the step is switched on. */
+/** A step as the window of the gear draws it: the processor and whether the step is switched on. */
 interface ScreenStep {
   processor: string;
   on: boolean;
 }
 
-/** Read the steps the recipe panel shows, in the order they are listed. */
-async function stepsOnScreen(page: Page): Promise<ScreenStep[]> {
-  return page.getByTestId('recipe-step').evaluateAll((items) =>
+/** Read the steps the open window of the gear lists, in the order they are listed. */
+async function stepsInWindow(page: Page): Promise<ScreenStep[]> {
+  return page.getByTestId('window-step').evaluateAll((items) =>
     items.map((item) => ({
       processor: item.getAttribute('data-processor') ?? '',
       on:
-        item.querySelector('[data-testid="step-enabled"]')?.getAttribute('data-state') ===
+        item.querySelector('[data-testid="window-step-enabled"]')?.getAttribute('data-state') ===
         'checked',
     })),
   );
 }
 
-/** Open the Geometry stage of the open book, whose recipe panel lists the steps. */
+/** Open the window of the gear, read the steps it lists, and shut it. */
+async function stepsOnScreen(page: Page): Promise<ScreenStep[]> {
+  await openStepsWindow(page);
+  const steps = await stepsInWindow(page);
+  await closeStepsWindow(page);
+  return steps;
+}
+
+/** Open the Geometry stage of the open book, whose bar lists the steps. */
 async function openGeometry(page: Page, bookPath: string): Promise<void> {
   await page.goto(`${bookPath}/stages/geometry`);
   await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
-  await expect(page.getByTestId('recipe-step').first()).toBeVisible();
+  await expect(page.getByTestId('bar-step').first()).toBeVisible();
 }
 
 /** Create a book from the library, upload the pages into it and return the address of the book. */
@@ -82,11 +91,11 @@ test('a recipe is saved as a profile, applied in another book, made the default,
     await registerAndSignIn(page);
     await openGeometry(page, await newBookWithPages(page, 'A photographed book', folder));
     expect((await stepsOnScreen(page)).map((step) => step.processor)).toEqual(BUILT_IN);
-    // The handle of the crop is lifted with Space, moved up with the arrow keys and dropped with Space. Each key waits
-    // for what the list announces to a screen reader, since a key pressed before the list took the last one is lost
-    const handle = page
-      .locator(`[data-testid="recipe-step"][data-processor="${CROP}"]`)
-      .getByRole('button', { name: /^Move the/ });
+    // The handle of the crop in the window of the gear is lifted with Space, moved up with the arrow keys and dropped with
+    // Space. Each key waits for what the list announces to a screen reader, since a key pressed before the list took the
+    // last one is lost
+    await openStepsWindow(page);
+    const handle = windowStepOf(page, CROP).getByRole('button', { name: /^Move the/ });
     const announced = (text: string) =>
       expect(page.getByRole('status').filter({ hasText: text })).toHaveCount(1);
     const drag = MESSAGES.processing.steps.drag;
@@ -100,18 +109,15 @@ test('a recipe is saved as a profile, applied in another book, made the default,
     }
     await page.keyboard.press('Space');
     await announced(drag.dropped('Select content'));
-    expect((await stepsOnScreen(page)).map((step) => step.processor)).toEqual([
+    expect((await stepsInWindow(page)).map((step) => step.processor)).toEqual([
       CROP,
       PERSPECTIVE,
       DESKEW,
       DEWARP,
       NORMALIZE,
     ]);
-    await page
-      .locator(`[data-testid="recipe-step"][data-processor="${PERSPECTIVE}"]`)
-      .getByTestId('step-enabled')
-      .click();
-    setUp = await stepsOnScreen(page);
+    await windowStepOf(page, PERSPECTIVE).getByTestId('window-step-enabled').click();
+    setUp = await stepsInWindow(page);
     expect(setUp).toEqual([
       { processor: CROP, on: true },
       { processor: PERSPECTIVE, on: false },
@@ -119,6 +125,7 @@ test('a recipe is saved as a profile, applied in another book, made the default,
       { processor: DEWARP, on: true },
       { processor: NORMALIZE, on: true },
     ]);
+    await closeStepsWindow(page);
   });
 
   await test.step('the steps on the screen are kept as a profile, which saves the recipe of the book first', async () => {
@@ -182,9 +189,6 @@ test('a recipe is saved as a profile, applied in another book, made the default,
     await expect(page.getByTestId('recipe-active')).toBeVisible();
     await expect(page.getByTestId('recipe-select')).toContainText(`${RENAMED} · active`);
     await expect.poll(() => stepsOnScreen(page)).toEqual(setUp);
-    // The first step is open, which pushes the others out of the picture, so it is closed for the picture
-    await page.getByTestId('recipe-step').first().getByTestId('step-toggle').click();
-    await expect(page.getByTestId('recipe-step').last()).toBeVisible();
     await snap(page, 'new-book-starts-with-default-profile');
   });
 

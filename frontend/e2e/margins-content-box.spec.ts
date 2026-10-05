@@ -3,6 +3,7 @@ import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 import {
   createBook,
+  markPagesAsText,
   openProjectId,
   registerAndSignIn,
   snap,
@@ -31,6 +32,8 @@ const STEP_ADDRESS = /\/stages\/geometry\/steps\/[0-9a-f-]{36}(\?|$)/;
 const DRAG_PX = 30;
 // How far a box found by a run of a page may stand from the one a preview found, in pixels of the picture
 const FOUND_TOLERANCE_PX = 12;
+const SMALL_MARGIN_PX = 20;
+const MARGIN_FIELDS = ['Top margin', 'Bottom margin', 'Inner margin', 'Outer margin'];
 const LEFT_MARGIN_SETTINGS = ['margin_inner', 'margin_outer'];
 
 // Tall enough for the pictures of the key states to show the bar, the canvas and the panel
@@ -96,6 +99,7 @@ test('the content box and the border of a page are found on opening, edited with
     await uploadFolder(page, folder, PAGES);
     projectId = openProjectId(page);
     await waitForIdleJobs(page, projectId);
+    await markPagesAsText(page);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
@@ -136,6 +140,24 @@ test('the content box and the border of a page are found on opening, edited with
   });
 
   await test.step('dragging a side of the border sets that margin for the page alone', async () => {
+    // The margins a book starts with are 150 to 200 pixels, and the border is the page they make round the box, so it
+    // lies beyond a canvas that shows a scan this small. The recipe is given margins that fit, as a scan of a real size
+    // has, and the pages are run again with them
+    for (const name of MARGIN_FIELDS) {
+      await page
+        .getByTestId('step-panel-settings')
+        .getByRole('spinbutton', { name, exact: true })
+        .fill(String(SMALL_MARGIN_PX));
+    }
+    await page.getByTestId('recipe-save').click();
+    await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
+    await waitForIdleJobs(page, projectId);
+    await runAll(page);
+    await waitForIdleJobs(page, projectId);
+    await expect(layer).toHaveAttribute('data-figure', 'by-hand', { timeout: RUN_TIMEOUT_MS });
+    await expect
+      .poll(async () => (await pairOf(layer, 'data-side-left')).x, { timeout: RUN_TIMEOUT_MS })
+      .toBeGreaterThan(0);
     const before = await numbersOf(layer, 'data-outer');
     const side = await pairOf(layer, 'data-side-left');
     await dragFrom(page, layer, side, { x: -DRAG_PX, y: 0 });
@@ -151,7 +173,7 @@ test('the content box and the border of a page are found on opening, edited with
   });
 
   await test.step('the alignment is chosen in the panel and kept for the page', async () => {
-    await page.getByTestId('align-vertical').getByText('Bottom').click();
+    await page.getByTestId('align-vertical').getByLabel('Bottom').click();
     await expect.poll(() => settingSaves.length, { timeout: RUN_TIMEOUT_MS }).toBe(2);
     await settled();
     const [first = ''] = await pageIds(page);
@@ -177,10 +199,16 @@ test('the content box and the border of a page are found on opening, edited with
     await page.getByTestId('editor-auto').click();
     await expect(layer).toHaveAttribute('data-figure', 'found', { timeout: RUN_TIMEOUT_MS });
     await settled();
-    const again = await numbersOf(layer, 'data-rect');
-    for (const [index, value] of again.entries()) {
-      expect(Math.abs(value - (found[index] ?? 0))).toBeLessThanOrEqual(FOUND_TOLERANCE_PX);
-    }
+    // The box is drawn from the result again once the page has been read after the run, which the busy mark does not wait for
+    await expect
+      .poll(
+        async () => {
+          const again = await numbersOf(layer, 'data-rect');
+          return Math.max(...again.map((value, index) => Math.abs(value - (found[index] ?? 0))));
+        },
+        { timeout: RUN_TIMEOUT_MS },
+      )
+      .toBeLessThanOrEqual(FOUND_TOLERANCE_PX);
     const [first = ''] = await pageIds(page);
     expect(await countEdits(page, first)).toBe(0);
     expect((await readSettings(page, first)).length).toBe(1);

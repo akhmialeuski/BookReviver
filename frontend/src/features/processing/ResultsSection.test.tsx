@@ -118,6 +118,48 @@ describe('ResultsSection', () => {
     vi.unstubAllGlobals();
   });
 
+  describe('the notes of a result', () => {
+    it('keeps the comment that is being written when the answer to a mark pressed meanwhile arrives', async () => {
+      let answer: (value: unknown) => void = () => undefined;
+      sdk.mark.mockReturnValue(
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+      );
+      await render();
+      await act(async () => {
+        find('result-comment-edit')?.click();
+      });
+      expect(find('result-comment-input')).not.toBeNull();
+      await act(async () => {
+        find('result-mark-good')?.click();
+      });
+
+      await act(async () => {
+        answer({ data: {} });
+      });
+      await settled();
+
+      expect(find('result-comment-input')).not.toBeNull();
+    });
+
+    it('closes the field of the comment once the comment is saved', async () => {
+      sdk.mark.mockResolvedValue({ data: {} });
+      await render();
+      await act(async () => {
+        find('result-comment-edit')?.click();
+      });
+
+      await act(async () => {
+        find('result-comment-save')?.click();
+      });
+      await settled();
+
+      expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({ body: { mark: 'bad', comment: '' } });
+      expect(find('result-comment-input')).toBeNull();
+    });
+  });
+
   describe('on the stage as a whole', () => {
     it('lists the results of the last step newest first, and leaves out the version a later step read', async () => {
       await render();

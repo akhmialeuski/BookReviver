@@ -3,6 +3,7 @@ import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 import {
   createBook,
+  markPagesAsText,
   openProjectId,
   registerAndSignIn,
   snap,
@@ -30,7 +31,7 @@ const DEFAULT_PAGE_WIDTH = '0';
 const LINE_TOLERANCE = 0.02;
 // How many pixels the top margin is made larger than the measured one, to tell it from a measured value
 const HAND_MARGIN_GROWTH = 25;
-const NORMALIZE = '[data-testid="recipe-step"][data-processor="geometry.normalize"]';
+const NORMALIZE_TITLE = 'Margins';
 
 /** What the server holds about the current result of the Geometry stage of one page. */
 interface Result {
@@ -82,8 +83,9 @@ test('the book is measured and its pages come out of one size with the lines at 
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writeScaledSheetsFolder(SCALES);
-  const normalize = page.locator(NORMALIZE);
-  const field = (name: string) => normalize.locator(`#root_${name}`);
+  // The settings of the step are in the panel of the step, which the bar opens
+  const normalize = page.getByTestId('step-panel');
+  const field = (name: string) => normalize.locator(`#step-panel_${name}`);
   let pageWidth = 0;
   let pageHeight = 0;
   let lineHeight = 0;
@@ -94,6 +96,8 @@ test('the book is measured and its pages come out of one size with the lines at 
     await createBook(page, 'A book of two scales');
     await uploadFolder(page, folder, PAGES);
     projectId = openProjectId(page);
+    await waitForIdleJobs(page, projectId);
+    await markPagesAsText(page);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
@@ -102,7 +106,15 @@ test('the book is measured and its pages come out of one size with the lines at 
   });
 
   await test.step('measuring the book fills the settings of the normalize step from the pages', async () => {
-    await normalize.getByTestId('step-toggle').click();
+    // Opening Margins asks for a preview of the page, which finds the content box, and the server refuses to measure the
+    // book while that job runs
+    const previewAsked = page.waitForResponse((response) =>
+      response.url().endsWith('/stages/geometry/preview'),
+    );
+    await page.getByTestId('bar-step').filter({ hasText: NORMALIZE_TITLE }).click();
+    await expect(normalize).toBeVisible();
+    await previewAsked;
+    await waitForIdleJobs(page, projectId);
     await expect(field('page_width')).toHaveValue(DEFAULT_PAGE_WIDTH);
     await normalize.getByTestId('measure-book-button').click();
     await expect(field('page_width')).not.toHaveValue(DEFAULT_PAGE_WIDTH, {

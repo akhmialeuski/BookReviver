@@ -12,8 +12,9 @@ import {
 } from './support/account';
 
 /**
- * A stage run step by step: the Geometry recipe is run through its first step on every page and checked, then through its
- * last step, and the first step is found in the cache of versions and not computed again.
+ * A stage run step by step: the Geometry recipe is run through its first step on every page from the panel of that step and
+ * checked, then through its last step, and the first step is found in the cache of versions and not computed again. The
+ * panel of the open step says how many pages passed it.
  */
 
 const PAGES = 4;
@@ -58,18 +59,27 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
-  const steps = page.getByTestId('recipe-step');
+  const steps = page.getByTestId('bar-step');
+  const passed = page.getByTestId('step-passed');
   let stepCount = 0;
   let firstStepVersion: StoredVersion | undefined;
 
-  /** Run the recipe up to a step on all pages and wait for the run to end. */
+  /** Open the step at a place of the bar, unless it is open already, which a second press would close. */
+  const openStep = async (index: number): Promise<void> => {
+    if ((await steps.nth(index).getAttribute('data-open')) !== 'true') {
+      await steps.nth(index).click();
+    }
+    await expect(steps.nth(index)).toHaveAttribute('data-open', 'true');
+  };
+
+  /** Run the recipe up to a step on all pages from the panel of the step, and wait for the run to end. */
   const runThrough = async (index: number): Promise<void> => {
     // A run is refused while the book still splits, collects old versions or does anything else, and a job of the
     // earlier stage that ends now would count as the run started here
     await waitForIdleJobs(page, openProjectId(page));
+    await openStep(index);
     const before = await finishedRuns(page);
-    await steps.nth(index).getByTestId('step-run').click();
-    await page.getByTestId('step-run-all').click();
+    await page.getByTestId('step-auto').click();
     await expect.poll(() => finishedRuns(page), { timeout: RUN_TIMEOUT_MS }).toBe(before + 1);
   };
 
@@ -81,26 +91,23 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
     await expect(page.getByTestId('page-strip').getByTestId('strip-page')).toHaveCount(PAGES);
-    // The panel draws the steps once the recipe of the stage is read, so they are counted after the first one shows
+    // The bar draws the steps once the recipe of the stage is read, so they are counted after the first one shows
     await expect(steps.first()).toBeVisible();
     stepCount = await steps.count();
     expect(stepCount).toBeGreaterThan(1);
     // Nothing has run, so no step has been passed and no page stopped short
-    await expect(steps.nth(FIRST).getByTestId('step-passed')).toHaveText(
-      `0 of ${PAGES} pages passed`,
-    );
+    await openStep(FIRST);
+    await expect(passed).toHaveText(`0 of ${PAGES} pages passed`);
     await expect(page.getByTestId('strip-stopped-filter')).toHaveCount(0);
   });
 
-  await test.step('"Run up to here" on the first step runs it on every page and leaves the rest', async () => {
+  await test.step('"Auto on all pages" in the panel of the first step runs it on every page and leaves the rest', async () => {
     await runThrough(FIRST);
-    await expect(steps.nth(FIRST).getByTestId('step-passed')).toHaveText(
-      `${PAGES} of ${PAGES} pages passed`,
-      { timeout: RUN_TIMEOUT_MS },
-    );
-    await expect(steps.nth(stepCount - 1).getByTestId('step-passed')).toHaveText(
-      `0 of ${PAGES} pages passed`,
-    );
+    await expect(passed).toHaveText(`${PAGES} of ${PAGES} pages passed`, {
+      timeout: RUN_TIMEOUT_MS,
+    });
+    await openStep(stepCount - 1);
+    await expect(passed).toHaveText(`0 of ${PAGES} pages passed`);
     await expect(page.getByTestId('run-stopped')).toHaveText(
       `Done through step 1 of ${stepCount}: ${PAGES} pages`,
     );
@@ -125,12 +132,11 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
     await snap(page, 'page-stopped-at-the-first-step');
   });
 
-  await test.step('"Run up to here" on the last step finds the first in the cache and makes the rest', async () => {
+  await test.step('"Auto on all pages" in the panel of the last step finds the first in the cache and makes the rest', async () => {
     await runThrough(stepCount - 1);
-    await expect(steps.nth(stepCount - 1).getByTestId('step-passed')).toHaveText(
-      `${PAGES} of ${PAGES} pages passed`,
-      { timeout: RUN_TIMEOUT_MS },
-    );
+    await expect(passed).toHaveText(`${PAGES} of ${PAGES} pages passed`, {
+      timeout: RUN_TIMEOUT_MS,
+    });
     await expect(page.getByTestId('run-stopped')).toHaveCount(0);
     await expect(page.getByTestId('strip-stopped-filter')).toHaveCount(0);
     await expect(page.getByTestId('stage-stopped')).toHaveCount(0);

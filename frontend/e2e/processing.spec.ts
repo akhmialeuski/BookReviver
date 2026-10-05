@@ -51,24 +51,31 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     await expect(page.getByTestId('recipe-select')).toContainText('Text');
     await expect(page.getByTestId('recipe-active')).toBeVisible();
     // A new book is straightened in five steps, the sheet first, the flattening after the turn and the page of the book
-    // last
-    await expect(page.getByTestId('recipe-step')).toHaveCount(5);
-    await expect(page.getByTestId('recipe-step').nth(0)).toContainText('1 · Perspective');
-    await expect(page.getByTestId('recipe-step').nth(1)).toContainText('2 · Deskew');
-    await expect(page.getByTestId('recipe-step').nth(2)).toContainText('3 · Dewarp');
-    await expect(page.getByTestId('recipe-step').nth(3)).toContainText('4 · Select content');
-    await expect(page.getByTestId('recipe-step').nth(4)).toContainText('5 · Margins');
-    // The settings of the first step are open, with the titles of the schema and no name of the code
-    await expect(page.getByRole('slider', { name: 'Smallest sheet' })).toBeVisible();
+    // last. They are in the bar only, and the panel of the recipe lists none
+    const barSteps = page.getByTestId('bar-step');
+    await expect(barSteps).toHaveCount(5);
+    for (const [index, title] of [
+      'Perspective',
+      'Deskew',
+      'Dewarp',
+      'Select content',
+      'Margins',
+    ].entries()) {
+      await expect(barSteps.nth(index)).toContainText(title);
+    }
+    await expect(page.getByTestId('recipe-steps')).toHaveCount(0);
+    // The settings of a step are in its panel, with the titles of the schema and no name of the code
+    await barSteps.nth(0).click();
+    await expect(
+      page.getByTestId('step-panel-settings').getByRole('slider', { name: 'Smallest sheet' }),
+    ).toBeVisible();
     await expect(page.getByTestId('stage-panel')).not.toContainText('min_sheet_fraction');
     // Every step of the stage is built, so none is listed as coming
     await expect(page.getByTestId('coming-steps')).toHaveCount(0);
   });
 
   await test.step('the settings of the last step are opened, and a value outside its limits cannot be saved', async () => {
-    await page
-      .getByRole('button', { name: 'Show the settings of the Select content step' })
-      .click();
+    await page.getByTestId('bar-step').filter({ hasText: 'Select content' }).click();
     const margin = page.getByRole('spinbutton', { name: 'Margin' });
     // The crop cuts to the block of text alone by default, since the normalize step sets the margins of the page
     await expect(margin).toHaveValue('0');
@@ -106,6 +113,9 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
   });
 
   await test.step('the page before and after is compared by a swipe, side by side and with a key held', async () => {
+    // The open step compares its own input with its own result, so the step is closed to compare the stage
+    await page.getByTestId('step-close').click();
+    await expect(page.getByTestId('step-panel')).toHaveCount(0);
     await expect(canvas).toHaveAttribute('data-mode', 'swipe');
     await page.getByTestId('compare-menu').click();
     await page.getByTestId('compare-side').click();
@@ -151,13 +161,18 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
 
   await test.step('a changed recipe says how many pages it makes out of date and is saved by the button', async () => {
     // The result of the stage is the page the last step made, so its settings are the ones the history tells apart
-    await page.getByRole('button', { name: 'Show the settings of the Margins step' }).click();
-    await page.getByRole('spinbutton', { name: 'Top margin', exact: true }).fill('160');
+    await page.getByTestId('bar-step').filter({ hasText: 'Margins' }).click();
+    await page
+      .getByTestId('step-panel-settings')
+      .getByRole('spinbutton', { name: 'Top margin', exact: true })
+      .fill('160');
     await expect(page.getByTestId('recipe-stale-warning')).toContainText(
       `${PAGES} pages out of date`,
     );
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
+    // The results of the stage are listed in the panel of the page, which the open step takes over for its own
+    await page.getByTestId('step-close').click();
     await expect(page.getByTestId('stale-banner')).toContainText(
       'Order changed after these pages were straightened',
     );

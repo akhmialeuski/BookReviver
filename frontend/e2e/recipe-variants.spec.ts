@@ -21,7 +21,7 @@ const PAGES = 4;
 const PLATE_POSITION = 2;
 const SCENARIO_TIMEOUT_MS = 240_000;
 const RUN_TIMEOUT_MS = 90_000;
-const DESKEW_PROCESSOR = 'geometry.deskew';
+const DESKEW_TITLE = 'Deskew';
 // The recipes a new book starts with, and the places of the second of them in the list of the recipes
 const TEXT_VARIANT = 'Text';
 const PLATES_VARIANT = 'Plates';
@@ -90,12 +90,12 @@ test('plates get their own variant by a rule, a pinned variant survives a run on
 
   await test.step('the variant Plates has the settings of its own, and a rule sends the plates and frontispieces to it', async () => {
     await page.getByTestId('recipe-select').selectOption({ index: PLATES_INDEX });
-    const deskew = page.locator(
-      `[data-testid="recipe-step"][data-processor="${DESKEW_PROCESSOR}"]`,
-    );
-    await deskew.getByTestId('step-toggle').click();
+    await page.getByTestId('bar-step').filter({ hasText: DESKEW_TITLE }).click();
     // The steps of a recipe are drawn by the method they name, and Plates levels the page by its long straight lines
-    await expect(deskew.getByRole('spinbutton', { name: 'Shortest line' })).toBeVisible();
+    await expect(
+      page.getByTestId('step-panel-settings').getByRole('spinbutton', { name: 'Shortest line' }),
+    ).toBeVisible();
+    await page.getByTestId('step-close').click();
     await expect(page.getByTestId('rule')).toHaveCount(1);
     await expect(page.getByTestId('rule')).toContainText('Plates and frontispieces');
     await page.getByTestId('used-for').scrollIntoViewIfNeeded();

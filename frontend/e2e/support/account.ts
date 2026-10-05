@@ -325,6 +325,28 @@ export async function setKind(page: Page, position: number, kind: string): Promi
   expect(response.ok()).toBe(true);
 }
 
+/**
+ * Say by hand that every page of the open book is a page of text, but the pages at the positions that are left out.
+ *
+ * The scans the sheet fixtures draw show a sheet on a dark table, which the detection of the content reads as a picture,
+ * and a picture is sent to the variants for plates and passed by the steps of text. A scenario about the steps of a page of
+ * text says so, and the detection leaves a content type that was set by hand alone.
+ */
+export async function markPagesAsText(page: Page, leftOut: readonly number[] = []): Promise<void> {
+  const projectId = openProjectId(page);
+  const listed = await page.request.get(`/api/v1/projects/${projectId}/pages?size=100`);
+  const items = ((await listed.json()) as { items: { id: string; position: number }[] }).items;
+  const cookies = await page.context().cookies();
+  const token = cookies.find((cookie) => cookie.name === CSRF_COOKIE_NAME)?.value ?? '';
+  for (const item of items.filter((entry) => !leftOut.includes(entry.position))) {
+    const response = await page.request.patch(`/api/v1/projects/${projectId}/pages/${item.id}`, {
+      headers: { [CSRF_HEADER_NAME]: token },
+      data: { content_type: 'text' },
+    });
+    expect(response.ok()).toBe(true);
+  }
+}
+
 /** Send a mutating request to the API as the signed-in reader, with the CSRF header the browser would add. */
 export async function deleteAsReader(page: Page, apiPath: string): Promise<number> {
   const cookies = await page.context().cookies();
