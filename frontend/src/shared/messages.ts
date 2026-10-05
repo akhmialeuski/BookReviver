@@ -1414,7 +1414,7 @@ export const MESSAGES = {
       },
       measure: {
         button: 'Measure the book',
-        hint: 'Read the text block and the line height the crop found on every page, and fill in the line height and the page size from their medians, and the margins too while they are measured. The pages of this recipe go out of date.',
+        hint: 'Read the content box and the line height Margins recorded on every page, and fill in the line height from their median and the page size from the largest box, and the margins too while they are measured. The pages of this recipe go out of date.',
         working: 'Measuring…',
         saveFirst: 'Save the recipe before measuring the book.',
         manualMargins:
