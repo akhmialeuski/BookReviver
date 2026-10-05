@@ -31,6 +31,8 @@ interface StepFacts {
   input: { width: number; height: number };
   page: { width: number; height: number };
   frame: { left: number; top: number; width: number; height: number };
+  /** The scale and the shift that carry a pixel of the input onto the page: a, the shift x, d, the shift y. */
+  place: { a: number; x: number; d: number; y: number };
 }
 
 /** Read the numbers a canvas writes into an attribute, as the left, the top, the width and the height. */
@@ -80,7 +82,10 @@ test('the compare of Margins draws the block of text inside the page at the plac
           items: {
             step: {
               input_version: { data: Record<string, number> } | null;
-              version: { data: Record<string, number | Record<string, number>> } | null;
+              version: {
+                data: Record<string, number | Record<string, number>>;
+                transform: { matrix: number[] | null };
+              } | null;
             };
           }[];
         }
@@ -95,6 +100,7 @@ test('the compare of Margins draws the block of text inside the page at the plac
     const input = item.step?.input_version?.data ?? {};
     const made = item.step?.version?.data ?? {};
     const frame = made.frame as Record<string, number>;
+    const matrix = item.step?.version?.transform.matrix ?? [];
     facts = {
       input: { width: input.width_px ?? 0, height: input.height_px ?? 0 },
       page: { width: made.width_px as number, height: made.height_px as number },
@@ -104,6 +110,7 @@ test('the compare of Margins draws the block of text inside the page at the plac
         width: frame.width ?? 0,
         height: frame.height ?? 0,
       },
+      place: { a: matrix[0] ?? NaN, x: matrix[2] ?? NaN, d: matrix[4] ?? NaN, y: matrix[5] ?? NaN },
     };
     // The margins put the block inside the page, so its place is not the whole page
     expect(facts.frame.left).toBeGreaterThan(0);
@@ -116,7 +123,7 @@ test('the compare of Margins draws the block of text inside the page at the plac
     if (facts === null) {
       throw new Error('The step facts were not read.');
     }
-    const { page: size, frame, input } = facts;
+    const { page: size, frame, input, place } = facts;
     const [pageLeft = NaN, pageTop = NaN, pageWidth = NaN, pageHeight = NaN] = await boxOf(
       canvas,
       'data-after-box',
@@ -127,11 +134,13 @@ test('the compare of Margins draws the block of text inside the page at the plac
     );
     expect([pageLeft, pageTop, pageHeight]).toEqual([0, 0, 1]);
     expect(pageWidth).toBeCloseTo(size.width / size.height, PRECISION_DIGITS);
-    // A pixel of the page is the same length in the world whichever picture it is on
-    expect(left).toBeCloseTo((frame.left / size.width) * pageWidth, PRECISION_DIGITS);
-    expect(top).toBeCloseTo(frame.top / size.height, PRECISION_DIGITS);
-    expect(height).toBeCloseTo(frame.height / size.height, PRECISION_DIGITS);
-    expect(width).toBeCloseTo((frame.width / size.width) * pageWidth, PRECISION_DIGITS);
+    // Select content leaves the page uncut, so the input of Margins is the whole page, and the matrix of the step carries
+    // it onto the page: its content box lands on the frame, and the rest of the input reaches past it
+    expect(left).toBeCloseTo((place.x / size.width) * pageWidth, PRECISION_DIGITS);
+    expect(top).toBeCloseTo(place.y / size.height, PRECISION_DIGITS);
+    expect(height).toBeCloseTo((input.height * place.d) / size.height, PRECISION_DIGITS);
+    expect(width).toBeCloseTo(((input.width * place.a) / size.width) * pageWidth, PRECISION_DIGITS);
+    expect(left).toBeLessThanOrEqual((frame.left / size.width) * pageWidth);
     // The block keeps its own shape
     expect(width / height).toBeCloseTo(input.width / input.height, PRECISION_DIGITS);
     await snap(page, 'compare-placement-swipe');

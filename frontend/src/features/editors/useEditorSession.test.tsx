@@ -1028,7 +1028,7 @@ describe('useEditorSession', () => {
       data: { angle: 0.3, confidence: 0.8 },
     });
     const CROP = version('v3', {
-      processor: { key: 'geometry.crop', version: '1' },
+      processor: { key: 'geometry.crop', version: '2' },
       input_id: 'v2',
       tiles_ready: false,
       data: {
@@ -1128,6 +1128,48 @@ describe('useEditorSession', () => {
         .querySelector('[data-testid="commit-rect"]')
         ?.getAttribute('data-shape');
       expect(JSON.parse(shape ?? 'null')).toEqual({ left: 60, top: 70, width: 800, height: 1200 });
+    });
+
+    describe('after the frame was saved and the stage ran again', () => {
+      const FOUND_AFTER = { left: 50, top: 60, width: 700, height: 900 };
+      const MADE = version('v4', {
+        processor: { key: 'geometry.crop', version: '2' },
+        input_id: 'v2',
+        tiles_ready: false,
+        data: { frame: FOUND_AFTER, source_width_px: 970, source_height_px: 1360 },
+      });
+      const shapeOnCanvas = (): unknown =>
+        JSON.parse(
+          container.querySelector('[data-testid="commit-rect"]')?.getAttribute('data-shape') ??
+            'null',
+        );
+
+      it('keeps the picture under the frame and the frame while the list of versions has not caught up with the row', async () => {
+        await render({ state: STATE, items: ITEMS, canvas: true });
+        await act(async () => session?.choose('id-geometry.crop'));
+        const picture = session?.picture;
+        expect(picture).toEqual({ kind: SourceKind.Image, url: '/version-v2/preview' });
+
+        // The row names the version the run made, which the list of versions does not hold yet
+        const made = joinRows([page('page')], [row('page', { version: MADE })]);
+        await render({ state: STATE, items: made, canvas: true });
+
+        expect(session).not.toBeNull();
+        expect(session?.picture).toEqual(picture);
+        expect(shapeOnCanvas()).toEqual({ left: 60, top: 70, width: 800, height: 1200 });
+
+        sdk.versions.mockResolvedValue({
+          data: { items: [PERSPECTIVE, DESKEW, MADE], total: 3, page: 1, size: 50, pages: 1 },
+        });
+        await act(async () => {
+          await client.invalidateQueries();
+        });
+        await settle();
+
+        // The picture the step reads is the one it read, so it is not loaded again, and the frame is the one it made
+        expect(session?.picture).toEqual(picture);
+        expect(shapeOnCanvas()).toEqual(FOUND_AFTER);
+      });
     });
 
     it('says which steps the reader gave an edit of their own', async () => {

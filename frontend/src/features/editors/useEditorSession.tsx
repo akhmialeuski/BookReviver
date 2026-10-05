@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FigureState, ScanSchema } from '@/api';
 import { getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetOptions } from '@/api/@tanstack/react-query.gen';
 import { stepChain, stepVersions } from '@/features/editors/chain';
@@ -17,6 +17,7 @@ import type { EditorSession, StepChoice } from '@/features/editors/session';
 import type { Geometry } from '@/features/editors/shapes';
 import { type StepSettings, StepSettingsContext } from '@/features/editors/stepSettings';
 import type { PageContext } from '@/features/editors/types';
+import { useHeld } from '@/features/editors/useHeld';
 import { usePictureSize } from '@/features/editors/usePictureSize';
 import { type ImageSource, sourceOfPreview } from '@/features/processing/compare';
 import { useUndo } from '@/features/processing/historyQueries';
@@ -103,6 +104,9 @@ export function useEditorSession({
   const { mutate: takeBack } = useUndo(projectId, stage);
   const { mutate: startRun } = run;
   const activeJobs = useActiveJobs(projectId);
+  const [wanted, setWanted] = useState<WantedRun | null>(null);
+  const runInFlight = useRunInFlight(projectId);
+  const idle = activeJobs.data !== undefined && activeJobs.data.length === 0 && !runInFlight;
 
   // The steps are the ones the recipe runs by, since only its run reads an edit, and the reader works on one at a time.
   // An edit belongs to a step and not to its processor, so a recipe that runs one twice has two editors
@@ -126,7 +130,17 @@ export function useEditorSession({
   // starts from what its step found
   const head = current?.row?.version ?? null;
   const versions = useVersions(projectId, current?.page.id, stage);
-  const chain = stepChain(versions.data ?? [], head);
+  const listed = versions.data;
+  const live = useMemo(() => stepChain(listed ?? [], head), [listed, head]);
+  // The versions and the row of the page arrive apart. After a run the row can name a current version that the list does
+  // not hold yet, and the chain is then cut short, so the picture the step reads and what it found would be lost for a
+  // moment and the editor would draw its shape on another picture. The chain of before is kept for that moment, and while
+  // a run on the page has taken its current version away.
+  const behind =
+    head === null
+      ? !idle || wanted !== null
+      : listed !== undefined && !listed.some((version) => version.id === head.id);
+  const chain = useHeld(`${current?.page.id}|${stage}`, live, behind);
   const found =
     entry === undefined || recipe === undefined
       ? { made: null, read: null }
@@ -219,7 +233,6 @@ export function useEditorSession({
   const [opened, setOpened] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [wanted, setWanted] = useState<WantedRun | null>(null);
 
   const key = `${owner?.id}|${step?.step_id}`;
   const openKey = `${current?.page.id}|${stage}`;
@@ -228,8 +241,6 @@ export function useEditorSession({
   const active = editor !== undefined && picture !== null && (alwaysOn || opened === openKey);
 
   // The run waits for the book to be free, and is asked for once whatever the number of saves before it
-  const runInFlight = useRunInFlight(projectId);
-  const idle = activeJobs.data !== undefined && activeJobs.data.length === 0 && !runInFlight;
   useEffect(() => {
     if (wanted === null || !idle) {
       return;

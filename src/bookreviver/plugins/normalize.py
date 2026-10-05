@@ -1,11 +1,13 @@
 """Placing the content box of a page on a page of the book, so every page has one size, text size and layout.
 
 ``geometry.normalize`` works on the box of the content of its input, never on the whole input. The box is the one the
-user drew as a ``ContentBox`` edit, else the one ``geometry.crop`` found when its input carries it, else the one the
+user drew as a ``ContentBox`` edit, else the one ``geometry.crop`` recorded when its input carries it, else the one the
 search of ``geometry.crop`` (``FrameSearch``) finds on the input here, so a recipe without Select content places the
 block of text and not the sheet round it. A page with no ink to find a box by is placed whole and unscaled and marked
-for review. The box is cut out of the input and put on a blank page of the size the parameters give. A size of 0 makes
-the page the box and its margins, which a run of the book replaces with the size by the book before the step runs.
+for review. ``geometry.crop`` leaves its page uncut, so the box lies in the pixels of the input, and this step is the
+one that cuts it out and puts it on a blank page of the size the parameters give. An input that an older
+``geometry.crop`` already cut is read as well, since its frame is brought into the pixels of the cut page. A size of 0
+makes the page the box and its margins, which a run of the book replaces with the size by the book before the step runs.
 
 The box is scaled so that the distance between its lines becomes the target one, which makes the letters of a
 photograph as large as those of a scan of the same book, and a page whose line height is farther from the
@@ -440,6 +442,8 @@ class Placing:
         data = image_data(page, facts, color_mode) | source_size_data(self._image, self._scale)
         data |= {
             VersionData.FRAME: self.target.to_data(),
+            # The block stands on the page at its place, which is where the steps after this one find the content
+            VersionData.CONTENT_FRAME: self.target.to_data(),
             VersionData.CONFIDENCE: 0.0 if content is None else content.confidence,
             VersionData.SKIPPED: False,
         }

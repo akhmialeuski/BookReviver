@@ -3,9 +3,11 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import {
   createBook,
+  openProjectId,
   registerAndSignIn,
   stepIdsOf,
   uploadFolder,
+  waitForIdleJobs,
   writePagesFolder,
   writeScansFolder,
 } from './support/account';
@@ -63,6 +65,9 @@ test('a reader turns a page by hand with the handle, the field and the wheel, ta
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });
+    // A run on all pages takes the book through Margins twice, once to size the pages by the book, so the summary can
+    // read up to date while the job still places the pages
+    await waitForIdleJobs(page, openProjectId(page));
     // The sheet, the angle, the curves, the frame and the block on the page
     await expect(page.getByTestId('editor-step')).toHaveCount(5);
     await expect(page.getByTestId('editor-auto')).toBeDisabled();
