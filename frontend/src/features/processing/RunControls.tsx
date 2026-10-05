@@ -6,7 +6,7 @@ import { troubleOf } from '@/features/processing/scope';
 import { UnsplitDialog, UnsplitQuestion } from '@/features/processing/UnsplitDialog';
 import { PreviewBlock, type Processing } from '@/features/processing/useProcessing';
 import type { StageRun } from '@/features/processing/useStageRun';
-import { useStageSummaries } from '@/features/workspace/queries';
+import { useActiveJobs, useStageSummaries } from '@/features/workspace/queries';
 import type { StripItem } from '@/features/workspace/strip';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
@@ -59,6 +59,10 @@ export function RunControls({
   const summaries = useStageSummaries(projectId);
   const trouble = troubleOf(items);
   const stopped = summaries.data?.find((entry) => entry.stage === stage)?.stopped ?? [];
+  // A run of this stage that is still going says so, since its pages read up to date before it has placed them all
+  const running = useActiveJobs(projectId).data?.find(
+    (job) => job.kind === 'run-stage' && job.stage === stage,
+  );
   const [mode, setMode] = useState<RunMode>('keep');
 
   return (
@@ -71,7 +75,12 @@ export function RunControls({
         </ul>
       )}
       <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm" data-testid="run-summary">
-        {trouble.stale === 0 && trouble.failed === 0 ? (
+        {running !== undefined ? (
+          <span className="flex items-center gap-1.5" data-testid="run-summary-running">
+            <LoaderCircleIcon className="size-3.5 animate-spin" aria-hidden="true" />
+            {labels.footer.running(running.progress.done, running.progress.total)}
+          </span>
+        ) : trouble.stale === 0 && trouble.failed === 0 ? (
           // Pages that stopped short are up to date but not done, which the lines above say
           stopped.length === 0 && (
             <span className="text-muted-foreground">{labels.footer.allClear}</span>
