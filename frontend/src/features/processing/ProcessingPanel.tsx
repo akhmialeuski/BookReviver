@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { EditorSession } from '@/features/editors/session';
 import { ContentTypeSection } from '@/features/processing/ContentTypeSection';
+import { PageHistorySection } from '@/features/processing/PageHistorySection';
 import { RecipeSection } from '@/features/processing/RecipeSection';
 import { RunControls } from '@/features/processing/RunControls';
 import { SplitSection } from '@/features/processing/SplitSection';
@@ -10,7 +11,7 @@ import type { Processing } from '@/features/processing/useProcessing';
 import { useStageRun } from '@/features/processing/useStageRun';
 import { ProfileLibraryPanel } from '@/features/profiles/ProfileLibraryPanel';
 import { StagePanel } from '@/features/workspace/StagePanel';
-import type { BarStep } from '@/features/workspace/steps';
+import { type BarStep, hasStepBar } from '@/features/workspace/steps';
 import type { StripItem } from '@/features/workspace/strip';
 import type { StepWorkspace } from '@/features/workspace/useStepWorkspace';
 import { MESSAGES } from '@/shared/messages';
@@ -49,6 +50,13 @@ export function ProcessingPanel({
   const rows = items.flatMap((item) => (item.row === undefined ? [] : [item.row]));
   const run = useStageRun(processing, items, current, selected);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  // The history of the open step stands at the very end of the panel on every stage: the step open in the bar, or on a
+  // stage without a bar the step open in the list of the recipe
+  const historyStep: { stepId: string | null; processorKey: string } | null =
+    step?.step ??
+    (hasStepBar(processing.stage)
+      ? null
+      : (processing.steps.find((draft) => draft.id === processing.openId) ?? null));
   if (processing.failed) {
     return (
       <StagePanel stage={processing.stage} available>
@@ -113,6 +121,15 @@ export function ProcessingPanel({
             editor={editor}
             controls={step === undefined}
             results={step === undefined}
+          />
+        )}
+        {current === undefined || historyStep === null ? null : (
+          <PageHistorySection
+            projectId={processing.projectId}
+            stage={processing.stage}
+            stepId={historyStep.stepId}
+            pageId={current.page.id}
+            processor={processing.catalogue.find((entry) => entry.key === historyStep.processorKey)}
           />
         )}
       </div>

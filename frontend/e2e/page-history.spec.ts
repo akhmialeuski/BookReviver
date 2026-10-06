@@ -14,7 +14,7 @@ import {
 } from './support/account';
 
 /**
- * The history of a step on a page, a collapsible section at the end of the panel of the step: a setting changed in the
+ * The history of a step on a page, a collapsible section at the end of the panel of the stage: a setting changed in the
  * panel and an edit saved by the editor are listed with what they changed, the button of the newest row takes it back,
  * Ctrl+Z takes back the one before it, and the history keeps the undos beside the changes they took back. A history of
  * several changes is read three at a time, an undo back to an older row asks first, and a clear asks too, then leaves the
@@ -110,9 +110,9 @@ test('a reader sees what changed on a page, takes the last change back with the 
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
-  // The settings of the page and its history are in the panel of the open step
+  // The settings of the page are in the panel of the open step, and the history ends the panel of the stage
   const step = page.getByTestId('step-panel');
-  const history = step.getByTestId('page-history');
+  const history = page.getByTestId('stage-panel').getByTestId('page-history');
   const rows = history.getByTestId('page-history-row');
   const settings = step.getByTestId('page-settings');
   let pageId = '';
@@ -148,6 +148,7 @@ test('a reader sees what changed on a page, takes the last change back with the 
     await expect(rows.first()).toContainText('Settings of the page');
     await expect(rows.first()).toContainText(SLANT_OF_THE_PAGE);
     await expect(settings.getByTestId('page-settings-list')).toBeVisible();
+    await history.scrollIntoViewIfNeeded();
     await snap(page, 'page-history-before-undo');
   });
 
@@ -157,6 +158,7 @@ test('a reader sees what changed on a page, takes the last change back with the 
     await expect(rows.nth(0)).toContainText('An undo');
     await expect(rows.nth(1)).toHaveAttribute('data-undone', 'true');
     await expect(settings.getByTestId('page-settings-none')).toBeVisible();
+    await history.scrollIntoViewIfNeeded();
     await snap(page, 'page-history-after-undo');
   });
 
@@ -189,8 +191,7 @@ test('a reader reads a long history three changes at a time, undoes back to an o
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
-  const step = page.getByTestId('step-panel');
-  const history = step.getByTestId('page-history');
+  const history = page.getByTestId('stage-panel').getByTestId('page-history');
   const rows = history.getByTestId('page-history-row');
   const dialog = page.getByTestId('page-history-dialog');
   let pageId = '';
@@ -218,6 +219,7 @@ test('a reader reads a long history three changes at a time, undoes back to an o
     await expect(history.getByTestId('page-history-toggle')).toBeEnabled();
     await expect(rows).toHaveCount(0);
     await expect(history.getByTestId('page-history-undo-here')).toHaveCount(0);
+    await history.scrollIntoViewIfNeeded();
     await snap(page, 'page-history-collapsed');
   });
 
@@ -225,6 +227,7 @@ test('a reader reads a long history three changes at a time, undoes back to an o
     await history.getByTestId('page-history-toggle').click();
     await expect(rows).toHaveCount(ROWS_SHOWN);
     await expect(rows.first()).toContainText(`Largest slant: ${SLANTS_OF_THE_PAGE.at(-1)}`);
+    await history.scrollIntoViewIfNeeded();
     await snap(page, 'page-history-three-rows');
     await history.getByTestId('page-history-more').click();
     await expect(rows).toHaveCount(SLANTS_OF_THE_PAGE.length);
@@ -254,6 +257,7 @@ test('a reader reads a long history three changes at a time, undoes back to an o
     await expect(rows).toHaveCount(0);
     expect(await readHistory(page, pageId, stepId)).toEqual([]);
     expect(await readSettings(page, pageId)).toEqual([]);
+    await history.scrollIntoViewIfNeeded();
     await snap(page, 'page-history-disabled-after-clear');
   });
 

@@ -2,7 +2,6 @@ import { CopyPlusIcon, PlusIcon } from 'lucide-react';
 import type { ProcessorSchema, StagePageSchema } from '@/api';
 import { isPlacement } from '@/features/editors/placement';
 import { MeasureBook } from '@/features/processing/MeasureBook';
-import { PageHistorySection } from '@/features/processing/PageHistorySection';
 import { PageStepSettings } from '@/features/processing/PageStepSettings';
 import { pageValuesOf } from '@/features/processing/pageSettings';
 import {
@@ -270,15 +269,6 @@ function RecipeSteps({
                 pageId={pageId}
                 stepId={step.stepId}
                 title={processorOf(step)?.title ?? step.processorKey}
-              />
-            )}
-            {pageId === undefined ? null : (
-              <PageHistorySection
-                projectId={projectId}
-                stage={stage}
-                stepId={step.stepId}
-                pageId={pageId}
-                processor={processorOf(step)}
               />
             )}
           </>

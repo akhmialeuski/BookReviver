@@ -29,7 +29,7 @@ import {
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
- * The changes of one step on the open page, newest first, at the very end of the panel of the step.
+ * The changes of one step on the open page, newest first, at the very end of the panel of the stage.
  *
  * The section looks and behaves the same on every step of every stage, and only the text of its rows differs. It is
  * collapsed until the reader opens it, and whether it is open is remembered for every step. Collapsed, it shows its
@@ -140,7 +140,7 @@ export function PageHistorySection({
           aria-hidden="true"
         />
         <ClockIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <h4 className="flex-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+        <h4 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           {labels.title}
         </h4>
         {disabled ? null : (

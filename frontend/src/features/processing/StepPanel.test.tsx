@@ -550,15 +550,14 @@ describe('StepPanel', () => {
       });
     });
 
-    it('lists the fields the page changes with the way back, and the history of the changes of the step', async () => {
+    it('lists the fields the page changes with the way back, and leaves the history to the end of the stage panel', async () => {
       render(1);
       await settled();
 
       expect(text('page-settings-list')).toContain('Least confidence');
       expect(find('page-settings-reset')).not.toBeNull();
-      expect(sdk.history.mock.calls[0]?.[0]).toMatchObject({
-        path: { page_id: 'p1', stage: 'geometry', step_id: 'b' },
-      });
+      expect(find('page-history')).toBeNull();
+      expect(sdk.history).not.toHaveBeenCalled();
     });
 
     it('marks the fields the page changes in the form of the step', async () => {
@@ -569,17 +568,6 @@ describe('StepPanel', () => {
         ...container.querySelectorAll('[data-testid="step-panel-settings"] form label'),
       ].map((label) => label.textContent);
       expect(labels).toEqual(['Largest slant', 'Least confidence · changed for this page']);
-    });
-
-    it('ends the panel of the step with the history of the page, after the results, the book and the moves', async () => {
-      render(1);
-      await settled();
-
-      const panel = find('step-panel');
-      const history = find('page-history');
-      expect(history).not.toBeNull();
-      expect(panel?.lastElementChild).toBe(history);
-      expect(container.querySelectorAll('[data-testid="page-history"]')).toHaveLength(1);
     });
 
     it('offers the reset of the step once, which the section of the page shares', async () => {

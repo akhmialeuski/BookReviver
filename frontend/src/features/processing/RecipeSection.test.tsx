@@ -22,8 +22,6 @@ const sdk = vi.hoisted(() => ({
   rules: vi.fn(),
   stages: vi.fn(),
   profiles: vi.fn(),
-  history: vi.fn(),
-  settings: vi.fn(),
 }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
@@ -34,8 +32,6 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   listRulesApiV1ProjectsProjectIdStagesStageRulesGet: sdk.rules,
   listStagesApiV1ProjectsProjectIdStagesGet: sdk.stages,
   listProfilesApiV1RecipeProfilesGet: sdk.profiles,
-  listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGet: sdk.history,
-  listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGet: sdk.settings,
 }));
 
 class SizeObserverStandIn {
@@ -60,12 +56,11 @@ describe('RecipeSection', () => {
   function render(
     state: ReturnType<typeof processing>,
     rows = [row('a', { recipe_id: 'r1' })],
-    pageId?: string,
   ): void {
     act(() =>
       root.render(
         <QueryClientProvider client={client}>
-          <RecipeSection processing={state} rows={rows} pageId={pageId} />
+          <RecipeSection processing={state} rows={rows} />
         </QueryClientProvider>,
       ),
     );
@@ -101,9 +96,6 @@ describe('RecipeSection', () => {
       },
     });
     sdk.profiles.mockResolvedValue(profilePage([]));
-    for (const empty of [sdk.history, sdk.settings]) {
-      empty.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 100, pages: 1 } });
-    }
     sdk.stages.mockResolvedValue({
       data: {
         items: [
@@ -191,18 +183,6 @@ describe('RecipeSection', () => {
 
     expect(container.querySelector('form')?.textContent).toContain('Largest slant');
     expect(container.querySelector('form')?.textContent).toContain('Least confidence');
-  });
-
-  it('ends the panel of an open step with the history of the page, after its settings and its reset', async () => {
-    render(processing({ stage: LISTED, openId: 'step-0' }), undefined, 'p1');
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    const history = byId('page-history');
-    expect(history).not.toBeNull();
-    expect(history?.parentElement?.lastElementChild).toBe(history);
-    expect(container.querySelectorAll('[data-testid="page-history"]')).toHaveLength(1);
   });
 
   it('counts the pages of each variant in a line of the names, and shows what the variant is used for', async () => {
