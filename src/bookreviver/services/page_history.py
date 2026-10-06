@@ -8,6 +8,9 @@ lose the later change. A change of a batch is taken back with the rest of its ba
 and the undos of one batch share a batch of their own, so the undo of a batch is one action as well.
 
 Taking back marks the stage of each page that changed stale and processes nothing, like the changes it undoes.
+
+A clear is the one way a history shrinks: it takes the settings and the edit of a step away from one page and deletes
+that step's history on that page, so nothing of it can be undone any more. Other pages and other steps are untouched.
 """
 
 from typing import TYPE_CHECKING
@@ -132,6 +135,34 @@ class PageHistoryService:
         await self._uow.commit()
         await self._records.announce(project_id, stale)
         return added
+
+    async def clear(self, actor: Actor, project_id: ProjectId, key: PageStepKey) -> int:
+        """Take the settings and the edit of a step away from a page and delete the history of the step on it.
+
+        The clear writes nothing to the history. The changes of a batch that reached other pages stay there, and their
+        undo goes on working, since an undo takes back only the changes it finds.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param key: The page, the stage and the step.
+        :type key: PageStepKey
+        :returns: How many changes were deleted, which is zero when the step had no history on the page.
+        :rtype: int
+        :raises NotFoundError: If the actor has no such project, or the project has no such page.
+        """
+        await owned_page(self._uow, actor, project_id, key.page_id)
+        stored = await self._uow.page_step_states.find(key)
+        if stored is not None:
+            await self._uow.page_step_states.delete(key)
+        deleted = await self._uow.page_step_changes.delete_for_step(key)
+        if stored is None and not deleted:
+            return 0
+        stale = await self._records.mark_stale(key.page_id, key.stage)
+        await self._uow.commit()
+        await self._records.announce(project_id, stale)
+        return deleted
 
     async def _with_batches(self, project_id: ProjectId, chosen: Sequence[PageStepChange]) -> Sequence[PageStepChange]:
         """Add the rest of the batch of each chosen change, and keep the changes that still stand.

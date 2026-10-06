@@ -7624,6 +7624,116 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "page-history"
+        ],
+        "summary": "Clear History",
+        "description": "Delete the history of a step on a page, take its settings and its edit away, and mark the stage stale.\n\nThe clear writes nothing to the history, so nothing of it can be undone. The changes of a batch on other pages\nstay.",
+        "operationId": "clear_history_api_v1_projects__project_id__pages__page_id__history__stage___step_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the step"
+            },
+            "description": "Stage of the step"
+          },
+          {
+            "name": "step_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the step of a recipe",
+              "title": "Step Id"
+            },
+            "description": "Identifier of the step of a recipe"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClearedSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/projects/{project_id}/pages/{page_id}/history/{stage}/{step_id}/undo": {
@@ -10500,6 +10610,20 @@
         ],
         "title": "ChangeSource",
         "description": "What made a change of a layer of a step on a page."
+      },
+      "ClearedSchema": {
+        "properties": {
+          "deleted": {
+            "type": "integer",
+            "title": "Deleted"
+          }
+        },
+        "type": "object",
+        "required": [
+          "deleted"
+        ],
+        "title": "ClearedSchema",
+        "description": "What clearing the history of a step on a page deleted.\n\n:ivar deleted: How many changes were deleted, which is none when the step had no history on the page."
       },
       "ColorMode": {
         "type": "string",

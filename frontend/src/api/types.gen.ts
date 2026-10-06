@@ -577,6 +577,20 @@ export type CarryScope = 'following' | 'selected' | 'condition';
 export type ChangeSource = 'user' | 'run' | 'carry-over' | 'reset' | 'undo';
 
 /**
+ * ClearedSchema
+ *
+ * What clearing the history of a step on a page deleted.
+ *
+ * :ivar deleted: How many changes were deleted, which is none when the step had no history on the page.
+ */
+export type ClearedSchema = {
+    /**
+     * Deleted
+     */
+    deleted: number;
+};
+
+/**
  * ColorMode
  *
  * Colour depth of a page image as stored in the source.
@@ -7684,6 +7698,62 @@ export type ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostResponses
 };
 
 export type ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostResponse = ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostResponses[keyof ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostResponses];
+
+export type ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+        /**
+         * Page Id
+         *
+         * Identifier of the page
+         */
+        page_id: string;
+        /**
+         * Stage of the step
+         */
+        stage: Stage;
+        /**
+         * Step Id
+         *
+         * Identifier of the step of a recipe
+         */
+        step_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/pages/{page_id}/history/{stage}/{step_id}';
+};
+
+export type ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteError = ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteErrors[keyof ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteErrors];
+
+export type ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    200: ClearedSchema;
+};
+
+export type ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteResponse = ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteResponses[keyof ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteResponses];
 
 export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetData = {
     body?: never;

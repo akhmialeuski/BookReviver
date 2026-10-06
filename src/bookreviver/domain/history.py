@@ -5,6 +5,10 @@ changes that still stand are those no undo names, and the undos themselves are n
 the newest change that stands, then the one before it, which is how a Ctrl+Z works, and a change of a batch is taken
 back together with the rest of its batch. A carry-over of a setting to other pages and a reset of steps to their
 defaults are such batches.
+
+The one exception to the growth is an explicit clear of one step on one page, which deletes that history and takes the
+settings and the edit of the step away from the page. The changes of a batch on other pages stay, and an undo of the
+batch takes back only the changes it still finds.
 """
 
 from typing import TYPE_CHECKING

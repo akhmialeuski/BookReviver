@@ -2,7 +2,8 @@
 
 The history lists every change of the step on the page, the newest first, and tells which of them were taken back. An
 undo takes back the newest change that stands, or every change back to a chosen one. It writes the undos as new changes
-and marks the stage of the page stale, and processes nothing.
+and marks the stage of the page stale, and processes nothing. A clear deletes the history of the step on the page and
+takes its settings and its edit away.
 """
 
 from dataclasses import dataclass
@@ -14,7 +15,7 @@ from fastapi_pagination import Page, Params
 
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
-from bookreviver.api.schemas.page_history import PageStepChangeSchema, UndoForm, UndoneSchema
+from bookreviver.api.schemas.page_history import ClearedSchema, PageStepChangeSchema, UndoForm, UndoneSchema
 from bookreviver.domain.entities import PageStepChange
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import PageId, ProjectId, StepId
@@ -112,3 +113,27 @@ async def undo_change(
     """
     written = await history.undo(actor, address.project_id, address.key, form.change_id)
     return UndoneSchema(changes=[PageStepChangeSchema.model_validate(change) for change in written])
+
+
+@router.delete('/{project_id}/pages/{page_id}/history/{stage}/{step_id}')
+async def clear_history(
+    address: Annotated[StepPath, Depends()],
+    actor: ActorDep,
+    history: FromDishka[PageHistoryService],
+) -> ClearedSchema:
+    """Delete the history of a step on a page, take its settings and its edit away, and mark the stage stale.
+
+    The clear writes nothing to the history, so nothing of it can be undone. The changes of a batch on other pages
+    stay.
+
+    \N{FORM FEED}
+    :param address: Identifiers of the project, the page, the stage and the step.
+    :type address: StepPath
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param history: Page history service of the request.
+    :type history: PageHistoryService
+    :returns: How many changes were deleted.
+    :rtype: ClearedSchema
+    """
+    return ClearedSchema(deleted=await history.clear(actor, address.project_id, address.key))

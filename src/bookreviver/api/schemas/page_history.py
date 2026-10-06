@@ -1,4 +1,4 @@
-"""Schemas of the history of a step on a page: a change as it was written, and what an undo wrote."""
+"""Schemas of the history of a step on a page: a change, what an undo wrote and what a clear deleted."""
 
 from datetime import datetime
 from typing import Any
@@ -62,3 +62,12 @@ class UndoneSchema(ResponseModel):
     """
 
     changes: list[PageStepChangeSchema]
+
+
+class ClearedSchema(ResponseModel):
+    """What clearing the history of a step on a page deleted.
+
+    :ivar deleted: How many changes were deleted, which is none when the step had no history on the page.
+    """
+
+    deleted: int

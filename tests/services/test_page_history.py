@@ -30,6 +30,8 @@ STRONGER: int = 2
 STRONGEST: int = 3
 NOT_FAILING: bool = False
 OTHER_ORDER_KEY: str = 'a1'
+# A setting, an edit and the undo of the edit, which the clear test writes before it deletes them
+STEP_CHANGES: int = 3
 FIRST_ANGLE: float = 1.5
 SECOND_ANGLE: float = 2.5
 FIRST: NewPageEdit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=FIRST_ANGLE))
@@ -377,3 +379,112 @@ class TestUndoOfABatch:
         expect((await fx_kit.uow().page_step_states.get(key)).params == {STRENGTH_PARAMETER: STRONGER})
         expect(len(await fx_kit.uow().page_step_changes.list_for_page(page.id)) == 1)
         assert_expectations()
+
+
+class TestClear:
+    """Tests for PageHistoryService.clear, which deletes the history of one step on one page."""
+
+    async def test_the_history_the_settings_and_the_edit_go_and_the_found_result_stays(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a clear deletes the changes, the settings and the hand edit, and leaves the result of the run alone.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, version = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, page)
+        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        await fx_kit.edits().save(actor, project.id, key, FIRST, None)
+        await fx_kit.page_history().undo(actor, project.id, key, None)
+        written = len(await history_of(fx_kit, actor, project, key))
+        deleted = await fx_kit.page_history().clear(actor, project.id, key)
+        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        expect(deleted == written == STEP_CHANGES)
+        expect(await history_of(fx_kit, actor, project, key) == [])
+        expect(await fx_kit.uow().page_step_states.find(key) is None)
+        expect(record.head_version_id == version.id)
+        assert_expectations()
+
+    async def test_the_stage_goes_stale_and_the_change_is_announced(self, fx_kit: ProcessingKit) -> None:
+        """Verify a clear marks the stage of the page stale and publishes it, as an undo does.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, _ = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, page)
+        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        uow = fx_kit.uow()
+        record = await uow.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        await uow.page_stages.save(evolve(record, state=StageState.FRESH))
+        await uow.commit()
+        fx_kit.events.published.clear()
+        await fx_kit.page_history().clear(actor, project.id, key)
+        stored = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        expect(stored.state is StageState.STALE)
+        expect(any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
+        assert_expectations()
+
+    async def test_a_step_with_no_history_is_a_clear_of_nothing(self, fx_kit: ProcessingKit) -> None:
+        """Verify clearing a step that has no change writes nothing, announces nothing and counts zero.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, _ = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, page)
+        fx_kit.events.published.clear()
+        expect(await fx_kit.page_history().clear(actor, project.id, key) == 0)
+        expect(not fx_kit.events.published)
+        assert_expectations()
+
+    async def test_another_page_of_a_batch_keeps_its_change_and_its_undo_works(self, fx_kit: ProcessingKit) -> None:
+        """Verify a clear on one page leaves the other page of a batch with its change, which an undo still takes back.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, _ = await ran_geometry(fx_kit)
+        other, _ = await fx_kit.seed_scan_page(project, order_key=OTHER_ORDER_KEY)
+        key = await step_key(fx_kit, page)
+        other_key = evolve(key, page_id=other.id)
+        batch = ChangeBatchId(uuid4())
+        uow = fx_kit.uow()
+        for at in (key, other_key):
+            state = make_page_step_state(page_id=at.page_id, step_id=at.step_id, params={STRENGTH_PARAMETER: STRONGER})
+            await uow.page_step_states.save(state)
+            await uow.page_step_changes.add(
+                evolve(
+                    PageStepChange.between(
+                        make_page_step_state(page_id=at.page_id, step_id=at.step_id),
+                        state,
+                        StepLayer.SETTINGS,
+                        ChangeSource.CARRY_OVER,
+                    ),
+                    batch_id=batch,
+                )
+            )
+        await uow.commit()
+        await fx_kit.page_history().clear(actor, project.id, key)
+        kept = await history_of(fx_kit, actor, project, other_key)
+        undone = await fx_kit.page_history().undo(actor, project.id, other_key, None)
+        expect(len(kept) == 1 and kept[0].batch_id == batch)
+        expect([undo.page_id for undo in undone] == [other.id])
+        expect(await fx_kit.uow().page_step_states.find(other_key) is None)
+        assert_expectations()
+
+    async def test_a_page_of_another_book_or_another_owner_is_not_found(self, fx_kit: ProcessingKit) -> None:
+        """Verify a clear on a page of another book, or by a stranger, is not found and deletes nothing.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, _ = await ran_geometry(fx_kit)
+        _, other_project = await fx_kit.seed_project()
+        key = await step_key(fx_kit, page)
+        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        for who, book in ((actor, other_project), (Actor(account_id=new_account_id()), project)):
+            with pytest.raises(NotFoundError):
+                await fx_kit.page_history().clear(who, book.id, key)
+        assert len(await history_of(fx_kit, actor, project, key)) == 1

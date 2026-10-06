@@ -818,6 +818,39 @@ class TestPageHistory:
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    async def test_clear_deletes_the_history_and_the_settings_and_counts_the_changes(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a clear answers 200 with the number of deleted changes, and the step has no history or setting left.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        history = f'{fx_book.page_path}/history/geometry/{step_id}'
+        await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 2})
+        await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 3})
+        cleared = await fx_client.delete(history)
+        listed = await fx_client.get(history)
+        settings = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
+        expect((cleared.status_code, cleared.json()) == (status.HTTP_200_OK, {'deleted': 2}))
+        expect(listed.json()['total'] == 0)
+        expect(settings.json()['total'] == 0)
+        assert_expectations()
+
+    async def test_clear_of_a_page_of_no_book_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify clearing the history of a page that is not in the book answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.delete(f'{fx_book.path}/pages/{uuid4()}/history/geometry/{uuid4()}')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
     async def test_history_of_a_page_of_no_book_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
         """Verify the history of a page that is not in the book answers 404.
 
