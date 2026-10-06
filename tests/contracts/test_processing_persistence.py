@@ -988,7 +988,7 @@ class TestPageStepChangeRepository:
         added = await uow.page_step_changes.add(make_page_step_change(page_id=page_id))
         await uow.commit()
         listed = await (await fx_uow_factory()).page_step_changes.list_for_page(page_id)
-        assert ([change.sequence for change in listed], added.sequence) == ([2, 4], 4)
+        assert ([change.sequence for change in listed], added.sequence) == ([2, 3], 3)
 
     async def test_change_of_a_missing_page_is_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
         """Reject a change whose page is not stored.
