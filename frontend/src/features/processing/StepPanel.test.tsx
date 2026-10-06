@@ -571,6 +571,17 @@ describe('StepPanel', () => {
       expect(labels).toEqual(['Largest slant', 'Least confidence · changed for this page']);
     });
 
+    it('ends the panel of the step with the history of the page, after the results, the book and the moves', async () => {
+      render(1);
+      await settled();
+
+      const panel = find('step-panel');
+      const history = find('page-history');
+      expect(history).not.toBeNull();
+      expect(panel?.lastElementChild).toBe(history);
+      expect(container.querySelectorAll('[data-testid="page-history"]')).toHaveLength(1);
+    });
+
     it('offers the reset of the step once, which the section of the page shares', async () => {
       render(1);
       await settled();
