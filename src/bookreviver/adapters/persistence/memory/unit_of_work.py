@@ -1480,6 +1480,24 @@ class InMemoryPageStepChangeRepository(InMemoryRepository[PageStepChange, PageSt
             key=attrgetter('page_id', 'sequence'),
         )
 
+    @override
+    async def delete_for_step(self, key: PageStepKey) -> int:
+        """Delete every change of one step on one page.
+
+        :param key: The page, the stage and the step.
+        :type key: PageStepKey
+        :returns: How many changes were deleted.
+        :rtype: int
+        """
+        doomed = [
+            change.id
+            for change in self._rows.values()
+            if (change.page_id, change.stage, change.step_id) == (key.page_id, key.stage, key.step_id)
+        ]
+        for change_id in doomed:
+            del self._rows[change_id]
+        return len(doomed)
+
 
 class InMemoryResultMarkChangeRepository(
     InMemoryRepository[ResultMarkChange, ResultMarkChangeId], ResultMarkChangeRepository

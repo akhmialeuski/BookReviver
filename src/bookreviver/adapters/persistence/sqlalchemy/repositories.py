@@ -1565,6 +1565,26 @@ class SqlAlchemyPageStepChangeRepository(
         )
         return [self._mapper.to_entity(row) for row in rows]
 
+    @override
+    async def delete_for_step(self, key: PageStepKey) -> int:
+        """Delete every change of one step on one page in one statement.
+
+        :param key: The page, the stage and the step.
+        :type key: PageStepKey
+        :returns: How many changes were deleted.
+        :rtype: int
+        """
+        statement = (
+            delete(PageStepChangeRow)
+            .where(
+                PageStepChangeRow.page_id == key.page_id,
+                PageStepChangeRow.stage == key.stage,
+                PageStepChangeRow.step_id == key.step_id,
+            )
+            .returning(PageStepChangeRow.id)
+        )
+        return len((await self._rows.session.execute(statement)).all())
+
 
 class SqlAlchemyResultMarkChangeRepository(
     SqlAlchemyRepository[ResultMarkChange, ResultMarkChangeId, ResultMarkChangeRow], ResultMarkChangeRepository
