@@ -13,7 +13,7 @@ import { isPlacement } from '@/features/editors/placement';
 import type { EditorSession } from '@/features/editors/session';
 import { CarryOver } from '@/features/processing/CarryOver';
 import { MeasureBook } from '@/features/processing/MeasureBook';
-import { PageStepHistory } from '@/features/processing/PageStepHistory';
+import { PageHistorySection } from '@/features/processing/PageHistorySection';
 import { PageStepSettings } from '@/features/processing/PageStepSettings';
 import { ParamsForm } from '@/features/processing/ParamsForm';
 import { pageValuesOf } from '@/features/processing/pageSettings';
@@ -297,22 +297,14 @@ export function StepPanel({
           </div>
         ) : null}
         {draft === undefined || pageId === undefined ? null : (
-          <>
-            <PageStepSettings
-              processing={processing}
-              step={draft}
-              processor={processor}
-              pageId={pageId}
-              pageValues={pageValues}
-              selected={selected}
-            />
-            <PageStepHistory
-              processing={processing}
-              step={draft}
-              processor={processor}
-              pageId={pageId}
-            />
-          </>
+          <PageStepSettings
+            processing={processing}
+            step={draft}
+            processor={processor}
+            pageId={pageId}
+            pageValues={pageValues}
+            selected={selected}
+          />
         )}
       </div>
 
@@ -444,6 +436,16 @@ export function StepPanel({
           <Move step={neighbours.next} direction="next" onOpen={onOpen} />
         )}
       </nav>
+
+      {pageId === undefined ? null : (
+        <PageHistorySection
+          projectId={processing.projectId}
+          stage={processing.stage}
+          stepId={step.stepId}
+          pageId={pageId}
+          processor={processor}
+        />
+      )}
     </section>
   );
 }
