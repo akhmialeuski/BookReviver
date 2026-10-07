@@ -672,6 +672,22 @@ describe('PageTimeline', () => {
       expect(rows()[1]?.textContent).not.toContain('Current');
     });
 
+    it('tags the current version of the stage while the versions of the whole stage are still being read', async () => {
+      const crop = version('crop', { created_at: at(11) });
+      // The list of the stage never answers, so only the head and the results of the step are known
+      sdk.versions.mockImplementation((options: { query?: { step?: string } }) =>
+        options.query?.step === undefined
+          ? new Promise<never>(() => undefined)
+          : Promise.resolve(listed(crop)),
+      );
+      serve([]);
+
+      await render({ headId: 'crop' });
+
+      expect(rows().map((row) => row.dataset.current)).toEqual(['true']);
+      expect(byId('page-history-use')).toBeNull();
+    });
+
     it('tags nothing while the page stands on no result of the open step, as when a variant of the recipe ran it', async () => {
       const deskew = version('deskew', { created_at: at(10) });
       const crop = version('crop', { created_at: at(11), input_id: 'deskew' });

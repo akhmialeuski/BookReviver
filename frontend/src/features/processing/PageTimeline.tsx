@@ -105,11 +105,13 @@ export function PageTimeline({
 
   const changes = history.data?.changes ?? NO_CHANGES;
   const changesTotal = history.data?.total ?? 0;
-  // The page stands on the current version of the stage and every version that one was made from
+  // The page stands on the current version of the stage and every version that one was made from. The head itself stands
+  // before the versions of the stage are read, so the current result is never offered as one to use
   const standing = useMemo(() => {
     const ofWholeStage = ofStage.data ?? NO_VERSIONS;
     const head = ofWholeStage.find((version) => version.id === headId);
-    return new Set(stepChain(ofWholeStage, head).map((version) => version.id));
+    const chain = stepChain(ofWholeStage, head).map((version) => version.id);
+    return new Set(headId === undefined ? chain : [headId, ...chain]);
   }, [ofStage.data, headId]);
   const entries = historyOf(versions.data ?? NO_VERSIONS, standing);
   // Only a result of the last step is a result of the stage, which is all that can be made the current one
