@@ -11,9 +11,10 @@ import { ProblemError } from '@/shared/http/problem';
 
 /**
  * The history of the open page as one list: the changes of a step and the results merged by time, each with its chip,
- * the filters, three rows at a time over both lists, the undo back to a change, the use of a result, the marks and the
- * comment, the clear that deletes the changes and the results, the stage with no step open, every reason for being grey, and the choice of
- * open or collapsed that is remembered.
+ * the filters, three rows at a time over both lists, the undo back to a change, the use of a result, the clear that
+ * deletes the changes and the results, the stage with no step open, and every reason for being grey. The frame, the
+ * remembered choice of open or collapsed, and the notes on a result are tested with `HistoryFrame`, `historyOpen` and
+ * `ResultNote`.
  */
 
 const sdk = vi.hoisted(() => ({
@@ -221,32 +222,13 @@ describe('PageTimeline', () => {
     localStorage.clear();
   });
 
-  describe('the header', () => {
-    it('is collapsed by default with the title and the number of changes and results, and no button', async () => {
+  describe('the count', () => {
+    it('counts the changes and the results of the step together', async () => {
       serve(settingsChanges(2));
       sdk.versions.mockResolvedValue(listed(OLD, NEW));
       await render();
 
-      expect(byId('page-history')?.getAttribute('aria-disabled')).toBe('false');
-      expect(byId('page-history')?.textContent).toContain('History of this page');
       expect(byId('page-history-count')?.textContent).toBe('4 events');
-      expect(byId('page-history-list')).toBeNull();
-      expect(byId('page-history-undo-here')).toBeNull();
-      expect(byId('page-history-toggle')?.querySelectorAll('button')).toHaveLength(0);
-      expect(container.textContent).not.toMatch(/\bUndo\b/);
-    });
-
-    it('counts a change and a result alike, and says one event in the singular', async () => {
-      serve([change({ id: 'only' })]);
-      await render();
-
-      expect(byId('page-history-count')?.textContent).toBe('1 event');
-    });
-
-    it('is the last element of the scrolling area of the panel', async () => {
-      await render();
-
-      expect(byId('stage-panel-scroll')?.lastElementChild).toBe(byId('page-history'));
     });
   });
 
@@ -835,167 +817,16 @@ describe('PageTimeline', () => {
     });
   });
 
-  describe('the marks and the comment of a result', () => {
+  describe('the notes on a result', () => {
     beforeEach(() => {
       sdk.versions.mockResolvedValue(listed(OLD, NEW));
       open();
-    });
-
-    it('marks a result, which sends the mark with the comment it has, and takes the mark off again', async () => {
-      await render();
-
-      await act(async () => {
-        byId('result-mark-good', rows()[0])?.click();
-      });
-      expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({
-        path: { project_id: 'project', page_id: 'page', version_id: 'new' },
-        body: { mark: 'good', comment: '' },
-      });
-      await settle();
-      await settle();
-
-      await act(async () => {
-        byId('result-mark-bad', rows()[0])?.click();
-      });
-      expect(sdk.mark.mock.calls[1]?.[0]).toMatchObject({ body: { mark: null, comment: '' } });
-    });
-
-    it('edits the comment with a pencil button beside the marks, and shows the comment under them', async () => {
-      sdk.versions.mockResolvedValue(
-        listed(version('new', { created_at: at(12), comment: 'Slightly dark' })),
-      );
-      await render();
-
-      const note = byId('result-note');
-      const pencil = byId('result-comment-edit');
-      expect(pencil?.querySelector('svg')).not.toBeNull();
-      expect(pencil?.textContent).toBe('');
-      expect(pencil?.getAttribute('aria-label')).toBe('Edit comment');
-      expect(byId('result-comment')?.textContent).toBe('Slightly dark');
-      expect(pencil?.parentElement?.compareDocumentPosition(byId('result-comment') as Node)).toBe(
-        Node.DOCUMENT_POSITION_FOLLOWING,
-      );
-      expect(note?.contains(pencil)).toBe(true);
-    });
-
-    it('labels the pencil as an addition while there is no comment', async () => {
-      await render();
-
-      expect(byId('result-comment-edit')?.getAttribute('aria-label')).toBe('Add a comment');
-      expect(byId('result-comment')).toBeNull();
-    });
-
-    it('keeps the comment that is being written when the answer to a mark pressed meanwhile arrives', async () => {
-      let answer: (value: unknown) => void = () => undefined;
-      sdk.mark.mockReturnValue(
-        new Promise((resolve) => {
-          answer = resolve;
-        }),
-      );
-      await render();
-      await act(async () => {
-        byId('result-comment-edit')?.click();
-      });
-      expect(byId('result-comment-input')).not.toBeNull();
-      await act(async () => {
-        byId('result-mark-good')?.click();
-      });
-
-      await act(async () => {
-        answer({ data: {} });
-      });
-      await settle();
-
-      expect(byId('result-comment-input')).not.toBeNull();
-    });
-
-    it('closes the field of the comment once the comment is saved', async () => {
-      await render();
-      await act(async () => {
-        byId('result-comment-edit')?.click();
-      });
-
-      await act(async () => {
-        byId('result-comment-save')?.click();
-      });
-      await settle();
-
-      expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({ body: { mark: 'bad', comment: '' } });
-      expect(byId('result-comment-input')).toBeNull();
     });
 
     it('offers a mark and a comment on every result, the current one included', async () => {
       await render();
 
       expect(container.querySelectorAll('[data-testid="result-note"]')).toHaveLength(2);
-    });
-
-    it('sends the comment a result has along with the mark', async () => {
-      sdk.versions.mockResolvedValue(
-        listed(version('old', { created_at: at(11), comment: 'Too tight' }), NEW),
-      );
-      await render();
-
-      await act(async () => {
-        container
-          .querySelector<HTMLElement>('[data-version="old"][data-testid="result-mark-good"]')
-          ?.click();
-      });
-
-      expect(sdk.mark).toHaveBeenCalledTimes(1);
-      expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({
-        path: { project_id: 'project', page_id: 'page', version_id: 'old' },
-        body: { mark: 'good', comment: 'Too tight' },
-      });
-    });
-
-    it('shows the mark a result has as pressed, on that result only', async () => {
-      await render();
-
-      const pressed = (id: string, mark: 'good' | 'bad'): string | null | undefined =>
-        container
-          .querySelector(`[data-version="${id}"][data-testid="result-mark-${mark}"]`)
-          ?.getAttribute('aria-pressed');
-      expect([pressed('old', 'good'), pressed('old', 'bad')]).toEqual(['true', 'false']);
-      expect([pressed('new', 'good'), pressed('new', 'bad')]).toEqual(['false', 'true']);
-    });
-
-    it('writes a comment of several lines and keeps the mark', async () => {
-      await render();
-
-      await act(async () => {
-        container
-          .querySelector<HTMLElement>('[data-version="old"][data-testid="result-comment-edit"]')
-          ?.click();
-      });
-      const input = byId('result-comment-input') as HTMLTextAreaElement | null;
-      await act(async () => {
-        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-        setter?.call(input, 'First try\nSecond try');
-        input?.dispatchEvent(new Event('input', { bubbles: true }));
-      });
-      await act(async () => {
-        byId('result-comment-save')?.click();
-      });
-
-      expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({
-        path: { version_id: 'old' },
-        body: { mark: 'good', comment: 'First try\nSecond try' },
-      });
-    });
-
-    it('tells the reader when the notes could not be saved', async () => {
-      sdk.mark.mockRejectedValue(
-        new ProblemError('Another job of this book is running.', 409, null, []),
-      );
-      await render();
-
-      await act(async () => {
-        byId('result-mark-good', rows()[0])?.click();
-      });
-
-      // The mutation reports its failure a few ticks after the click
-      await vi.waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
     });
   });
 
@@ -1234,54 +1065,6 @@ describe('PageTimeline', () => {
 
       expect(byId('page-history')?.getAttribute('aria-disabled')).toBe('false');
       expect(byId('page-history-count')).toBeNull();
-    });
-  });
-
-  describe('whether it is open', () => {
-    it('remembers that it was opened, and that it was closed again, for the next one', async () => {
-      serve(settingsChanges(2));
-      await render();
-      await click('page-history-toggle');
-      expect(rows()).toHaveLength(2);
-
-      act(() => root.unmount());
-      root = createRoot(container);
-      await render();
-      expect(rows()).toHaveLength(2);
-
-      await click('page-history-toggle');
-      act(() => root.unmount());
-      root = createRoot(container);
-      await render();
-      expect(byId('page-history-list')).toBeNull();
-    });
-
-    it('stays as chosen when the step is closed, since the choice is one for every stage', async () => {
-      serve(settingsChanges(2));
-      sdk.versions.mockResolvedValue(listed(OLD, NEW));
-      open();
-      await render();
-
-      await render({ step: null });
-
-      expect(byId('page-history-toggle')?.getAttribute('data-state')).toBe('open');
-    });
-
-    it('stays collapsed when the storage throws', async () => {
-      serve(settingsChanges(2));
-      vi.stubGlobal('localStorage', {
-        getItem: () => {
-          throw new Error('blocked');
-        },
-        setItem: () => {
-          throw new Error('blocked');
-        },
-      });
-      await render();
-
-      expect(byId('page-history-list')).toBeNull();
-      await click('page-history-toggle');
-      expect(rows()).toHaveLength(2);
     });
   });
 
