@@ -818,6 +818,98 @@ class TestPageHistory:
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    async def test_clear_deletes_the_history_and_the_settings_and_counts_the_changes(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a clear answers 200 with the numbers of deleted changes and versions, and the step has none left.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        history = f'{fx_book.page_path}/history/geometry/{step_id}'
+        await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 2})
+        await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 3})
+        cleared = await fx_client.delete(history)
+        listed = await fx_client.get(history)
+        settings = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
+        expect((cleared.status_code, cleared.json()) == (status.HTTP_200_OK, {'changes': 2, 'versions': 0}))
+        expect(listed.json()['total'] == 0)
+        expect(settings.json()['total'] == 0)
+        assert_expectations()
+
+    async def test_clear_deletes_the_result_of_the_step_and_counts_it(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify a clear of the only step after a run deletes its result, so the stage has no result on the page.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the jobs.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        await run_stage(fx_client, fx_broker, fx_book, 'geometry')
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        versions = f'{fx_book.page_path}/versions'
+        of_step = {'stage': 'geometry', 'step': step_id}
+        before = await fx_client.get(versions, params=of_step)
+        cleared = await fx_client.delete(f'{fx_book.page_path}/history/geometry/{step_id}')
+        after = await fx_client.get(versions, params=of_step)
+        rows = await fx_client.get(f'{fx_book.path}/stages/geometry/pages')
+        expect(before.json()['total'] == 1)
+        expect((cleared.status_code, cleared.json()) == (status.HTTP_200_OK, {'changes': 0, 'versions': 1}))
+        expect(after.json()['total'] == 0)
+        expect(rows.json()[ITEMS][0]['status'] == 'not-run')
+        assert_expectations()
+
+    async def test_clear_of_a_page_of_no_book_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify clearing the history of a page that is not in the book answers 404.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.delete(f'{fx_book.path}/pages/{uuid4()}/history/geometry/{uuid4()}')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    async def test_clear_while_the_project_is_busy_is_a_409_and_deletes_nothing(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a clear answers 409 while a run of the project is queued, which may read the versions, and keeps the step.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        history = f'{fx_book.page_path}/history/geometry/{step_id}'
+        await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 2})
+        run = await fx_client.post(f'{fx_book.path}/stages/page-split/run', json={})
+        cleared = await fx_client.delete(history)
+        listed = await fx_client.get(history)
+        expect(run.status_code == status.HTTP_202_ACCEPTED)
+        expect(cleared.status_code == status.HTTP_409_CONFLICT)
+        expect(listed.json()['total'] == 1)
+        assert_expectations()
+
+    async def test_clear_of_a_step_no_recipe_has_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify clearing a step that is in no recipe of the stage answers 404, as the listing of its versions does.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.delete(f'{fx_book.page_path}/history/geometry/{uuid4()}')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
     async def test_history_of_a_page_of_no_book_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
         """Verify the history of a page that is not in the book answers 404.
 

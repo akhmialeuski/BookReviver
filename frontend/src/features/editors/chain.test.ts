@@ -36,6 +36,20 @@ describe('stepChain', () => {
   it.each([null, undefined])('gives none when there is no current version (%s)', (head) => {
     expect(stepChain([CROP], head)).toEqual([]);
   });
+
+  it('leaves out the versions of another run that share an input with the chain', () => {
+    const redone = version('redone', { input_id: 'v1' });
+
+    expect(stepChain([PERSPECTIVE, DESKEW, CROP, redone], redone).map((entry) => entry.id)).toEqual(
+      ['v1', 'redone'],
+    );
+  });
+
+  it('stops on a version that reads itself', () => {
+    const loop = version('loop', { input_id: 'loop' });
+
+    expect(stepChain([loop], loop)).toEqual([loop]);
+  });
 });
 
 describe('stepVersions', () => {

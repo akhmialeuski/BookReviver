@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { editableStepsOf, editorOf, hasEditor } from '@/features/editors/registry';
+import { describeEdit, editableStepsOf, editorOf, hasEditor } from '@/features/editors/registry';
+import type { EditableKind, Geometry } from '@/features/editors/shapes';
 import { Picture } from '@/features/editors/types';
 import {
   autoSplit,
@@ -392,5 +393,67 @@ describe('editableStepsOf', () => {
     const known = [spread(), autoSplit(), processor('geometry.crop'), deskew()];
 
     expect(editableStepsOf(shown, known)).toEqual([]);
+  });
+});
+
+describe('describeEdit', () => {
+  const corner = { x: 1, y: 2 };
+  const line = { start: { x: 1, y: 2 }, end: { x: 3, y: 4 } };
+  const zone = {
+    mode: 'add',
+    points: [
+      { x: 0, y: 0 },
+      { x: 5, y: 0 },
+      { x: 5, y: 5 },
+    ],
+  };
+  const frame = { left: 1, top: 2, width: 30, height: 40 };
+
+  /** A geometry that fits each kind, so a kind added to the registry fails to compile until it has one here. */
+  const FITTING: Record<EditableKind, Geometry> = {
+    line,
+    rotation: { degrees: 1.5 },
+    split: { pages: 2, line },
+    quad: { top_left: corner, top_right: corner, bottom_right: corner, bottom_left: corner },
+    rect: frame,
+    mesh: {
+      rows: [
+        [corner, corner],
+        [corner, corner],
+      ],
+    },
+    regions: { zones: [zone] },
+    'brush-mask': { strokes: [{ radius: 5, points: [corner] }] },
+    'content-box': frame,
+  };
+  const UNKNOWN = 'Set by hand';
+
+  it.each(Object.entries(FITTING))(
+    'words the shape of %s in more than the default text',
+    (kind, geometry) => {
+      const text = describeEdit(kind, geometry);
+
+      expect(text).not.toBe('');
+      expect(text).not.toBe(UNKNOWN);
+    },
+  );
+
+  it.each(Object.keys(FITTING).filter((kind) => kind !== 'brush-mask'))(
+    'says it was set by hand when the shape does not fit %s',
+    (kind) => {
+      expect(describeEdit(kind, { nonsense: true })).toBe(UNKNOWN);
+      expect(describeEdit(kind, null)).toBe(UNKNOWN);
+      expect(describeEdit(kind, 'text')).toBe(UNKNOWN);
+    },
+  );
+
+  it('says a mask was painted for a brush whose strokes did not fit, since the mask stands without them', () => {
+    expect(describeEdit('brush-mask', { nonsense: true })).toBe('Mask painted by hand');
+    expect(describeEdit('brush-mask', null)).toBe('Mask painted by hand');
+  });
+
+  it('says it was set by hand for a kind that has no editor', () => {
+    expect(describeEdit('hologram', frame)).toBe(UNKNOWN);
+    expect(describeEdit('none', null)).toBe(UNKNOWN);
   });
 });

@@ -4,6 +4,7 @@ import { meshOf } from '@/features/editors/mesh';
 import { type MeshShape, readMesh, writeMesh } from '@/features/editors/shapes';
 import { type EditorDefinition, Picture } from '@/features/editors/types';
 import { sourceSize } from '@/features/processing/results';
+import { MESSAGES } from '@/shared/messages';
 
 /**
  * The curves editor: the top curve and the bottom curve of the page, dragged on the picture the dewarping step reads.
@@ -23,6 +24,7 @@ export const meshEditor: EditorDefinition<MeshShape> = {
   fallback: ({ size, result }) => meshOf(result, size),
   read: readMesh,
   write: writeMesh,
+  describe: () => MESSAGES.processing.timeline.hand.mesh,
   Canvas: MeshCanvas,
   Panel: MeshPanel,
 };

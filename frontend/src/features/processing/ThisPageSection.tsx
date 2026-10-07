@@ -3,7 +3,6 @@ import { EditorControls } from '@/features/editors/EditorControls';
 import type { EditorSession } from '@/features/editors/session';
 import { ApplyTo } from '@/features/processing/ApplyTo';
 import { type Fact, factsOf } from '@/features/processing/facts';
-import { ResultsSection } from '@/features/processing/ResultsSection';
 import { readChainResult } from '@/features/processing/results';
 import type { Processing } from '@/features/processing/useProcessing';
 import { useShownStep } from '@/features/processing/useShownStep';
@@ -11,12 +10,12 @@ import type { StripItem } from '@/features/workspace/strip';
 import { MESSAGES } from '@/shared/messages';
 
 /**
- * What the stage did to the open page, and the results it made on it before.
+ * What the stage did to the open page.
  *
  * The facts are read from the data of the current version, so the section shows what the step found on this page and
  * not what it was asked to do. A page the step was unsure of gets an amber plate with the way out, then come the controls
- * of the page editor of the stage when it has one, and under them stand the results of the stage on the page, from which an
- * earlier one is made the current one.
+ * of the page editor of the stage when it has one. The results of the stage on the page are in the history that ends the
+ * panel of the stage.
  */
 
 const labels = MESSAGES.processing;
@@ -28,7 +27,6 @@ export function ThisPageSection({
   selected,
   editor = null,
   controls = true,
-  results = true,
 }: {
   processing: Processing;
   /** Every page of the book with where it stands in the stage, which "Apply to" counts the pages of. */
@@ -40,8 +38,6 @@ export function ThisPageSection({
   editor?: EditorSession | null;
   /** Whether the controls of the editor stand here, which they do not while the section of an open step holds them. */
   controls?: boolean;
-  /** Whether the results of the stage are listed here, which they are not while the section of an open step lists its own. */
-  results?: boolean;
 }): React.JSX.Element {
   const { catalogue } = processing;
   const { page, row } = item;
@@ -161,9 +157,6 @@ export function ThisPageSection({
       )}
       {editor === null || !controls ? null : <EditorControls session={editor} />}
       <ApplyTo processing={processing} items={items} item={item} selected={selected} />
-      {results ? (
-        <ResultsSection processing={processing} pageId={page.id} currentId={version?.id} />
-      ) : null}
     </section>
   );
 }

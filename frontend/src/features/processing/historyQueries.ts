@@ -1,20 +1,34 @@
-import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Stage } from '@/api';
 import {
-  listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetOptions,
+  type InfiniteData,
+  type QueryClient,
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+} from '@tanstack/react-query';
+import type { PagePageStepChangeSchema, PageStepChangeSchema, Stage } from '@/api';
+import {
+  clearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteMutation,
+  listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetInfiniteOptions,
   undoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostMutation,
 } from '@/api/@tanstack/react-query.gen';
 import type * as sdk from '@/api/sdk.gen';
-import { invalidateStageRows, invalidateStageSummary } from '@/features/projects/queries';
+import {
+  invalidateStageRows,
+  invalidateStageSummary,
+  invalidateVersions,
+} from '@/features/projects/queries';
 
 /**
- * The history of a step on a page and the undo that takes its changes back.
+ * The history of a step on a page, the undo that takes its changes back and the clear that deletes it.
  *
  * Every change of a layer of a step is written to the history on the server, so what changes a page also changes its
- * history, and an undo changes the settings, the edits and the history of every page its batch reached.
+ * history, and an undo changes the settings, the edits and the history of every page its batch reached. A clear takes
+ * the settings and the edit of the step away from the page along with its history, and deletes its results with the
+ * results that read them.
  */
 
-const LIST_SIZE = 100;
+/** How many changes the history loads at a time, which is the most the server gives a page of a list. */
+const HISTORY_PAGE_SIZE = 100;
 
 // The generated client names each query by the function that makes it, so these are checked against the client
 const HISTORY_QUERY: keyof typeof sdk =
@@ -48,21 +62,56 @@ export function invalidatePageLayers(queryClient: QueryClient): Promise<void> {
   });
 }
 
-/** Read the changes of a step on a page, the newest first, with the ones an undo took back marked. */
+/** The changes loaded so far, the newest first, and how many the step has on the page in all. */
+interface LoadedHistory {
+  changes: readonly PageStepChangeSchema[];
+  total: number;
+}
+
+function loadedOf(data: InfiniteData<PagePageStepChangeSchema>): LoadedHistory {
+  return { changes: data.pages.flatMap((page) => page.items), total: data.pages[0]?.total ?? 0 };
+}
+
+/**
+ * Read the changes of a step on a page, the newest first, a page of a hundred at a time, with the ones an undo took back
+ * marked.
+ *
+ * The first request reads the newest changes and the total, and `fetchNextPage` reads the ones before them, which the
+ * timeline asks for only when the list it shows needs rows beyond those loaded. A change that is written or taken back
+ * reads every page that was loaded again, so the rows on screen stay the newest ones.
+ */
 export function usePageHistory(
   projectId: string,
   pageId: string | undefined,
   stage: Stage,
   stepId: string | null,
 ) {
-  return useQuery({
-    ...listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetOptions({
+  return useInfiniteQuery({
+    ...listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetInfiniteOptions({
       path: { project_id: projectId, page_id: pageId ?? '', stage, step_id: stepId ?? '' },
-      query: { size: LIST_SIZE },
+      query: { size: HISTORY_PAGE_SIZE },
     }),
-    select: (page) => page.items,
+    initialPageParam: 1,
+    getNextPageParam: (last, all) => (last.page < last.pages ? all.length + 1 : undefined),
+    select: loadedOf,
     enabled: pageId !== undefined && stepId !== null,
   });
+}
+
+/**
+ * What an undo and a clear change: the settings, the edits and the histories of the pages, and the rows and the
+ * summary of the stage, which a change marks out of date on the server.
+ */
+function invalidateAfterHistoryChange(
+  queryClient: QueryClient,
+  projectId: string,
+  stage: Stage,
+): Promise<unknown[]> {
+  return Promise.all([
+    invalidatePageLayers(queryClient),
+    invalidateStageRows(queryClient, projectId, stage),
+    invalidateStageSummary(queryClient, projectId),
+  ]);
 }
 
 /**
@@ -78,11 +127,25 @@ export function useUndo(projectId: string, stage: Stage) {
   return useMutation({
     ...undoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostMutation(),
     scope: { id: `page-edits:${projectId}` },
-    onSettled: () =>
+    onSettled: () => invalidateAfterHistoryChange(queryClient, projectId, stage),
+  });
+}
+
+/**
+ * Return a step to its initial state on a page: delete its history, its settings, its edit and its results.
+ *
+ * The clear joins the mutation scope of the edits of the book like an undo, and reads again what an undo does, and
+ * the results of the page too, since the server deleted the results of the step and the ones that read them.
+ */
+export function useClearHistory(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...clearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteMutation(),
+    scope: { id: `page-edits:${projectId}` },
+    onSettled: (_cleared, _error, { path }) =>
       Promise.all([
-        invalidatePageLayers(queryClient),
-        invalidateStageRows(queryClient, projectId, stage),
-        invalidateStageSummary(queryClient, projectId),
+        invalidateAfterHistoryChange(queryClient, projectId, stage),
+        invalidateVersions(queryClient, projectId, path.page_id),
       ]),
   });
 }

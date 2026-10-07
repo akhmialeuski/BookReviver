@@ -4,6 +4,7 @@ import { cutLine } from '@/features/editors/line';
 import { type LineShape, readLine, writeLine } from '@/features/editors/shapes';
 import { type EditorDefinition, type PageContext, Picture } from '@/features/editors/types';
 import { isSplit, pagesOfScan } from '@/features/processing/split';
+import { MESSAGES } from '@/shared/messages';
 
 /**
  * The split line editor: the cut of a spread drawn on the scan, for the recipe that cuts every scan it is given.
@@ -34,6 +35,13 @@ export const lineEditor: EditorDefinition<LineShape> = {
   fallback: ({ size, result }) => cutLine(result, size ?? { width: 0, height: 0 }),
   read: readLine,
   write: writeLine,
+  describe: ({ start, end }) =>
+    MESSAGES.processing.timeline.hand.line(
+      Math.round(start.x),
+      Math.round(start.y),
+      Math.round(end.x),
+      Math.round(end.y),
+    ),
   Canvas: LineCanvas,
   Panel: LinePanel,
 };

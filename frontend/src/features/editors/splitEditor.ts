@@ -5,6 +5,7 @@ import { SplitCanvas } from '@/features/editors/SplitCanvas';
 import { readSplit, type SplitShape, writeSplit } from '@/features/editors/shapes';
 import type { EditorDefinition } from '@/features/editors/types';
 import { PAGES_OF, SplitChoice } from '@/features/processing/split';
+import { MESSAGES } from '@/shared/messages';
 
 /**
  * The editor of the choice of pages for a scan, for the automatic split: the same line as the split line editor, saved
@@ -27,6 +28,9 @@ export const splitEditor: EditorDefinition<SplitShape> = {
   }),
   read: readSplit,
   write: writeSplit,
+  // A choice of one page has no line to word, and the cut is found where the gutter is
+  describe: ({ line }) =>
+    line === null ? MESSAGES.processing.timeline.hand.unknown : lineEditor.describe(line),
   Canvas: SplitCanvas,
   Panel: LinePanel,
 };

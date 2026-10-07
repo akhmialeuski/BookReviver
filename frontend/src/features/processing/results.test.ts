@@ -202,7 +202,7 @@ describe('historyOf', () => {
   const newer = version('new', { created_at: '2026-10-01T12:00:00Z' });
 
   it('lists the newest result first and marks the current one', () => {
-    const entries = historyOf([older, newer], 'old');
+    const entries = historyOf([older, newer], new Set(['old']));
 
     expect(entries.map((entry) => entry.version.id)).toEqual(['new', 'old']);
     expect(entries.map((entry) => entry.current)).toEqual([false, true]);
@@ -216,7 +216,7 @@ describe('historyOf', () => {
         version('f', { state: 'failed' }),
         version('r', { state: 'running' }),
       ],
-      undefined,
+      new Set(),
     );
 
     expect(entries.map((entry) => entry.version.id)).toEqual(['new']);
@@ -227,14 +227,22 @@ describe('historyOf', () => {
     const last = version('last', { created_at: '2026-10-01T10:01:00Z', input_id: 'first' });
     const redone = version('redone', { created_at: '2026-10-01T12:00:00Z', input_id: 'first' });
 
-    const entries = historyOf([first, last, redone], 'redone');
+    const entries = historyOf([first, last, redone], new Set(['redone']));
 
     expect(entries.map((entry) => entry.version.id)).toEqual(['redone', 'last']);
     expect(entries.map((entry) => entry.current)).toEqual([true, false]);
   });
 
+  it('marks a result of an early step that the page stands on, since the list holds that step only', () => {
+    const early = version('early', { input_id: 'base' });
+
+    expect(historyOf([early], new Set(['late', 'early'])).map((entry) => entry.current)).toEqual([
+      true,
+    ]);
+  });
+
   it('is empty for a page with no results', () => {
-    expect(historyOf([], undefined)).toEqual([]);
+    expect(historyOf([], new Set())).toEqual([]);
   });
 });
 

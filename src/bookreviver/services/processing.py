@@ -16,13 +16,12 @@ Versions are not deleted when they stop being current, so going back to earlier 
 its picture and a run makes the picture again under the same identifier. Only a preview loses its row.
 """
 
-import contextlib
 from typing import TYPE_CHECKING
 
 from bookreviver.domain.enums import JobKind, OrderMode, ProcessorScope, RunMode, Stage, VersionScale, VersionState
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.values import PageStageKey, Slice, StageRun, StepPreview, TileCut
-from bookreviver.domain.version_chains import stage_depths
+from bookreviver.domain.version_chains import stage_depths, step_places, versions_of_step
 from bookreviver.services.processing_parts import PROJECT_BUSY
 from bookreviver.services.projects import owned_project
 from bookreviver.services.run_plans import RunPlan
@@ -364,7 +363,7 @@ class ProcessingService:
         await self._uow.commit()
         await self._records.announce(project_id, changed)
         if version.renditions is not None and not version.tiles_ready:
-            await self._queue_tiles_of_choice(project_id, version_id)
+            await self._starter.enqueue_tiles(project_id, [version_id])
         return changed[0]
 
     async def unpin(self, actor: Actor, project_id: ProjectId, page_id: PageId, stage: Stage) -> PageStage:
@@ -397,20 +396,6 @@ class ProcessingService:
         await self._uow.commit()
         await self._records.announce(project_id, changed)
         return changed[0] if changed else await self._uow.page_stages.get(key)
-
-    async def _queue_tiles_of_choice(self, project_id: ProjectId, version_id: PageVersionId) -> None:
-        """Queue the cutting of the pyramid of a version that was just made current.
-
-        The choice is committed already, so a job of another request that took the project in the meantime does not
-        undo it. The viewer asks for the pyramid of a version that has none when it opens it, so it is cut then.
-
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :param version_id: Identifier of the version.
-        :type version_id: PageVersionId
-        """
-        with contextlib.suppress(ConflictError):
-            await self._starter.enqueue(project_id, JobKind.CUT_TILES, TileCut(version_ids=(version_id,)).to_map())
 
     async def versions(
         self,
@@ -452,24 +437,15 @@ class ProcessingService:
             )
         if version_filter.stage is None:
             raise InvalidParametersError(STEP_NEEDS_STAGE)
-        holders = [
-            (recipe, step)
-            for recipe in await self._uow.recipes.list_for_stage(project_id, version_filter.stage)
-            for step in recipe.steps
-            if step.step_id == step_id
-        ]
-        if not holders:
+        recipes = await self._uow.recipes.list_for_stage(project_id, version_filter.stage)
+        if not any(step.step_id == step_id for recipe in recipes for step in recipe.steps):
             raise NotFoundError(step_id)
-        places = {
-            (step.processor_key, place) for recipe, step in holders if (place := recipe.place_of(step_id)) is not None
-        }
         found = await self._uow.page_versions.list_for_page(page_id)
-        depths = stage_depths(found)
+        made = versions_of_step(found, version_filter.stage, step_places(recipes, step_id), stage_depths(found))
         matching = [
             version
             for version in found
-            if version.stage is version_filter.stage
-            and (version.processor.key, depths[version.id]) in places
+            if version.id in made
             and (version_filter.scale is None or version.scale is version_filter.scale)
             and (version_filter.mark is None or version.mark is version_filter.mark)
         ]

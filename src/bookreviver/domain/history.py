@@ -5,6 +5,11 @@ changes that still stand are those no undo names, and the undos themselves are n
 the newest change that stands, then the one before it, which is how a Ctrl+Z works, and a change of a batch is taken
 back together with the rest of its batch. A carry-over of a setting to other pages and a reset of steps to their
 defaults are such batches.
+
+The one exception to the growth is an explicit clear of one step on one page, which deletes that history, takes the
+settings and the edit of the step away from the page, and deletes the results of the step on it with the results that
+read them. The changes of a batch on other pages stay, and an undo of the batch takes back only the changes it still
+finds.
 """
 
 from typing import TYPE_CHECKING
@@ -17,7 +22,7 @@ from bookreviver.domain.errors import NotFoundError
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import PageStepChange
+    from bookreviver.domain.entities import PageStepChange, PageVersion
     from bookreviver.domain.ids import ChangeBatchId, PageId, PageStepChangeId
 
 
@@ -84,3 +89,15 @@ class StepReset:
 
     batch_id: ChangeBatchId
     changes: tuple[PageStepChange, ...]
+
+
+@frozen
+class ClearedStep:
+    """What clearing a step on a page deleted.
+
+    :ivar changes: How many changes of the history were deleted.
+    :ivar versions: The versions deleted: the ones the step made on the page and every version that read one of them.
+    """
+
+    changes: int
+    versions: tuple[PageVersion, ...]

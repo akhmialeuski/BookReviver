@@ -1,0 +1,46 @@
+import { useState } from 'react';
+import { browserStorage, type WorkspaceStorage } from '@/features/workspace/storage';
+
+/**
+ * Whether the history of a page is open in the panel of a stage, the choice that is remembered for the viewer.
+ *
+ * The history is a section of the panel of every stage, so one choice serves every stage, every step and every visit:
+ * it stays collapsed until the reader opens it and then stays open until the reader closes it. The choice lives in the
+ * browser, a convenience that is the same as nothing when the browser forbids storage: `browserStorage` turns every
+ * failure into "nothing there", so the section is left collapsed.
+ */
+
+/** The key the choice is kept under. */
+export const HISTORY_OPEN_KEY = 'bookreviver.page-history.open';
+
+const OPEN = 'open';
+const COLLAPSED = 'collapsed';
+
+/**
+ * Read the choice the viewer kept.
+ *
+ * @param storage Where the choices are kept.
+ * @returns Whether the history is open, which is false when nothing was kept.
+ */
+export function readHistoryOpen(storage: WorkspaceStorage = browserStorage): boolean {
+  return storage.getItem(HISTORY_OPEN_KEY) === OPEN;
+}
+
+/** Keep the choice of the viewer. */
+export function writeHistoryOpen(open: boolean, storage: WorkspaceStorage = browserStorage): void {
+  storage.setItem(HISTORY_OPEN_KEY, open ? OPEN : COLLAPSED);
+}
+
+/**
+ * Read whether the history is open, and change it.
+ *
+ * @returns Whether the history is open, and the function that sets it and keeps the choice.
+ */
+export function useHistoryOpen(): [boolean, (open: boolean) => void] {
+  const [open, setOpen] = useState(() => readHistoryOpen());
+  const choose = (next: boolean): void => {
+    writeHistoryOpen(next);
+    setOpen(next);
+  };
+  return [open, choose];
+}

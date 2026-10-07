@@ -127,7 +127,8 @@ function numberOf(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function recordOf(value: unknown): Record<string, unknown> | null {
+/** Read a value as the map of fields it is, or null when it is not an object. */
+export function recordOf(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
 }
 

@@ -1,3 +1,4 @@
+import { PencilIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { PageVersionSchema, ResultMark } from '@/api';
 import { useMarkResult } from '@/features/processing/queries';
@@ -10,8 +11,9 @@ import { TextareaField } from '@/shared/ui/textarea-field';
 /**
  * The notes of the user on one result: a good or bad mark and a comment of one line or several.
  *
- * Both are saved at once and can be changed at any time, and the server keeps every change. Pressing the mark that is
- * set takes it off. The notes are no input of the step, so setting them makes no picture and changes no identifier.
+ * The marks stand in a row with the pencil that opens the field of the comment, and the comment stands under them. Both
+ * are saved at once and can be changed at any time, and the server keeps every change. Pressing the mark that is set
+ * takes it off. The notes are no input of the step, so setting them makes no picture and changes no identifier.
  */
 
 const labels = MESSAGES.processing.history;
@@ -41,44 +43,51 @@ export function ResultNote({
   }
 
   return (
-    <div className="grid gap-1.5" data-testid="result-note" data-version={version.id}>
-      <fieldset className="m-0 flex min-w-0 gap-1.5 border-0 p-0">
-        <legend className="sr-only">{labels.mark.group}</legend>
-        {MARKS.map((mark) => (
+    <div
+      className="grid min-w-0 grid-cols-1 gap-1.5"
+      data-testid="result-note"
+      data-version={version.id}
+    >
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <fieldset className="m-0 flex min-w-0 gap-1.5 border-0 p-0">
+          <legend className="sr-only">{labels.mark.group}</legend>
+          {MARKS.map((mark) => (
+            <Button
+              key={mark}
+              variant={version.mark === mark ? 'secondary' : 'outline'}
+              size="sm"
+              aria-pressed={version.mark === mark}
+              disabled={save.isPending}
+              data-testid={`result-mark-${mark}`}
+              data-version={version.id}
+              onClick={() => send(version.mark === mark ? null : mark, version.comment)}
+            >
+              {labels.mark[mark]}
+            </Button>
+          ))}
+        </fieldset>
+        {draft === null ? (
           <Button
-            key={mark}
-            variant={version.mark === mark ? 'secondary' : 'outline'}
-            size="sm"
-            aria-pressed={version.mark === mark}
-            disabled={save.isPending}
-            data-testid={`result-mark-${mark}`}
-            data-version={version.id}
-            onClick={() => send(version.mark === mark ? null : mark, version.comment)}
-          >
-            {labels.mark[mark]}
-          </Button>
-        ))}
-      </fieldset>
-      {draft === null ? (
-        <>
-          {version.comment === '' ? null : (
-            <p className="break-words whitespace-pre-wrap" data-testid="result-comment">
-              {version.comment}
-            </p>
-          )}
-          <Button
-            variant="link"
-            size="sm"
-            className="h-auto w-fit p-0"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={version.comment === '' ? labels.comment.add : labels.comment.edit}
+            title={version.comment === '' ? labels.comment.add : labels.comment.edit}
             data-testid="result-comment-edit"
             data-version={version.id}
             onClick={() => setDraft(version.comment)}
           >
-            {version.comment === '' ? labels.comment.add : labels.comment.edit}
+            <PencilIcon />
           </Button>
-        </>
+        ) : null}
+      </div>
+      {draft === null ? (
+        version.comment === '' ? null : (
+          <p className="break-words whitespace-pre-wrap" data-testid="result-comment">
+            {version.comment}
+          </p>
+        )
       ) : (
-        <div className="grid gap-1.5">
+        <div className="grid min-w-0 grid-cols-1 gap-1.5">
           <TextareaField
             label={labels.comment.label}
             value={draft}

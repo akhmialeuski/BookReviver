@@ -213,12 +213,12 @@ export interface HistoryEntry {
  * Only a ready result of a full run can be made the current one, which is what the server accepts, so a preview and a
  * failed run are left out.
  *
- * @param versions The versions of the page in the stage, in any order.
- * @param currentId The current version of the stage on the page, if there is one.
+ * @param versions The versions of the page in the stage or in one step of it, in any order.
+ * @param standing The identifiers of the versions the page stands on, which are the ones that are current.
  */
 export function historyOf(
   versions: readonly PageVersionSchema[],
-  currentId: string | undefined,
+  standing: ReadonlySet<string>,
 ): HistoryEntry[] {
   // A step of a recipe that reads the one before leaves a version of its own, and only the last step makes a result
   const read = new Set(versions.map((version) => version.input_id));
@@ -227,7 +227,7 @@ export function historyOf(
       (version) => version.state === 'ready' && version.scale === 'full' && !read.has(version.id),
     )
     .toSorted((a, b) => b.created_at.localeCompare(a.created_at))
-    .map((version) => ({ version, current: version.id === currentId }));
+    .map((version) => ({ version, current: standing.has(version.id) }));
 }
 
 /** Write a field name the way a reader would, when the schema gives it no title: `max_angle` as `Max angle`. */

@@ -104,6 +104,14 @@ export interface EditorDefinition<S> {
   fallback: (context: FallbackContext) => S;
   read: (geometry: Geometry | null) => S | null;
   write: (shape: S) => Geometry;
+  /** Put a shape of the edit into words for the history of the step, with the pixels of the page rounded. */
+  describe: (shape: S) => string;
+  /**
+   * What the history says of an edit whose geometry does not fit the shape, for an editor that can say something true
+   * without it, such as the brush, whose mask stands whether or not the strokes were kept. Absent for the others, whose
+   * edits then read "Set by hand".
+   */
+  describeUnfit?: string;
   /**
    * Paint the mask the server keeps beside the shape, for an editor whose edit is a mask, such as the brush: a white
    * picture of the size of the edit's image where the reader brushed, and black elsewhere.
@@ -147,6 +155,8 @@ export interface RegisteredEditor {
   reach: (context: PageContext) => RectShape | null;
   /** The geometry to start from when the page has no edit. */
   fallback: (context: FallbackContext) => Geometry;
+  /** Put the geometry of an edit into words, which is "Set by hand" when it does not fit the shape the editor draws. */
+  describe: (geometry: Geometry | null) => string;
   /** Paint the mask that is saved with the geometry, for an editor whose edit is a mask; absent for the others. */
   mask: ((geometry: Geometry, size: Size) => Promise<Blob>) | null;
   Canvas: ComponentType<GeometryCanvasProps>;

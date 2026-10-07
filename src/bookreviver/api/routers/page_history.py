@@ -2,7 +2,8 @@
 
 The history lists every change of the step on the page, the newest first, and tells which of them were taken back. An
 undo takes back the newest change that stands, or every change back to a chosen one. It writes the undos as new changes
-and marks the stage of the page stale, and processes nothing.
+and marks the stage of the page stale, and processes nothing. A clear deletes the history of the step on the page, takes
+its settings and its edit away, and deletes its results with the results that read them.
 """
 
 from dataclasses import dataclass
@@ -14,7 +15,7 @@ from fastapi_pagination import Page, Params
 
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
-from bookreviver.api.schemas.page_history import PageStepChangeSchema, UndoForm, UndoneSchema
+from bookreviver.api.schemas.page_history import ClearedSchema, PageStepChangeSchema, UndoForm, UndoneSchema
 from bookreviver.domain.entities import PageStepChange
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import PageId, ProjectId, StepId
@@ -112,3 +113,34 @@ async def undo_change(
     """
     written = await history.undo(actor, address.project_id, address.key, form.change_id)
     return UndoneSchema(changes=[PageStepChangeSchema.model_validate(change) for change in written])
+
+
+@router.delete('/{project_id}/pages/{page_id}/history/{stage}/{step_id}')
+async def clear_history(
+    address: Annotated[StepPath, Depends()],
+    actor: ActorDep,
+    history: FromDishka[PageHistoryService],
+) -> ClearedSchema:
+    """Return a step to its initial state on a page: delete its history, its settings, its edit and its results.
+
+    The results are the versions the step made on the page and the versions that read them, with their files and their
+    marks. The stage of the page stands on the version the step read, marked stale, and has no current version when the
+    step is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The
+    changes of a batch on other pages stay. The answer is 409 while a run, a preview, a tile cutting or a collection of
+    the project is queued or running, and 404 when no recipe of the stage has the step.
+
+    \N{FORM FEED}
+    :param address: Identifiers of the project, the page, the stage and the step.
+    :type address: StepPath
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param history: Page history service of the request.
+    :type history: PageHistoryService
+    :returns: How many changes and how many versions were deleted.
+    :rtype: ClearedSchema
+    :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the stage
+                           has the step.
+    :raises ConflictError: If a run, a preview, a tile cutting or a collection of the project is queued or running.
+    """
+    cleared = await history.clear(actor, address.project_id, address.key)
+    return ClearedSchema(changes=cleared.changes, versions=len(cleared.versions))

@@ -8,27 +8,20 @@ import { processing, recipe, step, version } from '@/features/processing/fixture
 import { ThisPageSection } from '@/features/processing/ThisPageSection';
 import { page, row } from '@/features/workspace/fixtures';
 import type { StripItem } from '@/features/workspace/strip';
-import { ProblemError } from '@/shared/http/problem';
 
 /**
- * What the stage did to the open page: the facts the step found, the plate for a page it was unsure of, and the history
- * of the results with the choice of an earlier one.
+ * What the stage did to the open page: the facts the step found and the plate for a page it was unsure of. The results
+ * of the stage on the page are not listed here but in the history that ends the panel of the stage.
  */
 
 const sdk = vi.hoisted(() => ({
   versions: vi.fn(),
-  choose: vi.fn(),
-  remake: vi.fn(),
-  mark: vi.fn(),
   jobs: vi.fn(),
 }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet: sdk.versions,
-  chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePut: sdk.choose,
-  remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePost: sdk.remake,
-  putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPut: sdk.mark,
   listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
 }));
 
@@ -99,16 +92,10 @@ describe('ThisPageSection', () => {
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     sdk.versions.mockReset();
-    sdk.choose.mockReset();
-    sdk.remake.mockReset();
-    sdk.mark.mockReset();
     sdk.jobs.mockReset();
     sdk.versions.mockResolvedValue({
       data: { items: [OLD, NEW], total: 2, page: 1, size: 100, pages: 1 },
     });
-    sdk.choose.mockResolvedValue({ data: {} });
-    sdk.remake.mockResolvedValue({ data: { id: 'job' } });
-    sdk.mark.mockResolvedValue({ data: {} });
     sdk.jobs.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 100, pages: 1 } });
     container = document.createElement('div');
     document.body.append(container);
@@ -242,196 +229,13 @@ describe('ThisPageSection', () => {
     expect(text('this-page-failed')).toBe('The step failed: image unreadable');
   });
 
-  it('lists the results newest first, with their settings under the titles of the fields', async () => {
+  it('lists no result and reads none, since the results are in the history that ends the panel of the stage', async () => {
     await render({ page: page('page'), row: row('page', { version: NEW }) });
 
-    const entries = [...container.querySelectorAll('[data-testid="history-entry"]')];
-    expect(entries.map((entry) => entry.getAttribute('data-current'))).toEqual(['true', 'false']);
-    expect(entries[0]?.textContent).toContain('Largest slant 9 · Least confidence 0.3');
-    expect(entries[1]?.textContent).toContain('Largest slant 5 · Least confidence 0.3');
-  });
-
-  it('makes an earlier result the current one', async () => {
-    await render({ page: page('page'), row: row('page', { version: NEW }) });
-
-    await act(async () => {
-      container.querySelector<HTMLElement>('[data-testid="history-use"]')?.click();
-    });
-
-    expect(sdk.choose).toHaveBeenCalledTimes(1);
-    expect(sdk.choose.mock.calls[0]?.[0]).toMatchObject({
-      path: { project_id: 'project', page_id: 'page', stage: 'geometry' },
-      body: { version_id: 'old' },
-    });
-  });
-
-  it('marks a result whose picture was removed, and makes it again instead of choosing it', async () => {
-    const removed = version('old', {
-      created_at: '2026-10-01T10:00:00Z',
-      files_removed: true,
-      files_removed_at: '2026-10-02T00:00:00Z',
-      images: null,
-    });
-    sdk.versions.mockResolvedValue({
-      data: { items: [removed, NEW], total: 2, page: 1, size: 100, pages: 1 },
-    });
-    await render({ page: page('page'), row: row('page', { version: NEW }) });
-
-    expect(text('history-removed')).toBe('Picture removed · made again on use');
-    await act(async () => {
-      container.querySelector<HTMLElement>('[data-testid="history-use"]')?.click();
-    });
-
-    expect(sdk.choose).not.toHaveBeenCalled();
-    expect(sdk.remake).toHaveBeenCalledTimes(1);
-    expect(sdk.remake.mock.calls[0]?.[0]).toMatchObject({
-      path: { project_id: 'project', page_id: 'page', version_id: 'old' },
-    });
-  });
-
-  it('says nothing about a picture on a result that has one', async () => {
-    await render({ page: page('page'), row: row('page', { version: NEW }) });
-
-    expect(container.querySelector('[data-testid="history-removed"]')).toBeNull();
-  });
-
-  it('offers no button on the current result', async () => {
-    await render({ page: page('page'), row: row('page', { version: NEW }) });
-
-    const current = container.querySelector('[data-testid="history-entry"][data-current="true"]');
-    expect(current?.querySelector('[data-testid="history-use"]')).toBeNull();
-    expect(current?.textContent).toContain('Current');
-  });
-
-  describe('the mark and the comment of a result', () => {
-    const entry = (id: string): HTMLElement | null =>
-      container.querySelector<HTMLElement>(
-        `[data-testid="history-entry"]:has([data-testid="result-mark-good"][data-version="${id}"])`,
-      );
-    const pressed = (id: string, mark: 'good' | 'bad'): string | null | undefined =>
-      container
-        .querySelector(`[data-version="${id}"][data-testid="result-mark-${mark}"]`)
-        ?.getAttribute('aria-pressed');
-    const click = async (id: string, testId: string): Promise<void> => {
-      await act(async () => {
-        container
-          .querySelector<HTMLElement>(`[data-version="${id}"][data-testid="${testId}"]`)
-          ?.click();
-      });
-    };
-
-    it('offers a mark and a comment on every result, the current one included', async () => {
-      await render({ page: page('page'), row: row('page', { version: NEW }) });
-
-      expect(container.querySelectorAll('[data-testid="result-note"]')).toHaveLength(2);
-      expect(entry('new')).not.toBeNull();
-    });
-
-    it('marks a result good, which sends the mark with the comment the result has', async () => {
-      sdk.versions.mockResolvedValue({
-        data: {
-          items: [version('old', { comment: 'Too tight' }), NEW],
-          total: 2,
-          page: 1,
-          size: 100,
-          pages: 1,
-        },
-      });
-      await render({ page: page('page'), row: row('page', { version: NEW }) });
-
-      await click('old', 'result-mark-good');
-
-      expect(sdk.mark).toHaveBeenCalledTimes(1);
-      expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({
-        path: { project_id: 'project', page_id: 'page', version_id: 'old' },
-        body: { mark: 'good', comment: 'Too tight' },
-      });
-    });
-
-    it('shows the mark a result has as pressed, and takes it off by pressing it again', async () => {
-      sdk.versions.mockResolvedValue({
-        data: {
-          items: [version('old', { mark: 'bad' }), NEW],
-          total: 2,
-          page: 1,
-          size: 100,
-          pages: 1,
-        },
-      });
-      await render({ page: page('page'), row: row('page', { version: NEW }) });
-
-      expect([pressed('old', 'bad'), pressed('old', 'good'), pressed('new', 'bad')]).toEqual([
-        'true',
-        'false',
-        'false',
-      ]);
-      await click('old', 'result-mark-bad');
-
-      expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({ body: { mark: null, comment: '' } });
-    });
-
-    it('writes a comment of several lines and keeps the mark', async () => {
-      sdk.versions.mockResolvedValue({
-        data: {
-          items: [version('old', { mark: 'good' }), NEW],
-          total: 2,
-          page: 1,
-          size: 100,
-          pages: 1,
-        },
-      });
-      await render({ page: page('page'), row: row('page', { version: NEW }) });
-
-      await click('old', 'result-comment-edit');
-      const input = container.querySelector<HTMLTextAreaElement>(
-        '[data-testid="result-comment-input"]',
-      );
-      await act(async () => {
-        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-        setter?.call(input, 'First try\nSecond try');
-        input?.dispatchEvent(new Event('input', { bubbles: true }));
-      });
-      await act(async () => {
-        container.querySelector<HTMLElement>('[data-testid="result-comment-save"]')?.click();
-      });
-
-      expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({
-        path: { version_id: 'old' },
-        body: { mark: 'good', comment: 'First try\nSecond try' },
-      });
-    });
-
-    it('shows the comment a result has, and offers to add one to a result without', async () => {
-      sdk.versions.mockResolvedValue({
-        data: {
-          items: [version('old', { comment: 'Too tight' }), NEW],
-          total: 2,
-          page: 1,
-          size: 100,
-          pages: 1,
-        },
-      });
-      await render({ page: page('page'), row: row('page', { version: NEW }) });
-
-      // The history lists the newest result first, so each note is found by its version
-      const note = (id: string): string | null | undefined =>
-        container.querySelector(`[data-testid="result-note"][data-version="${id}"]`)?.textContent;
-      expect(note('old')).toContain('Too tight');
-      expect(note('old')).toContain('Edit comment');
-      expect(note('new')).toContain('Add a comment');
-    });
-
-    it('tells the reader when the notes could not be saved', async () => {
-      sdk.mark.mockRejectedValue(
-        new ProblemError('Another job of this book is running.', 409, null, []),
-      );
-      await render({ page: page('page'), row: row('page', { version: NEW }) });
-
-      await click('old', 'result-mark-good');
-
-      // The mutation reports its failure a few ticks after the click
-      await vi.waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
-    });
+    expect(container.querySelector('[data-testid="results"]')).toBeNull();
+    expect(container.querySelector('[data-testid="page-history-row"]')).toBeNull();
+    expect(container.querySelector('[data-testid="page-history-use"]')).toBeNull();
+    expect(container.querySelector('[data-testid="result-note"]')).toBeNull();
   });
 
   describe('a recipe of two steps', () => {
@@ -520,21 +324,5 @@ describe('ThisPageSection', () => {
 
       expect(container.querySelector('[data-testid="this-page-step"]')).toBeNull();
     });
-  });
-
-  it('shows the answer of the server when the choice is refused', async () => {
-    sdk.choose.mockRejectedValue(
-      new ProblemError('Another job of this book is running.', 409, null, []),
-    );
-    await render({ page: page('page'), row: row('page', { version: NEW }) });
-
-    await act(async () => {
-      container.querySelector<HTMLElement>('[data-testid="history-use"]')?.click();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      'Another job of this book is running.',
-    );
   });
 });

@@ -18,7 +18,6 @@ import type {
   PageStageStatus,
   RejectionReason,
   ResetScope,
-  ResultMark,
   ReviewReason,
   RightsStatus,
   RuleCondition,
@@ -33,6 +32,7 @@ import type { Problem } from '@/features/about/fields';
 import type { Section } from '@/features/about/sections';
 import type { SuggestedField } from '@/features/about/suggestion';
 import type { OAuthFailure } from '@/features/auth/oauth';
+import type { TimelineFilter } from '@/features/processing/timeline';
 import type { FileProblem } from '@/features/profiles/profileFile';
 import type { RoadmapKey } from '@/features/stages/roadmap';
 import type { Phase } from '@/features/stages/stages';
@@ -563,6 +563,11 @@ export const MESSAGES = {
       library: 'Library',
       read: 'Read the book',
       accountMenu: 'Account menu',
+    },
+    history: {
+      title: 'History of this page',
+      count: (count: number) => `${count} ${pluralize(count, 'event', 'events')}`,
+      noHistory: 'This stage keeps no history of its pages.',
     },
     bar: {
       label: 'Stages of the book',
@@ -1451,34 +1456,6 @@ export const MESSAGES = {
           undo: 'Undo the carry-over',
         },
       },
-      pageHistory: {
-        title: 'History of this page',
-        hint: 'Every change of this step on this page. Undo takes back the newest change that stands, and a change of a batch is taken back with the rest of its batch.',
-        none: 'Nothing has changed for this step on this page yet.',
-        undo: 'Undo',
-        undoLast: 'Undo the last change (Ctrl+Z)',
-        undoBack: 'Undo back to here',
-        undoBackLabel: (what: string) => `Undo back to the change: ${what}`,
-        undone: 'Undone',
-        batch: 'Part of a batch',
-        layers: {
-          settings: 'Settings of the page',
-          found: 'Found by the automatic run',
-          hand: 'Set by hand',
-        },
-        sources: {
-          user: 'You',
-          run: 'A run',
-          'carry-over': 'A carry-over',
-          reset: 'A reset',
-          undo: 'An undo',
-        },
-        what: (layer: string, source: string) => `${layer} · ${source}`,
-        change: (before: string, after: string) => `${before} → ${after}`,
-        nothing: 'nothing',
-        mask: 'a mask',
-        failed: 'The history of this page could not be read.',
-      },
       drag: {
         instructions:
           'To pick up a step, press Space. Move it with the arrow keys, drop it with Space, and cancel with Escape.',
@@ -1698,13 +1675,89 @@ export const MESSAGES = {
       all: (count: number) => `All pages · ${count}`,
       saveFirst: 'Save the recipe before applying it.',
     },
+    timeline: {
+      hint: {
+        step: 'The changes of this step on this page and the results it made, newest first. "Undo to here" takes back that change and every change after it, and Ctrl+Z takes back the newest one. A change of a batch is taken back with the rest of its batch.',
+        stage:
+          'The results this stage made on this page, newest first. Open a step to see its changes too.',
+      },
+      noPage: 'No page is chosen.',
+      notSaved: 'The recipe is not saved yet, so this step has no history.',
+      nothingYet: 'Nothing has happened on this page yet.',
+      chips: {
+        change: 'Change',
+        result: 'Result',
+      },
+      filters: {
+        group: 'Show',
+        labels: {
+          all: 'All',
+          changes: 'Changes',
+          results: 'Results',
+          good: 'Good',
+          bad: 'Bad',
+        } satisfies Record<TimelineFilter, string>,
+      },
+      empty: {
+        all: 'Run the stage to make a result.',
+        changes: 'This step has no change on this page.',
+        results: 'Run the stage to make a result.',
+        good: 'No result of this page is marked good.',
+        bad: 'No result of this page is marked bad.',
+      } satisfies Record<TimelineFilter, string>,
+      changesNeedStep: 'Open a step to see its changes',
+      showMore: (count: number) => `Show ${count} more`,
+      undoHere: 'Undo to here',
+      undoHereLabel: (what: string) => `Undo to the change: ${what}`,
+      undone: 'Undone',
+      batch: 'Part of a batch',
+      cancel: 'Cancel',
+      confirmUndo: {
+        title: (count: number) => `Undo ${count} changes?`,
+        body: (count: number) =>
+          `This takes back the chosen change and the ${count - 1} ${pluralize(count - 1, 'change', 'changes')} after it on this page. A change of a batch is taken back on every page of its batch.`,
+        confirm: 'Undo',
+      },
+      confirmClear: {
+        open: 'Clear the history',
+        title: 'Clear the history of this page?',
+        body: 'This deletes for good every change, the settings and the hand edit of this step on this page, the results of this step on this page, and the results of the later steps of the stage on this page. The step on this page is then as if it had never run or changed here. It cannot be undone.',
+        confirm: 'Clear and reset',
+      },
+      layers: {
+        settings: 'Settings of the page',
+        found: 'Found by the automatic run',
+        hand: 'Set by hand',
+      },
+      sources: {
+        user: 'You',
+        run: 'A run',
+        'carry-over': 'A carry-over',
+        reset: 'A reset',
+        undo: 'An undo',
+      },
+      what: (layer: string, source: string) => `${layer} · ${source}`,
+      change: (before: string, after: string) => `${before} → ${after}`,
+      nothing: 'nothing',
+      hand: {
+        frame: (left: number, top: number, width: number, height: number) =>
+          `Frame: left ${left}, top ${top}, ${width} × ${height} px`,
+        line: (startX: number, startY: number, endX: number, endY: number) =>
+          `Line from (${startX}, ${startY}) to (${endX}, ${endY}) px`,
+        angle: (degrees: string) => `Angle ${degrees}`,
+        quad: 'Four corners set by hand',
+        mesh: 'Mesh set by hand',
+        mask: 'Mask painted by hand',
+        regions: (count: number) => `${count} ${pluralize(count, 'region', 'regions')}`,
+        unknown: 'Set by hand',
+      },
+      failed: 'The history of this page could not be read.',
+    },
     history: {
-      title: 'Results on this page',
       current: 'Current',
-      use: 'Use this result',
+      use: 'Use this',
       using: 'Using…',
       pictureRemoved: 'Picture removed · made again on use',
-      empty: 'Run the stage to make a result.',
       mark: {
         group: 'Mark of this result',
         good: 'Good',
@@ -1719,19 +1772,10 @@ export const MESSAGES = {
         saving: 'Saving…',
         cancel: 'Cancel',
       },
-      made: (time: string) => `Made ${time}`,
       origin: {
         auto: 'Made by the step',
         hand: 'Set by hand',
       } satisfies Record<VersionOrigin, string>,
-      filter: {
-        group: 'Show the results marked',
-        all: 'All',
-      },
-      emptyMarked: {
-        good: 'No result of this page is marked good.',
-        bad: 'No result of this page is marked bad.',
-      } satisfies Record<ResultMark, string>,
     },
     stale: {
       title: (before: string, verb: string) => `${before} changed after these pages were ${verb}`,

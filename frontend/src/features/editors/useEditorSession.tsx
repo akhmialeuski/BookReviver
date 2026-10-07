@@ -20,7 +20,7 @@ import type { PageContext } from '@/features/editors/types';
 import { useHeld } from '@/features/editors/useHeld';
 import { usePictureSize } from '@/features/editors/usePictureSize';
 import { type ImageSource, sourceOfPreview } from '@/features/processing/compare';
-import { useUndo } from '@/features/processing/historyQueries';
+import { invalidateHistory, useUndo } from '@/features/processing/historyQueries';
 import { effectiveParams, pageValuesOf } from '@/features/processing/pageSettings';
 import type { PreviewRequest } from '@/features/processing/preview';
 import {
@@ -34,7 +34,11 @@ import { bodyOf, draftOf } from '@/features/processing/recipe';
 import { readResult } from '@/features/processing/results';
 import { usePreview } from '@/features/processing/usePreview';
 import type { Processing } from '@/features/processing/useProcessing';
-import { invalidateStageRows, invalidateStageSummary } from '@/features/projects/queries';
+import {
+  invalidateStageRows,
+  invalidateStageSummary,
+  invalidateVersions,
+} from '@/features/projects/queries';
 import { isTypingTarget } from '@/features/viewer/keys';
 import { useActiveJobs } from '@/features/workspace/queries';
 import type { StripItem } from '@/features/workspace/strip';
@@ -302,6 +306,10 @@ export function useEditorSession({
     } finally {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: editsKey(projectId, owner.id, stage) }),
+        // A saved or deleted edit is a change of the history of the step, and the results of the page are read again
+        // with it, as after every other change of a version
+        invalidateHistory(queryClient),
+        invalidateVersions(queryClient, projectId, owner.id),
         invalidateStageRows(queryClient, projectId, stage),
         invalidateStageSummary(queryClient, projectId),
       ]);

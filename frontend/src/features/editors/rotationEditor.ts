@@ -2,6 +2,7 @@ import { RotationCanvas } from '@/features/editors/RotationCanvas';
 import { RotationPanel } from '@/features/editors/RotationPanel';
 import { type RotationShape, readRotation, writeRotation } from '@/features/editors/shapes';
 import { type EditorDefinition, Picture } from '@/features/editors/types';
+import { MESSAGES } from '@/shared/messages';
 
 /**
  * The rotation editor: the angle a page is turned by, set with the handles of an axis on the page, the slider and the field
@@ -21,6 +22,8 @@ export const rotationEditor: EditorDefinition<RotationShape> = {
   fallback: ({ result }) => ({ degrees: result?.angle ?? 0 }),
   read: readRotation,
   write: writeRotation,
+  describe: ({ degrees }) =>
+    MESSAGES.processing.timeline.hand.angle(MESSAGES.processing.thisPage.degrees(degrees)),
   Canvas: RotationCanvas,
   Panel: RotationPanel,
 };

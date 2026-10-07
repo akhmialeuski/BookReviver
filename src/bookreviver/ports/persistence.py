@@ -729,6 +729,19 @@ class PageStepChangeRepository(Repository[PageStepChange, PageStepChangeId]):
         :rtype: Sequence[PageStepChange]
         """
 
+    @abstractmethod
+    async def delete_for_step(self, key: PageStepKey) -> int:
+        """Delete every change of one step on one page, whatever its layer, source or batch.
+
+        Other steps and other pages keep their changes, and the next change added to the page is numbered after the
+        highest sequence the page still holds.
+
+        :param key: The page, the stage and the step.
+        :type key: PageStepKey
+        :returns: How many changes were deleted.
+        :rtype: int
+        """
+
 
 class ResultMarkChangeRepository(Repository[ResultMarkChange, ResultMarkChangeId]):
     """The log of the marks and comments of the results. A change is added once and never rewritten.

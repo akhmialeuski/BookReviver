@@ -13,12 +13,10 @@ import { isPlacement } from '@/features/editors/placement';
 import type { EditorSession } from '@/features/editors/session';
 import { CarryOver } from '@/features/processing/CarryOver';
 import { MeasureBook } from '@/features/processing/MeasureBook';
-import { PageStepHistory } from '@/features/processing/PageStepHistory';
 import { PageStepSettings } from '@/features/processing/PageStepSettings';
 import { ParamsForm } from '@/features/processing/ParamsForm';
 import { pageValuesOf } from '@/features/processing/pageSettings';
 import { usePageSettings } from '@/features/processing/queries';
-import { ResultsSection } from '@/features/processing/ResultsSection';
 import { CONDITIONS } from '@/features/processing/recipe';
 import { readResult } from '@/features/processing/results';
 import { StepReset } from '@/features/processing/StepReset';
@@ -49,8 +47,8 @@ import {
  *
  * It stands above the sections of the recipe and of the open page and takes none of them away. The settings are the
  * draft of the recipe, which the window of the gear and the save bar share, so a change made here is the change made
- * there. Under the buttons of "Auto" is the menu that resets the step to its defaults. The results of the step on the open
- * page are listed here, and the section of the open page leaves the results of the stage to them.
+ * there. Under the buttons of "Auto" is the menu that resets the step to its defaults. The changes and the results of the
+ * step on the open page are not listed here but in the history that ends the panel of the stage.
  */
 
 const labels = MESSAGES.workspace.stepPanel;
@@ -149,8 +147,6 @@ export function StepPanel({
   const found =
     page?.version === null || page?.version === undefined ? null : readResult(page.version);
   const runnable = recipe !== undefined && canRunThrough(recipe.steps, step.index);
-  // Only a result of the last step is a result of the stage, which is all that can be made the current one
-  const isLast = recipe?.steps.findLastIndex((entry) => entry.enabled) === step.index;
   const ofCondition = pagesOfCondition(items, draft?.appliesTo ?? step.appliesTo);
   const hasCondition = (draft?.appliesTo ?? step.appliesTo) !== 'all';
 
@@ -297,34 +293,16 @@ export function StepPanel({
           </div>
         ) : null}
         {draft === undefined || pageId === undefined ? null : (
-          <>
-            <PageStepSettings
-              processing={processing}
-              step={draft}
-              processor={processor}
-              pageId={pageId}
-              pageValues={pageValues}
-              selected={selected}
-            />
-            <PageStepHistory
-              processing={processing}
-              step={draft}
-              processor={processor}
-              pageId={pageId}
-            />
-          </>
+          <PageStepSettings
+            processing={processing}
+            step={draft}
+            processor={processor}
+            pageId={pageId}
+            pageValues={pageValues}
+            selected={selected}
+          />
         )}
       </div>
-
-      {pageId === undefined ? null : (
-        <ResultsSection
-          processing={processing}
-          pageId={pageId}
-          stepId={step.stepId}
-          currentId={page?.version?.id}
-          canUse={isLast}
-        />
-      )}
 
       <div className="grid gap-2" data-testid="step-panel-book">
         <Heading>{labels.book}</Heading>

@@ -915,6 +915,81 @@ class TestPageStepChangeRepository:
         nothing = await (await fx_uow_factory()).page_step_changes.list_undoing([])
         assert ([change.id for change in found], nothing) == ([undo.id], [])
 
+    async def test_delete_for_step_deletes_that_step_on_that_page_only(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify every change of one step on one page goes, whatever its source, and the rest of the history stays.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        uow = await fx_uow_factory()
+        other_page = make_page(project_id=project_id, order_key=SECOND_ORDER_KEY)
+        await uow.pages.add(other_page)
+        doomed = [make_page_step_change(page_id=page_id) for _ in range(3)]
+        undo = evolve(make_page_step_change(page_id=page_id), source=ChangeSource.UNDO, undoes=doomed[0].id)
+        carried = evolve(
+            make_page_step_change(page_id=page_id), source=ChangeSource.CARRY_OVER, batch_id=ChangeBatchId(uuid4())
+        )
+        other_step = evolve(make_page_step_change(page_id=page_id), step_id=StepId(uuid4()))
+        other_stage = make_page_step_change(page_id=page_id, stage=Stage.CLEANUP)
+        elsewhere = make_page_step_change(page_id=other_page.id)
+        await uow.page_step_changes.add_many([*doomed, undo, carried, other_step, other_stage, elsewhere])
+        await uow.commit()
+        uow = await fx_uow_factory()
+        deleted = await uow.page_step_changes.delete_for_step(PageStepKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID))
+        await uow.commit()
+        reading = await fx_uow_factory()
+        assert (
+            deleted,
+            [change.id for change in await reading.page_step_changes.list_for_page(page_id)],
+            [change.id for change in await reading.page_step_changes.list_for_page(other_page.id)],
+        ) == (5, [other_step.id, other_stage.id], [elsewhere.id])
+
+    async def test_delete_for_step_of_a_step_with_no_history_deletes_nothing(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a step with no change on the page is a count of zero and not an error.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        uow = await fx_uow_factory()
+        assert await uow.page_step_changes.delete_for_step(PageStepKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID)) == 0
+
+    async def test_a_change_added_after_delete_for_step_is_numbered_above_every_remaining_one(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the sequence of the page goes on above the highest one it still holds, whichever changes were deleted.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        other_step = StepId(uuid4())
+        uow = await fx_uow_factory()
+        written = [
+            make_page_step_change(page_id=page_id),
+            evolve(make_page_step_change(page_id=page_id), step_id=other_step),
+            make_page_step_change(page_id=page_id),
+        ]
+        await uow.page_step_changes.add_many(written)
+        await uow.commit()
+        uow = await fx_uow_factory()
+        await uow.page_step_changes.delete_for_step(PageStepKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID))
+        added = await uow.page_step_changes.add(make_page_step_change(page_id=page_id))
+        await uow.commit()
+        listed = await (await fx_uow_factory()).page_step_changes.list_for_page(page_id)
+        assert ([change.sequence for change in listed], added.sequence) == ([2, 3], 3)
+
     async def test_change_of_a_missing_page_is_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
         """Reject a change whose page is not stored.
 

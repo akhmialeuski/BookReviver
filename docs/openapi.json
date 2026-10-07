@@ -7624,6 +7624,116 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "page-history"
+        ],
+        "summary": "Clear History",
+        "description": "Return a step to its initial state on a page: delete its history, its settings, its edit and its results.\n\nThe results are the versions the step made on the page and the versions that read them, with their files and their\nmarks. The stage of the page stands on the version the step read, marked stale, and has no current version when the\nstep is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The\nchanges of a batch on other pages stay. The answer is 409 while a run, a preview, a tile cutting or a collection of\nthe project is queued or running, and 404 when no recipe of the stage has the step.",
+        "operationId": "clear_history_api_v1_projects__project_id__pages__page_id__history__stage___step_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          },
+          {
+            "name": "page_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the page",
+              "title": "Page Id"
+            },
+            "description": "Identifier of the page"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Stage",
+              "description": "Stage of the step"
+            },
+            "description": "Stage of the step"
+          },
+          {
+            "name": "step_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the step of a recipe",
+              "title": "Step Id"
+            },
+            "description": "Identifier of the step of a recipe"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClearedSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/projects/{project_id}/pages/{page_id}/history/{stage}/{step_id}/undo": {
@@ -10500,6 +10610,25 @@
         ],
         "title": "ChangeSource",
         "description": "What made a change of a layer of a step on a page."
+      },
+      "ClearedSchema": {
+        "properties": {
+          "changes": {
+            "type": "integer",
+            "title": "Changes"
+          },
+          "versions": {
+            "type": "integer",
+            "title": "Versions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "changes",
+          "versions"
+        ],
+        "title": "ClearedSchema",
+        "description": "What clearing a step on a page deleted.\n\n:ivar changes: How many changes of the history were deleted, which is none when the step had no history on the page.\n:ivar versions: How many versions were deleted: the results of the step on the page and the results that read them."
       },
       "ColorMode": {
         "type": "string",

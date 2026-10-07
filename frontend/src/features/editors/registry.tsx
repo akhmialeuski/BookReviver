@@ -1,4 +1,4 @@
-import type { EditorKind, ProcessorSchema, RecipeSchema, StepSchema } from '@/api';
+import type { ProcessorSchema, RecipeSchema, StepSchema } from '@/api';
 import { brushEditor } from '@/features/editors/brushEditor';
 import { lineEditor } from '@/features/editors/lineEditor';
 import { marginsEditor } from '@/features/editors/marginsEditor';
@@ -7,7 +7,7 @@ import { quadEditor } from '@/features/editors/quadEditor';
 import { rectEditor } from '@/features/editors/rectEditor';
 import { regionsEditor } from '@/features/editors/regionsEditor';
 import { rotationEditor } from '@/features/editors/rotationEditor';
-import type { EditableKind, EditorShapes } from '@/features/editors/shapes';
+import { type EditableKind, type EditorShapes, recordOf } from '@/features/editors/shapes';
 import { splitEditor } from '@/features/editors/splitEditor';
 import type {
   EditorDefinition,
@@ -68,6 +68,12 @@ function register<K extends EditableKind>(
     runsAfterEdit: definition.runsAfterEdit,
     reach: definition.reach ?? (() => null),
     fallback: (context) => definition.write(definition.fallback(context)),
+    describe: (geometry) => {
+      const shape = definition.read(geometry);
+      return shape === null
+        ? (definition.describeUnfit ?? MESSAGES.processing.timeline.hand.unknown)
+        : definition.describe(shape);
+    },
     mask:
       mask === undefined
         ? null
@@ -96,7 +102,7 @@ const EDITORS: Readonly<Record<EditableKind, RegisteredEditor>> = {
 };
 
 /** Tell whether the kind of editor of a processor has a component. */
-export function hasEditor(kind: EditorKind): kind is EditableKind {
+export function hasEditor(kind: string): kind is EditableKind {
   return Object.hasOwn(EDITORS, kind);
 }
 
@@ -139,4 +145,20 @@ export function editableStepsOf(
 /** Give the editor of a kind that has a component. */
 export function editorOf(kind: EditableKind): RegisteredEditor {
   return EDITORS[kind];
+}
+
+/**
+ * Put a manual edit into words, by the kind of editor that made it.
+ *
+ * The kind and the geometry are what the server stores for the hand layer, so neither is trusted to be one an editor
+ * knows. Pixels of the page are rounded to whole numbers, and an angle to one decimal.
+ *
+ * @param kind The kind of the editor that made the edit.
+ * @param geometry The shape the editor drew, as the server stored it.
+ * @returns The text, which is "Set by hand" for a kind that has no editor or a geometry that does not fit its kind.
+ */
+export function describeEdit(kind: string, geometry: unknown): string {
+  return hasEditor(kind)
+    ? EDITORS[kind].describe(recordOf(geometry))
+    : MESSAGES.processing.timeline.hand.unknown;
 }

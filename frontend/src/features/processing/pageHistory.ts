@@ -1,4 +1,5 @@
 import type { PageStepChangeSchema, StepLayer } from '@/api';
+import { describeEdit } from '@/features/editors/registry';
 import { showValue } from '@/features/processing/pageSettings';
 
 /**
@@ -11,14 +12,6 @@ import { showValue } from '@/features/processing/pageSettings';
 
 /** The content of a layer as the history keeps it: the fields of the settings, or the snapshot of a manual edit. */
 export type LayerContent = Readonly<Record<string, unknown>> | null;
-
-/** How the content of a layer is put into words. */
-export interface ContentWords {
-  /** The title a field of the settings goes by. */
-  titleOf: (name: string) => string;
-  /** What a manual edit that is only a mask is called. */
-  mask: string;
-}
 
 /** Tell whether a change still stands, which is whether an undo can take it back. */
 export function stands(change: PageStepChangeSchema): boolean {
@@ -42,22 +35,22 @@ export function lastStanding(
  *
  * @param layer The layer the content belongs to.
  * @param content What the layer held, or null for an empty layer.
- * @param words The titles the text is made of.
+ * @param titleOf Gives the title a field of the settings goes by.
  * @returns The text, or null for an empty layer, which the caller words itself.
  */
 export function describeContent(
   layer: StepLayer,
   content: LayerContent,
-  words: ContentWords,
+  titleOf: (name: string) => string,
 ): string | null {
   if (content === null) {
     return null;
   }
   if (layer === 'settings') {
     return Object.entries(content)
-      .map(([name, value]) => `${words.titleOf(name)}: ${showValue(value)}`)
+      .map(([name, value]) => `${titleOf(name)}: ${showValue(value)}`)
       .join(', ');
   }
-  const shape = content.geometry;
-  return shape === null || shape === undefined ? words.mask : showValue(shape);
+  // The snapshot is what the server stored, so a kind that is not text is one no editor has, and is worded as unknown
+  return describeEdit(String(content.kind), content.geometry);
 }
