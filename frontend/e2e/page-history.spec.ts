@@ -384,6 +384,17 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await results.first().getByRole('textbox', { name: 'Comment' }).fill(COMMENT);
     await results.first().getByTestId('result-comment-save').click();
     await expect(results.first().getByTestId('result-comment')).toHaveText(COMMENT);
+
+    // The mark and the comment are the server's, so a reload finds both
+    await page.reload();
+    await expect(page).toHaveURL(STEP_ADDRESS);
+    await openTimeline(page);
+    await expect(results).toHaveCount(1);
+    await expect(results.first().getByTestId('result-mark-good')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await expect(results.first().getByTestId('result-comment')).toHaveText(COMMENT);
   });
 
   await test.step('a border moved by hand shows its change and the result it made with no reload, and the panel does not scroll sideways', async () => {
