@@ -126,7 +126,8 @@ async def clear_history(
     The results are the versions the step made on the page and the versions that read them, with their files and their
     marks. The stage of the page stands on the version the step read, marked stale, and has no current version when the
     step is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The
-    changes of a batch on other pages stay.
+    changes of a batch on other pages stay. The answer is 409 while a run, a preview, a tile cutting or a collection of
+    the project is queued or running, and 404 when no recipe of the stage has the step.
 
     \N{FORM FEED}
     :param address: Identifiers of the project, the page, the stage and the step.
@@ -137,6 +138,9 @@ async def clear_history(
     :type history: PageHistoryService
     :returns: How many changes and how many versions were deleted.
     :rtype: ClearedSchema
+    :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the stage
+                           has the step.
+    :raises ConflictError: If a run, a preview, a tile cutting or a collection of the project is queued or running.
     """
     cleared = await history.clear(actor, address.project_id, address.key)
     return ClearedSchema(changes=cleared.changes, versions=len(cleared.versions))

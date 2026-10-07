@@ -878,6 +878,37 @@ class TestPageHistory:
         response = await fx_client.delete(f'{fx_book.path}/pages/{uuid4()}/history/geometry/{uuid4()}')
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    async def test_clear_while_the_project_is_busy_is_a_409_and_deletes_nothing(
+        self, fx_client: httpx.AsyncClient, fx_book: Book
+    ) -> None:
+        """Verify a clear answers 409 while a collection is queued, which may be reading the versions, and keeps the step.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        history = f'{fx_book.page_path}/history/geometry/{step_id}'
+        await fx_client.put(f'{fx_book.page_path}/settings/geometry/{step_id}/strength', json={'value': 2})
+        await fx_client.post(f'{fx_book.path}/versions/collect')
+        cleared = await fx_client.delete(history)
+        listed = await fx_client.get(history)
+        expect(cleared.status_code == status.HTTP_409_CONFLICT)
+        expect(listed.json()['total'] == 1)
+        assert_expectations()
+
+    async def test_clear_of_a_step_no_recipe_has_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+        """Verify clearing a step that is in no recipe of the stage answers 404, as the listing of its versions does.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        response = await fx_client.delete(f'{fx_book.page_path}/history/geometry/{uuid4()}')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
     async def test_history_of_a_page_of_no_book_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
         """Verify the history of a page that is not in the book answers 404.
 

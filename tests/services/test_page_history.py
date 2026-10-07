@@ -667,3 +667,44 @@ class TestClear:
             with pytest.raises(NotFoundError):
                 await fx_kit.page_history().clear(who, book.id, key)
         assert len(await history_of(fx_kit, actor, project, key)) == 1
+
+    async def test_a_clear_is_refused_while_the_project_is_processing_something_and_deletes_nothing(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Reject a clear while a job may be reading or deleting the versions, and leave the step as it was.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, version = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, page)
+        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        written = len(await history_of(fx_kit, actor, project, key))
+        await fx_kit.service().start_collection(actor, project.id)
+        with pytest.raises(ConflictError, match='project is busy'):
+            await fx_kit.page_history().clear(actor, project.id, key)
+        stored = fx_kit.uow()
+        expect(len(await history_of(fx_kit, actor, project, key)) == written)
+        expect(await stored.page_step_states.find(key) is not None)
+        expect(await stored.page_versions.find(version.id) is not None)
+        expect(await has_files(fx_kit, project, version))
+        assert_expectations()
+
+    async def test_a_step_that_no_recipe_of_the_stage_has_is_not_found_and_deletes_nothing(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Reject a clear of a step that is in no recipe, as the listing of its versions does, and delete nothing.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, version = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, page)
+        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        with pytest.raises(NotFoundError):
+            await fx_kit.page_history().clear(actor, project.id, evolve(key, step_id=StepId(uuid4())))
+        stored = fx_kit.uow()
+        expect(len(await history_of(fx_kit, actor, project, key)) == 1)
+        expect(await stored.page_step_states.find(key) is not None)
+        expect(await stored.page_versions.find(version.id) is not None)
+        assert_expectations()

@@ -23,11 +23,12 @@ from attrs import evolve
 
 from bookreviver.domain.entities import PageStepChange, PageStepState
 from bookreviver.domain.enums import ChangeSource
-from bookreviver.domain.errors import ConflictError
+from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.history import ClearedStep, StepHistory
 from bookreviver.domain.ids import ChangeBatchId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.version_chains import StepVersions, step_places
+from bookreviver.services.processing_parts import PROJECT_BUSY
 from bookreviver.services.projects import owned_page
 
 if TYPE_CHECKING:
@@ -179,14 +180,21 @@ class PageHistoryService:
         :returns: The number of changes deleted and the versions deleted, none of which when the step had nothing on the
                   page.
         :rtype: ClearedStep
-        :raises NotFoundError: If the actor has no such project, or the project has no such page.
+        :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the stage
+                               has the step.
+        :raises ConflictError: If a run, a preview, a tile cutting or a collection of the project is queued or running,
+                               which may be reading or deleting the versions the clear deletes.
         """
         await owned_page(self._uow, actor, project_id, key.page_id)
+        if await self._starter.busy(project_id) is not None:
+            raise ConflictError(PROJECT_BUSY)
+        recipes = await self._uow.recipes.list_for_stage(project_id, key.stage)
+        if not any(step.step_id == key.step_id for recipe in recipes for step in recipe.steps):
+            raise NotFoundError(key.step_id)
         stored = await self._uow.page_step_states.find(key)
         if stored is not None:
             await self._uow.page_step_states.delete(key)
         changes = await self._uow.page_step_changes.delete_for_step(key)
-        recipes = await self._uow.recipes.list_for_stage(project_id, key.stage)
         versions = await self._uow.page_versions.list_for_page(key.page_id)
         chain = StepVersions.of(versions, key.stage, step_places(recipes, key.step_id))
         if stored is None and not changes and not chain.doomed:
