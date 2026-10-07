@@ -48,7 +48,7 @@ export function describeContent(
   }
   if (layer === 'settings') {
     return Object.entries(content)
-      .map(([name, value]) => `${titleOf(name)}:${showValue(value)}`)
+      .map(([name, value]) => `${titleOf(name)}: ${showValue(value)}`)
       .join(', ');
   }
   // The snapshot is what the server stored, so a kind that is not text is one no editor has, and is worded as unknown
