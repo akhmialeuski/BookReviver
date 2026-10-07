@@ -680,6 +680,7 @@ describe('PageTimeline', () => {
           ? listed(deskew, earlier, crop, normalize)
           : listed(earlier, crop),
       );
+      serve([]);
 
       await render({ headId: 'normalize' });
 
@@ -696,6 +697,7 @@ describe('PageTimeline', () => {
       sdk.versions.mockImplementation(async (options: { query?: { step?: string } }) =>
         options.query?.step === undefined ? listed(deskew, crop, other) : listed(crop),
       );
+      serve([]);
 
       await render({ headId: 'other' });
 
