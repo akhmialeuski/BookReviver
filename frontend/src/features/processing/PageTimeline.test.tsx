@@ -126,7 +126,8 @@ describe('PageTimeline', () => {
     step?: { stepId: string | null; processorKey: string } | null;
     /** The page is none when this is set. */
     noPage?: boolean;
-    currentId?: string;
+    /** The current version of the stage on the page; the newest result by default. */
+    headId?: string;
     state?: ReturnType<typeof processing>;
   }
 
@@ -142,7 +143,7 @@ describe('PageTimeline', () => {
                 processing={setup.state ?? processing()}
                 pageId={setup.noPage === true ? undefined : 'page'}
                 step={setup.step === undefined ? STEP : setup.step}
-                currentId={setup.currentId ?? 'new'}
+                headId={setup.headId ?? 'new'}
               />
             }
           />
@@ -365,6 +366,45 @@ describe('PageTimeline', () => {
       expect(byId('page-history-change', changed)?.className).toMatch(/min-w-0.*break-words/);
       expect(undoHere(changed)?.className).toContain('shrink-0');
       expect(byId('history-use', earlier)?.className).toContain('shrink-0');
+    });
+
+    it('puts "Undo to here" in a column of its own to the right of the text of the change, which does not shrink', async () => {
+      serve([change({ id: 'c' })]);
+      open();
+      await render();
+
+      const [changed] = rows();
+      const button = undoHere(changed);
+      const text = byId('page-history-change', changed)?.parentElement;
+      expect(changed?.className).toMatch(/\bflex\b/);
+      expect(text?.parentElement).toBe(changed);
+      expect(button?.parentElement).toBe(changed);
+      expect(text?.nextElementSibling).toBe(button);
+      expect(text?.className).toMatch(/\bmin-w-0\b/);
+      expect(text?.className).toMatch(/\bflex-1\b/);
+      expect(button?.className).toContain('shrink-0');
+    });
+
+    it('wraps a long description of a change within the section, since every box up to the section may shrink', async () => {
+      const long = 'x'.repeat(300);
+      serve([change({ id: 'c', after: { max_angle: long } })]);
+      open();
+      await render();
+
+      const text = byId('page-history-change', rows()[0]);
+      const frame = byId('page-history');
+      const boxes: HTMLElement[] = [];
+      for (
+        let box = text?.parentElement ?? null;
+        box !== null && box !== frame;
+        box = box.parentElement
+      ) {
+        boxes.push(box);
+      }
+      expect(text?.textContent).toContain(long);
+      expect(text?.className).toContain('break-words');
+      expect(boxes.length).toBeGreaterThan(0);
+      expect(boxes.filter((box) => !/\bmin-w-0\b/.test(box.className))).toEqual([]);
     });
   });
 
@@ -630,9 +670,41 @@ describe('PageTimeline', () => {
       expect(sdk.versions).toHaveBeenCalledTimes(reads);
     });
 
+    it('tags the result of the open step that the page stands on, though a later step made the current version', async () => {
+      const deskew = version('deskew', { created_at: at(10), input_id: 'perspective' });
+      const earlier = version('crop-earlier', { created_at: at(10, 30), input_id: 'deskew' });
+      const crop = version('crop', { created_at: at(11), input_id: 'deskew' });
+      const normalize = version('normalize', { created_at: at(12), input_id: 'crop' });
+      sdk.versions.mockImplementation(async (options: { query?: { step?: string } }) =>
+        options.query?.step === undefined
+          ? listed(deskew, earlier, crop, normalize)
+          : listed(earlier, crop),
+      );
+
+      await render({ headId: 'normalize' });
+
+      expect(order()).toEqual(['result:crop', 'result:crop-earlier']);
+      expect(rows().map((row) => row.dataset.current)).toEqual(['true', 'false']);
+      expect(rows()[0]?.textContent).toContain('Current');
+      expect(rows()[1]?.textContent).not.toContain('Current');
+    });
+
+    it('tags nothing while the page stands on no result of the open step, as when a variant of the recipe ran it', async () => {
+      const deskew = version('deskew', { created_at: at(10) });
+      const crop = version('crop', { created_at: at(11), input_id: 'deskew' });
+      const other = version('other', { created_at: at(12) });
+      sdk.versions.mockImplementation(async (options: { query?: { step?: string } }) =>
+        options.query?.step === undefined ? listed(deskew, crop, other) : listed(crop),
+      );
+
+      await render({ headId: 'other' });
+
+      expect(rows().map((row) => row.dataset.current)).toEqual(['false']);
+    });
+
     it('says which kind is missing when the filter leaves nothing', async () => {
       sdk.versions.mockResolvedValue(listed(version('plain', { created_at: at(12) })));
-      await render({ currentId: 'plain' });
+      await render({ headId: 'plain' });
 
       await click('results-filter-good');
       expect(byId('results-empty')?.textContent).toBe('No result of this page is marked good.');
@@ -1074,7 +1146,7 @@ describe('PageTimeline', () => {
 
     it('does not list a version a later step read under the mark it carries, since it is no result of the stage', async () => {
       sdk.versions.mockResolvedValue(listed(FIRST, version('last', { input_id: 'first' })));
-      await render({ step: null, currentId: 'last' });
+      await render({ step: null, headId: 'last' });
       await click('results-filter-bad');
 
       expect(order()).toEqual([]);
@@ -1093,7 +1165,7 @@ describe('PageTimeline', () => {
 
     it('lists the result of an early step though a later step reads it, since the list holds that step only', async () => {
       sdk.versions.mockResolvedValue(listed(FIRST));
-      await render({ currentId: 'first' });
+      await render({ headId: 'first' });
 
       expect(order()).toEqual(['result:first']);
     });

@@ -35,17 +35,17 @@ vi.mock('@/features/processing/PageTimeline', () => ({
   PageTimeline: ({
     step,
     pageId,
-    currentId,
+    headId,
   }: {
     step: { stepId: string | null } | null;
     pageId: string | undefined;
-    currentId: string | undefined;
+    headId: string | undefined;
   }) => (
     <div
       data-testid="page-history"
       data-step={step === null ? 'none' : (step.stepId ?? 'unsaved')}
       data-page-id={pageId ?? ''}
-      data-current-id={currentId ?? ''}
+      data-head-id={headId ?? ''}
     />
   ),
 }));
@@ -132,10 +132,33 @@ describe('ProcessingPanel', () => {
     expect(history()?.getAttribute('data-page-id')).toBe('p1');
   });
 
-  it('stands the page on the result of the open step, which is the version of the step on the page', () => {
+  it('names the current version of the stage as the one the page stands on, not the row of the open step', () => {
     render(processing({ recipes: [SAVED], recipe: SAVED }), true);
 
-    expect(history()?.getAttribute('data-current-id')).toBe('step-version');
+    expect(history()?.getAttribute('data-head-id')).toBe('stage-version');
+  });
+
+  it('names no version when the page has no current version of the stage, whatever its row at the step says', () => {
+    const none = joinRows([page('p1')], [row('p1', { version: null })]);
+    const workspace = workspaceOf();
+    act(() =>
+      root.render(
+        <ProcessingPanel
+          processing={processing({ recipes: [SAVED], recipe: SAVED })}
+          items={none}
+          current={none[0]}
+          selected={new Set()}
+          editor={null}
+          step={
+            workspace.open === null
+              ? undefined
+              : { workspace, step: workspace.open, pageLabel: '1', onOpen: () => undefined }
+          }
+        />,
+      ),
+    );
+
+    expect(history()?.getAttribute('data-head-id')).toBe('');
   });
 
   it('draws the history once on a stage with a bar while no step is open, with no step and the results of the stage', () => {
@@ -144,7 +167,7 @@ describe('ProcessingPanel', () => {
     expect(container.querySelectorAll('[data-testid="page-history"]')).toHaveLength(1);
     expect(areaIds().at(-1)).toBe('page-history');
     expect(history()?.getAttribute('data-step')).toBe('none');
-    expect(history()?.getAttribute('data-current-id')).toBe('stage-version');
+    expect(history()?.getAttribute('data-head-id')).toBe('stage-version');
   });
 
   it('ends the panel of a stage without a bar with the history of the step open in the list of the recipe', () => {
@@ -158,7 +181,7 @@ describe('ProcessingPanel', () => {
 
     expect(areaIds().at(-1)).toBe('page-history');
     expect(history()?.getAttribute('data-step')).toBe(state.steps[0]?.stepId);
-    expect(history()?.getAttribute('data-current-id')).toBe('stage-version');
+    expect(history()?.getAttribute('data-head-id')).toBe('stage-version');
   });
 
   it('draws the history of the stage on a stage without a bar while no step is open in the list', () => {

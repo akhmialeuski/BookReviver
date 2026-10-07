@@ -3,7 +3,7 @@ import type { PageStepChangeSchema, PageVersionSchema } from '@/api';
 import { useClearHistory, usePageHistory, useUndo } from '@/features/processing/historyQueries';
 import { lastStanding, stands } from '@/features/processing/pageHistory';
 import { useChooseVersion, useRemakeVersion, useVersions } from '@/features/processing/queries';
-import { historyOf } from '@/features/processing/results';
+import { chainOf, historyOf } from '@/features/processing/results';
 import { fieldTitleOf, formSchemaOf } from '@/features/processing/schema';
 import { ChangeRow, ResultRow } from '@/features/processing/TimelineRows';
 import { TIMELINE_FILTERS, TimelineFilter, timelineOf } from '@/features/processing/timeline';
@@ -34,6 +34,10 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * hundred at a time, and the next hundred only when the rows asked for reach beyond the ones loaded, since the results
  * are all read at once and a result older than the oldest change loaded could still have an unloaded change above it.
  *
+ * A result is the current one when the page stands on it, which is when it is the current version of the stage or one that
+ * version was made from. The versions of the whole stage tell that, so it holds for a page that a variant of the recipe
+ * ran, whose steps are not the steps of the recipe on the screen.
+ *
  * A change that stands has its own "Undo to here", which takes back that change and every change after it and asks first
  * when that is more than one; Ctrl+Z takes back the newest. A result that is not the current one may be made so when it
  * is a result of the stage, and carries the marks and the comment of the reader. "Clear the history" deletes for good
@@ -58,15 +62,15 @@ export function PageTimeline({
   processing,
   pageId,
   step,
-  currentId,
+  headId,
 }: {
   processing: Processing;
   /** The open page, or undefined when none is chosen. */
   pageId: string | undefined;
   /** The step that is open, or null for the stage as a whole; its id is null while the recipe is not saved. */
   step: { stepId: string | null; processorKey: string } | null;
-  /** The result the page stands on now, or undefined when it has none. */
-  currentId: string | undefined;
+  /** The current version of the stage on the page, or undefined when it has none. */
+  headId: string | undefined;
 }): React.JSX.Element {
   const { projectId, stage, catalogue, recipe } = processing;
   const stepId = step?.stepId ?? null;
@@ -76,12 +80,16 @@ export function PageTimeline({
   const history = usePageHistory(projectId, pageId, stage, stepId);
   // A step reads its own results from the server by its id, and the stage reads the versions no other version reads. A
   // step that is not saved has no id, and the list of the stage would show the results of every step
-  const versions = useVersions(
+  const ofStep = useVersions(
     projectId,
-    unsaved ? undefined : pageId,
+    unsaved || stepId === null ? undefined : pageId,
     stage,
     stepId === null ? {} : { step: stepId },
   );
+  // The versions of the whole stage tell what the page stands on, whichever recipe ran it: the step row of the server
+  // follows the recipe the page was run by, which a variant that the rules chose is not the recipe of the open step
+  const ofStage = useVersions(projectId, unsaved ? undefined : pageId, stage);
+  const versions = stepId === null ? ofStage : ofStep;
   const undo = useUndo(projectId, stage);
   const clear = useClearHistory(projectId, stage);
   const choose = useChooseVersion(projectId, stage);
@@ -93,7 +101,10 @@ export function PageTimeline({
 
   const changes = history.data?.changes ?? NO_CHANGES;
   const changesTotal = history.data?.total ?? 0;
-  const entries = historyOf(versions.data ?? NO_VERSIONS, currentId);
+  const entries = historyOf(
+    versions.data ?? NO_VERSIONS,
+    chainOf(ofStage.data ?? NO_VERSIONS, headId),
+  );
   // Only a result of the last step is a result of the stage, which is all that can be made the current one
   const canUse =
     step === null || recipe?.steps.findLast((entry) => entry.enabled)?.step_id === step.stepId;

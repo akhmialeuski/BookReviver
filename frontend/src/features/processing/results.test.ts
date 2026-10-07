@@ -5,6 +5,7 @@ import {
   version,
 } from '@/features/processing/fixtures';
 import {
+  chainOf,
   describeParams,
   historyOf,
   parameterLabel,
@@ -197,12 +198,44 @@ describe('readChainResult', () => {
   });
 });
 
+describe('chainOf', () => {
+  // The first step reads a version of an earlier stage, which the list of the stage does not hold
+  const first = version('first', { input_id: 'base' });
+  const second = version('second', { input_id: 'first' });
+  const third = version('third', { input_id: 'second' });
+  const redone = version('redone', { input_id: 'first' });
+
+  it('holds the current version and every version it was made from, whatever step made them', () => {
+    expect([...chainOf([first, second, third, redone], 'third')]).toEqual([
+      'third',
+      'second',
+      'first',
+      'base',
+    ]);
+  });
+
+  it('leaves out the versions of another run that share an input with the chain', () => {
+    expect(chainOf([first, second, third, redone], 'redone').has('second')).toBe(false);
+    expect(chainOf([first, second, third, redone], 'redone').has('third')).toBe(false);
+  });
+
+  it('stops where the list ends, and holds the current version alone when the list lacks it', () => {
+    expect([...chainOf([third], 'third')]).toEqual(['third', 'second']);
+    expect([...chainOf([], 'third')]).toEqual(['third']);
+  });
+
+  it('is empty for a page that has no current version, and stops on a version that reads itself', () => {
+    expect(chainOf([first], undefined).size).toBe(0);
+    expect([...chainOf([version('loop', { input_id: 'loop' })], 'loop')]).toEqual(['loop']);
+  });
+});
+
 describe('historyOf', () => {
   const older = version('old', { created_at: '2026-10-01T10:00:00Z' });
   const newer = version('new', { created_at: '2026-10-01T12:00:00Z' });
 
   it('lists the newest result first and marks the current one', () => {
-    const entries = historyOf([older, newer], 'old');
+    const entries = historyOf([older, newer], new Set(['old']));
 
     expect(entries.map((entry) => entry.version.id)).toEqual(['new', 'old']);
     expect(entries.map((entry) => entry.current)).toEqual([false, true]);
@@ -216,7 +249,7 @@ describe('historyOf', () => {
         version('f', { state: 'failed' }),
         version('r', { state: 'running' }),
       ],
-      undefined,
+      new Set(),
     );
 
     expect(entries.map((entry) => entry.version.id)).toEqual(['new']);
@@ -227,14 +260,22 @@ describe('historyOf', () => {
     const last = version('last', { created_at: '2026-10-01T10:01:00Z', input_id: 'first' });
     const redone = version('redone', { created_at: '2026-10-01T12:00:00Z', input_id: 'first' });
 
-    const entries = historyOf([first, last, redone], 'redone');
+    const entries = historyOf([first, last, redone], new Set(['redone']));
 
     expect(entries.map((entry) => entry.version.id)).toEqual(['redone', 'last']);
     expect(entries.map((entry) => entry.current)).toEqual([true, false]);
   });
 
+  it('marks a result of an early step that the page stands on, since the list holds that step only', () => {
+    const early = version('early', { input_id: 'base' });
+
+    expect(historyOf([early], new Set(['late', 'early'])).map((entry) => entry.current)).toEqual([
+      true,
+    ]);
+  });
+
   it('is empty for a page with no results', () => {
-    expect(historyOf([], undefined)).toEqual([]);
+    expect(historyOf([], new Set())).toEqual([]);
   });
 });
 

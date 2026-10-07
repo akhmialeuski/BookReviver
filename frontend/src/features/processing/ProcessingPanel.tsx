@@ -55,7 +55,8 @@ export function ProcessingPanel({
   const [libraryOpen, setLibraryOpen] = useState(false);
   // The history of the page is the last element of the panel on every stage. With a step open it holds the changes and the
   // results of that step: the step open in the bar, or on a stage without a bar the step open in the list of the recipe.
-  // With none open it holds the results of the stage. A step that is on the bar stands on the result of its own on the page
+  // With none open it holds the results of the stage. What the page stands on is told by the current version of the stage,
+  // not by the row of the open step, since a variant of the recipe may have run the page
   const historyStep: { stepId: string | null; processorKey: string } | null =
     step?.step ??
     (hasStepBar(processing.stage)
@@ -67,7 +68,7 @@ export function ProcessingPanel({
       processing={processing}
       pageId={current?.page.id}
       step={historyStep}
-      currentId={step === undefined ? current?.row?.version?.id : step.workspace.page?.version?.id}
+      headId={current?.row?.version?.id}
     />
   );
   if (processing.failed) {
