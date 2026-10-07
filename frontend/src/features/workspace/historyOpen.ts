@@ -6,8 +6,8 @@ import { browserStorage, type WorkspaceStorage } from '@/features/workspace/stor
  *
  * The history is a section of the panel of every stage, so one choice serves every stage, every step and every visit:
  * it stays collapsed until the reader opens it and then stays open until the reader closes it. The choice lives in the
- * browser, a convenience that is the same as nothing when the browser forbids storage, so a storage that throws leaves
- * the section collapsed.
+ * browser, a convenience that is the same as nothing when the browser forbids storage: `browserStorage` turns every
+ * failure into "nothing there", so the section is left collapsed.
  */
 
 /** The key the choice is kept under. */
@@ -20,24 +20,15 @@ const COLLAPSED = 'collapsed';
  * Read the choice the viewer kept.
  *
  * @param storage Where the choices are kept.
- * @returns Whether the history is open, which is false when nothing was kept or the storage cannot be read.
+ * @returns Whether the history is open, which is false when nothing was kept.
  */
 export function readHistoryOpen(storage: WorkspaceStorage = browserStorage): boolean {
-  try {
-    return storage.getItem(HISTORY_OPEN_KEY) === OPEN;
-  } catch {
-    // The storage is blocked, so nothing was ever remembered
-    return false;
-  }
+  return storage.getItem(HISTORY_OPEN_KEY) === OPEN;
 }
 
-/** Keep the choice of the viewer, or forget it when the storage cannot be written. */
+/** Keep the choice of the viewer. */
 export function writeHistoryOpen(open: boolean, storage: WorkspaceStorage = browserStorage): void {
-  try {
-    storage.setItem(HISTORY_OPEN_KEY, open ? OPEN : COLLAPSED);
-  } catch {
-    // The storage is blocked or full, so the next visit starts collapsed
-  }
+  storage.setItem(HISTORY_OPEN_KEY, open ? OPEN : COLLAPSED);
 }
 
 /**

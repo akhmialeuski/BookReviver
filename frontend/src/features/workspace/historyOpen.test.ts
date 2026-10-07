@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   HISTORY_OPEN_KEY,
   readHistoryOpen,
@@ -19,16 +19,11 @@ function memoryStorage(): WorkspaceStorage & { values: Map<string, string> } {
   };
 }
 
-const THROWING: WorkspaceStorage = {
-  getItem: () => {
-    throw new Error('blocked');
-  },
-  setItem: () => {
-    throw new Error('blocked');
-  },
-};
-
 describe('the remembered state of the history', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('is collapsed until the reader opens it', () => {
     expect(readHistoryOpen(memoryStorage())).toBe(false);
   });
@@ -44,8 +39,15 @@ describe('the remembered state of the history', () => {
     expect(readHistoryOpen(storage)).toBe(false);
   });
 
-  it('reads as collapsed and loses the choice when the storage throws', () => {
-    expect(readHistoryOpen(THROWING)).toBe(false);
-    expect(() => writeHistoryOpen(true, THROWING)).not.toThrow();
+  it('reads as collapsed and loses the choice when the browser blocks its storage', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+
+    expect(readHistoryOpen()).toBe(false);
+    expect(() => writeHistoryOpen(true)).not.toThrow();
   });
 });
