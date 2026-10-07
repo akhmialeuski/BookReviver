@@ -1285,4 +1285,13 @@ describe('PageTimeline', () => {
 
     expect(container.textContent).toContain('could not be read');
   });
+
+  it('shows a refused history once, in its own paragraph and not again as an error of the server', async () => {
+    sdk.history.mockRejectedValue(new ProblemError('Broken.', 500, null, []));
+    await render();
+
+    expect(container.textContent?.match(/could not be read/g)).toHaveLength(1);
+    expect(container.textContent).not.toContain('Broken.');
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
 });

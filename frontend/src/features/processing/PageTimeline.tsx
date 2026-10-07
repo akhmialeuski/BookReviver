@@ -207,7 +207,8 @@ export function PageTimeline({
     setQuestion(null);
   };
   const asked = question?.kind === 'undo' ? labels.confirmUndo : labels.confirmClear;
-  const error = undo.error ?? clear.error ?? history.error ?? choose.error ?? remake.error;
+  // A refused read of the history has its own paragraph below, so it is not an error of an action as well
+  const error = undo.error ?? clear.error ?? choose.error ?? remake.error;
   const remaining = Math.min(ROWS_AT_A_TIME, timeline.total - rows.length);
 
   return (
