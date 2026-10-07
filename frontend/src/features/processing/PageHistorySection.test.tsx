@@ -230,7 +230,7 @@ describe('PageHistorySection', () => {
 
     const [hand, setting] = rows();
     expect(hand?.textContent).toContain('Set by hand · You');
-    expect(hand?.textContent).toContain('nothing → {"degrees":1.5}');
+    expect(hand?.textContent).toContain('nothing → Angle 1.5°');
     expect(setting?.textContent).toContain('Settings of the page · You');
     expect(setting?.textContent).toContain('nothing → Largest slant: 3');
   });

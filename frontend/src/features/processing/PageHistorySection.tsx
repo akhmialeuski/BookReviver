@@ -79,7 +79,6 @@ export function PageHistorySection({
   );
   const words = {
     titleOf: (name: string) => (schema === undefined ? name : fieldTitleOf(schema, name)),
-    mask: labels.mask,
   };
   const reason =
     stepId === null ? labels.notSaved : history.isSuccess && total === 0 ? labels.nothingYet : null;

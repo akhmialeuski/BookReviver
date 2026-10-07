@@ -1491,7 +1491,18 @@ export const MESSAGES = {
         what: (layer: string, source: string) => `${layer} · ${source}`,
         change: (before: string, after: string) => `${before} → ${after}`,
         nothing: 'nothing',
-        mask: 'a mask',
+        hand: {
+          frame: (left: number, top: number, width: number, height: number) =>
+            `Frame: left ${left}, top ${top}, ${width} × ${height} px`,
+          line: (startX: number, startY: number, endX: number, endY: number) =>
+            `Line from (${startX}, ${startY}) to (${endX}, ${endY}) px`,
+          angle: (degrees: string) => `Angle ${degrees}`,
+          quad: 'Four corners set by hand',
+          mesh: 'Mesh set by hand',
+          mask: 'Mask painted by hand',
+          regions: (count: number) => `${count} ${pluralize(count, 'region', 'regions')}`,
+          unknown: 'Set by hand',
+        },
         failed: 'The history of this page could not be read.',
       },
       drag: {
