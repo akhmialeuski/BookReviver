@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { EditorSession } from '@/features/editors/session';
 import { ContentTypeSection } from '@/features/processing/ContentTypeSection';
-import { PageTimeline } from '@/features/processing/PageTimeline';
+import { PageTimeline, type TimelineStep } from '@/features/processing/PageTimeline';
 import { RecipeSection } from '@/features/processing/RecipeSection';
 import { RunControls } from '@/features/processing/RunControls';
 import { SplitSection } from '@/features/processing/SplitSection';
@@ -57,7 +57,7 @@ export function ProcessingPanel({
   // results of that step: the step open in the bar, or on a stage without a bar the step open in the list of the recipe.
   // With none open it holds the results of the stage. What the page stands on is told by the current version of the stage,
   // not by the row of the open step, since a variant of the recipe may have run the page
-  const historyStep: { stepId: string | null; processorKey: string } | null =
+  const historyStep: TimelineStep | null =
     step?.step ??
     (hasStepBar(processing.stage)
       ? null

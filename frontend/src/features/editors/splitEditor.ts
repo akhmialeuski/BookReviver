@@ -30,7 +30,7 @@ export const splitEditor: EditorDefinition<SplitShape> = {
   write: writeSplit,
   // A choice of one page has no line to word, and the cut is found where the gutter is
   describe: ({ line }) =>
-    line === null ? MESSAGES.processing.steps.pageHistory.hand.unknown : lineEditor.describe(line),
+    line === null ? MESSAGES.processing.timeline.hand.unknown : lineEditor.describe(line),
   Canvas: SplitCanvas,
   Panel: LinePanel,
 };

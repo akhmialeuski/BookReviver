@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { PageStepChangeSchema, PageVersionSchema } from '@/api';
 import { stepChain } from '@/features/editors/chain';
 import { useClearHistory, usePageHistory, useUndo } from '@/features/processing/historyQueries';
 import { lastStanding, stands } from '@/features/processing/pageHistory';
 import { useChooseVersion, useRemakeVersion, useVersions } from '@/features/processing/queries';
+import type { StepDraft } from '@/features/processing/recipe';
 import { historyOf } from '@/features/processing/results';
 import { fieldTitleOf, formSchemaOf } from '@/features/processing/schema';
 import { ChangeRow, ResultRow } from '@/features/processing/TimelineRows';
@@ -47,8 +48,7 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * page is chosen, the recipe is not saved so the step has no id, or nothing has happened on the page yet.
  */
 
-const labels = MESSAGES.processing.steps.pageHistory;
-const resultLabels = MESSAGES.processing.history;
+const labels = MESSAGES.processing.timeline;
 
 /** How many rows the list shows at first, and how many more "Show more" adds. */
 const ROWS_AT_A_TIME = 3;
@@ -58,6 +58,9 @@ const NO_VERSIONS: readonly PageVersionSchema[] = [];
 
 /** What the dialog asks the reader to confirm. */
 type Question = { kind: 'undo'; changeId: string; count: number } | { kind: 'clear' } | null;
+
+/** The step that is open, which the timeline reads the changes and the results of. */
+export type TimelineStep = Pick<StepDraft, 'stepId' | 'processorKey'>;
 
 export function PageTimeline({
   processing,
@@ -69,7 +72,7 @@ export function PageTimeline({
   /** The open page, or undefined when none is chosen. */
   pageId: string | undefined;
   /** The step that is open, or null for the stage as a whole; its id is null while the recipe is not saved. */
-  step: { stepId: string | null; processorKey: string } | null;
+  step: TimelineStep | null;
   /** The current version of the stage on the page, or undefined when it has none. */
   headId: string | undefined;
 }): React.JSX.Element {
@@ -141,9 +144,10 @@ export function PageTimeline({
     () => (processor === undefined ? undefined : formSchemaOf(processor.parameters)),
     [processor],
   );
-  const words = {
-    titleOf: (name: string) => (schema === undefined ? name : fieldTitleOf(schema, name)),
-  };
+  const titleOf = useCallback(
+    (name: string) => (schema === undefined ? name : fieldTitleOf(schema, name)),
+    [schema],
+  );
   // The result whose picture is being made again, from the moment it was asked for until its job has ended
   const remakingId =
     remake.isPending ||
@@ -206,13 +210,6 @@ export function PageTimeline({
   const error = undo.error ?? clear.error ?? history.error ?? choose.error ?? remake.error;
   const remaining = Math.min(ROWS_AT_A_TIME, timeline.total - rows.length);
 
-  const emptyText =
-    active === TimelineFilter.Changes
-      ? labels.noChanges
-      : active === TimelineFilter.Good || active === TimelineFilter.Bad
-        ? resultLabels.emptyMarked[active]
-        : resultLabels.empty;
-
   return (
     <>
       <HistoryFrame
@@ -238,9 +235,7 @@ export function PageTimeline({
                     setShown(ROWS_AT_A_TIME);
                   }}
                 >
-                  {value === TimelineFilter.Good || value === TimelineFilter.Bad
-                    ? resultLabels.mark[value]
-                    : labels.filters[value]}
+                  {labels.filters.labels[value]}
                 </Button>
               ))}
             </fieldset>
@@ -267,7 +262,7 @@ export function PageTimeline({
         {rows.length === 0 ? (
           known ? (
             <p className="text-sm text-muted-foreground" data-testid="results-empty">
-              {emptyText}
+              {labels.empty[active]}
             </p>
           ) : null
         ) : (
@@ -277,7 +272,7 @@ export function PageTimeline({
                 <ChangeRow
                   key={`change:${row.id}`}
                   change={row.change}
-                  words={words}
+                  titleOf={titleOf}
                   disabled={undo.isPending}
                   onUndo={() => undoTo(row.id)}
                 />
@@ -344,7 +339,7 @@ export function PageTimeline({
               </DialogHeader>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setQuestion(null)}>
-                  {asked.cancel}
+                  {labels.cancel}
                 </Button>
                 <Button
                   variant={question.kind === 'undo' ? 'default' : 'destructive'}

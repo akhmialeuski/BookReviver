@@ -23,7 +23,7 @@ export const regionsEditor: EditorDefinition<RegionsShape> = {
   fallback: () => ({ zones: [] }),
   read: readRegions,
   write: writeRegions,
-  describe: ({ zones }) => MESSAGES.processing.steps.pageHistory.hand.regions(zones.length),
+  describe: ({ zones }) => MESSAGES.processing.timeline.hand.regions(zones.length),
   Canvas: RegionsCanvas,
   Panel: RegionsPanel,
 };

@@ -28,7 +28,7 @@ import {
  */
 
 /** How many changes the history loads at a time, which is the most the server gives a page of a list. */
-export const HISTORY_PAGE_SIZE = 100;
+const HISTORY_PAGE_SIZE = 100;
 
 // The generated client names each query by the function that makes it, so these are checked against the client
 const HISTORY_QUERY: keyof typeof sdk =
@@ -63,7 +63,7 @@ export function invalidatePageLayers(queryClient: QueryClient): Promise<void> {
 }
 
 /** The changes loaded so far, the newest first, and how many the step has on the page in all. */
-export interface LoadedHistory {
+interface LoadedHistory {
   changes: readonly PageStepChangeSchema[];
   total: number;
 }

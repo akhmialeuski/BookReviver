@@ -21,7 +21,7 @@ function change(overrides: Partial<PageStepChangeSchema> = {}): PageStepChangeSc
   };
 }
 
-const WORDS = { titleOf: (name: string) => `Title of ${name}` };
+const titleOf = (name: string): string => `Title of ${name}`;
 
 describe('stands', () => {
   it('is true for a change that nothing took back', () => {
@@ -59,14 +59,14 @@ describe('lastStanding', () => {
 
 describe('describeContent', () => {
   it('words each field of the settings by its title, and quotes text as it is', () => {
-    const text = describeContent('settings', { max_angle: 3, method: 'otsu' }, WORDS);
+    const text = describeContent('settings', { max_angle: 3, method: 'otsu' }, titleOf);
 
     expect(text).toBe('Title of max_angle: 3, Title of method: otsu');
   });
 
   it('is null for an empty layer', () => {
-    expect(describeContent('settings', null, WORDS)).toBeNull();
-    expect(describeContent('hand', null, WORDS)).toBeNull();
+    expect(describeContent('settings', null, titleOf)).toBeNull();
+    expect(describeContent('hand', null, titleOf)).toBeNull();
   });
 
   describe('of a manual edit', () => {
@@ -76,7 +76,7 @@ describe('describeContent', () => {
     }
 
     const describeHand = (kind: string, geometry: unknown): string | null =>
-      describeContent('hand', hand(kind, geometry), WORDS);
+      describeContent('hand', hand(kind, geometry), titleOf);
 
     it('words a frame and a content box by their place and size in whole pixels', () => {
       const frame = { left: 97.70357142857144, top: 87.4, width: 1503.6, height: 2100.2 };
@@ -148,7 +148,7 @@ describe('describeContent', () => {
 
     it('says it was set by hand for a kind it does not know', () => {
       expect(describeHand('hologram', { degrees: 1 })).toBe('Set by hand');
-      expect(describeContent('hand', { geometry: { degrees: 1 } }, WORDS)).toBe('Set by hand');
+      expect(describeContent('hand', { geometry: { degrees: 1 } }, titleOf)).toBe('Set by hand');
       expect(describeHand('none', null)).toBe('Set by hand');
     });
 

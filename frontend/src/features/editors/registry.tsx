@@ -71,7 +71,7 @@ function register<K extends EditableKind>(
     describe: (geometry) => {
       const shape = definition.read(geometry);
       return shape === null
-        ? (definition.describeUnfit ?? MESSAGES.processing.steps.pageHistory.hand.unknown)
+        ? (definition.describeUnfit ?? MESSAGES.processing.timeline.hand.unknown)
         : definition.describe(shape);
     },
     mask:
@@ -160,5 +160,5 @@ export function editorOf(kind: EditableKind): RegisteredEditor {
 export function describeEdit(kind: string, geometry: unknown): string {
   return hasEditor(kind)
     ? EDITORS[kind].describe(recordOf(geometry))
-    : MESSAGES.processing.steps.pageHistory.hand.unknown;
+    : MESSAGES.processing.timeline.hand.unknown;
 }

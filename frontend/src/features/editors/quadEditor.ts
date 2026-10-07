@@ -24,7 +24,7 @@ export const quadEditor: EditorDefinition<QuadShape> = {
   fallback: ({ size, result }) => quadOf(result, size),
   read: readQuad,
   write: writeQuad,
-  describe: () => MESSAGES.processing.steps.pageHistory.hand.quad,
+  describe: () => MESSAGES.processing.timeline.hand.quad,
   Canvas: QuadCanvas,
   Panel: QuadPanel,
 };

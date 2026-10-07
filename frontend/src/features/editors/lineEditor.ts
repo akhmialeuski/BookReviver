@@ -36,7 +36,7 @@ export const lineEditor: EditorDefinition<LineShape> = {
   read: readLine,
   write: writeLine,
   describe: ({ start, end }) =>
-    MESSAGES.processing.steps.pageHistory.hand.line(
+    MESSAGES.processing.timeline.hand.line(
       Math.round(start.x),
       Math.round(start.y),
       Math.round(end.x),

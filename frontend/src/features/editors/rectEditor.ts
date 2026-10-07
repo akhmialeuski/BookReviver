@@ -25,7 +25,7 @@ export const rectEditor: EditorDefinition<RectShape> = {
   read: readRect,
   write: writeRect,
   describe: ({ left, top, width, height }) =>
-    MESSAGES.processing.steps.pageHistory.hand.frame(
+    MESSAGES.processing.timeline.hand.frame(
       Math.round(left),
       Math.round(top),
       Math.round(width),

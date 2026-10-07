@@ -25,9 +25,9 @@ export const brushEditor: EditorDefinition<BrushShape> = {
   fallback: () => ({ strokes: [] }),
   read: readBrush,
   write: writeBrush,
-  describe: () => MESSAGES.processing.steps.pageHistory.hand.mask,
+  describe: () => MESSAGES.processing.timeline.hand.mask,
   // The mask is what the eraser reads, so it was painted whether or not the strokes it came from were kept
-  describeUnfit: MESSAGES.processing.steps.pageHistory.hand.mask,
+  describeUnfit: MESSAGES.processing.timeline.hand.mask,
   mask: paintMask,
   Canvas: BrushCanvas,
   Panel: BrushPanel,

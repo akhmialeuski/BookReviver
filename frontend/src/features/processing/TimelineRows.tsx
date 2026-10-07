@@ -1,7 +1,7 @@
 import { Undo2Icon } from 'lucide-react';
 import type { PageStepChangeSchema, ProcessorSchema } from '@/api';
 import { factsOf } from '@/features/processing/facts';
-import { type ContentWords, describeContent, stands } from '@/features/processing/pageHistory';
+import { describeContent, stands } from '@/features/processing/pageHistory';
 import { ResultNote } from '@/features/processing/ResultNote';
 import { describeParams, type HistoryEntry, readResult } from '@/features/processing/results';
 import { formatDateTime } from '@/shared/lib/format';
@@ -17,7 +17,7 @@ import { Button } from '@/shared/ui/button';
  * row keeps its size, so no row makes the panel scroll sideways.
  */
 
-const labels = MESSAGES.processing.steps.pageHistory;
+const labels = MESSAGES.processing.timeline;
 const resultLabels = MESSAGES.processing.history;
 
 const ROW = 'min-w-0 rounded-lg border px-3 py-2 text-sm';
@@ -26,21 +26,21 @@ const META = 'flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-for
 /** A change of a layer of the step on the page: who made it and when, what it did, and the way to take it back. */
 export function ChangeRow({
   change,
-  words,
+  titleOf,
   disabled,
   onUndo,
 }: {
   change: PageStepChangeSchema;
-  /** The titles the settings in the change are worded by. */
-  words: ContentWords;
+  /** Gives the title a field of the settings in the change is worded by. */
+  titleOf: (name: string) => string;
   /** Whether an undo is on its way, which holds the buttons back. */
   disabled: boolean;
   /** Take back this change and every change after it. */
   onUndo: () => void;
 }): React.JSX.Element {
   const what = labels.what(labels.layers[change.layer], labels.sources[change.source]);
-  const before = describeContent(change.layer, change.before, words) ?? labels.nothing;
-  const after = describeContent(change.layer, change.after, words) ?? labels.nothing;
+  const before = describeContent(change.layer, change.before, titleOf) ?? labels.nothing;
+  const after = describeContent(change.layer, change.after, titleOf) ?? labels.nothing;
   return (
     <li
       className={cn(ROW, 'flex items-start gap-2')}

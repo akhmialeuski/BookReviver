@@ -23,7 +23,7 @@ export const rotationEditor: EditorDefinition<RotationShape> = {
   read: readRotation,
   write: writeRotation,
   describe: ({ degrees }) =>
-    MESSAGES.processing.steps.pageHistory.hand.angle(MESSAGES.processing.thisPage.degrees(degrees)),
+    MESSAGES.processing.timeline.hand.angle(MESSAGES.processing.thisPage.degrees(degrees)),
   Canvas: RotationCanvas,
   Panel: RotationPanel,
 };

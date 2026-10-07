@@ -24,7 +24,7 @@ export const meshEditor: EditorDefinition<MeshShape> = {
   fallback: ({ size, result }) => meshOf(result, size),
   read: readMesh,
   write: writeMesh,
-  describe: () => MESSAGES.processing.steps.pageHistory.hand.mesh,
+  describe: () => MESSAGES.processing.timeline.hand.mesh,
   Canvas: MeshCanvas,
   Panel: MeshPanel,
 };
