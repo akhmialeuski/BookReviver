@@ -162,12 +162,18 @@ export class CompareStage {
   /**
    * Leave room round the page when it is fitted, such as for the labels an editor puts above it.
    *
+   * A view the reader has moved or zoomed is left where it is, and one that is still the fit is made again with the room.
+   * The editor of an open step comes onto the page a moment after the pictures, so it must not take back a zoom the reader
+   * has set meanwhile.
+   *
    * @param share The room on each side as a share of the height of the page.
    */
   setPadding(share: number): void {
     if (share !== this.padding) {
       this.padding = share;
-      this.fit(true);
+      if (this.atFit) {
+        this.fit(true);
+      }
     }
   }
 

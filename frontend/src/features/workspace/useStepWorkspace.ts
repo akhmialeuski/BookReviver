@@ -8,8 +8,6 @@ import {
   barStepsOf,
   countStep,
   hasStepBar,
-  type Neighbours,
-  neighboursOf,
   openStepOf,
   type StepCounts,
   type StepStates,
@@ -39,10 +37,7 @@ export interface StepWorkspace {
   counts: StepCounts | null;
   /** The rows of every page of the book at the open step, with the flags the server put on them, or null while read. */
   rows: readonly StagePageSchema[] | null;
-  neighbours: Neighbours;
 }
-
-const NO_NEIGHBOURS: Neighbours = { previous: null, next: null };
 
 /**
  * Read the workspace of the open step.
@@ -97,6 +92,5 @@ export function useStepWorkspace(
     page: rowOfPage?.step ?? null,
     counts,
     rows: open === null ? null : (rows.data ?? null),
-    neighbours: open === null ? NO_NEIGHBOURS : neighboursOf(steps, open),
   };
 }

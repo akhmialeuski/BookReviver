@@ -136,13 +136,11 @@ describe('useStepWorkspace', () => {
     ]);
   });
 
-  it('names the open step, the page it did on the open page and the steps either side', async () => {
+  it('names the open step and the page it did on the open page', async () => {
     await render('b');
 
     expect(seen?.open?.number).toBe(2);
     expect(seen?.page?.state).toBe('by-hand');
-    expect(seen?.neighbours.previous?.stepId).toBe('a');
-    expect(seen?.neighbours.next?.stepId).toBe('c');
   });
 
   it('counts the pages of the book at the open step', async () => {

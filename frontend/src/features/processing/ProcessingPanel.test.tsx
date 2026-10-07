@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { deskew, processing, recipe, version } from '@/features/processing/fixtures';
 import { ProcessingPanel } from '@/features/processing/ProcessingPanel';
 import { page, row, stepPage } from '@/features/workspace/fixtures';
-import { barStepsOf, countStep, neighboursOf } from '@/features/workspace/steps';
+import { barStepsOf, countStep } from '@/features/workspace/steps';
 import { joinRows } from '@/features/workspace/strip';
 import type { StepWorkspace } from '@/features/workspace/useStepWorkspace';
 
@@ -71,7 +71,6 @@ describe('ProcessingPanel', () => {
       page: stepPage(open.stepId, 'found', { version: version('step-version') }),
       counts: countStep([]),
       rows: [],
-      neighbours: neighboursOf(BAR, open),
     };
   }
 
@@ -87,7 +86,7 @@ describe('ProcessingPanel', () => {
           editor={null}
           step={
             withStep && workspace.open !== null
-              ? { workspace, step: workspace.open, pageLabel: '1', onOpen: () => undefined }
+              ? { workspace, step: workspace.open, pageLabel: '1' }
               : undefined
           }
         />,
@@ -152,7 +151,7 @@ describe('ProcessingPanel', () => {
           step={
             workspace.open === null
               ? undefined
-              : { workspace, step: workspace.open, pageLabel: '1', onOpen: () => undefined }
+              : { workspace, step: workspace.open, pageLabel: '1' }
           }
         />,
       ),

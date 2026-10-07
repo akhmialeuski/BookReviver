@@ -632,7 +632,6 @@ export function StageScreen({
                         workspace,
                         step: openStep,
                         pageLabel: currentItem?.page.label ?? '',
-                        onOpen: onStepChange,
                       }
                 }
               />

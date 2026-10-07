@@ -3,13 +3,11 @@ import type { StepPageSchema } from '@/api';
 import { deskew, processor, recipe, step } from '@/features/processing/fixtures';
 import { row, stepPage } from '@/features/workspace/fixtures';
 import {
-  type BarStep,
   barStepsOf,
   countStep,
   defaultStepOf,
   hasStepBar,
   markOfCondition,
-  neighboursOf,
   openStepOf,
 } from '@/features/workspace/steps';
 
@@ -69,26 +67,13 @@ describe('markOfCondition', () => {
   });
 });
 
-describe('openStepOf and neighboursOf', () => {
+describe('openStepOf', () => {
   const steps = barStepsOf(RECIPE, CATALOGUE);
-  const at = (index: number): BarStep => {
-    const found = steps[index];
-    if (found === undefined) {
-      throw new Error(`The recipe has no step ${index}`);
-    }
-    return found;
-  };
 
   it('finds the step the address names, and none when the recipe has no such step', () => {
     expect(openStepOf(steps, 'b')?.number).toBe(2);
     expect(openStepOf(steps, 'nope')).toBeNull();
     expect(openStepOf(steps, undefined)).toBeNull();
-  });
-
-  it('gives the steps either side, counting the ones that are off', () => {
-    expect(neighboursOf(steps, at(1))).toEqual({ previous: at(0), next: at(2) });
-    expect(neighboursOf(steps, at(0)).previous).toBeNull();
-    expect(neighboursOf(steps, at(3)).next).toBeNull();
   });
 });
 

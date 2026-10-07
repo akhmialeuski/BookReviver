@@ -232,6 +232,17 @@ describe('CompareStage', () => {
       expect(lastFit().x).toBeCloseTo(-0.08);
     });
 
+    it('leaves a view the reader zoomed where it is when the editor makes room round the page', async () => {
+      await stage.show(null, AFTER, 'p1');
+      const [first] = fake.viewers as { addHandler: { mock: { calls: [string, () => void][] } } }[];
+      const scroll = first?.addHandler.mock.calls.find(([name]) => name === 'canvas-scroll');
+      scroll?.[1]();
+      const before = lastFit();
+      stage.setPadding(0.08);
+
+      expect(lastFit()).toBe(before);
+    });
+
     it('leaves a view the reader moved where it is when the border changes', async () => {
       await stage.show(null, AFTER, 'p1');
       stage.setPadding(0.08);

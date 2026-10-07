@@ -732,8 +732,6 @@ export const MESSAGES = {
       autoHint:
         'Run the recipe up to this step on every page. The steps before it come from the earlier run, and pages set by hand keep their shape.',
       saveFirst: 'Save the recipe to run it.',
-      moves: 'Move between steps',
-      moveTo: (number: number, title: string) => `Go to step ${number}, ${title}`,
       carry: {
         title: 'the shape',
         hint: 'The whole shape set by hand goes to the pages you choose. A page that set its own shape keeps it.',

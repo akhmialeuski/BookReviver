@@ -17,7 +17,7 @@ import type { OrderIssue } from '@/features/processing/order';
 import { StepPanel } from '@/features/processing/StepPanel';
 import type { StageRun } from '@/features/processing/useStageRun';
 import { page as pageOf, row, stepPage } from '@/features/workspace/fixtures';
-import { barStepsOf, countStep, neighboursOf } from '@/features/workspace/steps';
+import { barStepsOf, countStep } from '@/features/workspace/steps';
 import { joinRows, type StripItem } from '@/features/workspace/strip';
 import type { StepWorkspace } from '@/features/workspace/useStepWorkspace';
 
@@ -43,7 +43,7 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
 /**
  * The section of the panel for the open step: its settings, where it stands in the order, the state of its shape on the
  * open page and what the page changes for it, how the pages of the book stand at it and how many passed it, the run up to
- * it, and the way to the steps either side.
+ * it.
  *
  * Radix measures the thumb of a slider, which jsdom cannot, so the observer it asks for is given a stand-in.
  */
@@ -107,7 +107,6 @@ describe('StepPanel', () => {
   let container: HTMLDivElement;
   let root: Root;
   let client: QueryClient;
-  const onOpen = vi.fn();
   const start = vi.fn();
   const startPages = vi.fn();
   const condition = vi.fn();
@@ -173,7 +172,6 @@ describe('StepPanel', () => {
       page,
       counts: countStep(rows),
       rows,
-      neighbours: neighboursOf(BAR, opened),
     };
     const state = processing({
       catalogue: CATALOGUE,
@@ -223,7 +221,6 @@ describe('StepPanel', () => {
             selected={extra.selected}
             editor={extra.editor ?? null}
             run={run}
-            onOpen={onOpen}
           />
         </QueryClientProvider>,
       ),
@@ -237,7 +234,7 @@ describe('StepPanel', () => {
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('ResizeObserver', SizeObserverStandIn);
-    for (const mock of [onOpen, start, startPages, condition, change, restoreOrder]) {
+    for (const mock of [start, startPages, condition, change, restoreOrder]) {
       mock.mockReset();
     }
     sdk.versions.mockReset();
@@ -385,17 +382,13 @@ describe('StepPanel', () => {
     expect(container.textContent).toContain('Save the recipe to run it.');
   });
 
-  it('moves to the steps either side, and offers none past the first and the last', () => {
-    render(1);
-    act(() => find('step-previous')?.click());
-    act(() => find('step-next')?.click());
+  it('has no buttons to the steps either side, since the bar of the steps moves between them', () => {
+    for (const index of [0, 1, 2]) {
+      render(index);
 
-    expect(onOpen.mock.calls).toEqual([['a'], ['c']]);
-
-    render(0);
-    expect(find('step-previous')).toBeNull();
-    render(2);
-    expect(find('step-next')).toBeNull();
+      expect(find('step-previous')).toBeNull();
+      expect(find('step-next')).toBeNull();
+    }
   });
 
   it('has no button that closes the step, since a stage with a bar always has one open', () => {

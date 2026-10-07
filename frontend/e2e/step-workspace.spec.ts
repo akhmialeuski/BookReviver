@@ -162,12 +162,12 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await snap(page, 'first-deskew-open-on-a-page-of-text');
   });
 
-  await test.step('the second Deskew is reached from the step before it, and skips the page of text', async () => {
-    // The first Deskew is the step before it, and is open from the step above
+  await test.step('the second Deskew is opened from the bar after the first, and skips the page of text', async () => {
+    // The first Deskew is open from the step above
     await expect(page.getByTestId('step-panel-title')).toHaveText(
       `${FIRST_DESKEW_INDEX + 1} · Deskew`,
     );
-    await page.getByTestId('step-next').click();
+    await barSteps.nth(SECOND_DESKEW_INDEX).click();
     await expect(page.getByTestId('step-panel-title')).toHaveText(
       `${SECOND_DESKEW_INDEX + 1} · Deskew`,
     );

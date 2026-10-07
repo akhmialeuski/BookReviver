@@ -9,7 +9,7 @@ import type {
 
 /**
  * The steps of the open recipe as the step bar and the step panel read them: the saved steps with their titles, the step
- * the address names, the steps on either side of it, and what a step did on the pages of the book.
+ * the address names, and what a step did on the pages of the book.
  *
  * The bar shows the saved recipe and not the draft, since a step is addressed by the identifier the server gave it, and a
  * step that was only added to the draft has none yet.
@@ -117,17 +117,6 @@ export function defaultStepOf(
   }
   const furthest = Math.max(...ran.map((row) => row.through_step ?? 0));
   return steps[furthest] ?? last;
-}
-
-/** The steps either side of a step, which are the ones the panel offers to move to. */
-export interface Neighbours {
-  previous: BarStep | null;
-  next: BarStep | null;
-}
-
-/** Find the step before and the step after one, which count steps that are off too, since the bar lists them all. */
-export function neighboursOf(steps: readonly BarStep[], open: BarStep): Neighbours {
-  return { previous: steps[open.index - 1] ?? null, next: steps[open.index + 1] ?? null };
 }
 
 /** How the pages of the book stand at one step. */

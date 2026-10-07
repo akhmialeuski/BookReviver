@@ -1,10 +1,4 @@
-import {
-  ChevronDownIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  PlayIcon,
-  TriangleAlertIcon,
-} from 'lucide-react';
+import { ChevronDownIcon, PlayIcon, TriangleAlertIcon } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { AppliesTo, FigureState } from '@/api';
 import { EditorControls } from '@/features/editors/EditorControls';
@@ -41,8 +35,8 @@ import {
 /**
  * The section of the panel for the step that is open, which is where a step of a stage with a bar is set and looked at:
  * its settings, where it stands in the order and what is wrong with that, what it did on the open page and what the
- * page changes for it, how the pages of the book stand at it and how many passed it, the buttons that run the recipe up to
- * it, and the way to the steps either side of it.
+ * page changes for it, how the pages of the book stand at it and how many passed it, and the buttons that run the recipe
+ * up to it.
  *
  * It stands above the sections of the recipe and of the open page and takes none of them away. The settings are the
  * draft of the recipe, which the window of the gear and the save bar share, so a change made here is the change made
@@ -73,31 +67,6 @@ function Heading({ children }: { children: React.ReactNode }): React.JSX.Element
   );
 }
 
-function Move({
-  step,
-  direction,
-  onOpen,
-}: {
-  step: BarStep;
-  direction: 'previous' | 'next';
-  onOpen: (stepId: string) => void;
-}): React.JSX.Element {
-  const Icon = direction === 'previous' ? ChevronLeftIcon : ChevronRightIcon;
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      className={cn(direction === 'next' && 'ml-auto flex-row-reverse')}
-      aria-label={labels.moveTo(step.number, step.title)}
-      data-testid={`step-${direction}`}
-      onClick={() => onOpen(step.stepId)}
-    >
-      <Icon />
-      {MESSAGES.workspace.steps.step(step.number, step.title)}
-    </Button>
-  );
-}
-
 export function StepPanel({
   processing,
   workspace,
@@ -108,7 +77,6 @@ export function StepPanel({
   selected = NO_PAGES,
   editor,
   run,
-  onOpen,
 }: {
   processing: Processing;
   workspace: StepWorkspace;
@@ -126,8 +94,6 @@ export function StepPanel({
   editor: EditorSession | null;
   /** The run of the stage, which the buttons of "Auto" ask for. */
   run: StageRun;
-  /** Open another step. */
-  onOpen: (stepId: string) => void;
 }): React.JSX.Element {
   const { catalogue, recipe } = processing;
   const [overwrite, setOverwrite] = useState(false);
@@ -139,7 +105,7 @@ export function StepPanel({
   const issueKind = issues.some((issue) => issue.kind === 'required') ? 'required' : 'usual';
   const stageRows = items.flatMap((item) => (item.row === undefined ? [] : [item.row]));
   const processor = catalogue.find((entry) => entry.key === step.processorKey);
-  const { page, counts, neighbours } = workspace;
+  const { page, counts } = workspace;
   const state = page?.state ?? null;
   const found =
     page?.version === null || page?.version === undefined ? null : readResult(page.version);
@@ -400,15 +366,6 @@ export function StepPanel({
       </div>
 
       <StepReset processing={processing} pageId={pageId} stepId={step.stepId} title={step.title} />
-
-      <nav className="flex gap-2" aria-label={labels.moves}>
-        {neighbours.previous === null ? null : (
-          <Move step={neighbours.previous} direction="previous" onOpen={onOpen} />
-        )}
-        {neighbours.next === null ? null : (
-          <Move step={neighbours.next} direction="next" onOpen={onOpen} />
-        )}
-      </nav>
     </section>
   );
 }

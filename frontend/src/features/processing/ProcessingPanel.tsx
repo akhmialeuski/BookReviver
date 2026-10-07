@@ -47,7 +47,6 @@ export function ProcessingPanel({
     workspace: StepWorkspace;
     step: BarStep;
     pageLabel: string;
-    onOpen: (stepId: string) => void;
   };
 }): React.JSX.Element {
   const rows = items.flatMap((item) => (item.row === undefined ? [] : [item.row]));
@@ -104,7 +103,6 @@ export function ProcessingPanel({
             selected={selected}
             editor={editor}
             run={run}
-            onOpen={step.onOpen}
           />
         )}
         {processing.stage === 'page-split' && current !== undefined ? (

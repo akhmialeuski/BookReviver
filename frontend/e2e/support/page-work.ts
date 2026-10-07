@@ -121,6 +121,18 @@ export async function finishedRuns(page: Page): Promise<number> {
   return items.filter((job) => job.kind === 'run-stage' && job.state === 'succeeded').length;
 }
 
+/** Read the identifiers of the newest runs of a stage that ended well in the open book. */
+async function endedRunIds(page: Page): Promise<Set<string>> {
+  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/jobs?size=100`);
+  const items = ((await listed.json()) as { items: { id: string; kind: string; state: string }[] })
+    .items;
+  return new Set(
+    items
+      .filter((job) => job.kind === 'run-stage' && job.state === 'succeeded')
+      .map((job) => job.id),
+  );
+}
+
 /** How long a run on all pages may take before the scenario gives up on it. */
 const RUN_ALL_TIMEOUT_MS = 120_000;
 
@@ -133,9 +145,16 @@ const RUN_ALL_TIMEOUT_MS = 120_000;
  * @param page The page of the browser, on a stage with a run menu.
  */
 export async function runAllPages(page: Page): Promise<void> {
-  const before = await finishedRuns(page);
+  // A run an edit started is over first, so it is not counted as the one asked for here
+  await waitForIdleJobs(page, openProjectId(page));
+  const known = await endedRunIds(page);
   await page.getByTestId('run-menu').click();
   await page.getByTestId('run-all').click();
-  await expect.poll(() => finishedRuns(page), { timeout: RUN_ALL_TIMEOUT_MS }).toBe(before + 1);
+  // The jobs listed are the newest ones, so a scenario with many runs is told by the identifiers and not by their number
+  await expect
+    .poll(async () => [...(await endedRunIds(page))].some((id) => !known.has(id)), {
+      timeout: RUN_ALL_TIMEOUT_MS,
+    })
+    .toBe(true);
   await waitForIdleJobs(page, openProjectId(page));
 }
