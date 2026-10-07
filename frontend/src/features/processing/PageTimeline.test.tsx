@@ -1,0 +1,1178 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PageStepChangeSchema } from '@/api';
+import { processing, recipe, step, version } from '@/features/processing/fixtures';
+import { PageTimeline } from '@/features/processing/PageTimeline';
+import { HISTORY_OPEN_KEY } from '@/features/workspace/historyOpen';
+import { StagePanel } from '@/features/workspace/StagePanel';
+import { ProblemError } from '@/shared/http/problem';
+
+/**
+ * The history of the open page as one list: the changes of a step and the results merged by time, each with its chip,
+ * the filters, three rows at a time over both lists, the undo back to a change, the use of a result, the marks and the
+ * comment, the clear that keeps the results, the stage with no step open, every reason for being grey, and the choice of
+ * open or collapsed that is remembered.
+ */
+
+const sdk = vi.hoisted(() => ({
+  history: vi.fn(),
+  undo: vi.fn(),
+  clear: vi.fn(),
+  versions: vi.fn(),
+  choose: vi.fn(),
+  remake: vi.fn(),
+  mark: vi.fn(),
+  jobs: vi.fn(),
+}));
+
+vi.mock('@/api/sdk.gen', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
+  listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGet: sdk.history,
+  undoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPost: sdk.undo,
+  clearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDelete: sdk.clear,
+  listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet: sdk.versions,
+  chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePut: sdk.choose,
+  remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePost: sdk.remake,
+  putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPut: sdk.mark,
+  listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
+}));
+
+const STEP_ID = 'id-geometry.deskew';
+const STEP = { stepId: STEP_ID, processorKey: 'geometry.deskew' };
+const EMPTY_LIST = { data: { items: [], total: 0, page: 1, size: 100, pages: 1 } };
+
+/** A time of the day of the first of October, which orders the changes and the results of a test. */
+function at(hour: number, minute = 0): string {
+  return `2026-10-01T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00Z`;
+}
+
+function change(overrides: Partial<PageStepChangeSchema>): PageStepChangeSchema {
+  return {
+    id: 'c',
+    page_id: 'page',
+    stage: 'geometry',
+    step_id: STEP_ID,
+    layer: 'settings',
+    before: null,
+    after: { max_angle: 3 },
+    source: 'user',
+    batch_id: null,
+    undoes: null,
+    undone: false,
+    created_at: at(10, 30),
+    sequence: 1,
+    ...overrides,
+  };
+}
+
+/** `count` settings changes of the page, the newest first, named `c<count>` down to `c1` and an hour apart from 10:30. */
+function settingsChanges(count: number): PageStepChangeSchema[] {
+  return Array.from({ length: count }, (_, index) =>
+    change({
+      id: `c${count - index}`,
+      after: { max_angle: count - index },
+      created_at: at(10 + count - index - 1, 30),
+      sequence: count - index,
+    }),
+  );
+}
+
+/** Answer a request of the changes as the server does: the window of the page asked for, and the total of all. */
+function serve(all: readonly PageStepChangeSchema[], size = 100): void {
+  sdk.history.mockImplementation(async (options: { query?: { page?: number } }) => {
+    const page = options.query?.page ?? 1;
+    return {
+      data: {
+        items: all.slice((page - 1) * size, page * size),
+        total: all.length,
+        page,
+        size,
+        pages: Math.ceil(all.length / size),
+      },
+    };
+  });
+}
+
+function listed(...items: ReturnType<typeof version>[]): { data: unknown } {
+  return { data: { items, total: items.length, page: 1, size: 100, pages: 1 } };
+}
+
+const FIRST = version('first', { created_at: at(9), mark: 'bad' });
+const OLD = version('old', {
+  created_at: at(11),
+  input_id: 'first',
+  params: { max_angle: 5, min_confidence: 0.3 },
+  mark: 'good',
+});
+const NEW = version('new', {
+  created_at: at(12),
+  input_id: 'first',
+  params: { max_angle: 9, min_confidence: 0.3 },
+  data: { angle: 1.4, confidence: 0.91 },
+  edit_hash: '0123456789abcdef',
+  origin: 'hand',
+  mark: 'bad',
+});
+
+describe('PageTimeline', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let client: QueryClient;
+
+  interface Setup {
+    /** The step open, or null for the stage as a whole; the step of the recipe by default. */
+    step?: { stepId: string | null; processorKey: string } | null;
+    /** The page is none when this is set. */
+    noPage?: boolean;
+    currentId?: string;
+    state?: ReturnType<typeof processing>;
+  }
+
+  async function render(setup: Setup = {}): Promise<void> {
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <StagePanel
+            stage="geometry"
+            available
+            history={
+              <PageTimeline
+                processing={setup.state ?? processing()}
+                pageId={setup.noPage === true ? undefined : 'page'}
+                step={setup.step === undefined ? STEP : setup.step}
+                currentId={setup.currentId ?? 'new'}
+              />
+            }
+          />
+        </QueryClientProvider>,
+      );
+    });
+    await settle();
+    await settle();
+  }
+
+  async function settle(): Promise<void> {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  const byId = (id: string, within: ParentNode = document): HTMLElement | null =>
+    within.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+  const click = async (id: string): Promise<void> => {
+    await act(async () => {
+      byId(id)?.click();
+    });
+    await settle();
+    await settle();
+  };
+  const rows = (): HTMLElement[] => [
+    ...container.querySelectorAll<HTMLElement>('[data-testid="page-history-list"] > li'),
+  ];
+  /** The rows by what they are: the id of the change or of the result. */
+  const order = (): string[] =>
+    rows().map((row) => `${row.dataset.kind}:${row.dataset.change ?? row.dataset.version}`);
+  const undoHere = (row: HTMLElement | undefined): HTMLElement | null =>
+    row === undefined ? null : byId('page-history-undo-here', row);
+  const open = (): void => localStorage.setItem(HISTORY_OPEN_KEY, 'open');
+  const pressUndo = async (): Promise<void> => {
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+  };
+  const cancel = async (): Promise<void> => {
+    await act(async () => {
+      [...document.querySelectorAll<HTMLElement>('[data-testid="page-history-dialog"] button')]
+        .find((button) => button.textContent === 'Cancel')
+        ?.click();
+    });
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    localStorage.clear();
+    for (const mock of Object.values(sdk)) {
+      mock.mockReset();
+    }
+    serve([]);
+    sdk.versions.mockResolvedValue(EMPTY_LIST);
+    sdk.undo.mockResolvedValue({ data: { changes: [] } });
+    sdk.clear.mockResolvedValue({ data: { deleted: 2 } });
+    sdk.choose.mockResolvedValue({ data: {} });
+    sdk.remake.mockResolvedValue({ data: { id: 'job' } });
+    sdk.mark.mockResolvedValue({ data: {} });
+    sdk.jobs.mockResolvedValue(EMPTY_LIST);
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    client.clear();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  describe('the header', () => {
+    it('is collapsed by default with the title and the number of changes and results, and no button', async () => {
+      serve(settingsChanges(2));
+      sdk.versions.mockResolvedValue(listed(OLD, NEW));
+      await render();
+
+      expect(byId('page-history')?.getAttribute('aria-disabled')).toBe('false');
+      expect(byId('page-history')?.textContent).toContain('History of this page');
+      expect(byId('page-history-count')?.textContent).toBe('4 events');
+      expect(byId('page-history-list')).toBeNull();
+      expect(byId('page-history-undo-here')).toBeNull();
+      expect(byId('page-history-toggle')?.querySelectorAll('button')).toHaveLength(0);
+      expect(container.textContent).not.toMatch(/\bUndo\b/);
+    });
+
+    it('counts a change and a result alike, and says one event in the singular', async () => {
+      serve([change({ id: 'only' })]);
+      await render();
+
+      expect(byId('page-history-count')?.textContent).toBe('1 event');
+    });
+
+    it('is the last element of the scrolling area of the panel', async () => {
+      await render();
+
+      expect(byId('stage-panel-scroll')?.lastElementChild).toBe(byId('page-history'));
+    });
+  });
+
+  describe('the list', () => {
+    it('merges the changes and the results by time, newest first, each row with the chip of its kind', async () => {
+      serve([
+        change({ id: 'c2', created_at: at(11, 30), sequence: 2 }),
+        change({ id: 'c1', created_at: at(10, 30), sequence: 1 }),
+      ]);
+      sdk.versions.mockResolvedValue(listed(OLD, NEW));
+      open();
+      await render();
+
+      expect(order()).toEqual(['result:new', 'change:c2', 'result:old']);
+      expect(rows()[0]?.textContent).toContain('Result');
+      expect(rows()[1]?.textContent).toContain('Change');
+      expect(rows()[2]?.textContent).toContain('Result');
+    });
+
+    it('shows three rows, and adds three at a time over both lists until nothing is left', async () => {
+      serve([
+        change({ id: 'c4', created_at: at(13, 30), sequence: 4 }),
+        change({ id: 'c3', created_at: at(12, 30), sequence: 3 }),
+        change({ id: 'c2', created_at: at(11, 30), sequence: 2 }),
+        change({ id: 'c1', created_at: at(10, 30), sequence: 1 }),
+      ]);
+      sdk.versions.mockResolvedValue(
+        listed(
+          version('r1', { created_at: at(10) }),
+          version('r2', { created_at: at(11) }),
+          version('r3', { created_at: at(12) }),
+          version('r4', { created_at: at(13) }),
+        ),
+      );
+      open();
+      await render();
+
+      expect(order()).toEqual(['change:c4', 'result:r4', 'change:c3']);
+      expect(byId('page-history-more')?.textContent).toBe('Show 3 more');
+
+      await click('page-history-more');
+      expect(order()).toEqual([
+        'change:c4',
+        'result:r4',
+        'change:c3',
+        'result:r3',
+        'change:c2',
+        'result:r2',
+      ]);
+      expect(byId('page-history-more')?.textContent).toBe('Show 2 more');
+
+      await click('page-history-more');
+      expect(rows()).toHaveLength(8);
+      expect(byId('page-history-more')).toBeNull();
+    });
+
+    it('reads the next page of changes only when the rows asked for reach beyond the ones loaded', async () => {
+      serve(settingsChanges(5), 3);
+      open();
+      await render();
+
+      expect(order()).toEqual(['change:c5', 'change:c4', 'change:c3']);
+      expect(sdk.history).toHaveBeenCalledTimes(1);
+
+      await click('page-history-more');
+
+      expect(sdk.history).toHaveBeenCalledTimes(2);
+      expect(order()).toEqual(['change:c5', 'change:c4', 'change:c3', 'change:c2', 'change:c1']);
+      expect(byId('page-history-more')).toBeNull();
+    });
+
+    it('reads the next page when a result older than the loaded changes could have a change above it', async () => {
+      serve(settingsChanges(5), 2);
+      sdk.versions.mockResolvedValue(listed(version('mid', { created_at: at(12) })));
+      open();
+      await render();
+
+      // c5 and c4 are loaded, and the result at 12:00 is older than c4, so the third row waits for the next page
+      expect(sdk.history.mock.calls.map(([options]) => options.query.page)).toEqual([1, 2]);
+      expect(order()).toEqual(['change:c5', 'change:c4', 'change:c3']);
+
+      await click('page-history-more');
+
+      expect(sdk.history.mock.calls.map(([options]) => options.query.page)).toEqual([1, 2, 3]);
+      expect(order()).toEqual([
+        'change:c5',
+        'change:c4',
+        'change:c3',
+        'result:mid',
+        'change:c2',
+        'change:c1',
+      ]);
+    });
+
+    it('asks for the changes a hundred at a time', async () => {
+      serve(settingsChanges(2));
+      await render();
+
+      expect(sdk.history.mock.calls[0]?.[0]).toMatchObject({
+        path: { project_id: 'project', page_id: 'page', stage: 'geometry', step_id: STEP_ID },
+        query: { size: 100 },
+      });
+    });
+
+    it('lets the text of every row wrap and keeps the button of a row its size, so nothing scrolls sideways', async () => {
+      serve([change({ id: 'c', after: { max_angle: 3 } })]);
+      sdk.versions.mockResolvedValue(listed(OLD, NEW));
+      open();
+      await render();
+
+      const [current, earlier, changed] = rows();
+      expect(byId('page-history')?.className).toContain('min-w-0');
+      expect(byId('page-history-list')?.className).toContain('grid-cols-1');
+      expect(earlier?.className).toContain('min-w-0');
+      expect(byId('history-settings', current)?.className).toMatch(/min-w-0.*break-words/);
+      expect(byId('history-found', current)?.className).toMatch(/min-w-0.*break-words/);
+      expect(byId('page-history-change', changed)?.className).toMatch(/min-w-0.*break-words/);
+      expect(undoHere(changed)?.className).toContain('shrink-0');
+      expect(byId('history-use', earlier)?.className).toContain('shrink-0');
+    });
+  });
+
+  describe('a change', () => {
+    it('says who made it and what it did to which layer, with a hand edit in words', async () => {
+      serve([
+        change({
+          id: 'hand',
+          layer: 'hand',
+          after: { kind: 'rotation', geometry: { degrees: 1.5 }, mask_key: null, edit_hash: 'abc' },
+          created_at: at(11, 30),
+          sequence: 2,
+        }),
+        change({ id: 'setting', sequence: 1 }),
+      ]);
+      open();
+      await render();
+
+      const [hand, setting] = rows();
+      expect(hand?.textContent).toContain('Set by hand · You');
+      expect(hand?.textContent).toContain('nothing → Angle 1.5°');
+      expect(hand?.textContent).not.toContain('{');
+      expect(setting?.textContent).toContain('Settings of the page · You');
+      expect(setting?.textContent).toContain('nothing → Largest slant: 3');
+    });
+
+    it('marks the changes an undo took back and offers no undo for them or for an undo', async () => {
+      serve([
+        change({ id: 'undo', source: 'undo', undoes: 'hand', created_at: at(12, 30), sequence: 3 }),
+        change({ id: 'hand', layer: 'hand', undone: true, created_at: at(11, 30), sequence: 2 }),
+        change({ id: 'setting', sequence: 1 }),
+      ]);
+      open();
+      await render();
+
+      const [undo, hand, setting] = rows();
+      expect(hand?.dataset.undone).toBe('true');
+      expect(hand?.textContent).toContain('Undone');
+      expect(undo?.textContent).toContain('An undo');
+      expect([undo, hand, setting].map((row) => undoHere(row) !== null)).toEqual([
+        false,
+        false,
+        true,
+      ]);
+    });
+
+    it('marks the change of a batch', async () => {
+      serve([change({ id: 'carried', source: 'carry-over', batch_id: 'batch' })]);
+      open();
+      await render();
+
+      expect(rows()[0]?.textContent).toContain('A carry-over');
+      expect(rows()[0]?.textContent).toContain('Part of a batch');
+    });
+
+    it('takes back the newest change at once with its own button, naming that change', async () => {
+      serve(settingsChanges(3));
+      open();
+      await render();
+
+      expect(undoHere(rows()[0])?.querySelector('svg')).not.toBeNull();
+      await act(async () => undoHere(rows()[0])?.click());
+
+      expect(byId('page-history-dialog')).toBeNull();
+      expect(sdk.undo).toHaveBeenCalledTimes(1);
+      expect(sdk.undo.mock.calls[0]?.[0]).toMatchObject({
+        path: { project_id: 'project', page_id: 'page', stage: 'geometry', step_id: STEP_ID },
+        body: { change_id: 'c3' },
+      });
+    });
+
+    it('asks first before it takes back an older change with the ones after it', async () => {
+      serve(settingsChanges(3));
+      open();
+      await render();
+
+      await act(async () => undoHere(rows()[2])?.click());
+
+      expect(sdk.undo).not.toHaveBeenCalled();
+      const dialog = byId('page-history-dialog');
+      expect(dialog?.textContent).toContain('Undo 3 changes?');
+      expect(dialog?.textContent).toContain('Cancel');
+
+      await click('page-history-confirm');
+
+      expect(sdk.undo).toHaveBeenCalledTimes(1);
+      expect(sdk.undo.mock.calls[0]?.[0]).toMatchObject({ body: { change_id: 'c1' } });
+      expect(byId('page-history-dialog')).toBeNull();
+    });
+
+    it('counts only the changes that stand when it asks, and not the results between them', async () => {
+      serve([
+        change({ id: 'undo', source: 'undo', undoes: 'gone', created_at: at(13, 30), sequence: 4 }),
+        change({ id: 'gone', undone: true, created_at: at(12, 30), sequence: 3 }),
+        change({ id: 'newer', created_at: at(11, 30), sequence: 2 }),
+        change({ id: 'older', created_at: at(10, 30), sequence: 1 }),
+      ]);
+      sdk.versions.mockResolvedValue(listed(version('r', { created_at: at(11) })));
+      open();
+      await render();
+      await click('page-history-more');
+
+      const older = container.querySelector<HTMLElement>('[data-change="older"]');
+      await act(async () => undoHere(older ?? undefined)?.click());
+
+      expect(byId('page-history-dialog')?.textContent).toContain('Undo 2 changes?');
+    });
+
+    it('takes nothing back when the question is cancelled', async () => {
+      serve(settingsChanges(3));
+      open();
+      await render();
+
+      await act(async () => undoHere(rows()[1])?.click());
+      await cancel();
+
+      expect(sdk.undo).not.toHaveBeenCalled();
+      expect(byId('page-history-dialog')).toBeNull();
+    });
+
+    it('shows the answer of the server when an undo is refused', async () => {
+      serve(settingsChanges(2));
+      sdk.undo.mockRejectedValue(new ProblemError('The settings changed since.', 409, null, []));
+      open();
+      await render();
+
+      await act(async () => undoHere(rows()[0])?.click());
+      await settle();
+
+      expect(container.textContent).toContain('The settings changed since.');
+    });
+
+    it('reads the history again after an undo', async () => {
+      serve(settingsChanges(2));
+      open();
+      await render();
+      sdk.history.mockClear();
+
+      await act(async () => undoHere(rows()[0])?.click());
+      await settle();
+
+      expect(sdk.history).toHaveBeenCalled();
+    });
+  });
+
+  describe('Ctrl+Z', () => {
+    it('takes back the newest change, even while the history is collapsed', async () => {
+      serve(settingsChanges(2));
+      await render();
+
+      await pressUndo();
+
+      expect(sdk.undo).toHaveBeenCalledTimes(1);
+      expect(sdk.undo.mock.calls[0]?.[0]).toMatchObject({ body: { change_id: null } });
+    });
+
+    it('takes back two changes when it is pressed twice while the first undo is still settling', async () => {
+      serve(settingsChanges(2));
+      let finishFirst: (value: { data: { changes: never[] } }) => void = () => {};
+      sdk.undo.mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishFirst = resolve;
+        }),
+      );
+      await render();
+
+      await pressUndo();
+      await pressUndo();
+      await act(async () => finishFirst({ data: { changes: [] } }));
+      await settle();
+      await settle();
+
+      expect(sdk.undo).toHaveBeenCalledTimes(2);
+    });
+
+    it('does nothing when the step has no change, when it is not saved, or when no step is open', async () => {
+      await render();
+      await pressUndo();
+      await render({ step: { stepId: null, processorKey: 'geometry.deskew' } });
+      await pressUndo();
+      await render({ step: null });
+      await pressUndo();
+
+      expect(sdk.undo).not.toHaveBeenCalled();
+    });
+
+    it('takes back when the loaded changes are undos and an older change stands on the next page', async () => {
+      serve(
+        [
+          change({ id: 'u3', source: 'undo', undoes: 'c3', created_at: at(16), sequence: 6 }),
+          change({ id: 'u2', source: 'undo', undoes: 'c2', created_at: at(15), sequence: 5 }),
+          change({ id: 'u1', source: 'undo', undoes: 'c1', created_at: at(14), sequence: 4 }),
+          change({ id: 'c3', undone: true, created_at: at(13), sequence: 3 }),
+          change({ id: 'c2', undone: true, created_at: at(12), sequence: 2 }),
+          change({ id: 'c1', undone: true, created_at: at(11), sequence: 1 }),
+          change({ id: 'c0', created_at: at(10), sequence: 0 }),
+        ],
+        3,
+      );
+      await render();
+
+      await pressUndo();
+
+      expect(sdk.undo).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('the filters', () => {
+    const CHANGES = [
+      change({ id: 'c2', created_at: at(11, 30), sequence: 2 }),
+      change({ id: 'c1', created_at: at(10, 30), sequence: 1 }),
+    ];
+
+    beforeEach(() => {
+      serve(CHANGES);
+      sdk.versions.mockResolvedValue(listed(OLD, NEW));
+      open();
+    });
+
+    it('offers All, Changes, Results, Good and Bad, with All pressed', async () => {
+      await render();
+
+      const filters = [...container.querySelectorAll('[data-testid^="results-filter-"]')];
+      expect(filters.map((filter) => filter.textContent)).toEqual([
+        'All',
+        'Changes',
+        'Results',
+        'Good',
+        'Bad',
+      ]);
+      expect(byId('results-filter-all')?.getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('narrows to the changes, to the results, and to the results marked good or bad', async () => {
+      await render();
+
+      await click('results-filter-changes');
+      expect(order()).toEqual(['change:c2', 'change:c1']);
+      expect(byId('results-filter-changes')?.getAttribute('aria-pressed')).toBe('true');
+
+      await click('results-filter-results');
+      expect(order()).toEqual(['result:new', 'result:old']);
+
+      await click('results-filter-good');
+      expect(order()).toEqual(['result:old']);
+
+      await click('results-filter-bad');
+      expect(order()).toEqual(['result:new']);
+
+      await click('results-filter-all');
+      expect(order()).toEqual(['result:new', 'change:c2', 'result:old']);
+    });
+
+    it('asks the server nothing more for a filter, and goes back to three rows when one is chosen', async () => {
+      await render();
+      await click('page-history-more');
+      expect(rows()).toHaveLength(4);
+      const reads = sdk.versions.mock.calls.length;
+
+      await click('results-filter-all');
+
+      expect(rows()).toHaveLength(3);
+      expect(sdk.versions).toHaveBeenCalledTimes(reads);
+    });
+
+    it('says which kind is missing when the filter leaves nothing', async () => {
+      sdk.versions.mockResolvedValue(listed(version('plain', { created_at: at(12) })));
+      await render({ currentId: 'plain' });
+
+      await click('results-filter-good');
+      expect(byId('results-empty')?.textContent).toBe('No result of this page is marked good.');
+      await click('results-filter-bad');
+      expect(byId('results-empty')?.textContent).toBe('No result of this page is marked bad.');
+      await click('results-filter-all');
+      expect(byId('results-empty')).toBeNull();
+    });
+
+    it('says the step has no change, and that the stage made no result', async () => {
+      serve([]);
+      await render();
+      await click('results-filter-changes');
+      expect(byId('results-empty')?.textContent).toBe('This step has no change on this page.');
+
+      serve(CHANGES);
+      sdk.versions.mockResolvedValue(EMPTY_LIST);
+      await render({ step: { stepId: 'other', processorKey: 'geometry.deskew' } });
+      await click('results-filter-results');
+      expect(byId('results-empty')?.textContent).toBe('Run the stage to make a result.');
+    });
+  });
+
+  describe('a result', () => {
+    beforeEach(() => {
+      sdk.versions.mockResolvedValue(listed(FIRST, OLD, NEW));
+      open();
+    });
+
+    it('says how it was made and when, with what settings and what it found, and tags the current one', async () => {
+      await render({ step: null });
+
+      const [current, earlier] = rows();
+      expect(current?.getAttribute('data-current')).toBe('true');
+      expect(current?.textContent).toContain('Current');
+      expect(byId('history-origin', current)?.textContent).toBe('Set by hand');
+      expect(byId('history-settings', current)?.textContent).toBe(
+        'Largest slant 9 · Least confidence 0.3',
+      );
+      expect(byId('history-found', current)?.textContent).toBe(
+        'Turned by 1.4° · Confidence 0.91 · sure',
+      );
+      expect(byId('history-use', current)).toBeNull();
+      expect(byId('history-origin', earlier)?.textContent).toBe('Made by the step');
+      expect(byId('history-found', earlier)).toBeNull();
+      expect(byId('history-use', earlier)?.textContent).toBe('Use this');
+    });
+
+    it('makes an earlier result the current one', async () => {
+      await render({ step: null });
+
+      await act(async () => {
+        byId('history-use')?.click();
+      });
+
+      expect(sdk.choose.mock.calls[0]?.[0]).toMatchObject({
+        path: { project_id: 'project', page_id: 'page', stage: 'geometry' },
+        body: { version_id: 'old' },
+      });
+    });
+
+    it('makes the picture of a result again when a collection removed it, instead of choosing it', async () => {
+      const removed = version('old', {
+        created_at: at(11),
+        input_id: 'first',
+        files_removed: true,
+        files_removed_at: '2026-10-02T00:00:00Z',
+        images: null,
+      });
+      sdk.versions.mockResolvedValue(listed(FIRST, removed, NEW));
+      await render({ step: null });
+
+      expect(byId('history-removed')?.textContent).toBe('Picture removed · made again on use');
+      await act(async () => {
+        byId('history-use')?.click();
+      });
+
+      expect(sdk.choose).not.toHaveBeenCalled();
+      expect(sdk.remake.mock.calls[0]?.[0]).toMatchObject({ path: { version_id: 'old' } });
+    });
+
+    it('shows the answer of the server when a result cannot be chosen', async () => {
+      sdk.choose.mockRejectedValue(new ProblemError('This result is gone.', 409, null, []));
+      await render({ step: null });
+
+      await act(async () => {
+        byId('history-use')?.click();
+      });
+      await settle();
+
+      expect(container.textContent).toContain('This result is gone.');
+    });
+
+    it('offers an earlier result as the result of the stage only when its step is the last one', async () => {
+      const two = recipe('r1', {
+        steps: [step('geometry.deskew'), step('geometry.crop')],
+      });
+      sdk.versions.mockResolvedValue(listed(OLD, NEW));
+
+      await render({ state: processing({ recipe: two, recipes: [two] }), step: STEP });
+      expect(byId('history-use')).toBeNull();
+      expect(byId('history-entry')?.getAttribute('data-current')).toBe('true');
+
+      await render({
+        state: processing({ recipe: two, recipes: [two] }),
+        step: { stepId: 'id-geometry.crop', processorKey: 'geometry.crop' },
+      });
+      expect(byId('history-use')).not.toBeNull();
+    });
+
+    it('is a result of the last enabled step when a step after it is off', async () => {
+      const off = recipe('r1', {
+        steps: [step('geometry.deskew'), step('geometry.crop', { enabled: false })],
+      });
+      sdk.versions.mockResolvedValue(listed(OLD, NEW));
+
+      await render({ state: processing({ recipe: off, recipes: [off] }), step: STEP });
+
+      expect(byId('history-use')).not.toBeNull();
+    });
+  });
+
+  describe('the marks and the comment of a result', () => {
+    beforeEach(() => {
+      sdk.versions.mockResolvedValue(listed(OLD, NEW));
+      open();
+    });
+
+    it('marks a result, which sends the mark with the comment it has, and takes the mark off again', async () => {
+      await render();
+
+      await act(async () => {
+        byId('result-mark-good', rows()[0])?.click();
+      });
+      expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({
+        path: { project_id: 'project', page_id: 'page', version_id: 'new' },
+        body: { mark: 'good', comment: '' },
+      });
+      await settle();
+      await settle();
+
+      await act(async () => {
+        byId('result-mark-bad', rows()[0])?.click();
+      });
+      expect(sdk.mark.mock.calls[1]?.[0]).toMatchObject({ body: { mark: null, comment: '' } });
+    });
+
+    it('edits the comment with a pencil button beside the marks, and shows the comment under them', async () => {
+      sdk.versions.mockResolvedValue(
+        listed(version('new', { created_at: at(12), comment: 'Slightly dark' })),
+      );
+      await render();
+
+      const note = byId('result-note');
+      const pencil = byId('result-comment-edit');
+      expect(pencil?.querySelector('svg')).not.toBeNull();
+      expect(pencil?.textContent).toBe('');
+      expect(pencil?.getAttribute('aria-label')).toBe('Edit comment');
+      expect(byId('result-comment')?.textContent).toBe('Slightly dark');
+      expect(pencil?.parentElement?.compareDocumentPosition(byId('result-comment') as Node)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+      expect(note?.contains(pencil)).toBe(true);
+    });
+
+    it('labels the pencil as an addition while there is no comment', async () => {
+      await render();
+
+      expect(byId('result-comment-edit')?.getAttribute('aria-label')).toBe('Add a comment');
+      expect(byId('result-comment')).toBeNull();
+    });
+
+    it('keeps the comment that is being written when the answer to a mark pressed meanwhile arrives', async () => {
+      let answer: (value: unknown) => void = () => undefined;
+      sdk.mark.mockReturnValue(
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+      );
+      await render();
+      await act(async () => {
+        byId('result-comment-edit')?.click();
+      });
+      expect(byId('result-comment-input')).not.toBeNull();
+      await act(async () => {
+        byId('result-mark-good')?.click();
+      });
+
+      await act(async () => {
+        answer({ data: {} });
+      });
+      await settle();
+
+      expect(byId('result-comment-input')).not.toBeNull();
+    });
+
+    it('closes the field of the comment once the comment is saved', async () => {
+      await render();
+      await act(async () => {
+        byId('result-comment-edit')?.click();
+      });
+
+      await act(async () => {
+        byId('result-comment-save')?.click();
+      });
+      await settle();
+
+      expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({ body: { mark: 'bad', comment: '' } });
+      expect(byId('result-comment-input')).toBeNull();
+    });
+
+    it('offers a mark and a comment on every result, the current one included', async () => {
+      await render();
+
+      expect(container.querySelectorAll('[data-testid="result-note"]')).toHaveLength(2);
+    });
+
+    it('sends the comment a result has along with the mark', async () => {
+      sdk.versions.mockResolvedValue(
+        listed(version('old', { created_at: at(11), comment: 'Too tight' }), NEW),
+      );
+      await render();
+
+      await act(async () => {
+        container
+          .querySelector<HTMLElement>('[data-version="old"][data-testid="result-mark-good"]')
+          ?.click();
+      });
+
+      expect(sdk.mark).toHaveBeenCalledTimes(1);
+      expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({
+        path: { project_id: 'project', page_id: 'page', version_id: 'old' },
+        body: { mark: 'good', comment: 'Too tight' },
+      });
+    });
+
+    it('shows the mark a result has as pressed, on that result only', async () => {
+      await render();
+
+      const pressed = (id: string, mark: 'good' | 'bad'): string | null | undefined =>
+        container
+          .querySelector(`[data-version="${id}"][data-testid="result-mark-${mark}"]`)
+          ?.getAttribute('aria-pressed');
+      expect([pressed('old', 'good'), pressed('old', 'bad')]).toEqual(['true', 'false']);
+      expect([pressed('new', 'good'), pressed('new', 'bad')]).toEqual(['false', 'true']);
+    });
+
+    it('writes a comment of several lines and keeps the mark', async () => {
+      await render();
+
+      await act(async () => {
+        container
+          .querySelector<HTMLElement>('[data-version="old"][data-testid="result-comment-edit"]')
+          ?.click();
+      });
+      const input = byId('result-comment-input') as HTMLTextAreaElement | null;
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+        setter?.call(input, 'First try\nSecond try');
+        input?.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await act(async () => {
+        byId('result-comment-save')?.click();
+      });
+
+      expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({
+        path: { version_id: 'old' },
+        body: { mark: 'good', comment: 'First try\nSecond try' },
+      });
+    });
+
+    it('tells the reader when the notes could not be saved', async () => {
+      sdk.mark.mockRejectedValue(
+        new ProblemError('Another job of this book is running.', 409, null, []),
+      );
+      await render();
+
+      await act(async () => {
+        byId('result-mark-good', rows()[0])?.click();
+      });
+
+      // The mutation reports its failure a few ticks after the click
+      await vi.waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
+    });
+  });
+
+  describe('clearing the history', () => {
+    it('asks before it clears, says the results stay, and clears when that is confirmed', async () => {
+      serve(settingsChanges(2));
+      open();
+      await render();
+
+      await click('page-history-clear');
+
+      expect(sdk.clear).not.toHaveBeenCalled();
+      const dialog = byId('page-history-dialog');
+      expect(dialog?.textContent).toContain('cannot be undone');
+      expect(dialog?.textContent).toContain('The results stay');
+      expect(byId('page-history-confirm')?.textContent).toBe('Clear and reset');
+
+      await click('page-history-confirm');
+
+      expect(sdk.clear).toHaveBeenCalledTimes(1);
+      expect(sdk.clear.mock.calls[0]?.[0]).toMatchObject({
+        path: { project_id: 'project', page_id: 'page', stage: 'geometry', step_id: STEP_ID },
+      });
+      expect(byId('page-history-dialog')).toBeNull();
+    });
+
+    it('clears nothing when the question is cancelled', async () => {
+      serve(settingsChanges(2));
+      open();
+      await render();
+
+      await click('page-history-clear');
+      await cancel();
+
+      expect(sdk.clear).not.toHaveBeenCalled();
+    });
+
+    it('reads the history and the results again after a clear, and keeps the results on the list', async () => {
+      serve(settingsChanges(2));
+      sdk.versions.mockResolvedValue(listed(OLD, NEW));
+      open();
+      await render();
+      await click('page-history-clear');
+      sdk.history.mockClear();
+      serve([]);
+
+      await click('page-history-confirm');
+
+      expect(sdk.history).toHaveBeenCalled();
+      expect(order()).toEqual(['result:new', 'result:old']);
+    });
+
+    it('is the last thing in the list, and is not there while no step is open', async () => {
+      serve(settingsChanges(2));
+      open();
+      await render();
+
+      expect(byId('page-history-clear')?.previousElementSibling).not.toBeNull();
+      expect(byId('page-history-clear')?.nextElementSibling).toBeNull();
+
+      await render({ step: null });
+      expect(byId('page-history-clear')).toBeNull();
+    });
+  });
+
+  describe('with no step open', () => {
+    beforeEach(() => {
+      sdk.versions.mockResolvedValue(listed(FIRST, OLD, NEW));
+      open();
+    });
+
+    it('lists the results of the stage, leaves out the version a later step read, and reads no change', async () => {
+      await render({ step: null });
+
+      expect(order()).toEqual(['result:new', 'result:old']);
+      expect(sdk.history).not.toHaveBeenCalled();
+      expect(sdk.versions.mock.calls[0]?.[0].query).toEqual({
+        stage: 'geometry',
+        scale: 'full',
+        size: 100,
+        page: 1,
+      });
+      expect(byId('page-history-count')?.textContent).toBe('2 events');
+    });
+
+    it('turns the Changes filter off with the hint to open a step', async () => {
+      await render({ step: null });
+
+      expect(byId('results-filter-changes')?.hasAttribute('disabled')).toBe(true);
+      expect(byId('page-history-changes-hint')?.textContent).toBe('Open a step to see its changes');
+      expect(byId('results-filter-results')?.hasAttribute('disabled')).toBe(false);
+    });
+
+    it('has the Changes filter on, and no hint, when a step is open', async () => {
+      serve(settingsChanges(1));
+      await render();
+
+      expect(byId('results-filter-changes')?.hasAttribute('disabled')).toBe(false);
+      expect(byId('page-history-changes-hint')).toBeNull();
+    });
+
+    it('shows every result when the step is closed while the Changes filter is pressed', async () => {
+      serve(settingsChanges(1));
+      await render();
+      await click('results-filter-changes');
+
+      await render({ step: null });
+
+      expect(order()).toEqual(['result:new', 'result:old']);
+      expect(byId('results-filter-all')?.getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('narrows the results of the stage by the mark from the list it has, with no new request', async () => {
+      await render({ step: null });
+      await click('results-filter-bad');
+
+      expect(order()).toEqual(['result:new']);
+      expect(sdk.versions).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not list a version a later step read under the mark it carries, since it is no result of the stage', async () => {
+      sdk.versions.mockResolvedValue(listed(FIRST, version('last', { input_id: 'first' })));
+      await render({ step: null, currentId: 'last' });
+      await click('results-filter-bad');
+
+      expect(order()).toEqual([]);
+    });
+
+    it('reads the results of a step by the step', async () => {
+      sdk.versions.mockResolvedValue(listed(OLD, NEW));
+      await render();
+
+      expect(sdk.versions.mock.calls[0]?.[0].query).toMatchObject({
+        stage: 'geometry',
+        step: STEP_ID,
+        scale: 'full',
+      });
+    });
+
+    it('lists the result of an early step though a later step reads it, since the list holds that step only', async () => {
+      sdk.versions.mockResolvedValue(listed(FIRST));
+      await render({ currentId: 'first' });
+
+      expect(order()).toEqual(['result:first']);
+    });
+  });
+
+  describe('when it is grey', () => {
+    const expectGrey = (reason: string): void => {
+      expect(byId('page-history')?.getAttribute('aria-disabled')).toBe('true');
+      expect(byId('page-history-toggle')?.hasAttribute('disabled')).toBe(true);
+      expect(byId('page-history-reason')?.textContent).toContain(reason);
+      expect(byId('page-history-count')).toBeNull();
+      expect(byId('page-history-list')).toBeNull();
+    };
+
+    it('says no page is chosen, and reads nothing', async () => {
+      open();
+      await render({ noPage: true, step: null });
+
+      expectGrey('No page is chosen.');
+      expect(sdk.history).not.toHaveBeenCalled();
+      expect(sdk.versions).not.toHaveBeenCalled();
+    });
+
+    it('says the recipe is not saved for a step with no id, and reads nothing, not even the results of the stage', async () => {
+      open();
+      await render({ step: { stepId: null, processorKey: 'geometry.deskew' } });
+
+      expectGrey('not saved yet');
+      expect(sdk.history).not.toHaveBeenCalled();
+      expect(sdk.versions).not.toHaveBeenCalled();
+    });
+
+    it('says nothing has happened on the page yet, when there is no change and no result', async () => {
+      open();
+      await render();
+
+      expectGrey('Nothing has happened on this page yet.');
+    });
+
+    it('says the same for a stage with no result and no step open', async () => {
+      open();
+      await render({ step: null });
+
+      expectGrey('Nothing has happened on this page yet.');
+    });
+
+    it('stays shut for a page with no change when the reader chose to open it, and shows no list or clear', async () => {
+      open();
+      await render();
+
+      expect(byId('page-history-clear')).toBeNull();
+      expect(byId('results-filter')).toBeNull();
+    });
+
+    it('is not grey while the lists are being read, and shows no count', async () => {
+      sdk.history.mockReturnValue(new Promise(() => undefined));
+      await render();
+
+      expect(byId('page-history')?.getAttribute('aria-disabled')).toBe('false');
+      expect(byId('page-history-count')).toBeNull();
+    });
+  });
+
+  describe('whether it is open', () => {
+    it('remembers that it was opened, and that it was closed again, for the next one', async () => {
+      serve(settingsChanges(2));
+      await render();
+      await click('page-history-toggle');
+      expect(rows()).toHaveLength(2);
+
+      act(() => root.unmount());
+      root = createRoot(container);
+      await render();
+      expect(rows()).toHaveLength(2);
+
+      await click('page-history-toggle');
+      act(() => root.unmount());
+      root = createRoot(container);
+      await render();
+      expect(byId('page-history-list')).toBeNull();
+    });
+
+    it('stays as chosen when the step is closed, since the choice is one for every stage', async () => {
+      serve(settingsChanges(2));
+      sdk.versions.mockResolvedValue(listed(OLD, NEW));
+      open();
+      await render();
+
+      await render({ step: null });
+
+      expect(byId('page-history-toggle')?.getAttribute('data-state')).toBe('open');
+    });
+
+    it('stays collapsed when the storage throws', async () => {
+      serve(settingsChanges(2));
+      vi.stubGlobal('localStorage', {
+        getItem: () => {
+          throw new Error('blocked');
+        },
+        setItem: () => {
+          throw new Error('blocked');
+        },
+      });
+      await render();
+
+      expect(byId('page-history-list')).toBeNull();
+      await click('page-history-toggle');
+      expect(rows()).toHaveLength(2);
+    });
+  });
+
+  it('says the history could not be read when the server refuses', async () => {
+    sdk.history.mockRejectedValue(new ProblemError('Broken.', 500, null, []));
+    await render();
+
+    expect(container.textContent).toContain('could not be read');
+  });
+});

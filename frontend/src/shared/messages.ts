@@ -1457,11 +1457,26 @@ export const MESSAGES = {
         },
       },
       pageHistory: {
-        title: 'History of this page',
-        hint: 'Every change of this step on this page, newest first. "Undo to here" takes back that change and every change after it, and Ctrl+Z takes back the newest one. A change of a batch is taken back with the rest of its batch.',
+        hint: {
+          step: 'The changes of this step on this page and the results it made, newest first. "Undo to here" takes back that change and every change after it, and Ctrl+Z takes back the newest one. A change of a batch is taken back with the rest of its batch.',
+          stage:
+            'The results this stage made on this page, newest first. Open a step to see its changes too.',
+        },
+        noPage: 'No page is chosen.',
         notSaved: 'The recipe is not saved yet, so this step has no history.',
-        nothingYet: 'Nothing has changed for this step on this page yet.',
-        count: (count: number) => `${count} ${pluralize(count, 'change', 'changes')}`,
+        nothingYet: 'Nothing has happened on this page yet.',
+        chips: {
+          change: 'Change',
+          result: 'Result',
+        },
+        filters: {
+          group: 'Show',
+          all: 'All',
+          changes: 'Changes',
+          results: 'Results',
+        },
+        changesNeedStep: 'Open a step to see its changes',
+        noChanges: 'This step has no change on this page.',
         showMore: (count: number) => `Show ${count} more`,
         undoHere: 'Undo to here',
         undoHereLabel: (what: string) => `Undo to the change: ${what}`,
@@ -1477,7 +1492,7 @@ export const MESSAGES = {
         confirmClear: {
           open: 'Clear the history',
           title: 'Clear the history of this page?',
-          body: 'This deletes every change of this step on this page and takes away the settings and the hand edit of the step on this page, so the page uses the recipe again. It cannot be undone.',
+          body: 'This deletes every change of this step on this page and takes away the settings and the hand edit of the step on this page, so the page uses the recipe again. The results stay. It cannot be undone.',
           confirm: 'Clear and reset',
           cancel: 'Cancel',
         },
@@ -1730,9 +1745,8 @@ export const MESSAGES = {
       saveFirst: 'Save the recipe before applying it.',
     },
     history: {
-      title: 'Results on this page',
       current: 'Current',
-      use: 'Use this result',
+      use: 'Use this',
       using: 'Using…',
       pictureRemoved: 'Picture removed · made again on use',
       empty: 'Run the stage to make a result.',
@@ -1750,15 +1764,10 @@ export const MESSAGES = {
         saving: 'Saving…',
         cancel: 'Cancel',
       },
-      made: (time: string) => `Made ${time}`,
       origin: {
         auto: 'Made by the step',
         hand: 'Set by hand',
       } satisfies Record<VersionOrigin, string>,
-      filter: {
-        group: 'Show the results marked',
-        all: 'All',
-      },
       emptyMarked: {
         good: 'No result of this page is marked good.',
         bad: 'No result of this page is marked bad.',

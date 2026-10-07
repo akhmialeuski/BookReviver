@@ -642,13 +642,7 @@ describe('StepPanel', () => {
   });
 
   describe('the results of the step on the open page', () => {
-    // The list is drawn once the query has answered, which one tick of the timer does not always wait for
-    const settled = (): Promise<void> =>
-      act(async () => {
-        await vi.waitFor(() => expect(find('history-entry')).not.toBeNull());
-      });
-
-    beforeEach(() => {
+    it('leaves the results and the changes to the history at the end of the stage panel, and reads none', async () => {
       sdk.versions.mockResolvedValue({
         data: {
           items: [version('old', { created_at: '2026-09-30T10:00:00Z' }), version('v')],
@@ -658,33 +652,17 @@ describe('StepPanel', () => {
           pages: 1,
         },
       });
-    });
-
-    it('lists them from the server by the step, the current one marked', async () => {
       render(1);
-      await settled();
-
-      expect(sdk.versions.mock.calls[0]?.[0]).toMatchObject({
-        path: { page_id: 'p1' },
-        query: { stage: 'geometry', step: 'b', scale: 'full' },
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
       });
-      const entries = [...container.querySelectorAll('[data-testid="history-entry"]')];
-      expect(entries.map((entry) => entry.getAttribute('data-version'))).toEqual(['v', 'old']);
-      expect(entries[0]?.getAttribute('data-current')).toBe('true');
-    });
 
-    it('offers no earlier result as the result of the stage on a step that is not the last', async () => {
-      render(1);
-      await settled();
-
+      expect(find('results')).toBeNull();
+      expect(find('history-entry')).toBeNull();
       expect(find('history-use')).toBeNull();
-    });
-
-    it('offers an earlier result on the last step, whose results are the results of the stage', async () => {
-      render(2, placed('found'));
-      await settled();
-
-      expect(find('history-use')).not.toBeNull();
+      expect(find('page-history')).toBeNull();
+      expect(sdk.versions).not.toHaveBeenCalled();
+      expect(sdk.history).not.toHaveBeenCalled();
     });
   });
 });

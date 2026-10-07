@@ -22,8 +22,8 @@ import { invalidateStageRows, invalidateStageSummary } from '@/features/projects
  * the settings and the edit of the step away from the page along with its history.
  */
 
-/** How many changes the history loads at a time. */
-export const HISTORY_PAGE_SIZE = 3;
+/** How many changes the history loads at a time, which is the most the server gives a page of a list. */
+export const HISTORY_PAGE_SIZE = 100;
 
 // The generated client names each query by the function that makes it, so these are checked against the client
 const HISTORY_QUERY: keyof typeof sdk =
@@ -68,10 +68,12 @@ function loadedOf(data: InfiniteData<PagePageStepChangeSchema>): LoadedHistory {
 }
 
 /**
- * Read the changes of a step on a page, the newest first, a few at a time, with the ones an undo took back marked.
+ * Read the changes of a step on a page, the newest first, a page of a hundred at a time, with the ones an undo took back
+ * marked.
  *
- * The first request reads the newest changes and the total, and `fetchNextPage` reads the ones before them. A change
- * that is written or taken back reads every page that was loaded again, so the rows on screen stay the newest ones.
+ * The first request reads the newest changes and the total, and `fetchNextPage` reads the ones before them, which the
+ * timeline asks for only when the list it shows needs rows beyond those loaded. A change that is written or taken back
+ * reads every page that was loaded again, so the rows on screen stay the newest ones.
  */
 export function usePageHistory(
   projectId: string,
