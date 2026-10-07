@@ -8,6 +8,7 @@ import {
   writePagesFolder,
   writeScansFolder,
 } from './support/account';
+import { openTimeline } from './support/page-work';
 
 /**
  * The processing workspace on the Geometry stage: the recipe drawn from the schema of its processor, a preview of the
@@ -181,6 +182,8 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
   await test.step('the stale pages are run again and the page keeps both of its results', async () => {
     await page.getByTestId('stale-banner-run').click();
     await expect(page.getByTestId('stale-banner')).toHaveCount(0, { timeout: RUN_TIMEOUT_MS });
+    // The results are in the history that ends the panel, which is collapsed until it is opened
+    await openTimeline(page);
     await expect(page.getByTestId('history-entry')).toHaveCount(2, { timeout: RUN_TIMEOUT_MS });
     await expect(page.getByTestId('history-entry').first()).toHaveAttribute('data-current', 'true');
   });

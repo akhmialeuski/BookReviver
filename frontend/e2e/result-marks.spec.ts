@@ -10,6 +10,7 @@ import {
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
+import { openTimeline } from './support/page-work';
 
 /**
  * The notes a user puts on a result: a good or bad mark and a comment of several lines, which can be changed later,
@@ -52,6 +53,8 @@ test('a result is marked and commented, and the notes can be changed later', asy
       timeout: RUN_TIMEOUT_MS,
     });
     await page.getByTestId('strip-page').first().click();
+    // The results are in the history that ends the panel, which is collapsed until it is opened
+    await openTimeline(page);
     await expect(page.getByTestId('history-entry')).toHaveCount(1);
   });
 
@@ -71,6 +74,7 @@ test('a result is marked and commented, and the notes can be changed later', asy
     await expect(entry.getByTestId('result-mark-good')).toHaveAttribute('aria-pressed', 'false');
     await page.reload();
     await page.getByTestId('strip-page').first().click();
+    await openTimeline(page);
     await expect(entry.getByTestId('result-mark-bad')).toHaveAttribute('aria-pressed', 'true');
     await expect(entry.getByTestId('result-comment')).toHaveText(COMMENT);
     await snap(page, 'result-marked-bad');

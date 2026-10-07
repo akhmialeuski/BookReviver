@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../../src/shared/http/csrf';
 import { openProjectId } from './account';
 
@@ -85,4 +85,22 @@ export async function readHistory(
     `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/history/geometry/${stepId}?size=100`,
   );
   return ((await response.json()) as { items: HistoryItem[] }).items;
+}
+
+/**
+ * Open the history of the page at the end of the panel of the stage, which is collapsed until the reader opens it and
+ * then stays as the reader left it on every stage.
+ *
+ * @param page The page of the browser, on a stage with a page open.
+ * @returns The section, open.
+ */
+export async function openTimeline(page: Page): Promise<Locator> {
+  const history = page.getByTestId('stage-panel').getByTestId('page-history');
+  const toggle = history.getByTestId('page-history-toggle');
+  await expect(toggle).toBeEnabled();
+  if ((await toggle.getAttribute('data-state')) !== 'open') {
+    await toggle.click();
+  }
+  await expect(toggle).toHaveAttribute('data-state', 'open');
+  return history;
 }

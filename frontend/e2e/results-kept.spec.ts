@@ -11,6 +11,7 @@ import {
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
+import { openTimeline } from './support/page-work';
 
 /**
  * The results a page keeps after their pictures are collected: a collection removes the files of the old results and
@@ -69,6 +70,8 @@ test('a result whose picture was collected is made again when it is used', async
       timeout: RUN_TIMEOUT_MS,
     });
     await page.getByTestId('strip-page').first().click();
+    // The results are in the history that ends the panel, which is collapsed until it is opened
+    await openTimeline(page);
     await expect(entries).toHaveCount(1);
 
     await page.getByTestId('bar-step').filter({ hasText: 'Margins' }).click();
@@ -110,6 +113,7 @@ test('a result whose picture was collected is made again when it is used', async
     removedId = removed[0]?.id ?? '';
     await page.reload();
     await page.getByTestId('strip-page').first().click();
+    await openTimeline(page);
     await expect(entries).toHaveCount(2);
     await expect(entries.nth(1).getByTestId('history-removed')).toHaveText(
       'Picture removed · made again on use',

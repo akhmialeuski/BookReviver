@@ -1,9 +1,11 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Locator, type Page, test } from '@playwright/test';
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../src/shared/http/csrf';
 import {
   createBook,
+  openImportStage,
+  openOrderStage,
   openProjectId,
   registerAndSignIn,
   snap,
@@ -11,14 +13,20 @@ import {
   uploadFolder,
   waitForIdleJobs,
   writePagesFolder,
+  writeSheetsFolder,
 } from './support/account';
+import { dragFrom, pairOf } from './support/layer';
+import { openTimeline } from './support/page-work';
 
 /**
- * The history of a step on a page, a collapsible section at the end of the panel of the stage: a setting changed in the
- * panel and an edit saved by the editor are listed with what they changed, the button of the newest row takes it back,
- * Ctrl+Z takes back the one before it, and the history keeps the undos beside the changes they took back. A history of
- * several changes is read three at a time, an undo back to an older row asks first, and a clear asks too, then leaves the
- * section grey with no history and no setting on the page.
+ * The history of a page, a collapsible section at the end of the panel of every stage that lists the changes of the open
+ * step and its results in one timeline: a setting changed in the panel and an edit saved by the editor are listed with
+ * what they changed, the button of the newest row takes it back, Ctrl+Z takes back the one before it, and the history
+ * keeps the undos beside the changes they took back. A history of several changes is read three at a time, an undo back
+ * to an older row asks first, and a clear asks too, then leaves the section grey with no history and no setting on the
+ * page. A hand edit shows in the timeline as soon as it is saved, with the result it made, and a result can be marked and
+ * commented, narrowed by the filters and kept when the changes are cleared. A stage that keeps no history shows the same
+ * section grey, and the section never makes the panel scroll sideways.
  */
 
 const PAGES = 2;
@@ -37,6 +45,13 @@ const OLDEST_SLANT = 1;
 const THIRD_ROW = 2;
 const CHANGES_TAKEN_BACK = 3;
 const CHANGES_AFTER_THE_UNDO_BACK = 7;
+const RUN_TIMEOUT_MS = 90_000;
+const DRAG_PX = 30;
+const STEP_ADDRESS = /\/stages\/geometry\/steps\/[0-9a-f-]{36}(\?|$)/;
+const COMMENT = 'The frame found is right.';
+const EVENTS_AFTER_THE_EDIT = 3;
+const EVENTS_AFTER_THE_UNDO = 4;
+const EVENTS_AFTER_THE_CLEAR = 2;
 
 // Tall enough for the pictures of the key states to show the open step with its settings and its history
 test.use({ viewport: { width: 1280, height: 1100 } });
@@ -138,7 +153,7 @@ test('a reader sees what changed on a page, takes the last change back with the 
     await page.getByTestId('bar-step').filter({ hasText: DESKEW_TITLE }).click();
     await expect(step).toBeVisible();
     await expect(history).toBeVisible();
-    await expect(history.getByTestId('page-history-count')).toHaveText('1 change');
+    await expect(history.getByTestId('page-history-count')).toHaveText('1 event');
     await history.getByTestId('page-history-toggle').click();
     await expect(rows).toHaveCount(1);
     await expect(rows.first()).toContainText('Set by hand');
@@ -166,7 +181,7 @@ test('a reader sees what changed on a page, takes the last change back with the 
     await step.getByTestId('step-panel-title').click();
     await page.keyboard.press('Control+z');
     await expect(history.getByTestId('page-history-count')).toHaveText(
-      `${CHANGES_AFTER_TWO_UNDOS} changes`,
+      `${CHANGES_AFTER_TWO_UNDOS} events`,
     );
     await expect(rows).toHaveCount(ROWS_SHOWN);
     await expect(history.getByTestId('page-history-undo-here')).toHaveCount(0);
@@ -214,7 +229,7 @@ test('a reader reads a long history three changes at a time, undoes back to an o
     }
     await page.getByTestId('bar-step').filter({ hasText: DESKEW_TITLE }).click();
     await expect(history.getByTestId('page-history-count')).toHaveText(
-      `${SLANTS_OF_THE_PAGE.length} changes`,
+      `${SLANTS_OF_THE_PAGE.length} events`,
     );
     await expect(history.getByTestId('page-history-toggle')).toBeEnabled();
     await expect(rows).toHaveCount(0);
@@ -240,7 +255,7 @@ test('a reader reads a long history three changes at a time, undoes back to an o
     await dialog.getByTestId('page-history-confirm').click();
     await expect(dialog).toHaveCount(0);
     await expect(history.getByTestId('page-history-count')).toHaveText(
-      `${CHANGES_AFTER_THE_UNDO_BACK} changes`,
+      `${CHANGES_AFTER_THE_UNDO_BACK} events`,
     );
     expect(await readSettings(page, pageId)).toEqual([{ max_angle: OLDEST_SLANT }]);
   });
@@ -248,17 +263,195 @@ test('a reader reads a long history three changes at a time, undoes back to an o
   await test.step('a clear asks first, deletes the history and the settings, and leaves the section grey', async () => {
     await history.getByTestId('page-history-clear').click();
     await expect(dialog).toContainText('cannot be undone');
+    await history.scrollIntoViewIfNeeded();
     await snap(page, 'page-history-clear-confirmation');
     await dialog.getByTestId('page-history-confirm').click();
     await expect(dialog).toHaveCount(0);
     await expect(history).toHaveAttribute('aria-disabled', 'true');
     await expect(history.getByTestId('page-history-toggle')).toBeDisabled();
-    await expect(history.getByTestId('page-history-reason')).toContainText('Nothing has changed');
+    await expect(history.getByTestId('page-history-reason')).toContainText('Nothing has happened');
     await expect(rows).toHaveCount(0);
     expect(await readHistory(page, pageId, stepId)).toEqual([]);
     expect(await readSettings(page, pageId)).toEqual([]);
     await history.scrollIntoViewIfNeeded();
     await snap(page, 'page-history-disabled-after-clear');
+  });
+
+  await rm(path.dirname(folder), { recursive: true, force: true });
+});
+
+/** Tell whether a scrolling element holds its content without a horizontal scroll bar. */
+function fitsTheWidth(area: Locator): Promise<boolean> {
+  return area.evaluate((element) => element.scrollWidth <= element.clientWidth);
+}
+
+test('a reader reads the changes and the results of a step in one timeline that stays on every stage and never scrolls sideways', async ({
+  page,
+}) => {
+  test.setTimeout(SCENARIO_TIMEOUT_MS);
+  const folder = await writeSheetsFolder(1);
+  const history = page.getByTestId('stage-panel').getByTestId('page-history');
+  const area = page.getByTestId('stage-panel').getByTestId('stage-panel-scroll');
+  const rows = history.getByTestId('page-history-list').locator(':scope > li');
+  const changes = history.getByTestId('page-history-row');
+  const results = history.getByTestId('history-entry');
+  const dialog = page.getByTestId('page-history-dialog');
+  const layer = page.getByTestId('editor-layer');
+  let projectId = '';
+
+  // An edit starts a run of the stage on the page, and the next change waits until that run is over
+  const settled = async (): Promise<void> => {
+    await expect(page.getByTestId('editor-busy')).toHaveCount(0, { timeout: RUN_TIMEOUT_MS });
+    await waitForIdleJobs(page, projectId);
+  };
+
+  await test.step('Auto on Select content makes a result, which the collapsed section counts', async () => {
+    await registerAndSignIn(page);
+    await createBook(page, 'A book with a timeline');
+    await uploadFolder(page, folder, 1);
+    projectId = openProjectId(page);
+    await waitForIdleJobs(page, projectId);
+    const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
+    await page.goto(`${bookPath}/stages/geometry`);
+    await expect(page.getByTestId('strip-page')).toHaveCount(1);
+    await page.getByTestId('bar-step').filter({ hasText: 'Select content' }).click();
+    await expect(page).toHaveURL(STEP_ADDRESS);
+    await expect(layer).toHaveAttribute('aria-label', 'Frame of the content');
+    // The page has no result yet, so the section is grey and says so
+    await expect(history).toHaveAttribute('aria-disabled', 'true');
+    await expect(history.getByTestId('page-history-reason')).toContainText('Nothing has happened');
+    await page.getByTestId('step-auto').click();
+    await expect(history.getByTestId('page-history-count')).toHaveText('1 event', {
+      timeout: RUN_TIMEOUT_MS,
+    });
+    await waitForIdleJobs(page, projectId);
+    await expect(history).toHaveAttribute('aria-disabled', 'false');
+    await expect(history.getByTestId('page-history-toggle')).toHaveAttribute(
+      'data-state',
+      'closed',
+    );
+    await expect(area.locator(':scope > *').last()).toHaveAttribute('data-testid', 'page-history');
+    await history.scrollIntoViewIfNeeded();
+    await snap(page, 'timeline-collapsed');
+  });
+
+  await test.step('opened, the result is a row with its chip, and it is marked good and commented', async () => {
+    await openTimeline(page);
+    await expect(rows).toHaveCount(1);
+    await expect(results).toHaveCount(1);
+    await expect(changes).toHaveCount(0);
+    await expect(results.first()).toContainText('Result');
+    await expect(results.first()).toContainText('Current');
+    await expect(results.first().getByTestId('history-origin')).toHaveText('Made by the step');
+    await results.first().getByTestId('result-mark-good').click();
+    await expect(results.first().getByTestId('result-mark-good')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await results.first().getByTestId('result-comment-edit').click();
+    await results.first().getByRole('textbox', { name: 'Comment' }).fill(COMMENT);
+    await results.first().getByTestId('result-comment-save').click();
+    await expect(results.first().getByTestId('result-comment')).toHaveText(COMMENT);
+  });
+
+  await test.step('a border moved by hand shows its change and the result it made with no reload, and the panel does not scroll sideways', async () => {
+    const bottom = await pairOf(layer, 'data-handle-bottom');
+    await dragFrom(page, layer, bottom, { x: 0, y: -DRAG_PX });
+    await expect(layer).toHaveAttribute('data-figure', 'by-hand', { timeout: RUN_TIMEOUT_MS });
+    await settled();
+    await expect(history.getByTestId('page-history-count')).toHaveText(
+      `${EVENTS_AFTER_THE_EDIT} events`,
+      { timeout: RUN_TIMEOUT_MS },
+    );
+    await expect(rows).toHaveCount(EVENTS_AFTER_THE_EDIT);
+    await expect(rows.nth(0)).toHaveAttribute('data-kind', 'result');
+    await expect(rows.nth(1)).toHaveAttribute('data-kind', 'change');
+    await expect(rows.nth(2)).toHaveAttribute('data-kind', 'result');
+    await expect(rows.nth(0).getByTestId('history-origin')).toHaveText('Set by hand');
+    await expect(rows.nth(1)).toContainText('Set by hand');
+    await expect(rows.nth(1)).toContainText('Frame: left');
+    await expect(rows.nth(1)).not.toContainText('{');
+    await expect.poll(() => fitsTheWidth(area)).toBe(true);
+    await expect.poll(() => fitsTheWidth(history)).toBe(true);
+    await history.scrollIntoViewIfNeeded();
+    await snap(page, 'timeline-mixed-rows');
+  });
+
+  await test.step('the filters narrow the list to the changes, to the results and to the results marked good', async () => {
+    await history.getByTestId('results-filter-changes').click();
+    await expect(changes).toHaveCount(1);
+    await expect(results).toHaveCount(0);
+    await history.getByTestId('results-filter-results').click();
+    await expect(results).toHaveCount(2);
+    await expect(changes).toHaveCount(0);
+    await history.getByTestId('results-filter-good').click();
+    await expect(results).toHaveCount(1);
+    await expect(results.first().getByTestId('result-comment')).toHaveText(COMMENT);
+    await history.scrollIntoViewIfNeeded();
+    await snap(page, 'timeline-results-filter');
+    await history.getByTestId('results-filter-all').click();
+    await expect(rows).toHaveCount(EVENTS_AFTER_THE_EDIT);
+  });
+
+  await test.step('"Undo to here" takes back the change, and the fourth row waits behind "Show 1 more"', async () => {
+    await changes.first().getByTestId('page-history-undo-here').click();
+    await expect(history.getByTestId('page-history-count')).toHaveText(
+      `${EVENTS_AFTER_THE_UNDO} events`,
+    );
+    await expect(changes).toHaveCount(2);
+    await expect(changes.first()).toContainText('An undo');
+    await expect(changes.nth(1)).toHaveAttribute('data-undone', 'true');
+    await expect(rows).toHaveCount(EVENTS_AFTER_THE_EDIT);
+    await expect(history.getByTestId('page-history-more')).toHaveText('Show 1 more');
+    await history.getByTestId('page-history-more').click();
+    await expect(rows).toHaveCount(EVENTS_AFTER_THE_UNDO);
+    await expect.poll(() => fitsTheWidth(area)).toBe(true);
+  });
+
+  await test.step('clearing the history asks first, deletes the changes and keeps the results with their notes', async () => {
+    await history.getByTestId('page-history-clear').click();
+    await expect(dialog).toContainText('The results stay');
+    await dialog.getByTestId('page-history-confirm').click();
+    await expect(dialog).toHaveCount(0);
+    await expect(history.getByTestId('page-history-count')).toHaveText(
+      `${EVENTS_AFTER_THE_CLEAR} events`,
+    );
+    await expect(changes).toHaveCount(0);
+    await expect(results).toHaveCount(EVENTS_AFTER_THE_CLEAR);
+    await expect(history.getByTestId('result-comment')).toHaveText(COMMENT);
+  });
+
+  await test.step('with the step closed the section lists the results of the stage, its Changes filter is off and it has no clear', async () => {
+    await page.getByTestId('step-close').click();
+    await expect(page.getByTestId('step-panel')).toHaveCount(0);
+    await expect(history).toHaveAttribute('aria-disabled', 'false');
+    await expect(history.getByTestId('results-filter-changes')).toBeDisabled();
+    await expect(history.getByTestId('page-history-changes-hint')).toHaveText(
+      'Open a step to see its changes',
+    );
+    await expect(history.getByTestId('page-history-clear')).toHaveCount(0);
+    await expect(changes).toHaveCount(0);
+    await expect(results.first()).toBeVisible();
+    await history.scrollIntoViewIfNeeded();
+    await snap(page, 'timeline-no-step');
+  });
+
+  await test.step('Import and Order show the same section grey, with the reason that they keep no history', async () => {
+    await openImportStage(page);
+    await expect(history).toHaveAttribute('aria-disabled', 'true');
+    await expect(history.getByTestId('page-history-toggle')).toBeDisabled();
+    await expect(history.getByTestId('page-history-reason')).toContainText(
+      'keeps no history of its pages',
+    );
+    await history.scrollIntoViewIfNeeded();
+    await snap(page, 'timeline-import-disabled');
+
+    await openOrderStage(page);
+    const order = page.getByTestId('page-history').first();
+    await expect(order).toHaveAttribute('aria-disabled', 'true');
+    await expect(order.getByTestId('page-history-reason')).toContainText(
+      'keeps no history of its pages',
+    );
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });
