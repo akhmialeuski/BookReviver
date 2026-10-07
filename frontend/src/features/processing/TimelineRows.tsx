@@ -115,7 +115,7 @@ export function ResultRow({
   return (
     <li
       className={cn(ROW, 'grid gap-1.5')}
-      data-testid="history-entry"
+      data-testid="page-history-row"
       data-kind="result"
       data-current={current}
       data-version={version.id}
@@ -125,22 +125,22 @@ export function ResultRow({
           <div className={META}>
             <Badge variant="outline">{labels.chips.result}</Badge>
             <span className="min-w-0 break-words">
-              <span data-testid="history-origin">{resultLabels.origin[version.origin]}</span> ·{' '}
+              <span data-testid="page-history-origin">{resultLabels.origin[version.origin]}</span> ·{' '}
               {formatDateTime(version.created_at)}
             </span>
           </div>
           {parts.length === 0 ? null : (
-            <span className="min-w-0 break-words" data-testid="history-settings">
+            <span className="min-w-0 break-words" data-testid="page-history-settings">
               {parts.map((part) => `${part.label} ${part.value}`).join(' · ')}
             </span>
           )}
           {facts.length === 0 ? null : (
-            <span className="min-w-0 break-words" data-testid="history-found">
+            <span className="min-w-0 break-words" data-testid="page-history-found">
               {facts.map((fact) => `${fact.label} ${fact.value}`).join(' · ')}
             </span>
           )}
           {version.files_removed ? (
-            <span className="text-muted-foreground" data-testid="history-removed">
+            <span className="text-muted-foreground" data-testid="page-history-removed">
               {resultLabels.pictureRemoved}
             </span>
           ) : null}
@@ -153,7 +153,7 @@ export function ResultRow({
             size="sm"
             className="shrink-0"
             disabled={disabled}
-            data-testid="history-use"
+            data-testid="page-history-use"
             onClick={onUse}
           >
             {using ? resultLabels.using : resultLabels.use}

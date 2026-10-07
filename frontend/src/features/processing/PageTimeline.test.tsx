@@ -361,11 +361,11 @@ describe('PageTimeline', () => {
       expect(byId('page-history')?.className).toContain('min-w-0');
       expect(byId('page-history-list')?.className).toContain('grid-cols-1');
       expect(earlier?.className).toContain('min-w-0');
-      expect(byId('history-settings', current)?.className).toMatch(/min-w-0.*break-words/);
-      expect(byId('history-found', current)?.className).toMatch(/min-w-0.*break-words/);
+      expect(byId('page-history-settings', current)?.className).toMatch(/min-w-0.*break-words/);
+      expect(byId('page-history-found', current)?.className).toMatch(/min-w-0.*break-words/);
       expect(byId('page-history-change', changed)?.className).toMatch(/min-w-0.*break-words/);
       expect(undoHere(changed)?.className).toContain('shrink-0');
-      expect(byId('history-use', earlier)?.className).toContain('shrink-0');
+      expect(byId('page-history-use', earlier)?.className).toContain('shrink-0');
     });
 
     it('puts "Undo to here" in a column of its own to the right of the text of the change, which does not shrink', async () => {
@@ -627,7 +627,7 @@ describe('PageTimeline', () => {
     it('offers All, Changes, Results, Good and Bad, with All pressed', async () => {
       await render();
 
-      const filters = [...container.querySelectorAll('[data-testid^="results-filter-"]')];
+      const filters = [...container.querySelectorAll('[data-testid^="page-history-filter-"]')];
       expect(filters.map((filter) => filter.textContent)).toEqual([
         'All',
         'Changes',
@@ -635,26 +635,26 @@ describe('PageTimeline', () => {
         'Good',
         'Bad',
       ]);
-      expect(byId('results-filter-all')?.getAttribute('aria-pressed')).toBe('true');
+      expect(byId('page-history-filter-all')?.getAttribute('aria-pressed')).toBe('true');
     });
 
     it('narrows to the changes, to the results, and to the results marked good or bad', async () => {
       await render();
 
-      await click('results-filter-changes');
+      await click('page-history-filter-changes');
       expect(order()).toEqual(['change:c2', 'change:c1']);
-      expect(byId('results-filter-changes')?.getAttribute('aria-pressed')).toBe('true');
+      expect(byId('page-history-filter-changes')?.getAttribute('aria-pressed')).toBe('true');
 
-      await click('results-filter-results');
+      await click('page-history-filter-results');
       expect(order()).toEqual(['result:new', 'result:old']);
 
-      await click('results-filter-good');
+      await click('page-history-filter-good');
       expect(order()).toEqual(['result:old']);
 
-      await click('results-filter-bad');
+      await click('page-history-filter-bad');
       expect(order()).toEqual(['result:new']);
 
-      await click('results-filter-all');
+      await click('page-history-filter-all');
       expect(order()).toEqual(['result:new', 'change:c2', 'result:old']);
     });
 
@@ -664,7 +664,7 @@ describe('PageTimeline', () => {
       expect(rows()).toHaveLength(4);
       const reads = sdk.versions.mock.calls.length;
 
-      await click('results-filter-all');
+      await click('page-history-filter-all');
 
       expect(rows()).toHaveLength(3);
       expect(sdk.versions).toHaveBeenCalledTimes(reads);
@@ -708,25 +708,27 @@ describe('PageTimeline', () => {
       sdk.versions.mockResolvedValue(listed(version('plain', { created_at: at(12) })));
       await render({ headId: 'plain' });
 
-      await click('results-filter-good');
-      expect(byId('results-empty')?.textContent).toBe('No result of this page is marked good.');
-      await click('results-filter-bad');
-      expect(byId('results-empty')?.textContent).toBe('No result of this page is marked bad.');
-      await click('results-filter-all');
-      expect(byId('results-empty')).toBeNull();
+      await click('page-history-filter-good');
+      expect(byId('page-history-empty')?.textContent).toBe(
+        'No result of this page is marked good.',
+      );
+      await click('page-history-filter-bad');
+      expect(byId('page-history-empty')?.textContent).toBe('No result of this page is marked bad.');
+      await click('page-history-filter-all');
+      expect(byId('page-history-empty')).toBeNull();
     });
 
     it('says the step has no change, and that the stage made no result', async () => {
       serve([]);
       await render();
-      await click('results-filter-changes');
-      expect(byId('results-empty')?.textContent).toBe('This step has no change on this page.');
+      await click('page-history-filter-changes');
+      expect(byId('page-history-empty')?.textContent).toBe('This step has no change on this page.');
 
       serve(CHANGES);
       sdk.versions.mockResolvedValue(EMPTY_LIST);
       await render({ step: { stepId: 'other', processorKey: 'geometry.deskew' } });
-      await click('results-filter-results');
-      expect(byId('results-empty')?.textContent).toBe('Run the stage to make a result.');
+      await click('page-history-filter-results');
+      expect(byId('page-history-empty')?.textContent).toBe('Run the stage to make a result.');
     });
   });
 
@@ -742,24 +744,24 @@ describe('PageTimeline', () => {
       const [current, earlier] = rows();
       expect(current?.getAttribute('data-current')).toBe('true');
       expect(current?.textContent).toContain('Current');
-      expect(byId('history-origin', current)?.textContent).toBe('Set by hand');
-      expect(byId('history-settings', current)?.textContent).toBe(
+      expect(byId('page-history-origin', current)?.textContent).toBe('Set by hand');
+      expect(byId('page-history-settings', current)?.textContent).toBe(
         'Largest slant 9 · Least confidence 0.3',
       );
-      expect(byId('history-found', current)?.textContent).toBe(
+      expect(byId('page-history-found', current)?.textContent).toBe(
         'Turned by 1.4° · Confidence 0.91 · sure',
       );
-      expect(byId('history-use', current)).toBeNull();
-      expect(byId('history-origin', earlier)?.textContent).toBe('Made by the step');
-      expect(byId('history-found', earlier)).toBeNull();
-      expect(byId('history-use', earlier)?.textContent).toBe('Use this');
+      expect(byId('page-history-use', current)).toBeNull();
+      expect(byId('page-history-origin', earlier)?.textContent).toBe('Made by the step');
+      expect(byId('page-history-found', earlier)).toBeNull();
+      expect(byId('page-history-use', earlier)?.textContent).toBe('Use this');
     });
 
     it('makes an earlier result the current one', async () => {
       await render({ step: null });
 
       await act(async () => {
-        byId('history-use')?.click();
+        byId('page-history-use')?.click();
       });
 
       expect(sdk.choose.mock.calls[0]?.[0]).toMatchObject({
@@ -779,9 +781,9 @@ describe('PageTimeline', () => {
       sdk.versions.mockResolvedValue(listed(FIRST, removed, NEW));
       await render({ step: null });
 
-      expect(byId('history-removed')?.textContent).toBe('Picture removed · made again on use');
+      expect(byId('page-history-removed')?.textContent).toBe('Picture removed · made again on use');
       await act(async () => {
-        byId('history-use')?.click();
+        byId('page-history-use')?.click();
       });
 
       expect(sdk.choose).not.toHaveBeenCalled();
@@ -793,7 +795,7 @@ describe('PageTimeline', () => {
       await render({ step: null });
 
       await act(async () => {
-        byId('history-use')?.click();
+        byId('page-history-use')?.click();
       });
       await settle();
 
@@ -807,14 +809,18 @@ describe('PageTimeline', () => {
       sdk.versions.mockResolvedValue(listed(OLD, NEW));
 
       await render({ state: processing({ recipe: two, recipes: [two] }), step: STEP });
-      expect(byId('history-use')).toBeNull();
-      expect(byId('history-entry')?.getAttribute('data-current')).toBe('true');
+      expect(byId('page-history-use')).toBeNull();
+      expect(
+        container
+          .querySelector('[data-testid="page-history-row"][data-kind="result"]')
+          ?.getAttribute('data-current'),
+      ).toBe('true');
 
       await render({
         state: processing({ recipe: two, recipes: [two] }),
         step: { stepId: 'id-geometry.crop', processorKey: 'geometry.crop' },
       });
-      expect(byId('history-use')).not.toBeNull();
+      expect(byId('page-history-use')).not.toBeNull();
     });
 
     it('is a result of the last enabled step when a step after it is off', async () => {
@@ -825,7 +831,7 @@ describe('PageTimeline', () => {
 
       await render({ state: processing({ recipe: off, recipes: [off] }), step: STEP });
 
-      expect(byId('history-use')).not.toBeNull();
+      expect(byId('page-history-use')).not.toBeNull();
     });
   });
 
@@ -1114,33 +1120,33 @@ describe('PageTimeline', () => {
     it('turns the Changes filter off with the hint to open a step', async () => {
       await render({ step: null });
 
-      expect(byId('results-filter-changes')?.hasAttribute('disabled')).toBe(true);
+      expect(byId('page-history-filter-changes')?.hasAttribute('disabled')).toBe(true);
       expect(byId('page-history-changes-hint')?.textContent).toBe('Open a step to see its changes');
-      expect(byId('results-filter-results')?.hasAttribute('disabled')).toBe(false);
+      expect(byId('page-history-filter-results')?.hasAttribute('disabled')).toBe(false);
     });
 
     it('has the Changes filter on, and no hint, when a step is open', async () => {
       serve(settingsChanges(1));
       await render();
 
-      expect(byId('results-filter-changes')?.hasAttribute('disabled')).toBe(false);
+      expect(byId('page-history-filter-changes')?.hasAttribute('disabled')).toBe(false);
       expect(byId('page-history-changes-hint')).toBeNull();
     });
 
     it('shows every result when the step is closed while the Changes filter is pressed', async () => {
       serve(settingsChanges(1));
       await render();
-      await click('results-filter-changes');
+      await click('page-history-filter-changes');
 
       await render({ step: null });
 
       expect(order()).toEqual(['result:new', 'result:old']);
-      expect(byId('results-filter-all')?.getAttribute('aria-pressed')).toBe('true');
+      expect(byId('page-history-filter-all')?.getAttribute('aria-pressed')).toBe('true');
     });
 
     it('narrows the results of the stage by the mark from the list it has, with no new request', async () => {
       await render({ step: null });
-      await click('results-filter-bad');
+      await click('page-history-filter-bad');
 
       expect(order()).toEqual(['result:new']);
       expect(sdk.versions).toHaveBeenCalledTimes(1);
@@ -1149,7 +1155,7 @@ describe('PageTimeline', () => {
     it('does not list a version a later step read under the mark it carries, since it is no result of the stage', async () => {
       sdk.versions.mockResolvedValue(listed(FIRST, version('last', { input_id: 'first' })));
       await render({ step: null, headId: 'last' });
-      await click('results-filter-bad');
+      await click('page-history-filter-bad');
 
       expect(order()).toEqual([]);
     });
@@ -1219,7 +1225,7 @@ describe('PageTimeline', () => {
       await render();
 
       expect(byId('page-history-clear')).toBeNull();
-      expect(byId('results-filter')).toBeNull();
+      expect(byId('page-history-filter')).toBeNull();
     });
 
     it('is not grey while the lists are being read, and shows no count', async () => {

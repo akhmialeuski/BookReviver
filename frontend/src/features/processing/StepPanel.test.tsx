@@ -658,8 +658,8 @@ describe('StepPanel', () => {
       });
 
       expect(find('results')).toBeNull();
-      expect(find('history-entry')).toBeNull();
-      expect(find('history-use')).toBeNull();
+      expect(find('page-history-row')).toBeNull();
+      expect(find('page-history-use')).toBeNull();
       expect(find('page-history')).toBeNull();
       expect(sdk.versions).not.toHaveBeenCalled();
       expect(sdk.history).not.toHaveBeenCalled();

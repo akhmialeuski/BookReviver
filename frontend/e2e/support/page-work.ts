@@ -10,6 +10,12 @@ import { openProjectId } from './account';
 const FIELD = 'max_angle';
 const ANGLE_OF_THE_EDIT = 1.5;
 
+/** The rows of the history that are changes of a step, which share their test id with the rows that are results. */
+export const CHANGE_ROWS = '[data-testid="page-history-row"][data-kind="change"]';
+
+/** The rows of the history that are results of a step, which share their test id with the rows that are changes. */
+export const RESULT_ROWS = '[data-testid="page-history-row"][data-kind="result"]';
+
 /** One change of the history of a step on a page, as the API lists it. */
 export interface HistoryItem {
   layer: string;

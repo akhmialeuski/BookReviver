@@ -233,8 +233,8 @@ describe('ThisPageSection', () => {
     await render({ page: page('page'), row: row('page', { version: NEW }) });
 
     expect(container.querySelector('[data-testid="results"]')).toBeNull();
-    expect(container.querySelector('[data-testid="history-entry"]')).toBeNull();
-    expect(container.querySelector('[data-testid="history-use"]')).toBeNull();
+    expect(container.querySelector('[data-testid="page-history-row"]')).toBeNull();
+    expect(container.querySelector('[data-testid="page-history-use"]')).toBeNull();
     expect(container.querySelector('[data-testid="result-note"]')).toBeNull();
   });
 

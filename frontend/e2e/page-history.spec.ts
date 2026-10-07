@@ -17,7 +17,7 @@ import {
   writeSheetsFolder,
 } from './support/account';
 import { dragFrom, pairOf } from './support/layer';
-import { openTimeline } from './support/page-work';
+import { CHANGE_ROWS, openTimeline, RESULT_ROWS } from './support/page-work';
 
 /**
  * The history of a page, a collapsible section at the end of the panel of every stage that lists the changes of the open
@@ -156,7 +156,7 @@ test('a reader sees what changed on a page, takes the last change back with the 
   // The settings of the page are in the panel of the open step, and the history ends the panel of the stage
   const step = page.getByTestId('step-panel');
   const history = page.getByTestId('stage-panel').getByTestId('page-history');
-  const rows = history.getByTestId('page-history-row');
+  const rows = history.locator(CHANGE_ROWS);
   const settings = step.getByTestId('page-settings');
   let pageId = '';
   let stepId = '';
@@ -235,7 +235,7 @@ test('a reader reads a long history three changes at a time, undoes back to an o
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
   const history = page.getByTestId('stage-panel').getByTestId('page-history');
-  const rows = history.getByTestId('page-history-row');
+  const rows = history.locator(CHANGE_ROWS);
   const dialog = page.getByTestId('page-history-dialog');
   let pageId = '';
   let stepId = '';
@@ -321,8 +321,8 @@ test('a reader reads the changes and the results of a step in one timeline that 
   const history = page.getByTestId('stage-panel').getByTestId('page-history');
   const area = page.getByTestId('stage-panel').getByTestId('stage-panel-scroll');
   const rows = history.getByTestId('page-history-list').locator(':scope > li');
-  const changes = history.getByTestId('page-history-row');
-  const results = history.getByTestId('history-entry');
+  const changes = history.locator(CHANGE_ROWS);
+  const results = history.locator(RESULT_ROWS);
   const dialog = page.getByTestId('page-history-dialog');
   const layer = page.getByTestId('editor-layer');
   let projectId = '';
@@ -374,7 +374,7 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await expect(changes).toHaveCount(0);
     await expect(results.first()).toContainText('Result');
     await expect(results.first()).toContainText('Current');
-    await expect(results.first().getByTestId('history-origin')).toHaveText('Made by the step');
+    await expect(results.first().getByTestId('page-history-origin')).toHaveText('Made by the step');
     await results.first().getByTestId('result-mark-good').click();
     await expect(results.first().getByTestId('result-mark-good')).toHaveAttribute(
       'aria-pressed',
@@ -410,7 +410,7 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await expect(rows.nth(0)).toHaveAttribute('data-kind', 'result');
     await expect(rows.nth(1)).toHaveAttribute('data-kind', 'change');
     await expect(rows.nth(2)).toHaveAttribute('data-kind', 'result');
-    await expect(rows.nth(0).getByTestId('history-origin')).toHaveText('Set by hand');
+    await expect(rows.nth(0).getByTestId('page-history-origin')).toHaveText('Set by hand');
     await expect(rows.nth(1)).toContainText('Set by hand');
     await expect(rows.nth(1)).toContainText('Frame: left');
     await expect(rows.nth(1)).not.toContainText('{');
@@ -421,18 +421,18 @@ test('a reader reads the changes and the results of a step in one timeline that 
   });
 
   await test.step('the filters narrow the list to the changes, to the results and to the results marked good', async () => {
-    await history.getByTestId('results-filter-changes').click();
+    await history.getByTestId('page-history-filter-changes').click();
     await expect(changes).toHaveCount(1);
     await expect(results).toHaveCount(0);
-    await history.getByTestId('results-filter-results').click();
+    await history.getByTestId('page-history-filter-results').click();
     await expect(results).toHaveCount(2);
     await expect(changes).toHaveCount(0);
-    await history.getByTestId('results-filter-good').click();
+    await history.getByTestId('page-history-filter-good').click();
     await expect(results).toHaveCount(1);
     await expect(results.first().getByTestId('result-comment')).toHaveText(COMMENT);
     await history.scrollIntoViewIfNeeded();
     await snap(page, 'timeline-results-filter');
-    await history.getByTestId('results-filter-all').click();
+    await history.getByTestId('page-history-filter-all').click();
     await expect(rows).toHaveCount(EVENTS_AFTER_THE_EDIT);
   });
 
@@ -455,7 +455,7 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await page.getByTestId('step-close').click();
     await expect(page.getByTestId('step-panel')).toHaveCount(0);
     await expect(history).toHaveAttribute('aria-disabled', 'false');
-    await expect(history.getByTestId('results-filter-changes')).toBeDisabled();
+    await expect(history.getByTestId('page-history-filter-changes')).toBeDisabled();
     await expect(history.getByTestId('page-history-changes-hint')).toHaveText(
       'Open a step to see its changes',
     );
@@ -484,7 +484,7 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await openTimeline(page);
     await expect(results).toHaveCount(1);
     await expect(results.first()).toHaveAttribute('data-current', 'true');
-    await expect(history.getByTestId('results-filter-changes')).toBeDisabled();
+    await expect(history.getByTestId('page-history-filter-changes')).toBeDisabled();
     await expect(history.getByTestId('page-history-clear')).toHaveCount(0);
   });
 

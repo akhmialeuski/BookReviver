@@ -8,7 +8,7 @@ import {
   writePagesFolder,
   writeScansFolder,
 } from './support/account';
-import { openTimeline } from './support/page-work';
+import { openTimeline, RESULT_ROWS } from './support/page-work';
 
 /**
  * The processing workspace on the Geometry stage: the recipe drawn from the schema of its processor, a preview of the
@@ -184,14 +184,14 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     await expect(page.getByTestId('stale-banner')).toHaveCount(0, { timeout: RUN_TIMEOUT_MS });
     // The results are in the history that ends the panel, which is collapsed until it is opened
     await openTimeline(page);
-    await expect(page.getByTestId('history-entry')).toHaveCount(2, { timeout: RUN_TIMEOUT_MS });
-    await expect(page.getByTestId('history-entry').first()).toHaveAttribute('data-current', 'true');
+    await expect(page.locator(RESULT_ROWS)).toHaveCount(2, { timeout: RUN_TIMEOUT_MS });
+    await expect(page.locator(RESULT_ROWS).first()).toHaveAttribute('data-current', 'true');
   });
 
   await test.step('an earlier result is chosen from the history and becomes the current one', async () => {
-    const entries = page.getByTestId('history-entry');
+    const entries = page.locator(RESULT_ROWS);
     await expect(entries.nth(1)).toHaveAttribute('data-current', 'false');
-    await entries.nth(1).getByTestId('history-use').click();
+    await entries.nth(1).getByTestId('page-history-use').click();
     await expect(entries.nth(1)).toHaveAttribute('data-current', 'true', {
       timeout: RUN_TIMEOUT_MS,
     });

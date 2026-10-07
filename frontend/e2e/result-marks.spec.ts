@@ -10,7 +10,7 @@ import {
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
-import { openTimeline } from './support/page-work';
+import { openTimeline, RESULT_ROWS } from './support/page-work';
 
 /**
  * The notes a user puts on a result: a good or bad mark and a comment of several lines, which can be changed later,
@@ -33,7 +33,7 @@ interface ListedChange {
 test('a result is marked and commented, and the notes can be changed later', async ({ page }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
-  const entry = page.getByTestId('history-entry').first();
+  const entry = page.locator(RESULT_ROWS).first();
   let projectId = '';
   let bookPath = '';
 
@@ -55,7 +55,7 @@ test('a result is marked and commented, and the notes can be changed later', asy
     await page.getByTestId('strip-page').first().click();
     // The results are in the history that ends the panel, which is collapsed until it is opened
     await openTimeline(page);
-    await expect(page.getByTestId('history-entry')).toHaveCount(1);
+    await expect(page.locator(RESULT_ROWS)).toHaveCount(1);
   });
 
   await test.step('the result is marked good and commented', async () => {

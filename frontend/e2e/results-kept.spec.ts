@@ -11,7 +11,7 @@ import {
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
-import { openTimeline } from './support/page-work';
+import { openTimeline, RESULT_ROWS } from './support/page-work';
 
 /**
  * The results a page keeps after their pictures are collected: a collection removes the files of the old results and
@@ -38,7 +38,7 @@ interface ListedVersion {
 test('a result whose picture was collected is made again when it is used', async ({ page }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
-  const entries = page.getByTestId('history-entry');
+  const entries = page.locator(RESULT_ROWS);
   let projectId = '';
   let bookPath = '';
   let removedId = '';
@@ -115,20 +115,20 @@ test('a result whose picture was collected is made again when it is used', async
     await page.getByTestId('strip-page').first().click();
     await openTimeline(page);
     await expect(entries).toHaveCount(2);
-    await expect(entries.nth(1).getByTestId('history-removed')).toHaveText(
+    await expect(entries.nth(1).getByTestId('page-history-removed')).toHaveText(
       'Picture removed · made again on use',
     );
-    await expect(entries.first().getByTestId('history-removed')).toHaveCount(0);
+    await expect(entries.first().getByTestId('page-history-removed')).toHaveCount(0);
     await snap(page, 'results-picture-removed');
   });
 
   await test.step('using the result makes its picture again, and it becomes the current one', async () => {
-    await entries.nth(1).getByTestId('history-use').click();
+    await entries.nth(1).getByTestId('page-history-use').click();
     await expect(entries.nth(1)).toHaveAttribute('data-current', 'true', {
       timeout: RUN_TIMEOUT_MS,
     });
     await expect(entries.first()).toHaveAttribute('data-current', 'false');
-    await expect(entries.nth(1).getByTestId('history-removed')).toHaveCount(0);
+    await expect(entries.nth(1).getByTestId('page-history-removed')).toHaveCount(0);
     await expect(entries.nth(1)).toContainText('Top margin, mm 10');
 
     // The run queues a collection after it, and the result it replaced is past the retention too, so only the one that

@@ -10,7 +10,7 @@ import {
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
-import { openTimeline } from './support/page-work';
+import { openTimeline, RESULT_ROWS } from './support/page-work';
 
 /**
  * The results of a step on a page: the open step lists them in the history that ends the panel of the stage, a result
@@ -33,7 +33,7 @@ test('a result of a step is marked bad, which marks its page in the strip, and t
   const folder = await writePagesFolder(PAGES);
   const strip = page.getByTestId('page-strip');
   const section = page.getByTestId('stage-panel').getByTestId('page-history');
-  const entry = section.getByTestId('history-entry');
+  const entry = section.locator(RESULT_ROWS);
 
   await test.step('the recipe is run on every page and its first step is opened', async () => {
     await registerAndSignIn(page);
@@ -54,11 +54,11 @@ test('a result of a step is marked bad, which marks its page in the strip, and t
     await expect(page).toHaveURL(STEP_ADDRESS);
     await openTimeline(page);
     await expect(entry).toHaveCount(1);
-    await expect(entry.getByTestId('history-origin')).toHaveText('Made by the step');
+    await expect(entry.getByTestId('page-history-origin')).toHaveText('Made by the step');
     // The history lists the results once, and neither the panel of the step nor the section of the page does
     await expect(page.getByTestId('page-history')).toHaveCount(1);
-    await expect(page.getByTestId('step-panel').getByTestId('history-entry')).toHaveCount(0);
-    await expect(page.getByTestId('this-page').getByTestId('history-entry')).toHaveCount(0);
+    await expect(page.getByTestId('step-panel').locator(RESULT_ROWS)).toHaveCount(0);
+    await expect(page.getByTestId('this-page').locator(RESULT_ROWS)).toHaveCount(0);
   });
 
   await test.step('no page is marked, and the strip filter offers the pages marked bad', async () => {
@@ -83,12 +83,12 @@ test('a result of a step is marked bad, which marks its page in the strip, and t
   });
 
   await test.step('the history lists the result under Bad and nothing under Good', async () => {
-    await section.getByTestId('results-filter-good').click();
+    await section.getByTestId('page-history-filter-good').click();
     await expect(entry).toHaveCount(0);
-    await expect(section.getByTestId('results-empty')).toBeVisible();
-    await section.getByTestId('results-filter-bad').click();
+    await expect(section.getByTestId('page-history-empty')).toBeVisible();
+    await section.getByTestId('page-history-filter-bad').click();
     await expect(entry).toHaveCount(1);
-    await section.getByTestId('results-filter-all').click();
+    await section.getByTestId('page-history-filter-all').click();
     await expect(entry).toHaveCount(1);
   });
 

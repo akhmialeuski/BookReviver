@@ -220,7 +220,7 @@ export function PageTimeline({
           <div className="grid min-w-0 gap-1">
             <fieldset
               className="m-0 flex min-w-0 flex-wrap gap-1.5 border-0 p-0"
-              data-testid="results-filter"
+              data-testid="page-history-filter"
             >
               <legend className="sr-only">{labels.filters.group}</legend>
               {TIMELINE_FILTERS.map((value) => (
@@ -230,7 +230,7 @@ export function PageTimeline({
                   size="sm"
                   aria-pressed={active === value}
                   disabled={value === TimelineFilter.Changes && stepId === null}
-                  data-testid={`results-filter-${value}`}
+                  data-testid={`page-history-filter-${value}`}
                   onClick={() => {
                     setFilter(value);
                     setShown(ROWS_AT_A_TIME);
@@ -262,7 +262,7 @@ export function PageTimeline({
         </p>
         {rows.length === 0 ? (
           known ? (
-            <p className="text-sm text-muted-foreground" data-testid="results-empty">
+            <p className="text-sm text-muted-foreground" data-testid="page-history-empty">
               {labels.empty[active]}
             </p>
           ) : null
