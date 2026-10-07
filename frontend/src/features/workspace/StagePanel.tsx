@@ -11,6 +11,9 @@ import { Badge } from '@/shared/ui/badge';
  * exception. A stage that keeps one passes its content as `history`, and a stage that keeps none gets the same frame,
  * grey and shut, with the reason. A stage with nothing to show yet leaves the body and the footer out, so the title, the
  * sentence and the history stand. A stage that cannot be worked in yet carries the word "Soon" beside its name.
+ *
+ * The scrolling area is positioned, so what is placed absolutely inside it, such as the hidden legend of a group of
+ * buttons, stays inside the area instead of hanging below the window and making the whole book screen scroll.
  */
 
 export function StagePanel({
@@ -50,7 +53,7 @@ export function StagePanel({
         </p>
       </header>
       <div
-        className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-4"
+        className="relative flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-4"
         data-testid="stage-panel-scroll"
       >
         {children}
