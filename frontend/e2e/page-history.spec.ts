@@ -4,6 +4,7 @@ import { expect, type Locator, type Page, test } from '@playwright/test';
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../src/shared/http/csrf';
 import {
   createBook,
+  markPagesAsText,
   openImportStage,
   openOrderStage,
   openProjectId,
@@ -325,6 +326,7 @@ test('a reader reads the changes and the results of a step in one timeline that 
   const dialog = page.getByTestId('page-history-dialog');
   const layer = page.getByTestId('editor-layer');
   let projectId = '';
+  let bookPath = '';
 
   // An edit starts a run of the stage on the page, and the next change waits until that run is over
   const settled = async (): Promise<void> => {
@@ -338,7 +340,10 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await uploadFolder(page, folder, 1);
     projectId = openProjectId(page);
     await waitForIdleJobs(page, projectId);
-    const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
+    // The detection takes the sheet for a picture, which the rules send to the recipe for plates, and the step open here
+    // belongs to the recipe for text, so the page is said to be text
+    await markPagesAsText(page);
+    bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('strip-page')).toHaveCount(1);
     await page.getByTestId('bar-step').filter({ hasText: 'Select content' }).click();
@@ -450,7 +455,60 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await snap(page, 'timeline-no-step');
   });
 
+  await test.step('Cleanup with no step open lists the result of the stage, the current one, and keeps the Changes filter off', async () => {
+    const started = await page.request.post(`/api/v1/projects/${projectId}/stages/cleanup/run`, {
+      headers: await changeHeaders(page),
+      data: {},
+    });
+    expect(started.ok()).toBe(true);
+    await waitForIdleJobs(page, projectId);
+    await page.goto(`${bookPath}/stages/cleanup`);
+    await expect(page.getByTestId('stage-title')).toHaveText('Cleanup');
+    await expect(page.getByTestId('strip-page')).toHaveCount(1);
+    await expect(page.getByTestId('step-panel')).toHaveCount(0);
+    await expect(history).toHaveAttribute('aria-disabled', 'false');
+    await expect(history.getByTestId('page-history-count')).toHaveText('1 event', {
+      timeout: RUN_TIMEOUT_MS,
+    });
+    await openTimeline(page);
+    await expect(results).toHaveCount(1);
+    await expect(results.first()).toHaveAttribute('data-current', 'true');
+    await expect(history.getByTestId('results-filter-changes')).toBeDisabled();
+    await expect(history.getByTestId('page-history-clear')).toHaveCount(0);
+  });
+
+  await test.step('a stage that cannot be worked in yet shows the section grey, with the reason', async () => {
+    await page.goto(`${bookPath}/stages/layout`);
+    await expect(page.getByTestId('stage-title')).toHaveText('Layout');
+    await expect(page.getByTestId('stage-panel')).toContainText('Soon');
+    await expect(history).toHaveAttribute('aria-disabled', 'true');
+    await expect(history.getByTestId('page-history-reason')).toContainText(
+      'keeps no history of its pages',
+    );
+    await expect(area.locator(':scope > *').last()).toHaveAttribute('data-testid', 'page-history');
+  });
+
+  await test.step('Import and Order show the same section grey, with the reason that they keep no history', async () => {
+    await openImportStage(page);
+    await expect(history).toHaveAttribute('aria-disabled', 'true');
+    await expect(history.getByTestId('page-history-toggle')).toBeDisabled();
+    await expect(history.getByTestId('page-history-reason')).toContainText(
+      'keeps no history of its pages',
+    );
+    await history.scrollIntoViewIfNeeded();
+    await snap(page, 'timeline-import-disabled');
+
+    await openOrderStage(page);
+    const order = page.getByTestId('page-history').first();
+    await expect(order).toHaveAttribute('aria-disabled', 'true');
+    await expect(order.getByTestId('page-history-reason')).toContainText(
+      'keeps no history of its pages',
+    );
+  });
+
   await test.step('clearing the history asks first, deletes the changes and the results, and takes the step back to where it was before it ran on the page', async () => {
+    await page.goto(`${bookPath}/stages/geometry`);
+    await expect(page.getByTestId('strip-page')).toHaveCount(1);
     await page.getByTestId('bar-step').filter({ hasText: 'Select content' }).click();
     await expect(page).toHaveURL(STEP_ADDRESS);
     const pageId = await firstPageId(page);
@@ -485,24 +543,6 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await page.reload();
     await expect(page).toHaveURL(STEP_ADDRESS);
     await cleared();
-  });
-
-  await test.step('Import and Order show the same section grey, with the reason that they keep no history', async () => {
-    await openImportStage(page);
-    await expect(history).toHaveAttribute('aria-disabled', 'true');
-    await expect(history.getByTestId('page-history-toggle')).toBeDisabled();
-    await expect(history.getByTestId('page-history-reason')).toContainText(
-      'keeps no history of its pages',
-    );
-    await history.scrollIntoViewIfNeeded();
-    await snap(page, 'timeline-import-disabled');
-
-    await openOrderStage(page);
-    const order = page.getByTestId('page-history').first();
-    await expect(order).toHaveAttribute('aria-disabled', 'true');
-    await expect(order.getByTestId('page-history-reason')).toContainText(
-      'keeps no history of its pages',
-    );
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });
