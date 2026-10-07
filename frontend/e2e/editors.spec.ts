@@ -12,6 +12,7 @@ import {
   writeScansFolder,
 } from './support/account';
 import { dragFrom, pairOf } from './support/layer';
+import { runAllPages } from './support/page-work';
 
 /**
  * The page editors on the canvas: the rotation handles of the Geometry stage with its field, its wheel, its undo and its
@@ -48,7 +49,7 @@ test('a reader turns a page by hand with the handle, the field and the wheel, ta
     }
   });
 
-  await test.step('a page opens on the Geometry stage with the editor shut', async () => {
+  await test.step('a page opens on the Geometry stage, on the step the stage opens on', async () => {
     await registerAndSignIn(page);
     await createBook(page, 'A book to turn');
     await uploadFolder(page, folder, PAGES);
@@ -56,12 +57,11 @@ test('a reader turns a page by hand with the handle, the field and the wheel, ta
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
     await expect(canvas).toHaveAttribute('data-state', 'ready');
-    await expect(layer).toHaveCount(0);
+    await expect(page).toHaveURL(/\/stages\/geometry\/steps\/[0-9a-f-]{36}(\?|$)/);
   });
 
   await test.step('the editors of the sheet and the frame start from what their step found, so the stage runs first', async () => {
-    await page.getByTestId('run-menu').click();
-    await page.getByTestId('run-all').click();
+    await runAllPages(page);
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });
@@ -69,20 +69,18 @@ test('a reader turns a page by hand with the handle, the field and the wheel, ta
     // read up to date while the job still places the pages
     await waitForIdleJobs(page, openProjectId(page));
     // The sheet, the angle, the curves, the frame and the block on the page
-    await expect(page.getByTestId('editor-step')).toHaveCount(5);
+    await expect(page.getByTestId('bar-step')).toHaveCount(5);
     await expect(page.getByTestId('editor-auto')).toBeDisabled();
   });
 
-  await test.step('picking the angle opens its editor on the page, with the handle, and compare gives way to it', async () => {
-    await page.getByTestId('editor-step').filter({ hasText: 'Angle' }).click();
-    await expect(page.getByRole('button', { name: 'Set by hand' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+  await test.step('picking the angle opens its editor on the page, with the handle, and the compare stays off until it is asked for', async () => {
+    const deskew = page.getByTestId('bar-step').filter({ hasText: 'Deskew' });
+    await deskew.click();
+    await expect(deskew).toHaveAttribute('data-open', 'true');
     await expect(layer).toBeVisible();
     await expect(canvas).toHaveAttribute('data-state', 'ready');
     await expect(layer).toHaveAttribute('data-degrees', '0');
-    await expect(page.getByTestId('compare-menu')).toBeDisabled();
+    await expect(canvas).toHaveAttribute('data-mode', 'off');
   });
 
   await test.step('an angle typed in the field is saved and the page is turned by it, with the method By hand', async () => {
@@ -222,8 +220,7 @@ test('a reader moves the split line of the automatic split with the keys and the
 
   await test.step('a run on all pages keeps the line, so the halves are still cut by it', async () => {
     const back = found + NUDGES * NUDGE_SHIFT_PX - 1;
-    await page.getByTestId('run-menu').click();
-    await page.getByTestId('run-all').click();
+    await runAllPages(page);
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });

@@ -203,7 +203,7 @@ export function useEditorSession({
   const picture =
     editor === undefined || current === undefined || processor === undefined
       ? null
-      : (foundPicture ?? pictureOf(editor.picture, scan, current.page, before, found.read, made));
+      : (foundPicture ?? pictureOf(editor.picture, scan, before, found.read, made));
   // A step open in the workspace shows its shape before it has run, so an editor that starts from the step's result
   // starts from the whole picture instead, and the picture is asked for its size
   const pictureSize = usePictureSize(

@@ -218,14 +218,13 @@ class ProcessingService:
         :type stage: Stage
         :param run: The recipe and the pages, with the stage the request names.
         :type run: StageRun
-        :returns: The queued job.
+        :returns: The queued job; a preview of the project that is queued or running is cancelled for it.
         :rtype: Job
         :raises NotFoundError: If the actor has no such project, or the project has no such recipe, stage recipe or
                                page.
-        :raises ConflictError: If a run, a preview, a tile cutting, a collection or a measure of the project is queued
-                               or running, or the run goes through a step the recipe has no such step for, or whose
-                               steps up to it are all switched off, or its mode takes the work of pages away and it is
-                               not confirmed.
+        :raises ConflictError: If a run or a measure of the project is queued or running, or the run goes through a
+                               step the recipe has no such step for, or whose steps up to it are all switched off, or
+                               its mode takes the work of pages away and it is not confirmed.
         """
         await owned_project(self._uow.projects, actor, project_id)
         if run.recipe_id is None:
@@ -263,11 +262,11 @@ class ProcessingService:
         :type actor: Actor
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
-        :returns: The queued job.
+        :returns: The queued job; a preview of the project that is queued or running is cancelled for it.
         :rtype: Job
         :raises NotFoundError: If the actor has no such project, or the Geometry stage has no recipe.
-        :raises ConflictError: If a run, a preview, a tile cutting, a collection or a measure of the project is queued
-                               or running, which may be writing the versions that are measured or the recipe.
+        :raises ConflictError: If a run or a measure of the project is queued or running, which may be writing the
+                               versions that are measured or the recipe.
         """
         await owned_project(self._uow.projects, actor, project_id)
         await self._recipes.active(project_id, Stage.GEOMETRY)

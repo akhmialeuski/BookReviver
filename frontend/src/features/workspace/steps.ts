@@ -88,6 +88,37 @@ export function openStepOf(steps: readonly BarStep[], stepId: string | undefined
   return steps.find((step) => step.stepId === stepId) ?? null;
 }
 
+/**
+ * Choose the step a stage with a bar opens on when its address names none: the furthest step of the recipe that a run
+ * has brought a page of that recipe to.
+ *
+ * When some page of the recipe went through every step that is on, it is the last step that is on. Otherwise it is the
+ * step the furthest run stopped at, and when no run has made a result of the recipe, the last step of the recipe.
+ *
+ * @param steps The saved steps of the recipe shown in the bar.
+ * @param rows The rows of the stage, without a step.
+ * @param recipeId The recipe shown in the bar.
+ * @returns The step, or null when the recipe has no steps.
+ */
+export function defaultStepOf(
+  steps: readonly BarStep[],
+  rows: readonly StagePageSchema[],
+  recipeId: string,
+): BarStep | null {
+  const last = steps[steps.length - 1] ?? null;
+  const ran = rows.filter(
+    (row) => row.recipe_id === recipeId && row.version !== null && row.status !== 'failed',
+  );
+  if (ran.length === 0) {
+    return last;
+  }
+  if (ran.some((row) => row.through_step === null)) {
+    return [...steps].reverse().find((step) => step.enabled) ?? last;
+  }
+  const furthest = Math.max(...ran.map((row) => row.through_step ?? 0));
+  return steps[furthest] ?? last;
+}
+
 /** The steps either side of a step, which are the ones the panel offers to move to. */
 export interface Neighbours {
   previous: BarStep | null;

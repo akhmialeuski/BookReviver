@@ -129,7 +129,7 @@ test('the book screen stays in place on Import, Order and Geometry while its str
     await expectScreenInPlace(page);
   });
 
-  await test.step('the Geometry stage stays in place with no step open', async () => {
+  await test.step('the Geometry stage stays in place on the step it opens on', async () => {
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('page-strip').getByTestId('strip-page')).toHaveCount(PAGES);
     await scrollEveryPart(page, parts);

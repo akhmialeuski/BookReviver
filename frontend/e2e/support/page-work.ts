@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../../src/shared/http/csrf';
-import { openProjectId } from './account';
+import { openProjectId, waitForIdleJobs } from './account';
 
 /**
  * What a scenario sets up and reads back through the API for the work of the pages of the Geometry stage: the settings a
@@ -103,10 +103,39 @@ export async function readHistory(
 export async function openTimeline(page: Page): Promise<Locator> {
   const history = page.getByTestId('stage-panel').getByTestId('page-history');
   const toggle = history.getByTestId('page-history-toggle');
+  // The chip with the number of events stands once the section has read what it holds for the open page and step, so the
+  // panel above it has stopped moving and the click lands on the header
+  await expect(history.getByTestId('page-history-count')).toBeVisible();
   await expect(toggle).toBeEnabled();
   if ((await toggle.getAttribute('data-state')) !== 'open') {
     await toggle.click();
   }
   await expect(toggle).toHaveAttribute('data-state', 'open');
   return history;
+}
+
+/** Count the runs of a stage that ended well in the open book, which tells that a run the reader started is over. */
+export async function finishedRuns(page: Page): Promise<number> {
+  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/jobs?size=50`);
+  const items = ((await listed.json()) as { items: { kind: string; state: string }[] }).items;
+  return items.filter((job) => job.kind === 'run-stage' && job.state === 'succeeded').length;
+}
+
+/** How long a run on all pages may take before the scenario gives up on it. */
+const RUN_ALL_TIMEOUT_MS = 120_000;
+
+/**
+ * Run the stage on all pages from the menu of the run, and wait until that run has ended and the book is idle.
+ *
+ * The summary of the stage reads "up to date" before a run of pages that are up to date has begun, and while the run still
+ * places the pages, so the end of the job is what is waited for, and then for whatever the book queued after it.
+ *
+ * @param page The page of the browser, on a stage with a run menu.
+ */
+export async function runAllPages(page: Page): Promise<void> {
+  const before = await finishedRuns(page);
+  await page.getByTestId('run-menu').click();
+  await page.getByTestId('run-all').click();
+  await expect.poll(() => finishedRuns(page), { timeout: RUN_ALL_TIMEOUT_MS }).toBe(before + 1);
+  await waitForIdleJobs(page, openProjectId(page));
 }

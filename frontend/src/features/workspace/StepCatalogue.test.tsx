@@ -6,9 +6,10 @@ import { processing, processor, recipe, step } from '@/features/processing/fixtu
 import { draftOf } from '@/features/processing/recipe';
 import { row } from '@/features/workspace/fixtures';
 import { StepCatalogue } from '@/features/workspace/StepCatalogue';
+import { MESSAGES } from '@/shared/messages';
 
 /**
- * The catalogue the "+ Step" button opens: the processors of the stage with what each does, and the choice that adds a
+ * The catalogue the plus button of the bar opens: the processors of the stage with what each does, and the choice that adds a
  * step to the saved recipe where its processor usually stands, which is refused in the usual order when no place suits.
  *
  * The processors here declare the places the catalogue of the server does: B usually follows A, and D and E must each
@@ -106,6 +107,14 @@ describe('StepCatalogue', () => {
     container.remove();
     client.clear();
     vi.unstubAllGlobals();
+  });
+
+  it('is a plus with no word beside it, named for readers of the screen', () => {
+    render();
+
+    const button = byId('step-catalogue');
+    expect(button?.textContent).toBe('');
+    expect(button?.getAttribute('aria-label')).toBe(MESSAGES.workspace.steps.catalogue.open);
   });
 
   it('lists every processor of the stage with its line, and names the stage in its title', async () => {

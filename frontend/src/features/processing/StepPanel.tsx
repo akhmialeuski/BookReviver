@@ -4,7 +4,6 @@ import {
   ChevronRightIcon,
   PlayIcon,
   TriangleAlertIcon,
-  XIcon,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { AppliesTo, FigureState } from '@/api';
@@ -110,7 +109,6 @@ export function StepPanel({
   editor,
   run,
   onOpen,
-  onClose,
 }: {
   processing: Processing;
   workspace: StepWorkspace;
@@ -130,7 +128,6 @@ export function StepPanel({
   run: StageRun;
   /** Open another step. */
   onOpen: (stepId: string) => void;
-  onClose: () => void;
 }): React.JSX.Element {
   const { catalogue, recipe } = processing;
   const [overwrite, setOverwrite] = useState(false);
@@ -157,21 +154,9 @@ export function StepPanel({
       data-testid="step-panel"
       data-step-id={step.stepId}
     >
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="text-base font-semibold" data-testid="step-panel-title">
-          {MESSAGES.workspace.steps.step(step.number, step.title)}
-        </h3>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={labels.close}
-          title={labels.close}
-          data-testid="step-close"
-          onClick={onClose}
-        >
-          <XIcon />
-        </Button>
-      </div>
+      <h3 className="text-base font-semibold" data-testid="step-panel-title">
+        {MESSAGES.workspace.steps.step(step.number, step.title)}
+      </h3>
       {step.enabled ? null : <p className="text-xs text-muted-foreground">{labels.off}</p>}
       {issues.length === 0 ? null : (
         <div className="grid gap-2" data-testid="step-order-details" data-kind={issueKind}>
@@ -294,6 +279,8 @@ export function StepPanel({
         ) : null}
         {draft === undefined || pageId === undefined ? null : (
           <PageStepSettings
+            // The form of the page holds the values of one step, so another step starts from its own and not from these
+            key={draft.id}
             processing={processing}
             step={draft}
             processor={processor}

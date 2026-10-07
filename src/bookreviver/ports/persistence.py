@@ -574,6 +574,14 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
+    async def list_fresh(self) -> Sequence[PageStage]:
+        """Return the records of the pages of every book whose current version is up to date, by page and stage.
+
+        :returns: Every record in the fresh state, by page identifier and then in the order of the stages.
+        :rtype: Sequence[PageStage]
+        """
+
+    @abstractmethod
     async def list_for_project_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[PageStage]:
         """Return the records of one stage over the pages of a project, by page identifier.
 

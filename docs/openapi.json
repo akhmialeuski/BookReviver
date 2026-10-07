@@ -2648,7 +2648,7 @@
           "stages"
         ],
         "summary": "List Stage Pages",
-        "description": "List the pages of a book in book order, each with where it stands in a stage and the version that is its result.\n\nA page the stage has not run on has the status ``not-run`` and no version. A page holds up to a thousand rows, as\nthe page manifest does, so a strip of a whole book takes few requests. With ``step`` every row also says what that\nstep read and made on its page and where the shape of the step comes from; a step no recipe of the stage has is a\n404.",
+        "description": "List the pages of a book in book order, each with where it stands in a stage and the version that is its result.\n\nA page the stage has not run on has the status ``not-run`` and no version. A page holds up to a thousand rows, as\nthe page manifest does, so a strip of a whole book takes few requests. With ``step`` every row also says what that\nstep read and made on its page and where the shape of the step comes from; a step no recipe of the stage has is a\n404. Every row has a ``picture``, the version that stands for the page at the place asked for: the version the step\nreads, or the last version of the stage before it for a page that has not come as far, or else what the stage reads;\nwithout ``step`` the current version of the stage, else what the stage reads. A strip and a canvas draw it alike.",
         "operationId": "list_stage_pages_api_v1_projects__project_id__stages__stage__pages_get",
         "parameters": [
           {
@@ -15055,6 +15055,16 @@
           "marked_bad": {
             "type": "boolean",
             "title": "Marked Bad"
+          },
+          "picture": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PageVersionSchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -15068,10 +15078,11 @@
           "through_step",
           "review_processor",
           "step",
-          "marked_bad"
+          "marked_bad",
+          "picture"
         ],
         "title": "StagePageSchema",
-        "description": "One page of a book in one stage: where it stands there and the version that is its result.\n\n:ivar page_id: The page.\n:ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.\n:ivar review: Why the result asks for a second look, or None.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar pinned: Whether the recipe is pinned to the page.\n:ivar version: The current version of the stage on the page with its data and images, or None.\n:ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step\n                    that is on, so the page is not ready for the next stage, or None.\n:ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.\n:ivar step: The page at the step the list was asked for, or None for a list of the stage alone.\n:ivar marked_bad: Whether the user marked bad the result the row stands on: the version of the step the list was\n                  asked for, else the current version of the stage."
+        "description": "One page of a book in one stage: where it stands there and the version that is its result.\n\n:ivar page_id: The page.\n:ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.\n:ivar review: Why the result asks for a second look, or None.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar pinned: Whether the recipe is pinned to the page.\n:ivar version: The current version of the stage on the page with its data and images, or None.\n:ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step\n                    that is on, so the page is not ready for the next stage, or None.\n:ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.\n:ivar step: The page at the step the list was asked for, or None for a list of the stage alone.\n:ivar marked_bad: Whether the user marked bad the result the row stands on: the version of the step the list was\n                  asked for, else the current version of the stage.\n:ivar picture: The version that stands for the page at the place the list was asked for, so the strip and the canvas\n               draw the same picture. With ``step`` it is the version the step reads on the page; a page that has\n               not come as far as the step has the last version of the stage before it, and one the stage has not\n               run on, or whose recipe has no such step switched on, has the version the stage reads. Without\n               ``step`` it is the current version of the stage, else the version the stage reads. It is never the\n               result of the step or of a later one, nor a version of a later stage. None when the page has no image\n               to draw, such as a placeholder."
       },
       "StageProgressSchema": {
         "properties": {

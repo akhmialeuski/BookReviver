@@ -36,6 +36,42 @@ if TYPE_CHECKING:
 JOB_FINISHED: str = 'The job has already finished.'
 
 
+class JobCancellation:
+    """Moves an active job to the cancelled state and announces it, for whoever may take a job off the project."""
+
+    def __init__(self, *, uow: UnitOfWork, publisher: EventPublisher, clock: Clock) -> None:
+        """Cancel jobs through the unit of work.
+
+        :param uow: Unit of work, committed when a job is cancelled.
+        :type uow: UnitOfWork
+        :param publisher: Publisher announcing a cancelled job to the project's subscribers.
+        :type publisher: EventPublisher
+        :param clock: Clock stamping when a cancelled job finished.
+        :type clock: Clock
+        """
+        self._uow = uow
+        self._publisher = publisher
+        self._clock = clock
+
+    async def cancel(self, job: Job) -> Job | None:
+        """Cancel a job that is queued or running, commit that and announce it.
+
+        :param job: The job as read.
+        :type job: Job
+        :returns: The job in the cancelled state, with the time it finished, or None when it had finished meanwhile, in
+                  which case nothing is changed or announced.
+        :rtype: Job | None
+        """
+        cancelled = await self._uow.jobs.update_if_state(
+            evolve(job, state=JobState.CANCELLED, finished_at=self._clock.now()), expected=JobState.active()
+        )
+        if cancelled is None:
+            return None
+        await self._uow.commit()
+        await self._publisher.publish(JobChanged(project_id=cancelled.project_id, job=cancelled))
+        return cancelled
+
+
 class JobService:
     """Reads and cancels jobs, and opens the event stream of a project, for the account that owns the project."""
 
@@ -105,13 +141,9 @@ class JobService:
         :raises ConflictError: If the job has already finished, or finished while it was being cancelled.
         """
         job = await self.get(actor, job_id)
-        cancelled = await self._uow.jobs.update_if_state(
-            evolve(job, state=JobState.CANCELLED, finished_at=self._clock.now()), expected=JobState.active()
-        )
-        if cancelled is None:
+        cancellation = JobCancellation(uow=self._uow, publisher=self._publisher, clock=self._clock)
+        if (cancelled := await cancellation.cancel(job)) is None:
             raise ConflictError(JOB_FINISHED)
-        await self._uow.commit()
-        await self._publisher.publish(JobChanged(project_id=cancelled.project_id, job=cancelled))
         return cancelled
 
     async def events(

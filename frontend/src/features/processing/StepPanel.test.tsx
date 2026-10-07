@@ -26,6 +26,7 @@ const sdk = vi.hoisted(() => ({
   versions: vi.fn(),
   jobs: vi.fn(),
   settings: vi.fn(),
+  put: vi.fn(),
   history: vi.fn(),
 }));
 
@@ -35,6 +36,7 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet: sdk.versions,
   listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
   listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGet: sdk.settings,
+  putSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePut: sdk.put,
   listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGet: sdk.history,
 }));
 
@@ -106,7 +108,6 @@ describe('StepPanel', () => {
   let root: Root;
   let client: QueryClient;
   const onOpen = vi.fn();
-  const onClose = vi.fn();
   const start = vi.fn();
   const startPages = vi.fn();
   const condition = vi.fn();
@@ -223,7 +224,6 @@ describe('StepPanel', () => {
             editor={extra.editor ?? null}
             run={run}
             onOpen={onOpen}
-            onClose={onClose}
           />
         </QueryClientProvider>,
       ),
@@ -237,13 +237,15 @@ describe('StepPanel', () => {
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('ResizeObserver', SizeObserverStandIn);
-    for (const mock of [onOpen, onClose, start, startPages, condition, change, restoreOrder]) {
+    for (const mock of [onOpen, start, startPages, condition, change, restoreOrder]) {
       mock.mockReset();
     }
     sdk.versions.mockReset();
     sdk.versions.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 100, pages: 1 } });
     sdk.settings.mockReset();
     sdk.settings.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 100, pages: 1 } });
+    sdk.put.mockReset();
+    sdk.put.mockResolvedValue({ data: {} });
     sdk.history.mockReset();
     sdk.history.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 100, pages: 1 } });
     sdk.jobs.mockReset();
@@ -396,11 +398,10 @@ describe('StepPanel', () => {
     expect(find('step-next')).toBeNull();
   });
 
-  it('closes the step', () => {
+  it('has no button that closes the step, since a stage with a bar always has one open', () => {
     render();
-    act(() => find('step-close')?.click());
 
-    expect(onClose).toHaveBeenCalledOnce();
+    expect(find('step-close')).toBeNull();
   });
 
   it('changes the condition of the step in the draft of the recipe', () => {
@@ -575,6 +576,17 @@ describe('StepPanel', () => {
       await settled();
 
       expect(container.querySelectorAll('[data-testid="reset-menu"]')).toHaveLength(1);
+    });
+
+    it('sets nothing for the page when the form of a step is opened after another step was open', async () => {
+      render(0);
+      render(1);
+      await settled();
+
+      await act(async () => find('page-settings-edit')?.click());
+
+      // The form starts from what the page runs with at this step, so none of its fields counts as typed into
+      expect(sdk.put).not.toHaveBeenCalled();
     });
   });
 

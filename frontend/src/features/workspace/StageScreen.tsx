@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { TriangleAlertIcon } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PageSchema, ScanSchema, Stage, StagePageSchema, StepFlag } from '@/api';
 import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-query.gen';
 import { EDITOR_ROOM_SHARE } from '@/features/editors/scene';
@@ -9,21 +9,17 @@ import { useManifest } from '@/features/pages/manifest';
 import { pruneSelection } from '@/features/pages/selection';
 import { CompareCanvas } from '@/features/processing/CompareCanvas';
 import {
-  beforeSourceOf,
-  type ImageSource,
+  comparePairOf,
   placementOf,
-  SourceKind,
+  sameImage,
   sourceOfPreview,
-  sourceOfResult,
 } from '@/features/processing/compare';
 import { ProcessingPanel } from '@/features/processing/ProcessingPanel';
 import { useAllScans } from '@/features/processing/queries';
 import { reasonWithStep } from '@/features/processing/reasons';
 import { StageBanners } from '@/features/processing/StageBanners';
 import { wideScanIds } from '@/features/processing/split';
-import { useEarlierRows } from '@/features/processing/useEarlierRows';
 import { useProcessing } from '@/features/processing/useProcessing';
-import { useShownStep } from '@/features/processing/useShownStep';
 import { applyVariant, markOf, optionsOf } from '@/features/processing/variants';
 import { stageBefore } from '@/features/stages/stages';
 import { PageCanvas, type PageCanvasHandle } from '@/features/viewer/PageCanvas';
@@ -53,7 +49,7 @@ import {
   type SelectionState,
   selectionAfterClick,
 } from '@/features/workspace/selection';
-import { hasStepBar } from '@/features/workspace/steps';
+import { defaultStepOf, hasStepBar } from '@/features/workspace/steps';
 import {
   applyFilter,
   applyFlag,
@@ -65,9 +61,11 @@ import {
   flagsOf,
   joinRows,
   needsCheck,
+  pictureOf,
   type StopView,
   type StripItem,
   stopOptions,
+  stripRowsOf,
   type VariantView,
 } from '@/features/workspace/strip';
 import { useCloseRemovedStep } from '@/features/workspace/useCloseRemovedStep';
@@ -122,25 +120,29 @@ export function StageScreen({
   stepId,
   onSearchChange,
   onStepChange,
+  onDefaultStep,
 }: {
   projectId: string;
   stage: Stage;
   search: StageSearch;
-  /** The identifier of the step the address names, or undefined when no step is open. */
+  /** The identifier of the step the address names, or undefined when it names none. */
   stepId?: string;
   /** Merge changes into the search params of the route; an undefined value takes the param out. */
   onSearchChange: (changes: Partial<StageSearch>) => void;
-  /** Open a step of the stage, which is a move to its address, or close the open one with undefined. */
-  onStepChange: (stepId: string | undefined) => void;
+  /** Open a step of the stage, which is a move to its address. */
+  onStepChange: (stepId: string) => void;
+  /** Put the step a stage with a bar opens on in place of an address that names none, so Back does not return to it. */
+  onDefaultStep: (stepId: string) => void;
 }): React.JSX.Element {
   const project = useQuery(
     projectApiV1ProjectsProjectIdGetOptions({ path: { project_id: projectId } }),
   );
   const manifest = useManifest(projectId);
   const rows = useStageRows(projectId, stage);
-  // The rows at the open step say which pages have a bad result of that step, so they stand for the rows of the stage once
-  // read; the workspace of the step reads the same query
-  const stepRows = useStepRows(projectId, stage, hasStepBar(stage) ? stepId : undefined);
+  const barStage = hasStepBar(stage);
+  // The rows at the open step carry the picture of the step and the marks of its results, so on a stage with a bar they are
+  // the rows of the strip, the canvas and the counts; the workspace of the step reads the same query
+  const stepRows = useStepRows(projectId, stage, barStage ? stepId : undefined);
   const summaries = useStageSummaries(projectId);
   const [picked, setPicked] = useState({ stage, state: NOTHING_SELECTED });
   const canvas = useRef<PageCanvasHandle>(null);
@@ -155,8 +157,13 @@ export function StageScreen({
   // Only the Split stage looks at how wide a scan is
   const scans = useAllScans(projectId, stage === 'page-split');
   const items = useMemo(
-    () => joinRows(pages, stepRows.data ?? rows.data ?? NO_ROWS, wideScanIds(scans.data ?? [])),
-    [pages, stepRows.data, rows.data, scans.data],
+    () =>
+      joinRows(
+        pages,
+        stripRowsOf(barStage, stepRows.data, rows.data) ?? NO_ROWS,
+        wideScanIds(scans.data ?? []),
+      ),
+    [pages, barStage, stepRows.data, rows.data, scans.data],
   );
   const counts = useMemo(() => countFilters(items), [items]);
   const filter = search.filter ?? PageFilter.All;
@@ -198,20 +205,35 @@ export function StageScreen({
         onSearchChange({ compare: CompareMode.Swipe });
       }
     },
-    hasStepBar(stage) ? stepId : undefined,
+    barStage ? stepId : undefined,
   );
-  const workspace = useStepWorkspace(
-    processing,
-    hasStepBar(stage) ? stepId : undefined,
-    currentItem,
-  );
+  const workspace = useStepWorkspace(processing, barStage ? stepId : undefined, currentItem);
   const openStep = workspace.open;
-  // A step that was removed from the recipe leaves the address, so no workspace stays open for a step that is gone
+  // A stage with a bar always has a step open: the one a run has brought the pages of the recipe furthest to
+  const defaultStep = useMemo(
+    () =>
+      barStage && processing.recipe !== undefined && rows.data !== undefined
+        ? defaultStepOf(workspace.steps, rows.data, processing.recipe.id)
+        : null,
+    [barStage, processing.recipe, rows.data, workspace.steps],
+  );
+  const defaultStepId = defaultStep?.stepId;
+  useEffect(() => {
+    if (barStage && stepId === undefined && defaultStepId !== undefined) {
+      onDefaultStep(defaultStepId);
+    }
+  }, [barStage, stepId, defaultStepId, onDefaultStep]);
+  // A step that was removed from the recipe leaves the address for the default step, so no workspace stays open for a step
+  // that is gone
   useCloseRemovedStep(
-    hasStepBar(stage) ? stepId : undefined,
+    barStage ? stepId : undefined,
     openStep,
     processing.ready && processing.recipe !== undefined,
-    () => onStepChange(undefined),
+    () => {
+      if (defaultStepId !== undefined) {
+        onDefaultStep(defaultStepId);
+      }
+    },
   );
   const stageRows = useMemo(
     () => items.flatMap((item) => (item.row === undefined ? [] : [item.row])),
@@ -283,19 +305,24 @@ export function StageScreen({
     () => reasonWithStep(processing.recipes, processing.catalogue),
     [processing.recipes, processing.catalogue],
   );
-  const shownStep = useShownStep(processing, currentItem);
-  const earlierRows = useEarlierRows(projectId, stage, processing.available);
-  const beforeSource =
-    currentItem === undefined
-      ? null
-      : beforeSourceOf(currentItem.page, currentItem.row, earlierRows);
+  // The picture before is the one the strip shows, and the picture after is what the open step made, or the result of the
+  // stage when no step is open; the preview stands in for it while one is on
+  const previewShown =
+    processing.preview.on && processing.preview.shown?.page_id === currentItem?.page.id
+      ? processing.preview.shown
+      : null;
+  const pair = comparePairOf(
+    currentItem === undefined ? null : pictureOf(currentItem),
+    currentItem?.row,
+    previewShown,
+  );
   // The page editor of the stage, when a processor of it has one, draws over the canvas and in the panel
   const editor = useEditorSession({
     processing,
     current: currentItem,
     items,
     scans: scans.data ?? NO_SCANS,
-    before: beforeSource,
+    before: pair.before,
     focusStepId: openStep?.stepId,
     serverFigure: workspace.page?.state ?? null,
   });
@@ -389,33 +416,11 @@ export function StageScreen({
   // While an editor is open the canvas shows the one picture it lies on, so nothing is compared. The editor of an open
   // step is always open, so it gives way to the compare once the reader asks for one, and comes back when it is off
   const editorOpen = editor?.active === true;
-  const previewShown =
-    processing.preview.on && processing.preview.shown?.page_id === currentItem?.page.id
-      ? processing.preview.shown
-      : null;
-  const resultUrl = currentItem === undefined ? null : canvasSourceOf(currentItem);
-  // A step the reader chose is drawn from its own version, which has a pyramid only when it is the current one
-  const stepSource = sourceOfResult(shownStep.version);
-  // An open step shows what it reads on the canvas, and what it made once the picture after is compared with it. A page
-  // that has not come as far as the step reads the page as the stage would
-  const stepInput =
-    openStep === null ? null : (sourceOfResult(workspace.page?.input_version) ?? beforeSource);
-  const stepOutput =
-    openStep === null
-      ? null
-      : (sourceOfPreview(previewShown) ?? sourceOfResult(workspace.page?.version));
-  const afterSource: ImageSource | null =
-    openStep === null
-      ? (sourceOfPreview(previewShown) ??
-        stepSource ??
-        (resultUrl === null ? null : { kind: SourceKind.Iiif, url: resultUrl }))
-      : stepOutput;
-  const beforePicture = openStep === null ? beforeSource : stepInput;
   const compareBlocked = spread
     ? MESSAGES.processing.compare.spreadOnly
     : editorOpen && editor?.focused !== true
       ? MESSAGES.editors.compareOff
-      : beforePicture === null || (openStep !== null && stepOutput === null)
+      : pair.before === null || pair.after === null || sameImage(pair.before, pair.after)
         ? MESSAGES.processing.compare.none
         : null;
   const compareMode = compareBlocked === null ? compareChoice : CompareMode.Off;
@@ -460,12 +465,17 @@ export function StageScreen({
             pairs={
               editing !== null
                 ? { before: null, after: editing.picture }
-                : openStep === null
-                  ? { before: beforeSource, after: afterSource }
-                  : {
-                      before: stepInput,
-                      after: compareMode === CompareMode.Off ? stepInput : stepOutput,
-                    }
+                : {
+                    before: pair.before,
+                    // With the compare off the canvas draws the one picture of the strip, which is the picture before; with
+                    // no step open a preview that is on replaces it
+                    after:
+                      compareMode !== CompareMode.Off
+                        ? pair.after
+                        : openStep === null
+                          ? (pair.after ?? pair.before)
+                          : pair.before,
+                  }
             }
             mode={compareMode}
             beforeLabel={
@@ -482,9 +492,7 @@ export function StageScreen({
                   ? compareMode === CompareMode.Off
                     ? stepLabels.input(openStep.number, openStep.title)
                     : stepLabels.after(openStep.number, openStep.title)
-                  : stepSource !== null && shownStep.index !== null
-                    ? MESSAGES.processing.compare.afterStep(stageName, shownStep.index + 1)
-                    : MESSAGES.processing.compare.after(stageName)
+                  : MESSAGES.processing.compare.after(stageName)
             }
             notice={previewNotice}
             pageIds={shown.map((item) => item.page.id)}

@@ -22,6 +22,7 @@ from bookreviver.ports.processing import ProcessorCatalog, ProcessorSettings
 from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
 from bookreviver.ports.storage import AssetStore
 from bookreviver.services.edits import EditService
+from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.page_carry import CarryOverService
 from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService
@@ -369,3 +370,18 @@ class ProcessingProvider(Provider):
         :rtype: ResultMarksService
         """
         return ResultMarksService(uow=uow, clock=clock)
+
+    @provide(scope=Scope.REQUEST)
+    def outdated_results(self, uow: UnitOfWork, catalogue: ProcessorCatalog, clock: Clock) -> OutdatedResults:
+        """Build the finder of results that a replaced version of a processor made over the unit of work of the start.
+
+        :param uow: Unit of work of the current request or of the start of the application.
+        :type uow: UnitOfWork
+        :param catalogue: The processors the application can run, with the versions that are installed.
+        :type catalogue: ProcessorCatalog
+        :param clock: Clock of the application.
+        :type clock: Clock
+        :returns: The outdated results service.
+        :rtype: OutdatedResults
+        """
+        return OutdatedResults(uow=uow, catalogue=catalogue, clock=clock)

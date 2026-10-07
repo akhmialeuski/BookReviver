@@ -176,18 +176,22 @@ export class ViewerStage {
     for (const [url, item] of this.loaded) {
       item.setOpacity(current.has(url) ? VISIBLE : HIDDEN);
     }
-    // The first view of a screen goes back to where the reader left the canvas, and every later one is fitted, unless
-    // it shows the same pages as the one fitted before, laid out the same, and only their pictures changed
-    const fittedFor = `${fit}:${view.map((page) => page.id).join(',')}:${layout.width.toFixed(SHAPE_DIGITS)}`;
-    const restored = this.hasFitted ? null : (this.hooks.restore?.() ?? null);
-    if (restored !== null) {
-      this.look(restored);
-    } else if (fittedFor !== this.fittedFor) {
-      this.fit(fit, !this.hasFitted);
+    // A view with no picture to draw, such as pages whose rows are still being read, is not a view of the reader: it leaves
+    // the place to be restored, the fit and the zoom of the view before it as they are, for the first picture to take up
+    if (current.size > 0) {
+      // The first view of a screen goes back to where the reader left the canvas, and every later one is fitted, unless
+      // it shows the same pages as the one fitted before, laid out the same, and only their pictures changed
+      const fittedFor = `${fit}:${view.map((page) => page.id).join(',')}:${layout.width.toFixed(SHAPE_DIGITS)}`;
+      const restored = this.hasFitted ? null : (this.hooks.restore?.() ?? null);
+      if (restored !== null) {
+        this.look(restored);
+      } else if (fittedFor !== this.fittedFor) {
+        this.fit(fit, !this.hasFitted);
+      }
+      this.fittedFor = failed.length === 0 ? fittedFor : null;
+      this.hasFitted = true;
+      this.settled = true;
     }
-    this.fittedFor = failed.length === 0 ? fittedFor : null;
-    this.hasFitted = true;
-    this.settled = true;
 
     void this.preload(around, token);
     return { layout, failed };

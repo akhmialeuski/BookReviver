@@ -245,6 +245,39 @@ describe('CompareStage', () => {
     });
   });
 
+  describe('the place of the reader', () => {
+    const PLACE = { zoom: 0.67, centre_x: 0.3, centre_y: 0.5 };
+
+    it('is restored on the first picture and not on a view with none, so the rows that are still read do not spend it', async () => {
+      const restore = vi.fn(() => PLACE);
+      stage = new CompareStage(element, document.createElement('div'), { restore });
+
+      await stage.show(null, null, 'p1');
+      expect(restore).not.toHaveBeenCalled();
+
+      await stage.show(BEFORE, AFTER, 'p1');
+      expect(restore).toHaveBeenCalledTimes(1);
+      // The stage of this test is the second viewer, the first being the one the other tests share
+      const restored = fake.viewers.at(-1) as {
+        viewport: { zoomTo: { mock: { calls: unknown[][] } } };
+      };
+      expect(restored.viewport.zoomTo.mock.calls).toHaveLength(1);
+    });
+
+    it('keeps the zoom of the reader across a view with no picture when the same pages come back', async () => {
+      await stage.show(BEFORE, AFTER, 'p1');
+      const [first] = fake.viewers as {
+        viewport: { fitBounds: { mock: { calls: unknown[][] } } };
+      }[];
+      const fitted = first?.viewport.fitBounds.mock.calls.length;
+
+      await stage.show(null, null, 'p1');
+      await stage.show(BEFORE, AFTER, 'p1');
+
+      expect(first?.viewport.fitBounds.mock.calls).toHaveLength(fitted ?? -1);
+    });
+  });
+
   it('keeps the picture after in the second viewer where it stands in the first, in the side by side mode', async () => {
     await stage.show(BEFORE, AFTER, 'p1', {
       base: Side.After,

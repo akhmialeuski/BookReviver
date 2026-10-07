@@ -17,6 +17,7 @@ from bookreviver.app.container import build_container
 from bookreviver.app.providers.accounts import account_routes
 from bookreviver.app.security import install_security, sign_in_throttle
 from bookreviver.app.settings import Settings
+from bookreviver.services.outdated_results import OutdatedResults
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
@@ -51,10 +52,13 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        """Open the database, run the application and close the container when it shuts down.
+        """Open the database, mark the outdated results, run the application and close the container at shutdown.
 
         The container opens the database on first use, and opening it checks the schema revision, so the database is
         opened here: a database the migrations were not applied to stops the start instead of failing a request.
+        Then the stages whose result a replaced version of a processor made are marked stale, before the first request,
+        so the workspace never shows them as up to date. It runs in a request scope of its own, as a job does, and
+        publishes no event, since no client is connected yet.
 
         :param _app: The application, required by FastAPI's lifespan signature and unused.
         :type _app: FastAPI
@@ -64,6 +68,8 @@ def create_app(
         """
         try:
             await container.get(SqlDatabase)
+            async with container() as request:
+                await (await request.get(OutdatedResults)).mark_stale()
             yield
         finally:
             await container.close()

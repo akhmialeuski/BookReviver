@@ -91,7 +91,7 @@ describe('CompareCanvas', () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     stage.instances.length = 0;
     stage.show.mockReset();
-    stage.show.mockResolvedValue({ failed: [] });
+    stage.show.mockResolvedValue({ failed: [], loaded: [] });
     stage.setMode.mockReset();
     stage.setDivider.mockReset();
     stage.setHolding.mockReset();
@@ -213,7 +213,7 @@ describe('CompareCanvas', () => {
   });
 
   it('says a picture could not be loaded', async () => {
-    stage.show.mockResolvedValue({ failed: ['after'] });
+    stage.show.mockResolvedValue({ failed: ['after'], loaded: [] });
     render(CompareMode.Off);
     await act(async () => {
       await Promise.resolve();

@@ -64,7 +64,7 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
   let stepCount = 0;
   let firstStepVersion: StoredVersion | undefined;
 
-  /** Open the step at a place of the bar, unless it is open already, which a second press would close. */
+  /** Open the step at a place of the bar, unless it is open already. */
   const openStep = async (index: number): Promise<void> => {
     if ((await steps.nth(index).getAttribute('data-open')) !== 'true') {
       await steps.nth(index).click();
@@ -146,7 +146,7 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
     expect(made.find((version) => version.id === firstStepVersion?.id)).toEqual(firstStepVersion);
     await page.getByTestId('strip-page').first().click();
     await expect(page.getByTestId('this-page-stopped')).toHaveCount(0);
-    await page.getByTestId('this-page-step').scrollIntoViewIfNeeded();
+    await page.getByTestId('this-page').scrollIntoViewIfNeeded();
     await snap(page, 'run-through-the-last-step');
   });
 

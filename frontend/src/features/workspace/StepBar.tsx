@@ -9,7 +9,7 @@ import { MESSAGES } from '@/shared/messages';
  * its shape on the open page.
  *
  * After the steps stand the actions the caller gives it, which are the catalogue that adds a step and the gear that opens
- * the list of the steps. The open step is underlined, and pressing it again closes it. The state is never only the colour of the dot: the dot
+ * the list of the steps. The open step is underlined. The state is never only the colour of the dot: the dot
  * has a word that a screen reader reads, and a step that is switched off says so. When the steps do not fit the row, the
  * bar scrolls and the steps that are not open keep their number and mark.
  */
@@ -105,8 +105,8 @@ export function StepBar({
   /** The set of steps shown. */
   recipeId: string | undefined;
   onChooseRecipe: (id: string) => void;
-  /** Open a step, or close the open one with undefined. */
-  onOpen: (stepId: string | undefined) => void;
+  /** Open a step. */
+  onOpen: (stepId: string) => void;
   /** What stands after the steps: the button of the catalogue and the gear. */
   actions?: React.ReactNode;
 }): React.JSX.Element {
@@ -138,7 +138,7 @@ export function StepBar({
             step={step}
             open={step.stepId === openId}
             state={states.get(step.stepId) ?? null}
-            onOpen={() => onOpen(step.stepId === openId ? undefined : step.stepId)}
+            onOpen={() => onOpen(step.stepId)}
           />
         ))}
       </ol>

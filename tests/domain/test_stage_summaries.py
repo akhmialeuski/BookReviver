@@ -462,6 +462,31 @@ class TestStepRow:
         expect(row.input_version is chain[0])
         assert_expectations()
 
+    def test_a_step_a_page_has_not_come_to_is_preceded_by_the_last_version_the_page_has(self) -> None:
+        """Verify the version before a step is the last of a chain that stops short of it, and none when it is empty."""
+        page_id = PageId(uuid4())
+        first, second, third = (Step(processor_key=key) for key in (PERSPECTIVE_KEY, DESKEW_KEY, CROP_KEY))
+        recipe = recipe_of(first, second, third)
+        chain = [made_by(page_id, PERSPECTIVE_KEY)]
+        before = make_page_version(page_id=page_id)
+        stopped = StepRow.of(third.step_id, recipe, chain, before, edited=False)
+        empty = StepRow.of(third.step_id, recipe, [], None, edited=False)
+        at_first = StepRow.of(first.step_id, recipe, chain, before, edited=False)
+        expect((stopped.input_version, stopped.version) == (None, None))
+        expect(stopped.preceding is chain[0])
+        expect(empty.preceding is None)
+        expect(at_first.preceding is before)
+        assert_expectations()
+
+    def test_a_step_the_recipe_does_not_have_has_nothing_before_it(self) -> None:
+        """Verify a page whose recipe lacks the step, or that no recipe processed, has no version before the step."""
+        page_id = PageId(uuid4())
+        step, other = Step(processor_key=DESKEW_KEY), Step(processor_key=CROP_KEY)
+        chain = [made_by(page_id, CROP_KEY)]
+        lacking = StepRow.of(step.step_id, recipe_of(other), chain, None, edited=False)
+        unrun = StepRow.of(step.step_id, None, chain, None, edited=False)
+        assert (lacking.preceding, unrun.preceding) == (None, None)
+
     def test_a_step_that_is_switched_off_leaves_the_places_of_the_others(self) -> None:
         """Verify the place in the chain counts the steps that are on, as the run makes the versions."""
         page_id = PageId(uuid4())

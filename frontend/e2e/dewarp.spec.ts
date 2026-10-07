@@ -13,6 +13,7 @@ import {
   writeBentSheetsFolder,
 } from './support/account';
 import { dragFrom, pairOf } from './support/layer';
+import { runAllPages } from './support/page-work';
 
 /**
  * The Geometry stage on scans of a sheet whose lines are bent into the gutter: the dewarping step of the default recipe
@@ -28,7 +29,7 @@ const RUN_TIMEOUT_MS = 90_000;
 const PAGES = 2;
 const BEND_PX = 18;
 const NODE_DRAG_PX = 10;
-const CURVES = 'Page curves';
+const CURVES = 'Dewarp';
 const CURVE_NODES = '5';
 const GRID_ROWS = '5';
 const SIMPLE_ROWS = '2';
@@ -38,8 +39,7 @@ test.use({ viewport: { width: 1280, height: 1000 } });
 
 /** Run the stage on all pages and wait until every page is up to date. */
 async function runAll(page: Page): Promise<void> {
-  await page.getByTestId('run-menu').click();
-  await page.getByTestId('run-all').click();
+  await runAllPages(page);
   await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
     timeout: RUN_TIMEOUT_MS,
   });
@@ -88,8 +88,8 @@ test('a reader flattens a page bent into the gutter, lays its two curves by hand
   const folder = await writeBentSheetsFolder(PAGES, BEND_PX);
   const layer = page.getByTestId('editor-layer');
   const facts = page.getByTestId('this-page-facts');
-  const steps = page.getByTestId('editor-step');
-  const curvesStep = steps.filter({ hasText: CURVES });
+  const barSteps = page.getByTestId('bar-step');
+  const curvesStep = barSteps.filter({ hasText: CURVES });
   const moreControl = page.getByTestId('mesh-more-control');
   // An edit starts a run of the stage on the page, and the next change waits until that run is over
   const settled = async (): Promise<void> => {
@@ -139,11 +139,10 @@ test('a reader flattens a page bent into the gutter, lays its two curves by hand
   });
 
   await test.step('the curves editor shows the top curve and the bottom curve of five nodes each, over the page the step read', async () => {
-    await page.getByRole('button', { name: 'Set by hand' }).click();
     await curvesStep.click();
     await expect(layer).toBeVisible();
     await expect(layer).toHaveAttribute('aria-label', 'Curves of the lines');
-    await expect(curvesStep).toHaveAttribute('aria-pressed', 'true');
+    await expect(curvesStep).toHaveAttribute('data-open', 'true');
     await expect(layer).toHaveAttribute('data-rows', SIMPLE_ROWS);
     await expect(layer).toHaveAttribute('data-columns', CURVE_NODES);
     await expect(page.getByTestId('mesh-hint')).toBeVisible();
@@ -169,7 +168,7 @@ test('a reader flattens a page bent into the gutter, lays its two curves by hand
     const handle = await pairOf(layer, 'data-handle-1-2');
     await dragFrom(page, layer, handle, { x: 0, y: NODE_DRAG_PX });
     await expect(layer).not.toHaveAttribute('data-node-1-2', `${node.x},${node.y}`);
-    await expect(curvesStep).toHaveAttribute('data-manual', 'true', { timeout: RUN_TIMEOUT_MS });
+    await expect(curvesStep).toHaveAttribute('data-state', 'by-hand', { timeout: RUN_TIMEOUT_MS });
     await expect(facts).toContainText('By hand', { timeout: RUN_TIMEOUT_MS });
     await settled();
     const [dewarp = ''] = await stepIdsOf(page, 'geometry', 'geometry.dewarp');
@@ -202,15 +201,15 @@ test('a reader flattens a page bent into the gutter, lays its two curves by hand
   await test.step('a run on all pages keeps the curves of the user on the page', async () => {
     await runAll(page);
     // The sheet, the angle, the curves, the frame and the block on the page
-    await expect(steps).toHaveCount(5, { timeout: RUN_TIMEOUT_MS });
-    await expect(curvesStep).toHaveAttribute('data-manual', 'true');
+    await expect(barSteps).toHaveCount(5, { timeout: RUN_TIMEOUT_MS });
+    await expect(curvesStep).toHaveAttribute('data-state', 'by-hand');
     await expect(layer).toHaveAttribute('data-node-1-2', `${node.x},${node.y}`);
     expect((await dewarpVersion(page)).edit_hash).not.toBe('');
   });
 
   await test.step('Auto takes the curves away and the step finds them by itself again', async () => {
     await page.getByTestId('editor-auto').click();
-    await expect(curvesStep).toHaveAttribute('data-manual', 'false', { timeout: RUN_TIMEOUT_MS });
+    await expect(curvesStep).toHaveAttribute('data-state', 'found', { timeout: RUN_TIMEOUT_MS });
     await settled();
     await expect(page.getByTestId('editor-auto')).toBeDisabled();
     // The version of the step without the edit is found again in the cache, so it is not the newest, and the facts of

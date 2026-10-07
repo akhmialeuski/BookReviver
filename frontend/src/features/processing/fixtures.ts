@@ -466,8 +466,6 @@ export function processing(overrides: Partial<Processing> = {}): Processing {
     steps: draftOf(saved),
     openId: undefined,
     open: () => undefined,
-    shownStep: null,
-    showStep: () => undefined,
     dirty: false,
     valid: true,
     orderMode: 'usual',

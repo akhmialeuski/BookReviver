@@ -1225,6 +1225,17 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
         return [self._mapper.to_entity(row) for row in rows]
 
     @override
+    async def list_fresh(self) -> Sequence[PageStage]:
+        """Return the records in the fresh state in one query, by page and then in the order of the stages.
+
+        :returns: Every record whose current version is up to date.
+        :rtype: Sequence[PageStage]
+        """
+        order = list(Stage)
+        records = [self._mapper.to_entity(row) for row in await self._rows.get_many(state=StageState.FRESH)]
+        return sorted(records, key=lambda record: (str(record.page_id), order.index(record.stage)))
+
+    @override
     async def list_for_project_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[PageStage]:
         """Return the records of one stage over the pages of a project, by page identifier.
 

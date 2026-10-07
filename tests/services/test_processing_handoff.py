@@ -13,12 +13,15 @@ from bookreviver.adapters.jobs.recording import RecordingJobQueue
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.enums import JobKind, JobState, Stage
 from bookreviver.domain.errors import ConflictError
+from bookreviver.domain.events import JobChanged
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.values import StageRun, TileCut
-from bookreviver.services.processing_parts import NOT_QUEUED
+from bookreviver.services.processing_parts import NOT_QUEUED, JobStarter
+from tests.helpers.builders import EPOCH
+from tests.helpers.fakes_imports import TickingClock
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, Project
+    from bookreviver.domain.entities import Actor, Job, Project
     from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.values import MetadataMap
     from tests.helpers.processing import ProcessingKit
@@ -211,4 +214,193 @@ class TestRunHandOff:
         expect(await processing_kinds(fx_kit, project.id) == [JobKind.RUN_STAGE])
         # The replacement was queued to a worker once, when it was asked for, and the end of the old run adds nothing
         expect([queued.id for queued in fx_kit.recording.enqueued] == [job.id, replacement.id])
+        assert_expectations()
+
+
+class TestRunTakesTheProjectFromAPreview:
+    """Tests for a run or a measure of the book that finds a preview of the project queued or running."""
+
+    @pytest.mark.parametrize('requested', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
+    async def test_queued_preview_is_cancelled_and_the_request_is_queued(
+        self, fx_kit: ProcessingKit, requested: JobKind
+    ) -> None:
+        """Verify a run or a measure asked for while a preview is queued cancels it and is queued to a worker.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param requested: The kind of job the user asks for.
+        :type requested: JobKind
+        """
+        _, project = await prepared_page(fx_kit)
+        starter = fx_kit.parts(fx_kit.uow()).starter
+        preview = await starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
+        asked = await starter.enqueue(project.id, requested, StageRun(stage=Stage.GEOMETRY).to_map())
+
+        stored = await fx_kit.uow().jobs.get(preview.id)
+        expect((stored.state, stored.finished_at) == (JobState.CANCELLED, fx_kit.clock.now()))
+        expect(asked.state is JobState.QUEUED)
+        expect(fx_kit.recording.enqueued == [preview, asked])
+        expect(await processing_kinds(fx_kit, project.id) == [requested])
+        assert_expectations()
+
+    @pytest.mark.parametrize('requested', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
+    async def test_running_preview_is_cancelled_and_the_request_is_queued_once(
+        self, fx_kit: ProcessingKit, requested: JobKind
+    ) -> None:
+        """Verify a preview cancelled while it runs leaves the request queued once, whatever its worker does after.
+
+        The worker of the preview goes on to the end of its steps, since it reads no state before then. Its last write
+        finds the job cancelled and changes nothing, and the hand-off it ends with queues no job stored after the
+        cancellation, which is the request.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param requested: The kind of job the user asks for.
+        :type requested: JobKind
+        """
+        fx_kit.clock = TickingClock(EPOCH)
+        _, project = await prepared_page(fx_kit)
+        parts = fx_kit.parts(fx_kit.uow())
+        preview = await parts.starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
+        running = await parts.tracker.start(preview.id)
+        assert running is not None
+
+        asked = await parts.starter.enqueue(project.id, requested, StageRun(stage=Stage.GEOMETRY).to_map())
+        await parts.tracker.finish(running, JobState.SUCCEEDED, total=1)
+
+        stored = await fx_kit.uow().jobs.get(preview.id)
+        expect(stored.state is JobState.CANCELLED)
+        expect(fx_kit.recording.enqueued == [preview, asked])
+        expect(await processing_kinds(fx_kit, project.id) == [requested])
+        assert_expectations()
+
+    async def test_request_waits_behind_housekeeping_that_the_cancelled_preview_waited_for(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a preview that waited for a tile cutting is cancelled, never queued, and the run is queued after it.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, project = await prepared_page(fx_kit)
+        starter = fx_kit.parts(fx_kit.uow()).starter
+        tiles = await starter.enqueue(project.id, JobKind.CUT_TILES, NO_SUCH_TILES)
+        preview = await starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
+        run = await starter.enqueue(project.id, JobKind.RUN_STAGE, StageRun(stage=Stage.GEOMETRY).to_map())
+        expect(fx_kit.recording.enqueued == [tiles])
+
+        await fx_kit.jobs().cut_tiles(tiles.id)
+        expect(fx_kit.recording.enqueued == [tiles, run])
+        expect((await fx_kit.uow().jobs.get(preview.id)).state is JobState.CANCELLED)
+        assert_expectations()
+
+    async def test_cancelled_preview_is_announced(self, fx_kit: ProcessingKit) -> None:
+        """Verify the browser is told the preview was cancelled, so it stops waiting for it.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project = await prepared_page(fx_kit)
+        starter = fx_kit.parts(fx_kit.uow()).starter
+        preview = await starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
+        run = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+
+        changes = [event.job for event in fx_kit.events.published if isinstance(event, JobChanged)]
+        expect(
+            [(job.id, job.state) for job in changes]
+            == [
+                (preview.id, JobState.QUEUED),
+                (preview.id, JobState.CANCELLED),
+                (run.id, JobState.QUEUED),
+            ]
+        )
+        assert_expectations()
+
+    @pytest.mark.parametrize('requested', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
+    @pytest.mark.parametrize('active', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
+    async def test_run_or_measure_is_refused_while_another_is_active(
+        self, fx_kit: ProcessingKit, requested: JobKind, active: JobKind
+    ) -> None:
+        """Verify a run or a measure is still refused by an active run or measure, and the preview is left alone.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param requested: The kind of job the user asks for.
+        :type requested: JobKind
+        :param active: The kind of the job that is queued.
+        :type active: JobKind
+        """
+        _, project = await prepared_page(fx_kit)
+        starter = fx_kit.parts(fx_kit.uow()).starter
+        await starter.enqueue(project.id, active, StageRun(stage=Stage.GEOMETRY).to_map())
+        with pytest.raises(ConflictError, match=BUSY_REASON):
+            await starter.enqueue(project.id, requested, StageRun(stage=Stage.GEOMETRY).to_map())
+        expect(await processing_kinds(fx_kit, project.id) == [active])
+        assert_expectations()
+
+    @pytest.mark.parametrize('active', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
+    async def test_preview_is_refused_while_a_run_or_a_measure_is_active(
+        self, fx_kit: ProcessingKit, active: JobKind
+    ) -> None:
+        """Verify a preview does not take the project from a run or a measure that is queued.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param active: The kind of the job that is queued.
+        :type active: JobKind
+        """
+        _, project = await prepared_page(fx_kit)
+        starter = fx_kit.parts(fx_kit.uow()).starter
+        await starter.enqueue(project.id, active, StageRun(stage=Stage.GEOMETRY).to_map())
+        with pytest.raises(ConflictError, match=BUSY_REASON):
+            await starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
+        expect(await processing_kinds(fx_kit, project.id) == [active])
+        assert_expectations()
+
+    @pytest.mark.parametrize('requested', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
+    async def test_preview_stored_between_the_check_and_the_insert_is_cancelled_too(
+        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch, requested: JobKind
+    ) -> None:
+        """Verify a run or a measure that loses the insert to a preview of another request cancels it and goes on.
+
+        The editor of a step asks for a preview by itself at about the time the reader presses Run, so the preview may be
+        stored after the project was read as free and before the run is inserted, where the unique index refuses it.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param monkeypatch: Fixture patching the first read of the active jobs to be the one that came before the preview.
+        :type monkeypatch: pytest.MonkeyPatch
+        :param requested: The kind of job the user asks for.
+        :type requested: JobKind
+        """
+        _, project = await prepared_page(fx_kit)
+        starter = fx_kit.parts(fx_kit.uow()).starter
+        read = JobStarter._active
+        reads: list[None] = []
+
+        async def free_at_first(self: JobStarter, project_id: ProjectId) -> list[Job]:
+            """Show the project as free the first time, as it was when the run was checked, and as it is after that.
+
+            :param self: The starter that reads the active jobs.
+            :type self: JobStarter
+            :param project_id: Project whose jobs are read.
+            :type project_id: ProjectId
+            :returns: No job the first time, then the active jobs of the project.
+            :rtype: list[Job]
+            """
+            if not reads:
+                reads.append(None)
+                await self.enqueue(project_id, JobKind.PREVIEW_STEP, {})
+                return []
+            return await read(self, project_id)
+
+        monkeypatch.setattr(JobStarter, '_active', free_at_first)
+        asked = await starter.enqueue(project.id, requested, StageRun(stage=Stage.GEOMETRY).to_map())
+        monkeypatch.undo()
+
+        preview = fx_kit.recording.enqueued[0]
+        expect((await fx_kit.uow().jobs.get(preview.id)).state is JobState.CANCELLED)
+        expect(asked.state is JobState.QUEUED)
+        expect(fx_kit.recording.enqueued == [preview, asked])
+        expect(await processing_kinds(fx_kit, project.id) == [requested])
         assert_expectations()

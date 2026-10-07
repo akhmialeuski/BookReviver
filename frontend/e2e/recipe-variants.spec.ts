@@ -10,6 +10,7 @@ import {
   uploadFolder,
   writePagesFolder,
 } from './support/account';
+import { runAllPages } from './support/page-work';
 
 /**
  * A variant of a stage for a group of pages: the rule a new book starts with, which sends its plates to the variant
@@ -44,13 +45,6 @@ async function activeRecipeName(page: Page, stage: string): Promise<string> {
   return active.name;
 }
 
-/** Count the runs of a stage that ended well in the open book, which tells that a run the reader started is over. */
-async function finishedRuns(page: Page): Promise<number> {
-  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/jobs?size=20`);
-  const items = ((await listed.json()) as { items: { kind: string; state: string }[] }).items;
-  return items.filter((job) => job.kind === 'run-stage' && job.state === 'succeeded').length;
-}
-
 test('plates get their own variant by a rule, a pinned variant survives a run on all pages, and the strip marks them', async ({
   page,
 }) => {
@@ -59,11 +53,7 @@ test('plates get their own variant by a rule, a pinned variant survives a run on
   const strip = page.getByTestId('strip-page');
   const marks = page.getByTestId('strip-variant');
   const runAll = async (): Promise<void> => {
-    const before = await finishedRuns(page);
-    await page.getByTestId('run-menu').click();
-    await page.getByTestId('run-all').click();
-    // The summary reads "up to date" before a run of pages that are up to date has begun, so the job itself is awaited
-    await expect.poll(() => finishedRuns(page), { timeout: RUN_TIMEOUT_MS }).toBe(before + 1);
+    await runAllPages(page);
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });
@@ -95,7 +85,6 @@ test('plates get their own variant by a rule, a pinned variant survives a run on
     await expect(
       page.getByTestId('step-panel-settings').getByRole('spinbutton', { name: 'Shortest line' }),
     ).toBeVisible();
-    await page.getByTestId('step-close').click();
     await expect(page.getByTestId('rule')).toHaveCount(1);
     await expect(page.getByTestId('rule')).toContainText('Plates and frontispieces');
     await page.getByTestId('used-for').scrollIntoViewIfNeeded();

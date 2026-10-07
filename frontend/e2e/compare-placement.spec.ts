@@ -10,6 +10,7 @@ import {
   uploadFolder,
   writeSheetsFolder,
 } from './support/account';
+import { runAllPages } from './support/page-work';
 
 /**
  * The compare of a step that puts its input on another page: on Margins, the block of text that the step read lies on the
@@ -57,8 +58,7 @@ test('the compare of Margins draws the block of text inside the page at the plac
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
-    await page.getByTestId('run-menu').click();
-    await page.getByTestId('run-all').click();
+    await runAllPages(page);
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });

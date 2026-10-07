@@ -12,6 +12,7 @@ import {
   waitForIdleJobs,
   writeSheetsFolder,
 } from './support/account';
+import { runAllPages } from './support/page-work';
 
 /**
  * The step bar and the workspace of a step in Cleanup, which are the ones Geometry has: the bar stands under the row above
@@ -71,10 +72,7 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(strip).toHaveCount(PAGES);
-    const before = await finishedRuns(page);
-    await page.getByTestId('run-menu').click();
-    await page.getByTestId('run-all').click();
-    await expect.poll(() => finishedRuns(page), { timeout: RUN_TIMEOUT_MS }).toBe(before + 1);
+    await runAllPages(page);
   });
 
   await test.step('the bar of Cleanup shows its four steps in order, and nothing of the screen is gone', async () => {
@@ -162,17 +160,15 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
     await snap(page, 'cleanup-thickness-set-by-hand');
   });
 
-  await test.step('the filter is let go, the step stays open as the page changes, and a second press on it closes it', async () => {
+  await test.step('the filter is let go, the step stays open as the page changes and when it is pressed again', async () => {
     await flagFilter.selectOption('');
     await expect(strip).toHaveCount(PAGES);
     await strip.nth(1).click();
     await expect(page).toHaveURL(STEP_ADDRESS);
     await expect(page.getByTestId('step-panel-title')).toHaveText('3 · Thickness');
     await barSteps.nth(THICKNESS_INDEX).click();
-    await expect(page).toHaveURL(/\/stages\/cleanup(\?|$)/);
-    await expect(page.getByTestId('step-panel')).toHaveCount(0);
-    // Without an open step the strip has no reasons to list
-    await expect(flagFilter).toHaveCount(0);
+    await expect(page).toHaveURL(STEP_ADDRESS);
+    await expect(page.getByTestId('step-panel-title')).toHaveText('3 · Thickness');
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

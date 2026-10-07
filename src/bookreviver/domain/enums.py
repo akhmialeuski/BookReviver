@@ -95,6 +95,11 @@ class Stage(LabeledStrEnum):
         return list(type(self)).index(self)
 
     @property
+    def earlier(self) -> tuple[Stage, ...]:
+        """The stages before this one, the nearest first, which is the order a stage looks for its input in."""
+        return tuple(reversed(list(type(self))[: self.position]))
+
+    @property
     def manual(self) -> bool:
         """Whether the user does the stage by hand, so it is available whatever plugins are installed."""
         return self in {Stage.IMPORT, Stage.PAGE_ORDER}
@@ -596,6 +601,7 @@ class NormalizeParam(LabeledStrEnum):
 
     MARGINS_SOURCE = 'margins_source', 'Who sets the margins'
     LINE_HEIGHT = 'line_height', 'Distance between the lines of text, in pixels'
+    MAX_SCALE_CHANGE = 'max_scale_change', 'Largest change of the size of the text, in percent'
     PAGE_WIDTH = 'page_width', 'Width of the page, in pixels'
     PAGE_HEIGHT = 'page_height', 'Height of the page, in pixels'
     MARGIN_TOP = 'margin_top', 'Margin at the top, in millimetres'
@@ -1064,6 +1070,20 @@ class JobKind(LabeledStrEnum):
         :rtype: frozenset[JobKind]
         """
         return frozenset({cls.RUN_STAGE, cls.PREVIEW_STEP, cls.MEASURE_BOOK})
+
+    @classmethod
+    def preemptive(cls) -> frozenset[JobKind]:
+        """Return the kinds of job that cancel a preview of the project instead of being refused by it.
+
+        A preview is a look at one page that the editor of a step asks for by itself and the reader asks for with a
+        switch, and it changes nothing that is current: it writes versions of the preview scale only, which no run and
+        no measure reads, under identifiers that name that scale. A run and a measure of the book are what the reader
+        pressed a button for, so a preview that happens to be in the way gives the project up, queued or running.
+
+        :returns: A run and a measure of the book.
+        :rtype: frozenset[JobKind]
+        """
+        return frozenset({cls.RUN_STAGE, cls.MEASURE_BOOK})
 
     @classmethod
     def housekeeping(cls) -> frozenset[JobKind]:

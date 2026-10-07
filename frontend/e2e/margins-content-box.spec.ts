@@ -12,7 +12,7 @@ import {
   writeScaledSheetsFolder,
 } from './support/account';
 import { dragFrom, numbersOf, pairOf } from './support/layer';
-import { countEdits, pageIds, readSettings } from './support/page-work';
+import { countEdits, pageIds, readSettings, runAllPages } from './support/page-work';
 
 /**
  * The content box and the border of the page on the Margins step: both are found when the step is opened on a page that has
@@ -82,8 +82,7 @@ async function sizesOf(page: Page, projectId: string): Promise<(Size | null)[]> 
 
 /** Run the stage on all pages and wait until every page is up to date. */
 async function runAll(page: Page): Promise<void> {
-  await page.getByTestId('run-menu').click();
-  await page.getByTestId('run-all').click();
+  await runAllPages(page);
   await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
     timeout: RUN_TIMEOUT_MS,
   });

@@ -267,6 +267,9 @@ class StepRow:
                          page has not come as far as that, or the step is the first and the page is not run.
     :ivar version: The version the step made on the page, or None when the page was not run through the step, or its
                    recipe has no such step switched on.
+    :ivar preceding: The last version of the chain of the stage that comes before the step, which is the version the
+                     step reads, or, for a page that has not come as far as the step, the last version the page has.
+                     None when the chain has none before the step, or the recipe has no such step switched on.
     :ivar unsure: Whether the step marked the page itself as one it was not sure of, which a mark of an earlier step
                   that the step only carried on is not.
     :ivar unusual: Whether what the step found departs notably from the rest of the book.
@@ -277,6 +280,7 @@ class StepRow:
     state: FigureState = FigureState.DEFAULT
     input_version: PageVersion | None = None
     version: PageVersion | None = None
+    preceding: PageVersion | None = None
     unsure: bool = False
     unusual: bool = False
     by_hand: bool = False
@@ -295,8 +299,8 @@ class StepRow:
     @staticmethod
     def place(
         step_id: StepId, recipe: Recipe | None, chain: Sequence[PageVersion], before: PageVersion | None
-    ) -> tuple[PageVersion | None, PageVersion | None]:
-        """Find the version a step read and the version it made on one page, in the versions that made its head.
+    ) -> tuple[PageVersion | None, PageVersion | None, PageVersion | None]:
+        """Find what a step read, what it made and the last version before it on one page, in the versions of its head.
 
         The chain holds one version for each step that is on, so the place of a step in it is the number of steps that
         are on before it. A version of another processor than the step's stands for a step the recipe has changed since,
@@ -310,17 +314,20 @@ class StepRow:
         :type chain: Sequence[PageVersion]
         :param before: The version the first of the chain read, which an earlier stage made, or None.
         :type before: PageVersion | None
-        :returns: The version the step read and the version it made, each None when the page has not come as far, or its
-                  recipe has no such step switched on.
-        :rtype: tuple[PageVersion | None, PageVersion | None]
+        :returns: The version the step read, the version it made, and the last version of the chain that comes before
+                  the step, which is the one it read unless the page has not come as far as the step, and then the last
+                  version the page has. The first two are None when the page has not come as far, and all three when
+                  the recipe has no such step switched on.
+        :rtype: tuple[PageVersion | None, PageVersion | None, PageVersion | None]
         """
         steps = () if recipe is None else recipe.enabled_steps
         place = None if recipe is None else recipe.place_of(step_id)
         if place is None:
-            return None, None
+            return None, None, None
         made = chain[place] if place < len(chain) and chain[place].processor.key == steps[place].processor_key else None
         read = before if place == 0 else (chain[place - 1] if place <= len(chain) else None)
-        return read, made
+        preceding = before if place == 0 else (chain[min(place, len(chain)) - 1] if chain else None)
+        return read, made, preceding
 
     @classmethod
     def of(
@@ -347,7 +354,7 @@ class StepRow:
         :returns: The row. A page whose recipe has no such step, or has it switched off, has neither version.
         :rtype: Self
         """
-        read, made = cls.place(step_id, recipe, chain, before)
+        read, made, preceding = cls.place(step_id, recipe, chain, before)
         skipped = made is not None and made.data.get(VersionData.SKIPPED_BY_CONDITION) is True
         if skipped:
             state = FigureState.SKIPPED
@@ -361,7 +368,15 @@ class StepRow:
             and made.review is not None
             and (read is None or read.review is not made.review)
         )
-        return cls(step_id=step_id, state=state, input_version=read, version=made, unsure=unsure, by_hand=edited)
+        return cls(
+            step_id=step_id,
+            state=state,
+            input_version=read,
+            version=made,
+            preceding=preceding,
+            unsure=unsure,
+            by_hand=edited,
+        )
 
     def with_settings(self) -> Self:
         """Give the row the mark of a page that has settings of its own for the step.
@@ -402,6 +417,11 @@ class StageRow:
     :ivar review_processor: Key of the processor of the first step of the stage that marked the page for review, or None
                             when the page is not marked or an earlier stage marked it.
     :ivar step: The page at the step the row was asked for, or None for a row of the stage as a whole.
+    :ivar picture: The version that stands for the page at the place the row was asked for, which the strip and the
+                   canvas both draw. For a step it is the version the step reads, or, for a page that has not come as
+                   far as the step, the last version of the stage chain before it, and, when the chain has none or the
+                   recipe of the page has no such step switched on, the version the stage reads. For the stage alone it
+                   is the current version, else the version the stage reads. None when the page has no image to draw.
     """
 
     page_id: PageId
@@ -412,6 +432,7 @@ class StageRow:
     through_step: int | None = None
     review_processor: str | None = None
     step: StepRow | None = None
+    picture: PageVersion | None = None
 
     @property
     def marked_bad(self) -> bool:

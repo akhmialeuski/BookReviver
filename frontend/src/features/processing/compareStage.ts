@@ -59,6 +59,8 @@ export interface EditorReach {
 export interface ShownCompare {
   /** Which sides could not be read, `before` or `after`. */
   failed: string[];
+  /** The addresses of the pictures that were read and are on the stage, the one before first. */
+  loaded: string[];
 }
 
 /** The settings both viewers share. */
@@ -101,7 +103,7 @@ export class CompareStage {
   private hasFitted = false;
   /** Whether the canvas shows the view `fit` made, which the reader has not moved since. */
   private atFit = false;
-  /** The pages and the shape of the pictures last fitted, or null while a fitted picture is not on the stage. */
+  /** The pages and the shape of the pictures last fitted, or null while none was fitted. */
   private fittedFor: string | null = null;
   /** Whether the pictures of the latest `show` are on the stage, so the position of the canvas belongs to them. */
   private settled = false;
@@ -233,23 +235,30 @@ export class CompareStage {
     this.arrange();
     // The first pictures of a screen go back to where the reader left the canvas, and later ones are fitted, unless
     // they are other pictures of the pages that were fitted before, of the same shape
+    // With no picture to draw, such as while the rows of the pages are still being read, the view is not the reader's: it
+    // leaves the place to be restored, the fit and the zoom of the pictures before as they are, for the first picture
     const world = this.worldRect();
-    const fittedFor =
-      world === null ? null : `${pageKey}|${(world.width / world.height).toFixed(SHAPE_DIGITS)}`;
-    const restored = this.hasFitted ? null : (this.hooks.restore?.() ?? null);
-    if (restored !== null) {
-      this.look(restored);
-    } else if (fittedFor === null || fittedFor !== this.fittedFor) {
-      this.fit(!this.hasFitted);
+    if (world !== null) {
+      const fittedFor = `${pageKey}|${(world.width / world.height).toFixed(SHAPE_DIGITS)}`;
+      const restored = this.hasFitted ? null : (this.hooks.restore?.() ?? null);
+      if (restored !== null) {
+        this.look(restored);
+      } else if (fittedFor !== this.fittedFor) {
+        this.fit(!this.hasFitted);
+      }
+      this.fittedFor = fittedFor;
+      this.hasFitted = true;
+      this.settled = true;
     }
-    this.fittedFor = fittedFor;
-    this.hasFitted = true;
-    this.settled = true;
     this.publishPlacement();
     return {
       failed: [
         ...(before !== null && this.before === null ? ['before'] : []),
         ...(after !== null && this.after === null ? ['after'] : []),
+      ],
+      loaded: [
+        ...(before !== null && this.before !== null ? [before.url] : []),
+        ...(after !== null && this.after !== null ? [after.url] : []),
       ],
     };
   }

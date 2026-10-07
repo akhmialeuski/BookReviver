@@ -10,7 +10,9 @@ the parameters that are 0, which is the size by the book, without writing them a
 button to have one page size.
 
 A page whose lines were photographed larger than another's has a larger block too, so each block is brought to the
-median line height before the blocks are compared, as the normalize step will bring it. The page is the largest of those
+median line height before the blocks are compared, as the normalize step will bring it: by the same rule, which leaves a
+block whose line height is farther from the target than the step allows (``max_scale_change``) at its own size, since
+the step leaves its page so. The page is the largest of those
 blocks with the margins round it, so no page has a block that does not fit. The margins are lengths of the paper, in
 millimetres, which the step turns into pixels by the resolution of each page; the page is sized by the largest of those
 resolutions, or by the width of the block for pages that have none, as ``MarginScale`` works it out for the step too.
@@ -31,6 +33,7 @@ from bookreviver.domain.enums import MarginsSource, NormalizeParam, OrderMode, S
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Rect
 from bookreviver.domain.margins import DEFAULT_MARGINS_MM, MarginScale
+from bookreviver.domain.text_scale import DEFAULT_MAX_SCALE_CHANGE, scale_factor
 from bookreviver.domain.values import RecipeDraft
 
 if TYPE_CHECKING:
@@ -191,7 +194,7 @@ class BookSize:
                   measure sets them.
         :rtype: MetadataMap
         """
-        block = self._block(self._median_line_height)
+        block = self._block(self._median_line_height, current)
         along = {NormalizeParam.MARGIN_TOP: block.height, NormalizeParam.MARGIN_BOTTOM: block.height}
         # The margins are shares of the block, in the millimetres of the paper, to a tenth of a millimetre
         margins: dict[str, float] = {
@@ -237,7 +240,7 @@ class BookSize:
         margins: dict[str, float] = {
             name: float(current.get(name, default)) for name, default in DEFAULT_MARGINS_MM.items()
         }
-        page = self._page(self._block(line_height), margins)
+        page = self._page(self._block(line_height, current), margins)
         sizes: dict[str, object] = {
             NormalizeParam.PAGE_WIDTH: page[NormalizeParam.PAGE_WIDTH]
             if held is None
@@ -268,20 +271,27 @@ class BookSize:
             NormalizeParam.PAGE_HEIGHT: math.ceil(block.height + vertical),
         }
 
-    def _block(self, line_height: float | None) -> BookBlock:
-        """Give the largest content box of the book once every box is brought to a line height.
+    def _block(self, line_height: float | None, current: MetadataMap) -> BookBlock:
+        """Give the largest content box of the book once every box is brought to a line height, as the step does.
 
-        The pixels in a millimetre are those of the page that has the most of them, whose margins are the longest, so
-        no page of the book has a margin that does not fit the page. Pages that have no resolution take the width of
-        the box for ``NOMINAL_BLOCK_MM`` millimetres.
+        A box whose line height is too far from the target is left at its own size, since the step leaves its page so,
+        and its resolution stays as it is. The pixels in a millimetre are those of the page that has the most of them,
+        whose margins are the longest, so no page of the book has a margin that does not fit the page. Pages that have
+        no resolution take the width of the box for ``NOMINAL_BLOCK_MM`` millimetres.
 
         :param line_height: The distance between the lines the boxes are brought to, or None to leave them as they are.
         :type line_height: float | None
+        :param current: The parameters of the step, which hold the largest change of size it allows a page.
+        :type current: MetadataMap
         :returns: The box that holds every box, which has the width and the height of the largest of each.
         :rtype: BookBlock
         """
+        max_change = float(current.get(NormalizeParam.MAX_SCALE_CHANGE, DEFAULT_MAX_SCALE_CHANGE))
+        # A page the step leaves unscaled keeps its own size, which is the factor 1
         factors = [
-            1.0 if line_height is None or measure.line_height is None else line_height / measure.line_height
+            1.0
+            if line_height is None or measure.line_height is None
+            else scale_factor(measure.line_height, line_height, max_change) or 1.0
             for measure in self._measures
         ]
         width = max(measure.width * factor for measure, factor in zip(self._measures, factors, strict=True))

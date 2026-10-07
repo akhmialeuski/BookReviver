@@ -75,20 +75,14 @@ function StageOfBook({ projectId }: { projectId: string }): React.JSX.Element {
       });
     }
   };
-  const onStepChange = (next: string | undefined): void => {
-    if (next === undefined) {
-      void navigate({
-        to: '/projects/$projectId/stages/$stage',
-        params: (previous) => ({ ...previous, stage: known }),
-        search: (previous) => previous,
-      });
-    } else {
-      void navigate({
-        to: '/projects/$projectId/stages/$stage/steps/$stepId',
-        params: (previous) => ({ ...previous, stage: known, stepId: next }),
-        search: (previous) => previous,
-      });
-    }
+  // The step a stage with a bar opens on replaces an address that names none, so Back does not return to that address
+  const onStepChange = (next: string, replace = false): void => {
+    void navigate({
+      to: '/projects/$projectId/stages/$stage/steps/$stepId',
+      params: (previous) => ({ ...previous, stage: known, stepId: next }),
+      search: (previous) => previous,
+      replace,
+    });
   };
   let screen = (
     <StageScreen
@@ -98,6 +92,7 @@ function StageOfBook({ projectId }: { projectId: string }): React.JSX.Element {
       stepId={stepId}
       onSearchChange={onSearchChange}
       onStepChange={onStepChange}
+      onDefaultStep={(next) => onStepChange(next, true)}
     />
   );
   // Import works on files and scans, and the Order stage is a grid of pages with its own panel

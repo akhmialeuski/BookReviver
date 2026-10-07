@@ -13,6 +13,7 @@ import {
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
+import { finishedRuns } from './support/page-work';
 
 /**
  * The step bar and the workspace of a step in Geometry: the bar stands under the row above the canvas and takes nothing
@@ -32,19 +33,11 @@ const FIRST_DESKEW_INDEX = 1;
 // A step added from the catalogue stands where its processor usually does, which is right after the first one
 const SECOND_DESKEW_INDEX = 2;
 const STEP_ADDRESS = /\/stages\/geometry\/steps\/[0-9a-f-]{36}(\?|$)/;
-const STAGE_ADDRESS = /\/stages\/geometry(\?|$)/;
 const TEXT_PAGES = '2 pages';
 const PICTURE_PAGES = '1 page';
 
 // Tall enough for the pictures of the key states to show the bar, the canvas and the section of the step in the panel
 test.use({ viewport: { width: 1280, height: 1000 } });
-
-/** Count the runs of a stage that ended well in the open book, which tells that a run the reader started is over. */
-async function finishedRuns(page: Page): Promise<number> {
-  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/jobs?size=50`);
-  const items = ((await listed.json()) as { items: { kind: string; state: string }[] }).items;
-  return items.filter((job) => job.kind === 'run-stage' && job.state === 'succeeded').length;
-}
 
 /** Take away the rules of the Geometry stage, so that every page of the book is made by the one recipe that is shown. */
 async function removeRules(page: Page): Promise<void> {
@@ -88,7 +81,10 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await expect(bar).toBeVisible();
     await expect(barSteps).toHaveCount(stepCount);
     await expect(barSteps.nth(0)).toContainText('Perspective');
-    await expect(panel).toHaveCount(0);
+    // A stage with a bar always has a step open: the last one, since no run has brought a page of the recipe further
+    await expect(page).toHaveURL(STEP_ADDRESS);
+    await expect(panel).toHaveCount(1);
+    await expect(barSteps.nth(stepCount - 1)).toHaveAttribute('data-open', 'true');
     // Under the row above the canvas, which still holds its buttons and the page chip
     const header = await page.getByTestId('toggle-panel').boundingBox();
     const barBox = await bar.boundingBox();
@@ -120,6 +116,8 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await expect(barSteps).toHaveCount(stepCount + 1);
     await expect(barSteps.nth(SECOND_DESKEW_INDEX)).toContainText('Deskew');
     // The added step is open, so its condition is set in its own panel
+    // A stage with a bar has a step open all the time, so the added one is open once the address names it
+    await expect(barSteps.nth(SECOND_DESKEW_INDEX)).toHaveAttribute('data-open', 'true');
     await expect(page).toHaveURL(STEP_ADDRESS);
     await page.getByTestId('step-panel-condition').selectOption('pictures');
     await barSteps.nth(FIRST_DESKEW_INDEX).click();
@@ -189,7 +187,7 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await snap(page, 'second-deskew-open-on-the-plate');
   });
 
-  await test.step('the address of the step opens it again after a reload, and a second press on the open step closes it', async () => {
+  await test.step('the address of the step opens it again after a reload, and a second press on the open step leaves it open', async () => {
     await page.reload();
     await expect(page.getByTestId('step-panel-title')).toHaveText(
       `${SECOND_DESKEW_INDEX + 1} · Deskew`,
@@ -197,8 +195,11 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await expect(barSteps.nth(SECOND_DESKEW_INDEX)).toHaveAttribute('aria-current', 'step');
 
     await barSteps.nth(SECOND_DESKEW_INDEX).click();
-    await expect(page).toHaveURL(STAGE_ADDRESS);
-    await expect(panel).toHaveCount(0);
+    await expect(page).toHaveURL(STEP_ADDRESS);
+    await expect(panel).toHaveCount(1);
+    await expect(page.getByTestId('step-panel-title')).toHaveText(
+      `${SECOND_DESKEW_INDEX + 1} · Deskew`,
+    );
     await expect(page.getByTestId('this-page')).toBeVisible();
     await expect(barSteps).toHaveCount(stepCount + 1);
   });

@@ -27,7 +27,8 @@ import { MESSAGES } from '@/shared/messages';
  * It owns the OpenSeadragon stage, which loads the two pictures once and changes only what is shown when the mode
  * changes. The swipe has a divider the reader drags, or moves with the arrow keys once it has the focus, and holding
  * Space shows the picture before in every mode. The `data-state` of the canvas says where the loading stands, which the
- * end-to-end scenarios wait on, as they do for the canvas of the reading mode.
+ * end-to-end scenarios wait on, as they do for the canvas of the reading mode, and its `data-sources` lists the addresses
+ * of the pictures the stage has loaded, so a scenario can tell which version is drawn.
  *
  * A page editor is drawn over the canvas by the `overlay` the screen passes in. It gets the viewer and the one picture
  * the page is on, once that picture is loaded, and the page is fitted with room round it for the editor's labels.
@@ -76,6 +77,7 @@ export function CompareCanvas({
   const [aside, setAside] = useState<HTMLDivElement | null>(null);
   const [stage, setStage] = useState<CompareStage | null>(null);
   const [state, setState] = useState<LoadState>('idle');
+  const [sources, setSources] = useState<readonly string[]>([]);
   const [divider, setDivider] = useState(DIVIDER_CENTRE);
   const [holding, setHolding] = useState(false);
   const frame = useRef<HTMLDivElement>(null);
@@ -133,6 +135,7 @@ export function CompareCanvas({
     }
     let current = true;
     setState('loading');
+    setSources([]);
     const before =
       beforeUrl === null || beforeKind === null ? null : { kind: beforeKind, url: beforeUrl };
     const after =
@@ -140,6 +143,7 @@ export function CompareCanvas({
     void stage.show(before, after, pageKey, stand).then((shown) => {
       if (current && shown !== null) {
         setState(shown.failed.length > 0 ? 'failed' : 'ready');
+        setSources(shown.loaded);
       }
     });
     return () => {
@@ -187,6 +191,7 @@ export function CompareCanvas({
           className={cn('h-full', side ? 'w-1/2' : 'w-full')}
           data-testid="viewer-canvas"
           data-state={state}
+          data-sources={sources.join(' ')}
           data-mode={mode}
           data-holding={holding}
           data-page-ids={pageIds.join(',')}

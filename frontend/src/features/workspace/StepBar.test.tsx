@@ -129,12 +129,12 @@ describe('StepBar', () => {
     ]);
   });
 
-  it('opens a step that is pressed and closes the step that is open when it is pressed again', () => {
+  it('opens a step that is pressed and never closes the open one when it is pressed again', () => {
     render('b');
     act(() => buttons()[0]?.click());
     act(() => buttons()[1]?.click());
 
-    expect(onOpen.mock.calls).toEqual([['a'], [undefined]]);
+    expect(onOpen.mock.calls).toEqual([['a'], ['b']]);
   });
 
   it('offers the sets of steps of the stage only when there are several', () => {
@@ -238,7 +238,7 @@ describe('StepBar', () => {
         'default',
       ]);
       expect(buttons()[2]?.getAttribute('aria-current')).toBe('step');
-      expect(onOpen).toHaveBeenCalledWith(undefined);
+      expect(onOpen).toHaveBeenCalledWith('thick');
     });
   });
 });

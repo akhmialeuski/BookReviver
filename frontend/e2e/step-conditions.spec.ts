@@ -111,7 +111,9 @@ test('a second Deskew for the pictures skips the text pages, and the first Deske
     await page.getByTestId('step-catalogue-list').locator(`[data-processor="${DESKEW}"]`).click();
     await expect(steps).toHaveCount(stepCount + 1);
     await expect(steps.nth(SECOND_DESKEW_INDEX)).toContainText('Deskew');
-    // The added step is open, and its condition is set in its own panel
+    // The added step is open, and its condition is set in its own panel. A stage with a bar has a step open all the time,
+    // so the panel of the step that was open before stands there until the address moves to the added one
+    await expect(steps.nth(SECOND_DESKEW_INDEX)).toHaveAttribute('data-open', 'true');
     await expect(page.getByTestId('step-panel-condition')).toHaveValue('all');
     await page.getByTestId('step-panel-condition').selectOption('pictures');
     await snap(page, 'second-deskew-for-pictures');

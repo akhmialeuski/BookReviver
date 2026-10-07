@@ -38,8 +38,9 @@ VERSION_ID_DIGITS: int = 16
 FIRST_KEY: str = 'a0'
 BUSY_MESSAGE: str = 'project is busy'
 # The pages of the first test: a block and a line height each, the block being the same size when the lines are brought
-# to the median one, which is 30 pixels, so the block is 300 by 600 on all three
-BLOCKS: tuple[tuple[float, float, float], ...] = ((200, 400, 20), (300, 600, 30), (400, 800, 40))
+# to the median one, which is 30 pixels, so the block is 300 by 600 on all three. Each line height is within the quarter
+# the step scales a page by, since a page farther from the target keeps its size and would not be brought to it
+BLOCKS: tuple[tuple[float, float, float], ...] = ((250, 500, 25), (300, 600, 30), (360, 720, 36))
 MEDIAN_LINE_HEIGHT_PX: float = 30.0
 # The block 300 by 600 plus the margins, which are 8, 10, 10 and 8 percent of the block. The pages carry no resolution,
 # so the block is taken for 100 mm wide, a millimetre is 3 pixels, and the margins are 16, 20, 10 and 8 mm
@@ -53,6 +54,18 @@ EXPECTED_PAGE: dict[str, float] = {
     NormalizeParam.MARGIN_OUTER: 8.0,
 }
 TOO_WIDE_PX: float = 30_000
+# Three pages on the target of 30, one a tenth below it that the step scales, and one a third below it, which the step
+# leaves as it is unless it is allowed to change the size by half
+FAR_PAGE_BLOCKS: tuple[tuple[float, float, float], ...] = (
+    (300, 600, 30),
+    (300, 600, 30),
+    (300, 600, 30),
+    (330, 660, 27),
+    (300, 600, 20),
+)
+# The margins the measure writes add 18 percent to the block each way
+MARGINS_SHARE: float = 1.18
+SIZE_TOLERANCE_PX: float = 3.0
 
 
 def version_id() -> PageVersionId:
@@ -217,29 +230,30 @@ class TestMeasureBook:
     async def test_a_book_with_a_resolution_gets_its_margins_in_the_millimetres_of_that_resolution(
         self, fx_cv_kit: ProcessingKit
     ) -> None:
-        """Verify scans at 300 and 600 dpi of one paper measure to one block in millimetres, and the page holds them.
+        """Verify scans at 300 and 360 dpi of one paper measure to one block in millimetres, and the page holds them.
 
         The blocks are the same paper at two resolutions, so once their lines are brought to the median one both are
-        3000 by 4500 pixels of 450 dpi, and the margins, which are shares of that block, are the same in millimetres.
+        2200 by 3300 pixels of 330 dpi, and the margins, which are shares of that block, are the same in millimetres.
+        Both line heights are within the quarter the step scales a page by.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
         actor, project = await fx_cv_kit.seed_project()
         recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
-        for index, (width, height, line_height, dpi) in enumerate(((2000, 3000, 30, 300), (4000, 6000, 60, 600))):
+        for index, (width, height, line_height, dpi) in enumerate(((2000, 3000, 30, 300), (2400, 3600, 36, 360))):
             data = block_data(width, height, line_height, dpi)
             await placed_page(fx_cv_kit, project, recipe, f'a{index}', data)
         await measure(fx_cv_kit, actor, project)
         after = await normalize_params(fx_cv_kit, actor, project)
-        pixels_per_mm = 450 / MM_PER_INCH
+        pixels_per_mm = 330 / MM_PER_INCH
         # 10 percent of the width, 8 percent of the width, 8 percent of the height and 10 percent of the height
-        expect(after[NormalizeParam.MARGIN_INNER] == pytest.approx(300 / pixels_per_mm, abs=0.05))
-        expect(after[NormalizeParam.MARGIN_OUTER] == pytest.approx(240 / pixels_per_mm, abs=0.05))
-        expect(after[NormalizeParam.MARGIN_TOP] == pytest.approx(360 / pixels_per_mm, abs=0.05))
-        expect(after[NormalizeParam.MARGIN_BOTTOM] == pytest.approx(450 / pixels_per_mm, abs=0.05))
+        expect(after[NormalizeParam.MARGIN_INNER] == pytest.approx(220 / pixels_per_mm, abs=0.05))
+        expect(after[NormalizeParam.MARGIN_OUTER] == pytest.approx(176 / pixels_per_mm, abs=0.05))
+        expect(after[NormalizeParam.MARGIN_TOP] == pytest.approx(264 / pixels_per_mm, abs=0.05))
+        expect(after[NormalizeParam.MARGIN_BOTTOM] == pytest.approx(330 / pixels_per_mm, abs=0.05))
         # The margins are rounded to a tenth of a millimetre, which is half a pixel at this resolution
-        expect(after[NormalizeParam.PAGE_WIDTH] == pytest.approx(3000 + 300 + 240, abs=2))
+        expect(after[NormalizeParam.PAGE_WIDTH] == pytest.approx(2200 + 220 + 176, abs=2))
         assert_expectations()
 
     async def test_the_page_holds_the_largest_block_of_the_book_in_each_direction(
@@ -260,6 +274,38 @@ class TestMeasureBook:
         # 10 and 8 mm at the sides, and 17.1 and 21.3 mm at the top and the bottom
         expect(after[NormalizeParam.PAGE_WIDTH] == 300 + (10 + 8) * PIXELS_PER_MM)
         expect(after[NormalizeParam.PAGE_HEIGHT] == math.ceil(640 + (17.1 + 21.3) * PIXELS_PER_MM))
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        ('limit', 'width'),
+        [(None, 366.67 * MARGINS_SHARE), (50.0, 450.0 * MARGINS_SHARE)],
+        ids=['the-limit-the-step-starts-with', 'a-limit-the-user-set'],
+    )
+    async def test_a_page_the_step_leaves_unscaled_is_measured_at_its_own_size(
+        self, fx_cv_kit: ProcessingKit, limit: float | None, width: float
+    ) -> None:
+        """Verify the page is sized by the boxes as the step places them, which leaves a far page at its own size.
+
+        Three pages are on the target of 30 pixels, one is a tenth below it and is scaled, and one is at 20, a third
+        below it, which the default limit of 25 percent leaves at 300 by 600; a limit of 50 percent scales it to 450.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        :param limit: The largest change of size the step allows, or None to keep the one the step starts with.
+        :type limit: float | None
+        :param width: The width the page of the book comes out at, in pixels.
+        :type width: float
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        if limit is not None:
+            await set_normalize_params(fx_cv_kit, actor, project, {NormalizeParam.MAX_SCALE_CHANGE: limit})
+        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        for index, (box_width, box_height, line_height) in enumerate(FAR_PAGE_BLOCKS):
+            await placed_page(fx_cv_kit, project, recipe, f'a{index}', block_data(box_width, box_height, line_height))
+        await measure(fx_cv_kit, actor, project)
+        after = await normalize_params(fx_cv_kit, actor, project)
+        expect(after[NormalizeParam.PAGE_WIDTH] == pytest.approx(width, abs=SIZE_TOLERANCE_PX))
+        expect(after[NormalizeParam.PAGE_HEIGHT] == pytest.approx(width * 2, abs=SIZE_TOLERANCE_PX))
         assert_expectations()
 
     async def test_the_pages_the_recipe_processed_go_out_of_date_and_are_announced(

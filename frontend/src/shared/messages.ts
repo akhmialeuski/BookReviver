@@ -673,7 +673,7 @@ export const MESSAGES = {
         input: (number: number, title: string) => `Input of step ${number} · ${title}`,
       },
       catalogue: {
-        open: '+ Step',
+        open: 'Add a step',
         title: (stage: string) => `Add a ${stage.toLowerCase()} step`,
         hint: 'A step can be added more than once, with its own settings and pages.',
         saveFirst:
@@ -734,7 +734,6 @@ export const MESSAGES = {
       saveFirst: 'Save the recipe to run it.',
       moves: 'Move between steps',
       moveTo: (number: number, title: string) => `Go to step ${number}, ${title}`,
-      close: 'Close the step',
       carry: {
         title: 'the shape',
         hint: 'The whole shape set by hand goes to the pages you choose. A page that set its own shape keeps it.',
@@ -1577,7 +1576,6 @@ export const MESSAGES = {
     compare: {
       before: (stage: string) => (stage === '' ? 'Before' : `Before · result of ${stage}`),
       after: (stage: string) => `After · ${stage}`,
-      afterStep: (stage: string, step: number) => `After · ${stage}, step ${step}`,
       swipe: 'Swipe',
       side: 'Side by side',
       off: 'After only',
@@ -1647,13 +1645,6 @@ export const MESSAGES = {
       reviewHint: 'Set it by hand in the page editor, or change the settings and preview again.',
       stoppedAt: (step: number, total: number) =>
         `Run through step ${step} of ${total} only. The next stage reads this page after the rest is run.`,
-      result: {
-        label: 'Result shown',
-        last: 'Last step',
-        option: (number: number, title: string) => `${number} · ${title}`,
-        notReached: (number: number) =>
-          `This page has not reached step ${number}, so its latest result is shown.`,
-      },
       how: 'Method',
       automatic: 'Automatic',
       manual: 'By hand',

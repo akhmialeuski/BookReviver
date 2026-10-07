@@ -11,7 +11,7 @@ import {
   writeSheetsFolder,
 } from './support/account';
 import { dragFrom, numbersOf, pairOf } from './support/layer';
-import { pageIds } from './support/page-work';
+import { finishedRuns, pageIds } from './support/page-work';
 
 /**
  * The borders of the content on the Select content step: they are only placed. The step records the frame of the content
@@ -121,13 +121,6 @@ async function waitForQuietCanvas(page: Page): Promise<void> {
     await watchCanvas(page);
   }
   throw new Error('The canvas did not settle.');
-}
-
-/** Count the runs of a stage that ended well in the open book, which tells that a run the reader started is over. */
-async function finishedRuns(page: Page): Promise<number> {
-  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/jobs?size=50`);
-  const items = ((await listed.json()) as { items: { kind: string; state: string }[] }).items;
-  return items.filter((job) => job.kind === 'run-stage' && job.state === 'succeeded').length;
 }
 
 // Tall enough for the pictures of the key states to show the bar, the canvas and the panel

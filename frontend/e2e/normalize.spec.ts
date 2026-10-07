@@ -11,6 +11,7 @@ import {
   waitForIdleJobs,
   writeScaledSheetsFolder,
 } from './support/account';
+import { runAllPages } from './support/page-work';
 
 /**
  * Making the pages of a book alike: the book is measured and the Geometry stage puts the content box of every page on a page of
@@ -47,8 +48,7 @@ interface Result {
 
 /** Run the stage on all pages and wait until every page is up to date. */
 async function runAll(page: Page): Promise<void> {
-  await page.getByTestId('run-menu').click();
-  await page.getByTestId('run-all').click();
+  await runAllPages(page);
   await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
     timeout: RUN_TIMEOUT_MS,
   });
@@ -110,14 +110,10 @@ test('the book is measured and its pages come out of one size with the lines at 
   });
 
   await test.step('measuring the book fills the settings of the normalize step from the pages', async () => {
-    // Opening Margins asks for a preview of the page, which finds the content box, and the server refuses to measure the
-    // book while that job runs
-    const previewAsked = page.waitForResponse((response) =>
-      response.url().endsWith('/stages/geometry/preview'),
-    );
+    // The stage opens on Margins, the furthest step the run brought the pages to, and the server refuses to measure the
+    // book while a job of the book runs
     await page.getByTestId('bar-step').filter({ hasText: NORMALIZE_TITLE }).click();
     await expect(normalize).toBeVisible();
-    await previewAsked;
     await waitForIdleJobs(page, projectId);
     await expect(field('page_width')).toHaveValue(DEFAULT_PAGE_WIDTH);
     await normalize.getByTestId('measure-book-button').click();

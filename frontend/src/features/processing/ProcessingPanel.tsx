@@ -42,12 +42,12 @@ export function ProcessingPanel({
   selected: ReadonlySet<string>;
   /** The page editor of the stage on the open page, or null when the stage has none. */
   editor: EditorSession | null;
-  /** The step that is open, whose section stands above the others, or nothing when no step is open. */
+  /** The step that is open, whose section stands above the others; a stage with no step bar has none. */
   step?: {
     workspace: StepWorkspace;
     step: BarStep;
     pageLabel: string;
-    onOpen: (stepId: string | undefined) => void;
+    onOpen: (stepId: string) => void;
   };
 }): React.JSX.Element {
   const rows = items.flatMap((item) => (item.row === undefined ? [] : [item.row]));
@@ -105,7 +105,6 @@ export function ProcessingPanel({
             editor={editor}
             run={run}
             onOpen={step.onOpen}
-            onClose={() => step.onOpen(undefined)}
           />
         )}
         {processing.stage === 'page-split' && current !== undefined ? (

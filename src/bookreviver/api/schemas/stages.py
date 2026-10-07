@@ -3,7 +3,8 @@
 The stage bar draws itself from the summaries, the strip of pages from the rows, and the book list from the progress,
 so each comes from one request instead of one for each page. The row of a page carries the current version of the
 stage whole, in the same schema as the versions of a page, so the strip shows the result of this very stage with the
-same image paths, data and review mark as everywhere else.
+same image paths, data and review mark as everywhere else. The row also carries the picture of the page at the place the
+list was asked for, which the server picks, so the strip and the canvas of a step never choose a version each.
 """
 
 from typing import TYPE_CHECKING, Self
@@ -136,6 +137,13 @@ class StagePageSchema(ResponseModel):
     :ivar step: The page at the step the list was asked for, or None for a list of the stage alone.
     :ivar marked_bad: Whether the user marked bad the result the row stands on: the version of the step the list was
                       asked for, else the current version of the stage.
+    :ivar picture: The version that stands for the page at the place the list was asked for, so the strip and the canvas
+                   draw the same picture. With ``step`` it is the version the step reads on the page; a page that has
+                   not come as far as the step has the last version of the stage before it, and one the stage has not
+                   run on, or whose recipe has no such step switched on, has the version the stage reads. Without
+                   ``step`` it is the current version of the stage, else the version the stage reads. It is never the
+                   result of the step or of a later one, nor a version of a later stage. None when the page has no image
+                   to draw, such as a placeholder.
     """
 
     page_id: PageId
@@ -148,6 +156,7 @@ class StagePageSchema(ResponseModel):
     review_processor: str | None
     step: StepPageSchema | None
     marked_bad: bool
+    picture: PageVersionSchema | None
 
     @classmethod
     def of(cls, row: StageRow, project_id: ProjectId, request: Request) -> Self:
@@ -174,6 +183,7 @@ class StagePageSchema(ResponseModel):
             review_processor=row.review_processor,
             step=None if row.step is None else StepPageSchema.of(row.step, project_id, request),
             marked_bad=row.marked_bad,
+            picture=None if row.picture is None else PageVersionSchema.of(row.picture, project_id, request),
         )
 
 

@@ -1638,6 +1638,50 @@ class TestStepRows:
         expect(step['input_version']['stage'] == 'page-split')
         assert_expectations()
 
+    async def test_the_picture_of_a_row_is_the_input_of_the_step_and_the_head_of_a_row_without_one(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify the row carries the picture of the page: the step input at a step, the current version without one.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the job.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        await run_stage(fx_client, fx_broker, fx_book, 'geometry')
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        at_step = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
+        alone = await fx_client.get(f'{fx_book.path}/stages/geometry/pages')
+        row = at_step.json()[ITEMS][0]
+        expect(row['picture']['id'] == row['step']['input_version']['id'])
+        expect(row['picture']['stage'] == 'page-split')
+        expect(alone.json()[ITEMS][0]['picture']['id'] == alone.json()[ITEMS][0]['version']['id'])
+        assert_expectations()
+
+    async def test_a_page_the_stage_has_not_run_on_has_the_picture_the_stage_reads(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify a row of a stage that has not run is drawn from the page split, with a step and without one.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the job.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        at_step = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
+        alone = await fx_client.get(f'{fx_book.path}/stages/geometry/pages')
+        expect(at_step.json()[ITEMS][0]['picture']['stage'] == 'page-split')
+        expect(alone.json()[ITEMS][0]['picture']['stage'] == 'page-split')
+        expect(alone.json()[ITEMS][0]['version'] is None)
+        assert_expectations()
+
     async def test_an_edit_of_the_step_makes_the_shape_set_by_hand(
         self, fx_client: httpx.AsyncClient, fx_book: Book
     ) -> None:

@@ -84,6 +84,8 @@ SEARCH_TOLERANCE_PX: float = 10.0
 HALF_SCALE: float = 0.5
 LINE_HEIGHT: str = NormalizeParam.LINE_HEIGHT
 TARGET_LINE_PX: float = float(LINE_PITCH_PX)
+# The largest change of size the tests allow a page, in percent of the target line height
+LIMIT_PERCENT: float = 25.0
 PAPER_COLOUR: tuple[int, int, int] = (238, 226, 190)
 SIDES: tuple[PageSide, ...] = (PageSide.LEFT, PageSide.RIGHT)
 SIDE_ARG: str = 'side'
@@ -279,6 +281,41 @@ class TestNormalize:
             expect(frame.width == pytest.approx(block.width / given, rel=LINE_TOLERANCE))
         else:
             expect(frame.width == pytest.approx(block.width))
+        assert_expectations()
+
+    @pytest.mark.parametrize(
+        ('ratio', 'marked'),
+        [(1.25, None), (0.75, None), (1.26, ReviewReason.TEXT_SIZE), (0.74, ReviewReason.TEXT_SIZE)],
+        ids=['larger-at-the-limit', 'smaller-at-the-limit', 'larger-past-the-limit', 'smaller-past-the-limit'],
+    )
+    def test_a_line_height_exactly_at_the_limit_is_still_scaled(
+        self, fx_normalize: Processor, tmp_path: Path, ratio: float, marked: ReviewReason | None
+    ) -> None:
+        """Verify a page that is as far from the target as the limit is scaled, and one past the limit is marked.
+
+        The line height is the one the crop recorded, so the distance is exact: 35 and 21 pixels are 25 percent of the
+        28 pixel target away.
+
+        :param fx_normalize: The processor under test.
+        :type fx_normalize: Processor
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param ratio: Line height of the page over the target.
+        :type ratio: float
+        :param marked: Why the page is marked, or None.
+        :type marked: ReviewReason | None
+        """
+        block = text_block()
+        output = normalized(
+            fx_normalize,
+            block,
+            tmp_path,
+            params={LINE_HEIGHT: TARGET_LINE_PX, NormalizeParam.MAX_SCALE_CHANGE: LIMIT_PERCENT},
+            facts={VersionData.LINE_HEIGHT_PX: TARGET_LINE_PX * ratio},
+        )
+        frame = Rect.from_data(output.data[VersionData.FRAME])
+        expect(output.review is marked)
+        expect(frame.width == pytest.approx(block.width / (1.0 if marked else ratio), rel=0.001))
         assert_expectations()
 
     def test_a_line_height_of_zero_keeps_the_size_of_the_text(self, fx_normalize: Processor, tmp_path: Path) -> None:

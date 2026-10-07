@@ -59,6 +59,7 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import ContentBox, Rect, Transform
 from bookreviver.domain.margins import DEFAULT_MARGINS_MM, MarginScale
+from bookreviver.domain.text_scale import DEFAULT_MAX_SCALE_CHANGE, scale_factor
 from bookreviver.domain.values import OrderRule, ProcessorSpec
 from bookreviver.plugins.base import ModelProcessor, Params
 from bookreviver.plugins.crop import CropParams, FrameSearch, cut_edges_of
@@ -135,7 +136,7 @@ class NormalizeParams(Params):
         'the book is run, and keeps the size of the text when one page is. Measure the book fills it in',
     )
     max_scale_change: float = Field(
-        default=25.0,
+        default=DEFAULT_MAX_SCALE_CHANGE,
         ge=0,
         le=PERCENT,
         title='Largest change of size',
@@ -386,11 +387,10 @@ class Placing:
         if content is not None and (wanted := params.line_height) > 0:
             if self._measured is None or self._measured <= 0:
                 self.review = ReviewReason.LOW_CONFIDENCE
-            # How far the text of the page is from the size of the book, as a share of the size of the book
-            elif abs(self._measured - wanted) / wanted * PERCENT > params.max_scale_change:
+            elif (factor := scale_factor(self._measured, wanted, params.max_scale_change)) is None:
                 self.review = ReviewReason.TEXT_SIZE
             else:
-                self.factor = wanted / self._measured
+                self.factor = factor
         # The box as it is placed, in the pixels of the full page
         block = ((right - left) / self._scale * self.factor, (bottom - top) / self._scale * self.factor)
         dpi = step_input.input_data.get(VersionData.DPI)

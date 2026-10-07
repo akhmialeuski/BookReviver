@@ -1185,6 +1185,19 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         )
 
     @override
+    async def list_fresh(self) -> Sequence[PageStage]:
+        """Return the records in the fresh state, by page and then in the order of the stages.
+
+        :returns: Every record whose current version is up to date.
+        :rtype: Sequence[PageStage]
+        """
+        order = list(Stage)
+        return sorted(
+            (record for record in self._rows.values() if record.state is StageState.FRESH),
+            key=lambda record: (str(record.page_id), order.index(record.stage)),
+        )
+
+    @override
     async def list_for_project_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[PageStage]:
         """Return the records of one stage over the pages of a project, by page identifier.
 

@@ -49,6 +49,7 @@ from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import COLOR_MODE_KEY, PageSize, PageStageKey, PageStepKey, Step
 from bookreviver.services.book_measure import NORMALIZE_KEY, BlockMeasure, BookBlocks, wants_the_book
 from bookreviver.services.spread_splits import SpreadSplit
+from bookreviver.services.stage_inputs import StageInputs
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
@@ -156,6 +157,7 @@ class StageWork:
         self._clock = runtime.clock
         self._preview_long_side_px = runtime.preview_long_side_px
         self._keys = ProjectKeys(project.id)
+        self._inputs = StageInputs(uow=uow)
 
     async def _refresh(self, page: Page, stage: Stage) -> None:
         """Bring a stale earlier stage of a page up to date before a step reads it; a preview leaves it as it is.
@@ -169,6 +171,10 @@ class StageWork:
     async def _source(self, page: Page, stage: Stage, scale: VersionScale) -> StepSource | None:
         """Find what the first step of a stage reads: the scan for the page split, else the nearest earlier version.
 
+        An earlier stage that is stale or run through some of its steps only is brought up to date first, nearest stage
+        first and no farther back than the stage that has a result to read, and the version is then picked by the rule
+        of ``StageInputs``, the one the rows of the stage draw their pictures by.
+
         :param page: Page being processed.
         :type page: Page
         :param stage: Stage of the recipe.
@@ -181,7 +187,7 @@ class StageWork:
         """
         if stage is Stage.PAGE_SPLIT:
             return await self._scan_source(page, scale)
-        for earlier in sorted((s for s in Stage if s.position < stage.position), key=lambda s: -s.position):
+        for earlier in stage.earlier:
             record = await self._uow.page_stages.find(PageStageKey(page.id, earlier))
             if record is None or record.head_version_id is None:
                 continue
@@ -193,15 +199,11 @@ class StageWork:
                     raise ConflictError(EARLIER_STAGE_FAILED.format(stage=earlier.label))
             if record.head_version_id is None:
                 continue
-            head = await self._uow.page_versions.get(record.head_version_id)
-            if head.renditions is not None and head.renditions.ready:
-                return self._version_source(head, scale)
-        bases = [
-            version
-            for version in await self._uow.page_versions.list_base_versions([page.id])
-            if version.state is VersionState.READY and version.renditions is not None and version.renditions.ready
-        ]
-        return self._version_source(bases[-1], scale) if bases else None
+            # Stages further back are not brought up to date once a nearer one has a result to read
+            if StageInputs.has_image(await self._uow.page_versions.get(record.head_version_id)):
+                break
+        read = (await self._inputs.of([page.id], stage)).get(page.id)
+        return None if read is None else self._version_source(read, scale)
 
     async def _scan_source(self, page: Page, scale: VersionScale) -> StepSource | None:
         """Find the scan a page was cut from, whose image the page split reads.

@@ -75,12 +75,6 @@ export interface Processing {
   /** The step that is open, whose settings are drawn. */
   openId: string | undefined;
   open: (id: string | undefined) => void;
-  /**
-   * The step of the recipe, by its index, whose result the canvas and "This page" show, or null for the result the stage
-   * stands on, which is the last step a page was run through.
-   */
-  shownStep: number | null;
-  showStep: (index: number | null) => void;
   /** Whether the draft differs from the saved recipe. */
   dirty: boolean;
   /** Whether every value of the draft fits the schema of its processor. */
@@ -159,11 +153,6 @@ export function useProcessing(
   // The step that is open stays open when the recipe it belongs to is saved or measured, which only moves its time; the
   // steps keep their places, so the reader sees the new numbers in the form they were looking at
   const openId = openChoice?.owner === recipe?.id ? openChoice?.id : steps[0]?.id;
-  // The step whose result is shown is an index, so it belongs to the saved recipe it was chosen in, as the draft does
-  const [shownChoice, setShownChoice] = useState<{ owner: string; index: number | null } | null>(
-    null,
-  );
-  const shownStep = shownChoice?.owner === draftOwner ? shownChoice.index : null;
 
   const schemas = useMemo(
     () =>
@@ -232,8 +221,6 @@ export function useProcessing(
     steps,
     openId,
     open: (id) => setOpenChoice({ owner: recipe?.id, id }),
-    shownStep,
-    showStep: (index) => setShownChoice({ owner: draftOwner, index }),
     dirty,
     valid,
     orderMode,

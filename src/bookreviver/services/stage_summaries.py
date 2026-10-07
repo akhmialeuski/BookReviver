@@ -19,6 +19,7 @@ from attrs import evolve
 from bookreviver.domain.enums import JobState, PageStageStatus, Stage
 from bookreviver.domain.stage_summaries import BookProgress, StageRow, StageSummary
 from bookreviver.domain.values import Slice
+from bookreviver.services.stage_inputs import StageInputs
 from bookreviver.services.step_rows import StepRows
 
 if TYPE_CHECKING:
@@ -80,7 +81,8 @@ class StageSummaries:
         :type step_id: StepId | None
         :returns: One row for each page of the window, and the number of pages of the book. A page the stage has not run
                   on has the status not run and no version. With a step each row also says what the step read and made
-                  on the page and where its shape comes from.
+                  on the page and where its shape comes from. Every row has the picture that stands for the page at the
+                  place asked for, whether the stage has run on the page or not.
         :rtype: Slice[StageRow]
         :raises NotFoundError: If no recipe of the stage has the step.
         """
@@ -100,12 +102,18 @@ class StageSummaries:
                 pages.items, records, heads
             )
         )
+        reads = await StageInputs(uow=self._uow).of([page.id for page in pages.items], stage)
         rows: list[StageRow] = []
         for page in pages.items:
-            if (record := records.get(page.id)) is None:
-                rows.append(StageRow(page_id=page.id, step=steps.get(page.id)))
+            record = records.get(page.id)
+            head = None if record is None or record.head_version_id is None else heads.get(record.head_version_id)
+            step = steps.get(page.id)
+            # A page that has nothing of its own at the place asked for is drawn from what the stage reads
+            own = head if step is None else step.preceding
+            picture = reads.get(page.id) if own is None else own
+            if record is None:
+                rows.append(StageRow(page_id=page.id, step=step, picture=picture))
                 continue
-            head = None if record.head_version_id is None else heads.get(record.head_version_id)
             rows.append(
                 StageRow(
                     page_id=page.id,
@@ -115,7 +123,8 @@ class StageSummaries:
                     head_version=head,
                     through_step=record.through_step,
                     review_processor=None if head is None else markers.get(head.id),
-                    step=steps.get(page.id),
+                    step=step,
+                    picture=picture,
                 )
             )
         return Slice(items=rows, total=pages.total)

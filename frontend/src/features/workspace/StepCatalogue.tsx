@@ -14,7 +14,7 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 
 /**
- * The catalogue of the steps a stage can have, which the "+ Step" button of the bar opens: every processor of the stage
+ * The catalogue of the steps a stage can have, which the plus button of the bar opens: every processor of the stage
  * with what it does, and the steps that are planned and not built, marked "Soon".
  *
  * Choosing a step adds it to the saved recipe at once, and it is shown in the bar and opened. A step has no identifier
@@ -93,13 +93,13 @@ export function StepCatalogue({
       <PopoverTrigger asChild>
         <Button
           variant="outline"
-          size="sm"
+          size="icon-sm"
           className="shrink-0 border-dashed"
-          title={labels.hint}
+          aria-label={labels.open}
+          title={`${labels.open}. ${labels.hint}`}
           data-testid="step-catalogue"
         >
-          <PlusIcon />
-          {labels.open}
+          <PlusIcon aria-hidden="true" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[28rem] p-2" data-testid="step-catalogue-list">

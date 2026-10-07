@@ -84,6 +84,7 @@ export function row(id: string, overrides: Partial<StagePageSchema> = {}): Stage
     review_processor: null,
     step: null,
     marked_bad: false,
+    picture: null,
     ...overrides,
   };
 }

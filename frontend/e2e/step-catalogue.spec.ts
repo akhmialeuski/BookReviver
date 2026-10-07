@@ -15,7 +15,7 @@ import {
 /**
  * The catalogue of steps and the window of the gear in the step bar, and the carrying of a shape over to other pages.
  *
- * "+ Step" lists the processors of Geometry and adds the one chosen to the recipe, so a second Deskew stands in the bar
+ * The plus button of the bar lists the processors of Geometry and adds the one chosen to the recipe, so a second Deskew stands in the bar
  * with its own condition. The gear opens the steps of the recipe as a list, where a step is removed. A shape set by hand
  * on the first page goes to the following pages in one action, and one undo takes it back from all of them. Exact values
  * come from the field and never from a drag, so no screen distance depends on the size of the page on the canvas.
@@ -56,7 +56,7 @@ test('a step is added from the catalogue twice, removed in the window of the gea
     await expect(deskews).toHaveCount(1);
   });
 
-  await test.step('"+ Step" lists the steps of Geometry, each with a line saying what it does', async () => {
+  await test.step('the plus button lists the steps of Geometry, each with a line saying what it does', async () => {
     await page.getByTestId('step-catalogue').click();
     const list = page.getByTestId('step-catalogue-list');
     await expect(list).toBeVisible();
@@ -124,7 +124,7 @@ test('a step is added from the catalogue twice, removed in the window of the gea
     expect(await stepIdsOf(page, 'geometry', 'geometry.deskew')).toHaveLength(1);
   });
 
-  await test.step('"Reset to the default steps" asks first, then puts the steps of the stage back and closes the step that is gone', async () => {
+  await test.step('"Reset to the default steps" asks first, then puts the steps of the stage back and opens the default step in place of the step that is gone', async () => {
     await page.getByTestId('step-catalogue').click();
     await page
       .getByTestId('step-catalogue-list')
@@ -142,7 +142,7 @@ test('a step is added from the catalogue twice, removed in the window of the gea
 
     await expect(barSteps).toHaveCount(stepsBefore);
     await expect(deskews).toHaveCount(1);
-    await expect(page).not.toHaveURL(/\/steps\//);
+    await expect(page).toHaveURL(STEP_ADDRESS);
     // The close button, since Escape pressed while the confirmation hands the focus back can land on neither
     await windowOfSteps.getByRole('button', { name: 'Close' }).click();
     await expect(windowOfSteps).toHaveCount(0);

@@ -289,6 +289,9 @@ test('a reader reads a long history three changes at a time, undoes back to an o
   });
 
   await test.step('a clear asks first, deletes the history and the settings, and leaves the section grey', async () => {
+    // The undo changed the settings, so the editor of the step asks for a preview of the page, and a clear is refused
+    // while that preview may read the versions the clear deletes
+    await waitForIdleJobs(page, openProjectId(page));
     await history.getByTestId('page-history-clear').click();
     await expect(dialog).toContainText('cannot be undone');
     await history.scrollIntoViewIfNeeded();
@@ -451,22 +454,7 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await expect.poll(() => fitsTheWidth(area)).toBe(true);
   });
 
-  await test.step('with the step closed the section lists the results of the stage, its Changes filter is off and it has no clear', async () => {
-    await page.getByTestId('step-close').click();
-    await expect(page.getByTestId('step-panel')).toHaveCount(0);
-    await expect(history).toHaveAttribute('aria-disabled', 'false');
-    await expect(history.getByTestId('page-history-filter-changes')).toBeDisabled();
-    await expect(history.getByTestId('page-history-changes-hint')).toHaveText(
-      'Open a step to see its changes',
-    );
-    await expect(history.getByTestId('page-history-clear')).toHaveCount(0);
-    await expect(changes).toHaveCount(0);
-    await expect(results.first()).toBeVisible();
-    await history.scrollIntoViewIfNeeded();
-    await snap(page, 'timeline-no-step');
-  });
-
-  await test.step('Cleanup with no step open lists the result of the stage, the current one, and keeps the Changes filter off', async () => {
+  await test.step('Cleanup opens on a step, and its history lists the changes of that step and the result of the stage', async () => {
     const started = await page.request.post(`/api/v1/projects/${projectId}/stages/cleanup/run`, {
       headers: await changeHeaders(page),
       data: {},
@@ -476,7 +464,8 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await page.goto(`${bookPath}/stages/cleanup`);
     await expect(page.getByTestId('stage-title')).toHaveText('Cleanup');
     await expect(page.getByTestId('strip-page')).toHaveCount(1);
-    await expect(page.getByTestId('step-panel')).toHaveCount(0);
+    await expect(page).toHaveURL(/\/stages\/cleanup\/steps\//);
+    await expect(page.getByTestId('step-panel')).toHaveCount(1);
     await expect(history).toHaveAttribute('aria-disabled', 'false');
     await expect(history.getByTestId('page-history-count')).toHaveText('1 event', {
       timeout: RUN_TIMEOUT_MS,
@@ -484,8 +473,9 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await openTimeline(page);
     await expect(results).toHaveCount(1);
     await expect(results.first()).toHaveAttribute('data-current', 'true');
-    await expect(history.getByTestId('page-history-filter-changes')).toBeDisabled();
-    await expect(history.getByTestId('page-history-clear')).toHaveCount(0);
+    // With a step open the section is the history of that step, which has its Changes filter and its clear
+    await expect(history.getByTestId('page-history-filter-changes')).toBeEnabled();
+    await expect(history.getByTestId('page-history-clear')).toHaveCount(1);
   });
 
   await test.step('a stage that cannot be worked in yet shows the section grey, with the reason', async () => {

@@ -1,4 +1,4 @@
-import type { PageSchema, PageVersionSchema, ScanSchema } from '@/api';
+import type { PageVersionSchema, ScanSchema } from '@/api';
 import { Picture } from '@/features/editors/types';
 import { type ImageSource, SourceKind, sourceOfResult } from '@/features/processing/compare';
 
@@ -7,7 +7,6 @@ import { type ImageSource, SourceKind, sourceOfResult } from '@/features/process
  *
  * @param picture Which picture the editor wants.
  * @param scan The scan the open page was cut from, if any.
- * @param page The open page.
  * @param before The picture before the stage on the page, if any.
  * @param stepInput The version an earlier step of the stage made and the step of the editor reads, if the step is not the
  *                  first of the stage.
@@ -17,7 +16,6 @@ import { type ImageSource, SourceKind, sourceOfResult } from '@/features/process
 export function pictureOf(
   picture: Picture,
   scan: ScanSchema | null,
-  page: PageSchema,
   before: ImageSource | null,
   stepInput: PageVersionSchema | null = null,
   made: PageVersionSchema | null = null,
@@ -29,11 +27,7 @@ export function pictureOf(
   if (picture === Picture.Output) {
     return sourceOfResult(made);
   }
-  // A step after the first reads what the step before it made, and the first reads the result of the stage before
-  if (stepInput !== null) {
-    return sourceOfResult(stepInput);
-  }
-  return (
-    before ?? (page.images === null ? null : { kind: SourceKind.Iiif, url: page.images.iiif_info })
-  );
+  // A step after the first reads what the step before it made, and the first reads the picture the server gives for the
+  // page; there is none while the row loads, and never the latest image of the page, which a later stage made
+  return stepInput === null ? before : sourceOfResult(stepInput);
 }

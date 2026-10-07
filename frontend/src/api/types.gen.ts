@@ -3565,6 +3565,13 @@ export type Stage = 'import' | 'page-split' | 'page-order' | 'geometry' | 'clean
  * :ivar step: The page at the step the list was asked for, or None for a list of the stage alone.
  * :ivar marked_bad: Whether the user marked bad the result the row stands on: the version of the step the list was
  * asked for, else the current version of the stage.
+ * :ivar picture: The version that stands for the page at the place the list was asked for, so the strip and the canvas
+ * draw the same picture. With ``step`` it is the version the step reads on the page; a page that has
+ * not come as far as the step has the last version of the stage before it, and one the stage has not
+ * run on, or whose recipe has no such step switched on, has the version the stage reads. Without
+ * ``step`` it is the current version of the stage, else the version the stage reads. It is never the
+ * result of the step or of a later one, nor a version of a later stage. None when the page has no image
+ * to draw, such as a placeholder.
  */
 export type StagePageSchema = {
     /**
@@ -3595,6 +3602,7 @@ export type StagePageSchema = {
      * Marked Bad
      */
     marked_bad: boolean;
+    picture: PageVersionSchema | null;
 };
 
 /**

@@ -35,6 +35,7 @@ from tests.helpers.builders import make_page
 from tests.helpers.fake_processing import PREVIEW_TOKEN
 from tests.helpers.processing import IMAGE_CONTENT
 from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
+from tests.helpers.stage_heads import seed_head
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Page, PageVersion, Project
@@ -256,6 +257,21 @@ class TestRunStage:
         expect((geometry.state, cleanup.state) == (StageState.FAILED, StageState.FAILED))
         expect((cleanup.head_version_id, versions.total) == (cleanup_before.id, 1))
         assert_expectations()
+
+    async def test_run_skips_an_earlier_stage_whose_current_version_has_no_image_and_reads_the_one_before(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a run does not read a current version that has no published image, but the version a stage back.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project = await fx_kit.seed_project()
+        page, _ = await fx_kit.seed_scan_page(project)
+        base = await fx_kit.seed_base_version(page)
+        await seed_head(fx_kit, page, Stage.GEOMETRY, after=base, ready=False)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
+        assert (await head_of(fx_kit, page, Stage.CLEANUP)).input_id == base.id
 
     async def test_failing_step_fails_its_version_and_stage_and_the_job_goes_on(self, fx_kit: ProcessingKit) -> None:
         """Verify a step that fails is stored as failed with its reason, and the next page is still processed.

@@ -268,6 +268,23 @@ describe('usePreview', () => {
     expect(sdk.preview).toHaveBeenCalledTimes(2);
   });
 
+  it('stops waiting for a job that a run cancelled, with no error and no ask again for the same form', async () => {
+    sdk.job.mockImplementation(async ({ path }) => ({ data: jobOf(path.job_id, 'cancelled') }));
+
+    render(ask(5));
+    await elapse(400);
+    await elapse(5_000);
+
+    expect(latest.error).toBeNull();
+    expect(latest.working).toBe(false);
+    expect(latest.waiting).toBe(false);
+    expect(sdk.preview).toHaveBeenCalledTimes(1);
+
+    render(ask(6));
+    await elapse(400);
+    expect(sdk.preview).toHaveBeenCalledTimes(2);
+  });
+
   it('waits while another job of the book is going, and asks when it has ended', async () => {
     sdk.jobs.mockResolvedValue({
       data: { items: [jobOf('run')], total: 1, page: 1, size: 20, pages: 1 },

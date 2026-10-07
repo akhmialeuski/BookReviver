@@ -1,4 +1,5 @@
-import type { PageSchema, StagePageSchema, StepFlag } from '@/api';
+import type { PageSchema, PageVersionSchema, StagePageSchema, StepFlag } from '@/api';
+import { SourceKind, sourceOfResult } from '@/features/processing/compare';
 import { PageFilter } from '@/features/workspace/params';
 
 /**
@@ -219,23 +220,50 @@ export function countFilters(items: readonly StripItem[]): FilterCounts {
 }
 
 /**
- * Give the picture that stands for a page in a stage: the thumbnail of the result of the stage, else the thumbnail of
- * the page itself.
+ * Choose the rows the strip, the canvas and the counts are read from.
  *
- * @returns The path of the thumbnail, or null when neither exists yet.
+ * A stage with a step bar always has a step open, and only the rows asked for that step carry the picture of the step, so
+ * while they load there are none, and the rows of the stage, whose picture is the result of the stage, never stand in.
+ *
+ * @param hasBar Whether the stage shows the bar of its steps.
+ * @param stepRows The rows asked for the open step, or undefined while they load or when no step is open.
+ * @param stageRows The rows of the stage, or undefined while they load.
+ * @returns The rows to join with the pages, or undefined while there are none to show.
  */
-export function thumbnailOf(item: StripItem): string | null {
-  return item.row?.version?.images?.thumbnail ?? item.page.images?.thumbnail ?? null;
+export function stripRowsOf(
+  hasBar: boolean,
+  stepRows: readonly StagePageSchema[] | undefined,
+  stageRows: readonly StagePageSchema[] | undefined,
+): readonly StagePageSchema[] | undefined {
+  return hasBar ? stepRows : stageRows;
 }
 
 /**
- * Give the info document of the pyramid the canvas draws for a page: the result of the stage once its tiles are cut,
- * else the image of the page itself, so the canvas never points at tiles that do not exist yet.
+ * Give the version that stands for a page on the strip and on the canvas: the server's `picture` of the row, and nothing
+ * else, so the two never disagree. It is what the open step reads, else the last version before it, else what the stage
+ * reads; with no step it is the result of the stage, else what the stage reads. Never a later stage, and never the
+ * latest result of the book, which `page.images` is.
+ *
+ * @returns The version, or null while the row loads or when the page has no picture.
+ */
+export function pictureOf(item: StripItem): PageVersionSchema | null {
+  return item.row?.picture ?? null;
+}
+
+/**
+ * Give the thumbnail of the picture of a page.
+ *
+ * @returns The path of the thumbnail, or null when the page has no picture yet.
+ */
+export function thumbnailOf(item: StripItem): string | null {
+  return pictureOf(item)?.images?.thumbnail ?? null;
+}
+
+/**
+ * Give the info document of the pyramid of the picture of a page, which the canvas of the reading layouts draws, or null
+ * until the tiles are cut, so the canvas never points at tiles that do not exist yet.
  */
 export function canvasSourceOf(item: StripItem): string | null {
-  const version = item.row?.version;
-  if (version?.tiles_ready && version.images !== null) {
-    return version.images.iiif_info;
-  }
-  return item.page.images?.iiif_info ?? null;
+  const source = sourceOfResult(pictureOf(item));
+  return source?.kind === SourceKind.Iiif ? source.url : null;
 }

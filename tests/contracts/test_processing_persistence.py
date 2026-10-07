@@ -442,6 +442,34 @@ class TestPageStageRepository:
             await uow.page_stages.list_for_project_stage(other_project_id, Stage.CLEANUP),
         ) == ([mine], [mine], [])
 
+    async def test_list_fresh_returns_the_fresh_records_of_every_project(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the fresh records of all the projects are listed by page and stage, and no stale or failed one.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        _, other_page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        uow = await fx_uow_factory()
+        fresh = [
+            make_page_stage(page_id=page_id, stage=Stage.CLEANUP),
+            make_page_stage(page_id=page_id, stage=Stage.GEOMETRY),
+            make_page_stage(page_id=other_page_id, stage=Stage.GEOMETRY),
+        ]
+        for record in fresh:
+            await uow.page_stages.save(record)
+        await uow.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.PAGE_SPLIT, state=StageState.STALE))
+        await uow.page_stages.save(make_page_stage(page_id=other_page_id, stage=Stage.CLEANUP, state=StageState.FAILED))
+        await uow.commit()
+        order = list(Stage)
+        expected = sorted(fresh, key=lambda record: (str(record.page_id), order.index(record.stage)))
+
+        assert await (await fx_uow_factory()).page_stages.list_fresh() == expected
+
     async def test_head_ids_lists_the_current_versions_of_a_project(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:

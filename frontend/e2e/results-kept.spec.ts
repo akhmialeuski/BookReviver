@@ -11,7 +11,7 @@ import {
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
-import { openTimeline, RESULT_ROWS } from './support/page-work';
+import { openTimeline, RESULT_ROWS, runAllPages } from './support/page-work';
 
 /**
  * The results a page keeps after their pictures are collected: a collection removes the files of the old results and
@@ -64,8 +64,7 @@ test('a result whose picture was collected is made again when it is used', async
     // The import leaves jobs behind it, and a run asked for while they last is refused
     await waitForIdleJobs(page, projectId);
 
-    await page.getByTestId('run-menu').click();
-    await page.getByTestId('run-all').click();
+    await runAllPages(page);
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });
@@ -81,12 +80,8 @@ test('a result whose picture was collected is made again when it is used', async
       .fill('12');
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
-    // The results of the stage are listed in the panel of the page, which the open step takes over for its own
-    await page.getByTestId('step-close').click();
-    await expect(page.getByTestId('step-panel')).toHaveCount(0);
     // The page is marked to check, which the stale banner does not offer to run, so the stage is run on all pages
-    await page.getByTestId('run-menu').click();
-    await page.getByTestId('run-all').click();
+    await runAllPages(page);
     await expect(entries).toHaveCount(2, { timeout: RUN_TIMEOUT_MS });
     await expect(entries.first()).toHaveAttribute('data-current', 'true');
     await waitForIdleJobs(page, projectId);
