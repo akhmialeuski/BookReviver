@@ -16,7 +16,6 @@ Versions are not deleted when they stop being current, so going back to earlier 
 its picture and a run makes the picture again under the same identifier. Only a preview loses its row.
 """
 
-import contextlib
 from typing import TYPE_CHECKING
 
 from bookreviver.domain.enums import JobKind, OrderMode, ProcessorScope, RunMode, Stage, VersionScale, VersionState
@@ -364,7 +363,7 @@ class ProcessingService:
         await self._uow.commit()
         await self._records.announce(project_id, changed)
         if version.renditions is not None and not version.tiles_ready:
-            await self._queue_tiles_of_choice(project_id, version_id)
+            await self._starter.enqueue_tiles(project_id, [version_id])
         return changed[0]
 
     async def unpin(self, actor: Actor, project_id: ProjectId, page_id: PageId, stage: Stage) -> PageStage:
@@ -397,20 +396,6 @@ class ProcessingService:
         await self._uow.commit()
         await self._records.announce(project_id, changed)
         return changed[0] if changed else await self._uow.page_stages.get(key)
-
-    async def _queue_tiles_of_choice(self, project_id: ProjectId, version_id: PageVersionId) -> None:
-        """Queue the cutting of the pyramid of a version that was just made current.
-
-        The choice is committed already, so a job of another request that took the project in the meantime does not
-        undo it. The viewer asks for the pyramid of a version that has none when it opens it, so it is cut then.
-
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :param version_id: Identifier of the version.
-        :type version_id: PageVersionId
-        """
-        with contextlib.suppress(ConflictError):
-            await self._starter.enqueue(project_id, JobKind.CUT_TILES, TileCut(version_ids=(version_id,)).to_map())
 
     async def versions(
         self,

@@ -279,7 +279,10 @@ class ProcessingKit:
         :rtype: PageHistoryService
         """
         uow = InMemoryUnitOfWork(self.database)
-        return PageHistoryService(uow=uow, records=self.parts(uow).records, assets=self.assets, clock=self.clock)
+        parts = self.parts(uow)
+        return PageHistoryService(
+            uow=uow, records=parts.records, starter=parts.starter, assets=self.assets, clock=self.clock
+        )
 
     async def edit_key(self, page: Page, stage: Stage, processor_key: str) -> PageStepKey:
         """Give the key of the edit of a step of the active recipe of a stage on a page, found by its processor.

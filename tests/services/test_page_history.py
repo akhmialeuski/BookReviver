@@ -9,13 +9,13 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import EDIT_HASH_FIELD, Actor, PageStepChange
-from bookreviver.domain.enums import ChangeSource, EditorKind, Stage, StageState, StepLayer
+from bookreviver.domain.enums import ChangeSource, EditorKind, JobKind, Stage, StageState, StepLayer
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import ChangeBatchId, PageStepChangeId, StepId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, RecipeDraft, StageRun, Step
+from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, RecipeDraft, StageRun, Step, TileCut
 from tests.helpers.builders import make_page_step_state, make_result_mark_change, new_account_id
 from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.spreads import run_stage
@@ -441,6 +441,41 @@ class TestClear:
         stored = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         expect((stored.head_version_id, stored.state, stored.through_step) == (made[0].id, StageState.STALE, 0))
         expect(any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
+        assert_expectations()
+
+    async def test_the_version_the_stage_stands_on_gets_its_pyramid_cut_since_the_page_is_shown_by_it(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a clear that makes a step in the middle of the recipe current queues the cutting of its pyramid.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
+        expect(not made[0].tiles_ready)
+        queued = len(fx_kit.recording.enqueued)
+        await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
+        cutting = fx_kit.recording.enqueued[queued:]
+        expect([job.kind for job in cutting] == [JobKind.CUT_TILES])
+        expect([TileCut.from_map(job.params).version_ids for job in cutting] == [(made[0].id,)])
+        assert_expectations()
+
+    async def test_a_stage_left_with_no_current_version_or_a_cut_pyramid_queues_nothing(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a clear of the first step, which leaves no head, and one that leaves a tiled head cut nothing.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
+        uow = fx_kit.uow()
+        await uow.page_versions.update(evolve(made[0], tiles_ready=True))
+        await uow.commit()
+        queued = len(fx_kit.recording.enqueued)
+        await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
+        await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[0]))
+        expect(fx_kit.recording.enqueued[queued:] == [])
         assert_expectations()
 
     async def test_a_page_run_by_a_variant_stands_on_the_step_before_in_the_recipe_that_ran_it(

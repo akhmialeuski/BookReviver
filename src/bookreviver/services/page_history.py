@@ -34,11 +34,12 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bookreviver.domain.entities import Actor, PageStage
-    from bookreviver.domain.ids import PageId, PageStepChangeId, ProjectId
+    from bookreviver.domain.ids import PageId, PageStepChangeId, PageVersionId, ProjectId
     from bookreviver.domain.values import PageStepKey
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore
+    from bookreviver.services.processing_parts import JobStarter
     from bookreviver.services.stage_records import StageRecords
 
 logger = logging.getLogger(__name__)
@@ -49,13 +50,17 @@ CHANGED_SINCE: str = 'The layer {layer} of a step changed after this change, so 
 class PageHistoryService:
     """Lists the history of the steps of the acting account's pages, takes its changes back, and clears a step."""
 
-    def __init__(self, *, uow: UnitOfWork, records: StageRecords, assets: AssetStore, clock: Clock) -> None:
+    def __init__(
+        self, *, uow: UnitOfWork, records: StageRecords, starter: JobStarter, assets: AssetStore, clock: Clock
+    ) -> None:
         """Work over the ports of one request.
 
         :param uow: Unit of work of the request, whose commit ends every changing use case.
         :type uow: UnitOfWork
         :param records: Writer of the stage records, which an undo marks stale.
         :type records: StageRecords
+        :param starter: Queuer of the jobs, which cuts the pyramid of the version a clear makes current.
+        :type starter: JobStarter
         :param assets: Store of the derived files, which the versions a clear deletes leave.
         :type assets: AssetStore
         :param clock: Clock stamping the states and the undos.
@@ -63,6 +68,7 @@ class PageHistoryService:
         """
         self._uow = uow
         self._records = records
+        self._starter = starter
         self._assets = assets
         self._clock = clock
 
@@ -157,6 +163,10 @@ class PageHistoryService:
         versions of other pages, of steps that did not read the step, and the changes of a batch that reached other
         pages stay, and an undo of such a batch goes on working, since it takes back only the changes it finds.
 
+        The version the stage stands on was made by a step in the middle of the recipe, which cuts no pyramid, and the
+        page is shown by the pyramid of the current version of its stage. So the cutting of that pyramid is queued once
+        the clear is committed, which a project busy with another tile cutting or collection leaves undone.
+
         The files of the deleted versions are removed after the transaction committed, so a store that fails to remove
         them leaves them without a row for the next collection and does not fail the clear.
 
@@ -182,6 +192,7 @@ class PageHistoryService:
         if stored is None and not changes and not chain.doomed:
             return ClearedStep(changes=0, versions=())
         stale: list[PageStage] = []
+        untiled: list[PageVersionId] = []
         for record in await self._uow.page_stages.list_for_page(key.page_id):
             if record.head_version_id is None or record.head_version_id not in chain.doomed:
                 continue
@@ -189,6 +200,8 @@ class PageHistoryService:
             if head is None:
                 stale.extend(await self._records.clear(record.key))
                 continue
+            if (kept := chain.versions[head]).renditions is not None and not kept.tiles_ready:
+                untiled.append(head)
             # The new head is the result of the step at its depth in the recipe the page was run by, and the page was
             # run through that step only, which is before the last step that is on
             recipe = next((recipe for recipe in recipes if recipe.id == record.recipe_id), None)
@@ -205,10 +218,10 @@ class PageHistoryService:
         await self._uow.page_versions.delete_many([version.id for version in deleted])
         await self._uow.commit()
         await self._records.announce(project_id, stale)
-        keys = ProjectKeys(project_id)
+        await self._starter.enqueue_tiles(project_id, untiled)
         for version in deleted:
             try:
-                await self._assets.delete_prefix(keys.version_directory(version))
+                await self._assets.delete_prefix(ProjectKeys(project_id).version_directory(version))
             except OSError:
                 logger.exception('The files of the version %s were not removed after its page was cleared', version.id)
         return ClearedStep(changes=changes, versions=deleted)

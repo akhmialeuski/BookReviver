@@ -25,16 +25,17 @@ from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.events import JobChanged
 from bookreviver.domain.ids import JobId
-from bookreviver.domain.values import VersionCollection
+from bookreviver.domain.values import TileCut, VersionCollection
 from bookreviver.services.job_runs import JobTracker
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipes import RecipeBook
 from bookreviver.services.stage_records import StageRecords
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import timedelta
 
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import PageVersionId, ProjectId
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
@@ -238,6 +239,28 @@ class JobStarter:
             return active if active.kind is JobKind.COLLECT_VERSIONS else None
         try:
             return await self.enqueue(project_id, JobKind.COLLECT_VERSIONS, self.new_collection(project_id).params)
+        except ConflictError:
+            return None
+
+    async def enqueue_tiles(self, project_id: ProjectId, version_ids: Sequence[PageVersionId]) -> Job | None:
+        """Queue the cutting of the pyramids of versions that were just made the current ones of their stages.
+
+        The change that made them current is committed already, so a job of another request that took the project in
+        the meantime does not undo it. The viewer asks for the pyramid of a current version, and only the last step of
+        a run cuts one, so the version of a step in the middle of a recipe has none until it is cut here.
+
+        :param project_id: Project whose versions are cut.
+        :type project_id: ProjectId
+        :param version_ids: The versions, which may be empty.
+        :type version_ids: Sequence[PageVersionId]
+        :returns: The tile cutting job, or None when there is no version to cut or another tile cutting or collection
+                  of the project is queued or running.
+        :rtype: Job | None
+        """
+        if not version_ids:
+            return None
+        try:
+            return await self.enqueue(project_id, JobKind.CUT_TILES, TileCut(version_ids=tuple(version_ids)).to_map())
         except ConflictError:
             return None
 
