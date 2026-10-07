@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { PageStepChangeSchema, PageVersionSchema } from '@/api';
+import { stepChain } from '@/features/editors/chain';
 import { useClearHistory, usePageHistory, useUndo } from '@/features/processing/historyQueries';
 import { lastStanding, stands } from '@/features/processing/pageHistory';
 import { useChooseVersion, useRemakeVersion, useVersions } from '@/features/processing/queries';
-import { chainOf, historyOf } from '@/features/processing/results';
+import { historyOf } from '@/features/processing/results';
 import { fieldTitleOf, formSchemaOf } from '@/features/processing/schema';
 import { ChangeRow, ResultRow } from '@/features/processing/TimelineRows';
 import { TIMELINE_FILTERS, TimelineFilter, timelineOf } from '@/features/processing/timeline';
@@ -101,10 +102,13 @@ export function PageTimeline({
 
   const changes = history.data?.changes ?? NO_CHANGES;
   const changesTotal = history.data?.total ?? 0;
-  const entries = historyOf(
-    versions.data ?? NO_VERSIONS,
-    chainOf(ofStage.data ?? NO_VERSIONS, headId),
-  );
+  // The page stands on the current version of the stage and every version that one was made from
+  const standing = useMemo(() => {
+    const ofWholeStage = ofStage.data ?? NO_VERSIONS;
+    const head = ofWholeStage.find((version) => version.id === headId);
+    return new Set(stepChain(ofWholeStage, head).map((version) => version.id));
+  }, [ofStage.data, headId]);
+  const entries = historyOf(versions.data ?? NO_VERSIONS, standing);
   // Only a result of the last step is a result of the stage, which is all that can be made the current one
   const canUse =
     step === null || recipe?.steps.findLast((entry) => entry.enabled)?.step_id === step.stepId;

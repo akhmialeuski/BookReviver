@@ -5,7 +5,6 @@ import {
   version,
 } from '@/features/processing/fixtures';
 import {
-  chainOf,
   describeParams,
   historyOf,
   parameterLabel,
@@ -195,38 +194,6 @@ describe('readChainResult', () => {
 
   it('gives nothing for no versions', () => {
     expect(readChainResult([])).toBeNull();
-  });
-});
-
-describe('chainOf', () => {
-  // The first step reads a version of an earlier stage, which the list of the stage does not hold
-  const first = version('first', { input_id: 'base' });
-  const second = version('second', { input_id: 'first' });
-  const third = version('third', { input_id: 'second' });
-  const redone = version('redone', { input_id: 'first' });
-
-  it('holds the current version and every version it was made from, whatever step made them', () => {
-    expect([...chainOf([first, second, third, redone], 'third')]).toEqual([
-      'third',
-      'second',
-      'first',
-      'base',
-    ]);
-  });
-
-  it('leaves out the versions of another run that share an input with the chain', () => {
-    expect(chainOf([first, second, third, redone], 'redone').has('second')).toBe(false);
-    expect(chainOf([first, second, third, redone], 'redone').has('third')).toBe(false);
-  });
-
-  it('stops where the list ends, and holds the current version alone when the list lacks it', () => {
-    expect([...chainOf([third], 'third')]).toEqual(['third', 'second']);
-    expect([...chainOf([], 'third')]).toEqual(['third']);
-  });
-
-  it('is empty for a page that has no current version, and stops on a version that reads itself', () => {
-    expect(chainOf([first], undefined).size).toBe(0);
-    expect([...chainOf([version('loop', { input_id: 'loop' })], 'loop')]).toEqual(['loop']);
   });
 });
 

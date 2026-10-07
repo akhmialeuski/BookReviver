@@ -208,36 +208,13 @@ export interface HistoryEntry {
 }
 
 /**
- * Find the versions the page stands on in a stage: its current version and every version that one was made from.
- *
- * Every step that is on stores one version that reads the one before, so the versions the current one read, directly or
- * through the others, are the results of the steps the page went through, whatever recipe ran them.
- *
- * @param versions The versions of the page in the stage, in any order.
- * @param headId The current version of the stage on the page, if there is one.
- */
-export function chainOf(
-  versions: readonly PageVersionSchema[],
-  headId: string | undefined,
-): ReadonlySet<string> {
-  const inputs = new Map(versions.map((version) => [version.id, version.input_id]));
-  const chain = new Set<string>();
-  let id: string | null | undefined = headId;
-  while (id !== undefined && id !== null && !chain.has(id)) {
-    chain.add(id);
-    id = inputs.get(id);
-  }
-  return chain;
-}
-
-/**
  * List the results of a page that a reader may go back to, the newest first.
  *
  * Only a ready result of a full run can be made the current one, which is what the server accepts, so a preview and a
  * failed run are left out.
  *
  * @param versions The versions of the page in the stage or in one step of it, in any order.
- * @param standing The versions the page stands on, from `chainOf`, which are the ones that are current.
+ * @param standing The identifiers of the versions the page stands on, which are the ones that are current.
  */
 export function historyOf(
   versions: readonly PageVersionSchema[],
