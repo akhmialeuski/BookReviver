@@ -1,16 +1,6 @@
 import type { PageStepChangeSchema, StepLayer } from '@/api';
-import {
-  type Geometry,
-  readLine,
-  readMesh,
-  readQuad,
-  readRect,
-  readRegions,
-  readRotation,
-  readSplit,
-} from '@/features/editors/shapes';
+import { describeEdit } from '@/features/editors/registry';
 import { showValue } from '@/features/processing/pageSettings';
-import { MESSAGES } from '@/shared/messages';
 
 /**
  * Reading the history of a step on a page: which changes still stand, and the text that says what a change did to its
@@ -47,66 +37,6 @@ export function lastStanding(
 }
 
 /**
- * Put a manual edit into words, by the kind of editor that made it.
- *
- * The snapshot is what the server writes for the hand layer, the kind of the editor and the shape it drew. Pixels of the
- * page are rounded to whole numbers, and an angle to one decimal.
- *
- * @param snapshot The content of the hand layer.
- * @returns The text, which is "Set by hand" for a kind that is not known or a shape that does not fit its kind.
- */
-function describeEdit(snapshot: Readonly<Record<string, unknown>>): string {
-  const words = MESSAGES.processing.steps.pageHistory.hand;
-  // The readers take the shape as the API serves it, a map of numbers, and return null for anything else
-  const stored = snapshot.geometry;
-  const shape = typeof stored === 'object' && stored !== null ? (stored as Geometry) : null;
-  switch (snapshot.kind) {
-    case 'rect':
-    case 'content-box': {
-      const frame = readRect(shape);
-      return frame === null
-        ? words.unknown
-        : words.frame(
-            Math.round(frame.left),
-            Math.round(frame.top),
-            Math.round(frame.width),
-            Math.round(frame.height),
-          );
-    }
-    case 'line':
-    case 'split': {
-      const line = snapshot.kind === 'split' ? readSplit(shape)?.line : readLine(shape);
-      return line === null || line === undefined
-        ? words.unknown
-        : words.line(
-            Math.round(line.start.x),
-            Math.round(line.start.y),
-            Math.round(line.end.x),
-            Math.round(line.end.y),
-          );
-    }
-    case 'rotation': {
-      const rotation = readRotation(shape);
-      return rotation === null
-        ? words.unknown
-        : words.angle(MESSAGES.processing.thisPage.degrees(rotation.degrees));
-    }
-    case 'quad':
-      return readQuad(shape) === null ? words.unknown : words.quad;
-    case 'mesh':
-      return readMesh(shape) === null ? words.unknown : words.mesh;
-    case 'brush-mask':
-      return words.mask;
-    case 'regions': {
-      const regions = readRegions(shape);
-      return regions === null ? words.unknown : words.regions(regions.zones.length);
-    }
-    default:
-      return words.unknown;
-  }
-}
-
-/**
  * Put the content of a layer into words.
  *
  * @param layer The layer the content belongs to.
@@ -127,5 +57,6 @@ export function describeContent(
       .map(([name, value]) => `${words.titleOf(name)}: ${showValue(value)}`)
       .join(', ');
   }
-  return describeEdit(content);
+  // The snapshot is what the server stored, so a kind that is not text is one no editor has, and is worded as unknown
+  return describeEdit(String(content.kind), content.geometry);
 }

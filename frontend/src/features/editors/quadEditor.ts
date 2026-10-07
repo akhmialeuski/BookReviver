@@ -4,6 +4,7 @@ import { quadOf } from '@/features/editors/quad';
 import { type QuadShape, readQuad, writeQuad } from '@/features/editors/shapes';
 import { type EditorDefinition, Picture } from '@/features/editors/types';
 import { sourceSize } from '@/features/processing/results';
+import { MESSAGES } from '@/shared/messages';
 
 /**
  * The sheet editor: the four corners of the paper, dragged on the picture the perspective step reads.
@@ -23,6 +24,7 @@ export const quadEditor: EditorDefinition<QuadShape> = {
   fallback: ({ size, result }) => quadOf(result, size),
   read: readQuad,
   write: writeQuad,
+  describe: () => MESSAGES.processing.steps.pageHistory.hand.quad,
   Canvas: QuadCanvas,
   Panel: QuadPanel,
 };

@@ -3,6 +3,7 @@ import { RegionsPanel } from '@/features/editors/RegionsPanel';
 import { type RegionsShape, readRegions, writeRegions } from '@/features/editors/shapes';
 import { type EditorDefinition, Picture } from '@/features/editors/types';
 import { sourceSize } from '@/features/processing/results';
+import { MESSAGES } from '@/shared/messages';
 
 /**
  * The editor of the picture zones of a mixed page: the zones the step found, which the reader adds to and removes from.
@@ -22,6 +23,7 @@ export const regionsEditor: EditorDefinition<RegionsShape> = {
   fallback: () => ({ zones: [] }),
   read: readRegions,
   write: writeRegions,
+  describe: ({ zones }) => MESSAGES.processing.steps.pageHistory.hand.regions(zones.length),
   Canvas: RegionsCanvas,
   Panel: RegionsPanel,
 };

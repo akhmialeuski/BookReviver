@@ -1,6 +1,7 @@
 import { contentBoxOf } from '@/features/editors/contentBox';
 import { MarginsCanvas } from '@/features/editors/MarginsCanvas';
 import { MarginsPanel } from '@/features/editors/MarginsPanel';
+import { rectEditor } from '@/features/editors/rectEditor';
 import { type ContentBoxShape, readContentBox, writeContentBox } from '@/features/editors/shapes';
 import { type EditorDefinition, Picture } from '@/features/editors/types';
 import { sourceSize } from '@/features/processing/results';
@@ -26,6 +27,8 @@ export const marginsEditor: EditorDefinition<ContentBoxShape> = {
   fallback: ({ size, result }) => contentBoxOf(result, size),
   read: readContentBox,
   write: writeContentBox,
+  // The box has the four numbers of a frame, and the history words it the same way
+  describe: rectEditor.describe,
   Canvas: MarginsCanvas,
   Panel: MarginsPanel,
 };
