@@ -1,6 +1,7 @@
 """Tests for the history of a step on a page and for the undo that takes its changes back."""
 
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -13,14 +14,15 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import ChangeBatchId, PageStepChangeId, StepId
-from bookreviver.domain.values import NewPageEdit, PageStageKey
-from tests.helpers.builders import make_page_step_state, new_account_id
+from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, StageRun
+from tests.helpers.builders import make_page_step_state, make_result_mark_change, new_account_id
 from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
-from tests.services.test_processing_versions import ran_geometry
+from tests.helpers.spreads import run_stage
+from tests.services.test_processing_versions import ran_geometry, ran_two_steps
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Page, PageEdit, Project
-    from bookreviver.domain.values import PageStepKey
+    from bookreviver.domain.entities import Page, PageEdit, PageVersion, Project
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -80,6 +82,25 @@ async def stored_edit(kit: ProcessingKit, key: PageStepKey) -> PageEdit | None:
     """
     state = await kit.uow().page_step_states.find(key)
     return None if state is None else state.edit
+
+
+async def has_files(kit: ProcessingKit, project: Project, version: PageVersion) -> bool:
+    """Tell whether the directory of a version is in the store of the derived files.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param project: The book owning the version.
+    :type project: Project
+    :param version: The version.
+    :type version: PageVersion
+    :returns: Whether the store has the directory.
+    :rtype: bool
+    """
+    try:
+        async with kit.assets.readable(ProjectKeys(project.id).version_directory(version)):
+            return True
+    except NotFoundError:
+        return False
 
 
 class TestHistoryOfEdits:
@@ -384,10 +405,10 @@ class TestUndoOfABatch:
 class TestClear:
     """Tests for PageHistoryService.clear, which deletes the history of one step on one page."""
 
-    async def test_the_history_the_settings_and_the_edit_go_and_the_found_result_stays(
+    async def test_the_history_the_settings_and_the_edit_go_with_the_result_of_the_step(
         self, fx_kit: ProcessingKit
     ) -> None:
-        """Verify a clear deletes the changes, the settings and the hand edit, and leaves the result of the run alone.
+        """Verify a clear deletes the changes, the settings, the hand edit and the result the run made, and counts them.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -398,44 +419,147 @@ class TestClear:
         await fx_kit.edits().save(actor, project.id, key, FIRST, None)
         await fx_kit.page_history().undo(actor, project.id, key, None)
         written = len(await history_of(fx_kit, actor, project, key))
-        deleted = await fx_kit.page_history().clear(actor, project.id, key)
-        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
-        expect(deleted == written == STEP_CHANGES)
+        cleared = await fx_kit.page_history().clear(actor, project.id, key)
+        expect(cleared.changes == written == STEP_CHANGES)
+        expect([deleted.id for deleted in cleared.versions] == [version.id])
         expect(await history_of(fx_kit, actor, project, key) == [])
         expect(await fx_kit.uow().page_step_states.find(key) is None)
-        expect(record.head_version_id == version.id)
+        expect(await fx_kit.uow().page_versions.find(version.id) is None)
         assert_expectations()
 
-    async def test_the_stage_goes_stale_and_the_change_is_announced(self, fx_kit: ProcessingKit) -> None:
-        """Verify a clear marks the stage of the page stale and publishes it, as an undo does.
+    async def test_the_stage_stands_on_what_the_step_read_stale_and_the_change_is_announced(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a clear of the second step puts the stage back on the result of the first, stale, and announces it.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
-        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
-        uow = fx_kit.uow()
-        record = await uow.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
-        await uow.page_stages.save(evolve(record, state=StageState.FRESH))
-        await uow.commit()
+        actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
         fx_kit.events.published.clear()
-        await fx_kit.page_history().clear(actor, project.id, key)
+        await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
         stored = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
-        expect(stored.state is StageState.STALE)
+        expect((stored.head_version_id, stored.state, stored.through_step) == (made[0].id, StageState.STALE, 0))
         expect(any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
         assert_expectations()
 
-    async def test_a_step_with_no_history_is_a_clear_of_nothing(self, fx_kit: ProcessingKit) -> None:
-        """Verify clearing a step that has no change writes nothing, announces nothing and counts zero.
+    async def test_the_first_step_leaves_the_stage_with_no_current_version(self, fx_kit: ProcessingKit) -> None:
+        """Verify a clear of the first step leaves the stage of the page as it was before its first run.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, page, _ = await ran_geometry(fx_kit)
+        actor, project, page, step_ids, _ = await ran_two_steps(fx_kit)
+        await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[0]))
+        expect(await fx_kit.uow().page_stages.find(PageStageKey(page.id, Stage.GEOMETRY)) is None)
+        assert_expectations()
+
+    async def test_the_results_that_read_the_step_go_with_their_marks_their_rows_and_their_files(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a clear of the first step deletes both results of the chain, their mark logs and their directories.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
+        key = PageStepKey(page.id, Stage.GEOMETRY, step_ids[0])
+        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        uow = fx_kit.uow()
+        for version in made:
+            await uow.result_mark_changes.add(make_result_mark_change(version_id=version.id))
+        await uow.commit()
+        expect([await has_files(fx_kit, project, version) for version in made] == [True, True])
+        cleared = await fx_kit.page_history().clear(actor, project.id, key)
+        stored = fx_kit.uow()
+        remaining = await stored.page_versions.list_for_page(page.id)
+        expect({version.id for version in cleared.versions} == {version.id for version in made})
+        expect({version.id for version in remaining} == {made[0].input_id})
+        expect(await stored.page_step_changes.list_for_page(page.id, Stage.GEOMETRY) == [])
+        expect(await stored.page_step_states.list_for_step([page.id], Stage.GEOMETRY, key.step_id) == [])
+        expect([await stored.result_mark_changes.list_for_version(version.id) for version in made] == [[], []])
+        expect([await has_files(fx_kit, project, version) for version in made] == [False, False])
+        assert_expectations()
+
+    async def test_the_versions_the_step_did_not_read_stay_with_those_of_other_pages_and_stages(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a clear of the second step keeps the first result, the base version and the results of another page.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
+        first, second = made
+        other, _ = await fx_kit.seed_scan_page(project, order_key=OTHER_ORDER_KEY)
+        await fx_kit.seed_base_version(other)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        uow = fx_kit.uow()
+        before = {version.id for version in await uow.page_versions.list_for_page(other.id)}
+        await uow.result_mark_changes.add(make_result_mark_change(version_id=first.id))
+        await uow.commit()
+        await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
+        stored = fx_kit.uow()
+        kept = {version.id for version in await stored.page_versions.list_for_page(page.id)}
+        expect(second.id not in kept and first.id in kept and first.input_id in kept)
+        expect(len(before) > 1)
+        expect({version.id for version in await stored.page_versions.list_for_page(other.id)} == before)
+        expect(len(await stored.result_mark_changes.list_for_version(first.id)) == 1)
+        expect(await has_files(fx_kit, project, first))
+        assert_expectations()
+
+    async def test_a_later_stage_that_read_the_step_loses_its_result_and_its_record(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify the result of the cleanup stage that read the cleared step goes, and its record with it.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
+        later = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.CLEANUP))
+        assert later.head_version_id is not None
+        key = PageStepKey(page.id, Stage.GEOMETRY, step_ids[1])
+        cleared = await fx_kit.page_history().clear(actor, project.id, key)
+        stored = fx_kit.uow()
+        expect(later.head_version_id in {version.id for version in cleared.versions})
+        expect(await stored.page_versions.find(later.head_version_id) is None)
+        expect(await stored.page_stages.find(PageStageKey(page.id, Stage.CLEANUP)) is None)
+        expect(await stored.page_versions.find(made[0].id) is not None)
+        assert_expectations()
+
+    async def test_a_store_that_cannot_remove_the_files_does_not_fail_the_clear(
+        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify the rows are gone and the answer is given when the store fails to remove the directories.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param monkeypatch: Replaces the removal of directories with one that fails.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        actor, project, page, version = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, page)
+        monkeypatch.setattr(fx_kit.assets, 'delete_prefix', AsyncMock(side_effect=OSError('The disk is read only.')))
+        cleared = await fx_kit.page_history().clear(actor, project.id, key)
+        expect([deleted.id for deleted in cleared.versions] == [version.id])
+        expect(await fx_kit.uow().page_versions.find(version.id) is None)
+        expect(await has_files(fx_kit, project, version))
+        assert_expectations()
+
+    async def test_a_step_with_nothing_on_the_page_is_a_clear_of_nothing(self, fx_kit: ProcessingKit) -> None:
+        """Verify clearing a step that has no change, no setting and no result writes nothing and announces nothing.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project = await fx_kit.seed_project()
+        page, _ = await fx_kit.seed_scan_page(project)
         key = await step_key(fx_kit, page)
         fx_kit.events.published.clear()
-        expect(await fx_kit.page_history().clear(actor, project.id, key) == 0)
+        cleared = await fx_kit.page_history().clear(actor, project.id, key)
+        expect((cleared.changes, cleared.versions) == (0, ()))
         expect(not fx_kit.events.published)
         assert_expectations()
 

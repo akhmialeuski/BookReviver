@@ -579,15 +579,20 @@ export type ChangeSource = 'user' | 'run' | 'carry-over' | 'reset' | 'undo';
 /**
  * ClearedSchema
  *
- * What clearing the history of a step on a page deleted.
+ * What clearing a step on a page deleted.
  *
- * :ivar deleted: How many changes were deleted, which is none when the step had no history on the page.
+ * :ivar changes: How many changes of the history were deleted, which is none when the step had no history on the page.
+ * :ivar versions: How many versions were deleted: the results of the step on the page and the results that read them.
  */
 export type ClearedSchema = {
     /**
-     * Deleted
+     * Changes
      */
-    deleted: number;
+    changes: number;
+    /**
+     * Versions
+     */
+    versions: number;
 };
 
 /**

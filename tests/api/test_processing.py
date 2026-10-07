@@ -821,7 +821,7 @@ class TestPageHistory:
     async def test_clear_deletes_the_history_and_the_settings_and_counts_the_changes(
         self, fx_client: httpx.AsyncClient, fx_book: Book
     ) -> None:
-        """Verify a clear answers 200 with the number of deleted changes, and the step has no history or setting left.
+        """Verify a clear answers 200 with the numbers of deleted changes and versions, and the step has none left.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -835,7 +835,7 @@ class TestPageHistory:
         cleared = await fx_client.delete(history)
         listed = await fx_client.get(history)
         settings = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
-        expect((cleared.status_code, cleared.json()) == (status.HTTP_200_OK, {'deleted': 2}))
+        expect((cleared.status_code, cleared.json()) == (status.HTTP_200_OK, {'changes': 2, 'versions': 0}))
         expect(listed.json()['total'] == 0)
         expect(settings.json()['total'] == 0)
         assert_expectations()

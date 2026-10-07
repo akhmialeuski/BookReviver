@@ -7630,7 +7630,7 @@
           "page-history"
         ],
         "summary": "Clear History",
-        "description": "Delete the history of a step on a page, take its settings and its edit away, and mark the stage stale.\n\nThe clear writes nothing to the history, so nothing of it can be undone. The changes of a batch on other pages\nstay.",
+        "description": "Return a step to its initial state on a page: delete its history, its settings, its edit and its results.\n\nThe results are the versions the step made on the page and the versions that read them, with their files and their\nmarks. The stage of the page stands on the version the step read, marked stale, and has no current version when the\nstep is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The\nchanges of a batch on other pages stay.",
         "operationId": "clear_history_api_v1_projects__project_id__pages__page_id__history__stage___step_id__delete",
         "parameters": [
           {
@@ -10613,17 +10613,22 @@
       },
       "ClearedSchema": {
         "properties": {
-          "deleted": {
+          "changes": {
             "type": "integer",
-            "title": "Deleted"
+            "title": "Changes"
+          },
+          "versions": {
+            "type": "integer",
+            "title": "Versions"
           }
         },
         "type": "object",
         "required": [
-          "deleted"
+          "changes",
+          "versions"
         ],
         "title": "ClearedSchema",
-        "description": "What clearing the history of a step on a page deleted.\n\n:ivar deleted: How many changes were deleted, which is none when the step had no history on the page."
+        "description": "What clearing a step on a page deleted.\n\n:ivar changes: How many changes of the history were deleted, which is none when the step had no history on the page.\n:ivar versions: How many versions were deleted: the results of the step on the page and the results that read them."
       },
       "ColorMode": {
         "type": "string",

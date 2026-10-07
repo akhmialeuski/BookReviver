@@ -100,6 +100,7 @@ class ProcessingKit:
     :ivar queue: Queue the jobs are handed to, which is the recording one unless a test gave another.
     :ivar fake: The fake geometry processor, which counts its runs and previews.
     :ivar cleanup: The fake cleanup processor.
+    :ivar catalogue: The catalogue of the processors the services can run.
     :ivar writer: The fake writer of renditions.
     :ivar tiler: The fake tiler.
     """
@@ -278,7 +279,7 @@ class ProcessingKit:
         :rtype: PageHistoryService
         """
         uow = InMemoryUnitOfWork(self.database)
-        return PageHistoryService(uow=uow, records=self.parts(uow).records, clock=self.clock)
+        return PageHistoryService(uow=uow, records=self.parts(uow).records, assets=self.assets, clock=self.clock)
 
     async def edit_key(self, page: Page, stage: Stage, processor_key: str) -> PageStepKey:
         """Give the key of the edit of a step of the active recipe of a stage on a page, found by its processor.

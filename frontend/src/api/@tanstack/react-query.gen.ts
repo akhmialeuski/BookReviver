@@ -2190,10 +2190,12 @@ export const resetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostMutation
 /**
  * Clear History
  *
- * Delete the history of a step on a page, take its settings and its edit away, and mark the stage stale.
+ * Return a step to its initial state on a page: delete its history, its settings, its edit and its results.
  *
- * The clear writes nothing to the history, so nothing of it can be undone. The changes of a batch on other pages
- * stay.
+ * The results are the versions the step made on the page and the versions that read them, with their files and their
+ * marks. The stage of the page stands on the version the step read, marked stale, and has no current version when the
+ * step is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The
+ * changes of a batch on other pages stay.
  */
 export const clearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteMutation = (options?: Partial<Options<ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteData>>): UseMutationOptions<ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteResponse, ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteError, Options<ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteData>> => {
     const mutationOptions: UseMutationOptions<ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteResponse, ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteError, Options<ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteData>> = {

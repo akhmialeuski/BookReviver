@@ -339,11 +339,15 @@ class ProcessingProvider(Provider):
         return StepResetService(uow=uow, records=parts.records, clock=parts.clock)
 
     @provide(scope=Scope.REQUEST)
-    def page_history_service(self, uow: UnitOfWork, parts: ProcessingParts, clock: Clock) -> PageHistoryService:
+    def page_history_service(
+        self, uow: UnitOfWork, assets: AssetStore, parts: ProcessingParts, clock: Clock
+    ) -> PageHistoryService:
         """Build the page history service of a request.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
+        :param assets: Asset store of the application, from which a clear removes the files of the versions it deletes.
+        :type assets: AssetStore
         :param parts: The parts the processing use cases share, of which the stage records are used.
         :type parts: ProcessingParts
         :param clock: Clock of the application.
@@ -351,7 +355,7 @@ class ProcessingProvider(Provider):
         :returns: The page history service.
         :rtype: PageHistoryService
         """
-        return PageHistoryService(uow=uow, records=parts.records, clock=clock)
+        return PageHistoryService(uow=uow, records=parts.records, assets=assets, clock=clock)
 
     @provide(scope=Scope.REQUEST)
     def result_marks_service(self, uow: UnitOfWork, clock: Clock) -> ResultMarksService:

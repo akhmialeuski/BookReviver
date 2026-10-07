@@ -2,8 +2,8 @@
 
 The history lists every change of the step on the page, the newest first, and tells which of them were taken back. An
 undo takes back the newest change that stands, or every change back to a chosen one. It writes the undos as new changes
-and marks the stage of the page stale, and processes nothing. A clear deletes the history of the step on the page and
-takes its settings and its edit away.
+and marks the stage of the page stale, and processes nothing. A clear deletes the history of the step on the page, takes
+its settings and its edit away, and deletes its results with the results that read them.
 """
 
 from dataclasses import dataclass
@@ -121,10 +121,12 @@ async def clear_history(
     actor: ActorDep,
     history: FromDishka[PageHistoryService],
 ) -> ClearedSchema:
-    """Delete the history of a step on a page, take its settings and its edit away, and mark the stage stale.
+    """Return a step to its initial state on a page: delete its history, its settings, its edit and its results.
 
-    The clear writes nothing to the history, so nothing of it can be undone. The changes of a batch on other pages
-    stay.
+    The results are the versions the step made on the page and the versions that read them, with their files and their
+    marks. The stage of the page stands on the version the step read, marked stale, and has no current version when the
+    step is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The
+    changes of a batch on other pages stay.
 
     \N{FORM FEED}
     :param address: Identifiers of the project, the page, the stage and the step.
@@ -133,7 +135,8 @@ async def clear_history(
     :type actor: Actor
     :param history: Page history service of the request.
     :type history: PageHistoryService
-    :returns: How many changes were deleted.
+    :returns: How many changes and how many versions were deleted.
     :rtype: ClearedSchema
     """
-    return ClearedSchema(deleted=await history.clear(actor, address.project_id, address.key))
+    cleared = await history.clear(actor, address.project_id, address.key)
+    return ClearedSchema(changes=cleared.changes, versions=len(cleared.versions))
