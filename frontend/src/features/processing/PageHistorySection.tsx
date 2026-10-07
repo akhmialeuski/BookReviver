@@ -1,7 +1,6 @@
 import { ChevronDownIcon, ClockIcon } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { PageStepChangeSchema, ProcessorSchema, Stage } from '@/api';
-import { useHistoryOpen } from '@/features/processing/historyOpen';
 import {
   HISTORY_PAGE_SIZE,
   useClearHistory,
@@ -11,6 +10,7 @@ import {
 import { describeContent, lastStanding, stands } from '@/features/processing/pageHistory';
 import { fieldTitleOf, formSchemaOf } from '@/features/processing/schema';
 import { useUndoKey } from '@/features/processing/useUndoKey';
+import { useHistoryOpen } from '@/features/workspace/historyOpen';
 import { describeError } from '@/shared/http/problem';
 import { formatDateTime } from '@/shared/lib/format';
 import { cn } from '@/shared/lib/utils';

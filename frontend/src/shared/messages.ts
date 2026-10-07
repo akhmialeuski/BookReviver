@@ -564,6 +564,11 @@ export const MESSAGES = {
       read: 'Read the book',
       accountMenu: 'Account menu',
     },
+    history: {
+      title: 'History of this page',
+      count: (count: number) => `${count} ${pluralize(count, 'event', 'events')}`,
+      noHistory: 'This stage keeps no history of its pages.',
+    },
     bar: {
       label: 'Stages of the book',
       about: 'About the book',

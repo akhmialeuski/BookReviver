@@ -3,7 +3,7 @@ import {
   HISTORY_OPEN_KEY,
   readHistoryOpen,
   writeHistoryOpen,
-} from '@/features/processing/historyOpen';
+} from '@/features/workspace/historyOpen';
 import type { WorkspaceStorage } from '@/features/workspace/storage';
 
 /** The choice of whether the history of a page is open: kept once for the viewer, and collapsed when storage fails. */

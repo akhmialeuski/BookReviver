@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { browserStorage, type WorkspaceStorage } from '@/features/workspace/storage';
 
 /**
- * Whether the history of a page is open in the panel of a step, the choice that is remembered for the viewer.
+ * Whether the history of a page is open in the panel of a stage, the choice that is remembered for the viewer.
  *
- * The history is a section of the panel of every step, so one choice serves every step of every stage and every visit:
+ * The history is a section of the panel of every stage, so one choice serves every stage, every step and every visit:
  * it stays collapsed until the reader opens it and then stays open until the reader closes it. The choice lives in the
  * browser, a convenience that is the same as nothing when the browser forbids storage, so a storage that throws leaves
  * the section collapsed.

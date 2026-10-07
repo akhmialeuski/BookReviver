@@ -4,8 +4,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageStepChangeSchema } from '@/api';
 import { deskew } from '@/features/processing/fixtures';
-import { HISTORY_OPEN_KEY } from '@/features/processing/historyOpen';
 import { PageHistorySection } from '@/features/processing/PageHistorySection';
+import { HISTORY_OPEN_KEY } from '@/features/workspace/historyOpen';
 import { ProblemError } from '@/shared/http/problem';
 
 /**
