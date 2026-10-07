@@ -1492,7 +1492,7 @@ export const MESSAGES = {
         confirmClear: {
           open: 'Clear the history',
           title: 'Clear the history of this page?',
-          body: 'This deletes every change of this step on this page and takes away the settings and the hand edit of the step on this page, so the page uses the recipe again. The results stay. It cannot be undone.',
+          body: 'This deletes for good every change, the settings and the hand edit of this step on this page, the results of this step on this page, and the results of the later steps of the stage on this page. The step on this page is then as if it had never run or changed here. It cannot be undone.',
           confirm: 'Clear and reset',
           cancel: 'Cancel',
         },

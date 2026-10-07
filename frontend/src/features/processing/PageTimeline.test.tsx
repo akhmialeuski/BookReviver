@@ -12,7 +12,7 @@ import { ProblemError } from '@/shared/http/problem';
 /**
  * The history of the open page as one list: the changes of a step and the results merged by time, each with its chip,
  * the filters, three rows at a time over both lists, the undo back to a change, the use of a result, the marks and the
- * comment, the clear that keeps the results, the stage with no step open, every reason for being grey, and the choice of
+ * comment, the clear that deletes the changes and the results, the stage with no step open, every reason for being grey, and the choice of
  * open or collapsed that is remembered.
  */
 
@@ -201,7 +201,7 @@ describe('PageTimeline', () => {
     serve([]);
     sdk.versions.mockResolvedValue(EMPTY_LIST);
     sdk.undo.mockResolvedValue({ data: { changes: [] } });
-    sdk.clear.mockResolvedValue({ data: { deleted: 2 } });
+    sdk.clear.mockResolvedValue({ data: { changes: 2, versions: 2 } });
     sdk.choose.mockResolvedValue({ data: {} });
     sdk.remake.mockResolvedValue({ data: { id: 'job' } });
     sdk.mark.mockResolvedValue({ data: {} });
@@ -920,7 +920,7 @@ describe('PageTimeline', () => {
   });
 
   describe('clearing the history', () => {
-    it('asks before it clears, says the results stay, and clears when that is confirmed', async () => {
+    it('asks before it clears, says what is deleted for good, and clears when that is confirmed', async () => {
       serve(settingsChanges(2));
       open();
       await render();
@@ -929,8 +929,13 @@ describe('PageTimeline', () => {
 
       expect(sdk.clear).not.toHaveBeenCalled();
       const dialog = byId('page-history-dialog');
+      expect(dialog?.textContent).toContain('deletes for good');
+      expect(dialog?.textContent).toContain('the results of this step on this page');
+      expect(dialog?.textContent).toContain(
+        'the results of the later steps of the stage on this page',
+      );
       expect(dialog?.textContent).toContain('cannot be undone');
-      expect(dialog?.textContent).toContain('The results stay');
+      expect(dialog?.textContent).not.toContain('The results stay');
       expect(byId('page-history-confirm')?.textContent).toBe('Clear and reset');
 
       await click('page-history-confirm');
@@ -953,19 +958,50 @@ describe('PageTimeline', () => {
       expect(sdk.clear).not.toHaveBeenCalled();
     });
 
-    it('reads the history and the results again after a clear, and keeps the results on the list', async () => {
+    it('reads the history, the results and the rows of the stage again, and leaves the list empty and grey', async () => {
       serve(settingsChanges(2));
       sdk.versions.mockResolvedValue(listed(OLD, NEW));
       open();
       await render();
+      expect(order()).toHaveLength(3);
       await click('page-history-clear');
       sdk.history.mockClear();
+      sdk.versions.mockClear();
       serve([]);
+      sdk.versions.mockResolvedValue(EMPTY_LIST);
 
       await click('page-history-confirm');
 
       expect(sdk.history).toHaveBeenCalled();
-      expect(order()).toEqual(['result:new', 'result:old']);
+      expect(sdk.versions).toHaveBeenCalled();
+      expect(order()).toEqual([]);
+      expect(byId('page-history')?.getAttribute('aria-disabled')).toBe('true');
+      expect(byId('page-history-reason')?.textContent).toContain(
+        'Nothing has happened on this page yet.',
+      );
+      expect(byId('page-history-count')).toBeNull();
+    });
+
+    it('marks the results of the page, the rows of the stage and its summary out of date', async () => {
+      serve(settingsChanges(2));
+      open();
+      await render();
+      await click('page-history-clear');
+      const invalidate = vi.spyOn(client, 'invalidateQueries');
+
+      await click('page-history-confirm');
+
+      const asked = invalidate.mock.calls.map(([filters]) => {
+        const head = filters?.queryKey?.[0];
+        return typeof head === 'object' && head !== null && '_id' in head ? head._id : null;
+      });
+      expect(asked).toEqual(
+        expect.arrayContaining([
+          'listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet',
+          'listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet',
+          'listStagesApiV1ProjectsProjectIdStagesGet',
+        ]),
+      );
     });
 
     it('is the last thing in the list, and is not there while no step is open', async () => {

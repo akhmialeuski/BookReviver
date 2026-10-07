@@ -12,14 +12,19 @@ import {
   undoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostMutation,
 } from '@/api/@tanstack/react-query.gen';
 import type * as sdk from '@/api/sdk.gen';
-import { invalidateStageRows, invalidateStageSummary } from '@/features/projects/queries';
+import {
+  invalidateStageRows,
+  invalidateStageSummary,
+  invalidateVersions,
+} from '@/features/projects/queries';
 
 /**
  * The history of a step on a page, the undo that takes its changes back and the clear that deletes it.
  *
  * Every change of a layer of a step is written to the history on the server, so what changes a page also changes its
  * history, and an undo changes the settings, the edits and the history of every page its batch reached. A clear takes
- * the settings and the edit of the step away from the page along with its history.
+ * the settings and the edit of the step away from the page along with its history, and deletes its results with the
+ * results that read them.
  */
 
 /** How many changes the history loads at a time, which is the most the server gives a page of a list. */
@@ -127,15 +132,20 @@ export function useUndo(projectId: string, stage: Stage) {
 }
 
 /**
- * Delete the history of a step on a page and take its settings and its edit away.
+ * Return a step to its initial state on a page: delete its history, its settings, its edit and its results.
  *
- * The clear joins the mutation scope of the edits of the book like an undo, and reads again what an undo does.
+ * The clear joins the mutation scope of the edits of the book like an undo, and reads again what an undo does, and
+ * the results of the page too, since the server deleted the results of the step and the ones that read them.
  */
 export function useClearHistory(projectId: string, stage: Stage) {
   const queryClient = useQueryClient();
   return useMutation({
     ...clearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteMutation(),
     scope: { id: `page-edits:${projectId}` },
-    onSettled: () => invalidateAfterHistoryChange(queryClient, projectId, stage),
+    onSettled: (_cleared, _error, { path }) =>
+      Promise.all([
+        invalidateAfterHistoryChange(queryClient, projectId, stage),
+        invalidateVersions(queryClient, projectId, path.page_id),
+      ]),
   });
 }

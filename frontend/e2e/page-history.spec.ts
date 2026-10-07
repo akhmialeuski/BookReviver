@@ -25,7 +25,8 @@ import { openTimeline } from './support/page-work';
  * keeps the undos beside the changes they took back. A history of several changes is read three at a time, an undo back
  * to an older row asks first, and a clear asks too, then leaves the section grey with no history and no setting on the
  * page. A hand edit shows in the timeline as soon as it is saved, with the result it made, and a result can be marked and
- * commented, narrowed by the filters and kept when the changes are cleared. A stage that keeps no history shows the same
+ * commented and narrowed by the filters. A clear of the step deletes its changes and its results too, and the stage of
+ * the page stands on what the step read, before and after a reload. A stage that keeps no history shows the same
  * section grey, and the section never makes the panel scroll sideways.
  */
 
@@ -33,6 +34,7 @@ const PAGES = 2;
 const SCENARIO_TIMEOUT_MS = 240_000;
 const DESKEW = 'geometry.deskew';
 const DESKEW_TITLE = 'Deskew';
+const CROP = 'geometry.crop';
 const FIRST_PAGE = 0;
 const ANGLE_OF_THE_EDIT = 1.5;
 const SLANT_OF_THE_PAGE = '3';
@@ -51,7 +53,6 @@ const STEP_ADDRESS = /\/stages\/geometry\/steps\/[0-9a-f-]{36}(\?|$)/;
 const COMMENT = 'The frame found is right.';
 const EVENTS_AFTER_THE_EDIT = 3;
 const EVENTS_AFTER_THE_UNDO = 4;
-const EVENTS_AFTER_THE_CLEAR = 2;
 
 // Tall enough for the pictures of the key states to show the open step with its settings and its history
 test.use({ viewport: { width: 1280, height: 1100 } });
@@ -118,6 +119,32 @@ async function readHistory(page: Page, pageId: string, stepId: string): Promise<
     `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/history/geometry/${stepId}?size=100`,
   );
   return ((await response.json()) as { items: HistoryItem[] }).items;
+}
+
+/** What the server says of a page at a step of the stage: where the stage of the page stands, and what the step read and made. */
+interface StepRow {
+  page_id: string;
+  status: string;
+  version: { id: string } | null;
+  step: {
+    state: string;
+    version: { id: string } | null;
+    input_version: { id: string } | null;
+  };
+}
+
+/** Read the row of a page at a step of the Geometry stage from the server. */
+async function readStepRow(page: Page, pageId: string, stepId: string): Promise<StepRow> {
+  const response = await page.request.get(
+    `/api/v1/projects/${openProjectId(page)}/stages/geometry/pages?step=${stepId}&size=100`,
+  );
+  const found = ((await response.json()) as { items: StepRow[] }).items.find(
+    (row) => row.page_id === pageId,
+  );
+  if (found === undefined) {
+    throw new Error('The stage has no row for the page.');
+  }
+  return found;
 }
 
 test('a reader sees what changed on a page, takes the last change back with the button and Ctrl+Z, and finds the undos in the history', async ({
@@ -408,19 +435,6 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await expect.poll(() => fitsTheWidth(area)).toBe(true);
   });
 
-  await test.step('clearing the history asks first, deletes the changes and keeps the results with their notes', async () => {
-    await history.getByTestId('page-history-clear').click();
-    await expect(dialog).toContainText('The results stay');
-    await dialog.getByTestId('page-history-confirm').click();
-    await expect(dialog).toHaveCount(0);
-    await expect(history.getByTestId('page-history-count')).toHaveText(
-      `${EVENTS_AFTER_THE_CLEAR} events`,
-    );
-    await expect(changes).toHaveCount(0);
-    await expect(results).toHaveCount(EVENTS_AFTER_THE_CLEAR);
-    await expect(history.getByTestId('result-comment')).toHaveText(COMMENT);
-  });
-
   await test.step('with the step closed the section lists the results of the stage, its Changes filter is off and it has no clear', async () => {
     await page.getByTestId('step-close').click();
     await expect(page.getByTestId('step-panel')).toHaveCount(0);
@@ -434,6 +448,43 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await expect(results.first()).toBeVisible();
     await history.scrollIntoViewIfNeeded();
     await snap(page, 'timeline-no-step');
+  });
+
+  await test.step('clearing the history asks first, deletes the changes and the results, and takes the step back to where it was before it ran on the page', async () => {
+    await page.getByTestId('bar-step').filter({ hasText: 'Select content' }).click();
+    await expect(page).toHaveURL(STEP_ADDRESS);
+    const pageId = await firstPageId(page);
+    const [stepId = ''] = await stepIdsOf(page, 'geometry', CROP);
+    const before = await readStepRow(page, pageId, stepId);
+    expect(before.step.version).not.toBeNull();
+    expect(before.step.input_version).not.toBeNull();
+    await history.getByTestId('page-history-clear').click();
+    await expect(dialog).toContainText('the results of the later steps of the stage on this page');
+    await dialog.getByTestId('page-history-confirm').click();
+    await expect(dialog).toHaveCount(0);
+
+    // The section is grey, the step is at its defaults with no frame, and the stage stands on what the step read
+    const cleared = async (): Promise<void> => {
+      await expect(history).toHaveAttribute('aria-disabled', 'true');
+      await expect(history.getByTestId('page-history-reason')).toContainText(
+        'Nothing has happened on this page yet.',
+      );
+      await expect(history.getByTestId('page-history-count')).toHaveCount(0);
+      await expect(layer).toHaveAttribute('data-figure', 'default');
+      expect(await readSettings(page, pageId)).toEqual([]);
+      expect(await readHistory(page, pageId, stepId)).toEqual([]);
+      const row = await readStepRow(page, pageId, stepId);
+      expect(row.step.version).toBeNull();
+      expect(row.step.state).toBe('default');
+      expect(row.status).toBe('stale');
+      expect(row.version?.id).toBe(before.step.input_version?.id);
+    };
+    await cleared();
+    await history.scrollIntoViewIfNeeded();
+    await snap(page, 'timeline-cleared');
+    await page.reload();
+    await expect(page).toHaveURL(STEP_ADDRESS);
+    await cleared();
   });
 
   await test.step('Import and Order show the same section grey, with the reason that they keep no history', async () => {

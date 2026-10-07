@@ -36,10 +36,10 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  *
  * A change that stands has its own "Undo to here", which takes back that change and every change after it and asks first
  * when that is more than one; Ctrl+Z takes back the newest. A result that is not the current one may be made so when it
- * is a result of the stage, and carries the marks and the comment of the reader. "Clear the history" deletes the changes
- * of the step on the page and takes its settings and its hand edit away, and the results stay. A section with nothing to
- * show stays in its place, grey, and says why: no page is chosen, the recipe is not saved so the step has no id, or
- * nothing has happened on the page yet.
+ * is a result of the stage, and carries the marks and the comment of the reader. "Clear the history" deletes for good
+ * every event of the step on the page: its changes, its settings and hand edit, its results and the results of the later
+ * steps that read them, so the list is empty. A section with nothing to show stays in its place, grey, and says why: no
+ * page is chosen, the recipe is not saved so the step has no id, or nothing has happened on the page yet.
  */
 
 const labels = MESSAGES.processing.steps.pageHistory;
