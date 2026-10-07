@@ -840,6 +840,33 @@ class TestPageHistory:
         expect(settings.json()['total'] == 0)
         assert_expectations()
 
+    async def test_clear_deletes_the_result_of_the_step_and_counts_it(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify a clear of the only step after a run deletes its result, so the stage has no result on the page.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the jobs.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        await run_stage(fx_client, fx_broker, fx_book, 'geometry')
+        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        versions = f'{fx_book.page_path}/versions'
+        of_step = {'stage': 'geometry', 'step': step_id}
+        before = await fx_client.get(versions, params=of_step)
+        cleared = await fx_client.delete(f'{fx_book.page_path}/history/geometry/{step_id}')
+        after = await fx_client.get(versions, params=of_step)
+        rows = await fx_client.get(f'{fx_book.path}/stages/geometry/pages')
+        expect(before.json()['total'] == 1)
+        expect((cleared.status_code, cleared.json()) == (status.HTTP_200_OK, {'changes': 0, 'versions': 1}))
+        expect(after.json()['total'] == 0)
+        expect(rows.json()[ITEMS][0]['status'] == 'not-run')
+        assert_expectations()
+
     async def test_clear_of_a_page_of_no_book_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
         """Verify clearing the history of a page that is not in the book answers 404.
 

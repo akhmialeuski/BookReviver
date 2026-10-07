@@ -114,12 +114,14 @@ class StepVersions:
 
     :ivar stage: The stage of the step.
     :ivar versions: Every version of the page, of every stage, by identifier.
+    :ivar depths: How many versions of their own stage each version reads, which is the place of its step in a chain.
     :ivar made: The versions of the step.
     :ivar doomed: The versions of the step and every version that read one of them.
     """
 
     stage: Stage
     versions: Mapping[PageVersionId, PageVersion]
+    depths: Mapping[PageVersionId, int]
     made: frozenset[PageVersionId]
     doomed: frozenset[PageVersionId]
 
@@ -153,6 +155,7 @@ class StepVersions:
         return cls(
             stage=stage,
             versions={version.id: version for version in versions},
+            depths=depths,
             made=made,
             doomed=frozenset(doomed),
         )

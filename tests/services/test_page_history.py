@@ -15,7 +15,7 @@ from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import ChangeBatchId, PageStepChangeId, StepId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, StageRun
+from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, RecipeDraft, StageRun, Step
 from tests.helpers.builders import make_page_step_state, make_result_mark_change, new_account_id
 from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.spreads import run_stage
@@ -441,6 +441,26 @@ class TestClear:
         stored = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         expect((stored.head_version_id, stored.state, stored.through_step) == (made[0].id, StageState.STALE, 0))
         expect(any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
+        assert_expectations()
+
+    async def test_a_page_run_by_a_variant_stands_on_the_step_before_in_the_recipe_that_ran_it(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify the index the record keeps is the one of the new head in the recipe of the page, which lacks the step.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
+        draft = RecipeDraft(name='V', steps=[Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)])
+        variant = await fx_kit.service().add_variant(actor, project.id, Stage.GEOMETRY, draft)
+        uow = fx_kit.uow()
+        record = await uow.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        await uow.page_stages.save(evolve(record, recipe_id=variant.id))
+        await uow.commit()
+        await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
+        stored = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        expect((stored.head_version_id, stored.recipe_id, stored.through_step) == (made[0].id, variant.id, 0))
         assert_expectations()
 
     async def test_the_first_step_leaves_the_stage_with_no_current_version(self, fx_kit: ProcessingKit) -> None:
