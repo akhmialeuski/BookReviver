@@ -18,6 +18,7 @@ import {
   step,
   version,
 } from '@/features/processing/fixtures';
+import { usePageHistory } from '@/features/processing/historyQueries';
 import { images, page, row } from '@/features/workspace/fixtures';
 import { joinRows, type StripItem } from '@/features/workspace/strip';
 import { ProblemError } from '@/shared/http/problem';
@@ -40,6 +41,7 @@ const sdk = vi.hoisted(() => ({
   versions: vi.fn(),
   settings: vi.fn(),
   putSetting: vi.fn(),
+  history: vi.fn(),
 }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
@@ -53,6 +55,7 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
   listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGet: sdk.settings,
   putSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePut: sdk.putSetting,
+  listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGet: sdk.history,
 }));
 
 // A stand-in for the canvas of the split line, which needs a real viewer: it shows the shape it was given and lets a
@@ -205,6 +208,8 @@ describe('useEditorSession', () => {
   );
 
   function Harness({ setup }: { setup: Setup }): React.JSX.Element {
+    // The history of the step on the page, which stands on screen beside the editor and is read again after a save
+    usePageHistory('project', 'page', 'geometry', 'id-geometry.deskew');
     const items = setup.items ?? PAGE_ITEM;
     session = useEditorSession({
       processing: setup.state ?? processing(),
@@ -305,6 +310,7 @@ describe('useEditorSession', () => {
       data: { page_id: 'page', stage: 'geometry', step_id: 'id-geometry.normalize', params: {} },
     });
     sdk.versions.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 50, pages: 1 } });
+    sdk.history.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 100, pages: 1 } });
     session = null;
     container = document.createElement('div');
     document.body.append(container);
@@ -419,6 +425,40 @@ describe('useEditorSession', () => {
       path: { project_id: 'project', stage: 'geometry' },
       body: { recipe_id: 'r1', page_ids: ['page'] },
     });
+  });
+
+  it('reads the history and the results of the page again once an edit is saved, without a reload', async () => {
+    await render();
+    const historyReads = sdk.history.mock.calls.length;
+    const versionReads = sdk.versions.mock.calls.length;
+
+    await typeAngle('2.5');
+
+    expect(sdk.put).toHaveBeenCalledTimes(1);
+    expect(sdk.history.mock.calls.length).toBeGreaterThan(historyReads);
+    expect(sdk.versions.mock.calls.length).toBeGreaterThan(versionReads);
+  });
+
+  it('reads the history again when the edit is deleted too', async () => {
+    sdk.edits.mockResolvedValue(listOf(edit({})));
+    await render();
+    const historyReads = sdk.history.mock.calls.length;
+
+    await act(async () => session?.auto());
+    await settle();
+
+    expect(sdk.remove).toHaveBeenCalledTimes(1);
+    expect(sdk.history.mock.calls.length).toBeGreaterThan(historyReads);
+  });
+
+  it('reads the history again when a save is refused, since the write may have changed it', async () => {
+    sdk.put.mockRejectedValue(new ProblemError('Broken.', 500, null, []));
+    await render();
+    const historyReads = sdk.history.mock.calls.length;
+
+    await typeAngle('2.5');
+
+    expect(sdk.history.mock.calls.length).toBeGreaterThan(historyReads);
   });
 
   it('saves nothing for text that is not an angle or for the angle it already has', async () => {
