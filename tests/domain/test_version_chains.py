@@ -9,7 +9,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, StepId
 from bookreviver.domain.values import ProcessorRef, Step
-from bookreviver.domain.version_chains import StepVersions, stage_depths, step_places
+from bookreviver.domain.version_chains import StepVersions, stage_depths, step_places, versions_of_step
 from tests.helpers.builders import make_page_version, make_recipe
 
 if TYPE_CHECKING:
@@ -86,6 +86,23 @@ class TestStepPlaces:
         assert places == {(CROP_KEY, CROP_PLACE), (CROP_KEY, 0)}
 
 
+class TestVersionsOfStep:
+    """Tests for versions_of_step."""
+
+    def test_a_processor_at_the_place_of_the_step_is_the_step_without_the_versions_that_read_it(self) -> None:
+        """Verify both runs of the middle step are its versions, and the versions that read them are not."""
+        versions = TestStepVersions.book()
+        _, _, crop, _, _, again = versions
+        made = versions_of_step(versions, Stage.GEOMETRY, {(CROP_KEY, CROP_PLACE)}, stage_depths(versions))
+        assert made == {crop.id, again.id}
+
+    def test_a_processor_at_another_place_is_not_the_step(self) -> None:
+        """Verify a version of the processor of the step that reads more versions than its place is left out."""
+        versions = TestStepVersions.book()
+        made = versions_of_step(versions, Stage.GEOMETRY, {(CROP_KEY, CROP_PLACE + 1)}, stage_depths(versions))
+        assert made == frozenset()
+
+
 class TestStepVersions:
     """Tests for StepVersions."""
 
@@ -147,4 +164,13 @@ class TestStepVersions:
         chain = StepVersions.of(versions, Stage.GEOMETRY, {(NORMALIZE_KEY, NORMALIZE_PLACE)})
         expect(chain.input_of(versions[1].id) is None)
         expect(chain.input_of(UNKNOWN_VERSION) is None)
+        assert_expectations()
+
+    def test_the_versions_that_go_with_the_step_do_not_depend_on_the_order_of_the_list(self) -> None:
+        """Verify a version listed before the version it reads is doomed as well, across two stages."""
+        versions = self.book()
+        _, _, crop, normalize, cleanup, again = versions
+        chain = StepVersions.of(versions[::-1], Stage.GEOMETRY, {(CROP_KEY, CROP_PLACE)})
+        expect(chain.made == {crop.id, again.id})
+        expect(chain.doomed == {crop.id, again.id, normalize.id, cleanup.id})
         assert_expectations()

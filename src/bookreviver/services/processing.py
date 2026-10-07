@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from bookreviver.domain.enums import JobKind, OrderMode, ProcessorScope, RunMode, Stage, VersionScale, VersionState
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.values import PageStageKey, Slice, StageRun, StepPreview, TileCut
-from bookreviver.domain.version_chains import StepVersions, step_places
+from bookreviver.domain.version_chains import stage_depths, step_places, versions_of_step
 from bookreviver.services.processing_parts import PROJECT_BUSY
 from bookreviver.services.projects import owned_project
 from bookreviver.services.run_plans import RunPlan
@@ -441,7 +441,7 @@ class ProcessingService:
         if not any(step.step_id == step_id for recipe in recipes for step in recipe.steps):
             raise NotFoundError(step_id)
         found = await self._uow.page_versions.list_for_page(page_id)
-        made = StepVersions.of(found, version_filter.stage, step_places(recipes, step_id)).made
+        made = versions_of_step(found, version_filter.stage, step_places(recipes, step_id), stage_depths(found))
         matching = [
             version
             for version in found

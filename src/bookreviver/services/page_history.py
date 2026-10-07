@@ -213,9 +213,9 @@ class PageHistoryService:
             # The new head is the result of the step at its depth in the recipe the page was run by, and the page was
             # run through that step only, which is before the last step that is on
             recipe = next((recipe for recipe in recipes if recipe.id == record.recipe_id), None)
-            steps = () if recipe is None else recipe.indexed_steps_through(None)
+            enabled = () if recipe is None else recipe.indexed_steps_through(None)
             place = chain.depths[head]
-            through_step = steps[place][0] if place < len(steps) - 1 else None
+            through_step = None if recipe is None or place >= len(enabled) else recipe.stopped_at(enabled[place][0])
             # The record is marked stale below, so only the later stages that the new head makes stale are announced
             _, *later = await self._records.set_head(
                 record.key, head_version_id=head, recipe_id=record.recipe_id, through_step=through_step

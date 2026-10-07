@@ -13,6 +13,7 @@ versions of their stage they read, and which versions go with them when the step
 The rule is the same for every adapter of the persistence ports, so it is written once here, over plain identifiers.
 """
 
+from collections import defaultdict, deque
 from typing import TYPE_CHECKING, Self
 
 from attrs import frozen
@@ -103,6 +104,32 @@ def step_places(recipes: Iterable[Recipe], step_id: StepId) -> frozenset[tuple[s
     )
 
 
+def versions_of_step(
+    versions: Sequence[PageVersion],
+    stage: Stage,
+    places: Collection[tuple[str, int]],
+    depths: Mapping[PageVersionId, int],
+) -> frozenset[PageVersionId]:
+    """Find the versions a step made among the versions of a page, without the versions that read them.
+
+    :param versions: Every version of the page, of every stage.
+    :type versions: Sequence[PageVersion]
+    :param stage: The stage of the step.
+    :type stage: Stage
+    :param places: The places of the step in the recipes of the stage, from ``step_places``.
+    :type places: Collection[tuple[str, int]]
+    :param depths: How many versions of their own stage each version reads, from ``stage_depths``.
+    :type depths: Mapping[PageVersionId, int]
+    :returns: The versions of the stage whose processor and depth are one of the places.
+    :rtype: frozenset[PageVersionId]
+    """
+    return frozenset(
+        version.id
+        for version in versions
+        if version.stage is stage and (version.processor.key, depths[version.id]) in places
+    )
+
+
 @frozen
 class StepVersions:
     """The versions one step of a stage made on a page, and the versions that read them.
@@ -139,19 +166,18 @@ class StepVersions:
         :rtype: Self
         """
         depths = stage_depths(versions)
-        made = frozenset(
-            version.id
-            for version in versions
-            if version.stage is stage and (version.processor.key, depths[version.id]) in places
-        )
+        made = versions_of_step(versions, stage, places, depths)
+        readers: defaultdict[PageVersionId, list[PageVersionId]] = defaultdict(list)
+        for version in versions:
+            if version.input_id is not None:
+                readers[version.input_id].append(version.id)
         doomed = set(made)
-        grown = True
-        while grown:
-            grown = False
-            for version in versions:
-                if version.id not in doomed and version.input_id in doomed:
-                    doomed.add(version.id)
-                    grown = True
+        waiting = deque(made)
+        while waiting:
+            for reader_id in readers[waiting.popleft()]:
+                if reader_id not in doomed:
+                    doomed.add(reader_id)
+                    waiting.append(reader_id)
         return cls(
             stage=stage,
             versions={version.id: version for version in versions},
