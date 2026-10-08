@@ -391,9 +391,13 @@ class OrderMode(LabeledStrEnum):
 
 
 class ProfileFileVersion(enum.IntEnum):
-    """The versions of the format a recipe profile is written to a file in, so a later format can read an older file."""
+    """The versions of the format a recipe profile is written to a file in, so a later format can read an older file.
+
+    The second version has no condition on a step, which the first wrote as ``applies_to``.
+    """
 
     V1 = 1
+    V2 = 2
 
 
 class OrderRuleKind(LabeledStrEnum):

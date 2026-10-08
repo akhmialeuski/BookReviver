@@ -157,7 +157,7 @@ describe('ProfileLibrary', () => {
     sdk.duplicate.mockResolvedValue({ data: profile('p4', { name: 'Clean flatbed scan (copy)' }) });
     sdk.exporter.mockResolvedValue({
       data: {
-        version: 1,
+        version: 2,
         stage: 'geometry',
         name: 'Clean flatbed scan',
         order: 'usual',
@@ -352,7 +352,7 @@ describe('ProfileLibrary', () => {
       );
       expect(files.save).toHaveBeenCalledWith(
         'clean-flatbed-scan.bookreviver-profile.json',
-        expect.stringContaining('"version": 1'),
+        expect.stringContaining('"version": 2'),
       );
     });
 

@@ -641,7 +641,8 @@ export const createProfileApiV1RecipeProfilesPost = <ThrowOnError extends boolea
  *
  * Save the profile a file holds, which is not the default until it is made one.
  *
- * The file is checked as a saved profile is. A file of another version of the format, a step whose parameters do not
+ * The file is checked as a saved profile is. A file of the first version is read as well, and the condition its
+ * steps name is dropped. A file of another version of the format, a step whose parameters do not
  * fit, and a step that stands where it cannot work, unless the file asks for the free order, answer 422, and so does
  * a file that needs a processor that is not installed, which the answer names.
  */

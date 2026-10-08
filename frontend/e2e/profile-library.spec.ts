@@ -110,7 +110,7 @@ test('the library applies, copies, exports and imports profiles and counts the b
       name: string;
       steps: Record<string, unknown>[];
     };
-    expect([content.version, content.stage, content.name]).toEqual([1, 'geometry', PROFILE_NAME]);
+    expect([content.version, content.stage, content.name]).toEqual([2, 'geometry', PROFILE_NAME]);
     expect(content.steps).toHaveLength(BUILT_IN_STEPS);
     expect(content.steps.every((step) => !('step_id' in step))).toBe(true);
   });

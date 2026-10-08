@@ -4600,13 +4600,28 @@
           "profiles"
         ],
         "summary": "Import Profile",
-        "description": "Save the profile a file holds, which is not the default until it is made one.\n\nThe file is checked as a saved profile is. A file of another version of the format, a step whose parameters do not\nfit, and a step that stands where it cannot work, unless the file asks for the free order, answer 422, and so does\na file that needs a processor that is not installed, which the answer names.",
+        "description": "Save the profile a file holds, which is not the default until it is made one.\n\nThe file is checked as a saved profile is. A file of the first version is read as well, and the condition its\nsteps name is dropped. A file of another version of the format, a step whose parameters do not\nfit, and a step that stands where it cannot work, unless the file asks for the free order, answer 422, and so does\na file that needs a processor that is not installed, which the answer names.",
         "operationId": "import_profile_api_v1_recipe_profiles_import_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ProfileFileSchema"
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ProfileFileV1"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ProfileFileSchema"
+                  }
+                ],
+                "title": "Body",
+                "discriminator": {
+                  "propertyName": "version",
+                  "mapping": {
+                    "1": "#/components/schemas/ProfileFileV1",
+                    "2": "#/components/schemas/ProfileFileSchema"
+                  }
+                }
               }
             }
           },
@@ -12065,11 +12080,6 @@
       },
       "ProfileFileSchema": {
         "properties": {
-          "version": {
-            "type": "integer",
-            "const": 1,
-            "title": "Version"
-          },
           "stage": {
             "$ref": "#/components/schemas/Stage"
           },
@@ -12091,18 +12101,23 @@
             "maxItems": 50,
             "minItems": 1,
             "title": "Steps"
+          },
+          "version": {
+            "type": "integer",
+            "const": 2,
+            "title": "Version"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "version",
           "stage",
           "name",
-          "steps"
+          "steps",
+          "version"
         ],
         "title": "ProfileFileSchema",
-        "description": "A profile as a file that is exchanged between accounts: the answer of an export, and the body of an import.\n\n:ivar version: Version of the format of the file.\n:ivar stage: Stage whose recipes the profile can be applied to.\n:ivar name: Name of the profile.\n:ivar order: ``usual`` if the profile refuses a step off a required place, ``free`` if it lets it stand.\n:ivar steps: The steps in the order they run."
+        "description": "A profile as a file that is exchanged between accounts: the answer of an export, and a body of an import.\n\n:ivar version: Version of the format of the file, the second, whose steps have no condition.\n:ivar steps: The steps in the order they run."
       },
       "ProfileFileStep": {
         "properties": {
@@ -12129,6 +12144,84 @@
         ],
         "title": "ProfileFileStep",
         "description": "One step of a profile file: a processor, its parameters, and whether it is on.\n\nThe step has no identifier, since the identifier belongs to the recipe a step is in, and an import gives each step a\nnew one.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which an import checks against the processor.\n:ivar enabled: Whether a run runs the step."
+      },
+      "ProfileFileStepV1": {
+        "properties": {
+          "processor_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Processor Key"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "applies_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applies To"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "processor_key"
+        ],
+        "title": "ProfileFileStepV1",
+        "description": "One step of a profile file of the first version, which also named the pages the step processed.\n\nA page is processed by the recipe of its kind now, so there is no condition on a step, and an import drops it.\n\n:ivar applies_to: The pages the step processed, which no step has any longer."
+      },
+      "ProfileFileV1": {
+        "properties": {
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "order": {
+            "$ref": "#/components/schemas/OrderMode",
+            "default": "usual"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileFileStepV1"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Steps"
+          },
+          "version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "stage",
+          "name",
+          "steps",
+          "version"
+        ],
+        "title": "ProfileFileV1",
+        "description": "A profile file of the first version, which an import still reads: its steps may name the pages they processed.\n\n:ivar version: Version of the format of the file, the first.\n:ivar steps: The steps in the order they run."
       },
       "ProfileLinkBody": {
         "properties": {

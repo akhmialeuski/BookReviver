@@ -1,4 +1,4 @@
-import type { ProfileFileSchema } from '@/api';
+import type { ImportProfileApiV1RecipeProfilesImportPostData, ProfileFileSchema } from '@/api';
 
 /**
  * The file a profile is exchanged by: writing one for the download, and reading one the reader chose before it is sent.
@@ -8,8 +8,14 @@ import type { ProfileFileSchema } from '@/api';
  * should judge, and it does that before a request is spent on it.
  */
 
-/** The version of the format this screen writes and reads, which the server's `ProfileFileVersion` names. */
-const FILE_VERSION = 1;
+/** A profile file of any version the server still imports, as the body of the import names them. */
+export type ProfileFile = ImportProfileApiV1RecipeProfilesImportPostData['body'];
+
+/**
+ * The versions of the format the server imports, which the server's `ProfileFileVersion` names. Each is checked against
+ * the body of the import, so a version the server stops reading stops the build until it is taken out here too.
+ */
+const FILE_VERSIONS: ReadonlySet<number> = new Set([1, 2] satisfies ProfileFile['version'][]);
 const FILE_SUFFIX = '.bookreviver-profile.json';
 const FALLBACK_NAME = 'profile';
 const MEDIA_TYPE = 'application/json';
@@ -25,7 +31,7 @@ export const FileProblem = {
 export type FileProblem = (typeof FileProblem)[keyof typeof FileProblem];
 
 /** What reading a chosen file gave: the profile to send, or why it cannot be one. */
-export type ReadFile = { ok: true; file: ProfileFileSchema } | { ok: false; problem: FileProblem };
+export type ReadFile = { ok: true; file: ProfileFile } | { ok: false; problem: FileProblem };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -53,11 +59,11 @@ export function readProfileFile(text: string): ReadFile {
   ) {
     return { ok: false, problem: FileProblem.NotProfile };
   }
-  if (parsed.version !== FILE_VERSION) {
+  if (!FILE_VERSIONS.has(parsed.version)) {
     return { ok: false, problem: FileProblem.Version };
   }
   // The shape of every step and the value of every field are checked by the server, which answers with what is wrong
-  return { ok: true, file: parsed as unknown as ProfileFileSchema };
+  return { ok: true, file: parsed as unknown as ProfileFile };
 }
 
 /** Write a profile file as the text that is saved: indented, so a person can read and diff it, and ending in a newline. */

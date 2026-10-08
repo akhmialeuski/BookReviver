@@ -2396,19 +2396,12 @@ export type ProfileBody = {
 /**
  * ProfileFileSchema
  *
- * A profile as a file that is exchanged between accounts: the answer of an export, and the body of an import.
+ * A profile as a file that is exchanged between accounts: the answer of an export, and a body of an import.
  *
- * :ivar version: Version of the format of the file.
- * :ivar stage: Stage whose recipes the profile can be applied to.
- * :ivar name: Name of the profile.
- * :ivar order: ``usual`` if the profile refuses a step off a required place, ``free`` if it lets it stand.
+ * :ivar version: Version of the format of the file, the second, whose steps have no condition.
  * :ivar steps: The steps in the order they run.
  */
 export type ProfileFileSchema = {
-    /**
-     * Version
-     */
-    version: 1;
     stage: Stage;
     /**
      * Name
@@ -2419,6 +2412,10 @@ export type ProfileFileSchema = {
      * Steps
      */
     steps: Array<ProfileFileStep>;
+    /**
+     * Version
+     */
+    version: 2;
 };
 
 /**
@@ -2448,6 +2445,61 @@ export type ProfileFileStep = {
      * Enabled
      */
     enabled?: boolean;
+};
+
+/**
+ * ProfileFileStepV1
+ *
+ * One step of a profile file of the first version, which also named the pages the step processed.
+ *
+ * A page is processed by the recipe of its kind now, so there is no condition on a step, and an import drops it.
+ *
+ * :ivar applies_to: The pages the step processed, which no step has any longer.
+ */
+export type ProfileFileStepV1 = {
+    /**
+     * Processor Key
+     */
+    processor_key: string;
+    /**
+     * Params
+     */
+    params?: {
+        [key: string]: unknown;
+    };
+    /**
+     * Enabled
+     */
+    enabled?: boolean;
+    /**
+     * Applies To
+     */
+    applies_to?: string | null;
+};
+
+/**
+ * ProfileFileV1
+ *
+ * A profile file of the first version, which an import still reads: its steps may name the pages they processed.
+ *
+ * :ivar version: Version of the format of the file, the first.
+ * :ivar steps: The steps in the order they run.
+ */
+export type ProfileFileV1 = {
+    stage: Stage;
+    /**
+     * Name
+     */
+    name: string;
+    order?: OrderMode;
+    /**
+     * Steps
+     */
+    steps: Array<ProfileFileStepV1>;
+    /**
+     * Version
+     */
+    version: 1;
 };
 
 /**
@@ -6164,7 +6216,14 @@ export type CreateProfileApiV1RecipeProfilesPostResponses = {
 export type CreateProfileApiV1RecipeProfilesPostResponse = CreateProfileApiV1RecipeProfilesPostResponses[keyof CreateProfileApiV1RecipeProfilesPostResponses];
 
 export type ImportProfileApiV1RecipeProfilesImportPostData = {
-    body: ProfileFileSchema;
+    /**
+     * Body
+     */
+    body: ({
+        version: 1;
+    } & ProfileFileV1) | ({
+        version: 2;
+    } & ProfileFileSchema);
     path?: never;
     query?: never;
     url: '/api/v1/recipe-profiles/import';

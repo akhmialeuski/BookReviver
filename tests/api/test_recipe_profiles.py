@@ -50,7 +50,9 @@ PROFILE_ID_FIELD: str = 'profile_id'
 FREE_ORDER: str = 'free'
 VERSION_FIELD: str = 'version'
 BOOKS_FIELD: str = 'books'
-FILE_VERSION: int = 1
+FILE_VERSION: int = 2
+FIRST_FILE_VERSION: int = 1
+APPLIES_TO_FIELD: str = 'applies_to'
 COPY_NAME: str = 'Photographed book (copy)'
 MANY_BOOKS: int = 2
 EXPORT_SUFFIX: str = 'export'
@@ -633,6 +635,38 @@ class TestLibrary:
         )
         expect({step.step_id for step in imported.steps}.isdisjoint({step.step_id for step in profile.steps}))
         assert_expectations()
+
+    async def test_a_file_of_the_first_version_imports_and_its_conditions_are_dropped(
+        self, fx_client: httpx.AsyncClient
+    ) -> None:
+        """Verify a file exported before the conditions went, whose steps say which pages they process, is accepted.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        steps = [
+            {PROCESSOR_FIELD: FAKE_KEY, PARAMS_FIELD: {STRENGTH: 3}, 'enabled': False, APPLIES_TO_FIELD: 'all'},
+            {PROCESSOR_FIELD: FAKE_KEY, PARAMS_FIELD: {STRENGTH: 2}, APPLIES_TO_FIELD: 'plates'},
+        ]
+        response = await fx_client.post(
+            IMPORT_PATH, json=_file(**{VERSION_FIELD: FIRST_FILE_VERSION, STEPS_FIELD: steps})
+        )
+        imported = RecipeProfileSchema.model_validate_json(response.content)
+        expect(response.status_code == status.HTTP_201_CREATED)
+        expect([(step.params[STRENGTH], step.enabled) for step in imported.steps] == [(3, False), (2, True)])
+        assert_expectations()
+
+    async def test_a_file_of_the_current_version_that_names_a_condition_is_a_422_problem(
+        self, fx_client: httpx.AsyncClient
+    ) -> None:
+        """Verify the condition is a field of the first version only, so the current one refuses it.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        steps = [{PROCESSOR_FIELD: FAKE_KEY, APPLIES_TO_FIELD: 'all'}]
+        response = await fx_client.post(IMPORT_PATH, json=_file(**{STEPS_FIELD: steps}))
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_a_file_that_does_not_validate_is_a_422_problem(self, fx_client: httpx.AsyncClient) -> None:
         """Verify a wrong version, an unknown field, a missing processor and bad parameters all answer 422.

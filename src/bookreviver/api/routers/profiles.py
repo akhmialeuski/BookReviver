@@ -23,6 +23,7 @@ from bookreviver.api.schemas.profiles import (
     ApplyProfileBody,
     LibraryProfileSchema,
     ProfileBody,
+    ProfileFile,
     ProfileFileSchema,
     ProfileLinkBody,
     ProfileQuery,
@@ -109,17 +110,18 @@ async def create_profile(
 
 @router.post(IMPORT_PATH, status_code=status.HTTP_201_CREATED)
 async def import_profile(
-    body: ProfileFileSchema, actor: ActorDep, profiles: FromDishka[RecipeProfiles]
+    body: ProfileFile, actor: ActorDep, profiles: FromDishka[RecipeProfiles]
 ) -> RecipeProfileSchema:
     """Save the profile a file holds, which is not the default until it is made one.
 
-    The file is checked as a saved profile is. A file of another version of the format, a step whose parameters do not
+    The file is checked as a saved profile is. A file of the first version is read as well, and the condition its
+    steps name is dropped. A file of another version of the format, a step whose parameters do not
     fit, and a step that stands where it cannot work, unless the file asks for the free order, answer 422, and so does
     a file that needs a processor that is not installed, which the answer names.
 
     \N{FORM FEED}
-    :param body: The content of the profile file.
-    :type body: ProfileFileSchema
+    :param body: The content of the profile file, of the version it says.
+    :type body: ProfileFile
     :param actor: The signed-in account.
     :type actor: Actor
     :param profiles: Profiles service of the request.
