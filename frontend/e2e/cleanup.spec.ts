@@ -147,12 +147,12 @@ test('the Cleanup stage binarizes, despeckles and erases, with a recipe for plat
 
   await test.step('the form of the binarization offers the methods and shows only the fields of the one that is chosen', async () => {
     await barSteps.nth(BINARIZE_INDEX).click();
-    await expect(page.getByTestId('step-panel-title')).toHaveText('1 · Binarization');
+    await expect(page.getByTestId('step-panel-title')).toHaveText('Binarization');
     await expect(page.getByRole('slider', { name: 'Window, px' })).toBeVisible();
     await expect(page.getByRole('slider', { name: 'Coefficient k' })).toBeVisible();
     await expect(page.getByTestId('stage-panel')).not.toContainText('output_dpi');
     const method = page
-      .getByTestId('step-panel-settings')
+      .getByTestId('panel-settings')
       .locator('button[aria-haspopup="listbox"]')
       .first();
     await expect(method).toHaveText('Sauvola');
@@ -176,7 +176,7 @@ test('the Cleanup stage binarizes, despeckles and erases, with a recipe for plat
 
   await test.step('the despeckling is made stronger in the recipe, which the dust on the scans needs', async () => {
     await barSteps.nth(DESPECKLE_INDEX).click();
-    const strength = page.getByTestId('step-panel-settings').getByRole('spinbutton', {
+    const strength = page.getByTestId('panel-settings').getByRole('spinbutton', {
       name: 'Strength',
     });
     await expect(strength).toHaveValue('2');

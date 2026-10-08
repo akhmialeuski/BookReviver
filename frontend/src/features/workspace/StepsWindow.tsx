@@ -67,7 +67,7 @@ export function StepsWindow({
           <DialogTitle>{labels.title(MESSAGES.stages.names[stage])}</DialogTitle>
           <DialogDescription>{labels.hint}</DialogDescription>
         </DialogHeader>
-        <StepList processing={processing} showParams={false} />
+        <StepList processing={processing} />
         <RecipeSaveBar processing={processing} rows={rows} />
         <div className="flex flex-wrap gap-2">
           <Button

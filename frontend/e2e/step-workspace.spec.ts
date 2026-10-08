@@ -44,7 +44,7 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
   const folder = await writePagesFolder(PAGES);
   const bar = page.getByTestId('step-bar');
   const barSteps = page.getByTestId('bar-step');
-  const panel = page.getByTestId('step-panel');
+  const panel = page.getByTestId('panel-step');
   let stepCount = 0;
 
   await test.step('a book with a plate opens on Geometry, and the bar of steps holds the buttons of the strip and the panel', async () => {
@@ -86,13 +86,13 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
       'page-strip',
       'recipe-select',
       'run-menu',
-      'this-page',
+      'panel-page',
     ]) {
       await expect(page.getByTestId(id)).toBeVisible();
     }
     // The steps are in the bar only, and the panel of the recipe lists none
     await expect(page.getByTestId('recipe-steps')).toHaveCount(0);
-    await expect(page.getByTestId('step-add')).toHaveCount(0);
+    await expect(page.getByTestId('panel-recipe').getByTestId('step-catalogue')).toHaveCount(0);
   });
 
   await test.step('a second Deskew is added after the first, which saves it', async () => {
@@ -112,9 +112,7 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await waitForIdleJobs(page, openProjectId(page));
     await barSteps.nth(SECOND_DESKEW_INDEX).click();
     await expect(page).toHaveURL(STEP_ADDRESS);
-    await expect(page.getByTestId('step-panel-title')).toHaveText(
-      `${SECOND_DESKEW_INDEX + 1} · Deskew`,
-    );
+    await expect(page.getByTestId('step-panel-title')).toHaveText('Deskew');
     await expect(barSteps.nth(SECOND_DESKEW_INDEX)).toHaveAttribute('aria-current', 'step');
     await runPages(page, { throughOpenStep: true });
   });
@@ -123,11 +121,11 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     const [firstId] = await stepIdsOf(page, 'geometry', DESKEW);
     await barSteps.nth(FIRST_DESKEW_INDEX).click();
     await expect(page).toHaveURL(new RegExp(`/steps/${firstId}`));
-    await expect(page.getByTestId('step-panel-title')).toHaveText('2 · Deskew');
+    await expect(page.getByTestId('step-panel-title')).toHaveText('Deskew');
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
     await expect(barSteps.nth(FIRST_DESKEW_INDEX)).toHaveAttribute('data-state', 'found');
     // The sections of the panel that were there before the step are under the section of the step
-    await expect(page.getByTestId('this-page')).toBeVisible();
+    await expect(page.getByTestId('panel-page')).toBeVisible();
     await expect(barSteps).toHaveCount(stepCount + 1);
     await snap(page, 'first-deskew-open-on-a-page-of-text');
   });
@@ -138,26 +136,20 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await expect(page).toHaveURL(/page=/);
     // The second Deskew was added to the recipe of text, so the recipe of the plate has the steps it had at first
     await expect(barSteps).toHaveCount(stepCount);
-    await expect(page.getByTestId('step-panel-title')).toHaveText(
-      `${FIRST_DESKEW_INDEX + 1} · Deskew`,
-    );
+    await expect(page.getByTestId('step-panel-title')).toHaveText('Deskew');
     await snap(page, 'step-open-on-the-plate');
   });
 
   await test.step('the address of the step opens it again after a reload, and a second press on the open step leaves it open', async () => {
     await page.reload();
-    await expect(page.getByTestId('step-panel-title')).toHaveText(
-      `${FIRST_DESKEW_INDEX + 1} · Deskew`,
-    );
+    await expect(page.getByTestId('step-panel-title')).toHaveText('Deskew');
     await expect(barSteps.nth(FIRST_DESKEW_INDEX)).toHaveAttribute('aria-current', 'step');
 
     await barSteps.nth(FIRST_DESKEW_INDEX).click();
     await expect(page).toHaveURL(STEP_ADDRESS);
     await expect(panel).toHaveCount(1);
-    await expect(page.getByTestId('step-panel-title')).toHaveText(
-      `${FIRST_DESKEW_INDEX + 1} · Deskew`,
-    );
-    await expect(page.getByTestId('this-page')).toBeVisible();
+    await expect(page.getByTestId('step-panel-title')).toHaveText('Deskew');
+    await expect(page.getByTestId('panel-page')).toBeVisible();
     await expect(barSteps).toHaveCount(stepCount);
   });
 

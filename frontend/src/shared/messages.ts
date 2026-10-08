@@ -606,7 +606,7 @@ export const MESSAGES = {
       stopped: {
         label: 'Stopped at step',
         all: 'Any step',
-        option: (number: number, pages: number) => `Stopped at step ${number} · ${pages}`,
+        option: (title: string, pages: number) => `Stopped at ${title} · ${pages}`,
       },
       flag: {
         label: 'Pages of the step',
@@ -656,7 +656,6 @@ export const MESSAGES = {
     },
     steps: {
       label: 'Steps of the stage',
-      step: (number: number, title: string) => `${number} · ${title}`,
       open: (number: number, title: string) => `Open step ${number}, ${title}`,
       off: 'Off',
       reading: 'Reading the page',
@@ -707,10 +706,7 @@ export const MESSAGES = {
       },
     },
     stepPanel: {
-      label: (number: number, title: string) => `Step ${number} · ${title}`,
-      settings: 'Settings of the step',
       off: 'This step is off, so a run and a preview skip it.',
-      thisPage: (label: string) => (label === '' ? 'This page' : `This page · ${label}`),
       notReached:
         'The page has not been through the earlier steps yet, so this step reads the page as it is.',
       carry: {
@@ -782,7 +778,6 @@ export const MESSAGES = {
       labelHint: 'Leave empty for a page without a number.',
       notes: 'Notes',
       notesMixed: 'The notes differ between these pages. Typing here replaces them all.',
-      actions: 'Actions',
       move: 'Move to another place…',
       number: 'Number from here…',
       insert: 'Insert a page before / after…',
@@ -1322,7 +1317,6 @@ export const MESSAGES = {
     },
     steps: {
       title: 'Steps',
-      step: (number: number, title: string) => `${number} · ${title}`,
       switchLabel: (title: string) => `Run the ${title} step`,
       remove: (title: string) => `Remove the ${title} step`,
       move: (title: string) => `Move the ${title} step`,
@@ -1332,8 +1326,7 @@ export const MESSAGES = {
       switchedOff: 'Off: the step is kept, but a run and a preview skip it.',
       passed: (passed: number, total: number) => `${passed} of ${total} pages passed`,
       passedHint: 'Pages whose result of this stage was made through this step or a later one',
-      empty: 'This recipe has no steps. Add one from the list below.',
-      add: 'Add a step',
+      empty: 'This recipe has no steps. Add one with the plus button.',
       unknownProcessor: 'This step is not installed on this machine.',
       outOfLimits: 'A value is outside its limits, so the recipe cannot be saved.',
       measure: {
@@ -1409,7 +1402,6 @@ export const MESSAGES = {
     },
     soon: {
       label: 'Soon',
-      title: 'Coming steps',
       steps: {
         'geometry.perspective': 'Perspective crop',
         'geometry.dewarp': 'Dewarp by mesh',
@@ -1432,8 +1424,6 @@ export const MESSAGES = {
         total > 0 ? `Running the stage: ${done} of ${total}` : 'Running the stage',
       outOfDate: (pages: number) => `${pages} ${pluralize(pages, 'page', 'pages')} out of date`,
       failed: (pages: number) => `${pages} failed`,
-      stoppedAt: (step: number, total: number, pages: number) =>
-        `Done through step ${step} of ${total}: ${pages} ${pluralize(pages, 'page', 'pages')}`,
       busy: 'Another job of this book is still going.',
     },
     modes: {
@@ -1468,7 +1458,6 @@ export const MESSAGES = {
       throughLabel: 'Through',
       throughOpen: (step: string) => `Up to the open step · ${step}`,
       throughAll: (step: string) => `The whole stage · ${step}`,
-      step: (number: number, title: string) => `${number} ${title}`,
       onPage: 'this page',
       onFromPage: (pages: number) =>
         `${pages} ${pluralize(pages, 'page', 'pages')} from this page on`,
@@ -1670,8 +1659,7 @@ export const MESSAGES = {
       otherVerb: 'processed',
     },
     reasons: {
-      atStep: (number: number, title: string, reason: string) =>
-        `Step ${number} · ${title}: ${reason}`,
+      atStep: (title: string, reason: string) => `${title}: ${reason}`,
       failed: (error: string) => (error === '' ? 'Failed' : `Failed: ${error}`),
       stale: 'Out of date',
       notApplied: (confidence: number | null) =>
@@ -1702,7 +1690,6 @@ export const MESSAGES = {
       },
       cut: (count: number) => `Split the ${count} ${pluralize(count, 'scan', 'scans')}`,
       notNow: 'Not now',
-      scan: 'This scan',
       choice: 'What this scan becomes',
       onePage: 'One page',
       twoPages: 'Two pages',
@@ -1816,7 +1803,6 @@ export const MESSAGES = {
         'brush-mask': 'Eraser',
         'content-box': 'Content box',
       },
-      numbered: (number: number, title: string) => `${number} · ${title}`,
       auto: 'auto',
       manual: 'by hand',
     },

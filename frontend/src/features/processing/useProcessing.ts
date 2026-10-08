@@ -9,7 +9,6 @@ import {
 } from '@/features/processing/order';
 import { useProcessors, useRecipes } from '@/features/processing/queries';
 import {
-  addStep,
   draftOf,
   moveStep,
   removeStep,
@@ -69,7 +68,6 @@ export interface Processing {
   toggle: (id: string) => void;
   remove: (id: string) => void;
   change: (id: string, params: Record<string, unknown>) => void;
-  add: (processor: ProcessorSchema) => void;
   discard: () => void;
 }
 
@@ -220,11 +218,6 @@ export function useProcessing(
     toggle: (id) => write(toggleStep(steps, id)),
     remove: (id) => write(removeStep(steps, id)),
     change: (id, params) => write(setStepParams(steps, id, params)),
-    add: (processor) => {
-      const next = addStep(steps, processor);
-      write(next);
-      setOpenChoice({ owner: recipe?.id, id: next.at(-1)?.id });
-    },
     discard: () => setEdit(null),
   };
 }

@@ -9,6 +9,7 @@ import {
   type FlagView,
   joinRows,
   type KindView,
+  type StopView,
   type StripItem,
 } from '@/features/workspace/strip';
 
@@ -51,6 +52,7 @@ describe('StageStrip', () => {
       withWide?: boolean;
       kinds?: KindView;
       flagged?: FlagView;
+      stopped?: StopView;
     } = {},
   ): void {
     const pages = Array.from({ length }, (_, index) => page(`p-${index}`, { position: index }));
@@ -73,6 +75,7 @@ describe('StageStrip', () => {
           withWide={extra.withWide}
           kinds={extra.kinds}
           flagged={extra.flagged}
+          stopped={extra.stopped}
         />,
       ),
     );
@@ -119,6 +122,32 @@ describe('StageStrip', () => {
     render(2, { filter: PageFilter.Check, reasonOf: () => null });
 
     expect(container.querySelector('[data-testid="strip-reason"]')).toBeNull();
+  });
+
+  describe('the steps a run stopped at', () => {
+    it('names each step by its title, with the pages that stopped there and no number', () => {
+      const titles = ['Perspective', 'Deskew'];
+      render(2, {
+        stopped: {
+          options: [
+            { step: 0, pages: 1 },
+            { step: 1, pages: 76 },
+          ],
+          titleOf: (step) => titles[step] ?? '',
+          selected: null,
+          onSelect: vi.fn(),
+        },
+      });
+
+      const options = container.querySelectorAll<HTMLOptionElement>(
+        '[data-testid="strip-stopped-filter"] option',
+      );
+      expect([...options].map((option) => option.textContent)).toEqual([
+        'Any step',
+        'Stopped at Perspective · 1',
+        'Stopped at Deskew · 76',
+      ]);
+    });
   });
 
   describe('the kinds of page of the stage', () => {

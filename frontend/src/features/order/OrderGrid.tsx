@@ -75,6 +75,7 @@ export interface FocusRequest {
 
 export function OrderGrid({
   pages,
+  thumbnails,
   gaps,
   selected,
   spread,
@@ -92,6 +93,8 @@ export function OrderGrid({
   onAddMissing,
 }: {
   pages: readonly PageSchema[];
+  /** The thumbnail of each page at the Order stage by the identifier of the page; a page without one has no entry. */
+  thumbnails: ReadonlyMap<string, string>;
   gaps: readonly LabelGap[];
   selected: ReadonlySet<string>;
   spread: boolean;
@@ -326,6 +329,7 @@ export function OrderGrid({
                             <OrderTile
                               key={page.id}
                               page={page}
+                              thumbnail={thumbnails.get(page.id) ?? null}
                               selected={selected.has(page.id)}
                               dropSide={target?.pageId === page.id ? target.side : null}
                               previewLabel={previewLabels?.get(page.id)}
@@ -347,7 +351,12 @@ export function OrderGrid({
             <DragOverlay dropAnimation={null}>
               {activePage === undefined ? null : (
                 <div className="relative" style={{ width: size }}>
-                  <PageThumbnail page={activePage} alt="" className="shadow-lg" />
+                  <PageThumbnail
+                    page={activePage}
+                    src={thumbnails.get(activePage.id) ?? null}
+                    alt=""
+                    className="shadow-lg"
+                  />
                   {carriedCount > 1 ? (
                     <span
                       className="absolute -top-2 -right-2 rounded-full bg-foreground px-2 py-0.5 text-xs font-medium text-background"

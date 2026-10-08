@@ -9,22 +9,35 @@ import { joinRows } from '@/features/workspace/strip';
 import type { StepWorkspace } from '@/features/workspace/useStepWorkspace';
 
 /**
- * Where the panel of a stage puts the history of the page: once, as the last element of the scrolling area of the panel
- * after every other section, whatever the state of the panel, with the step open in the bar or, on a stage without a bar,
- * the step open in the list of the recipe, and with no step when none is open.
+ * What the panel of a stage puts in each slot of the layout: the recipe, the step with its notes, the settings of the open
+ * step, the one section of the page with its facts last, the history as the last element of the scrolling area whatever
+ * the state of the panel, with the step open in the bar or, on a stage without a bar, the step open in the list of the
+ * recipe, and with no step when none is open, and the run in the footer.
  *
- * The sections are replaced by stand-ins that only name themselves, so the test reads their order and what the history
- * was given, and nothing reaches the server.
+ * The content of the slots is replaced by stand-ins that only name themselves, so the test reads which slots are filled
+ * and in what order, and what the history was given, and nothing reaches the server.
  */
 
 const { stub } = vi.hoisted(() => ({
   stub: (testId: string) => () => <div data-testid={testId} />,
 }));
 
-vi.mock('@/features/processing/StepPanel', () => ({ StepPanel: stub('step-panel') }));
+vi.mock('@/features/processing/StepSlots', () => ({
+  StepNotes: stub('step-notes'),
+  StepSettings: stub('step-settings'),
+}));
 vi.mock('@/features/processing/SplitSection', () => ({ SplitSection: stub('split-section') }));
 vi.mock('@/features/processing/RecipeSection', () => ({ RecipeSection: stub('recipe-section') }));
-vi.mock('@/features/processing/ThisPageSection', () => ({ ThisPageSection: stub('this-page') }));
+vi.mock('@/features/processing/useThisPage', () => ({
+  useThisPage: (_processing: unknown, item: { page: { label: string } } | undefined) =>
+    item === undefined
+      ? undefined
+      : {
+          title: `This page · ${item.page.label}`,
+          children: <div data-testid="this-page-content" />,
+          facts: <div data-testid="this-page-facts" />,
+        },
+}));
 vi.mock('@/features/processing/RunControls', () => ({ RunControls: stub('run-controls') }));
 vi.mock('@/features/profiles/ProfileLibraryPanel', () => ({ ProfileLibraryPanel: () => null }));
 vi.mock('@/features/processing/useStageRun', () => ({ useStageRun: () => ({}) }));
@@ -83,9 +96,7 @@ describe('ProcessingPanel', () => {
           selected={new Set()}
           editor={null}
           step={
-            withStep && workspace.open !== null
-              ? { workspace, step: workspace.open, pageLabel: '1' }
-              : undefined
+            withStep && workspace.open !== null ? { workspace, step: workspace.open } : undefined
           }
         />,
       ),
@@ -99,11 +110,8 @@ describe('ProcessingPanel', () => {
     ).map((child) => child.getAttribute('data-testid') ?? '');
   }
 
-  /** The names of the sections inside the body of the panel, which the history is not part of. */
-  function sectionIds(): string[] {
-    const body = container.querySelector('[data-testid="stage-panel-scroll"]')?.firstElementChild;
-    return Array.from(body?.children ?? []).map((child) => child.getAttribute('data-testid') ?? '');
-  }
+  const find = (testId: string): HTMLElement | null =>
+    container.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
 
   const history = (): HTMLElement | null => container.querySelector('[data-testid="page-history"]');
 
@@ -120,13 +128,68 @@ describe('ProcessingPanel', () => {
     vi.unstubAllGlobals();
   });
 
-  it('ends the scrolling area with the history of the step open in the bar, after every section', () => {
+  it('fills the slots of a stage with a bar in the fixed order and ends the area with the history of the open step', () => {
     render(processing({ recipes: [SAVED], recipe: SAVED }), true);
 
-    expect(sectionIds()).toEqual(['step-panel', 'recipe-section', 'this-page']);
-    expect(areaIds()).toEqual(['', 'page-history']);
+    expect(areaIds()).toEqual([
+      'panel-recipe',
+      'panel-step',
+      'panel-settings',
+      'panel-page',
+      'page-history',
+    ]);
+    expect(find('panel-recipe')?.contains(find('recipe-section'))).toBe(true);
+    expect(find('step-panel-title')?.textContent).toBe('Deskew');
+    expect(find('panel-step')?.contains(find('step-notes'))).toBe(true);
+    expect(find('panel-settings')?.contains(find('step-settings'))).toBe(true);
     expect(history()?.getAttribute('data-step')).toBe(BAR[0]?.stepId);
     expect(history()?.getAttribute('data-page-id')).toBe('p1');
+  });
+
+  it('draws the page section once, with the facts last and the history right after it, and no number in the title', () => {
+    render(processing({ recipes: [SAVED], recipe: SAVED }), true);
+
+    expect(container.textContent?.match(/This page/g)).toHaveLength(1);
+    expect(find('panel-page')?.querySelector('h3')?.textContent).toContain('This page');
+    expect(find('panel-page')?.lastElementChild).toBe(find('panel-facts'));
+    expect(find('panel-facts')?.contains(find('this-page-facts'))).toBe(true);
+    expect(find('panel-page')?.nextElementSibling).toBe(history());
+    expect(find('step-panel-title')?.textContent).not.toMatch(/\d/);
+  });
+
+  it('fills the slots of a stage without a bar with no step slot, the settings of the open card and the split choice in the page', () => {
+    render(
+      processing({ stage: 'page-split', recipes: [SAVED], recipe: SAVED, openId: 'step-0' }),
+      false,
+    );
+
+    expect(areaIds()).toEqual(['panel-recipe', 'panel-settings', 'panel-page', 'page-history']);
+    expect(find('panel-settings')?.contains(find('step-settings'))).toBe(true);
+    expect(find('panel-page')?.firstElementChild?.nextElementSibling).toBe(find('split-section'));
+    expect(find('panel-page')?.lastElementChild).toBe(find('panel-facts'));
+  });
+
+  it('leaves the settings out while no card is open in the list of a stage without a bar', () => {
+    render(processing({ stage: 'page-split', recipes: [SAVED], recipe: SAVED }), false);
+
+    expect(find('panel-settings')).toBeNull();
+    expect(find('panel-step')).toBeNull();
+  });
+
+  it('leaves the page section out when the book has no page, and the recipe out when the stage has none', () => {
+    act(() =>
+      root.render(
+        <ProcessingPanel
+          processing={processing({ recipes: [], recipe: undefined })}
+          items={[]}
+          current={undefined}
+          selected={new Set()}
+          editor={null}
+        />,
+      ),
+    );
+
+    expect(areaIds()).toEqual(['page-history']);
   });
 
   it('keeps the run, with the summary of the stage that stands in it, in the footer and out of the body', () => {
@@ -163,11 +226,7 @@ describe('ProcessingPanel', () => {
           current={none[0]}
           selected={new Set()}
           editor={null}
-          step={
-            workspace.open === null
-              ? undefined
-              : { workspace, step: workspace.open, pageLabel: '1' }
-          }
+          step={workspace.open === null ? undefined : { workspace, step: workspace.open }}
         />,
       ),
     );

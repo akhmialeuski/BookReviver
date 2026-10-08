@@ -48,7 +48,7 @@ function Step({
         )}
         aria-current={open ? 'step' : undefined}
         aria-label={labels.open(step.number, step.title)}
-        title={`${labels.step(step.number, step.title)} · ${stateText}`}
+        title={`${step.title} · ${stateText}`}
         data-testid="bar-step"
         data-step-id={step.stepId}
         data-state={state ?? 'unknown'}

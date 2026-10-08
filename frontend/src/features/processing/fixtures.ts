@@ -477,7 +477,6 @@ export function processing(overrides: Partial<Processing> = {}): Processing {
     toggle: () => undefined,
     remove: () => undefined,
     change: () => undefined,
-    add: () => undefined,
     discard: () => undefined,
     ...overrides,
   };

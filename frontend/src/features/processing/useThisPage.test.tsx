@@ -2,17 +2,36 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { FigureState, StepPageSchema } from '@/api';
 import type { EditorSession } from '@/features/editors/session';
 import { SourceKind } from '@/features/processing/compare';
 import { processing, recipe, step, version } from '@/features/processing/fixtures';
-import { ThisPageSection } from '@/features/processing/ThisPageSection';
-import { page, row } from '@/features/workspace/fixtures';
+import { type OpenStep, useThisPage } from '@/features/processing/useThisPage';
+import { page, row, stepPage } from '@/features/workspace/fixtures';
+import { StagePanel } from '@/features/workspace/StagePanel';
 import type { StripItem } from '@/features/workspace/strip';
 
 /**
- * What the stage did to the open page: the facts the step found and the plate for a page it was unsure of. The results
- * of the stage on the page are not listed here but in the history that ends the panel of the stage.
+ * What the stage did to the open page, as the page slot of the panel: the facts the steps found, last in the section, the
+ * plate for a page the step was unsure of, the page editor and the carry-over of an open step. The results of the stage on
+ * the page are not listed here but in the history that ends the panel of the stage.
  */
+
+/** Draws the page slot the hook builds in the layout, as a stage does. */
+function Slot({
+  processing: state,
+  item,
+  editor,
+  step,
+}: {
+  processing: ReturnType<typeof processing>;
+  item: StripItem | undefined;
+  editor: EditorSession | null;
+  step?: OpenStep;
+}): React.JSX.Element {
+  const slot = useThisPage(state, item, editor, step);
+  return <StagePanel stage="geometry" available page={slot} />;
+}
 
 const sdk = vi.hoisted(() => ({
   versions: vi.fn(),
@@ -35,7 +54,7 @@ const NEW = version('new', {
   data: { angle: 1.4, confidence: 0.91 },
 });
 
-describe('ThisPageSection', () => {
+describe('useThisPage', () => {
   let container: HTMLDivElement;
   let root: Root;
   let client: QueryClient;
@@ -62,15 +81,27 @@ describe('ThisPageSection', () => {
     };
   }
 
+  function openStep(pageOfStep: StepPageSchema | null): OpenStep {
+    return { stepId: 'b', page: pageOfStep, selected: new Set() };
+  }
+
+  function placed(state: FigureState, data: Record<string, unknown> = {}): StepPageSchema {
+    return stepPage('b', state, {
+      version: state === 'default' ? null : version('v', { data }),
+      flags: state === 'by-hand' ? ['by-hand'] : [],
+    });
+  }
+
   async function render(
-    item: StripItem,
+    item: StripItem | undefined,
     editor: EditorSession | null = null,
     state = processing(),
+    step?: OpenStep,
   ): Promise<void> {
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
-          <ThisPageSection processing={state} item={item} editor={editor} />
+          <Slot processing={state} item={item} editor={editor} step={step} />
         </QueryClientProvider>,
       );
     });
@@ -107,7 +138,7 @@ describe('ThisPageSection', () => {
   it('writes what the step found with the words of the book', async () => {
     await render({ page: page('page', { label: '14' }), row: row('page', { version: NEW }) });
 
-    expect(text('this-page')).toContain('This page · 14');
+    expect(text('panel-page')).toContain('This page · 14');
     expect(text('this-page-facts')).toContain('Turned by1.4°');
     expect(text('this-page-facts')).toContain('Confidence0.91 · sure');
   });
@@ -185,7 +216,7 @@ describe('ThisPageSection', () => {
     expect(text('this-page-facts')).toContain('Turned by2.5°');
   });
 
-  it('draws the controls of the editor under the facts, with the button of the plate gone', async () => {
+  it('draws the controls of the editor in the section, above the facts, with the button of the plate gone', async () => {
     const unsure = version('unsure', {
       data: { skipped: true, confidence: 0.18 },
       review: 'not-applied',
@@ -216,7 +247,7 @@ describe('ThisPageSection', () => {
       editorStub({ hasEdit: true, figure: 'by-hand', alwaysOn: true }),
     );
 
-    const section = container.querySelector('[data-testid="this-page"]');
+    const section = container.querySelector('[data-testid="panel-page"]');
     const buttons = [...(section?.querySelectorAll('button') ?? [])];
     expect(buttons.some((button) => /Auto/.test(button.textContent ?? ''))).toBe(false);
     expect(section?.querySelector('[data-testid$="-auto"]')).toBeNull();
@@ -228,7 +259,7 @@ describe('ThisPageSection', () => {
   it('says the stage has not run on a page that has no result', async () => {
     await render({ page: page('page'), row: row('page', { status: 'not-run' }) });
 
-    expect(text('this-page')).toContain('This stage has not run on this page yet.');
+    expect(text('panel-page')).toContain('This stage has not run on this page yet.');
     expect(container.querySelector('[data-testid="this-page-review"]')).toBeNull();
   });
 
@@ -291,6 +322,67 @@ describe('ThisPageSection', () => {
       );
 
       expect(container.querySelector('[data-testid="this-page-step"]')).toBeNull();
+    });
+  });
+
+  describe('the one section of the page', () => {
+    const found = { page: page('page', { label: '14' }), row: row('page', { version: NEW }) };
+
+    it('is drawn once, with the facts last and the history of the layout right after it', async () => {
+      await render(found, editorStub());
+
+      expect(container.textContent?.match(/This page/g)).toHaveLength(1);
+      const section = container.querySelector('[data-testid="panel-page"]');
+      expect(section?.lastElementChild).toBe(
+        container.querySelector('[data-testid="panel-facts"]'),
+      );
+      expect(section?.nextElementSibling).toBe(
+        container.querySelector('[data-testid="page-history"]'),
+      );
+      expect(section?.querySelector('[data-testid="editor-controls"]')).not.toBeNull();
+    });
+
+    it('names the angle once, in the facts, and has no line of its own for it', async () => {
+      await render(found, null, processing(), openStep(placed('found', { angle: 1.4 })));
+
+      expect(text('panel-page').match(/Turned by/g)).toHaveLength(1);
+      expect(container.querySelector('[data-testid="step-panel-angle"]')).toBeNull();
+    });
+
+    it('draws the controls of the editor once, whether a step is open or not', async () => {
+      await render(found, editorStub(), processing(), openStep(placed('found')));
+      expect(container.querySelectorAll('[data-testid="editor-controls"]')).toHaveLength(1);
+
+      await render(found, editorStub());
+      expect(container.querySelectorAll('[data-testid="editor-controls"]')).toHaveLength(1);
+    });
+
+    it('says a page that has not been through the open step has not reached it', async () => {
+      await render(found, null, processing(), openStep(stepPage('b', 'default')));
+      expect(container.querySelector('[data-testid="step-panel-not-reached"]')).not.toBeNull();
+
+      await render(found, null, processing(), openStep(placed('found')));
+      expect(container.querySelector('[data-testid="step-panel-not-reached"]')).toBeNull();
+      await render(found);
+      expect(container.querySelector('[data-testid="step-panel-not-reached"]')).toBeNull();
+    });
+
+    it('offers the carry-over only for a shape the reader set by hand on the open step', async () => {
+      await render(found, null, processing(), openStep(placed('by-hand', { angle: 0.5 })));
+      expect(container.querySelector('[data-testid="step-carry"]')).not.toBeNull();
+
+      for (const state of ['found', 'default', 'skipped'] as const) {
+        await render(found, null, processing(), openStep(placed(state)));
+        expect(container.querySelector('[data-testid="step-carry"]')).toBeNull();
+      }
+      await render(found);
+      expect(container.querySelector('[data-testid="step-carry"]')).toBeNull();
+    });
+
+    it('draws no section when the book has no page', async () => {
+      await render(undefined);
+
+      expect(container.querySelector('[data-testid="panel-page"]')).toBeNull();
     });
   });
 });

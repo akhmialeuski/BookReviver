@@ -155,7 +155,7 @@ test('a reader sees what changed on a page, takes the last change back with the 
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
   // The settings of the page are in the panel of the open step, and the history ends the panel of the stage
-  const step = page.getByTestId('step-panel');
+  const step = page.getByTestId('panel-settings');
   const history = page.getByTestId('stage-panel').getByTestId('page-history');
   const rows = history.locator(CHANGE_ROWS);
   // The values of the page for the largest slant are the chips under that setting, in the panel of the open step
@@ -212,7 +212,7 @@ test('a reader sees what changed on a page, takes the last change back with the 
   });
 
   await test.step('Ctrl+Z takes back the value and then the edit that are left, and the server keeps every entry', async () => {
-    await step.getByTestId('step-panel-title').click();
+    await page.getByTestId('step-panel-title').click();
     await page.keyboard.press('Control+z');
     await expect(slant.getByTestId('value-chip')).toHaveCount(0);
     await page.keyboard.press('Control+z');
@@ -472,7 +472,7 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await expect(page.getByTestId('stage-title')).toHaveText('Cleanup');
     await expect(page.getByTestId('strip-page')).toHaveCount(1);
     await expect(page).toHaveURL(/\/stages\/cleanup\/steps\//);
-    await expect(page.getByTestId('step-panel')).toHaveCount(1);
+    await expect(page.getByTestId('panel-step')).toHaveCount(1);
     await expect(history).toHaveAttribute('aria-disabled', 'false');
     await expect(history.getByTestId('page-history-count')).toHaveText('1 event', {
       timeout: RUN_TIMEOUT_MS,

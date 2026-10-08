@@ -2,7 +2,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PageSchema } from '@/api';
+import type { PageSchema, Stage } from '@/api';
+import { listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey } from '@/api/@tanstack/react-query.gen';
 import { BlankImageBlock } from '@/features/order/BlankImageBlock';
 import { page } from '@/features/workspace/fixtures';
 import { ProblemError } from '@/shared/http/problem';
@@ -118,6 +119,25 @@ describe('BlankImageBlock', () => {
     expect(sdk.fill).toHaveBeenCalledWith(
       expect.objectContaining({ body: { page_ids: ['a', 'b', 'c'], blank_fill: 'white' } }),
     );
+  });
+
+  it('reads the rows of the Order stage and of the stages after it again, which draw the leaf', async () => {
+    const rowsKey = (stage: Stage) =>
+      listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey({
+        path: { project_id: PROJECT, stage },
+      });
+    for (const stage of ['page-split', 'page-order', 'geometry'] as const) {
+      client.setQueryData(rowsKey(stage), []);
+    }
+    render([BLANK_PAGES[0] as PageSchema]);
+
+    await act(async () => applyAll().click());
+
+    await vi.waitFor(() =>
+      expect(client.getQueryState(rowsKey('page-order'))?.isInvalidated).toBe(true),
+    );
+    expect(client.getQueryState(rowsKey('geometry'))?.isInvalidated).toBe(true);
+    expect(client.getQueryState(rowsKey('page-split'))?.isInvalidated).toBe(false);
   });
 
   it('shows no error while the pages are written', async () => {

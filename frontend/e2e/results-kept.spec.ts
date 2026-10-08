@@ -63,7 +63,7 @@ test('a collection deletes the results a run replaced and keeps the good and the
   const runWithTopMargin = async (millimetres: string): Promise<void> => {
     await page.getByTestId('bar-step').filter({ hasText: 'Margins' }).click();
     await page
-      .getByTestId('step-panel-settings')
+      .getByTestId('panel-settings')
       .getByRole('spinbutton', { name: 'Top margin, mm', exact: true })
       .fill(millimetres);
     await page.getByTestId('recipe-save').click();

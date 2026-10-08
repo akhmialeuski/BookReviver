@@ -154,7 +154,7 @@ test('the book screen stays in place on Import, Order and Geometry while its str
 
   await test.step('the Geometry stage stays in place with a step and the history of the page open', async () => {
     await page.getByTestId('bar-step').filter({ hasText: DESKEW_TITLE }).click();
-    await expect(page.getByTestId('step-panel')).toBeVisible();
+    await expect(page.getByTestId('panel-step')).toBeVisible();
     await openTimeline(page);
     await scrollEveryPart(page, parts);
     await expectScreenInPlace(page);
@@ -268,7 +268,7 @@ test('the panel of a stage is never wider than its column at 1280 px, nor at its
         await expect(page.getByTestId('stage-panel')).toBeVisible();
         await expectPanelFits(page);
         await page.getByTestId('bar-step').filter({ hasText: step }).click();
-        await expect(page.getByTestId('step-panel')).toBeVisible();
+        await expect(page.getByTestId('panel-step')).toBeVisible();
         await expectPanelFits(page);
         await snap(page, `panel-${stage}-${width.replaceAll(' ', '-')}`);
       });

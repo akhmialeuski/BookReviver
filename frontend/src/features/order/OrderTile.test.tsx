@@ -7,7 +7,7 @@ import type { PageSchema } from '@/api';
 import { OrderTile, type TileClick } from '@/features/order/OrderTile';
 import { SECTION_TONES, type SectionSpan, sectionSpans } from '@/features/order/sections';
 import { AnchorSide } from '@/features/pages/order';
-import { page, section } from '@/features/workspace/fixtures';
+import { images, page, section } from '@/features/workspace/fixtures';
 
 /**
  * The tile of the Order grid: what a click with a modifier key asks of the selection, the words and marks it shows
@@ -40,6 +40,7 @@ describe('OrderTile', () => {
       dropSide?: AnchorSide | null;
       previewLabel?: string;
       span?: SectionSpan;
+      thumbnail?: string | null;
     } = {},
   ): HTMLButtonElement {
     act(() =>
@@ -48,6 +49,7 @@ describe('OrderTile', () => {
           <SortableContext items={[entry.id]}>
             <OrderTile
               page={entry}
+              thumbnail={options.thumbnail ?? null}
               selected={options.selected ?? false}
               dropSide={options.dropSide ?? null}
               previewLabel={options.previewLabel}
@@ -121,6 +123,19 @@ describe('OrderTile', () => {
     expect(tile.textContent).toContain('Missing page');
     expect(tile.querySelector('img')).toBeNull();
     expect(tile.getAttribute('data-check')).toBe('true');
+  });
+
+  it('draws the picture it is given, not the image of the page, which a later stage may have made', () => {
+    const tile = render(page('a', { images: images('geometry') }), {
+      thumbnail: '/page-order/a/thumb',
+    });
+    expect(tile.querySelector('img')?.getAttribute('src')).toBe('/page-order/a/thumb');
+  });
+
+  it('draws a missing page as waiting for a scan when the stage has no picture of it, whatever the page images say', () => {
+    const tile = render(page('a', { origin: 'placeholder', images: images('later') }));
+    expect(tile.textContent).toContain('Missing page');
+    expect(tile.querySelector('img')).toBeNull();
   });
 
   it('marks the selected page', () => {

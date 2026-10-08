@@ -59,6 +59,8 @@ export interface StopOption {
  */
 export interface StopView {
   options: readonly StopOption[];
+  /** The title of the step at an index of the recipe, which names the step in the choice. */
+  titleOf: (step: number) => string;
   /** The step whose pages are listed, or null for every page. */
   selected: number | null;
   onSelect: (step: number | null) => void;
@@ -296,6 +298,21 @@ export function pictureOf(item: StripItem): PageVersionSchema | null {
  */
 export function thumbnailOf(item: StripItem): string | null {
   return pictureOf(item)?.images?.thumbnail ?? null;
+}
+
+/**
+ * Give the thumbnail of the picture of every page that has one, by the identifier of the page, for a screen that draws
+ * the pages in a grid of its own, such as the Order stage.
+ */
+export function thumbnailsOf(items: readonly StripItem[]): Map<string, string> {
+  const thumbnails = new Map<string, string>();
+  for (const item of items) {
+    const thumbnail = thumbnailOf(item);
+    if (thumbnail !== null) {
+      thumbnails.set(item.page.id, thumbnail);
+    }
+  }
+  return thumbnails;
 }
 
 /**

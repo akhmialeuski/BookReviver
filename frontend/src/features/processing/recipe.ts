@@ -29,10 +29,15 @@ function idNumber(id: string): number {
   return id.startsWith(ID_PREFIX) ? Number(id.slice(ID_PREFIX.length)) : -1;
 }
 
+/** The draft identifier of the saved step at a place, from zero, which `draftOf` gives it. */
+export function draftIdAt(index: number): string {
+  return `${ID_PREFIX}${index}`;
+}
+
 /** Start a draft from the saved steps of a recipe. */
 export function draftOf(recipe: Pick<RecipeSchema, 'steps'>): StepDraft[] {
   return recipe.steps.map((step, index) => ({
-    id: `${ID_PREFIX}${index}`,
+    id: draftIdAt(index),
     stepId: step.step_id,
     processorKey: step.processor_key,
     params: { ...step.params },

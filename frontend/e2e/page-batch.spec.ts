@@ -50,7 +50,7 @@ test('a reader sets a value for the even pages and takes it back in one action, 
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
   // The settings of the page and its history are in the panel of the open step
-  const step = page.getByTestId('step-panel');
+  const step = page.getByTestId('panel-settings');
   const slant = step.locator('[data-testid="field-values"][data-field="max_angle"]');
   let ids: string[] = [];
   let stepId = '';

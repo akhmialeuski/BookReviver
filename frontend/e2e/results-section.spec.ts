@@ -56,8 +56,8 @@ test('a result of a step is marked bad, which marks its page in the strip, and t
     await expect(entry.getByTestId('page-history-origin')).toHaveText('Made by the step');
     // The history lists the results once, and neither the panel of the step nor the section of the page does
     await expect(page.getByTestId('page-history')).toHaveCount(1);
-    await expect(page.getByTestId('step-panel').locator(RESULT_ROWS)).toHaveCount(0);
-    await expect(page.getByTestId('this-page').locator(RESULT_ROWS)).toHaveCount(0);
+    await expect(page.getByTestId('panel-settings').locator(RESULT_ROWS)).toHaveCount(0);
+    await expect(page.getByTestId('panel-page').locator(RESULT_ROWS)).toHaveCount(0);
   });
 
   await test.step('no page is marked, and the strip filter offers the pages marked bad', async () => {

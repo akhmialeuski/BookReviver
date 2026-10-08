@@ -118,7 +118,7 @@ test('a reader arranges the pages of a book', async ({ page }) => {
   await test.step('move a group of pages after another page', async () => {
     await tile(page, ids[0] ?? '').click();
     await tile(page, ids[1] ?? '').click({ modifiers: ['ControlOrMeta'] });
-    await expect(page.getByTestId('selection-heading')).toContainText('2 pages selected');
+    await expect(page.getByTestId('panel-page')).toContainText('2 pages selected');
     await page.getByRole('button', { name: 'Move to another place…' }).click();
     await expect(page.getByRole('heading', { name: 'Move 2 pages' })).toBeVisible();
     // The pages that move are on the strip but cannot be chosen, since a place next to oneself is not defined

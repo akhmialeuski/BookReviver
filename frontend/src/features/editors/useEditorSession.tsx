@@ -498,13 +498,10 @@ export function useEditorSession({
       candidateMade === null || candidateMade.data.skipped_by_condition === true
         ? null
         : readResult(candidateMade).angle;
-    const title = titleOf(candidate);
-    // Two steps of one kind of editor are told apart by their place in the recipe
-    const twin = editable.some((other) => other !== candidate && titleOf(other) === title);
     return [
       {
         key: candidate.step.step_id,
-        title: twin ? MESSAGES.editors.steps.numbered(candidate.index + 1, title) : title,
+        title: titleOf(candidate),
         manual: edits?.some((saved) => saved.step_id === candidate.step.step_id) ?? false,
         detail:
           candidate.kind === 'rotation' && angle !== null

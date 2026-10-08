@@ -37,7 +37,7 @@ import {
   type SelectionState,
   selectionAfterClick,
 } from '@/features/workspace/selection';
-import { defaultStepOf, hasStepBar } from '@/features/workspace/steps';
+import { barStepsOf, defaultStepOf, hasStepBar } from '@/features/workspace/steps';
 import {
   applyFilter,
   applyFlag,
@@ -251,6 +251,8 @@ export function StageScreen({
       ? undefined
       : {
           options: stopOptionList,
+          titleOf: (index) =>
+            barStepsOf(processing.recipe, processing.catalogue)[index]?.title ?? '',
           selected: stopStep,
           onSelect: (step) => setStopPick({ stage, step }),
         };
@@ -538,15 +540,7 @@ export function StageScreen({
                 current={currentItem}
                 selected={selection.selected}
                 editor={editor}
-                step={
-                  openStep === null
-                    ? undefined
-                    : {
-                        workspace,
-                        step: openStep,
-                        pageLabel: currentItem?.page.label ?? '',
-                      }
-                }
+                step={openStep === null ? undefined : { workspace, step: openStep }}
               />
             ) : (
               <StagePanel stage={stage} available={available} />

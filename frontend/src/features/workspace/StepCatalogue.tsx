@@ -14,7 +14,8 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 
 /**
- * The catalogue of the steps a stage can have, which the plus button of the bar opens: every processor of the stage
+ * The catalogue of the steps a stage can have, which the plus button opens, in the bar of a stage that has one and under
+ * the list of steps of a stage that has none: every processor of the stage
  * with what it does, and the steps that are planned and not built, marked "Soon".
  *
  * Choosing a step adds it to the saved recipe at once, and it is shown in the bar and opened. A step has no identifier
@@ -35,8 +36,8 @@ export function StepCatalogue({
   processing: Processing;
   /** The rows of the stage, which the number of pages the new step makes out of date is counted from. */
   rows: readonly StagePageSchema[];
-  /** Called with the identifier the server gave the new step, so the step can be opened. */
-  onAdded: (stepId: string) => void;
+  /** Called with the identifier the server gave the new step and its place from zero, so the step can be opened. */
+  onAdded: (stepId: string, index: number) => void;
 }): React.JSX.Element | null {
   const { projectId, stage, recipe, catalogue } = processing;
   const save = useSaveRecipe(projectId, stage);
@@ -70,7 +71,7 @@ export function StepCatalogue({
           setOpen(false);
           const stepId = updated.steps[index]?.step_id;
           if (stepId !== undefined) {
-            onAdded(stepId);
+            onAdded(stepId, index);
           }
         },
       },

@@ -20,6 +20,9 @@ import { Badge } from '@/shared/ui/badge';
  * for the keyboard, since the sensor is set to listen for it. While a numbering is previewed, a tile whose number
  * changes shows the old number struck out and the new one in blue.
  *
+ * The picture is the page at the Order stage, which the server gives in the rows of the stage: the leaf chosen for a
+ * blank page, else what the stage reads, and never the result of a later stage that the page ran through before.
+ *
  * The number stands in a pill ringed in the colour of the section the page belongs to, so the boundary between two
  * sections is visible along the grid, and a number written by hand carries a pencil.
  */
@@ -33,6 +36,7 @@ export interface TileClick {
 
 export function OrderTile({
   page,
+  thumbnail,
   selected,
   dropSide,
   previewLabel,
@@ -41,6 +45,8 @@ export function OrderTile({
   onOpen,
 }: {
   page: PageSchema;
+  /** The thumbnail of the page at the Order stage, or null while the page has no picture there. */
+  thumbnail: string | null;
   selected: boolean;
   /** The side a bar is drawn on while a drag is over this tile, or null. */
   dropSide: AnchorSide | null;
@@ -101,13 +107,13 @@ export function OrderTile({
         />
       )}
       <span className="relative block">
-        {missing && page.images === null ? (
+        {missing && thumbnail === null ? (
           <span className="flex aspect-[3/4] flex-col items-center justify-center gap-1 rounded-md border border-dashed bg-muted/50 text-muted-foreground">
             <SquareDashedIcon className="size-5" aria-hidden="true" />
             {MESSAGES.order.tile.missing}
           </span>
         ) : (
-          <PageThumbnail page={page} alt="" />
+          <PageThumbnail page={page} src={thumbnail} alt="" />
         )}
         {selected ? (
           <CheckIcon

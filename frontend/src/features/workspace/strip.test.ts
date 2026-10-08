@@ -18,6 +18,7 @@ import {
   stopOptions,
   stripRowsOf,
   thumbnailOf,
+  thumbnailsOf,
 } from '@/features/workspace/strip';
 
 describe('joinRows', () => {
@@ -226,6 +227,19 @@ describe('the picture of a page', () => {
 
     expect(thumbnailOf(item)).toBe('/picture/thumb');
     expect(canvasSourceOf(item)).toBeNull();
+  });
+});
+
+describe('the thumbnails of a grid of pages', () => {
+  const picture = { images: images('picture'), tiles_ready: true } as PageVersionSchema;
+
+  it('are the thumbnails of the pictures of the rows by page, never the images of the pages', () => {
+    const items = joinRows(
+      [page('a', { images: images('latest') }), page('b'), page('c')],
+      [row('a', { picture })],
+    );
+
+    expect(thumbnailsOf(items)).toEqual(new Map([['a', '/picture/thumb']]));
   });
 });
 

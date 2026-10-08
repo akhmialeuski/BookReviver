@@ -129,8 +129,6 @@ export function RunControls({
     const key = index === undefined ? undefined : steps[index]?.processor_key;
     return key === undefined ? '' : (catalogue.find((entry) => entry.key === key)?.title ?? key);
   };
-  const stepName = (index: number | undefined): string =>
-    index === undefined ? '' : menu.step(index + 1, titleOf(index));
 
   // The pages that have work of their own are counted by the server, over the pages and the steps of this choice
   const request = { scope: chosen?.scope ?? RunScope.Attention, group: chosen?.group, throughStep };
@@ -166,13 +164,6 @@ export function RunControls({
 
   return (
     <div className="grid gap-3">
-      {stopped.length === 0 || recipe === undefined ? null : (
-        <ul className="grid gap-0.5 text-sm" data-testid="run-stopped">
-          {stopped.map(({ through_step: step, pages }) => (
-            <li key={step}>{labels.footer.stoppedAt(step + 1, recipe.steps.length, pages)}</li>
-          ))}
-        </ul>
-      )}
       <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm" data-testid="run-summary">
         {running !== undefined ? (
           <span className="flex items-center gap-1.5" data-testid="run-summary-running">
@@ -180,7 +171,7 @@ export function RunControls({
             {labels.footer.running(running.progress.done, running.progress.total)}
           </span>
         ) : trouble.stale === 0 && trouble.failed === 0 ? (
-          // Pages that stopped short are up to date but not done, which the lines above say
+          // Pages that stopped short are up to date but not done, which the strip filter and the page section say
           stopped.length === 0 && (
             <span className="text-muted-foreground">{labels.footer.allClear}</span>
           )
@@ -268,14 +259,14 @@ export function RunControls({
                     data-testid="run-through-open"
                     onSelect={(event) => event.preventDefault()}
                   >
-                    {menu.throughOpen(stepName(openIndex))}
+                    {menu.throughOpen(titleOf(openIndex))}
                   </DropdownMenuRadioItem>
                   <DropdownMenuRadioItem
                     value={Through.Stage}
                     data-testid="run-through-stage"
                     onSelect={(event) => event.preventDefault()}
                   >
-                    {menu.throughAll(stepName(lastIndex))}
+                    {menu.throughAll(titleOf(lastIndex))}
                   </DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
               </>

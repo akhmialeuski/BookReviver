@@ -12,6 +12,8 @@ import { planSuggestion } from '@/features/about/suggestion';
 import { formatRuns, pageRunsOf, resolutionOf } from '@/features/import/facts';
 import { DeleteSourceDialog } from '@/features/projects/DeleteSourceDialog';
 import { invalidateProjectList } from '@/features/projects/queries';
+import { FactList } from '@/features/workspace/FactList';
+import { PanelHeading } from '@/features/workspace/PanelHeading';
 import { StagePanel } from '@/features/workspace/StagePanel';
 import { describeError } from '@/shared/http/problem';
 import { formatBytes, formatDateTime } from '@/shared/lib/format';
@@ -20,32 +22,16 @@ import { Button } from '@/shared/ui/button';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
- * The panel of the Import stage for the chosen file: what the file is, what it says about the book where that differs
- * from the description, what became of its pages, and the actions on them, with the deletion of the file apart at the
- * foot.
+ * The panel of the Import stage for the chosen file, in the slots of the `StagePanel`: the settings frame holds what the
+ * file says about the book where that differs from the description and the actions on its pages, the page section holds
+ * the name of the file, what became of its pages and last the facts of the file, and the deletion of the file stands apart
+ * at the foot.
  *
  * The import has already filled the empty fields of the description from the file, so the box of the file's own
  * suggestion appears only for what differs from the description, usually the title. Using it saves the description
  * through the same patch the About tab sends. The two actions on the pages of the file open the Order stage with the
  * file named in the address, and wait for pages to exist.
  */
-
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}): React.JSX.Element {
-  return (
-    <section className="grid gap-2">
-      <h3 className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-        {title}
-      </h3>
-      {children}
-    </section>
-  );
-}
 
 export function FilePanel({
   project,
@@ -79,14 +65,19 @@ export function FilePanel({
   const resolution = resolutionOf(scans);
   const fields = toFields(project);
   const plan = planSuggestion(fields, source.suggestion);
-  const facts: ReadonlyArray<readonly [string, string]> = [
-    [labels.type, MESSAGES.import.files.kinds[source.file_type]],
-    [labels.size, formatBytes(source.size_bytes)],
-    [labels.scans, String(source.scan_count)],
+  const facts = [
+    { label: labels.type, value: MESSAGES.import.files.kinds[source.file_type] },
+    { label: labels.size, value: formatBytes(source.size_bytes) },
+    { label: labels.scans, value: String(source.scan_count) },
     ...(resolution === null
       ? []
-      : [[labels.resolution, labels.resolutionValue(resolution.min, resolution.max)] as const]),
-    [labels.imported, formatDateTime(source.imported_at)],
+      : [
+          {
+            label: labels.resolution,
+            value: labels.resolutionValue(resolution.min, resolution.max),
+          },
+        ]),
+    { label: labels.imported, value: formatDateTime(source.imported_at) },
   ];
 
   const toOrder = (icon: React.ReactNode, label: string): React.JSX.Element =>
@@ -112,61 +103,55 @@ export function FilePanel({
     <StagePanel
       stage="import"
       available
+      settings={
+        <div className="grid gap-4">
+          {plan.rows.length === 0 ? null : (
+            <div className="grid gap-3">
+              <PanelHeading>{labels.found}</PanelHeading>
+              <SuggestionBox
+                fileName={source.file_name}
+                plan={plan}
+                pending={use.isPending}
+                onUse={() =>
+                  use.mutate({
+                    path: { project_id: project.id },
+                    body: planSave(fields, plan.changes).patch,
+                  })
+                }
+              />
+              {use.isError ? <ErrorAlert message={describeError(use.error)} /> : null}
+            </div>
+          )}
+          <div className="grid gap-3">
+            <PanelHeading>{labels.pages}</PanelHeading>
+            {toOrder(<ListOrderedIcon />, labels.showInOrder)}
+            {toOrder(<ArrowDownUpIcon />, labels.moveElsewhere)}
+          </div>
+        </div>
+      }
+      page={{
+        title: labels.file,
+        children: (
+          <div className="grid gap-1">
+            <p className="flex items-center gap-2 font-semibold break-all">
+              <Icon className="size-4 shrink-0" aria-hidden="true" />
+              {source.file_name}
+            </p>
+            <p className="text-sm text-muted-foreground" data-testid="file-pages">
+              {placed === 0
+                ? labels.noPages
+                : labels.becamePages(source.scan_count, placed, formatRuns(runs))}
+            </p>
+          </div>
+        ),
+        facts: <FactList facts={facts} />,
+      }}
       footer={
         <div className="grid gap-2">
           <DeleteSourceDialog projectId={project.id} source={source} />
           <p className="text-xs text-muted-foreground">{labels.deleteNote}</p>
         </div>
       }
-    >
-      <div className="grid gap-6" data-testid="file-panel">
-        <div className="grid gap-1">
-          <h3 className="flex items-center gap-2 font-semibold break-all">
-            <Icon className="size-4 shrink-0" aria-hidden="true" />
-            {source.file_name}
-          </h3>
-          <p className="text-sm text-muted-foreground" data-testid="file-pages">
-            {placed === 0
-              ? labels.noPages
-              : labels.becamePages(source.scan_count, placed, formatRuns(runs))}
-          </p>
-        </div>
-
-        <Section title={labels.file}>
-          <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-sm">
-            {facts.map(([name, value]) => (
-              <div key={name} className="contents">
-                <dt className="text-muted-foreground">{name}</dt>
-                <dd className="text-right font-medium">{value}</dd>
-              </div>
-            ))}
-          </dl>
-        </Section>
-
-        {plan.rows.length === 0 ? null : (
-          <Section title={labels.found}>
-            <SuggestionBox
-              fileName={source.file_name}
-              plan={plan}
-              pending={use.isPending}
-              onUse={() =>
-                use.mutate({
-                  path: { project_id: project.id },
-                  body: planSave(fields, plan.changes).patch,
-                })
-              }
-            />
-            {use.isError ? <ErrorAlert message={describeError(use.error)} /> : null}
-          </Section>
-        )}
-
-        <Section title={labels.pages}>
-          <div className="grid gap-2">
-            {toOrder(<ListOrderedIcon />, labels.showInOrder)}
-            {toOrder(<ArrowDownUpIcon />, labels.moveElsewhere)}
-          </div>
-        </Section>
-      </div>
-    </StagePanel>
+    />
   );
 }

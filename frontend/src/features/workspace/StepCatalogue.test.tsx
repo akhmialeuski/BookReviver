@@ -167,7 +167,7 @@ describe('StepCatalogue', () => {
       'sb',
     ]);
     expect(body).toMatchObject({ order: 'usual' });
-    expect(onAdded).toHaveBeenCalledWith('new');
+    expect(onAdded).toHaveBeenCalledWith('new', 1);
     expect(byId('step-catalogue-list')).toBeNull();
   });
 

@@ -90,7 +90,7 @@ export function StripToolbar({
             <option value="">{labels.stopped.all}</option>
             {stopped.options.map((option) => (
               <option key={option.step} value={option.step}>
-                {labels.stopped.option(option.step + 1, option.pages)}
+                {labels.stopped.option(stopped.titleOf(option.step), option.pages)}
               </option>
             ))}
           </select>

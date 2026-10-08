@@ -2,18 +2,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  deskew,
-  pageValues,
-  processing,
-  processor,
-  recipe,
-  step,
-  stepSettings,
-  whole,
-} from '@/features/processing/fixtures';
+import { deskew, processing, processor, recipe, step, whole } from '@/features/processing/fixtures';
 import type { OrderIssue } from '@/features/processing/order';
-import type { PageValues } from '@/features/processing/pageSettings';
 import { draftOf } from '@/features/processing/recipe';
 import { StepList } from '@/features/processing/StepList';
 import { OrderNotice } from '@/features/processing/StepSorter';
@@ -57,8 +47,6 @@ describe('StepList', () => {
   function render(
     steps = STEPS,
     openId: string | undefined = undefined,
-    values?: PageValues,
-    showParams = true,
     overrides: Parameters<typeof processing>[0] = {},
   ): void {
     act(() =>
@@ -72,8 +60,6 @@ describe('StepList', () => {
               ...handlers,
               ...overrides,
             })}
-            showParams={showParams}
-            values={values}
           />
         </QueryClientProvider>,
       ),
@@ -101,12 +87,12 @@ describe('StepList', () => {
     vi.unstubAllGlobals();
   });
 
-  it('numbers the steps and gives each the title of its processor', () => {
+  it('gives each step the title of its processor, with no number', () => {
     render();
 
     expect(
       steps().map((item) => item.querySelector('[data-testid="step-toggle"]')?.textContent),
-    ).toEqual(['1 · Deskew', '2 · x.gone']);
+    ).toEqual(['Deskew', 'x.gone']);
   });
 
   it('says so for a recipe with no steps', () => {
@@ -130,47 +116,12 @@ describe('StepList', () => {
     expect(handlers.open).toHaveBeenLastCalledWith(undefined);
   });
 
-  it('draws the settings of the open step only', () => {
+  it('draws no form of settings in the open card, whose settings stand in the frame of the panel', () => {
     render(STEPS, 'step-0');
 
-    expect(steps()[0]?.querySelector('form')?.textContent).toContain('Largest slant');
-    expect(steps()[1]?.querySelector('form')).toBeNull();
-  });
-
-  it('draws under each setting of the open step the values the open page and its parts have', () => {
-    render(
-      STEPS,
-      'step-0',
-      pageValues({
-        settings: [
-          stepSettings('id-geometry.deskew', {
-            params: { min_confidence: 0.6 },
-            parts: [
-              {
-                scope: 'even',
-                group_label: '',
-                params: { max_angle: 3 },
-                updated_at: '2026-10-01T00:00:00Z',
-              },
-            ],
-          }),
-        ],
-      }),
-    );
-
-    const fields = [...(steps()[0]?.querySelectorAll('[data-testid="field-values"]') ?? [])].map(
-      (field) => [field.getAttribute('data-field'), field.textContent],
-    );
-    expect(fields).toEqual([
-      ['max_angle', expect.stringContaining('Even pages 3')],
-      ['min_confidence', expect.stringContaining('p. 143 0.6')],
-    ]);
-  });
-
-  it('draws no values when no page is open', () => {
-    render(STEPS, 'step-0');
-
+    expect(steps()[0]?.querySelector('form')).toBeNull();
     expect(steps()[0]?.querySelector('[data-testid="field-values"]')).toBeNull();
+    expect(steps()[0]?.querySelector('[aria-expanded="true"]')).not.toBeNull();
   });
 
   it('switches a step off and on with its switch', () => {
@@ -231,7 +182,6 @@ describe('StepList', () => {
               catalogue: [deskew(), whole()],
               ...handlers,
             })}
-            showParams
             progress={progress}
           />,
         ),
@@ -288,7 +238,7 @@ describe('StepList', () => {
     }
 
     function guarded(issues: OrderIssue[], openId: string | undefined = undefined): void {
-      render(STEPS, openId, undefined, true, {
+      render(STEPS, openId, {
         catalogue: [deskew(), processor('x.gone')],
         orderIssues: new Map(issues.length === 0 ? [] : [['step-0', issues]]),
       });
@@ -362,9 +312,9 @@ describe('StepList', () => {
     });
   });
 
-  describe('where the settings of a step are set elsewhere', () => {
+  describe('the open card', () => {
     it('draws the summary of the processor in place of the form of its settings', () => {
-      render(STEPS, 'step-0', undefined, false, {
+      render(STEPS, 'step-0', {
         catalogue: [deskew({ summary: 'Straightens the lines' }), whole()],
       });
 

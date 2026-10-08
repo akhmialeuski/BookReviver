@@ -74,11 +74,9 @@ test('a reader runs and checks the Geometry stage', async ({ page }) => {
     // The settings of a step are in its panel, with the titles of the schema and no name of the code
     await barSteps.nth(0).click();
     await expect(
-      page.getByTestId('step-panel-settings').getByRole('slider', { name: 'Smallest sheet' }),
+      page.getByTestId('panel-settings').getByRole('slider', { name: 'Smallest sheet' }),
     ).toBeVisible();
     await expect(page.getByTestId('stage-panel')).not.toContainText('min_sheet_fraction');
-    // Every step of the stage is built, so none is listed as coming
-    await expect(page.getByTestId('coming-steps')).toHaveCount(0);
   });
 
   await test.step('the settings of the last step are opened, and a value outside its limits cannot be saved', async () => {
@@ -154,7 +152,7 @@ test('a reader runs and checks the Geometry stage', async ({ page }) => {
     // The result of the stage is the page the last step made, so its settings are the ones the history tells apart
     await page.getByTestId('bar-step').filter({ hasText: 'Margins' }).click();
     await page
-      .getByTestId('step-panel-settings')
+      .getByTestId('panel-settings')
       .getByRole('spinbutton', { name: 'Top margin, mm', exact: true })
       .fill('12');
     await expect(page.getByTestId('recipe-stale-warning')).toContainText(

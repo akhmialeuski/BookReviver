@@ -53,7 +53,7 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
   const flagFilter = page.getByTestId('strip-step-filter');
   // The values of the page for the amount are the chips under that setting, in the panel of the open step
   const amount = page
-    .getByTestId('step-panel')
+    .getByTestId('panel-settings')
     .locator('[data-testid="field-values"][data-field="amount"]');
   let bookPath = '';
   let stepId = '';
@@ -85,7 +85,7 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
       'page-strip',
       'recipe-select',
       'run-menu',
-      'this-page',
+      'panel-page',
     ]) {
       await expect(page.getByTestId(id)).toBeVisible();
     }
@@ -98,17 +98,17 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
     await barSteps.nth(THICKNESS_INDEX).click();
     await expect(page).toHaveURL(STEP_ADDRESS);
     await expect(page).toHaveURL(new RegExp(`/steps/${stepId}`));
-    await expect(page.getByTestId('step-panel-title')).toHaveText('3 · Thickness');
+    await expect(page.getByTestId('step-panel-title')).toHaveText('Thickness');
     await expect(barSteps.nth(THICKNESS_INDEX)).toHaveAttribute('aria-current', 'step');
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
     await expect(
-      page.getByTestId('step-panel-settings').getByRole('spinbutton', { name: 'Amount' }),
+      page.getByTestId('panel-settings').getByRole('spinbutton', { name: 'Amount' }),
     ).toHaveValue('0');
   });
 
   await test.step('the amount is changed in the settings of the step, saved, and the recipe is run on the open page', async () => {
     await page
-      .getByTestId('step-panel-settings')
+      .getByTestId('panel-settings')
       .getByRole('spinbutton', { name: 'Amount' })
       .fill(RECIPE_AMOUNT);
     await page.getByTestId('recipe-save').click();
@@ -153,10 +153,10 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
     await expect(strip).toHaveCount(PAGES);
     await strip.nth(1).click();
     await expect(page).toHaveURL(STEP_ADDRESS);
-    await expect(page.getByTestId('step-panel-title')).toHaveText('3 · Thickness');
+    await expect(page.getByTestId('step-panel-title')).toHaveText('Thickness');
     await barSteps.nth(THICKNESS_INDEX).click();
     await expect(page).toHaveURL(STEP_ADDRESS);
-    await expect(page.getByTestId('step-panel-title')).toHaveText('3 · Thickness');
+    await expect(page.getByTestId('step-panel-title')).toHaveText('Thickness');
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

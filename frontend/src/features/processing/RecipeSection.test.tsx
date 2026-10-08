@@ -9,8 +9,9 @@ import { profilePage } from '@/features/profiles/fixtures';
 import { row } from '@/features/workspace/fixtures';
 
 /**
- * The recipe in the panel: its steps with their settings on a stage that has no step bar, what a change of them costs, and
- * the bar that saves it. A stage with a bar lists no steps here.
+ * The content of the recipe slot of the panel: the steps as cards on a stage that has no step bar, with the plus button of
+ * the bar to add one, what a change of them costs, and the bar that saves it. A stage with a bar lists no steps here, and
+ * no form of settings stands in a card on any stage, since the settings are in the frame of the panel.
  *
  * Radix measures the thumb of a slider, which jsdom cannot, so the observer it asks for is given a stand-in.
  */
@@ -110,9 +111,9 @@ describe('RecipeSection', () => {
     render(processing({ stage: LISTED }));
 
     expect(container.querySelectorAll('[data-testid="recipe-step"]')).toHaveLength(1);
-    expect(container.querySelector('[data-testid="recipe-step"]')?.textContent).toContain(
-      '1 · Deskew',
-    );
+    const card = container.querySelector('[data-testid="recipe-step"]')?.textContent;
+    expect(card).toContain('Deskew');
+    expect(card).not.toMatch(/\d ·/);
   });
 
   it('puts the button of the profile above the recipes, naming none for a recipe made from no profile', () => {
@@ -130,10 +131,8 @@ describe('RecipeSection', () => {
       expect(byId('recipe-select')).toBeNull();
       expect(byId('recipe-steps')).toBeNull();
       expect(byId('recipe-step')).toBeNull();
-      expect(byId('step-add')).toBeNull();
+      expect(byId('step-catalogue')).toBeNull();
       expect(byId('order-free')).toBeNull();
-      expect(byId('coming-steps')).toBeNull();
-      expect(container.textContent).not.toContain('Add a step');
     },
   );
 
@@ -143,12 +142,12 @@ describe('RecipeSection', () => {
     expect(byId('recipe-save')?.disabled).toBe(false);
   });
 
-  it('draws the settings of the open step from the schema, with the titles of its fields', () => {
-    const open = processing({ stage: LISTED, openId: 'step-0' });
-    render(open);
+  it('draws no form of settings in the open card, since the settings stand in the frame of the panel', () => {
+    render(processing({ stage: LISTED, openId: 'step-0' }));
 
-    expect(container.querySelector('form')?.textContent).toContain('Largest slant');
-    expect(container.querySelector('form')?.textContent).toContain('Least confidence');
+    expect(container.querySelector('form')).toBeNull();
+    expect(container.textContent).not.toContain('Largest slant');
+    expect(container.querySelector('h3')?.textContent).toBe('Steps');
   });
 
   it('draws the choice of the recipe in the panel only on a stage without a step bar, since the bar has it otherwise', () => {
@@ -255,22 +254,36 @@ describe('RecipeSection', () => {
     expect(container.textContent).toContain('A value is outside its limits');
   });
 
-  it('offers the processors of the stage in the menu of the steps to add, and adds the one chosen', async () => {
-    const add = vi.fn();
-    render(processing({ stage: LISTED, add }));
+  it('adds a step with the plus button of the step bar, which has no word, and opens the new card', async () => {
+    sdk.save.mockResolvedValue({
+      data: recipe('r1', {
+        steps: [
+          step('geometry.deskew', { step_id: 'a' }),
+          step('geometry.deskew', { step_id: 'b' }),
+        ],
+      }),
+    });
+    const open = vi.fn();
+    render(processing({ stage: LISTED, open }));
+
+    const plus = byId('step-catalogue');
+    expect(plus?.textContent).toBe('');
+    expect(plus?.getAttribute('aria-label')).toBe('Add a step');
+    await act(async () => {
+      plus?.click();
+    });
+    const entries = [
+      ...document.body.querySelectorAll<HTMLElement>('[data-testid="catalogue-add"]'),
+    ];
+    expect(entries.map((entry) => entry.getAttribute('data-processor'))).toEqual([
+      'geometry.deskew',
+    ]);
 
     await act(async () => {
-      const trigger = byId('step-add');
-      trigger?.focus();
-      trigger?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      entries[0]?.click();
     });
-    const items = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')];
-    expect(items.map((item) => item.textContent)).toEqual(['Deskew']);
-
-    await act(async () => {
-      items[0]?.click();
-    });
-    expect(add).toHaveBeenCalledWith(expect.objectContaining({ key: 'geometry.deskew' }));
+    expect(sdk.save).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith('step-1');
   });
 
   it('shows the answer of the server when a save is refused', async () => {

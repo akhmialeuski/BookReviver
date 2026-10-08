@@ -82,7 +82,7 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
   await test.step('the Import stage has no files yet and the book waits for pages', async () => {
     await expect(page.getByTestId('import-empty')).toBeVisible();
     await expect(page.getByText('Drop a folder or files here')).toBeVisible();
-    await expect(page.getByTestId('import-tips')).toContainText('Good to know');
+    await expect(page.getByTestId('panel-page')).toContainText('Good to know');
     await expect(page.getByTestId('stage-page-order')).toHaveAttribute('data-status', 'waiting');
   });
 
@@ -176,7 +176,7 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
     await page.getByTestId('source-row').nth(2).click();
     await expect(page).toHaveURL(/[?&]source=/);
     await expect(page.getByTestId('source-row').nth(2)).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.getByTestId('file-panel')).toContainText('book/vol1/1.png');
+    await expect(page.getByTestId('stage-panel')).toContainText('book/vol1/1.png');
     await expect(page.getByTestId('file-pages')).toContainText(
       'Its 1 scan became page 3 of the book.',
     );

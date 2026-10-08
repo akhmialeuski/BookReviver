@@ -69,14 +69,14 @@ describe('StepBar', () => {
     vi.unstubAllGlobals();
   });
 
-  it('lists the steps in order by number and title', () => {
+  it('lists the steps in order, each titled with its processor and the state of its shape', () => {
     render(undefined);
 
     expect(buttons().map((button) => button.getAttribute('data-step-id'))).toEqual(['a', 'b', 'c']);
     expect(buttons().map((button) => button.getAttribute('title'))).toEqual([
-      '1 · Perspective · Reading the page',
-      '2 · Deskew · Reading the page',
-      '3 · Deskew · Reading the page',
+      'Perspective · Reading the page',
+      'Deskew · Reading the page',
+      'Deskew · Reading the page',
     ]);
   });
 

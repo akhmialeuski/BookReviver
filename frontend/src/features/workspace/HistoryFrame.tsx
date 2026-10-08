@@ -1,5 +1,6 @@
 import { ChevronDownIcon, ClockIcon } from 'lucide-react';
 import { useHistoryOpen } from '@/features/workspace/historyOpen';
+import { PanelHeading } from '@/features/workspace/PanelHeading';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 import { Badge } from '@/shared/ui/badge';
@@ -61,9 +62,7 @@ export function HistoryFrame({
           aria-hidden="true"
         />
         <ClockIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <h4 className="min-w-0 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          {labels.title}
-        </h4>
+        <PanelHeading className="min-w-0">{labels.title}</PanelHeading>
         {disabled || count === null ? null : (
           <Badge variant="outline" data-testid="page-history-count">
             {labels.count(count)}

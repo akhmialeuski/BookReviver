@@ -213,7 +213,7 @@ describe('RunControls', () => {
     );
   });
 
-  it('says how many pages stopped at each step, out of the steps of the recipe', async () => {
+  it('leaves the pages that stopped short out of the footer, which the strip filter and the page section name', async () => {
     const four = recipe('r1', { steps: [step('a'), step('b'), step('c'), step('d')] });
     sdk.stages.mockResolvedValue({
       data: {
@@ -245,11 +245,12 @@ describe('RunControls', () => {
     });
     render(processing({ recipe: four, recipes: [four] }));
 
-    await vi.waitFor(() =>
-      expect(container.querySelector('[data-testid="run-stopped"]')?.textContent).toBe(
-        'Done through step 1 of 4: 1 pageDone through step 2 of 4: 76 pages',
-      ),
-    );
+    await vi.waitFor(() => expect(sdk.stages).toHaveBeenCalled());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(container.querySelector('[data-testid="run-stopped"]')).toBeNull();
+    expect(container.textContent).not.toContain('Done through');
   });
 
   describe('the button', () => {

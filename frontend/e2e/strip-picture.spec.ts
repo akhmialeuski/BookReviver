@@ -119,7 +119,7 @@ test('the strip and the canvas show the same picture of the page at every step o
     await expect(page).toHaveURL(STEP_ADDRESS);
     await page.getByTestId('stage-geometry').locator('visible=true').first().click();
     await expect(page).toHaveURL(/\/stages\/geometry\/steps\/[0-9a-f-]{36}(\?|$)/);
-    await expect(page.getByTestId('step-panel')).toHaveCount(1);
+    await expect(page.getByTestId('panel-step')).toHaveCount(1);
   });
 
   await test.step('while the rows of a step load the strip shows no picture, not the result of the stage', async () => {

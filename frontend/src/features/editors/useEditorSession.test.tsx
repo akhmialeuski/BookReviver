@@ -402,12 +402,12 @@ describe('useEditorSession', () => {
     });
     const twiceState = processing({ recipe: twice, recipes: [twice] });
 
-    it('offers an editor for each step, told apart by their place, and starts on the first', async () => {
+    it('offers an editor for each step, titled by its kind with no number, and starts on the first', async () => {
       await render({ state: twiceState });
 
       expect(session?.steps.map((entry) => [entry.key, entry.title, entry.chosen])).toEqual([
-        ['first', '1 · Angle', true],
-        ['second', '2 · Angle', false],
+        ['first', 'Angle', true],
+        ['second', 'Angle', false],
       ]);
     });
 

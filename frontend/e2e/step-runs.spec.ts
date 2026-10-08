@@ -125,8 +125,10 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
   await test.step('a run of all pages through the first step runs it on every page and leaves the rest', async () => {
     await runThrough(FIRST);
     await openStep(stepCount - 1);
-    await expect(page.getByTestId('run-stopped')).toHaveText(
-      `Done through step 1 of ${stepCount}: ${PAGES} pages`,
+    // The stop is told by the strip filter and the section of the page, and the footer has no line for it
+    await expect(page.getByTestId('run-stopped')).toHaveCount(0);
+    await expect(page.getByTestId('stage-panel').locator('footer')).not.toContainText(
+      'Done through',
     );
     const made = await geometryVersions(page);
     expect(made).toHaveLength(1);
@@ -137,13 +139,17 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
   await test.step('the pages are checked by the step they stopped at', async () => {
     const filter = page.getByTestId('strip-stopped-filter');
     await expect(filter).toBeVisible();
-    await filter.selectOption({ label: `Stopped at step 1 · ${PAGES}` });
+    await filter.selectOption('0');
+    await expect(filter.locator('option:checked')).toHaveText(
+      new RegExp(`^Stopped at \\S.* · ${PAGES}$`),
+    );
+    await expect(filter.locator('option:checked')).not.toContainText('step');
     await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
     await page.getByTestId('strip-page').first().click();
     await expect(page.getByTestId('this-page-stopped')).toContainText(
       `Run through step 1 of ${stepCount} only`,
     );
-    await page.getByTestId('this-page').scrollIntoViewIfNeeded();
+    await page.getByTestId('panel-page').scrollIntoViewIfNeeded();
     await snap(page, 'page-stopped-at-the-first-step');
   });
 
@@ -157,7 +163,7 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
     expect(made.find((version) => version.id === firstStepVersion?.id)).toEqual(firstStepVersion);
     await page.getByTestId('strip-page').first().click();
     await expect(page.getByTestId('this-page-stopped')).toHaveCount(0);
-    await page.getByTestId('this-page').scrollIntoViewIfNeeded();
+    await page.getByTestId('panel-page').scrollIntoViewIfNeeded();
     await snap(page, 'run-through-the-last-step');
   });
 

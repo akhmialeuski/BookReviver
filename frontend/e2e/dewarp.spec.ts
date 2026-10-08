@@ -226,7 +226,7 @@ test('a reader flattens a page bent into the gutter, lays its two curves by hand
     const [dewarp = ''] = await stepIdsOf(page, 'geometry', 'geometry.dewarp');
     const ids = await pageIds(page);
     const bend = page
-      .getByTestId('step-panel')
+      .getByTestId('panel-settings')
       .locator(`[data-testid="field-values"][data-field="${LEAST_BEND}"]`);
     // Both pages are flattened by the value of the recipe, which the bent sheets exceed
     const oddBefore = await dewarpVersion(page, ODD_POSITION);

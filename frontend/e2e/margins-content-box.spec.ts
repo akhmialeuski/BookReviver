@@ -183,7 +183,7 @@ test('the content box and the border of a page are found on opening, edited with
     // the same place on a scan of any size, and the canvas is fitted to hold it
     for (const [name, millimetres] of MARGIN_FIELDS) {
       await expect(
-        page.getByTestId('step-panel-settings').getByRole('spinbutton', { name, exact: true }),
+        page.getByTestId('panel-settings').getByRole('spinbutton', { name, exact: true }),
       ).toHaveValue(millimetres);
     }
     await expect

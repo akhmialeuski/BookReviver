@@ -78,23 +78,25 @@ export function EmptyImport({ projectId }: { projectId: string }): React.JSX.Ele
   );
 }
 
-/** The panel of a book without files, which answers what comes up before the first upload. */
+/** The panel of a book without files, which answers what comes up before the first upload in its page section. */
 export function ImportTips(): React.JSX.Element {
   return (
-    <StagePanel stage="import" available>
-      <section className="grid gap-3" data-testid="import-tips">
-        <h3 className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-          {MESSAGES.import.empty.tipsTitle}
-        </h3>
-        <ul className="grid gap-3 text-sm">
-          {MESSAGES.import.empty.tips.map((tip) => (
-            <li key={tip} className="flex items-start gap-2">
-              <CircleCheckIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              {tip}
-            </li>
-          ))}
-        </ul>
-      </section>
-    </StagePanel>
+    <StagePanel
+      stage="import"
+      available
+      page={{
+        title: MESSAGES.import.empty.tipsTitle,
+        children: (
+          <ul className="grid gap-3 text-sm" data-testid="import-tips">
+            {MESSAGES.import.empty.tips.map((tip) => (
+              <li key={tip} className="flex items-start gap-2">
+                <CircleCheckIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                {tip}
+              </li>
+            ))}
+          </ul>
+        ),
+      }}
+    />
   );
 }

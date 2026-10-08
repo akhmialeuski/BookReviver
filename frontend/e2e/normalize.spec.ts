@@ -88,7 +88,7 @@ test('the book is measured and its pages come out of one size with the lines at 
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writeScaledSheetsFolder(SCALES);
   // The settings of the step are in the panel of the step, which the bar opens
-  const normalize = page.getByTestId('step-panel');
+  const normalize = page.getByTestId('panel-settings');
   const field = (name: string) => normalize.locator(`#step-panel_${name}`);
   let pageWidth = 0;
   let pageHeight = 0;

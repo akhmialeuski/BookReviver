@@ -78,6 +78,6 @@ export function reasonWithStep(
     const title =
       catalogue.find((processor) => processor.key === row.review_processor)?.title ??
       row.review_processor;
-    return MESSAGES.processing.reasons.atStep(index + 1, title, reason);
+    return MESSAGES.processing.reasons.atStep(title, reason);
   };
 }
