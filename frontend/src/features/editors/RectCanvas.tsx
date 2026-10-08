@@ -24,9 +24,10 @@ export function RectCanvas({
   figure,
   onChange,
   onCommit,
+  onCommitLater,
 }: CanvasProps<RectShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
-  const editing = useShapeEditing(frame, shape, onChange, onCommit);
+  const editing = useShapeEditing(frame, shape, onChange, onCommit, onCommitLater);
   const layout = layoutOf(frame.mapping, shape);
 
   return (

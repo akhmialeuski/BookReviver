@@ -48,11 +48,12 @@ export function MarginsCanvas({
   context,
   onChange,
   onCommit,
+  onCommitLater,
 }: CanvasProps<ContentBoxShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
   const settings = useStepSettings();
   const { stroke } = FIGURE_STYLE[figure];
-  const editing = useShapeEditing(frame, shape, onChange, onCommit);
+  const editing = useShapeEditing(frame, shape, onChange, onCommit, onCommitLater);
   const { latest } = editing;
 
   const { result } = context;

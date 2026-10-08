@@ -41,9 +41,10 @@ export function RegionsCanvas({
   context,
   onChange,
   onCommit,
+  onCommitLater,
 }: CanvasProps<RegionsShape>): React.JSX.Element | null {
   const frame = useSceneFrame(scene, size);
-  const editing = useShapeEditing(frame, shape, onChange, onCommit);
+  const editing = useShapeEditing(frame, shape, onChange, onCommit, onCommitLater);
 
   const { mapping } = frame;
   const flat = (points: readonly Point[]): number[] =>

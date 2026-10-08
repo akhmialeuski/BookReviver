@@ -22,6 +22,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { PageSchema } from '@/api';
 import { carriedBy, dropPlace } from '@/features/order/drag';
 import { GapCard } from '@/features/order/GapCard';
+import { LiveDropRects } from '@/features/order/LiveDropRects';
 import { columnsOf, layoutOf, rowOfCells, rowsOf } from '@/features/order/layout';
 import { OrderTile, type TileClick } from '@/features/order/OrderTile';
 import type { SectionSpan } from '@/features/order/sections';
@@ -46,6 +47,8 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * few around them are in the document, however long the book is. The sortable list still names every page, but only the
  * tiles in the document are registered with dnd-kit, so a drag works on what is drawn and the auto-scroll of dnd-kit
  * brings the next rows in. The row of the held page stays in the document while it is held, so the drag never loses it.
+ * The virtualizer moves the rows below a row once it has measured it, which dnd-kit does not notice, so the drop targets are
+ * measured again whenever the rows move (see `LiveDropRects`), and a page lands on the tile under the pointer.
  */
 
 /** Pixels the pointer must travel before a press is a drag, so that a click still selects. */
@@ -232,6 +235,10 @@ export function OrderGrid({
   const activePage = activeId === null ? undefined : byId.get(activeId);
   const carriedCount = activeId === null ? 0 : carriedBy(selected, activeId).size;
 
+  const virtualRows = virtualizer.getVirtualItems();
+  // Where the rows in the document stand, which changes when the virtualizer corrects the guessed height of a row
+  const rowPlaces = virtualRows.map((row) => row.start).join(',');
+
   return (
     <div
       className="group/grid flex min-h-0 flex-1 flex-col"
@@ -282,9 +289,10 @@ export function OrderGrid({
               setTarget(null);
             }}
           >
+            <LiveDropRects key={rowPlaces} />
             <SortableContext items={ids} strategy={KEEP_IN_PLACE}>
               <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
-                {virtualizer.getVirtualItems().map((row) => (
+                {virtualRows.map((row) => (
                   <div
                     key={row.key}
                     ref={virtualizer.measureElement}

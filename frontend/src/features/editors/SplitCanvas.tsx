@@ -26,6 +26,7 @@ export function SplitCanvas({
   figure,
   onChange,
   onCommit,
+  onCommitLater,
 }: CanvasProps<SplitShape>): React.JSX.Element {
   const version = context.current.row?.version;
   const found = version === undefined || version === null ? null : readResult(version);
@@ -38,6 +39,7 @@ export function SplitCanvas({
       figure={figure}
       onChange={(line) => onChange(chosen(line))}
       onCommit={(line) => onCommit(chosen(line))}
+      onCommitLater={(line) => onCommitLater(chosen(line))}
     />
   );
 }

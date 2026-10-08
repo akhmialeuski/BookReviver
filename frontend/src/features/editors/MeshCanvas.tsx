@@ -40,13 +40,14 @@ export function MeshCanvas({
   figure,
   onChange,
   onCommit,
+  onCommitLater,
 }: CanvasProps<MeshShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
   const { stroke, dash } = FIGURE_STYLE[figure];
   const showAll = useMoreControl();
   // What is on the screen: the grid, or the two curves of the shape
   const shown = showAll ? gridOf(shape, GRID_ROWS) : curvesOf(shape);
-  const editing = useShapeEditing(frame, shown, onChange, onCommit);
+  const editing = useShapeEditing(frame, shown, onChange, onCommit, onCommitLater);
   const [grabbed, setGrabbed] = useState<Grabbed>({ row: 0, column: 0 });
 
   const { mapping } = frame;

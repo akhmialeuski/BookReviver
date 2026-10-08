@@ -42,6 +42,7 @@ import {
 import { isTypingTarget } from '@/features/viewer/keys';
 import { useActiveJobs } from '@/features/workspace/queries';
 import type { StripItem } from '@/features/workspace/strip';
+import { useDebouncedCallback } from '@/shared/hooks/useDebouncedCallback';
 import { describeError, ProblemError } from '@/shared/http/problem';
 import { HttpStatus } from '@/shared/http/status';
 import { MESSAGES } from '@/shared/messages';
@@ -56,6 +57,11 @@ import { MESSAGES } from '@/shared/messages';
  * "Auto" deletes the edit and runs again, and Ctrl+Z asks the server to take back the newest change of the step on the
  * page, which the history of the page keeps: the edit it had before is put back, or deleted when it had none, and a
  * setting of the page changed after the edit is taken back first. The stage is run again when an edit was put back.
+ *
+ * A shape moved in small steps, such as by the arrow keys, is saved once the steps pause. That save and the one made when
+ * the reader lets go of a handle, types an angle or presses a button are two ways to write one shape, so the order between
+ * them is decided here and nowhere else: a save made now drops the save of the same step on the same page that still waits,
+ * since the waiting one holds an older shape and would write over the newer one.
  */
 
 /**
@@ -74,6 +80,19 @@ interface Draft {
 
 /** The size an editor that paints a mask is given when the step has not said how large its picture is. */
 const EMPTY_SIZE = { width: 0, height: 0 };
+
+/** Quiet time after the last small step of a shape before it is saved. */
+const NUDGE_SAVE_DELAY_MS = 600;
+
+/**
+ * A save that waits for the reader to pause. It carries the save of the page and step it was asked for, since the canvas
+ * stays mounted when the reader turns the page, and a save read when the wait ends would go to the page then open.
+ */
+interface WaitingSave {
+  /** The page and step of the save. */
+  key: string;
+  save: () => void;
+}
 
 /** A run that waits for the book to be free. */
 interface WantedRun {
@@ -238,6 +257,17 @@ export function useEditorSession({
   const [error, setError] = useState<string | null>(null);
 
   const key = `${owner?.id}|${step?.step_id}`;
+  // One save waits at a time. The delayed call makes it, and a shape still waiting when the editor goes away is saved at
+  // once, so a nudge is never lost
+  const waiting = useRef<WaitingSave | null>(null);
+  const saveWaiting = useDebouncedCallback(
+    (waited: WaitingSave) => {
+      waiting.current = null;
+      waited.save();
+    },
+    NUDGE_SAVE_DELAY_MS,
+    { flushOnUnmount: true },
+  );
   const openKey = `${current?.page.id}|${stage}`;
   // The shape of an open step is on the page whether or not the reader has pressed "Set by hand"
   const alwaysOn = editor?.alwaysOn === true || focused;
@@ -283,6 +313,11 @@ export function useEditorSession({
       step === undefined
     ) {
       return;
+    }
+    // This is the newest shape of the step on the page, and a save that waits for a pause holds an older one
+    if (waiting.current?.key === key) {
+      saveWaiting.cancel();
+      waiting.current = null;
     }
     const path = {
       project_id: projectId,
@@ -439,6 +474,14 @@ export function useEditorSession({
   const commit = (next: Geometry): void => {
     void write(next, hold(next));
   };
+  const commitLater = (next: Geometry): void => {
+    // The delay holds one save, so a shape waiting for another page or step is saved now rather than replaced by this one
+    if (waiting.current !== null && waiting.current.key !== key) {
+      saveWaiting.flush();
+    }
+    waiting.current = { key, save: () => commit(next) };
+    saveWaiting(waiting.current);
+  };
   const saving = save.isPending || remove.isPending;
   const stepSettings: StepSettings = {
     values: pageSettingsOfStep?.effective ?? step?.params ?? {},
@@ -505,6 +548,7 @@ export function useEditorSession({
           figure={figure}
           onChange={hold}
           onCommit={commit}
+          onCommitLater={commitLater}
         />
       </StepSettingsContext.Provider>
     ),

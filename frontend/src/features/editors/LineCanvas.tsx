@@ -36,9 +36,10 @@ export function LineCanvas({
   context,
   onChange,
   onCommit,
+  onCommitLater,
 }: CanvasProps<LineShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
-  const editing = useShapeEditing(frame, shape, onChange, onCommit);
+  const editing = useShapeEditing(frame, shape, onChange, onCommit, onCommitLater);
 
   const { mapping } = frame;
   const start = mapping.toScreen(shape.start);

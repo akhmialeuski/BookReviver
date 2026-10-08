@@ -3,24 +3,15 @@ import { type RefObject, useEffect, useRef } from 'react';
 import { nudgeOfKey } from '@/features/editors/line';
 import type { SceneFrame } from '@/features/editors/scene';
 import type { Point } from '@/features/editors/shapes';
-import { useDebouncedCallback } from '@/shared/hooks/useDebouncedCallback';
 import { MESSAGES } from '@/shared/messages';
 
 /**
  * What every editor does with the shape it draws while the reader moves it: keep the latest shape, follow a drag of a
  * handle within the limits of the shape, move it with the arrow keys, and save it when the reader lets go or pauses.
  *
- * The canvases differ in what a handle or a key moves, and say so with a function each; the rest is done once here.
+ * The canvases differ in what a handle or a key moves, and say so with a function each; the rest is done once here. Which
+ * save is the newest of a step on a page is decided by the editor session that makes them, not here.
  */
-
-/** Quiet time after the last key before the shape is saved. */
-const KEY_SAVE_DELAY_MS = 600;
-
-/** A save that waits for the reader to pause: the shape, and the save of the page and step it was asked for. */
-interface WaitingSave<S> {
-  shape: S;
-  commit: (shape: S) => void;
-}
 
 /** The editing of one shape on the canvas of a scene. */
 export interface ShapeEditing<S> {
@@ -30,9 +21,7 @@ export interface ShapeEditing<S> {
   latest: RefObject<S>;
   /** Take a shape the reader is still moving as the latest and tell the editor. */
   change: (next: S) => void;
-  /** Ask for a save of the shape, which is made once the reader pauses. */
-  saveLater: (value: S) => void;
-  /** Save the latest shape at once, for a handle the reader let go, and drop a save that was still waiting. */
+  /** Save the latest shape at once, for a handle the reader let go. The session drops a save that was still waiting. */
   release: () => void;
   /**
    * Make the drag handler of a handle.
@@ -64,24 +53,16 @@ export interface ShapeEditing<S> {
  * @param frame The scene at this moment, which converts between the screen and the pixels of the edit.
  * @param shape The shape as the page has it.
  * @param onChange Called while the reader is still moving the shape.
- * @param onCommit Called when the shape is to be saved.
+ * @param onCommit Called when the shape is to be saved at once.
+ * @param onCommitLater Called when the shape is to be saved once the reader pauses.
  */
 export function useShapeEditing<S>(
   frame: SceneFrame,
   shape: S,
   onChange: (shape: S) => void,
   onCommit: (shape: S) => void,
+  onCommitLater: (shape: S) => void,
 ): ShapeEditing<S> {
-  // The canvas stays mounted when the reader turns to another page, and `onCommit` then saves for the new page. A waiting
-  // save therefore carries the `onCommit` it was asked with, which saves for its own page and step
-  const waiting = useDebouncedCallback(
-    ({ shape: waited, commit }: WaitingSave<S>) => commit(waited),
-    KEY_SAVE_DELAY_MS,
-    {
-      // A shape still waiting when the editor goes away is saved at once, so a nudge is never lost
-      flushOnUnmount: true,
-    },
-  );
   const latest = useRef(shape);
   useEffect(() => {
     latest.current = shape;
@@ -93,17 +74,10 @@ export function useShapeEditing<S>(
     onChange(next);
   };
 
-  const saveLater = (value: S): void => waiting({ shape: value, commit: onCommit });
-
   return {
     latest,
     change,
-    saveLater,
-    release: () => {
-      // The latest shape is newer than any that waits, and the waiting save would put the older one over it
-      waiting.cancel();
-      onCommit(latest.current);
-    },
+    release: () => onCommit(latest.current),
     drag: (move, anchor, grab) => (event) => {
       grab?.();
       const next = move(
@@ -127,7 +101,7 @@ export function useShapeEditing<S>(
       }
       event.preventDefault();
       change(next);
-      saveLater(next);
+      onCommitLater(next);
     },
   };
 }

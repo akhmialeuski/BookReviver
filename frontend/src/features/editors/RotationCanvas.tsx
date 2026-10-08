@@ -54,10 +54,17 @@ export function RotationCanvas({
   figure,
   onChange,
   onCommit,
+  onCommitLater,
 }: CanvasProps<RotationShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
   const { stroke, dash } = FIGURE_STYLE[figure];
-  const { latest, change, saveLater, release } = useShapeEditing(frame, shape, onChange, onCommit);
+  const { latest, change, release } = useShapeEditing(
+    frame,
+    shape,
+    onChange,
+    onCommit,
+    onCommitLater,
+  );
 
   // The picture is turned the way the step will turn it, counter-clockwise, while the view counts clockwise
   const { image, viewer } = scene;
@@ -100,7 +107,7 @@ export function RotationCanvas({
   const turnTo = (degrees: number): void => {
     const next = { degrees };
     change(next);
-    saveLater(next);
+    onCommitLater(next);
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {

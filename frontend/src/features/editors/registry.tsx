@@ -41,6 +41,7 @@ function register<K extends EditableKind>(
         figure={props.figure}
         onChange={(next) => props.onChange(definition.write(next))}
         onCommit={(next) => props.onCommit(definition.write(next))}
+        onCommitLater={(next) => props.onCommitLater(definition.write(next))}
       />
     );
   }

@@ -31,6 +31,12 @@ import { ProblemError } from '@/shared/http/problem';
  * editor is driven through the field of the angle in the panel, which is the part of an editor that needs no canvas.
  */
 
+/** The angle the stand-in canvas of the angle asks to save after a pause, one key press from what the step found. */
+const NUDGED_DEGREES = 1.45;
+
+/** The quiet time after the last small step of a shape before it is saved. */
+const NUDGE_SAVE_DELAY_MS = 600;
+
 /** The line the stand-in canvas of the split line hands back when a test presses it. */
 const handed = vi.hoisted(() => ({
   line: { start: { x: 10, y: 0 }, end: { x: 12, y: 600 } },
@@ -47,6 +53,8 @@ const sdk = vi.hoisted(() => ({
   settings: vi.fn(),
   putSetting: vi.fn(),
   history: vi.fn(),
+  preview: vi.fn(),
+  job: vi.fn(),
 }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
@@ -61,6 +69,8 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGet: sdk.settings,
   putValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePut: sdk.putSetting,
   listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGet: sdk.history,
+  previewStepApiV1ProjectsProjectIdStagesStagePreviewPost: sdk.preview,
+  readJobApiV1JobsJobIdGet: sdk.job,
 }));
 
 // A stand-in for the canvas of the split line, which needs a real viewer: it shows the shape it was given and lets a
@@ -128,6 +138,20 @@ vi.mock('@/features/editors/MarginsCanvas', () => ({
       onClick={() => onCommit({ left: 20, top: 30, width: 600, height: 900 })}
     >
       box
+    </button>
+  ),
+}));
+
+// A stand-in for the canvas of the angle, which needs a real viewer too: a button asks for the save that waits for a
+// pause of an angle the arrow keys made, as the canvas does
+vi.mock('@/features/editors/RotationCanvas', () => ({
+  RotationCanvas: ({ onCommitLater }: { onCommitLater: (angle: { degrees: number }) => void }) => (
+    <button
+      type="button"
+      data-testid="nudge-angle"
+      onClick={() => onCommitLater({ degrees: NUDGED_DEGREES })}
+    >
+      nudge
     </button>
   ),
 }));
@@ -317,6 +341,8 @@ describe('useEditorSession', () => {
     });
     sdk.versions.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 50, pages: 1 } });
     sdk.history.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 100, pages: 1 } });
+    sdk.preview.mockResolvedValue({ data: JOB });
+    sdk.job.mockResolvedValue({ data: JOB });
     session = null;
     container = document.createElement('div');
     document.body.append(container);
@@ -680,6 +706,43 @@ describe('useEditorSession', () => {
       await render({ focusStepId: DESKEW_STEP });
       expect(session?.figure).toBe('by-hand');
       expect(field()?.value).toBe('1.5');
+    });
+
+    it('has an edit to take back, which is what Auto on the toolbar needs, only for a shape set by hand', async () => {
+      await render({ focusStepId: DESKEW_STEP });
+      expect(session?.figure).toBe('found');
+      expect(session?.hasEdit).toBe(false);
+
+      await render({ focusStepId: DESKEW_STEP, items: NO_RESULT });
+      expect(session?.figure).toBe('default');
+      expect(session?.hasEdit).toBe(false);
+
+      // The edits of the page were read by the renders above, and the harness keeps its cache between them
+      sdk.edits.mockResolvedValue(listOf(edit({ geometry: { degrees: 1.5 } })));
+      await act(async () => {
+        await client.invalidateQueries();
+      });
+      await render({ focusStepId: DESKEW_STEP });
+      expect(session?.figure).toBe('by-hand');
+      expect(session?.hasEdit).toBe(true);
+    });
+
+    it('takes the shape of the step back with Auto, which leaves the shape the step found', async () => {
+      sdk.edits.mockResolvedValue(listOf(edit({ geometry: { degrees: 1.5 } })));
+      await render({ focusStepId: DESKEW_STEP });
+      expect(session?.figure).toBe('by-hand');
+
+      // The server holds no edit once it is deleted, so the list read again is empty
+      sdk.edits.mockResolvedValue(listOf());
+      await act(async () => session?.auto());
+      await settle();
+      await settle();
+
+      expect(sdk.remove.mock.calls[0]?.[0]).toMatchObject({
+        path: { page_id: 'page', step_id: DESKEW_STEP },
+      });
+      await vi.waitFor(() => expect(session?.hasEdit).toBe(false));
+      expect(session?.figure).toBe('found');
     });
 
     it('takes the state of the shape from the row of the open step when the server has sent it', async () => {
@@ -1373,10 +1436,138 @@ describe('useEditorSession', () => {
       });
     });
 
+    it('asks for a preview of the open step on a page it has not run on, and starts no run', async () => {
+      await render({
+        state: MARGINS_STATE,
+        items: joinRows([page('page')], [row('page')]),
+        focusStepId: 'id-geometry.normalize',
+      });
+
+      // The preview waits for the form to stand still for 400 ms
+      await vi.waitFor(() => expect(sdk.preview).toHaveBeenCalledTimes(1), { timeout: 3000 });
+
+      expect(sdk.preview.mock.calls[0]?.[0]).toMatchObject({
+        path: { project_id: 'project', stage: 'geometry' },
+        body: { page_id: 'page', step_index: 0 },
+      });
+      expect(sdk.run).not.toHaveBeenCalled();
+    });
+
+    it('asks for no preview on a page the step has run on', async () => {
+      await render({
+        state: MARGINS_STATE,
+        items: PLACED,
+        focusStepId: 'id-geometry.normalize',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 600));
+
+      expect(sdk.preview).not.toHaveBeenCalled();
+    });
+
     it('does not ask for the settings of the page for a step that has no use for them', async () => {
       await render();
 
       expect(sdk.settings).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a shape moved by the keys, which is saved once they pause', () => {
+    const OTHER_ITEMS = joinRows([page('other')], [row('other')]);
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** Draw the page again while the clock is the fake one, since the render of the harness waits on a real timer. */
+    async function showAgain(setup: Setup): Promise<void> {
+      await act(async () => {
+        root.render(
+          <QueryClientProvider client={client}>
+            <Harness setup={setup} />
+          </QueryClientProvider>,
+        );
+      });
+    }
+
+    const nudge = (): void =>
+      act(() => container.querySelector<HTMLElement>('[data-testid="nudge-angle"]')?.click());
+
+    /** Let the reader press an arrow key on the slider of the panel, which saves the angle it gives at once. */
+    const pressOnSlider = (): void =>
+      act(() => {
+        const thumb = container.querySelector<HTMLElement>('[role="slider"]');
+        thumb?.focus();
+        thumb?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      });
+
+    async function wait(milliseconds: number): Promise<void> {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(milliseconds);
+      });
+    }
+
+    /** What the server was sent to save, as the request of the client holds it. */
+    interface SavedEdit {
+      path: { page_id: string };
+      body: { geometry: string };
+    }
+
+    const requests = (): SavedEdit[] => sdk.put.mock.calls.map(([request]) => request);
+    const savedPages = (): string[] => requests().map((request) => request.path.page_id);
+    const savedAngles = (): number[] =>
+      requests().map((request) => {
+        const geometry: { degrees: number } = JSON.parse(request.body.geometry);
+        return geometry.degrees;
+      });
+
+    it('saves it once the keys pause, and not before', async () => {
+      await render({ canvas: true });
+      vi.useFakeTimers();
+
+      nudge();
+      await wait(NUDGE_SAVE_DELAY_MS - 1);
+      expect(sdk.put).not.toHaveBeenCalled();
+
+      await wait(1);
+      expect(savedAngles()).toEqual([NUDGED_DEGREES]);
+    });
+
+    it('is not saved over a newer angle the panel saved while it waited', async () => {
+      await render({ canvas: true });
+      vi.useFakeTimers();
+
+      nudge();
+      pressOnSlider();
+      await wait(NUDGE_SAVE_DELAY_MS * 2);
+
+      expect(savedAngles()).toHaveLength(1);
+      expect(savedAngles()[0]).toBeCloseTo(-2.35, 5);
+    });
+
+    it('is saved for the page it was made on when the reader has turned to another page', async () => {
+      await render({ canvas: true });
+      vi.useFakeTimers();
+
+      nudge();
+      await showAgain({ canvas: true, items: OTHER_ITEMS });
+      await wait(NUDGE_SAVE_DELAY_MS);
+
+      expect(savedPages()).toEqual(['page']);
+      expect(savedAngles()).toEqual([NUDGED_DEGREES]);
+    });
+
+    it('is saved at once, for its own page, when the reader moves a shape on the next page', async () => {
+      await render({ canvas: true });
+      vi.useFakeTimers();
+
+      nudge();
+      await showAgain({ canvas: true, items: OTHER_ITEMS });
+      nudge();
+      await wait(0);
+      expect(savedPages()).toEqual(['page']);
+
+      await wait(NUDGE_SAVE_DELAY_MS);
+      expect(savedPages()).toEqual(['page', 'other']);
     });
   });
 });

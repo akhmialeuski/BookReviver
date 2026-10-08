@@ -6,12 +6,11 @@ import type { SceneFrame } from '@/features/editors/scene';
 import { type ShapeEditing, useShapeEditing } from '@/features/editors/shapeEditing';
 
 /**
- * The saving of a shape the reader moves with the keys or a handle: a run of key presses is saved once after a pause,
- * a handle let go saves at once and replaces a save that was waiting, and a save that was waiting is made for the page
- * it was asked on even when the reader has turned to another one.
+ * What the editing of a shape asks for while the reader moves it with the keys or a handle: a key press asks for a save
+ * that waits for a pause, with the shape it made, and a handle let go asks for a save at once of the latest shape. When
+ * the two are made, and which one wins, is decided by the editor session and tested with it.
  */
 
-const SAVE_DELAY_MS = 600;
 const SIZE = { width: 100, height: 100 };
 
 /** The shape of the test: one number, which an arrow key moves by one. */
@@ -40,8 +39,14 @@ describe('useShapeEditing', () => {
   let root: Root;
   let editing: ShapeEditing<Bar>;
 
-  function Probe({ onCommit }: { onCommit: (shape: Bar) => void }): React.JSX.Element {
-    editing = useShapeEditing(FRAME, START, vi.fn(), onCommit);
+  function Probe({
+    onCommit,
+    onCommitLater,
+  }: {
+    onCommit: (shape: Bar) => void;
+    onCommitLater: (shape: Bar) => void;
+  }): React.JSX.Element {
+    editing = useShapeEditing(FRAME, START, vi.fn(), onCommit, onCommitLater);
     // A stand-in for the layer that takes the keys, the slider `EditorLayer` draws
     return (
       <div
@@ -55,8 +60,8 @@ describe('useShapeEditing', () => {
     );
   }
 
-  function render(onCommit: (shape: Bar) => void): void {
-    act(() => root.render(<Probe onCommit={onCommit} />));
+  function render(onCommit: (shape: Bar) => void, onCommitLater: (shape: Bar) => void): void {
+    act(() => root.render(<Probe onCommit={onCommit} onCommitLater={onCommitLater} />));
   }
 
   function pressRight(): void {
@@ -68,7 +73,6 @@ describe('useShapeEditing', () => {
   }
 
   beforeEach(() => {
-    vi.useFakeTimers();
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     container = document.createElement('div');
     root = createRoot(container);
@@ -76,43 +80,30 @@ describe('useShapeEditing', () => {
 
   afterEach(() => {
     act(() => root.unmount());
-    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
-  it('saves the shape a run of key presses made once, when the keys pause', () => {
+  it('asks for a save that waits for a pause with the shape each key press made, which builds on the one before', () => {
     const commit = vi.fn();
-    render(commit);
+    const commitLater = vi.fn();
+    render(commit, commitLater);
 
     pressRight();
     pressRight();
-    vi.advanceTimersByTime(SAVE_DELAY_MS);
 
-    expect(commit).toHaveBeenCalledExactlyOnceWith({ x: 2 });
+    expect(commitLater.mock.calls).toEqual([[{ x: 1 }], [{ x: 2 }]]);
+    expect(commit).not.toHaveBeenCalled();
   });
 
-  it('saves a handle let go at once, and not again for a key press that came before it', () => {
+  it('saves the latest shape at once for a handle let go', () => {
     const commit = vi.fn();
-    render(commit);
+    const commitLater = vi.fn();
+    render(commit, commitLater);
 
-    pressRight();
     act(() => editing.change({ x: 50 }));
     editing.release();
-    vi.advanceTimersByTime(SAVE_DELAY_MS * 2);
 
     expect(commit).toHaveBeenCalledExactlyOnceWith({ x: 50 });
-  });
-
-  it('saves a waiting shape for the page it was asked on when the reader has turned to another page', () => {
-    const forFirst = vi.fn();
-    const forSecond = vi.fn();
-    render(forFirst);
-    pressRight();
-
-    render(forSecond);
-    vi.advanceTimersByTime(SAVE_DELAY_MS);
-
-    expect(forFirst).toHaveBeenCalledExactlyOnceWith({ x: 1 });
-    expect(forSecond).not.toHaveBeenCalled();
+    expect(commitLater).not.toHaveBeenCalled();
   });
 });

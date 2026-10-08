@@ -62,6 +62,11 @@ export interface CanvasProps<S> {
   onChange: (shape: S) => void;
   /** The reader let go of the shape, so it is to be saved. */
   onCommit: (shape: S) => void;
+  /**
+   * The reader moved the shape in small steps, so it is to be saved once the steps pause. A shape saved by `onCommit`
+   * meanwhile is newer, and drops the one that waits.
+   */
+  onCommitLater: (shape: S) => void;
 }
 
 /** What the part of an editor in the panel gets. */
@@ -129,6 +134,7 @@ export interface GeometryCanvasProps {
   figure: FigureState;
   onChange: (geometry: Geometry) => void;
   onCommit: (geometry: Geometry) => void;
+  onCommitLater: (geometry: Geometry) => void;
 }
 
 /** What the part of a registered editor in the panel gets. */

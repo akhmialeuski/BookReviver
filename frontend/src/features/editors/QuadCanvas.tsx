@@ -29,10 +29,11 @@ export function QuadCanvas({
   figure,
   onChange,
   onCommit,
+  onCommitLater,
 }: CanvasProps<QuadShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
   const { stroke, dash } = FIGURE_STYLE[figure];
-  const editing = useShapeEditing(frame, shape, onChange, onCommit);
+  const editing = useShapeEditing(frame, shape, onChange, onCommit, onCommitLater);
   const [grabbed, setGrabbed] = useState<QuadCorner>(QuadCorner.TopLeft);
 
   const { mapping } = frame;
