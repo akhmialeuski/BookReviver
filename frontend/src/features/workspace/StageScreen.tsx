@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { PageSchema, RecipeKind, ScanSchema, Stage, StagePageSchema, StepFlag } from '@/api';
 import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-query.gen';
 import { EDITOR_ROOM_SHARE } from '@/features/editors/scene';
@@ -93,7 +93,6 @@ export function StageScreen({
   stepId,
   onSearchChange,
   onStepChange,
-  onDefaultStep,
 }: {
   projectId: string;
   stage: Stage;
@@ -102,10 +101,8 @@ export function StageScreen({
   stepId?: string;
   /** Merge changes into the search params of the route; an undefined value takes the param out. */
   onSearchChange: (changes: Partial<StageSearch>) => void;
-  /** Open a step of the stage, which is a move to its address. */
-  onStepChange: (stepId: string) => void;
-  /** Put the step a stage with a bar opens on in place of an address that names none, so Back does not return to it. */
-  onDefaultStep: (stepId: string) => void;
+  /** Open a step of the stage, which is a move to its address; `replace` puts it in place of the address that is open. */
+  onStepChange: (stepId: string, replace?: boolean) => void;
 }): React.JSX.Element {
   const project = useQuery(
     projectApiV1ProjectsProjectIdGetOptions({ path: { project_id: projectId } }),
@@ -179,7 +176,8 @@ export function StageScreen({
   );
   const workspace = useStepWorkspace(processing, barStage ? stepId : undefined, currentItem);
   const openStep = workspace.open;
-  // A stage with a bar always has a step open: the one a run has brought the pages of the recipe furthest to
+  // The step a stage with a bar falls back on when the one that is open is removed: the one a run has brought the pages
+  // of the recipe furthest to. The router chooses the step of an address that names none by the same function
   const defaultStep = useMemo(
     () =>
       barStage && processing.recipe !== undefined && rows.data !== undefined
@@ -188,11 +186,6 @@ export function StageScreen({
     [barStage, processing.recipe, rows.data, workspace.steps],
   );
   const defaultStepId = defaultStep?.stepId;
-  useEffect(() => {
-    if (barStage && stepId === undefined && defaultStepId !== undefined) {
-      onDefaultStep(defaultStepId);
-    }
-  }, [barStage, stepId, defaultStepId, onDefaultStep]);
   // A step that left the recipe shown leaves the address, so no workspace stays open for a step that is gone. A page of
   // another kind shows another recipe, and the step of the same processor in it is opened, so the reader stays on the
   // step they were at; a step that was removed gives way to the default step
@@ -207,7 +200,7 @@ export function StageScreen({
       const next =
         workspace.steps.find((step) => step.processorKey === processorKey)?.stepId ?? defaultStepId;
       if (next !== undefined) {
-        onDefaultStep(next);
+        onStepChange(next, true);
       }
     },
   );
@@ -496,7 +489,7 @@ export function StageScreen({
                         <StepCatalogue
                           processing={processing}
                           rows={stageRows}
-                          onAdded={onStepChange}
+                          onAdded={(added) => onStepChange(added)}
                         />
                         <StepsWindow processing={processing} rows={stageRows} />
                       </>

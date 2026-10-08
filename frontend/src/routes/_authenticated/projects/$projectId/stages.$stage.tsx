@@ -1,5 +1,5 @@
 import { createFileRoute, notFound, useParams } from '@tanstack/react-router';
-import { useCallback, useMemo } from 'react';
+import { useMemo } from 'react';
 import type { Stage } from '@/api';
 import { ImportScreen } from '@/features/import/ImportScreen';
 import { OrderScreen } from '@/features/order/OrderScreen';
@@ -17,9 +17,10 @@ import { MESSAGES } from '@/shared/messages';
  * open `/projects/<id>/stages/<stage>/steps/<step>?...`.
  *
  * The stage is a segment of the path, the step a child segment, and the rest of the view is in the search params, so any
- * view can be linked and reloaded. The child route draws nothing, so moving between steps leaves this screen mounted. A segment that names no stage answers with the not-found screen inside the layout of the book, which
- * keeps the header and the stage bar on screen. The screen keeps the place of the reader in the book as they move, so
- * the book opens here again.
+ * view can be linked and reloaded. The child routes draw nothing, so moving between steps leaves this screen mounted, and
+ * the child route of the address with no step sends a stage with a step bar to the step it opens on. A segment that names
+ * no stage answers with the not-found screen inside the layout of the book, which keeps the header and the stage bar on
+ * screen. The screen keeps the place of the reader in the book as they move, so the book opens here again.
  */
 
 export const Route = createFileRoute('/_authenticated/projects/$projectId/stages/$stage')({
@@ -87,22 +88,16 @@ function KnownStageOfBook({
       });
     }
   };
-  const goToStep = useCallback(
-    (next: string, replace: boolean): void => {
-      void navigate({
-        to: '/projects/$projectId/stages/$stage/steps/$stepId',
-        params: (previous) => ({ ...previous, stage, stepId: next }),
-        search: (previous) => previous,
-        replace,
-      });
-    },
-    [navigate, stage],
-  );
-  // The screen opens the step a stage with a bar starts on from an effect that depends on these two, so they keep their
-  // identity for as long as the stage does, and the effect runs once for each step it has to open and not on each render
-  const onStepChange = useCallback((next: string): void => goToStep(next, false), [goToStep]);
-  // The step a stage with a bar opens on replaces an address that names none, so Back does not return to that address
-  const onDefaultStep = useCallback((next: string): void => goToStep(next, true), [goToStep]);
+  // A step that left the recipe is replaced in the address by another, so Back does not return to the address of a step
+  // that is gone; every other move to a step is a step of the history
+  const onStepChange = (next: string, replace = false): void => {
+    void navigate({
+      to: '/projects/$projectId/stages/$stage/steps/$stepId',
+      params: (previous) => ({ ...previous, stage, stepId: next }),
+      search: (previous) => previous,
+      replace,
+    });
+  };
   let screen = (
     <StageScreen
       projectId={projectId}
@@ -111,7 +106,6 @@ function KnownStageOfBook({
       stepId={stepId}
       onSearchChange={onSearchChange}
       onStepChange={onStepChange}
-      onDefaultStep={onDefaultStep}
     />
   );
   // Import works on files and scans, and the Order stage is a grid of pages with its own panel

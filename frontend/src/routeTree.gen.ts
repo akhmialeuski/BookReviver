@@ -24,6 +24,7 @@ import { Route as AuthenticatedProjectsProjectIdIndexRouteImport } from './route
 import { Route as AuthenticatedProjectsProjectIdAboutRouteImport } from './routes/_authenticated/projects/$projectId/about'
 import { Route as AuthenticatedProjectsProjectIdViewerRouteImport } from './routes/_authenticated/projects/$projectId/viewer'
 import { Route as AuthenticatedProjectsProjectIdStagesStageRouteImport } from './routes/_authenticated/projects/$projectId/stages.$stage'
+import { Route as AuthenticatedProjectsProjectIdStagesStageIndexRouteImport } from './routes/_authenticated/projects/$projectId/stages.$stage.index'
 import { Route as AuthenticatedProjectsProjectIdStagesStageStepsStepIdRouteImport } from './routes/_authenticated/projects/$projectId/stages.$stage.steps.$stepId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -107,6 +108,12 @@ const AuthenticatedProjectsProjectIdStagesStageRoute =
     path: '/stages/$stage',
     getParentRoute: () => AuthenticatedProjectsProjectIdRouteRoute,
   } as any)
+const AuthenticatedProjectsProjectIdStagesStageIndexRoute =
+  AuthenticatedProjectsProjectIdStagesStageIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AuthenticatedProjectsProjectIdStagesStageRoute,
+  } as any)
 const AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute =
   AuthenticatedProjectsProjectIdStagesStageStepsStepIdRouteImport.update({
     id: '/steps/$stepId',
@@ -129,6 +136,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
   '/projects/$projectId/': typeof AuthenticatedProjectsProjectIdIndexRoute
   '/projects/$projectId/stages/$stage': typeof AuthenticatedProjectsProjectIdStagesStageRouteWithChildren
+  '/projects/$projectId/stages/$stage/': typeof AuthenticatedProjectsProjectIdStagesStageIndexRoute
   '/projects/$projectId/stages/$stage/steps/$stepId': typeof AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute
 }
 export interface FileRoutesByTo {
@@ -144,7 +152,7 @@ export interface FileRoutesByTo {
   '/projects/$projectId/about': typeof AuthenticatedProjectsProjectIdAboutRoute
   '/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdIndexRoute
-  '/projects/$projectId/stages/$stage': typeof AuthenticatedProjectsProjectIdStagesStageRouteWithChildren
+  '/projects/$projectId/stages/$stage': typeof AuthenticatedProjectsProjectIdStagesStageIndexRoute
   '/projects/$projectId/stages/$stage/steps/$stepId': typeof AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute
 }
 export interface FileRoutesById {
@@ -164,6 +172,7 @@ export interface FileRoutesById {
   '/_authenticated/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
   '/_authenticated/projects/$projectId/': typeof AuthenticatedProjectsProjectIdIndexRoute
   '/_authenticated/projects/$projectId/stages/$stage': typeof AuthenticatedProjectsProjectIdStagesStageRouteWithChildren
+  '/_authenticated/projects/$projectId/stages/$stage/': typeof AuthenticatedProjectsProjectIdStagesStageIndexRoute
   '/_authenticated/projects/$projectId/stages/$stage/steps/$stepId': typeof AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute
 }
 export interface FileRouteTypes {
@@ -183,6 +192,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/viewer'
     | '/projects/$projectId/'
     | '/projects/$projectId/stages/$stage'
+    | '/projects/$projectId/stages/$stage/'
     | '/projects/$projectId/stages/$stage/steps/$stepId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -217,6 +227,7 @@ export interface FileRouteTypes {
     | '/_authenticated/projects/$projectId/viewer'
     | '/_authenticated/projects/$projectId/'
     | '/_authenticated/projects/$projectId/stages/$stage'
+    | '/_authenticated/projects/$projectId/stages/$stage/'
     | '/_authenticated/projects/$projectId/stages/$stage/steps/$stepId'
   fileRoutesById: FileRoutesById
 }
@@ -338,6 +349,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProjectsProjectIdStagesStageRouteImport
       parentRoute: typeof AuthenticatedProjectsProjectIdRouteRoute
     }
+    '/_authenticated/projects/$projectId/stages/$stage/': {
+      id: '/_authenticated/projects/$projectId/stages/$stage/'
+      path: '/'
+      fullPath: '/projects/$projectId/stages/$stage/'
+      preLoaderRoute: typeof AuthenticatedProjectsProjectIdStagesStageIndexRouteImport
+      parentRoute: typeof AuthenticatedProjectsProjectIdStagesStageRoute
+    }
     '/_authenticated/projects/$projectId/stages/$stage/steps/$stepId': {
       id: '/_authenticated/projects/$projectId/stages/$stage/steps/$stepId'
       path: '/steps/$stepId'
@@ -349,11 +367,14 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedProjectsProjectIdStagesStageRouteChildren {
+  AuthenticatedProjectsProjectIdStagesStageIndexRoute: typeof AuthenticatedProjectsProjectIdStagesStageIndexRoute
   AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute: typeof AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute
 }
 
 const AuthenticatedProjectsProjectIdStagesStageRouteChildren: AuthenticatedProjectsProjectIdStagesStageRouteChildren =
   {
+    AuthenticatedProjectsProjectIdStagesStageIndexRoute:
+      AuthenticatedProjectsProjectIdStagesStageIndexRoute,
     AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute:
       AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute,
   }

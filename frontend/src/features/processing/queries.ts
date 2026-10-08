@@ -65,23 +65,32 @@ import {
 /** Items asked for per request of a short list; the routes accept at most this many. */
 const LIST_SIZE = 100;
 
-/** Read the catalogue of processors, which a stage is built from. */
-export function useProcessors() {
-  return useQuery({
+/** Query options of the catalogue of processors, which the screens and the router read through one key. */
+export function processorsOptions() {
+  return queryOptions({
     ...listProcessorsApiV1ProcessorsGetOptions({ query: { size: LIST_SIZE } }),
-    select: (page) => page.items,
     // The installed plugins change with a restart of the server, not while a screen is open
     staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+/** Read the catalogue of processors, which a stage is built from. */
+export function useProcessors() {
+  return useQuery({ ...processorsOptions(), select: (page) => page.items });
+}
+
+/** Query options of the recipes of a stage, which the screens and the router read through one key. */
+export function recipesOptions(projectId: string, stage: Stage) {
+  return listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetOptions({
+    path: { project_id: projectId, stage },
+    query: { size: LIST_SIZE },
   });
 }
 
 /** Read the recipes of a stage, one for each kind of page, in the order of the kinds. */
 export function useRecipes(projectId: string, stage: Stage, enabled: boolean) {
   return useQuery({
-    ...listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetOptions({
-      path: { project_id: projectId, stage },
-      query: { size: LIST_SIZE },
-    }),
+    ...recipesOptions(projectId, stage),
     select: (page) => page.items,
     enabled,
   });
