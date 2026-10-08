@@ -12,6 +12,9 @@ import { Badge } from '@/shared/ui/badge';
  * grey and shut, with the reason. A stage with nothing to show yet leaves the body and the footer out, so the title, the
  * sentence and the history stand. A stage that cannot be worked in yet carries the word "Soon" beside its name.
  *
+ * Every grid item inside the panel has a zero minimum width, so no grid of a stage needs its own column template to stay
+ * within the panel, however long a label in it is.
+ *
  * The scrolling area is positioned, so what is placed absolutely inside it, such as the hidden legend of a group of
  * buttons, stays inside the area instead of hanging below the window and making the whole book screen scroll.
  */
@@ -35,7 +38,10 @@ export function StagePanel({
 }): React.JSX.Element {
   return (
     <aside
-      className="flex h-full flex-col"
+      // A grid with no column template sizes its one implicit column to the min-content of its widest item, and an
+      // item whose min-width is auto cannot be narrower than that, so a long label would push the panel wider than its
+      // column. Giving every grid item in the panel, the footer included, a zero minimum lets that column shrink.
+      className="flex h-full flex-col [&_.grid>*]:min-w-0"
       aria-label={MESSAGES.stages.names[stage]}
       data-testid="stage-panel"
     >

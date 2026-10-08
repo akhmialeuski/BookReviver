@@ -2,7 +2,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { deskew, processing, recipe, step, whole } from '@/features/processing/fixtures';
+import type { PageSchema, StagePageSchema } from '@/api';
+import { deskew, processing, processor, recipe, step, whole } from '@/features/processing/fixtures';
 import { RunControls } from '@/features/processing/RunControls';
 import { useStageRun } from '@/features/processing/useStageRun';
 import { page, row } from '@/features/workspace/fixtures';
@@ -273,6 +274,17 @@ describe('RunControls', () => {
       expect(text('run-start')).toBe('Run on 2 selected pages through Deskew');
     });
 
+    it('stands alone in the foot, with the menu beside it and no preview of the page or Auto', () => {
+      render();
+
+      const buttons = [...container.querySelectorAll('button')].map((button) =>
+        button.getAttribute('data-testid'),
+      );
+      expect(buttons).toEqual(['run-start', 'run-menu']);
+      expect(container.textContent).not.toMatch(/Preview|Auto/);
+      expect(container.querySelector('[data-testid="run-summary"]')).not.toBeNull();
+    });
+
     it('is off while the draft has changes that are not saved', () => {
       render(processing({ dirty: true }));
 
@@ -324,6 +336,80 @@ describe('RunControls', () => {
     });
   });
 
+  describe('the text of the button', () => {
+    /** The four pages of the book, a to d, with the status each has in the stage. */
+    const withStatuses = (
+      statuses: readonly StagePageSchema['status'][],
+      overrides: Partial<PageSchema> = {},
+    ): typeof ITEMS =>
+      joinRows(
+        ['a', 'b', 'c', 'd'].map((id, position) => page(id, { position, ...overrides })),
+        ['a', 'b', 'c', 'd'].map((id, place) => row(id, { status: statuses[place] ?? 'not-run' })),
+      );
+
+    // Every page of these has a result, the second and the third out of date, and none of those has
+    const RESULTS = ['fresh', 'stale', 'stale', 'fresh'] as const;
+    const NO_RESULT = ['not-run', 'failed', 'failed', 'not-run'] as const;
+    const ONE_RESULT = ['fresh', 'not-run', 'not-run', 'not-run'] as const;
+
+    const BOTH = new Set(['c', 'd']);
+    const ONE = new Set(['c']);
+
+    // The page open is b, and the recipe has two steps, of which the open step in the bar is the first
+    const state = (): ReturnType<typeof processing> =>
+      processing({
+        recipe: TWO_STEPS,
+        recipes: [TWO_STEPS],
+        catalogue: [deskew(), processor('geometry.normalize', { title: 'Normalize' })],
+      });
+    const OPEN_FIRST_STEP: BarStep = { ...OPEN_SECOND_STEP, index: 0, number: 1, title: 'Deskew' };
+
+    // The pages of the choice, the statuses of the book, who is selected, and what the button says about the pages
+    const CHOICES = [
+      ['page', RESULTS, BOTH, 'Run again on this page'],
+      ['from-page', RESULTS, BOTH, 'Run again on 3 pages from this page on'],
+      ['selected', RESULTS, BOTH, 'Run again on 2 selected pages'],
+      ['selected', RESULTS, ONE, 'Run again on 1 selected page'],
+      ['group:text', RESULTS, BOTH, 'Run again on 4 pages of the kind Text'],
+      ['attention', RESULTS, BOTH, 'Run again on 2 out-of-date pages'],
+      ['all', RESULTS, BOTH, 'Run again on all 4 pages'],
+      ['page', NO_RESULT, BOTH, 'Run on this page'],
+      ['from-page', NO_RESULT, BOTH, 'Run on 3 pages from this page on'],
+      ['selected', NO_RESULT, BOTH, 'Run on 2 selected pages'],
+      ['group:text', NO_RESULT, BOTH, 'Run on 4 pages of the kind Text'],
+      ['attention', NO_RESULT, BOTH, 'Run on 2 failed pages'],
+      ['all', NO_RESULT, BOTH, 'Run on all 4 pages'],
+      // The words follow the pages the run goes over, and not the book: a is the only page with a result
+      ['all', ONE_RESULT, BOTH, 'Run again on all 4 pages'],
+      ['selected', ONE_RESULT, BOTH, 'Run on 2 selected pages'],
+    ] as const;
+
+    const THROUGH = [
+      ['up to the open step', 'run-through-open', 'Deskew'],
+      ['through the whole stage', 'run-through-stage', 'Normalize'],
+    ] as const;
+
+    it.each(
+      CHOICES.flatMap(([key, statuses, selected, pages]) =>
+        THROUGH.map(([how, through, step]) => ({
+          name: `${key} of ${statuses.join(', ')}, ${[...selected].join('')} selected, ${how}`,
+          key,
+          statuses,
+          selected,
+          through,
+          text: `${pages} through ${step}`,
+        })),
+      ),
+    )('says $text for $name', async ({ key, statuses, selected, through, text: expected }) => {
+      render(state(), selected, withStatuses(statuses), OPEN_FIRST_STEP);
+
+      await choose(`run-pages-${key}`);
+      await choose(through);
+
+      expect(text('run-start')).toBe(expected);
+    });
+  });
+
   describe('the pages of the menu', () => {
     it.each([
       ['page', { page_ids: ['b'] }],
@@ -350,6 +436,48 @@ describe('RunControls', () => {
         document.body.querySelector('[data-testid="run-pages-group:blank"]')?.textContent,
       ).toBe('Pages of a kind · Blank1');
       expect(document.body.querySelector('[data-testid="run-pages-group:bw-picture"]')).toBeNull();
+    });
+
+    it('turns Selected pages off while no page is selected, and on once one is', async () => {
+      render(processing(), new Set());
+      await openMenu();
+
+      const entry = (): Element | null =>
+        document.body.querySelector('[data-testid="run-pages-selected"]');
+      expect(entry()?.getAttribute('aria-disabled')).toBe('true');
+      expect(entry()?.textContent).toBe('Selected pages0');
+
+      render(processing(), new Set(['c']));
+
+      expect(entry()?.getAttribute('aria-disabled')).toBeNull();
+      expect(entry()?.textContent).toBe('Selected pages1');
+    });
+
+    it('lists every kind of pages the book has, with its count, in the order of the menu', async () => {
+      render(
+        processing(),
+        new Set(),
+        joinRows(
+          [
+            page('a'),
+            page('b'),
+            page('c', { content_type: 'bw-picture' }),
+            page('d', { content_type: 'color-picture' }),
+            page('e', { kind: 'blank' }),
+          ],
+          [],
+        ),
+      );
+
+      await openMenu();
+
+      const kinds = [...document.body.querySelectorAll('[data-testid^="run-pages-group:"]')];
+      expect(kinds.map((kind) => kind.textContent)).toEqual([
+        'Pages of a kind · Text3',
+        'Pages of a kind · Colour picture1',
+        'Pages of a kind · Black-and-white picture1',
+        'Pages of a kind · Blank1',
+      ]);
     });
 
     it('names no recipe, so each page is run by the recipe of its kind', async () => {

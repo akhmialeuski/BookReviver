@@ -103,6 +103,16 @@ describe('StagePanel', () => {
     expect(find('page-history-count')?.textContent).toBe('4 events');
     expect(find('page-history-reason')).toBeNull();
   });
+
+  it('lets the grids of the body and of the footer shrink to the panel, so no grid sets a column of its own', async () => {
+    await render(
+      <StagePanel stage="geometry" available footer={<button type="button">Run</button>} />,
+    );
+
+    // Tailwind writes this variant as `.panel .grid > *`, and a zero minimum width lets an auto column shrink
+    expect(find('stage-panel')?.className).toContain('[&_.grid>*]:min-w-0');
+    expect(find('stage-panel')?.querySelector('footer')?.parentElement).toBe(find('stage-panel'));
+  });
 });
 
 describe('HistoryFrame', () => {

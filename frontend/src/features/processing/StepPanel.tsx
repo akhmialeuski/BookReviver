@@ -78,7 +78,7 @@ export function StepPanel({
 
   return (
     <section
-      className="grid grid-cols-1 gap-4 border-b pb-4"
+      className="grid gap-4 border-b pb-4"
       aria-label={labels.label(step.number, step.title)}
       data-testid="step-panel"
       data-step-id={step.stepId}
@@ -114,7 +114,7 @@ export function StepPanel({
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-3" data-testid="step-panel-settings">
+      <div className="grid gap-3" data-testid="step-panel-settings">
         <Heading>{labels.settings}</Heading>
         {draft === undefined || processor === undefined ? null : (
           <ParamsForm

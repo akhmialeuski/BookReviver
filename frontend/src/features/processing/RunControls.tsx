@@ -165,7 +165,7 @@ export function RunControls({
   );
 
   return (
-    <div className="grid grid-cols-1 gap-3">
+    <div className="grid gap-3">
       {stopped.length === 0 || recipe === undefined ? null : (
         <ul className="grid gap-0.5 text-sm" data-testid="run-stopped">
           {stopped.map(({ through_step: step, pages }) => (

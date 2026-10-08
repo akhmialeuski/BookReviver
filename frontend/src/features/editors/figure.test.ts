@@ -32,3 +32,18 @@ describe('FIGURE_STYLE', () => {
     ).toBe(3);
   });
 });
+
+describe('the shape set by hand', () => {
+  it('is painted orange, a red channel far above the green and the blue far below it, and solid', () => {
+    const { stroke, dash } = FIGURE_STYLE['by-hand'];
+    const [red = 0, green = 0, blue = 0] = [1, 3, 5].map((at) =>
+      Number.parseInt(stroke.slice(at, at + 2), 16),
+    );
+
+    expect(stroke).toMatch(/^#[0-9a-f]{6}$/);
+    expect(red).toBeGreaterThan(200);
+    expect(green).toBeGreaterThan(blue + 40);
+    expect(red).toBeGreaterThan(green + 80);
+    expect(dash).toBeUndefined();
+  });
+});

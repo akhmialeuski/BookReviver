@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageSchema } from '@/api';
 import { BlankImageBlock } from '@/features/order/BlankImageBlock';
 import { page } from '@/features/workspace/fixtures';
+import { ProblemError } from '@/shared/http/problem';
 
 /**
  * The choice of the image of blank pages: the radio of the choice the selected pages share, and the button that writes
@@ -116,6 +117,28 @@ describe('BlankImageBlock', () => {
     await vi.waitFor(() => expect(sdk.fill).toHaveBeenCalledTimes(1));
     expect(sdk.fill).toHaveBeenCalledWith(
       expect.objectContaining({ body: { page_ids: ['a', 'b', 'c'], blank_fill: 'white' } }),
+    );
+  });
+
+  it('shows no error while the pages are written', async () => {
+    render([BLANK_PAGES[1] as PageSchema]);
+
+    await act(async () => radio('Paper of the book').click());
+
+    await vi.waitFor(() => expect(sdk.fill).toHaveBeenCalledTimes(1));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('shows the answer of the server in the block when the request is rejected', async () => {
+    sdk.fill.mockRejectedValue(new ProblemError('The leaf could not be drawn.', 500, null, []));
+    render([BLANK_PAGES[1] as PageSchema, BLANK_PAGES[2] as PageSchema]);
+
+    await act(async () => radio('Paper of the book').click());
+
+    await vi.waitFor(() =>
+      expect(
+        container.querySelector('[data-testid="blank-leaf"] [role="alert"]')?.textContent,
+      ).toBe('The leaf could not be drawn.'),
     );
   });
 });

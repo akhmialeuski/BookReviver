@@ -92,6 +92,24 @@ describe('StageBanners', () => {
     });
   });
 
+  describe('pages that ask for a look', () => {
+    it('get no banner over the canvas, whether they failed or the step was unsure of them', async () => {
+      await render(
+        processing(),
+        joinRows(
+          [page('a'), page('b'), page('c')],
+          [
+            row('a', { status: 'failed' }),
+            row('b', { review: 'low-confidence' }),
+            row('c', { review: 'not-applied' }),
+          ],
+        ),
+      );
+
+      expect(container.children).toHaveLength(0);
+    });
+  });
+
   describe('the banner of the Split stage', () => {
     const cutter = recipe('spread', {
       stage: 'page-split',

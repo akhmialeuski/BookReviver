@@ -209,6 +209,22 @@ describe('ThisPageSection', () => {
     expect(container.querySelector('[data-testid="editor-controls"]')).not.toBeNull();
   });
 
+  it('has no Auto button, no line for the state of the shape, no legend of its colours and no card of hints', async () => {
+    const byHand = version('hand', { edit_hash: 'abc', data: { angle: 2.5, confidence: 1 } });
+    await render(
+      { page: page('page'), row: row('page', { version: byHand }) },
+      editorStub({ hasEdit: true, figure: 'by-hand', alwaysOn: true }),
+    );
+
+    const section = container.querySelector('[data-testid="this-page"]');
+    const buttons = [...(section?.querySelectorAll('button') ?? [])];
+    expect(buttons.some((button) => /Auto/.test(button.textContent ?? ''))).toBe(false);
+    expect(section?.querySelector('[data-testid$="-auto"]')).toBeNull();
+    expect(section?.querySelector('[data-testid$="-state"]')).toBeNull();
+    expect(section?.querySelector('[data-testid$="-hint"]')).toBeNull();
+    expect(section?.textContent).not.toMatch(/orange|grey|green|\bShape\b/i);
+  });
+
   it('says the stage has not run on a page that has no result', async () => {
     await render({ page: page('page'), row: row('page', { status: 'not-run' }) });
 

@@ -11,12 +11,13 @@ import { joinRows } from '@/features/workspace/strip';
  * what a choice of each sends to the server.
  */
 
-const sdk = vi.hoisted(() => ({ update: vi.fn(), jobs: vi.fn() }));
+const sdk = vi.hoisted(() => ({ update: vi.fn(), jobs: vi.fn(), detect: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
   updatePageApiV1ProjectsProjectIdPagesPageIdPatch: sdk.update,
   listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
+  detectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPost: sdk.detect,
 }));
 
 class SizeObserverStandIn {
@@ -35,11 +36,11 @@ describe('ContentTypeMenu', () => {
   let root: Root;
   let client: QueryClient;
 
-  function render(selected: ReadonlySet<string> = new Set()): void {
+  function render(selected: ReadonlySet<string> = new Set(), items = ITEMS): void {
     act(() =>
       root.render(
         <QueryClientProvider client={client}>
-          <ContentTypeMenu projectId="book" items={ITEMS} currentId="a" selected={selected} />
+          <ContentTypeMenu projectId="book" items={items} currentId="a" selected={selected} />
         </QueryClientProvider>,
       ),
     );
@@ -67,6 +68,8 @@ describe('ContentTypeMenu', () => {
     vi.stubGlobal('ResizeObserver', SizeObserverStandIn);
     sdk.update.mockReset();
     sdk.jobs.mockReset();
+    sdk.detect.mockReset();
+    sdk.detect.mockResolvedValue({ data: { id: 'job' } });
     sdk.update.mockResolvedValue({ data: page('a') });
     sdk.jobs.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 20, pages: 1 } });
     container = document.createElement('div');
@@ -139,5 +142,67 @@ describe('ContentTypeMenu', () => {
       path: { page_id: 'a' },
       body: { content_type: 'color-picture' },
     });
+  });
+
+  it('marks the type the program found, and no type when the reader set it', async () => {
+    const detected = joinRows(
+      [page('a', { content_type: 'bw-picture', content_source: 'detected' })],
+      [row('a')],
+    );
+    render(new Set(), detected);
+    await openMenu();
+
+    const marked = (): string[] =>
+      ['text', 'color-picture', 'bw-picture'].filter((type) =>
+        entry(`content-type-${type}`)?.textContent?.includes('found'),
+      );
+    expect(marked()).toEqual(['bw-picture']);
+
+    const byHand = joinRows(
+      [page('a', { content_type: 'bw-picture', content_source: 'hand' })],
+      [row('a')],
+    );
+    render(new Set(), byHand);
+
+    expect(marked()).toEqual([]);
+  });
+
+  it('puts the pages of a choice in the menu as the open page and the selected ones, which waits for a selection', async () => {
+    render();
+    await openMenu();
+
+    expect(entry('content-scope-page')?.textContent).toBe('This page');
+    expect(entry('content-scope-selected')?.textContent).toBe('Selected pages0');
+    expect(entry('content-scope-selected')?.getAttribute('aria-disabled')).toBe('true');
+
+    render(new Set(['b', 'c']));
+
+    expect(entry('content-scope-selected')?.textContent).toBe('Selected pages2');
+    expect(entry('content-scope-selected')?.getAttribute('aria-disabled')).toBeNull();
+  });
+
+  it('offers Detect again, which asks the program about the open page, and keeps the menu open', async () => {
+    render(new Set(['b', 'c']));
+    await openMenu();
+
+    expect(entry('content-type-detect')?.textContent).toBe('Detect again');
+    await choose('content-type-detect');
+
+    expect(sdk.detect).toHaveBeenCalledTimes(1);
+    expect(sdk.detect.mock.calls[0]?.[0]).toMatchObject({
+      path: { project_id: 'book' },
+      body: { page_ids: ['a'] },
+    });
+    expect(document.body.querySelector('[role="menu"]')).not.toBeNull();
+  });
+
+  it('asks the program about the selected pages when they are the pages of the choice', async () => {
+    render(new Set(['b', 'c']));
+    await openMenu();
+    await choose('content-scope-selected');
+
+    await choose('content-type-detect');
+
+    expect(sdk.detect.mock.calls[0]?.[0].body).toEqual({ page_ids: ['b', 'c'] });
   });
 });

@@ -64,10 +64,10 @@ describe('the panels of the cleanup editors', () => {
       return onCommit;
     }
 
-    it('says how a zone is shaped, and says the reader has drawn none', () => {
+    it('shows no hint card, and says the reader has drawn no zones', () => {
       render({});
 
-      expect(byTestId('regions-hint')?.textContent).toContain('drag the corners');
+      expect(byTestId('regions-hint')).toBeNull();
       expect(container.textContent).toContain('You have drawn no zones');
       expect(byTestId('regions-list')).toBeNull();
     });
@@ -131,10 +131,10 @@ describe('the panels of the cleanup editors', () => {
       return onCommit;
     }
 
-    it('says how the brush works and how large it is', () => {
+    it('shows no hint card, and says how large the brush is', () => {
       render(0);
 
-      expect(byTestId('brush-hint')?.textContent).toContain('Brush over');
+      expect(byTestId('brush-hint')).toBeNull();
       expect(byTestId('brush-size')?.textContent).toBe('2 % of the page width');
     });
 

@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { page } from '@/features/workspace/fixtures';
+import { page, row } from '@/features/workspace/fixtures';
 import { PageTile } from '@/features/workspace/PageTile';
 import { joinRows } from '@/features/workspace/strip';
 
@@ -67,5 +67,34 @@ describe('PageTile', () => {
 
     render({ content_type: 'text', content_source: 'detected' });
     expect(container.querySelector(`${MARK} svg`)).toBeNull();
+  });
+
+  it('has marks that are not interactive: the tile is the one button, and a press on a mark is a press on the tile', () => {
+    const onClick = vi.fn();
+    const marked = [
+      { page: page('a', { content_source: 'hand' }), row: row('a', { status: 'failed' }) },
+      { page: page('b', { included: false }), row: row('b', { review: 'low-confidence' }) },
+    ];
+
+    for (const item of marked) {
+      const [tile] = joinRows([item.page], [item.row]);
+      if (tile === undefined) {
+        throw new Error('The tile has no page.');
+      }
+      act(() => root.render(<PageTile item={tile} highlighted={false} onClick={onClick} />));
+
+      expect(container.querySelectorAll('button, [role="button"], [tabindex]')).toHaveLength(1);
+      for (const mark of container.querySelectorAll(
+        '[data-testid="strip-content"], [data-testid="strip-failed"], [data-testid="strip-review"]',
+      )) {
+        expect(mark.tagName).toBe('SPAN');
+        expect(mark.getAttribute('role')).toBeNull();
+        expect(mark.getAttribute('tabindex')).toBeNull();
+        act(() => mark.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+      }
+    }
+
+    // Each mark that was pressed has told the tile and nobody else: the content mark and the failed or review mark
+    expect(onClick).toHaveBeenCalledTimes(4);
   });
 });

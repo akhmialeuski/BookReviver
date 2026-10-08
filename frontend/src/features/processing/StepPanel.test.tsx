@@ -275,6 +275,35 @@ describe('StepPanel', () => {
     expect(find('step-close')).toBeNull();
   });
 
+  it('has no Auto button, whatever the state of the shape, since Auto stands on the toolbar of the canvas', () => {
+    for (const state of ['default', 'found', 'by-hand', 'skipped'] as const) {
+      render(1, placed(state, { angle: 0.5 }), { editor: editorStub({ figure: state }) });
+
+      const names = [...container.querySelectorAll('button')].map((button) =>
+        (button.textContent ?? '').trim(),
+      );
+      expect(names.some((name) => /^Auto\b/.test(name))).toBe(false);
+      expect(container.querySelector('[data-testid^="step-auto"]')).toBeNull();
+      expect(container.querySelector('[data-testid^="step-run-"]')).toBeNull();
+      expect(find('editor-auto')).toBeNull();
+    }
+  });
+
+  describe('the section of the open page', () => {
+    it('has no line for the state of the shape, no legend of its colours and no card of hints', () => {
+      for (const state of ['default', 'found', 'by-hand', 'skipped'] as const) {
+        render(1, placed(state, { angle: 0.5 }), { editor: editorStub({ figure: state }) });
+
+        const section = find('step-panel-page');
+        expect(find('step-panel-state')).toBeNull();
+        expect(find('step-panel-hint')).toBeNull();
+        expect(section?.querySelector('[data-testid$="-hint"]')).toBeNull();
+        expect(section?.textContent).not.toMatch(/orange|grey|green/i);
+        expect(section?.textContent).not.toMatch(/\bShape\b/);
+      }
+    });
+  });
+
   it('draws the settings of the step with ids of their own, so the form of the page can stand beside it', () => {
     render();
 

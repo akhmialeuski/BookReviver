@@ -91,7 +91,7 @@ export function ProcessingPanel({
       history={history}
       footer={<RunControls processing={processing} items={items} run={run} openStep={step?.step} />}
     >
-      <div className="grid grid-cols-1 gap-6">
+      <div className="grid gap-6">
         {step === undefined ? null : (
           <StepPanel
             processing={processing}

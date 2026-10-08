@@ -61,7 +61,12 @@ describe('StageBar, the Import stage', () => {
     vi.unstubAllGlobals();
   });
 
-  async function render(counts: { files: number; scans: number }, active: JobSchema[], path = '/') {
+  async function render(
+    counts: { files: number; scans: number },
+    active: JobSchema[],
+    path = '/',
+    summaries: StageSummarySchema[] = [IMPORT_SUMMARY],
+  ) {
     const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
     client.setQueryData(
       projectApiV1ProjectsProjectIdGetOptions({ path: { project_id: PROJECT_ID } }).queryKey,
@@ -69,12 +74,13 @@ describe('StageBar, the Import stage', () => {
         ...projectWith(),
         source_count: counts.files,
         scan_count: counts.scans,
+        page_count: counts.scans,
       },
     );
     client.setQueryData(
       listStagesApiV1ProjectsProjectIdStagesGetOptions({ path: { project_id: PROJECT_ID } })
         .queryKey,
-      { items: [IMPORT_SUMMARY], total: 1, page: 1, size: 100, pages: 1 },
+      { items: summaries, total: summaries.length, page: 1, size: 100, pages: 1 },
     );
     client.setQueryData(jobsOptions(PROJECT_ID, true).queryKey, active);
 
@@ -164,6 +170,28 @@ describe('StageBar, the Import stage', () => {
 
       expect(container.querySelector('[data-testid="stage-page-split"]')).not.toBeNull();
       expect(container.querySelector('[data-testid="stage-menu"]')).toBeNull();
+    });
+
+    it('shows no counts under the stages, whatever the pages of the book are doing in them', async () => {
+      vi.stubGlobal('matchMedia', undefined);
+      const geometry: StageSummarySchema = {
+        ...IMPORT_SUMMARY,
+        stage: 'geometry',
+        manual: false,
+        pages: 120,
+        fresh: 100,
+        stale: 15,
+        failed: 5,
+        check: 7,
+        partial: 3,
+      };
+      await render({ files: 3, scans: 122 }, [], IMPORT_PATH, [IMPORT_SUMMARY, geometry]);
+
+      const bar = container.querySelector('[data-testid="stage-bar"]');
+      expect(bar?.textContent).toContain('Geometry');
+      expect(bar?.textContent).not.toMatch(
+        /\d{3}|\bfiles?\b|\bscans?\b|\bpages?\b|\bout of date\b|\bfailed\b/i,
+      );
     });
   });
 });

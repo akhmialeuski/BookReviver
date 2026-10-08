@@ -257,6 +257,17 @@ describe('StepList', () => {
 
       expect(container.querySelector('[data-testid="step-passed"]')).toBeNull();
     });
+
+    it('has no button that runs the pages up to a step, since a run starts only from the foot of the panel', () => {
+      renderRunnable();
+
+      const names = [...container.querySelectorAll('button')].map(
+        (button) => button.getAttribute('aria-label') ?? '',
+      );
+      expect(names.some((name) => name.startsWith('Run up to here'))).toBe(false);
+      expect(container.querySelector('[data-testid="step-run"]')).toBeNull();
+      expect(container.querySelector('[data-testid^="step-run-"]')).toBeNull();
+    });
   });
 
   it('marks a step whose values are outside their limits', () => {

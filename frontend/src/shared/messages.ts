@@ -1735,7 +1735,6 @@ export const MESSAGES = {
       name: 'Split line',
       start: 'Top end of the split line',
       end: 'Bottom end of the split line',
-      hint: 'Drag the ends of the dashed line to move the cut, or nudge it with the arrow keys. The new cut is saved at once and the two pages are cut again.',
       noPicture: 'This scan has no picture to draw the cut on yet.',
       // A page without a number is named by its place in the book
       pageName: (label: string, position: number) =>
@@ -1787,7 +1786,6 @@ export const MESSAGES = {
     regions: {
       name: 'Picture zones',
       handle: (zone: number, corner: number) => `Corner ${corner} of zone ${zone}`,
-      hint: 'Add a zone where the page has a picture the step took for text, or remove one where it took text for a picture, then drag the corners of the zone to fit. The page is made again at once.',
       addZone: 'Add a picture',
       removeZone: 'Remove a picture',
       zones: 'Zones you drew',
@@ -1798,7 +1796,6 @@ export const MESSAGES = {
     },
     brush: {
       name: 'Eraser brush',
-      hint: 'Brush over what the steps left on the page, then let go: the area is painted out with the fill colour of the step and the page is made again at once.',
       size: 'Brush size',
       sizeValue: (percent: number) => `${percent} % of the page width`,
       clear: 'Clear the brush',

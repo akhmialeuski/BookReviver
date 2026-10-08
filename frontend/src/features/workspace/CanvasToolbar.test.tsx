@@ -16,6 +16,7 @@ describe('CanvasToolbar', () => {
   function render(
     grid?: { on: boolean; onToggle: () => void },
     auto?: { busy: boolean; onClick: () => void },
+    contentType?: React.ReactNode,
   ): void {
     act(() =>
       root.render(
@@ -31,6 +32,7 @@ describe('CanvasToolbar', () => {
           onZoomIn={vi.fn()}
           onZoomOut={vi.fn()}
           grid={grid}
+          contentType={contentType}
           auto={auto}
         />,
       ),
@@ -92,5 +94,22 @@ describe('CanvasToolbar', () => {
 
     render(undefined, { busy: true, onClick });
     expect(autoButton()?.disabled).toBe(true);
+  });
+
+  it('stands the actions on the open page after the grid, the type of the page first and Auto next to it', () => {
+    render(
+      { on: false, onToggle },
+      { busy: false, onClick: vi.fn() },
+      <button type="button" data-testid="content-type-menu">
+        Text
+      </button>,
+    );
+
+    const order = [...container.querySelectorAll('[data-testid]')]
+      .map((node) => node.getAttribute('data-testid'))
+      .filter((id) =>
+        ['canvas-grid-toggle', 'content-type-menu', 'canvas-auto'].includes(id ?? ''),
+      );
+    expect(order).toEqual(['canvas-grid-toggle', 'content-type-menu', 'canvas-auto']);
   });
 });

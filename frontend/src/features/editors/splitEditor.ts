@@ -1,4 +1,3 @@
-import { LinePanel } from '@/features/editors/LinePanel';
 import { cutLine } from '@/features/editors/line';
 import { lineEditor } from '@/features/editors/lineEditor';
 import { SplitCanvas } from '@/features/editors/SplitCanvas';
@@ -32,5 +31,4 @@ export const splitEditor: EditorDefinition<SplitShape> = {
   describe: ({ line }) =>
     line === null ? MESSAGES.processing.timeline.hand.unknown : lineEditor.describe(line),
   Canvas: SplitCanvas,
-  Panel: LinePanel,
 };

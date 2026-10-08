@@ -134,6 +134,27 @@ describe('StepBar', () => {
     expect(list?.nextElementSibling).toBe(action);
   });
 
+  it('holds the buttons of the side panels at its two ends, as the one row above the canvas', () => {
+    act(() =>
+      root.render(
+        <StepBar
+          steps={STEPS}
+          openId={undefined}
+          states={new Map() as StepStates}
+          onOpen={onOpen}
+          leading={<button type="button" data-testid="toggle-strip" />}
+          trailing={<button type="button" data-testid="toggle-panel" />}
+        />,
+      ),
+    );
+
+    const bar = container.querySelector('[data-testid="step-bar"]');
+    expect(container.children).toHaveLength(1);
+    expect(bar?.firstElementChild).toBe(container.querySelector('[data-testid="toggle-strip"]'));
+    expect(bar?.lastElementChild).toBe(container.querySelector('[data-testid="toggle-panel"]'));
+    expect(bar?.querySelectorAll('ol')).toHaveLength(1);
+  });
+
   describe('for the steps of Cleanup', () => {
     // The recipe of text pages of Cleanup: the three steps that clean the pages of text, then the one the reader fills zones with
     const CLEANUP = barStepsOf(

@@ -129,6 +129,23 @@ describe('ProcessingPanel', () => {
     expect(history()?.getAttribute('data-page-id')).toBe('p1');
   });
 
+  it('keeps the run, with the summary of the stage that stands in it, in the footer and out of the body', () => {
+    render(processing({ recipes: [SAVED], recipe: SAVED }), true);
+
+    expect(container.querySelector('footer [data-testid="run-controls"]')).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="stage-panel-scroll"] [data-testid="run-controls"]'),
+    ).toBeNull();
+    expect(container.querySelector('header [data-testid="run-controls"]')).toBeNull();
+  });
+
+  it('has no section for what the pages show, since the type of the page is set from the toolbar of the canvas', () => {
+    render(processing({ recipes: [SAVED], recipe: SAVED }), true);
+
+    expect(container.textContent).not.toMatch(/What the pages? show/);
+    expect(container.querySelector('[data-testid^="content-type"]')).toBeNull();
+  });
+
   it('names the current version of the stage as the one the page stands on, not the row of the open step', () => {
     render(processing({ recipes: [SAVED], recipe: SAVED }), true);
 
