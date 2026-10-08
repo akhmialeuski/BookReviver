@@ -311,7 +311,8 @@ describe('useThisPage', () => {
         state(),
       );
 
-      expect(text('this-page-stopped')).toContain('Run through step 1 of 2 only.');
+      // The step is named by its title, as everywhere in the panel, and not by its place in the recipe
+      expect(text('this-page-stopped')).toContain('Run only through Deskew.');
     });
 
     it('offers no choice of the step whose result is shown, since the open step is the one shown', async () => {

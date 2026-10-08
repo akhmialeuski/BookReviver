@@ -385,13 +385,13 @@ export function StageScreen({
                 ? MESSAGES.processing.compare.before(
                     stageBeforeThis === null ? '' : MESSAGES.stages.names[stageBeforeThis],
                   )
-                : stepLabels.before(openStep.number)
+                : stepLabels.before(openStep.title)
             }
             afterLabel={
               openStep !== null
                 ? compareMode === CompareMode.Off
-                  ? stepLabels.input(openStep.number, openStep.title)
-                  : stepLabels.after(openStep.number, openStep.title)
+                  ? stepLabels.before(openStep.title)
+                  : stepLabels.after(openStep.title)
                 : MESSAGES.processing.compare.after(stageName)
             }
             pageIds={shown.map((item) => item.page.id)}

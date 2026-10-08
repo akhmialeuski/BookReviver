@@ -667,9 +667,8 @@ export const MESSAGES = {
       } satisfies Record<FigureState, string>,
       marks: { text: '¶', picture: '▣' } satisfies Record<ContentMark, string>,
       canvas: {
-        before: (number: number) => `Input of step ${number}`,
-        after: (number: number, title: string) => `Result of step ${number} · ${title}`,
-        input: (number: number, title: string) => `Input of step ${number} · ${title}`,
+        before: (title: string) => `Input of ${title}`,
+        after: (title: string) => `Result of ${title}`,
       },
       catalogue: {
         open: ADD_STEP,
@@ -1544,8 +1543,8 @@ export const MESSAGES = {
           'The lines of this page are still bent after dewarping, so the result may be off.',
       },
       reviewHint: 'Set it by hand in the page editor, or change the settings and preview again.',
-      stoppedAt: (step: number, total: number) =>
-        `Run through step ${step} of ${total} only. The next stage reads this page after the rest is run.`,
+      stoppedAt: (title: string) =>
+        `Run only through ${title}. The next stage reads this page after the rest is run.`,
       how: 'Method',
       automatic: 'Automatic',
       manual: 'By hand',

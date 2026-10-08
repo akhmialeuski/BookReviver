@@ -9,6 +9,7 @@ import { usePageChain } from '@/features/processing/usePageChain';
 import type { Processing } from '@/features/processing/useProcessing';
 import { FactList } from '@/features/workspace/FactList';
 import type { PageSlot } from '@/features/workspace/StagePanel';
+import { barStepsOf } from '@/features/workspace/steps';
 import type { StripItem } from '@/features/workspace/strip';
 import { MESSAGES } from '@/shared/messages';
 
@@ -57,7 +58,6 @@ export function useThisPage(
   const { page, row } = item;
   const version = row?.version ?? null;
   const result = readChainResult(chain);
-  const stepCount = recipe?.steps.length ?? 0;
   const review = row?.review ?? null;
   const facts: Fact[] = [];
   if (editor !== null && version !== null) {
@@ -90,7 +90,9 @@ export function useThisPage(
         ) : null}
         {row?.through_step === null || row?.through_step === undefined ? null : (
           <p className="text-sm text-status-attention" data-testid="this-page-stopped">
-            {labels.thisPage.stoppedAt(row.through_step + 1, stepCount)}
+            {labels.thisPage.stoppedAt(
+              barStepsOf(recipe, processing.catalogue)[row.through_step]?.title ?? '',
+            )}
           </p>
         )}
         {review === null ? null : (

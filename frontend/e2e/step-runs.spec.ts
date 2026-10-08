@@ -146,8 +146,9 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
     await expect(filter.locator('option:checked')).not.toContainText('step');
     await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
     await page.getByTestId('strip-page').first().click();
-    await expect(page.getByTestId('this-page-stopped')).toContainText(
-      `Run through step 1 of ${stepCount} only`,
+    // The page section names the step the page stopped at by its title, with no number
+    await expect(page.getByTestId('this-page-stopped')).toHaveText(
+      /^Run only through [^0-9].*\. The next stage reads this page after the rest is run\.$/,
     );
     await page.getByTestId('panel-page').scrollIntoViewIfNeeded();
     await snap(page, 'page-stopped-at-the-first-step');
