@@ -12,18 +12,21 @@ import {
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
-import { runPages } from './support/page-work';
+import { countRunJobs, readStageRows, runPages } from './support/page-work';
 
 /**
  * The step bar and the workspace of a step in Geometry: the bar stands above the canvas with the buttons of the strip and
  * the panel at its ends and takes nothing of the screen away, a step opens on a link of its own with its input on the canvas and its section in the panel, the
  * dots of the bar tell the state of each step on the open page, and the step stays open as the page and the step change.
  *
- * The book has two Deskew steps, one after the other, both for every page of the recipe.
+ * The book has two Deskew steps, one after the other, both for every page of the recipe. A page of text that is changed to a
+ * Colour picture from the canvas toolbar moves to the recipe of pictures, which the choice of the recipe counts, and goes out
+ * of date without a run, which the button of the footer makes.
  */
 
 const PAGES = 3;
 const PLATE_POSITION = 1;
+const TEXT_POSITION = 2;
 const SCENARIO_TIMEOUT_MS = 240_000;
 const DESKEW = 'geometry.deskew';
 const FIRST_DESKEW_INDEX = 1;
@@ -67,6 +70,13 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     // The bar takes the place of the row above the canvas, so the buttons of the strip and the panel are its ends
     await expect(bar.getByTestId('toggle-strip')).toBeVisible();
     await expect(bar.getByTestId('toggle-panel')).toBeVisible();
+    // No row of buttons stands above the bar: it is the top of the workspace
+    const screen = await page.getByTestId('stage-screen').boundingBox();
+    const top = await bar.boundingBox();
+    expect(screen).not.toBeNull();
+    expect(top).not.toBeNull();
+    expect(Math.abs((top?.y ?? 0) - (screen?.y ?? 0))).toBeLessThanOrEqual(1);
+    await snap(page, 'workspace-step-bar-toggles');
   });
 
   await test.step('everything the screen had before the bar is where it was', async () => {
@@ -149,6 +159,45 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     );
     await expect(page.getByTestId('this-page')).toBeVisible();
     await expect(barSteps).toHaveCount(stepCount);
+  });
+
+  await test.step('a page of text is changed to a Colour picture from the toolbar, which counts it in the recipe of pictures and runs nothing', async () => {
+    const recipes = page.getByTestId('recipe-select');
+    await page.getByTestId('strip-page').nth(TEXT_POSITION).click();
+    await expect(page.getByTestId('strip-page').nth(TEXT_POSITION)).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    // The plate is a picture by its kind, and the two other pages are text
+    await expect(recipes).toContainText('Text · 2 pages');
+    await expect(recipes).toContainText('Colour picture · 1 page');
+    const rowsBefore = await readStageRows(page);
+    expect(rowsBefore[TEXT_POSITION]?.status).toBe('fresh');
+    await waitForIdleJobs(page, openProjectId(page));
+    const runsBefore = await countRunJobs(page);
+
+    await page.getByTestId('content-type-menu').click();
+    await page.getByTestId('content-type-color-picture').click();
+
+    await expect(recipes).toContainText('Text · 1 page');
+    await expect(recipes).toContainText('Colour picture · 2 pages');
+    // The page now stands in the recipe of pictures, which has the steps the plate has
+    await expect(barSteps).toHaveCount(stepCount);
+    await expect(page.getByTestId('strip-page').nth(TEXT_POSITION)).toContainText('Out of date');
+    await expect(page.getByTestId('run-summary')).toContainText('1 page out of date');
+    const rowsAfter = await readStageRows(page);
+    expect(rowsAfter[TEXT_POSITION]?.status).toBe('stale');
+    expect(rowsAfter[TEXT_POSITION]?.kind).toBe('color-picture');
+    await waitForIdleJobs(page, openProjectId(page));
+    expect(await countRunJobs(page)).toBe(runsBefore);
+    await snap(page, 'page-changed-to-a-colour-picture');
+  });
+
+  await test.step('the button of the footer runs the page that is out of date, by the recipe of pictures', async () => {
+    await runPages(page, { pages: 'attention' });
+    const rows = await readStageRows(page);
+    expect(rows[TEXT_POSITION]?.status).toBe('fresh');
+    expect(rows[TEXT_POSITION]?.kind).toBe('color-picture');
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

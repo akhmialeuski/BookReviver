@@ -31,11 +31,14 @@ const STEP_ADDRESS = /\/stages\/[a-z-]+\/steps\/[0-9a-f-]{36}(\?|$)/;
 // An asset of a page version: `.../assets/pages/<page>/<stage>/<processor>/<version>/...`, the version being 16 hex digits
 const VERSION_IN_PATH = /\/assets\/pages\/[^/]+\/[^/]+\/[^/]+\/([0-9a-f]{16})\//;
 
-/** The stages with a step bar and the first and the last step of each, which are shown in the pictures of the run. */
-const BAR_STAGES = [
-  { stage: 'geometry', picture: 'Margins' },
-  { stage: 'cleanup', picture: 'Binarization' },
-] as const;
+/**
+ * The stages with a step bar, the step of each that is shown in the pictures of the run, and the steps whose picture is
+ * not the result of the stage, so a strip that drew the result there would be caught.
+ */
+const BAR_STAGES: readonly { stage: string; picture: string; apart: readonly string[] }[] = [
+  { stage: 'geometry', picture: 'Margins', apart: ['Select content', 'Margins'] },
+  { stage: 'cleanup', picture: 'Binarization', apart: [] },
+];
 
 /** Read the identifier of the version an asset path belongs to, or null for a path of no version. */
 function versionIdOf(assetPath: string | null | undefined): string | null {
@@ -169,15 +172,18 @@ test('the strip and the canvas show the same picture of the page at every step o
     await page.unrouteAll({ behavior: 'ignoreErrors' });
   });
 
-  for (const { stage, picture } of BAR_STAGES) {
+  for (const { stage, picture, apart } of BAR_STAGES) {
     await test.step(`on ${stage} every step shows the picture the strip shows on its canvas`, async () => {
       await page.goto(`${bookPath}/stages/${stage}`);
       await expect(page).toHaveURL(STEP_ADDRESS);
       await expect(page.getByTestId('strip-page')).toHaveCount(1);
       const count = await barSteps.count();
       expect(count).toBeGreaterThan(1);
+      // The version the stage as a whole ended with, which is what the strip shows when it falls back to the stage
+      const { head } = await rowOf(page, projectId, stage);
       for (let index = 0; index < count; index += 1) {
         const stepId = await openStepAt(index);
+        const title = (await barSteps.nth(index).textContent()) ?? '';
         await expect(canvas).toHaveAttribute('data-state', 'ready', { timeout: RUN_TIMEOUT_MS });
         // The row of the step says which version is the picture, so the strip is read against the server and the canvas
         const { picture: expected } = await rowOf(page, projectId, stage, stepId);
@@ -192,8 +198,12 @@ test('the strip and the canvas show the same picture of the page at every step o
           expect(drawn).toBe(shown);
           expect(shown).toBe(expected);
         }).toPass({ timeout: RUN_TIMEOUT_MS });
-        const title = await barSteps.nth(index).textContent();
-        if (title?.includes(picture)) {
+        if (apart.some((step) => title.includes(step))) {
+          // These steps read a picture that is not the result of the stage, and the strip shows what the step reads
+          expect(head).not.toBeNull();
+          expect(versionIdOf(await thumbnail.getAttribute('src'))).not.toBe(head);
+        }
+        if (title.includes(picture)) {
           await snap(page, `${stage}-${picture.toLowerCase()}`);
         }
       }

@@ -10,11 +10,13 @@ import {
   waitForIdleJobs,
   writeMixedFolder,
 } from './support/account';
+import { readStageRows, runPages, selectPagesInGrid } from './support/page-work';
 
 /**
  * The content type of a page: the program finds text, a colour picture or a black-and-white one on each page as the
  * pages are made, the strip marks every page with it, and the selected pages are changed at once from the menu of the
- * canvas toolbar and given back to the program.
+ * canvas toolbar and given back to the program. A page that was run and is given another content type is out of date, and
+ * the strip draws a pencil on the mark of a page whose content type was set by hand.
  */
 
 const SCENARIO_TIMEOUT_MS = 240_000;
@@ -49,6 +51,9 @@ test('the program finds what each page shows, the strip marks it, and the select
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writeMixedFolder();
   const marks = page.getByTestId('strip-content');
+  const tiles = page.getByTestId('strip-page');
+  // The pencil the strip draws on the mark of a page whose content type was set by hand
+  const pencil = (position: number) => marks.nth(position).locator('svg.lucide-pencil');
   const menu = page.getByTestId('content-type-menu');
   const selectedScope = page.getByTestId('content-scope-selected');
 
@@ -79,16 +84,19 @@ test('the program finds what each page shows, the strip marks it, and the select
     await snap(page, 'content-type-marks-in-the-strip');
   });
 
+  await test.step('the stage runs on every page, so each page has a result that can go out of date', async () => {
+    await runPages(page);
+    expect((await readStageRows(page)).map((row) => row.status)).toEqual([
+      'fresh',
+      'fresh',
+      'fresh',
+      'fresh',
+    ]);
+  });
+
   await test.step('two selected pages of different types are changed to text at once', async () => {
-    await page.getByTestId('strip-view-switch').click();
-    await expect(page).toHaveURL(/view=grid/);
-    const tiles = page.getByTestId('strip-page');
-    await tiles.nth(COLOUR_POSITION).click();
-    await tiles.nth(BW_POSITION).click({ modifiers: ['ControlOrMeta'] });
-    await expect(page.getByTestId('grid-selection')).toHaveText('2 pages selected');
     // The selection stays as the strip comes back, and the menu of the canvas toolbar reaches the selected pages
-    await page.getByTestId('strip-view-switch').click();
-    await expect(page).not.toHaveURL(/view=grid/);
+    await selectPagesInGrid(page, [COLOUR_POSITION, BW_POSITION]);
     await menu.click();
     await expect(selectedScope).toContainText('2');
     await selectedScope.click();
@@ -117,6 +125,50 @@ test('the program finds what each page shows, the strip marks it, and the select
     await expect(marks.nth(COLOUR_POSITION)).toHaveAttribute('data-source', 'detected');
     await expect(marks.nth(BW_POSITION)).toHaveAttribute('data-content', 'bw-picture');
     await snap(page, 'content-type-detected-again');
+  });
+
+  await test.step('two pages of text are changed to Colour picture at once, with a pencil on both marks and both out of date', async () => {
+    await selectPagesInGrid(page, [TEXT_POSITION, LAST_POSITION]);
+    await expect(pencil(TEXT_POSITION)).toHaveCount(0);
+    await expect(pencil(LAST_POSITION)).toHaveCount(0);
+    await menu.click();
+    await expect(selectedScope).toContainText('2');
+    await selectedScope.click();
+    await page.getByTestId('content-type-color-picture').click();
+    await expect
+      .poll(() => contentOf(page))
+      .toEqual([
+        'color-picture:hand',
+        'color-picture:detected',
+        'bw-picture:detected',
+        'color-picture:hand',
+      ]);
+    for (const position of [TEXT_POSITION, LAST_POSITION]) {
+      await expect(marks.nth(position)).toHaveAttribute('data-content', 'color-picture');
+      await expect(pencil(position)).toBeVisible();
+      await expect(tiles.nth(position)).toContainText('Out of date');
+    }
+    // The pages that were not changed have no pencil
+    await expect(pencil(COLOUR_POSITION)).toHaveCount(0);
+    await expect(pencil(BW_POSITION)).toHaveCount(0);
+    const rows = await readStageRows(page);
+    expect(rows[TEXT_POSITION]?.status).toBe('stale');
+    expect(rows[LAST_POSITION]?.status).toBe('stale');
+    await snap(page, 'content-type-colour-picture-by-hand');
+  });
+
+  await test.step('Detect again gives the two pages back to the program, which finds text and takes the pencil off', async () => {
+    await menu.click();
+    await expect(selectedScope).toHaveAttribute('aria-checked', 'true');
+    await page.getByTestId('content-type-detect').click();
+    await expect
+      .poll(() => contentOf(page), { timeout: DETECT_TIMEOUT_MS })
+      .toEqual(['text:detected', 'color-picture:detected', 'bw-picture:detected', 'text:detected']);
+    // The menu stays open while the program works, so it is shut once the pages are found again
+    await page.keyboard.press('Escape');
+    await expect(pencil(TEXT_POSITION)).toHaveCount(0);
+    await expect(pencil(LAST_POSITION)).toHaveCount(0);
+    await expect(marks.nth(TEXT_POSITION)).toHaveAttribute('data-source', 'detected');
   });
 
   await test.step('a single open page is changed without a selection', async () => {

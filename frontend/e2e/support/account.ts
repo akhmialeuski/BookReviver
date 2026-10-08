@@ -334,8 +334,12 @@ export async function waitForIdleJobs(page: Page, projectId: string): Promise<vo
     .toBe(0);
 }
 
-/** Change the kind of the page at a position of the open book, as the Order stage does, straight through the API. */
-export async function setKind(page: Page, position: number, kind: string): Promise<void> {
+/** Change a field of the page at a position of the open book straight through the API, as the screen does. */
+async function patchPageAt(
+  page: Page,
+  position: number,
+  changes: Record<string, string>,
+): Promise<void> {
   const projectId = openProjectId(page);
   const listed = await page.request.get(`/api/v1/projects/${projectId}/pages?size=100`);
   const items = ((await listed.json()) as { items: { id: string; position: number }[] }).items;
@@ -347,9 +351,27 @@ export async function setKind(page: Page, position: number, kind: string): Promi
   const token = cookies.find((cookie) => cookie.name === CSRF_COOKIE_NAME)?.value ?? '';
   const response = await page.request.patch(`/api/v1/projects/${projectId}/pages/${target.id}`, {
     headers: { [CSRF_HEADER_NAME]: token },
-    data: { kind },
+    data: changes,
   });
   expect(response.ok()).toBe(true);
+}
+
+/** Change the kind of the page at a position of the open book, as the Order stage does, straight through the API. */
+export async function setKind(page: Page, position: number, kind: string): Promise<void> {
+  await patchPageAt(page, position, { kind });
+}
+
+/**
+ * Say by hand what the page at a position of the open book shows, as the menu of the canvas toolbar does.
+ *
+ * @param contentType What the page shows: `text`, `color-picture` or `bw-picture`.
+ */
+export async function setContentType(
+  page: Page,
+  position: number,
+  contentType: string,
+): Promise<void> {
+  await patchPageAt(page, position, { content_type: contentType });
 }
 
 /**

@@ -13,7 +13,7 @@ import {
   writeBentSheetsFolder,
 } from './support/account';
 import { dragFrom, pairOf } from './support/layer';
-import { runPages } from './support/page-work';
+import { pageIds, readEffective, runPages } from './support/page-work';
 
 /**
  * The Geometry stage on scans of a sheet whose lines are bent into the gutter: the dewarping step of the default recipe
@@ -21,7 +21,8 @@ import { runPages } from './support/page-work';
  *
  * The page is shown bent before the stage runs, flattened after it, and under the curves editor with its top and bottom
  * curve. A node dragged by the reader is saved when it is let go, the stage runs again on that page, and the curves survive
- * a run of the stage on all pages until "Auto" takes them away.
+ * a run of the stage on all pages until "Auto" takes them away. A value of "Least bend" for the even pages changes the
+ * even page after a run, and the odd page keeps the value the recipe holds.
  */
 
 const SCENARIO_TIMEOUT_MS = 240_000;
@@ -33,6 +34,11 @@ const CURVES = 'Dewarp';
 const CURVE_NODES = '5';
 const GRID_ROWS = '5';
 const SIMPLE_ROWS = '2';
+const ODD_POSITION = 0;
+const EVEN_POSITION = 1;
+const LEAST_BEND = 'min_bend';
+// More bend than a page of the fixture has, so a page that takes it is left as it is
+const LEAST_BEND_OF_THE_EVEN_PAGES = 100;
 
 // Tall enough for the whole page to lie above the toolbar of the canvas, so both curves can be reached
 test.use({ viewport: { width: 1280, height: 1000 } });
@@ -47,21 +53,21 @@ async function runAll(page: Page): Promise<void> {
 
 /** What the API holds of a ready version of the dewarping step of the first page of the open book. */
 interface DewarpVersion {
+  id: string;
   transform: { kind: string; mesh_key: string | null };
   data: Record<string, unknown>;
   edit_hash: string;
 }
 
-/** Read the newest ready version of the dewarping step of the first page of the open book. */
-async function dewarpVersion(page: Page): Promise<DewarpVersion> {
+/** Read the newest ready version of the dewarping step of a page of the open book, the first unless a place is given. */
+async function dewarpVersion(page: Page, position = ODD_POSITION): Promise<DewarpVersion> {
   const projectId = openProjectId(page);
-  const pages = await page.request.get(`/api/v1/projects/${projectId}/pages?size=100`);
-  const [first] = ((await pages.json()) as { items: { id: string }[] }).items;
-  if (first === undefined) {
-    throw new Error('The book has no page.');
+  const target = (await pageIds(page))[position];
+  if (target === undefined) {
+    throw new Error(`The book has no page at ${position}.`);
   }
   const listed = await page.request.get(
-    `/api/v1/projects/${projectId}/pages/${first.id}/versions?stage=geometry&scale=full&size=100`,
+    `/api/v1/projects/${projectId}/pages/${target}/versions?stage=geometry&scale=full&size=100`,
   );
   const items = (
     (await listed.json()) as {
@@ -76,7 +82,7 @@ async function dewarpVersion(page: Page): Promise<DewarpVersion> {
     .filter((item) => item.processor.key === 'geometry.dewarp' && item.state === 'ready')
     .toSorted((a, b) => b.created_at.localeCompare(a.created_at))[0];
   if (made === undefined) {
-    throw new Error('The first page has no ready version of the dewarping.');
+    throw new Error(`The page at ${position} has no ready version of the dewarping.`);
   }
   return made;
 }
@@ -214,6 +220,41 @@ test('a reader flattens a page bent into the gutter, lays its two curves by hand
     // The version of the step without the edit is found again in the cache, so it is not the newest, and the facts of
     // the page are the ones the step found before the reader moved a node
     await expect.poll(factsText, { timeout: RUN_TIMEOUT_MS }).toBe(automaticFacts);
+  });
+
+  await test.step('a value of Least bend for the even pages changes the even page after a run, and the odd page keeps the value of the recipe', async () => {
+    const [dewarp = ''] = await stepIdsOf(page, 'geometry', 'geometry.dewarp');
+    const ids = await pageIds(page);
+    const bend = page
+      .getByTestId('step-panel')
+      .locator(`[data-testid="field-values"][data-field="${LEAST_BEND}"]`);
+    // Both pages are flattened by the value of the recipe, which the bent sheets exceed
+    const oddBefore = await dewarpVersion(page, ODD_POSITION);
+    expect((await dewarpVersion(page, EVEN_POSITION)).data.skipped).toBe(false);
+    expect(oddBefore.data.skipped).toBe(false);
+
+    await bend.getByTestId('value-add').click();
+    await page.getByTestId('value-choice-even').click();
+    await expect(
+      bend.getByTestId('value-chip-edit').filter({ hasText: 'Even pages' }),
+    ).toHaveAttribute('aria-expanded', 'true');
+    await bend.locator('input[type="number"]').fill(`${LEAST_BEND_OF_THE_EVEN_PAGES}`);
+    const options = { stepId: dewarp, field: LEAST_BEND };
+    await expect
+      .poll(() => readEffective(page, ids[EVEN_POSITION] ?? '', options))
+      .toBe(LEAST_BEND_OF_THE_EVEN_PAGES);
+    expect(await readEffective(page, ids[ODD_POSITION] ?? '', options)).not.toBe(
+      LEAST_BEND_OF_THE_EVEN_PAGES,
+    );
+    await waitForIdleJobs(page, openProjectId(page));
+
+    await runAll(page);
+    // The even page took the value and was left as it was, and the odd page is the version it had, flattened by the recipe
+    const odd = await dewarpVersion(page, ODD_POSITION);
+    expect(odd.id).toBe(oddBefore.id);
+    expect(odd.data.skipped).toBe(false);
+    expect((await dewarpVersion(page, EVEN_POSITION)).data.skipped).toBe(true);
+    await snap(page, 'dewarp-least-bend-of-the-even-pages');
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

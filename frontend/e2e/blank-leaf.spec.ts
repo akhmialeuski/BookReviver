@@ -31,7 +31,7 @@ interface ListedPage {
   id: string;
   position: number;
   blank_fill: string;
-  images: { full: string } | null;
+  images: { full: string; thumbnail: string } | null;
 }
 
 /** Read the pages of the open book as the API lists them. */
@@ -75,6 +75,8 @@ test('a blank scan gets a leaf of the paper of the book in its place, and the sc
   const folder = await writeSheetsFolder(PAGES);
   const tiles = page.getByTestId('order-tile');
   const block = page.getByTestId('blank-leaf');
+  // What the grid drew for each blank page before it had a leaf, read from the manifest of the book
+  const scanThumbnails = new Map<number, string>();
 
   await test.step('two pages of the book are blank, and the panel offers the image of a blank page', async () => {
     await registerAndSignIn(page);
@@ -85,6 +87,12 @@ test('a blank scan gets a leaf of the paper of the book in its place, and the sc
     }
     await openOrderStage(page);
     await expect(tiles).toHaveCount(PAGES);
+    for (const entry of await listPages(page)) {
+      if (BLANK_POSITIONS.includes(entry.position)) {
+        scanThumbnails.set(entry.position, entry.images?.thumbnail ?? '');
+      }
+    }
+    expect([...scanThumbnails.values()].every((thumbnail) => thumbnail !== '')).toBe(true);
     await tiles.nth(1).click();
     await expect(block).toBeVisible();
     await expect(block.getByRole('radio', { name: 'Keep the scan' })).toBeChecked();
@@ -109,6 +117,14 @@ test('a blank scan gets a leaf of the paper of the book in its place, and the sc
     await waitForImages(page, BLANK_POSITIONS, 'paper', true);
     await waitForIdleJobs(page, openProjectId(page));
     await expect(tiles.nth(2)).toContainText('Blank');
+    // The grid itself draws the leaf of every blank page, with no reload of the screen
+    const listed = await listPages(page);
+    for (const position of BLANK_POSITIONS) {
+      const leaf = listed.find((entry) => entry.position === position)?.images?.thumbnail ?? '';
+      expect(leaf).not.toBe('');
+      expect(leaf).not.toBe(scanThumbnails.get(position));
+      await expect(tiles.nth(position).locator('img')).toHaveAttribute('src', leaf);
+    }
     await snap(page, 'blank-leaf-paper');
   });
 
