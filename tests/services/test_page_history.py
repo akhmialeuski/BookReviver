@@ -489,14 +489,14 @@ class TestClear:
         """
         actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)])
-        variant = await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, draft, RecipeKind.BLANK)
+        blank_recipe = await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, draft, RecipeKind.BLANK)
         uow = fx_kit.uow()
         record = await uow.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
-        await uow.page_stages.save(evolve(record, recipe_id=variant.id))
+        await uow.page_stages.save(evolve(record, recipe_id=blank_recipe.id))
         await uow.commit()
         await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
         stored = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
-        expect((stored.head_version_id, stored.recipe_id, stored.through_step) == (made[0].id, variant.id, 0))
+        expect((stored.head_version_id, stored.recipe_id, stored.through_step) == (made[0].id, blank_recipe.id, 0))
         assert_expectations()
 
     async def test_the_first_step_leaves_the_stage_with_no_current_version(self, fx_kit: ProcessingKit) -> None:

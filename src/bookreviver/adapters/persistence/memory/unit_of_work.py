@@ -1478,7 +1478,7 @@ class InMemoryStepValuesRepository(InMemoryRepository[StepValues, StepValuesKey]
     async def find(self, key: StepValuesKey) -> StepValues | None:
         """Return the values one part of the pages has for one step.
 
-        :param key: The step and the part of the pages.
+        :param key: The project, the step and the part of the pages.
         :type key: StepValuesKey
         :returns: The values, or None.
         :rtype: StepValues | None
@@ -1486,32 +1486,32 @@ class InMemoryStepValuesRepository(InMemoryRepository[StepValues, StepValuesKey]
         return self._rows.get(key)
 
     @override
-    async def list_for_step(self, step_id: StepId) -> Sequence[StepValues]:
-        """Return the values every part of the pages has for one step, by scope and group.
+    async def list_for_step(self, project_id: ProjectId, step_id: StepId) -> Sequence[StepValues]:
+        """Return the values every part of the pages of a project has for one step, by scope and group.
 
+        :param project_id: Project owning the step.
+        :type project_id: ProjectId
         :param step_id: The step of a recipe.
         :type step_id: StepId
         :returns: The values of the step.
         :rtype: Sequence[StepValues]
         """
         return sorted(
-            (values for values in self._rows.values() if values.step_id == step_id),
+            (values for values in self._rows.values() if values.project_id == project_id and values.step_id == step_id),
             key=lambda values: (list(ValueScope).index(values.scope), values.group_label),
         )
 
     @override
-    async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[StepValues]:
-        """Return the values of every step of one stage of a project, by step, scope and group.
+    async def list_for_project(self, project_id: ProjectId) -> Sequence[StepValues]:
+        """Return the values of every step of a project, by step, scope and group.
 
         :param project_id: Project owning the steps.
         :type project_id: ProjectId
-        :param stage: The stage.
-        :type stage: Stage
-        :returns: The values of the stage.
+        :returns: The values of the project.
         :rtype: Sequence[StepValues]
         """
         return sorted(
-            (values for values in self._rows.values() if values.project_id == project_id and values.stage == stage),
+            (values for values in self._rows.values() if values.project_id == project_id),
             key=lambda values: (str(values.step_id), list(ValueScope).index(values.scope), values.group_label),
         )
 

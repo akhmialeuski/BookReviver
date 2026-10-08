@@ -7,19 +7,25 @@ again. A record that already failed stays failed, since a stale mark would hide 
 
 The class writes the records through the unit of work of its caller, which commits, and then announces them, so a
 browser reads the stages it shows again.
+
+A value for the odd pages or the even pages is taken by place, so a page that a change of the places of the pages turns
+over to the other side runs with other parameters, and its stages are marked stale by ``watching_sides``.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from attrs import evolve
 
 from bookreviver.domain.entities import PageStage
 from bookreviver.domain.enums import Stage, StageState, ValueScope
 from bookreviver.domain.events import PageStageChanged
+from bookreviver.domain.step_values import SIDE_SCOPES, pages_changing_side
 from bookreviver.domain.values import PageStageKey
+from bookreviver.services.projects import book_pages
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Sequence
+    from collections.abc import Collection, Iterable, Sequence
+    from types import TracebackType
 
     from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
     from bookreviver.ports.persistence import UnitOfWork
@@ -108,11 +114,23 @@ class StageRecords:
         :rtype: list[PageStage]
         """
         record = await self._uow.page_stages.find(PageStageKey(page_id, stage))
-        if record is None or record.state is not StageState.FRESH:
+        return await self._stale([] if record is None else [record])
+
+    async def mark_pages_stale(self, page_ids: Collection[PageId], stages: Collection[Stage]) -> list[PageStage]:
+        """Mark some stages of some pages stale, which is one read for all of them.
+
+        :param page_ids: Pages whose stages are marked.
+        :type page_ids: Collection[PageId]
+        :param stages: The stages to mark.
+        :type stages: Collection[Stage]
+        :returns: The records that became stale, none for a stage that has not run or is stale or failed already.
+        :rtype: list[PageStage]
+        """
+        if not page_ids or not stages:
             return []
-        stale = evolve(record, state=StageState.STALE, updated_at=self._clock.now())
-        await self._uow.page_stages.save(stale)
-        return [stale]
+        return await self._stale(
+            record for record in await self._uow.page_stages.list_for_pages(page_ids) if record.stage in stages
+        )
 
     async def mark_group_stale(
         self, project_id: ProjectId, page_id: PageId, labels: Collection[str]
@@ -131,12 +149,47 @@ class StageRecords:
         :returns: The records that became stale, none for a page that has not been through such a stage.
         :rtype: list[PageStage]
         """
-        stale: list[PageStage] = []
-        for record in await self._uow.page_stages.list_for_page(page_id):
-            valued = await self._uow.step_values.list_for_stage(project_id, record.stage)
-            if any(values.scope is ValueScope.GROUP and values.group_label in labels for values in valued):
-                stale.extend(await self.mark_stale(page_id, record.stage))
-        return stale
+        valued = await self._uow.step_values.list_for_project(project_id)
+        stages = {
+            values.stage for values in valued if values.scope is ValueScope.GROUP and values.group_label in labels
+        }
+        return await self.mark_pages_stale([page_id], stages)
+
+    async def mark_sides_stale(self, project_id: ProjectId, page_ids: Collection[PageId]) -> list[PageStage]:
+        """Mark the stages of pages stale in which the odd pages or the even pages have values for a step.
+
+        A page takes the values of the odd or the even pages by its place in the book, so a page whose place changed
+        by an odd number runs with other parameters wherever one of the two sides has a value, and in no other stage.
+
+        :param project_id: Project owning the pages and the values.
+        :type project_id: ProjectId
+        :param page_ids: Pages that stand on the other side of the book than they did.
+        :type page_ids: Collection[PageId]
+        :returns: The records that became stale, none for a page that has not been through such a stage.
+        :rtype: list[PageStage]
+        """
+        return await self.mark_pages_stale(page_ids, await self.side_stages(project_id))
+
+    def watching_sides(self, project_id: ProjectId) -> SideWatch:
+        """Watch the pages of a project for the ones that a block of code turns over to the other side of the book.
+
+        :param project_id: Project whose pages the block moves, adds or deletes.
+        :type project_id: ProjectId
+        :returns: The watch, which is entered with ``async with`` around the block.
+        :rtype: SideWatch
+        """
+        return SideWatch(records=self, uow=self._uow, project_id=project_id)
+
+    async def side_stages(self, project_id: ProjectId) -> set[Stage]:
+        """Find the stages in which the odd pages or the even pages of a project have values for a step.
+
+        :param project_id: Project owning the values.
+        :type project_id: ProjectId
+        :returns: The stages, none when no side has a value.
+        :rtype: set[Stage]
+        """
+        valued = await self._uow.step_values.list_for_project(project_id)
+        return {values.stage for values in valued if values.scope in SIDE_SCOPES}
 
     async def mark_content_stale(self, page_id: PageId) -> list[PageStage]:
         """Mark every stage of a page after the page order stale, because what the page shows changed.
@@ -150,11 +203,11 @@ class StageRecords:
                   are stale or failed already.
         :rtype: list[PageStage]
         """
-        stale: list[PageStage] = []
-        for record in await self._uow.page_stages.list_for_page(page_id):
-            if record.stage.position > Stage.PAGE_ORDER.position:
-                stale.extend(await self.mark_stale(page_id, record.stage))
-        return stale
+        return await self._stale(
+            record
+            for record in await self._uow.page_stages.list_for_page(page_id)
+            if record.stage.position > Stage.PAGE_ORDER.position
+        )
 
     async def mark_recipe_stale(self, recipe_id: RecipeId) -> list[PageStage]:
         """Mark the stage of every page a recipe processed stale, because the recipe changed.
@@ -164,10 +217,7 @@ class StageRecords:
         :returns: The records that became stale.
         :rtype: list[PageStage]
         """
-        stale: list[PageStage] = []
-        for record in await self._uow.page_stages.list_for_recipe(recipe_id):
-            stale.extend(await self.mark_stale(record.page_id, record.stage))
-        return stale
+        return await self._stale(await self._uow.page_stages.list_for_recipe(recipe_id))
 
     async def mark_failed(self, page_id: PageId, stage: Stage, *, recipe_id: RecipeId | None) -> PageStage:
         """Record that a stage failed on a page, keeping the version that was current before.
@@ -215,11 +265,86 @@ class StageRecords:
         :returns: The records that became stale.
         :rtype: list[PageStage]
         """
-        stale = [
-            evolve(later, state=StageState.STALE, updated_at=self._clock.now())
+        return await self._stale(
+            later
             for later in await self._uow.page_stages.list_for_page(page_id)
-            if later.stage.position > stage.position and later.state is StageState.FRESH
+            if later.stage.position > stage.position
+        )
+
+    async def _stale(self, records: Iterable[PageStage]) -> list[PageStage]:
+        """Write the up-to-date ones of some records as stale, and leave the stale and the failed ones as they are.
+
+        :param records: Records read in the transaction of the caller.
+        :type records: Iterable[PageStage]
+        :returns: The records that became stale.
+        :rtype: list[PageStage]
+        """
+        stale = [
+            evolve(record, state=StageState.STALE, updated_at=self._clock.now())
+            for record in records
+            if record.state is StageState.FRESH
         ]
         for record in stale:
             await self._uow.page_stages.save(record)
         return stale
+
+
+class SideWatch:
+    """Marks stale the pages that the places a block changes turn over to the other side of the book.
+
+    The order of the book is read before the block and after it, so inserting, deleting and moving pages are all
+    covered by the one comparison, and nothing is read when no side has values for a step. The records are marked in the
+    transaction of the caller, which commits and announces them. A block that raises marks nothing.
+
+    :ivar turned: The records that became stale, which are none until a block ends without an error.
+    """
+
+    def __init__(self, *, records: StageRecords, uow: UnitOfWork, project_id: ProjectId) -> None:
+        """Watch the pages of a project through the unit of work of the caller.
+
+        :param records: Writer of the stage records.
+        :type records: StageRecords
+        :param uow: Unit of work the order of the book is read through.
+        :type uow: UnitOfWork
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        """
+        self._records = records
+        self._uow = uow
+        self._project_id = project_id
+        self._before: list[PageId] | None = None
+        self.turned: list[PageStage] = []
+
+    async def __aenter__(self) -> Self:
+        """Remember the order of the book, when a side has values for a step.
+
+        :returns: The watch.
+        :rtype: Self
+        """
+        if await self._records.side_stages(self._project_id):
+            self._before = await self._order()
+        return self
+
+    async def __aexit__(
+        self, exc_type: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None
+    ) -> None:
+        """Mark the pages that stand on the other side now, unless the block raised.
+
+        :param exc_type: Type of the exception the block raised, or None.
+        :type exc_type: type[BaseException] | None
+        :param exc: The exception the block raised, or None.
+        :type exc: BaseException | None
+        :param traceback: Traceback of the exception, or None.
+        :type traceback: TracebackType | None
+        """
+        if exc_type is None and self._before is not None:
+            turned = pages_changing_side(self._before, await self._order())
+            self.turned = await self._records.mark_sides_stale(self._project_id, turned)
+
+    async def _order(self) -> list[PageId]:
+        """Read the pages of the project in book order, the placeholders and the pages kept out of the book included.
+
+        :returns: The identifiers of the pages, by place.
+        :rtype: list[PageId]
+        """
+        return [page.id for page in await book_pages(self._uow.pages, self._project_id)]

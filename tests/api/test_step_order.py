@@ -1,4 +1,4 @@
-"""Tests for the order of steps on the recipe, variant and profile endpoints, over processors that declare a place."""
+"""Tests for the order of steps on the recipe and profile endpoints, over processors that declare a place."""
 
 from typing import TYPE_CHECKING
 

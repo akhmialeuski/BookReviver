@@ -48,7 +48,7 @@ from bookreviver.domain.values import PageSize, PageStageKey, PageStepKey, Step
 from bookreviver.services.book_measure import NORMALIZE_KEY, BlockMeasure, BookBlocks, wants_the_book
 from bookreviver.services.spread_splits import SpreadSplit
 from bookreviver.services.stage_inputs import StageInputs
-from bookreviver.services.step_params import lay_step_values
+from bookreviver.services.step_params import PageLayers
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
@@ -296,9 +296,11 @@ class StageWork:
                              one.
         """
         version: PageVersion | None = None
+        # The values of the parts of the book and the place of the page are read once for all the steps of the page
+        layers = PageLayers(self._uow, page)
         for index, step in enumerate(steps):
             version = await self._make_version(
-                page, stage, step, source, expected=None if expected is None else expected[index]
+                stage, step, source, layers, expected=None if expected is None else expected[index]
             )
             if version.state is not VersionState.READY:
                 return version
@@ -385,10 +387,10 @@ class StageWork:
 
     async def _make_version(
         self,
-        page: Page,
         stage: Stage,
         step: Step,
         source: StepSource,
+        layers: PageLayers,
         *,
         expected: PageVersionId | None = None,
     ) -> PageVersion:
@@ -402,8 +404,6 @@ class StageWork:
         A page that shows a leaf the program drew is not run through the processor: its version holds the image of the
         source as it is, with no parameters, no settings and no edit, so every step that skips the same input shares it.
 
-        :param page: Page being processed.
-        :type page: Page
         :param stage: Stage of the recipe.
         :type stage: Stage
         :param step: The step to run.
@@ -411,6 +411,9 @@ class StageWork:
         :param source: What the step reads, whose scale says whether the step runs on the full image or on the preview,
                        and whose book gives the fields of the step that are 0 their values.
         :type source: StepSource
+        :param layers: The page being processed, and what the steps of the chain read of the values of the parts of
+                       the book and of its place, read once for the page.
+        :type layers: PageLayers
         :param expected: Identifier the version must have, when the step makes a version again, or None.
         :type expected: PageVersionId | None
         :returns: The version, in the state ready or failed.
@@ -425,8 +428,10 @@ class StageWork:
         if processor.spec.scope is ProcessorScope.SPLIT:
             raise ConflictError(SPLIT_NOT_AVAILABLE.format(key=step.processor_key))
         # A leaf the program drew has nothing for a step to find, so it passes every step unchanged and unmarked
-        skipped = page.is_leaf
-        state = None if skipped else await self._uow.page_step_states.find(PageStepKey(page.id, stage, step.step_id))
+        skipped = layers.page.is_leaf
+        state = (
+            None if skipped else await self._uow.page_step_states.find(PageStepKey(layers.page.id, stage, step.step_id))
+        )
         # The values of the page and of the parts of the book it is in are laid over the parameters of the step before
         # they are checked, so the identifier of the version hashes the parameters the step runs with, and two pages
         # that end up with equal ones share it.
@@ -440,19 +445,15 @@ class StageWork:
         laid = (
             base
             if skipped or expected is not None
-            else await lay_step_values(self._uow, page, step.step_id, base, None if state is None else state.params)
+            else await layers.lay(step.step_id, base, None if state is None else state.params)
         )
         checked = processor.validate_params(laid)
         params = {} if skipped else checked
         edit = None if state is None else state.edit
         # The side is part of what a step depends on, so a page moved to the other side of the book is made again
-        side = (
-            PageSide.of_position(await self._uow.pages.count_before(page) + 1)
-            if processor.spec.by_page_side and not skipped
-            else None
-        )
+        side = PageSide.of_position(await layers.position()) if processor.spec.by_page_side and not skipped else None
         inputs = VersionInputs(
-            page_id=page.id,
+            page_id=layers.page.id,
             processor=processor.spec.ref,
             params=params,
             input_id=source.version_id,
@@ -468,7 +469,7 @@ class StageWork:
             return existing
         version = PageVersion(
             id=inputs.identify(),
-            page_id=page.id,
+            page_id=layers.page.id,
             stage=stage,
             processor=processor.spec.ref,
             input_id=source.version_id,
@@ -499,12 +500,12 @@ class StageWork:
         except DomainError as error:
             made = evolve(version, state=VersionState.FAILED, data={VersionData.ERROR: str(error)})
         except Exception:
-            logger.exception('The step %s on page %s failed', step.processor_key, page.id)
+            logger.exception('The step %s on page %s failed', step.processor_key, layers.page.id)
             made = evolve(version, state=VersionState.FAILED, data={VersionData.ERROR: UNEXPECTED_FAILURE})
         await self._uow.page_versions.update(made)
         await self._uow.commit()
         if made.state is VersionState.READY:
-            await self._publisher.publish(PageVersionReady(project_id=page.project_id, version=made))
+            await self._publisher.publish(PageVersionReady(project_id=layers.page.project_id, version=made))
         return made
 
 
@@ -588,7 +589,7 @@ class RecipeRun(StageWork):
             through_step=recipe.stopped_at(through_step),
         )
         if undoing is not None:
-            await self._splits.unsplit(undoing)
+            changed = [*changed, *await self._splits.unsplit(undoing)]
         await self._uow.commit()
         if undoing is not None:
             await self._splits.finish_unsplit(undoing)

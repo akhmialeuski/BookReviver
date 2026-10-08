@@ -7,7 +7,7 @@ import pytest
 
 from bookreviver.domain.enums import ValueScope
 from bookreviver.domain.ids import PageId, ProjectId
-from bookreviver.domain.step_values import StepValueLayers, ValueTarget
+from bookreviver.domain.step_values import StepValueLayers, ValueTarget, pages_changing_side
 from tests.helpers.builders import make_step_values
 
 if TYPE_CHECKING:
@@ -186,3 +186,40 @@ class TestStepValueLayers:
     def test_a_book_with_no_value_for_a_part_runs_with_the_recipe(self) -> None:
         """Verify no part of the pages and no page value leave the parameters of the recipe as they are."""
         assert StepValueLayers().lay_over(RECIPE, group_label=GROUP, position=2) == RECIPE
+
+
+class TestPagesChangingSide:
+    """Tests for the pages a change of the places of the pages turns over to the other side of the book."""
+
+    FIRST: PageId = PageId(uuid4())
+    SECOND: PageId = PageId(uuid4())
+    THIRD: PageId = PageId(uuid4())
+    FOURTH: PageId = PageId(uuid4())
+    ADDED: PageId = PageId(uuid4())
+
+    @pytest.mark.parametrize(
+        ('before', 'after', 'turned'),
+        [
+            ((FIRST, SECOND, THIRD, FOURTH), (FIRST, SECOND, THIRD, FOURTH), ()),
+            ((FIRST, SECOND, THIRD, FOURTH), (SECOND, FIRST, THIRD, FOURTH), (SECOND, FIRST)),
+            ((FIRST, SECOND, THIRD, FOURTH), (SECOND, THIRD, FIRST, FOURTH), (SECOND, THIRD)),
+            ((FIRST, SECOND, THIRD, FOURTH), (SECOND, THIRD, FOURTH), (SECOND, THIRD, FOURTH)),
+            ((FIRST, SECOND, THIRD, FOURTH), (FIRST, SECOND, FOURTH), (FOURTH,)),
+            ((FIRST, SECOND, THIRD), (FIRST, ADDED, SECOND, THIRD), (SECOND, THIRD)),
+            ((FIRST, SECOND, THIRD), (FIRST, SECOND, THIRD, ADDED), ()),
+        ],
+        ids=['same', 'swap', 'move-over-two-pages', 'delete-first', 'delete-third', 'insert-second', 'append'],
+    )
+    def test_pages_standing_an_odd_number_of_places_away_turn_over(
+        self, before: tuple[PageId, ...], after: tuple[PageId, ...], turned: tuple[PageId, ...]
+    ) -> None:
+        """Verify a page that is in both orders and moved by an odd number of places is picked, and no other page.
+
+        :param before: The pages in order before the change.
+        :type before: tuple[PageId, ...]
+        :param after: The pages in order after the change.
+        :type after: tuple[PageId, ...]
+        :param turned: The pages that turned over, in the order they have after the change.
+        :type turned: tuple[PageId, ...]
+        """
+        assert pages_changing_side(before, after) == list(turned)

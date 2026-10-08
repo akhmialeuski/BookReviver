@@ -91,7 +91,7 @@ async def placed_page(
     :type kit: ProcessingKit
     :param project: Project owning the page.
     :type project: Project
-    :param recipe: Active recipe of the Geometry stage, which the page was processed by.
+    :param recipe: Recipe of text pages of the Geometry stage, which the page was processed by.
     :type recipe: Recipe
     :param order_key: Order key of the page.
     :type order_key: str
@@ -161,8 +161,10 @@ async def measure(kit: ProcessingKit, actor: Actor, project: Project) -> Job:
     return await kit.uow().jobs.get(job.id)
 
 
-async def normalize_params(kit: ProcessingKit, actor: Actor, project: Project) -> dict[str, object]:
-    """Read the parameters of the normalize step of the active Geometry recipe.
+async def normalize_params(
+    kit: ProcessingKit, actor: Actor, project: Project, kind: RecipeKind = RecipeKind.TEXT
+) -> dict[str, object]:
+    """Read the parameters of the normalize step of the Geometry recipe of a kind of page.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
@@ -170,16 +172,24 @@ async def normalize_params(kit: ProcessingKit, actor: Actor, project: Project) -
     :type actor: Actor
     :param project: The project.
     :type project: Project
+    :param kind: The kind of page, text unless given.
+    :type kind: RecipeKind
     :returns: The parameters of the step.
     :rtype: dict[str, object]
     """
-    recipe = await kit.recipe_of(actor, project, Stage.GEOMETRY)
+    recipe = await kit.recipe_of(actor, project, Stage.GEOMETRY, kind)
     [step] = [step for step in recipe.steps if step.processor_key == NORMALIZE_KEY]
     return dict(step.params)
 
 
-async def set_normalize_params(kit: ProcessingKit, actor: Actor, project: Project, changes: dict[str, object]) -> None:
-    """Save the active Geometry recipe with some parameters of its normalize step changed, as the form does.
+async def set_normalize_params(
+    kit: ProcessingKit,
+    actor: Actor,
+    project: Project,
+    changes: dict[str, object],
+    kind: RecipeKind = RecipeKind.TEXT,
+) -> None:
+    """Save the Geometry recipe of a kind of page with some parameters of its normalize step changed, as the form does.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
@@ -189,13 +199,15 @@ async def set_normalize_params(kit: ProcessingKit, actor: Actor, project: Projec
     :type project: Project
     :param changes: The parameters to set.
     :type changes: dict[str, object]
+    :param kind: The kind of page, text unless given.
+    :type kind: RecipeKind
     """
-    recipe = await kit.recipe_of(actor, project, Stage.GEOMETRY)
+    recipe = await kit.recipe_of(actor, project, Stage.GEOMETRY, kind)
     steps = [
         evolve(step, params={**step.params, **changes}) if step.processor_key == NORMALIZE_KEY else step
         for step in recipe.steps
     ]
-    await kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=steps))
+    await kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=steps), kind)
 
 
 class TestMeasureBook:
@@ -275,6 +287,46 @@ class TestMeasureBook:
         # 10 and 8 mm at the sides, and 17.1 and 21.3 mm at the top and the bottom
         expect(after[NormalizeParam.PAGE_WIDTH] == 300 + (10 + 8) * PIXELS_PER_MM)
         expect(after[NormalizeParam.PAGE_HEIGHT] == math.ceil(640 + (17.1 + 21.3) * PIXELS_PER_MM))
+        assert_expectations()
+
+    async def test_every_kind_of_page_gets_the_one_page_size_and_keeps_its_own_margins(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify the sheet is the widest and the highest of what the recipes measure, and each recipe keeps its margins.
+
+        The recipe of text pages is measured with the margins of the block, which make a page of 354 by 708 pixels. The
+        recipe of colour pictures has margins of its own, wider at the sides and shorter at the top and the bottom, which
+        alone make a page of 531 by 699. Neither is the sheet of the book: it is 531 by 708, in both recipes.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
+        for index, (width, height, line_height) in enumerate(BLOCKS):
+            await placed_page(fx_cv_kit, project, recipe, f'a{index}', block_data(width, height, line_height))
+        margins: dict[str, object] = {
+            NormalizeParam.MARGIN_TOP: 11.0,
+            NormalizeParam.MARGIN_BOTTOM: 22.0,
+            NormalizeParam.MARGIN_INNER: 33.0,
+            NormalizeParam.MARGIN_OUTER: 44.0,
+        }
+        await set_normalize_params(
+            fx_cv_kit,
+            actor,
+            project,
+            {NormalizeParam.MARGINS_SOURCE: MarginsSource.MANUAL, NormalizeParam.MAX_SCALE_CHANGE: 50.0, **margins},
+            RecipeKind.COLOR_PICTURE,
+        )
+        await measure(fx_cv_kit, actor, project)
+        text = await normalize_params(fx_cv_kit, actor, project)
+        picture = await normalize_params(fx_cv_kit, actor, project, RecipeKind.COLOR_PICTURE)
+        sheet = {NormalizeParam.PAGE_WIDTH: 300 + (33 + 44) * PIXELS_PER_MM, NormalizeParam.PAGE_HEIGHT: 708}
+        expect({name: text[name] for name in sheet} == sheet)
+        expect({name: picture[name] for name in sheet} == sheet)
+        expect({name: text[name] for name in margins} == {n: v for n, v in EXPECTED_PAGE.items() if n in margins})
+        expect({name: picture[name] for name in margins} == margins)
+        expect(picture[NormalizeParam.LINE_HEIGHT] == text[NormalizeParam.LINE_HEIGHT])
         assert_expectations()
 
     @pytest.mark.parametrize(
@@ -459,7 +511,7 @@ class TestMarginsSource:
     async def test_manual_margins_survive_a_measure_while_the_line_height_and_the_page_follow(
         self, fx_cv_kit: ProcessingKit
     ) -> None:
-        """Verify a measure keeps the four margins, and makes the page the largest block plus those margins.
+        """Verify a measure keeps the four margins, and makes the page the largest of the blocks plus the margins.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
@@ -483,9 +535,11 @@ class TestMarginsSource:
         expect({name: after[name] for name in margins} == margins)
         expect(after[NormalizeParam.MARGINS_SOURCE] == MarginsSource.MANUAL)
         expect(after[NormalizeParam.LINE_HEIGHT] == pytest.approx(MEDIAN_LINE_HEIGHT_PX))
-        # The block is 300 by 600, and a millimetre of it is 3 pixels
+        # The block is 300 by 600, and a millimetre of it is 3 pixels. The sheet is the largest of the recipes: the
+        # manual margins make it 531 wide and 699 high, and the other kinds, which have the margins of the block, make
+        # it 354 wide and 708 high
         expect(after[NormalizeParam.PAGE_WIDTH] == 300 + (33 + 44) * PIXELS_PER_MM)
-        expect(after[NormalizeParam.PAGE_HEIGHT] == 600 + (11 + 22) * PIXELS_PER_MM)
+        expect(after[NormalizeParam.PAGE_HEIGHT] == EXPECTED_PAGE[NormalizeParam.PAGE_HEIGHT])
         assert_expectations()
 
     async def test_measured_margins_are_written_again_once_the_source_is_switched_back(

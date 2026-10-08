@@ -22,7 +22,6 @@ CASE_ARG: str = 'case'
 STEP_ARG: str = 'step_index'
 PAGE_KEYS: tuple[str, str, str, str] = ('a0', 'a1', 'a2', 'a3')
 STEP_COUNT: int = 3
-ONE_STEP_NAME: str = 'One step'
 # A strength the one-step recipe runs with, which tells its versions from the ones of the recipe of three steps
 OTHER_STRENGTH: int = 2
 
@@ -55,11 +54,11 @@ class StagedBook:
     """A book whose four pages stand differently in a stage with a recipe of three steps.
 
     :ivar project: The project.
-    :ivar step_ids: The steps of the active recipe of the stage, in order.
+    :ivar step_ids: The steps of the recipe of text pages of the stage, in order.
     :ivar full: Page run through every step.
     :ivar partial: Page run through the first step only.
     :ivar idle: Page the stage has not run on.
-    :ivar other: Page processed by a recipe that has none of the steps of the active one.
+    :ivar other: Page processed by a recipe that has none of the steps of the recipe of text pages.
     :ivar reads: What the stage reads on each page, which the stage before it made.
     :ivar chains: The versions the stage made on each page, the first step first, none for a page it has not run on.
     """
@@ -158,7 +157,7 @@ async def pictures_of(
     :type book: StagedBook
     :param case: The stage of the rows.
     :type case: StageCase
-    :param step_index: Index of the step in the active recipe to place the pages at, or None for the stage alone.
+    :param step_index: Index of the step in the recipe of text pages to place the pages at, or None for the stage alone.
     :type step_index: int | None
     :returns: The identifier of the picture of each page, or None for a page that has none.
     :rtype: dict[PageId, PageVersionId | None]

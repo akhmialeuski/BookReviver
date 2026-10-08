@@ -33,6 +33,7 @@ from bookreviver.domain.enums import (
     EditorKind,
     JobKind,
     JobState,
+    PageKind,
     RecipeKind,
     Rendition,
     ResultMark,
@@ -56,7 +57,7 @@ if TYPE_CHECKING:
     from dishka import AsyncContainer, Provider
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
-    from bookreviver.domain.entities import Actor, Page, Project
+    from bookreviver.domain.entities import Actor, Page, Project, Scan
     from bookreviver.ports.storage import AssetStore
 
 pytestmark = pytest.mark.anyio
@@ -137,13 +138,26 @@ async def fx_book(fx_database: InMemoryDatabase, fx_asset_store: AssetStore, fx_
     )
     page = make_page(project_id=project.id, scan=scan)
     await commit_project(fx_database, project, page, sources=[source], scans=[scan])
+    await store_scan_images(fx_asset_store, project, scan)
+    return Book(project=project, page=page)
+
+
+async def store_scan_images(asset_store: AssetStore, project: Project, scan: Scan) -> None:
+    """Store the full image and the preview of a scan as real JPEGs.
+
+    :param asset_store: Asset store of the application.
+    :type asset_store: AssetStore
+    :param project: Project owning the scan.
+    :type project: Project
+    :param scan: The scan, whose renditions are ready.
+    :type scan: Scan
+    """
     keys = ProjectKeys(project.id)
     buffer = io.BytesIO()
     Image.new('L', SCAN_SIZE_PX, color=200).save(buffer, format='JPEG')
     for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW):
-        async with fx_asset_store.writable(keys.scan_rendition(scan, rendition)) as path:
+        async with asset_store.writable(keys.scan_rendition(scan, rendition)) as path:
             path.write_bytes(buffer.getvalue())
-    return Book(project=project, page=page)
 
 
 async def set_strength(client: httpx.AsyncClient, book: Book, step_id: str, value: int) -> httpx.Response:
@@ -350,6 +364,58 @@ class TestRecipes:
         """
         response = await fx_client.get(f'{fx_book.path}/stages/nowhere/recipes')
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+class TestStageSummaries:
+    """Tests for the recipes of each kind a stage summary lists, and the kind of every page of a stage."""
+
+    async def test_a_summary_counts_the_pages_of_each_kind_and_a_page_row_names_its_kind(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_broker: InMemoryBroker,
+        fx_book: Book,
+        fx_database: InMemoryDatabase,
+        fx_asset_store: AssetStore,
+    ) -> None:
+        """Verify a text page and a plate are counted under the recipes of their kinds, and each row says its kind.
+
+        The plate is a picture in colour, since nobody set its colour. This covers the response as it is, and is not a
+        test that fails without a fix.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the job.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account with a text page.
+        :type fx_book: Book
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        :param fx_asset_store: Asset store of the application.
+        :type fx_asset_store: AssetStore
+        """
+        source = make_source(project_id=fx_book.project.id, name='plate.pdf')
+        scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
+        plate = make_page(project_id=fx_book.project.id, order_key='a1', scan=scan, kind=PageKind.PLATE)
+        uow = InMemoryUnitOfWork(fx_database)
+        await uow.sources.add(source)
+        await uow.scans.add(scan)
+        await uow.pages.add(plate)
+        await uow.commit()
+        await store_scan_images(fx_asset_store, fx_book.project, scan)
+        await run_stage(fx_client, fx_broker, fx_book, 'geometry')
+        recipes = await recipes_of(fx_client, fx_book, 'geometry')
+        summaries = (await fx_client.get(f'{fx_book.path}/stages')).json()[ITEMS]
+        [geometry] = [summary for summary in summaries if summary['stage'] == 'geometry']
+        rows = (await fx_client.get(f'{fx_book.path}/stages/geometry/pages')).json()[ITEMS]
+        expect(
+            geometry['recipes']
+            == [
+                {'kind': kind.value, 'recipe_id': str(recipes[kind].id), 'pages': pages}
+                for kind, pages in zip(RecipeKind, (1, 1, 0, 0), strict=True)
+            ]
+        )
+        expect([row['kind'] for row in rows] == [RecipeKind.TEXT.value, RecipeKind.COLOR_PICTURE.value])
+        assert_expectations()
 
 
 class TestRunAndVersions:
@@ -586,7 +652,7 @@ class TestRunAndVersions:
         assert_expectations()
 
 
-async def active_step_id(client: httpx.AsyncClient, book: Book, stage: Stage) -> str:
+async def text_step_id(client: httpx.AsyncClient, book: Book, stage: Stage) -> str:
     """Read the identifier of the only step of the recipe of text pages of a stage, which an edit is addressed by.
 
     :param client: Client of the running application.
@@ -612,7 +678,7 @@ class TestEdits:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         path = f'{fx_book.page_path}/edits/geometry/{step_id}'
         saved = await fx_client.put(path, data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'})
         listed = await fx_client.get(f'{fx_book.page_path}/edits/geometry')
@@ -647,7 +713,7 @@ class TestEdits:
         :param data: Form under test.
         :type data: dict[str, str]
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         response = await fx_client.put(f'{fx_book.page_path}/edits/geometry/{step_id}', data=data)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
@@ -674,7 +740,7 @@ class TestEdits:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        path = f'{fx_book.page_path}/edits/cleanup/{await active_step_id(fx_client, fx_book, Stage.CLEANUP)}'
+        path = f'{fx_book.page_path}/edits/cleanup/{await text_step_id(fx_client, fx_book, Stage.CLEANUP)}'
         saved = await fx_client.put(path, data={'kind': 'brush-mask'}, files={'mask': ('mask.png', b'mask-bytes')})
         served = await fx_client.get(saved.json()['mask'])
         expect(saved.status_code == status.HTTP_200_OK)
@@ -695,7 +761,7 @@ class TestPageHistory:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         history = f'{fx_book.page_path}/history/geometry/{step_id}'
         await set_strength(fx_client, fx_book, step_id, 2)
         await fx_client.put(
@@ -726,7 +792,7 @@ class TestPageHistory:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         history = f'{fx_book.page_path}/history/geometry/{step_id}'
         await set_strength(fx_client, fx_book, step_id, 2)
         await set_strength(fx_client, fx_book, step_id, 3)
@@ -747,7 +813,7 @@ class TestPageHistory:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         response = await fx_client.post(f'{fx_book.page_path}/history/geometry/{step_id}/undo', json={})
         assert (response.status_code, response.json()) == (status.HTTP_200_OK, {'changes': []})
 
@@ -759,7 +825,7 @@ class TestPageHistory:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         response = await fx_client.post(
             f'{fx_book.page_path}/history/geometry/{step_id}/undo', json={'change_id': str(uuid4())}
         )
@@ -775,7 +841,7 @@ class TestPageHistory:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         history = f'{fx_book.page_path}/history/geometry/{step_id}'
         await set_strength(fx_client, fx_book, step_id, 2)
         await set_strength(fx_client, fx_book, step_id, 3)
@@ -801,7 +867,7 @@ class TestPageHistory:
         """
         await run_stage(fx_client, fx_broker, fx_book, 'page-split')
         await run_stage(fx_client, fx_broker, fx_book, 'geometry')
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         versions = f'{fx_book.page_path}/versions'
         of_step = {'stage': 'geometry', 'step': step_id}
         before = await fx_client.get(versions, params=of_step)
@@ -835,7 +901,7 @@ class TestPageHistory:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         history = f'{fx_book.page_path}/history/geometry/{step_id}'
         await set_strength(fx_client, fx_book, step_id, 2)
         run = await fx_client.post(f'{fx_book.path}/stages/page-split/run', json={})
@@ -907,7 +973,7 @@ class TestCarryOverOfAShape:
         :param fx_database: In-memory database of the application.
         :type fx_database: InMemoryDatabase
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         pages = [await add_page(fx_database, fx_book, order_key) for order_key in ('a1', 'a2')]
         await fx_client.put(
             f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
@@ -943,7 +1009,7 @@ class TestCarryOverOfAShape:
         :param fx_database: In-memory database of the application.
         :type fx_database: InMemoryDatabase
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         page = await add_page(fx_database, fx_book, 'a1')
         own = f'{fx_book.path}/pages/{page.id}/edits/geometry'
         await fx_client.put(
@@ -967,7 +1033,7 @@ class TestCarryOverOfAShape:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         response = await fx_client.post(
             f'{fx_book.page_path}/edits/geometry/{step_id}/carry-over', json={'scope': 'following'}
         )
@@ -983,7 +1049,7 @@ class TestCarryOverOfAShape:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         await fx_client.put(
             f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
         )
@@ -1006,7 +1072,7 @@ class TestRunModes:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         await set_strength(fx_client, fx_book, step_id, 2)
         drop = await fx_client.post(f'{fx_book.path}/stages/geometry/run-impact', json={'mode': 'drop-own-work'})
         skip = await fx_client.post(f'{fx_book.path}/stages/geometry/run-impact', json={'mode': 'skip-own-work'})
@@ -1027,7 +1093,7 @@ class TestRunModes:
         :param fx_broker: In-process broker running the job.
         :type fx_broker: InMemoryBroker
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         await set_strength(fx_client, fx_book, step_id, 2)
         path = f'{fx_book.path}/stages/geometry/run'
         refused = await fx_client.post(path, json={'mode': 'drop-own-work'})
@@ -1051,7 +1117,7 @@ class TestRunModes:
         :param fx_broker: In-process broker running the job.
         :type fx_broker: InMemoryBroker
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         await set_strength(fx_client, fx_book, step_id, 2)
         await run_stage(fx_client, fx_broker, fx_book, 'geometry')
         settings = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
@@ -1251,7 +1317,7 @@ class TestStepRows:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
         step = response.json()[ITEMS][0]['step']
         expect(response.status_code == status.HTTP_200_OK)
@@ -1272,7 +1338,7 @@ class TestStepRows:
         """
         await run_stage(fx_client, fx_broker, fx_book, 'page-split')
         await run_stage(fx_client, fx_broker, fx_book, 'geometry')
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
         row = response.json()[ITEMS][0]
         step = row['step']
@@ -1295,7 +1361,7 @@ class TestStepRows:
         """
         await run_stage(fx_client, fx_broker, fx_book, 'page-split')
         await run_stage(fx_client, fx_broker, fx_book, 'geometry')
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         at_step = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
         alone = await fx_client.get(f'{fx_book.path}/stages/geometry/pages')
         row = at_step.json()[ITEMS][0]
@@ -1317,7 +1383,7 @@ class TestStepRows:
         :type fx_book: Book
         """
         await run_stage(fx_client, fx_broker, fx_book, 'page-split')
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         at_step = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
         alone = await fx_client.get(f'{fx_book.path}/stages/geometry/pages')
         expect(at_step.json()[ITEMS][0]['picture']['stage'] == 'page-split')
@@ -1335,7 +1401,7 @@ class TestStepRows:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         await fx_client.put(
             f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
         )
@@ -1355,7 +1421,7 @@ class TestStepRows:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        step_id = await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         changed = await set_strength(fx_client, fx_book, step_id, 2)
         response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
         step = response.json()[ITEMS][0]['step']
@@ -1382,7 +1448,7 @@ class TestStepRows:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        await active_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': str(uuid4())})
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -1524,7 +1590,7 @@ class TestResultsOfAStep:
         """
         await run_stage(client, broker, book, 'page-split')
         await run_stage(client, broker, book, 'geometry')
-        step_id = await active_step_id(client, book, Stage.GEOMETRY)
+        step_id = await text_step_id(client, book, Stage.GEOMETRY)
         stages = await client.get(f'{book.page_path}/stages')
         [geometry] = [item for item in stages.json()[ITEMS] if item['stage'] == 'geometry']
         version_id = str(geometry['head_version_id'])

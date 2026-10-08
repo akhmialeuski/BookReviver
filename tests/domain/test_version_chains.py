@@ -74,7 +74,7 @@ def made_by(page_id: PageId, key: str, stage: Stage, minutes: int, read: PageVer
 class TestStepPlaces:
     """Tests for step_places."""
 
-    def test_a_step_copied_into_a_variant_has_a_place_in_each_recipe_that_has_it_on(self) -> None:
+    def test_a_step_copied_into_the_recipe_of_another_kind_has_a_place_in_each_recipe_that_has_it_on(self) -> None:
         """Verify one step identifier gives one place for each recipe, and none for a recipe that has it off."""
         project_id = ProjectId(uuid4())
         crop = Step(processor_key=CROP_KEY, step_id=CROP_STEP)

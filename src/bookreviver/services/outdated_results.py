@@ -22,10 +22,9 @@ from typing import TYPE_CHECKING
 from attrs import evolve
 
 from bookreviver.domain.enums import StageState
-from bookreviver.domain.values import PageStageKey
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import PageStage
+    from bookreviver.domain.entities import PageStage, PageVersion
     from bookreviver.domain.ids import PageVersionId
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
@@ -54,37 +53,51 @@ class OutdatedResults:
     async def mark_stale(self) -> list[PageStage]:
         """Mark every fresh record whose result a replaced version of a processor made stale, and commit.
 
-        The chains of all the records are walked together, a level at a time with one read of the versions of the level,
-        so the number of queries follows the depth of the chains and not the number of pages.
+        The versions of all the chains are read a level at a time, each distinct version once however many records,
+        pages and stages lead to it, so the number of queries follows the depth of the chains, and the number of rows
+        read the number of distinct versions. A version is judged once, and a chain that meets a version judged already
+        takes its verdict.
 
         :returns: The records that became stale.
         :rtype: list[PageStage]
         """
         installed = {spec.key: spec.version for spec in self._catalogue.specs()}
-        records = {
-            PageStageKey(record.page_id, record.stage): record for record in await self._uow.page_stages.list_fresh()
-        }
-        walking: dict[PageStageKey, PageVersionId] = {
-            key: record.head_version_id for key, record in records.items() if record.head_version_id is not None
-        }
-        outdated: set[PageStageKey] = set()
-        while walking:
-            versions = {
-                version.id: version for version in await self._uow.page_versions.list_by_ids(set(walking.values()))
-            }
-            ahead: dict[PageStageKey, PageVersionId] = {}
-            for key, version_id in walking.items():
-                if (version := versions.get(version_id)) is None:
-                    continue
-                if installed.get(version.processor.key, version.processor.version) != version.processor.version:
-                    outdated.add(key)
-                elif version.input_id is not None:
-                    ahead[key] = version.input_id
-            walking = ahead
+        records = await self._uow.page_stages.list_fresh()
+        versions: dict[PageVersionId, PageVersion] = {}
+        replaced: set[PageVersionId] = set()
+        asked: set[PageVersionId] = set()
+        pending = {record.head_version_id for record in records if record.head_version_id is not None}
+        while pending:
+            asked |= pending
+            for read in await self._uow.page_versions.list_by_ids(pending):
+                versions[read.id] = read
+                if installed.get(read.processor.key, read.processor.version) != read.processor.version:
+                    replaced.add(read.id)
+            # The chain of a replaced version is not followed, since its stage is outdated whatever it read
+            following: set[PageVersionId] = set()
+            for version_id in pending - replaced:
+                if (version := versions.get(version_id)) is not None and version.input_id is not None:
+                    following.add(version.input_id)
+            pending = following - asked
+        verdicts: dict[PageVersionId, bool] = {}
+        for head in {record.head_version_id for record in records if record.head_version_id is not None}:
+            chain: list[PageVersionId] = []
+            current: PageVersionId | None = head
+            outdated = False
+            while current is not None and current in versions:
+                if current in verdicts:
+                    outdated = verdicts[current]
+                    break
+                chain.append(current)
+                if current in replaced:
+                    outdated = True
+                    break
+                current = versions[current].input_id
+            verdicts.update(dict.fromkeys(chain, outdated))
         moment = self._clock.now()
         stale: list[PageStage] = []
-        for key, record in records.items():
-            if key in outdated:
+        for record in records:
+            if record.head_version_id is not None and verdicts.get(record.head_version_id):
                 marked = evolve(record, state=StageState.STALE, updated_at=moment)
                 stale.append(await self._uow.page_stages.save(marked))
         await self._uow.commit()

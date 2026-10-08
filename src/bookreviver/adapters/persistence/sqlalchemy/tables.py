@@ -709,10 +709,11 @@ class StepValuesRow(DefaultBase):
     The step is named by the identifier its recipe gives it, with no foreign key, as in ``page_step_states``. The label
     of a group is empty for the odd and the even pages, so it can belong to the key.
 
+    :ivar project_id: Project owning the step, whose deletion removes the values. It belongs to the key, since two books
+                      built from one profile keep the identifiers of its steps.
     :ivar step_id: Identifier of the step.
     :ivar scope: The odd pages, the even pages or a group, stored by value.
     :ivar group_label: Label of the group, or empty.
-    :ivar project_id: Project owning the step, whose deletion removes the values.
     :ivar stage: Stage of the step, stored by value.
     :ivar params: The fields of the parameters of the step that the pages change, as a JSON object.
     :ivar updated_at: Time the values were last saved.
@@ -721,10 +722,10 @@ class StepValuesRow(DefaultBase):
     __tablename__ = 'step_values'
     __table_args__ = (Index(None, 'project_id', 'stage'),)
 
+    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), primary_key=True)
     step_id: Mapped[UUID] = mapped_column(primary_key=True)
     scope: Mapped[ValueScope] = mapped_column(enum_by_value(ValueScope), primary_key=True)
     group_label: Mapped[str] = mapped_column(primary_key=True, server_default=EMPTY_TEXT)
-    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE))
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
     params: Mapped[dict[str, Any]] = mapped_column(JsonB, server_default=EMPTY_OBJECT)
     updated_at: Mapped[datetime]

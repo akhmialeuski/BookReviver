@@ -342,6 +342,9 @@ class PageService:
     async def add(self, actor: Actor, project_id: ProjectId, new_page: NewPage) -> PageOverview:
         """Add a placeholder or a blank leaf at a place of the book, or at its end.
 
+        The pages after it move down, and those that turn over to the other side of the book, odd or even, are marked
+        stale where a side has values.
+
         A placeholder has no image. A blank leaf gets the pending base version ``pages.blank``, of the size given or of
         the median of the pages of the book, whose white image the ``prepare-pages`` job writes. The request makes no
         image itself.
@@ -363,7 +366,8 @@ class PageService:
         [key] = await self._keys_at(project_id, new_page.anchor, count=1)
         moment = self._clock.now()
         page = self._new_page(project_id, new_page, key, moment)
-        await self._uow.pages.add(page)
+        async with self._records.watching_sides(project_id) as watch:
+            await self._uow.pages.add(page)
         if size is not None:
             full = project.image_policy.full_format(ColorMode.BILEVEL)
             await self._uow.page_versions.add(BaseVersions.blank(page=page, size=size, full=full, moment=moment))
@@ -371,6 +375,7 @@ class PageService:
             page = await self._uow.pages.get(page.id)
         overview = await self._overview(page)
         await self._finish(project_id, [page], PageChange.ADDED)
+        await self._records.announce(project_id, watch.turned)
         if blank:
             await self._enqueue(project_id, JobKind.PREPARE_PAGES)
         return overview
@@ -429,7 +434,8 @@ class PageService:
                 (i, self._new_page(project_id, new_pages[i], key, moment)) for i, key in zip(indexes, keys, strict=True)
             )
         added = [pages[index] for index in range(len(new_pages))]
-        await self._uow.pages.add_many(added)
+        async with self._records.watching_sides(project_id) as watch:
+            await self._uow.pages.add_many(added)
 
         full = project.image_policy.full_format(ColorMode.BILEVEL)
         leaves = []
@@ -450,6 +456,7 @@ class PageService:
                 (o.page.id, o) for o in await self._overviews(run, await self._uow.pages.count_before(run[0]))
             )
         await self._finish(project_id, added, PageChange.ADDED)
+        await self._records.announce(project_id, watch.turned)
         if leaves:
             await self._enqueue(project_id, JobKind.PREPARE_PAGES)
         return [overviews[page.id] for page in added]
@@ -559,6 +566,9 @@ class PageService:
     async def delete(self, actor: Actor, project_id: ProjectId, page_id: PageId) -> None:
         """Delete a page with its versions, and then its files, leaving its scan and the scan's source.
 
+        The pages after it move up, and those that turn over to the other side of the book, odd or even, are marked
+        stale where a side has values.
+
         :param actor: Account acting in the current request.
         :type actor: Actor
         :param project_id: Identifier of the project.
@@ -570,10 +580,12 @@ class PageService:
         await owned_project(self._uow.projects, actor, project_id)
         page = await self._page(project_id, page_id)
         await self._labels.recompute(project_id, leaving=[page.id])
-        await self._uow.pages.delete(page.id)
+        async with self._records.watching_sides(project_id) as watch:
+            await self._uow.pages.delete(page.id)
         await self._uow.commit()
         await self._discard_files(project_id, [page])
         await self._announce(project_id, [page], PageChange.REMOVED)
+        await self._records.announce(project_id, watch.turned)
 
     async def attach_scan(
         self, actor: Actor, project_id: ProjectId, page_id: PageId, scan_id: ScanId, *, take_over: bool = False
@@ -656,8 +668,9 @@ class PageService:
             # Renumbering may write the placeholder too, so it is read again for the write below
             await self._labels.recompute(project_id, leaving=[page.id for page in taken])
             placeholder = await self._page(project_id, page_id)
-        for page in taken:
-            await self._uow.pages.delete(page.id)
+        async with self._records.watching_sides(project_id) as watch:
+            for page in taken:
+                await self._uow.pages.delete(page.id)
         moment = self._clock.now()
         # The label of the scan is the one its source printed, so it is an exception of the sections, like one typed
         page = evolve(
@@ -679,6 +692,7 @@ class PageService:
         if taken:
             await self._announce(project_id, taken, PageChange.REMOVED)
         await self._announce(project_id, [page], PageChange.EDITED)
+        await self._records.announce(project_id, watch.turned)
         await self._enqueue(project_id, JobKind.PREPARE_PAGES)
         return overview
 
@@ -774,6 +788,8 @@ class PageService:
     async def move(self, actor: Actor, project_id: ProjectId, page_id: PageId, anchor: PageAnchor) -> PageOverview:
         """Put one page before or after another, and renumber the pages whose number the sections now give differently.
 
+        The pages that turn over to the other side of the book, odd or even, are marked stale where a side has values.
+
         :param actor: Account acting in the current request.
         :type actor: Actor
         :param project_id: Identifier of the project.
@@ -789,18 +805,22 @@ class PageService:
         :raises ConcurrentChangeError: If another request changed the page meanwhile.
         """
         await owned_project(self._uow.projects, actor, project_id)
-        [moved] = await self._place(project_id, [await self._page(project_id, page_id)], anchor)
-        await self._uow.pages.update(moved)
+        async with self._records.watching_sides(project_id) as watch:
+            [moved] = await self._place(project_id, [await self._page(project_id, page_id)], anchor)
+            await self._uow.pages.update(moved)
         if await self._labels.recompute(project_id):
             moved = await self._uow.pages.get(moved.id)
         overview = await self._overview(moved)
         await self._finish(project_id, [moved], PageChange.MOVED)
+        await self._records.announce(project_id, watch.turned)
         return overview
 
     async def move_group(
         self, actor: Actor, project_id: ProjectId, page_ids: Collection[PageId], anchor: PageAnchor
     ) -> None:
         """Put several pages in a run before or after another page, keeping the order they have in the book.
+
+        The pages that turn over to the other side of the book, odd or even, are marked stale where a side has values.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -1058,9 +1078,11 @@ class PageService:
         moved = await self._place(project_id, pages, anchor)
         if not moved:
             return
-        await self._uow.pages.update_many(moved)
+        async with self._records.watching_sides(project_id) as watch:
+            await self._uow.pages.update_many(moved)
         await self._labels.recompute(project_id)
         await self._finish(project_id, moved, PageChange.MOVED)
+        await self._records.announce(project_id, watch.turned)
 
     async def _finish(self, project_id: ProjectId, pages: Sequence[Page], change: PageChange) -> None:
         """Commit what a use case wrote, and only then tell the browser which pages changed.
@@ -1193,7 +1215,8 @@ class PageService:
         """Return the size of a blank leaf that stands level with the pages of the book.
 
         Once the book is measured, its pages are the size the normalize step of the Geometry recipe for blank pages
-        gives them, and a leaf has that size. Before that it is the median size of the pages cut from a scan.
+        gives them, which is the one size of the book that the measure writes into every Geometry recipe, and a leaf
+        has that size. Before that it is the median size of the pages cut from a scan.
 
         :param project_id: Identifier of the project.
         :type project_id: ProjectId

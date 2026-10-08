@@ -1,17 +1,20 @@
 """Tests for the values a step has for pages, the odd pages, the even pages and groups, and for the run that lays them."""
 
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.adapters.persistence.memory.unit_of_work import InMemoryPageRepository
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import (
     ChangeSource,
     EditorKind,
     JobState,
+    OrderMode,
     RecipeKind,
     Stage,
     StageState,
@@ -21,7 +24,7 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.geometry import Rotation
-from bookreviver.domain.ids import StepId
+from bookreviver.domain.ids import RecipeId, StepId
 from bookreviver.domain.step_values import ValueField, ValueTarget
 from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, RecipeDraft, SliceRequest, StepPreview
 from tests.helpers.builders import new_account_id
@@ -32,12 +35,16 @@ from tests.services.test_processing_remake import run_geometry
 from tests.services.test_processing_versions import ran_geometry
 
 if TYPE_CHECKING:
+    from unittest.mock import MagicMock
+
     from bookreviver.domain.entities import Page, PageVersion, Project
     from bookreviver.domain.values import Step
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 
+COUNT_BEFORE_PATCH: str = 'bookreviver.adapters.persistence.memory.unit_of_work.InMemoryPageRepository.count_before'
+STEPS_OF_A_CHAIN: int = 3
 FAKE_KEY: str = FakeProcessor.spec.key
 STRONGER: int = 2
 STRONGEST: int = 3
@@ -363,7 +370,7 @@ class TestValuesForPartsOfTheBook:
         done = await fx_kit.page_settings().change(
             actor, project.id, strength_field(step_id, on(ValueScope.EVEN)), STRONGER
         )
-        stored = await fx_kit.uow().step_values.list_for_step(step_id)
+        stored = await fx_kit.uow().step_values.list_for_step(project.id, step_id)
         expect(
             [(values.scope, values.params) for values in stored] == [(ValueScope.EVEN, {STRENGTH_PARAMETER: STRONGER})]
         )
@@ -430,7 +437,7 @@ class TestValuesForPartsOfTheBook:
             [1, STRONGER, 1, STRONGER],
             [1, 1, 1, 1],
         ]
-        assert await fx_kit.uow().step_values.list_for_step(step_id) == []
+        assert await fx_kit.uow().step_values.list_for_step(project.id, step_id) == []
 
     async def test_a_change_goes_stale_only_the_pages_it_changes_the_parameters_of(self, fx_kit: ProcessingKit) -> None:
         """Verify an even page that takes the field from its group is untouched by a value for the even pages.
@@ -506,7 +513,7 @@ class TestValuesForPartsOfTheBook:
         field = ValueField(stage=Stage.GEOMETRY, step_id=step_id, name='no_such_field', target=on(ValueScope.EVEN))
         with pytest.raises(InvalidParametersError):
             await fx_kit.page_settings().change(actor, project.id, field, 1)
-        expect(await fx_kit.uow().step_values.list_for_step(step_id) == [])
+        expect(await fx_kit.uow().step_values.list_for_step(project.id, step_id) == [])
         expect(await stages_of(fx_kit, pages) == [StageState.FRESH] * 4)
         assert_expectations()
 
@@ -566,6 +573,38 @@ class TestValuesForPartsOfTheBook:
         expect(await moved(pages[0], {'', GROUP}) == [StageState.STALE, StageState.FRESH])
         assert_expectations()
 
+    async def test_books_built_from_one_profile_keep_their_values_apart(self, fx_kit: ProcessingKit) -> None:
+        """Verify the values of a step in one book neither run in another book with the same step ids, nor get replaced.
+
+        The second book holds copies of the recipes of the first with the same step identifiers, as two books built
+        from one default profile do.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, first, _, step_id = await ran_book(fx_kit, count=2)
+        await fx_kit.page_settings().change(actor, first.id, strength_field(step_id, on(ValueScope.EVEN)), STRONGER)
+        other_actor, second = await fx_kit.seed_project()
+        pages = [(await fx_kit.seed_scan_page(second, order_key=f'a{number}'))[0] for number in range(2)]
+        for page in pages:
+            await fx_kit.seed_base_version(page)
+        uow = fx_kit.uow()
+        for recipe in await uow.recipes.list_for_stage(first.id, Stage.GEOMETRY):
+            await uow.recipes.add(evolve(recipe, id=RecipeId(uuid4()), project_id=second.id))
+        await uow.commit()
+        await run_geometry(fx_kit, other_actor, second)
+        heads = [await head_of(fx_kit, page, Stage.GEOMETRY) for page in pages]
+        expect([head.params[STRENGTH_PARAMETER] for head in heads] == [RECIPE_STRENGTH, RECIPE_STRENGTH])
+        await fx_kit.page_settings().change(
+            other_actor, second.id, strength_field(step_id, on(ValueScope.EVEN)), STRONGEST
+        )
+        stored = [
+            [values.params for values in await fx_kit.uow().step_values.list_for_step(project.id, step_id)]
+            for project in (first, second)
+        ]
+        expect(stored == [[{STRENGTH_PARAMETER: STRONGER}], [{STRENGTH_PARAMETER: STRONGEST}]])
+        assert_expectations()
+
 
 class TestUndoOfAValueForParts:
     """Tests for taking back, from the history of a page, a value for the odd pages, the even pages or a group."""
@@ -584,7 +623,7 @@ class TestUndoOfAValueForParts:
         )
         expect(sorted(undo.page_id for undo in undone) == sorted([pages[1].id, pages[3].id]))
         expect(all(undo.scope is ValueScope.EVEN and undo.source is ChangeSource.UNDO for undo in undone))
-        expect(await fx_kit.uow().step_values.list_for_step(step_id) == [])
+        expect(await fx_kit.uow().step_values.list_for_step(project.id, step_id) == [])
         expect(await strengths(fx_kit, actor, project, pages) == [1, 1, 1, 1])
         expect(await stages_of(fx_kit, pages) == [StageState.FRESH, StageState.STALE] * 2)
         assert_expectations()
@@ -605,12 +644,38 @@ class TestUndoOfAValueForParts:
         newest = await fx_kit.page_history().undo(actor, project.id, key, None)
         expect(len(newest) == 2)
         expect(
-            [values.params for values in await fx_kit.uow().step_values.list_for_step(step_id)]
+            [values.params for values in await fx_kit.uow().step_values.list_for_step(project.id, step_id)]
             == [{STRENGTH_PARAMETER: STRONGER}]
         )
         oldest = next(change for change in first.changes if change.page_id == pages[1].id)
         await fx_kit.page_history().undo(actor, project.id, key, oldest.id)
-        expect(await fx_kit.uow().step_values.list_for_step(step_id) == [])
+        expect(await fx_kit.uow().step_values.list_for_step(project.id, step_id) == [])
+        assert_expectations()
+
+    async def test_an_undo_marks_the_pages_the_part_covers_now_and_not_only_the_pages_of_its_history(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a page that joined the group after the change goes stale when the change is taken back.
+
+        The page that joined later has no change in its history, since the value was set before it was in the group, but
+        it ran with the value and runs with the recipe once the value is gone.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, pages, step_id = await ran_book(fx_kit)
+        await put_in_group(fx_kit, pages[0], GROUP)
+        await fx_kit.page_settings().change(
+            actor, project.id, strength_field(step_id, on(ValueScope.GROUP, label=GROUP)), STRONGER
+        )
+        await put_in_group(fx_kit, pages[2], GROUP)
+        await run_geometry(fx_kit, actor, project)
+        before = await stages_of(fx_kit, pages)
+        await fx_kit.page_history().undo(actor, project.id, PageStepKey(pages[0].id, Stage.GEOMETRY, step_id), None)
+        expect(before == [StageState.FRESH] * len(pages))
+        expect(
+            await stages_of(fx_kit, pages) == [StageState.STALE, StageState.FRESH, StageState.STALE, StageState.FRESH]
+        )
         assert_expectations()
 
     async def test_an_undo_is_refused_when_the_values_changed_after_the_change(self, fx_kit: ProcessingKit) -> None:
@@ -632,7 +697,7 @@ class TestUndoOfAValueForParts:
         await settings.change(actor, project.id, even, STRONGEST)
         with pytest.raises(ConflictError):
             await fx_kit.page_history().undo(actor, project.id, key, first.id)
-        assert [values.params for values in await fx_kit.uow().step_values.list_for_step(step_id)] == [
+        assert [values.params for values in await fx_kit.uow().step_values.list_for_step(project.id, step_id)] == [
             {STRENGTH_PARAMETER: STRONGEST}
         ]
 
@@ -659,6 +724,26 @@ class TestRunWithPageSettings:
         expect(own.data[RAN_KEY] == STRONGER)
         expect(shared.params[STRENGTH_PARAMETER] == 1)
         assert_expectations()
+
+    @patch(COUNT_BEFORE_PATCH, autospec=True, side_effect=InMemoryPageRepository.count_before)
+    async def test_a_page_counts_its_place_once_however_many_steps_the_recipe_has(
+        self, counting: MagicMock, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify the place of a page is counted once for the chain of its steps, when a part of the pages has a value.
+
+        :param counting: The count of the pages before a page, which still counts.
+        :type counting: MagicMock
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, pages, step_id = await ran_book(fx_kit, count=2)
+        step = await step_of(fx_kit, project)
+        steps = [step, *(evolve(step, step_id=StepId(uuid4())) for _ in range(STEPS_OF_A_CHAIN - 1))]
+        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=steps, order=OrderMode.FREE))
+        await fx_kit.page_settings().change(actor, project.id, strength_field(step_id, on(ValueScope.EVEN)), STRONGER)
+        counting.reset_mock()
+        await run_geometry(fx_kit, actor, project)
+        assert counting.call_count == len(pages)
 
     async def test_the_page_keeps_its_value_when_the_recipe_changes_and_the_others_follow_it(
         self, fx_kit: ProcessingKit

@@ -1,7 +1,7 @@
 """Schemas of the values a setting of a step has for a part of the pages: what a request sets, and what is listed."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Self
 
 from pydantic import Field, model_validator
 
@@ -26,7 +26,7 @@ class ValueTargetModel(RequestModel):
     group_label: GroupLabel = ''
 
     @model_validator(mode='after')
-    def _names_what_the_scope_needs(self) -> ValueTargetModel:
+    def _names_what_the_scope_needs(self) -> Self:
         """Check that the request names the pages or the label its scope needs, and nothing else.
 
         :returns: The model unchanged.

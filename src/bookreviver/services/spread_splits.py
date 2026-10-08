@@ -49,7 +49,7 @@ from bookreviver.domain.ids import PageId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import PageStageKey, PageStepKey
 from bookreviver.services.page_labels import PageLabels
-from bookreviver.services.step_params import lay_step_values
+from bookreviver.services.step_params import PageLayers
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
@@ -166,7 +166,7 @@ class SpreadSplit:
         processor = self._catalogue.get(step.processor_key)
         state = await self._uow.page_step_states.find(PageStepKey(page.id, Stage.PAGE_SPLIT, step.step_id))
         params = processor.validate_params(
-            await lay_step_values(self._uow, page, step.step_id, step.params, None if state is None else state.params)
+            await PageLayers(self._uow, page).lay(step.step_id, step.params, None if state is None else state.params)
         )
         edit = None if state is None else state.edit
         halves = await self._halves(page)
@@ -215,16 +215,23 @@ class SpreadSplit:
             raise ConflictError(UNSPLIT_NOT_CONFIRMED.format(page_id=rights[0].id))
         return Unsplit(page=page, rights=rights)
 
-    async def unsplit(self, undoing: Unsplit) -> None:
+    async def unsplit(self, undoing: Unsplit) -> list[PageStage]:
         """Delete the right halves and make the left half the whole scan, in the transaction of the caller.
+
+        The pages after the deleted halves move up, so those that turn over to the other side of the book are marked
+        stale where the odd pages or the even pages have values for a step.
 
         :param undoing: What the undoing deletes.
         :type undoing: Unsplit
+        :returns: The stage records of the pages that turned over and became stale, which the caller announces.
+        :rtype: list[PageStage]
         """
         await self._labels.recompute(self._project.id, leaving=[right.id for right in undoing.rights])
-        for right in undoing.rights:
-            await self._uow.pages.delete(right.id)
+        async with self._records.watching_sides(self._project.id) as watch:
+            for right in undoing.rights:
+                await self._uow.pages.delete(right.id)
         await self._uow.pages.update(evolve(undoing.page, slot=Page.WHOLE_SCAN, updated_at=self._clock.now()))
+        return watch.turned
 
     async def finish_unsplit(self, undoing: Unsplit) -> None:
         """Remove the files of the deleted pages and tell the browser, after the caller committed the undoing.
@@ -397,8 +404,10 @@ class SpreadSplit:
         :rtype: list[PageStage]
         """
         pages = (halves.left, halves.right)[: len(made)]
-        if len(made) > 1 and halves.right_is_new:
-            await self._uow.pages.add(halves.right)
+        # The new half moves the pages after it on, which turns some of them over to the other side of the book
+        async with self._records.watching_sides(self._project.id) as watch:
+            if len(made) > 1 and halves.right_is_new:
+                await self._uow.pages.add(halves.right)
         if len(made) > 1 and halves.left_changes:
             await self._uow.pages.update(halves.left)
         if len(made) > 1 and halves.right_is_new:
@@ -417,8 +426,9 @@ class SpreadSplit:
                 PageStageKey(page.id, Stage.PAGE_SPLIT), head_version_id=version.id, recipe_id=recipe.id
             )
         ]
+        changed.extend(watch.turned)
         if undoing is not None:
-            await self.unsplit(undoing)
+            changed.extend(await self.unsplit(undoing))
         await self._uow.commit()
         return changed
 

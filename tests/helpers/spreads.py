@@ -43,7 +43,7 @@ async def seed_spreads(kit: ProcessingKit, *, count: int = 1) -> tuple[Actor, Pr
 
 
 async def use_recipe(kit: ProcessingKit, actor: Actor, project: Project, stage: Stage, processor_key: str) -> None:
-    """Make a one-step recipe with default parameters the active recipe of a stage.
+    """Give the recipe of text pages of a stage one step with default parameters.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit

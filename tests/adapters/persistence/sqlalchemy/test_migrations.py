@@ -38,7 +38,7 @@ from bookreviver.app.container import build_container
 from bookreviver.app.main import create_app
 from bookreviver.app.providers.database import MIGRATE_COMMAND, MIGRATE_DOWNGRADE_COMMAND
 from bookreviver.app.settings import PersistenceBackend
-from bookreviver.domain.enums import EditorKind, OrderMode, RecipeKind, Rendition, ResultMark, Stage
+from bookreviver.domain.enums import EditorKind, OrderMode, RecipeKind, Rendition, ResultMark
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.ids import PageVersionId, RecipeId, RecipeProfileId
 from bookreviver.domain.values import Renditions
@@ -111,6 +111,12 @@ INSERT_PAGE: str = (
     " VALUES (:id, :project_id, :order_key, '', 0, 'text', 'placeholder', NULL, 0, 1, '', '',"
     " '2026-01-01 00:00:00', '2026-01-01 00:00:00', 0)"
 )
+INSERT_TYPED_PAGE: str = (
+    'INSERT INTO pages (id, project_id, order_key, label, label_manual, kind, content_type, origin, scan_id, slot,'
+    ' included, notes, group_label, created_at, updated_at, revision)'
+    " VALUES (:id, :project_id, :order_key, '', 0, :kind, :content_type, 'placeholder', NULL, 0, 1, '', '',"
+    " '2026-01-01 00:00:00', '2026-01-01 00:00:00', 0)"
+)
 INSERT_STAGE: str = (
     'INSERT INTO page_stages (page_id, stage, recipe_id, state, updated_at) '
     "VALUES (:page_id, 'geometry', :recipe_id, 'fresh', '2026-01-01 00:00:00')"
@@ -174,6 +180,14 @@ RECIPE_KIND_LABELS: tuple[tuple[str, str], ...] = (
     ('bw-picture', 'Black-and-white picture'),
     ('blank', 'Blank page'),
 )
+# The pages the active recipe processed besides the text page, as the role and the content type each is stored with, and
+# the kind of recipe that processes each after the revision
+TYPED_PAGES: dict[str, tuple[str, str | None, str]] = {
+    'colour': ('text', 'color-picture', 'color-picture'),
+    'grey': ('text', 'bw-picture', 'bw-picture'),
+    'blank': ('blank', None, 'blank'),
+    'frontispiece': ('frontispiece', None, 'color-picture'),
+}
 # Rows as the revision before the recipes had a kind wrote them
 INSERT_KIND_RECIPE: str = (
     'INSERT INTO recipes (id, project_id, stage, name, steps, active, created_at, updated_at) '
@@ -1512,7 +1526,9 @@ class TestRecipeKindsRevision:
 
         The geometry stage has the active recipe Text and the variant Plates, the cleanup stage the active recipe
         alone. The page ``text`` was processed by the active recipe, the page ``plate`` by the variant, which a rule
-        sends the plates to and which is pinned to the page. Every step has a condition, and so has the one of the profile.
+        sends the plates to and which is pinned to the page. The pages of ``TYPED_PAGES``, a picture in colour, a
+        picture in black and white, a blank page and a frontispiece, were processed by the active recipe. Every step has a
+        condition, and so has the one of the profile.
 
         :param database: Database migrated to the revision before.
         :type database: SqlDatabase
@@ -1558,6 +1574,20 @@ class TestRecipeKindsRevision:
                     text(INSERT_KIND_STAGE),
                     {'page_id': page.id.bytes, 'recipe_id': ids['text' if name == 'text' else 'plates']},
                 )
+            for name, (page_kind, content_type, _) in TYPED_PAGES.items():
+                typed = make_page(project_id=project.id, order_key=name)
+                pages[name] = typed
+                await session.execute(
+                    text(INSERT_TYPED_PAGE),
+                    {
+                        'id': typed.id.bytes,
+                        'project_id': project.id.bytes,
+                        'order_key': name,
+                        'kind': page_kind,
+                        'content_type': content_type,
+                    },
+                )
+                await session.execute(text(INSERT_KIND_STAGE), {'page_id': typed.id.bytes, 'recipe_id': ids['text']})
             await session.commit()
         return {**ids, **{f'page-{name}': page.id.bytes for name, page in pages.items()}}
 
@@ -1607,6 +1637,36 @@ class TestRecipeKindsRevision:
         stored = {row.page_id: (row.recipe_id, row.state) for row in rows}
         expect(stored[ids['page-text']] == (ids['text'], 'fresh'))
         expect(stored[ids['page-plate']] == (None, 'stale'))
+        assert_expectations()
+
+    async def test_pages_of_the_active_recipe_move_to_the_recipe_of_their_kind_and_stay_fresh(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify a picture, a blank page and a frontispiece point at the copy of their kind, and the text page stays.
+
+        The kind comes from the role and the content type of the page as ``RecipeKind.of`` works it out, so a change of
+        the recipe of a kind marks exactly the pages of that kind. The copies have the steps of the text recipe, so no
+        page goes stale.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, MILLIMETRES_REVISION)
+        ids = await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, KINDS_REVISION)
+        async with fx_empty_database.sessions() as session:
+            recipes = {
+                row.kind: row.id
+                for row in (await session.execute(text("SELECT id, kind FROM recipes WHERE stage = 'geometry'"))).all()
+            }
+            stages = {
+                row.page_id: (row.recipe_id, row.state)
+                for row in (await session.execute(text('SELECT page_id, recipe_id, state FROM page_stages'))).all()
+            }
+        expect(stages[ids['page-text']] == (ids['text'], 'fresh'))
+        for name, (_, _, recipe_kind) in TYPED_PAGES.items():
+            expect(stages[ids[f'page-{name}']] == (recipes[recipe_kind], 'fresh'))
         assert_expectations()
 
     async def test_the_conditions_of_the_profiles_the_rules_and_the_pins_are_dropped(
@@ -1714,10 +1774,21 @@ class TestStepValuesRevision:
         await _migrate(fx_empty_database, migrations.upgrade, VALUES_REVISION)
         async with fx_empty_database.sessions() as session:
             change = (await session.execute(text('SELECT scope, group_label, source FROM page_step_changes'))).one()
-            stored = await SqlAlchemyUnitOfWork(session).step_values.list_for_stage(project.id, Stage.GEOMETRY)
+            stored = await SqlAlchemyUnitOfWork(session).step_values.list_for_project(project.id)
         expect(tuple(change) == ('pages', '', 'user'))
         expect(stored == [])
         assert_expectations()
+
+    async def test_primary_key_of_the_values_names_the_project(self, fx_empty_database: SqlDatabase) -> None:
+        """Verify the values of a step are keyed by the project too, since books built from one profile share step ids.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        await _migrate(fx_empty_database, fx_empty_database.migrations.upgrade, VALUES_REVISION)
+        async with fx_empty_database.engine.connect() as connection:
+            key = await connection.run_sync(lambda sync: inspect(sync).get_pk_constraint('step_values'))
+        assert key['constrained_columns'] == ['project_id', 'step_id', 'scope', 'group_label']
 
     async def test_downgrade_drops_the_table_and_the_columns_and_keeps_the_changes(
         self, fx_empty_database: SqlDatabase

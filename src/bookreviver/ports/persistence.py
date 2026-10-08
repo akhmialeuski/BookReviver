@@ -725,16 +725,20 @@ class StepValuesRepository(Repository[StepValues, StepValuesKey]):
     async def find(self, key: StepValuesKey) -> StepValues | None:
         """Return the values one part of the pages has for one step.
 
-        :param key: The step and the part of the pages.
+        :param key: The project, the step and the part of the pages.
         :type key: StepValuesKey
         :returns: The values, or None when the part changes no field of the step.
         :rtype: StepValues | None
         """
 
     @abstractmethod
-    async def list_for_step(self, step_id: StepId) -> Sequence[StepValues]:
-        """Return the values every part of the pages has for one step, by scope and group.
+    async def list_for_step(self, project_id: ProjectId, step_id: StepId) -> Sequence[StepValues]:
+        """Return the values every part of the pages of a project has for one step, by scope and group.
 
+        Books built from one profile share the identifiers of the steps, so the values are those of one project.
+
+        :param project_id: Project owning the step.
+        :type project_id: ProjectId
         :param step_id: The step of a recipe.
         :type step_id: StepId
         :returns: The values of the step, which are none when no part changes a field of it.
@@ -742,14 +746,12 @@ class StepValuesRepository(Repository[StepValues, StepValuesKey]):
         """
 
     @abstractmethod
-    async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[StepValues]:
-        """Return the values of every step of one stage of a project, by step, scope and group.
+    async def list_for_project(self, project_id: ProjectId) -> Sequence[StepValues]:
+        """Return the values of every step of a project, by step, scope and group, which is one read for all stages.
 
         :param project_id: Project owning the steps.
         :type project_id: ProjectId
-        :param stage: The stage.
-        :type stage: Stage
-        :returns: The values of the stage.
+        :returns: The values of the project, each naming its stage.
         :rtype: Sequence[StepValues]
         """
 

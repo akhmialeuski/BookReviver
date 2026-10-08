@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pytest
 from attrs import evolve
+from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import (
@@ -883,7 +884,7 @@ class TestStepValuesRepository:
         for values in parts:
             await uow.step_values.save(values)
         await uow.commit()
-        listed = await (await fx_uow_factory()).step_values.list_for_step(DESKEW_STEP_ID)
+        listed = await (await fx_uow_factory()).step_values.list_for_step(project_id, DESKEW_STEP_ID)
         assert [(values.scope, values.group_label) for values in listed] == [
             (ValueScope.GROUP, 'Appendix'),
             (ValueScope.GROUP, 'Index'),
@@ -891,10 +892,10 @@ class TestStepValuesRepository:
             (ValueScope.EVEN, ''),
         ]
 
-    async def test_lists_keep_the_steps_the_stages_and_the_projects_apart(
+    async def test_lists_keep_the_steps_and_the_projects_apart(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the values of another step, another stage and another book are not listed.
+        """Verify the values of another step and another book are not listed, and a project lists every stage.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -913,10 +914,43 @@ class TestStepValuesRepository:
         await uow.commit()
         reading = (await fx_uow_factory()).step_values
         assert (
-            await reading.list_for_step(DESKEW_STEP_ID),
-            await reading.list_for_stage(project_id, Stage.GEOMETRY),
-            await reading.list_for_stage(project_id, Stage.CLEANUP),
-        ) == ([mine], sorted([mine, other_step], key=lambda values: str(values.step_id)), [other_stage])
+            await reading.list_for_step(project_id, DESKEW_STEP_ID),
+            await reading.list_for_project(project_id),
+        ) == (
+            [mine],
+            sorted([mine, other_step, other_stage], key=lambda values: str(values.step_id)),
+        )
+
+    async def test_two_projects_sharing_a_step_keep_separate_values(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify books built from one profile, which share a step id, keep, replace and delete their values apart.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        first_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
+        second_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
+        first = make_step_values(project_id=first_id, params={'max_angle_deg': 3})
+        second = make_step_values(project_id=second_id, params={'max_angle_deg': 9})
+        uow = await fx_uow_factory()
+        await uow.step_values.save(first)
+        await uow.step_values.save(second)
+        await uow.commit()
+        reading = (await fx_uow_factory()).step_values
+        expect(await reading.list_for_step(first_id, DESKEW_STEP_ID) == [first])
+        expect(await reading.list_for_step(second_id, DESKEW_STEP_ID) == [second])
+        expect(await reading.find(first.key) == first)
+        expect(await reading.find(second.key) == second)
+        uow = await fx_uow_factory()
+        await uow.step_values.delete(first.key)
+        await uow.commit()
+        reading = (await fx_uow_factory()).step_values
+        expect(await reading.find(first.key) is None)
+        expect(await reading.find(second.key) == second)
+        assert_expectations()
 
     async def test_delete_removes_one_part_and_a_missing_one_is_not_found(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -973,7 +1007,7 @@ class TestStepValuesRepository:
         uow = await fx_uow_factory()
         await uow.projects.delete(project_id)
         await uow.commit()
-        assert await (await fx_uow_factory()).step_values.list_for_step(DESKEW_STEP_ID) == [kept]
+        assert await (await fx_uow_factory()).step_values.list_for_step(other_project_id, DESKEW_STEP_ID) == [kept]
 
 
 class TestPageStepChangeRepository:

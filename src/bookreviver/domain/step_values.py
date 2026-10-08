@@ -33,18 +33,45 @@ NOT_A_PART: str = 'A value for pages is kept by the pages themselves, and not on
 
 # The places of the parts of the book that are told apart, from the weakest to the strongest: a group beats a side
 SIDE_SCOPES: frozenset[ValueScope] = frozenset({ValueScope.ODD, ValueScope.EVEN})
+SIDE_COUNT: int = 2
 ODD_REMAINDER: int = 1
+
+
+def pages_changing_side(before: Sequence[PageId], after: Sequence[PageId]) -> list[PageId]:
+    """Pick the pages that stand on the other side of the book, odd or even, after a change of their places.
+
+    The place of a page is its index in the order of the book, so a page that stands an odd number of places away from
+    where it stood has turned over, and a page that is only in one of the two orders, added or deleted, has not.
+
+    :param before: The pages of the book in order before the change.
+    :type before: Sequence[PageId]
+    :param after: The pages of the book in order after the change.
+    :type after: Sequence[PageId]
+    :returns: The pages of both orders whose place changed by an odd number, in the order they have after the change.
+    :rtype: list[PageId]
+    """
+    earlier = {page_id: place for place, page_id in enumerate(before)}
+    return [
+        page_id
+        for place, page_id in enumerate(after)
+        if page_id in earlier and (place - earlier[page_id]) % SIDE_COUNT == ODD_REMAINDER
+    ]
 
 
 @frozen
 class StepValuesKey:
     """The key a part of the pages keeps its values of a step under.
 
+    The project is part of the key, since two books built from one profile keep the identifiers of its steps, and the
+    values of one must never reach a run or a save of the other.
+
+    :ivar project_id: Project owning the step.
     :ivar step_id: The step of a recipe.
     :ivar scope: The odd pages, the even pages or a group.
     :ivar group_label: Label of the group for the scope of a group, and empty for the others.
     """
 
+    project_id: ProjectId
     step_id: StepId
     scope: ValueScope
     group_label: str = ''
@@ -129,7 +156,7 @@ class StepValues:
     @property
     def key(self) -> StepValuesKey:
         """The key the values are stored under."""
-        return StepValuesKey(self.step_id, self.scope, self.group_label)
+        return StepValuesKey(self.project_id, self.step_id, self.scope, self.group_label)
 
     @property
     def is_empty(self) -> bool:
@@ -148,9 +175,9 @@ class StepValues:
         """
         match self.scope:
             case ValueScope.ODD:
-                return position % 2 == ODD_REMAINDER
+                return position % SIDE_COUNT == ODD_REMAINDER
             case ValueScope.EVEN:
-                return position % 2 != ODD_REMAINDER
+                return position % SIDE_COUNT != ODD_REMAINDER
             case _:
                 return bool(group_label) and group_label == self.group_label
 

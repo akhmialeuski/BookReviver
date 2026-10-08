@@ -1,7 +1,9 @@
 """Tests for marking the stage records stale when a processor that made their result has a new version."""
 
+from collections import Counter
 from datetime import timedelta
 from typing import TYPE_CHECKING, Self
+from unittest.mock import AsyncMock
 
 import pytest
 from attrs import evolve
@@ -239,3 +241,30 @@ class TestMarkStale:
             (await outdated_page.stored(Stage.GEOMETRY)).state,
             (await current_page.stored(Stage.GEOMETRY)).state,
         ) == ([outdated_page.page.id], StageState.STALE, StageState.FRESH)
+
+    async def test_a_version_that_several_records_lead_to_is_read_once(
+        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify the base version and the geometry version, which the later stages of one page read, are read once.
+
+        The cleanup record leads to the geometry version and through it to the base version, and the geometry record
+        leads to both as well, so a walk of each record on its own reads them again and again.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param monkeypatch: Replaces the read of the versions by one that counts what it is asked for.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        page = await SeededPage.seed(fx_kit)
+        geometry = await page.result(Stage.GEOMETRY, CURRENT_GEOMETRY)
+        cleanup = await page.result(Stage.CLEANUP, CURRENT_CLEANUP, input_id=geometry.id)
+        uow = fx_kit.uow()
+        reading = AsyncMock(wraps=uow.page_versions.list_by_ids)
+        monkeypatch.setattr(uow.page_versions, 'list_by_ids', reading)
+        fx_kit.clock.moment = CHECKED_AT
+
+        await OutdatedResults(uow=uow, catalogue=fx_kit.catalogue, clock=fx_kit.clock).mark_stale()
+
+        asked = Counter(version_id for call in reading.await_args_list for version_id in call.args[0])
+        base = (await uow.page_versions.list_for_page(page.page.id))[0]
+        assert asked == {base.id: 1, geometry.id: 1, cleanup.id: 1}

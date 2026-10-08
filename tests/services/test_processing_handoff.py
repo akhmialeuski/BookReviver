@@ -16,11 +16,13 @@ from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.events import JobChanged
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.values import StageRun, TileCut
-from bookreviver.services.processing_parts import NOT_QUEUED, JobStarter
+from bookreviver.services.processing_parts import NOT_QUEUED
 from tests.helpers.builders import EPOCH
 from tests.helpers.fakes_imports import TickingClock
 
 if TYPE_CHECKING:
+    from collections.abc import Collection, Sequence
+
     from bookreviver.domain.entities import Actor, Job, Project
     from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.values import MetadataMap
@@ -90,7 +92,6 @@ class TestRunHandOff:
 
         monkeypatch.setattr(InMemoryUnitOfWork, 'commit', commit_and_look)
         await fx_kit.jobs().run_stage(job.id)
-        monkeypatch.undo()
 
         stored = await fx_kit.uow().jobs.get(job.id)
         expect(stored.state is JobState.SUCCEEDED)
@@ -364,39 +365,41 @@ class TestRunTakesTheProjectFromAPreview:
         """Verify a run or a measure that loses the insert to a preview of another request cancels it and goes on.
 
         The editor of a step asks for a preview by itself at about the time the reader presses Run, so the preview may be
-        stored after the project was read as free and before the run is inserted, where the unique index refuses it.
+        stored after the project was read as free and before the run is inserted, where the unique index refuses it. The
+        race is made at the port: the first listing of the active jobs of the unit of work returns what it found, and
+        then stores a preview, so the starter acts on a read that the preview has made out of date.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param monkeypatch: Fixture patching the first read of the active jobs to be the one that came before the preview.
+        :param monkeypatch: Fixture putting the racing listing in the job repository of the unit of work.
         :type monkeypatch: pytest.MonkeyPatch
         :param requested: The kind of job the user asks for.
         :type requested: JobKind
         """
         _, project = await prepared_page(fx_kit)
-        starter = fx_kit.parts(fx_kit.uow()).starter
-        read = JobStarter._active
-        reads: list[None] = []
+        uow = fx_kit.uow()
+        starter = fx_kit.parts(uow).starter
+        listing = uow.jobs.list_for_project
+        raced: list[None] = []
 
-        async def free_at_first(self: JobStarter, project_id: ProjectId) -> list[Job]:
-            """Show the project as free the first time, as it was when the run was checked, and as it is after that.
+        async def list_then_store_a_preview(project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:
+            """List the jobs as they are, and the first time store a preview right after, as a rival request does.
 
-            :param self: The starter that reads the active jobs.
-            :type self: JobStarter
-            :param project_id: Project whose jobs are read.
+            :param project_id: Project whose jobs are listed.
             :type project_id: ProjectId
-            :returns: No job the first time, then the active jobs of the project.
-            :rtype: list[Job]
+            :param states: States a listed job may be in.
+            :type states: Collection[JobState]
+            :returns: The jobs found before the preview was stored.
+            :rtype: Sequence[Job]
             """
-            if not reads:
-                reads.append(None)
-                await self.enqueue(project_id, JobKind.PREVIEW_STEP, {})
-                return []
-            return await read(self, project_id)
+            found = await listing(project_id, states)
+            if not raced:
+                raced.append(None)
+                await starter.enqueue(project_id, JobKind.PREVIEW_STEP, {})
+            return found
 
-        monkeypatch.setattr(JobStarter, '_active', free_at_first)
+        monkeypatch.setattr(uow.jobs, 'list_for_project', list_then_store_a_preview)
         asked = await starter.enqueue(project.id, requested, StageRun(stage=Stage.GEOMETRY).to_map())
-        monkeypatch.undo()
 
         preview = fx_kit.recording.enqueued[0]
         expect((await fx_kit.uow().jobs.get(preview.id)).state is JobState.CANCELLED)

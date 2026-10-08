@@ -35,8 +35,10 @@ class TestScaleFactor:
         """
         assert scale_factor(far, TARGET_PX, LIMIT_PERCENT) is None
 
-    def test_a_limit_of_zero_scales_only_a_page_on_the_target(self) -> None:
-        """Verify no change of size is allowed when the limit is zero."""
-        expected_on_target = scale_factor(TARGET_PX, TARGET_PX, 0.0)
-        assert expected_on_target == pytest.approx(1.0)
+    def test_a_limit_of_zero_still_scales_a_page_on_the_target(self) -> None:
+        """Verify a page on the target gets the factor 1 when the limit is zero."""
+        assert scale_factor(TARGET_PX, TARGET_PX, 0.0) == pytest.approx(1.0)
+
+    def test_a_limit_of_zero_leaves_a_page_off_the_target_as_it_is(self) -> None:
+        """Verify a page off the target gets no factor when the limit is zero, since no change of size is allowed."""
         assert scale_factor(TARGET_PX + 0.5, TARGET_PX, 0.0) is None

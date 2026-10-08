@@ -108,13 +108,15 @@ class _Scene:
         }
         if not steps:
             raise NotFoundError(step_id)
-        parts = await uow.step_values.list_for_step(step_id)
+        parts = await uow.step_values.list_for_step(project_id, step_id)
         if target.scope is ValueScope.PAGES:
             holder = None
             named = await uow.pages.list_by_ids(project_id, target.page_ids)
             positions = {page.id: await uow.pages.count_before(page) + 1 for page in named} if parts else {}
         else:
-            holder = await uow.step_values.find(StepValuesKey(step_id, target.scope, target.group_label)) or StepValues(
+            holder = await uow.step_values.find(
+                StepValuesKey(project_id, step_id, target.scope, target.group_label)
+            ) or StepValues(
                 project_id=project_id,
                 stage=field.stage,
                 step_id=step_id,
@@ -249,7 +251,7 @@ class PageSettingsService:
         listed: list[PageStepSettings] = []
         if recipe is None:
             return listed
-        parts = await self._uow.step_values.list_for_stage(project_id, stage)
+        parts = await self._uow.step_values.list_for_project(project_id)
         states = {state.step_id: state for state in await self._uow.page_step_states.list_for_page(page_id, stage)}
         position = await self._uow.pages.count_before(page) + 1
         for step in recipe.steps:

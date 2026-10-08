@@ -48,7 +48,7 @@ class Book(NamedTuple):
 
     :ivar project: The project of the book.
     :ivar pages: The pages in book order.
-    :ivar step_id: Identifier of the only step of the active geometry recipe.
+    :ivar step_id: Identifier of the only step of the geometry recipe of text pages.
     """
 
     project: Project

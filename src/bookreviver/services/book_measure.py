@@ -5,10 +5,11 @@ lines of the box. The pages of one book are made alike by the same step, which n
 size for the page, and no step sees more than one page. ``BookBlocks`` reads what the step recorded on the current
 version of every page, and ``BookSize`` works the target and the page out of it, in one place for the two ways it is
 used. The ``measure-book`` job writes them into the parameters of the normalize step of every Geometry recipe, since
-the pages of all kinds have one size, where the user sees them in the form and may change them. A run of the stage,
-and the preview of the step, lay them over
-the parameters that are 0, which is the size by the book, without writing them anywhere, so a book needs no press of the
-button to have one page size.
+the pages of all kinds have one size, where the user sees them in the form and may change them. Each recipe is measured
+by its own margins and its own largest change of size, and the page written into all of them is the largest width and
+the largest height of those, so the sheet is one for the book while the margins of each kind stay its own. A run of the
+stage, and the preview of the step, lay them over the parameters that are 0, which is the size by the book, without
+writing them anywhere, so a book needs no press of the button to have one page size.
 
 A page whose lines were photographed larger than another's has a larger block too, so each block is brought to the
 median line height before the blocks are compared, as the normalize step will bring it: by the same rule, which leaves a
@@ -433,8 +434,11 @@ class BookMeasure:
     async def run(self, project_id: ProjectId) -> int:
         """Measure the pages of the book and write the result into the parameters of the normalize step.
 
-        The step is written into every recipe of the Geometry stage that has one, since the pages of every kind of the
-        book are placed on one page size.
+        The step is written into every recipe of the Geometry stage that has one. The margins and the line height of
+        each recipe are measured by its own parameters, since the margins of a kind are its own, but the sheet is one
+        for the book: the page size written into every recipe is the largest width and the largest height measured by
+        any of them, so the pages of every kind are placed on one page size and each still holds its content with its
+        own margins.
 
         :param project_id: Project whose pages are measured.
         :type project_id: ProjectId
@@ -454,12 +458,18 @@ class BookMeasure:
         measures = list((await BookBlocks(self._uow).read(project_id, Stage.GEOMETRY)).values())
         if not measures:
             raise ConflictError(NOTHING_TO_MEASURE)
+        sizes = BookSize(measures)
+        steps = [recipe.steps[position] for recipe, position in holders]
+        measured = [sizes.measured(step.params) for step in steps]
+        page: dict[str, int] = {
+            name: max(int(own[name]) for own in measured)
+            for name in (NormalizeParam.PAGE_WIDTH, NormalizeParam.PAGE_HEIGHT)
+        }
         stale: list[PageStage] = []
-        for recipe, position in holders:
-            step = recipe.steps[position]
-            measured = evolve(step, params={**step.params, **BookSize(measures).measured(step.params)})
-            if measured.params != step.params:
-                stale.extend(await self._write(recipe, position, measured))
+        for (recipe, position), step, own in zip(holders, steps, measured, strict=True):
+            written = evolve(step, params={**step.params, **own, **page})
+            if written.params != step.params:
+                stale.extend(await self._write(recipe, position, written))
         await self._uow.commit()
         await self._records.announce(project_id, stale)
         return len(measures)
