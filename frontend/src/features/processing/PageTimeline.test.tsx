@@ -23,9 +23,7 @@ const sdk = vi.hoisted(() => ({
   clear: vi.fn(),
   versions: vi.fn(),
   choose: vi.fn(),
-  remake: vi.fn(),
   mark: vi.fn(),
-  jobs: vi.fn(),
 }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
@@ -35,9 +33,7 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   clearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDelete: sdk.clear,
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet: sdk.versions,
   chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePut: sdk.choose,
-  remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePost: sdk.remake,
   putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPut: sdk.mark,
-  listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
 }));
 
 const STEP_ID = 'id-geometry.deskew';
@@ -207,9 +203,7 @@ describe('PageTimeline', () => {
     sdk.undo.mockResolvedValue({ data: { changes: [] } });
     sdk.clear.mockResolvedValue({ data: { changes: 2, versions: 2 } });
     sdk.choose.mockResolvedValue({ data: {} });
-    sdk.remake.mockResolvedValue({ data: { id: 'job' } });
     sdk.mark.mockResolvedValue({ data: {} });
-    sdk.jobs.mockResolvedValue(EMPTY_LIST);
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -782,26 +776,6 @@ describe('PageTimeline', () => {
         path: { project_id: 'project', page_id: 'page', stage: 'geometry' },
         body: { version_id: 'old' },
       });
-    });
-
-    it('makes the picture of a result again when a collection removed it, instead of choosing it', async () => {
-      const removed = version('old', {
-        created_at: at(11),
-        input_id: 'first',
-        files_removed: true,
-        files_removed_at: '2026-10-02T00:00:00Z',
-        images: null,
-      });
-      sdk.versions.mockResolvedValue(listed(FIRST, removed, NEW));
-      await render({ step: null });
-
-      expect(byId('page-history-removed')?.textContent).toBe('Picture removed · made again on use');
-      await act(async () => {
-        byId('page-history-use')?.click();
-      });
-
-      expect(sdk.choose).not.toHaveBeenCalled();
-      expect(sdk.remake.mock.calls[0]?.[0]).toMatchObject({ path: { version_id: 'old' } });
     });
 
     it('shows the answer of the server when a result cannot be chosen', async () => {

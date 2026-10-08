@@ -551,7 +551,7 @@ class PageService:
             sources = await self._paper_sources(page) if page.blank_fill is BlankFill.PAPER else None
             leaf = BaseVersions.blank(page=page, size=size, full=full, moment=moment, paper_from=sources)
             made = await self._uow.page_versions.find(leaf.id)
-            if made is not None and made.state is VersionState.READY and not made.files_removed:
+            if made is not None and made.state is VersionState.READY:
                 # The same leaf was made before, so it is current again without the job
                 records.extend(await self._records.set_head(key, head_version_id=made.id, recipe_id=None))
                 continue
@@ -1372,7 +1372,7 @@ class PageService:
                 references=[
                     keys.version_rendition(source, source.renditions.full)
                     for source in sources
-                    if source.renditions is not None and source.renditions.ready and not source.files_removed
+                    if source.renditions is not None and source.renditions.ready
                 ],
             )
         else:

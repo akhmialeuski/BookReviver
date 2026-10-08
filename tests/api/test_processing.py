@@ -44,8 +44,9 @@ from bookreviver.domain.enums import (
     VersionScale,
 )
 from bookreviver.domain.geometry import ContentBox, Line, Mesh, SplitChoice
+from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import Renditions, StageRun
+from bookreviver.domain.values import PageStageKey, Renditions, StageRun
 from tests.helpers.builders import make_page, make_project, make_scan, make_source, new_account_id
 from tests.helpers.processing import ProcessingFakesProvider
 from tests.helpers.seeding import commit_project
@@ -70,6 +71,10 @@ CONTENT_TYPE_HEADER: str = 'content-type'
 FAKE_KEY: str = 'geometry.fake'
 SCAN_SIZE_PX: tuple[int, int] = (120, 160)
 ITEMS: str = 'items'
+# An old version of the page that nothing needs, and the bytes of its one file
+OLD_VERSION_ID: str = 'abcdefabcdefabcd'
+OLD_VERSION_CONTENT: bytes = b'an old picture' * 100
+COLLECTABLE_PATH: str = '/versions/collectable'
 
 
 class Book(NamedTuple):
@@ -590,6 +595,63 @@ class TestRunAndVersions:
         expect(response.status_code == status.HTTP_202_ACCEPTED)
         expect(job.kind is JobKind.COLLECT_VERSIONS)
         assert_expectations()
+
+    async def test_collectable_versions_are_counted_with_their_bytes_and_nothing_is_deleted(
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_broker: InMemoryBroker,
+        fx_book: Book,
+        fx_database: InMemoryDatabase,
+        fx_asset_store: AssetStore,
+    ) -> None:
+        """Verify the report names the versions a collection would delete and the bytes of their files, and deletes none.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the job.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        :param fx_asset_store: Asset store of the application.
+        :type fx_asset_store: AssetStore
+        """
+        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        uow = InMemoryUnitOfWork(fx_database)
+        record = await uow.page_stages.get(PageStageKey(fx_book.page.id, Stage.PAGE_SPLIT))
+        assert record.head_version_id is not None
+        # A version made from the current one and left behind: it reads the head, and no current chain reads it
+        old = evolve(
+            await uow.page_versions.get(record.head_version_id),
+            id=PageVersionId(OLD_VERSION_ID),
+            input_id=record.head_version_id,
+        )
+        async with fx_asset_store.writable(
+            ProjectKeys(fx_book.project.id).version_rendition(old, Rendition.FULL_JPEG)
+        ) as path:
+            path.write_bytes(OLD_VERSION_CONTENT)
+        await uow.page_versions.add(old)
+        await uow.commit()
+
+        first = await fx_client.get(f'{fx_book.path}{COLLECTABLE_PATH}')
+        second = await fx_client.get(f'{fx_book.path}{COLLECTABLE_PATH}')
+
+        expect(first.status_code == status.HTTP_200_OK)
+        expect(
+            first.json() == {'versions': 1, 'size_bytes': len(OLD_VERSION_CONTENT)} and second.json() == first.json()
+        )
+        expect(await InMemoryUnitOfWork(fx_database).page_versions.find(old.id) is not None)
+        assert_expectations()
+
+    async def test_collectable_versions_of_another_account_are_a_404(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify the report of a project that is not the account's is answered like one of a missing project.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        response = await fx_client.get(f'{PROJECTS_PATH}/{uuid4()}{COLLECTABLE_PATH}')
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     async def test_measuring_the_book_is_a_202_job(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
         """Verify the measure of the book is queued as a job and answered 202.

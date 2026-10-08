@@ -491,9 +491,6 @@ class PageVersion:
     :ivar tiles_ready: Whether the IIIF tile pyramid of the version is cut, which is done for the current version of a
                        stage and for any other version on request.
     :ivar created_at: When the version was created.
-    :ivar files_removed_at: When a collection removed the files of the version, or None while it has them. The row
-                            stays with its parameters, data and edit hash, and a run makes the files again under the
-                            same identifier.
     :ivar mark: What the user judged of the result, or None while it is not judged. The mark and the comment are the
                 user's notes on the result, not an input of the step, so neither changes the identifier.
     :ivar comment: What the user wrote about the result, or empty.
@@ -514,18 +511,8 @@ class PageVersion:
     edit_hash: str = ''
     tiles_ready: bool = False
     created_at: datetime
-    files_removed_at: datetime | None = None
     mark: ResultMark | None = None
     comment: str = ''
-
-    @property
-    def files_removed(self) -> bool:
-        """Whether a collection removed the files of the version, which a run can make again.
-
-        :returns: True from the moment the files were removed until they are made again.
-        :rtype: bool
-        """
-        return self.files_removed_at is not None
 
     @property
     def origin(self) -> VersionOrigin:

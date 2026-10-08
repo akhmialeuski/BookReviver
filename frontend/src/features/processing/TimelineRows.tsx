@@ -114,7 +114,7 @@ export function ResultRow({
   disabled: boolean;
   /** Whether this very result is being made the current one. */
   using: boolean;
-  /** Make this result the current one, or make its picture again when the picture was removed. */
+  /** Make this result the current one. */
   onUse: () => void;
 }): React.JSX.Element {
   const { version, current } = entry;
@@ -147,11 +147,6 @@ export function ResultRow({
               {facts.map((fact) => `${fact.label} ${fact.value}`).join(' · ')}
             </span>
           )}
-          {version.files_removed ? (
-            <span className="text-muted-foreground" data-testid="page-history-removed">
-              {resultLabels.pictureRemoved}
-            </span>
-          ) : null}
         </div>
         {current ? (
           <Badge variant="secondary">{resultLabels.current}</Badge>

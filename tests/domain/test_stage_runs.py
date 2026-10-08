@@ -3,9 +3,8 @@
 import pytest
 
 from bookreviver.domain.enums import RunMode, Stage
-from bookreviver.domain.ids import PageId, PageVersionId
 from bookreviver.domain.values import THROUGH_STEP_KEY, RunImpact, StageRun
-from tests.helpers.builders import make_page, make_project, new_account_id
+from tests.helpers.builders import make_project, new_account_id
 
 PROJECT_ID = make_project(owner_id=new_account_id()).id
 THROUGH_THIRD_STEP: int = 2
@@ -54,13 +53,3 @@ class TestRunMode:
         :type affected: int
         """
         assert RunImpact(mode=mode, pages=9, own_pages=7).affected == affected
-
-    def test_a_run_that_makes_a_version_again_keeps_the_work_of_the_page(self) -> None:
-        """Reject a mode that takes work away on a run that makes a version again, which runs with what was stored."""
-        with pytest.raises(ValueError, match='keeps the settings'):
-            StageRun(
-                stage=Stage.GEOMETRY,
-                page_ids=(PageId(make_page(project_id=PROJECT_ID).id),),
-                remake=PageVersionId('0123456789abcdef'),
-                mode=RunMode.DROP_OWN,
-            )

@@ -19,6 +19,7 @@ from bookreviver.api.pagination import Pager
 from bookreviver.api.routers.pages import PagePath
 from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.processing import (
+    CollectionReportSchema,
     HeadChoice,
     PageStageSchema,
     PageVersionSchema,
@@ -447,29 +448,27 @@ async def cut_version_tiles(
     return JobSchema.model_validate(job)
 
 
-@router.post('/{project_id}/pages/{page_id}/versions/{version_id}/remake', status_code=status.HTTP_202_ACCEPTED)
-async def remake_version(
-    address: Annotated[VersionPath, Depends()], actor: ActorDep, processing: FromDishka[ProcessingService]
-) -> JobSchema:
-    """Make the picture of a version again, whose files a collection removed, and make the version current.
+@router.get('/{project_id}/versions/collectable')
+async def collectable_versions(
+    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    actor: ActorDep,
+    processing: FromDishka[ProcessingService],
+) -> CollectionReportSchema:
+    """Count the versions a collection would delete now and the space their files take, and change nothing.
 
-    The job runs the step with the parameters and the edit the version stored, over the current version of the earlier
-    stage, and finds the version under its own identifier. It fails with its reason, and makes nothing, when the earlier
-    stage has another current version than the one this version was made from, or the edit changed. The answer is 409
-    for a version that has its files, is not ready or is a preview.
+    The versions are the ones ``POST /projects/{project_id}/versions/collect`` deletes, chosen by the same rule.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page and the version.
-    :type address: VersionPath
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
     :param actor: The signed-in account.
     :type actor: Actor
     :param processing: Processing service of the request.
     :type processing: ProcessingService
-    :returns: The queued job; the end of the version is announced as ``page-version-ready``.
-    :rtype: JobSchema
+    :returns: The number of versions and the bytes their files take.
+    :rtype: CollectionReportSchema
     """
-    job = await processing.start_remake(actor, address.project_id, address.page_id, address.version_id)
-    return JobSchema.model_validate(job)
+    return CollectionReportSchema.model_validate(await processing.collection_report(actor, project_id))
 
 
 @router.post('/{project_id}/versions/collect', status_code=status.HTTP_202_ACCEPTED)
@@ -478,12 +477,12 @@ async def collect_versions(
     actor: ActorDep,
     processing: FromDishka[ProcessingService],
 ) -> JobSchema:
-    """Remove the files of the versions nothing needs, in the background, and answer with the queued job.
+    """Delete the versions nothing needs, in the background, and answer with the queued job.
 
     A version goes when it is not current, not in the chain of inputs of a current version, not a base version, not
-    marked Good and without a comment, and, for a preview, older than its retention period. A preview loses its row,
-    and any other version keeps its row and loses its files, so it can be made again. A collection that is queued or
-    running already is the answer. A run queues one by itself when it ends.
+    marked Good and without a comment, and, for a preview, older than its retention period. It goes with its files, its
+    row and the log of its marks. A collection that is queued or running already is the answer. A run queues one by
+    itself when it ends.
 
     \N{FORM FEED}
     :param project_id: Identifier of the project.

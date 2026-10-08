@@ -1095,7 +1095,6 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
             version.id
             for version in versions.values()
             if version.input_id is not None
-            and version.files_removed_at is None
             and version.mark is not ResultMark.GOOD
             and not version.comment
             and (version.scale is not VersionScale.PREVIEW or version.created_at < previews_older_than)

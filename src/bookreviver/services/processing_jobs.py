@@ -21,30 +21,28 @@ A measure of the book reads the content boxes the normalize step recorded on eve
 that step of every Geometry recipe, which marks the pages of those recipes stale.
 
 A project processes one thing at a time, so a collection never overlaps a run that may be reusing the versions it
-clears. A collection chooses the versions, marks them failed so that none can be chosen or reused any more, removes
-their directories and then settles their rows: a preview loses its row, and a version of a full run keeps it with the
-time its files were removed, so its parameters, data and edit hash outlive its image. A collection that stops on the
-way leaves the versions marked, which are old and read by nothing that stays, so the next collection chooses them
-again and finishes the work. Removing a directory that is gone is no error.
-
-A run may be asked to make a version again whose files were removed (``StageRun.remake``), which goes through the same
-steps with the parameters the versions of its chain stored.
+deletes. A collection chooses the versions and hands them in batches to ``VersionClearing``, readers first, which marks
+each batch failed, removes the directories and then deletes the rows with the log of their marks, in one commit. A row
+is never deleted before its files, and a version whose files could not be removed stays marked with the versions it
+reads, so the next collection chooses them again, and the job ends as failed with their number. Removing a directory
+that is gone is no error.
 """
 
 import logging
-from typing import TYPE_CHECKING
+from itertools import batched
+from typing import TYPE_CHECKING, ClassVar
 
-from attrs import evolve
-
-from bookreviver.domain.enums import JobState, RunOutcome, VersionData, VersionScale, VersionState
+from bookreviver.domain.enums import JobState, RunOutcome, VersionState
 from bookreviver.domain.errors import DomainError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import StageRun, StepPreview, TileCut, VersionCollection
+from bookreviver.domain.version_chains import readers_first
 from bookreviver.services.book_measure import BookMeasure
 from bookreviver.services.content_detection import ContentDetector
 from bookreviver.services.run_plans import RunPlan
 from bookreviver.services.stage_runs import PreviewRun, RecipeRun
+from bookreviver.services.version_clearing import VersionClearing
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -60,13 +58,20 @@ if TYPE_CHECKING:
 NO_PAGE_PROCESSED: str = 'No page could be processed. The state of the stage of each page says why.'
 NO_CONTENT_DETECTED: str = 'The content of no page could be detected. The log of the worker says why.'
 UNEXPECTED_FAILURE: str = 'The job stopped because of an unexpected error. It has been logged.'
-BEING_COLLECTED: str = 'The version is being deleted.'
+VERSIONS_LEFT: str = (
+    '{count} versions could not be deleted, because their files could not be removed. The log says why.'
+)
 
 logger = logging.getLogger(__name__)
 
 
 class ProcessingJobs:
-    """Does the work of the processing jobs for the worker that took them."""
+    """Does the work of the processing jobs for the worker that took them.
+
+    :cvar COLLECTION_BATCH_SIZE: How many versions a collection deletes before it commits and reports its progress.
+    """
+
+    COLLECTION_BATCH_SIZE: ClassVar[int] = 100
 
     def __init__(self, *, uow: UnitOfWork, assets: AssetStore, runtime: StageRuntime, parts: ProcessingParts) -> None:
         """Work over the ports of one job.
@@ -169,7 +174,7 @@ class ProcessingJobs:
                 await self._tracker.finish(job, JobState.SUCCEEDED, total=total)
 
     async def collect_versions(self, job_id: JobId) -> None:
-        """Run a ``collect-versions`` job: delete the old versions that nothing needs, and then their directories.
+        """Run a ``collect-versions`` job: delete the old versions that nothing needs, with their files.
 
         :param job_id: Identifier of the job.
         :type job_id: JobId
@@ -178,7 +183,7 @@ class ProcessingJobs:
         if (job := await self._tracker.start(job_id)) is None:
             return
         try:
-            total = await self._collect(job)
+            outcome = await self._collect(job)
         except DomainError as error:
             await self._uow.rollback()
             await self._tracker.finish(job, JobState.FAILED, error=str(error))
@@ -186,8 +191,14 @@ class ProcessingJobs:
             logger.exception('The collect-versions job %s stopped', job_id)
             await self._tracker.finish(job, JobState.FAILED, error=UNEXPECTED_FAILURE)
         else:
-            if total is not None:
-                await self._tracker.finish(job, JobState.SUCCEEDED, total=total)
+            if outcome is not None:
+                deleted, left = outcome
+                await self._tracker.finish(
+                    job,
+                    JobState.FAILED if left else JobState.SUCCEEDED,
+                    error=VERSIONS_LEFT.format(count=left) if left else '',
+                    total=deleted + left,
+                )
 
     async def measure_book(self, job_id: JobId) -> None:
         """Run a ``measure-book`` job: the median line height and page size of the book, written into its recipe.
@@ -255,15 +266,6 @@ class ProcessingJobs:
         executor = RecipeRun(
             project=project, uow=self._uow, runtime=self._runtime, recipes=self._recipes, records=self._records
         )
-        if run.remake is not None:
-            # A page without an image, such as a placeholder, has no version to make again
-            if not pages:
-                return 0, 1, 1
-            if await self._tracker.advance(job, done=0, total=1) is None:
-                return None
-            outcome = await executor.remake(pages[0], run.remake)
-            made = outcome is RunOutcome.DONE
-            return int(made), int(not made), 1
         recipes = await plan.recipes()
         # The work the mode takes away goes first, as one batch, so one undo gives it back on every page
         await plan.apply_mode()
@@ -383,49 +385,29 @@ class ProcessingJobs:
             await self._runtime.publisher.publish(PageVersionReady(project_id=job.project_id, version=cut_version))
         return len(cut.version_ids)
 
-    async def _collect(self, job: Job) -> int | None:
-        """Clear the versions that nothing needs: mark them, remove their directories, then settle their rows.
+    async def _collect(self, job: Job) -> tuple[int, int] | None:
+        """Delete the versions that nothing needs, batch by batch, with their files and their rows.
 
-        A preview loses its row. A version of a full run keeps its row, with its parameters, data and edit hash, and
-        loses its files, which a run makes again under the same identifier. The mark is a failed state that nothing can
-        choose or reuse, and the row is given back its own state only after its directory is gone, together with the
-        time the files were removed.
+        The versions go readers first and a batch never holds a version and one that reads it, so no version is left
+        without the input it reads. Every batch is committed by ``VersionClearing``, so a version whose files cannot be
+        removed leaves the deletions of the others standing.
 
         :param job: The running job.
         :type job: Job
-        :returns: The number of versions cleared, or None when the job was cancelled before it cleared anything.
-        :rtype: int | None
+        :returns: How many versions were deleted and how many were left, because their files could not be removed or a
+                  version that stays reads them, or None when the job was cancelled.
+        :rtype: tuple[int, int] | None
         :raises DomainError: If the parameters of the job are not valid.
         """
         collection = VersionCollection.from_map(job.params)
         old = await self._uow.page_versions.collectable(job.project_id, collection.previews_older_than)
-        if await self._tracker.advance(job, done=0, total=len(old)) is None:
-            return None
-        for version in old:
-            if version.state is VersionState.READY:
-                marked = evolve(
-                    version, state=VersionState.FAILED, data={**version.data, VersionData.ERROR: BEING_COLLECTED}
-                )
-                await self._uow.page_versions.update(marked)
-        await self._uow.commit()
-        keys = ProjectKeys(job.project_id)
-        for version in old:
-            await self._assets.delete_prefix(keys.version_directory(version))
-        await self._uow.page_versions.delete_many([v.id for v in old if v.scale is VersionScale.PREVIEW])
-        removed_at = self._runtime.clock.now()
-        for version in old:
-            if version.scale is VersionScale.FULL:
-                # A version marked by an earlier collection that stopped is READY again once its files are gone
-                own_mark = version.data.get(VersionData.ERROR) == BEING_COLLECTED
-                await self._uow.page_versions.update(
-                    evolve(
-                        version,
-                        state=VersionState.READY if own_mark else version.state,
-                        data={k: v for k, v in version.data.items() if not (own_mark and k == VersionData.ERROR)},
-                        renditions=None if version.renditions is None else evolve(version.renditions, ready=False),
-                        tiles_ready=False,
-                        files_removed_at=removed_at,
-                    )
-                )
-        await self._uow.commit()
-        return len(old)
+        clearing = VersionClearing(uow=self._uow, assets=self._assets, project_id=job.project_id)
+        deleted = 0
+        for group in readers_first(old):
+            for batch in batched(group, self.COLLECTION_BATCH_SIZE, strict=False):
+                # The progress is recorded before the batch, since a cancelled job rolls back what is not committed yet
+                if (saved := await self._tracker.advance(job, done=deleted, total=len(old))) is None:
+                    return None
+                job = saved
+                deleted += await clearing.clear(batch)
+        return deleted, len(old) - deleted

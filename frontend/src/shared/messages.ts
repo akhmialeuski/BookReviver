@@ -235,6 +235,17 @@ export const MESSAGES = {
       storage: 'Image storage',
     } satisfies Record<Section, string>,
     delete: 'Delete the book',
+    clearResults: {
+      open: 'Clear old results',
+      title: 'Clear old results?',
+      counting: 'Counting the old results…',
+      unavailable: 'The old results could not be counted.',
+      nothing: 'The book has no old results to clear.',
+      description: (versions: number, size: string) =>
+        `${versions} old ${pluralize(versions, 'result', 'results')} of the pages will be deleted with their pictures, which frees ${size}. The current results, the results marked Good or with a comment, and the results they are made from stay. This cannot be undone.`,
+      submit: 'Clear',
+      submitting: 'Clearing…',
+    },
     fields: {
       title: 'Title',
       subtitle: 'Subtitle',
@@ -1631,7 +1642,6 @@ export const MESSAGES = {
       current: 'Current',
       use: 'Use this',
       using: 'Using…',
-      pictureRemoved: 'Picture removed · made again on use',
       mark: {
         group: 'Mark of this result',
         good: 'Good',

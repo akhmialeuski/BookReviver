@@ -9,6 +9,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import (
     JobKind,
     JobState,
@@ -26,10 +27,20 @@ from bookreviver.domain.events import PageStageChanged, PageVersionReady
 from bookreviver.domain.geometry import Point, Quad, Transform
 from bookreviver.domain.ids import PageVersionId, StepId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PageStageKey, RecipeDraft, SliceRequest, StageRun, Step, TileCut, VersionFilter
+from bookreviver.domain.values import (
+    CollectionReport,
+    PageStageKey,
+    RecipeDraft,
+    SliceRequest,
+    StageRun,
+    Step,
+    TileCut,
+    VersionFilter,
+)
 from bookreviver.services.job_runs import JobTracker
-from bookreviver.services.processing_jobs import BEING_COLLECTED
-from tests.helpers.builders import EPOCH, make_page_stage
+from bookreviver.services.processing_jobs import VERSIONS_LEFT, ProcessingJobs
+from bookreviver.services.version_clearing import BEING_COLLECTED
+from tests.helpers.builders import EPOCH, make_page_stage, make_result_mark_change
 from tests.helpers.processing import IMAGE_CONTENT
 from tests.helpers.processors import FakeProcessor
 from tests.helpers.spreads import run_stage
@@ -37,12 +48,21 @@ from tests.helpers.spreads import run_stage
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from bookreviver.domain.entities import Actor, Job, Page, PageVersion, Project
+    from bookreviver.domain.entities import Job, Page, PageVersion, Project
+    from bookreviver.domain.ids import StorageKey
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 
 EVERYTHING: SliceRequest = SliceRequest(limit=100)
+BATCH_ARG: str = 'batch_size'
+# A second version of the page beside the old one, and a preview of it
+OTHER_VERSION_ID: PageVersionId = PageVersionId('0f0f0f0f0f0f0f0f')
+PREVIEW_VERSION_ID: PageVersionId = PageVersionId('fedcbafedcbafedc')
+# The method of the asset store that removes the directory of a version, which the tests make fail
+DELETE_PREFIX: str = 'delete_prefix'
+READ_ONLY_DISK: str = 'The disk is read only.'
+REFUSED_DIRECTORY: str = 'The disk refuses this directory.'
 NO_FILTER: VersionFilter = VersionFilter()
 HALF: Quad = Quad(
     top_left=Point(x=1100, y=0),
@@ -434,34 +454,37 @@ class TestCollection:
         await uow.commit()
         return actor, project, page, current, old
 
-    async def test_old_version_nothing_needs_loses_its_directory_and_keeps_its_row(self, fx_kit: ProcessingKit) -> None:
-        """Verify the collection removes the files of an old version and keeps its row, its settings and its time.
+    async def test_old_version_nothing_needs_is_deleted_with_its_files_its_row_and_the_log_of_its_marks(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify the collection deletes an old version with its directory, its row and the log of its marks.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
         actor, project, page, current, old = await self.collectable_book(fx_kit)
+        uow = fx_kit.uow()
+        await uow.page_versions.update(evolve(old, mark=ResultMark.BAD))
+        await uow.result_mark_changes.add(make_result_mark_change(version_id=old.id, mark_after=ResultMark.BAD))
+        await uow.commit()
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.jobs().collect_versions(job.id)
         remaining = (await fx_kit.uow().page_versions.list_for_stage(page.id, None, None, EVERYTHING)).items
-        cleared = await fx_kit.uow().page_versions.get(old.id)
-        kept = await fx_kit.uow().page_versions.get(current.id)
         with pytest.raises(NotFoundError):
             async with fx_kit.assets.readable(ProjectKeys(project.id).version_directory(old)):
                 pass
-        expect(len(remaining) == 3)
-        expect((cleared.files_removed_at, cleared.state, cleared.tiles_ready) == (EPOCH, VersionState.READY, False))
-        expect(cleared.renditions is not None and not cleared.renditions.ready)
-        expect((cleared.params, cleared.data, cleared.edit_hash) == (old.params, old.data, old.edit_hash))
-        expect((cleared.input_id, cleared.created_at) == (old.input_id, old.created_at))
-        expect(not kept.files_removed)
-        expect((await fx_kit.uow().jobs.get(job.id)).state is JobState.SUCCEEDED)
+        expect(old.id not in {version.id for version in remaining})
+        expect(len(remaining) == 2)
+        expect(await fx_kit.uow().page_versions.find(current.id) is not None)
+        expect(await fx_kit.uow().result_mark_changes.list_for_version(old.id) == [])
+        stored = await fx_kit.uow().jobs.get(job.id)
+        expect((stored.state, stored.error) == (JobState.SUCCEEDED, ''))
         assert_expectations()
 
     async def test_run_removes_the_files_of_a_version_it_left_behind_without_a_request(
         self, fx_kit: ProcessingKit
     ) -> None:
-        """Verify the collection a run queues when it ends clears a version that is no longer current at once.
+        """Verify the collection a run queues when it ends deletes a version that is no longer current at once.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -475,7 +498,7 @@ class TestCollection:
         await fx_kit.jobs().run_stage(run.id)
         await fx_kit.work_queue()
         jobs = await fx_kit.uow().jobs.list_for_project(project.id, frozenset(JobState))
-        cleared = await fx_kit.uow().page_versions.get(old.id)
+        gone = await fx_kit.uow().page_versions.find(old.id)
         kept = await fx_kit.uow().page_versions.get(current.id)
         record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         keys = ProjectKeys(project.id)
@@ -486,30 +509,14 @@ class TestCollection:
             pass
         collections = [job for job in jobs if job.kind is JobKind.COLLECT_VERSIONS]
         expect(all(job.state is JobState.SUCCEEDED for job in collections) and bool(collections))
-        expect((cleared.files_removed, cleared.state, cleared.params) == (True, VersionState.READY, old.params))
-        expect(not kept.files_removed)
+        expect(gone is None)
+        expect(kept.state is VersionState.READY)
         expect(record.head_version_id == current.id)
-        expect(
-            current.input_id is not None and not (await fx_kit.uow().page_versions.get(current.input_id)).files_removed
-        )
+        expect(current.input_id is not None and await fx_kit.uow().page_versions.find(current.input_id) is not None)
         assert_expectations()
 
-    async def test_a_collection_does_not_clear_a_version_twice(self, fx_kit: ProcessingKit) -> None:
-        """Verify a version whose files are removed is not chosen again, so its time of removal stays.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        actor, project, _, _, old = await self.collectable_book(fx_kit)
-        first = await fx_kit.service().start_collection(actor, project.id)
-        await fx_kit.jobs().collect_versions(first.id)
-        fx_kit.clock.moment = EPOCH + timedelta(days=1)
-        second = await fx_kit.service().start_collection(actor, project.id)
-        await fx_kit.jobs().collect_versions(second.id)
-        assert (await fx_kit.uow().page_versions.get(old.id)).files_removed_at == EPOCH
-
-    async def test_a_preview_is_still_deleted_with_its_row(self, fx_kit: ProcessingKit) -> None:
-        """Verify an old preview loses its row and its directory, since a preview is no result to come back to.
+    async def test_a_preview_is_deleted_with_its_row_like_any_other_version(self, fx_kit: ProcessingKit) -> None:
+        """Verify an old preview loses its row and its directory, as a version of a full run does.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -517,7 +524,7 @@ class TestCollection:
         actor, project, _, _, old = await self.collectable_book(fx_kit)
         preview = evolve(
             old,
-            id=PageVersionId('fedcbafedcbafedc'),
+            id=PREVIEW_VERSION_ID,
             scale=VersionScale.PREVIEW,
             created_at=EPOCH - timedelta(days=2),
         )
@@ -533,7 +540,8 @@ class TestCollection:
             async with fx_kit.assets.readable(keys.version_directory(preview)):
                 pass
         expect(await fx_kit.uow().page_versions.find(preview.id) is None)
-        expect(await fx_kit.uow().page_versions.find(old.id) is not None)
+        # The version of the full run that nothing reads goes in the same collection, so the preview is no exception
+        expect(await fx_kit.uow().page_versions.find(old.id) is None)
         assert_expectations()
 
     async def test_young_preview_is_kept_since_the_editor_still_shows_it(self, fx_kit: ProcessingKit) -> None:
@@ -545,7 +553,7 @@ class TestCollection:
         actor, project, _, _, old = await self.collectable_book(fx_kit)
         preview = evolve(
             old,
-            id=PageVersionId('fedcbafedcbafedc'),
+            id=PREVIEW_VERSION_ID,
             scale=VersionScale.PREVIEW,
             created_at=EPOCH - timedelta(minutes=5),
         )
@@ -575,7 +583,7 @@ class TestCollection:
     async def test_collection_marks_the_versions_failed_before_it_removes_their_files(
         self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Verify a collection that cannot remove a directory leaves its version marked, so nothing reuses it.
+        """Verify a collection that cannot remove a directory leaves its version marked and its row, and fails.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -584,11 +592,12 @@ class TestCollection:
         """
         actor, project, _, current, old = await self.collectable_book(fx_kit)
 
-        monkeypatch.setattr(fx_kit.assets, 'delete_prefix', AsyncMock(side_effect=OSError('The disk is read only.')))
+        monkeypatch.setattr(fx_kit.assets, DELETE_PREFIX, AsyncMock(side_effect=OSError(READ_ONLY_DISK)))
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.jobs().collect_versions(job.id)
         marked = await fx_kit.uow().page_versions.get(old.id)
-        expect((await fx_kit.uow().jobs.get(job.id)).state is JobState.FAILED)
+        stored = await fx_kit.uow().jobs.get(job.id)
+        expect((stored.state, stored.error) == (JobState.FAILED, VERSIONS_LEFT.format(count=1)))
         expect((marked.state, marked.data[VersionData.ERROR]) == (VersionState.FAILED, BEING_COLLECTED))
         expect((await fx_kit.uow().page_versions.get(current.id)).state is VersionState.READY)
         assert_expectations()
@@ -596,7 +605,7 @@ class TestCollection:
     async def test_the_next_collection_finishes_what_a_failed_one_left(
         self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Verify the versions a failed collection marked are chosen again, lose their files and are ready again.
+        """Verify the versions a failed collection marked are chosen again and deleted with their files.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -605,7 +614,7 @@ class TestCollection:
         """
         actor, project, _, _, old = await self.collectable_book(fx_kit)
         with monkeypatch.context() as broken:
-            broken.setattr(fx_kit.assets, 'delete_prefix', AsyncMock(side_effect=OSError('The disk is read only.')))
+            broken.setattr(fx_kit.assets, DELETE_PREFIX, AsyncMock(side_effect=OSError(READ_ONLY_DISK)))
             failed = await fx_kit.service().start_collection(actor, project.id)
             await fx_kit.jobs().collect_versions(failed.id)
         again = await fx_kit.service().start_collection(actor, project.id)
@@ -613,13 +622,192 @@ class TestCollection:
         with pytest.raises(NotFoundError):
             async with fx_kit.assets.readable(ProjectKeys(project.id).version_directory(old)):
                 pass
-        cleared = await fx_kit.uow().page_versions.get(old.id)
-        expect(
-            (cleared.state, cleared.files_removed, VersionData.ERROR in cleared.data)
-            == (VersionState.READY, True, False)
-        )
+        expect(await fx_kit.uow().page_versions.find(old.id) is None)
         expect((await fx_kit.uow().jobs.get(again.id)).state is JobState.SUCCEEDED)
         assert_expectations()
+
+    @pytest.mark.parametrize(BATCH_ARG, [1, ProcessingJobs.COLLECTION_BATCH_SIZE], ids=['one-by-one', 'one-batch'])
+    async def test_a_version_whose_files_stay_keeps_its_row_and_the_deletions_of_the_others_stand(
+        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch, batch_size: int
+    ) -> None:
+        """Verify one version whose directory cannot be removed neither loses its row nor takes back the others.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param monkeypatch: Sets the size of a batch, and replaces the removal of directories with one that refuses one.
+        :type monkeypatch: pytest.MonkeyPatch
+        :param batch_size: How many versions a collection deletes before it commits.
+        :type batch_size: int
+        """
+        actor, project, _, _, old = await self.collectable_book(fx_kit)
+        other = evolve(old, id=OTHER_VERSION_ID, created_at=EPOCH - timedelta(days=80))
+        keys = ProjectKeys(project.id)
+        async with fx_kit.assets.writable(keys.version_rendition(other, Rendition.FULL_JPEG)) as target:
+            target.write_bytes(IMAGE_CONTENT)
+        uow = fx_kit.uow()
+        await uow.page_versions.add(other)
+        await uow.result_mark_changes.add(make_result_mark_change(version_id=old.id))
+        await uow.commit()
+        refused = keys.version_directory(old)
+        removing = fx_kit.assets.delete_prefix
+
+        async def refuse_one(prefix: StorageKey) -> None:
+            """Remove a directory, except the one of the version that must stay.
+
+            :param prefix: Directory to remove.
+            :type prefix: StorageKey
+            :raises OSError: If the directory is the refused one.
+            """
+            if prefix == refused:
+                err_msg = REFUSED_DIRECTORY
+                raise OSError(err_msg)
+            await removing(prefix)
+
+        monkeypatch.setattr(ProcessingJobs, 'COLLECTION_BATCH_SIZE', batch_size)
+        monkeypatch.setattr(fx_kit.assets, DELETE_PREFIX, refuse_one)
+        job = await fx_kit.service().start_collection(actor, project.id)
+        await fx_kit.jobs().collect_versions(job.id)
+
+        stayed = await fx_kit.uow().page_versions.get(old.id)
+        stored = await fx_kit.uow().jobs.get(job.id)
+        async with fx_kit.assets.readable(keys.version_rendition(old, Rendition.FULL_JPEG)):
+            pass
+        expect(await fx_kit.uow().page_versions.find(other.id) is None)
+        expect((stayed.state, stayed.data[VersionData.ERROR]) == (VersionState.FAILED, BEING_COLLECTED))
+        expect(len(await fx_kit.uow().result_mark_changes.list_for_version(old.id)) == 1)
+        expect((stored.state, stored.error) == (JobState.FAILED, VERSIONS_LEFT.format(count=1)))
+        assert_expectations()
+
+    async def test_the_input_of_a_version_whose_files_stay_is_kept_with_its_files(
+        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify an input is not deleted before the version that reads it, which stays when its files cannot go.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param monkeypatch: Replaces the removal of directories with one that refuses the reader's.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        actor, project, _, _, old = await self.collectable_book(fx_kit)
+        reader = evolve(old, id=OTHER_VERSION_ID, input_id=old.id)
+        keys = ProjectKeys(project.id)
+        async with fx_kit.assets.writable(keys.version_rendition(reader, Rendition.FULL_JPEG)) as target:
+            target.write_bytes(IMAGE_CONTENT)
+        uow = fx_kit.uow()
+        await uow.page_versions.add(reader)
+        await uow.commit()
+        refused = keys.version_directory(reader)
+        removing = fx_kit.assets.delete_prefix
+
+        async def refuse_the_reader(prefix: StorageKey) -> None:
+            """Remove a directory, except the one of the reader.
+
+            :param prefix: Directory to remove.
+            :type prefix: StorageKey
+            :raises OSError: If the directory is the reader's.
+            """
+            if prefix == refused:
+                err_msg = REFUSED_DIRECTORY
+                raise OSError(err_msg)
+            await removing(prefix)
+
+        monkeypatch.setattr(fx_kit.assets, DELETE_PREFIX, refuse_the_reader)
+        job = await fx_kit.service().start_collection(actor, project.id)
+        await fx_kit.jobs().collect_versions(job.id)
+
+        stored = await fx_kit.uow().page_versions.get(reader.id)
+        async with fx_kit.assets.readable(keys.version_rendition(old, Rendition.FULL_JPEG)):
+            pass
+        expect(stored.input_id == old.id)
+        expect((await fx_kit.uow().jobs.get(job.id)).error == VERSIONS_LEFT.format(count=2))
+        assert_expectations()
+
+    async def test_a_version_marked_good_or_commented_keeps_its_files_its_row_and_its_log(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a collection deletes neither the version the user judged Good nor the one with a comment.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, _, _, old = await self.collectable_book(fx_kit)
+        keys = ProjectKeys(project.id)
+        commented = evolve(old, id=OTHER_VERSION_ID, mark=None, comment='Check the margin.')
+        good = evolve(old, mark=ResultMark.GOOD)
+        async with fx_kit.assets.writable(keys.version_rendition(commented, Rendition.FULL_JPEG)) as target:
+            target.write_bytes(IMAGE_CONTENT)
+        uow = fx_kit.uow()
+        await uow.page_versions.update(good)
+        await uow.page_versions.add(commented)
+        await uow.result_mark_changes.add(make_result_mark_change(version_id=old.id))
+        await uow.commit()
+        job = await fx_kit.service().start_collection(actor, project.id)
+        await fx_kit.jobs().collect_versions(job.id)
+        for kept in (good, commented):
+            async with fx_kit.assets.readable(keys.version_rendition(kept, Rendition.FULL_JPEG)):
+                pass
+        expect(await fx_kit.uow().page_versions.find(good.id) is not None)
+        expect(await fx_kit.uow().page_versions.find(commented.id) is not None)
+        expect(len(await fx_kit.uow().result_mark_changes.list_for_version(good.id)) == 1)
+        assert_expectations()
+
+    async def test_the_versions_of_an_old_chain_go_together(self, fx_kit: ProcessingKit) -> None:
+        """Verify a version that only an old version reads goes with it, so no version is left without its input.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, _, _, old = await self.collectable_book(fx_kit)
+        reader = evolve(old, id=OTHER_VERSION_ID, input_id=old.id)
+        uow = fx_kit.uow()
+        await uow.page_versions.add(reader)
+        await uow.commit()
+        job = await fx_kit.service().start_collection(actor, project.id)
+        await fx_kit.jobs().collect_versions(job.id)
+        expect(await fx_kit.uow().page_versions.find(old.id) is None)
+        expect(await fx_kit.uow().page_versions.find(reader.id) is None)
+        assert_expectations()
+
+    async def test_the_report_counts_the_versions_a_collection_would_delete_and_their_bytes(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify the report names the versions and the size of the files of those a collection deletes, and deletes none.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, _, old = await self.collectable_book(fx_kit)
+        # The run that made the book queued a collection of its own, so the report is judged by the jobs it adds
+        before = await fx_kit.uow().jobs.list_for_project(project.id, frozenset(JobState))
+        report = await fx_kit.service().collection_report(actor, project.id)
+        listed = (await fx_kit.uow().page_versions.list_for_stage(page.id, None, None, EVERYTHING)).items
+        jobs = await fx_kit.uow().jobs.list_for_project(project.id, frozenset(JobState))
+        async with fx_kit.assets.readable(ProjectKeys(project.id).version_rendition(old, Rendition.FULL_JPEG)):
+            pass
+        expect(report == CollectionReport(versions=1, size_bytes=len(IMAGE_CONTENT)))
+        expect(old.id in {version.id for version in listed})
+        expect({job.id for job in jobs} == {job.id for job in before})
+        assert_expectations()
+
+    async def test_the_report_of_a_book_with_nothing_to_clear_is_empty(self, fx_kit: ProcessingKit) -> None:
+        """Verify a book whose versions are all current or needed reports no version and no bytes.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, _, _ = await ran_geometry(fx_kit)
+        assert await fx_kit.service().collection_report(actor, project.id) == CollectionReport(versions=0, size_bytes=0)
+
+    async def test_the_report_of_a_book_of_another_account_is_not_found(self, fx_kit: ProcessingKit) -> None:
+        """Verify an account that does not own the book is told it does not exist.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, project = await fx_kit.seed_project()
+        stranger = Actor(account_id=(await fx_kit.seed_project())[0].account_id)
+        with pytest.raises(NotFoundError):
+            await fx_kit.service().collection_report(stranger, project.id)
 
     async def test_a_cancelled_collection_deletes_nothing(
         self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
@@ -676,7 +864,7 @@ class TestCollection:
         untouched = await fx_kit.uow().page_versions.get(old.id)
         async with fx_kit.assets.readable(ProjectKeys(project.id).version_rendition(old, Rendition.FULL_JPEG)):
             pass
-        expect(not untouched.files_removed)
+        expect(untouched.id == old.id)
         expect(stored.input_id == old.id)
         assert_expectations()
 

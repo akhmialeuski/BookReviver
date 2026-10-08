@@ -21,6 +21,8 @@ import {
 import {
   carryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostMutation,
   chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutMutation,
+  collectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetOptions,
+  collectVersionsApiV1ProjectsProjectIdVersionsCollectPostMutation,
   deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteMutation,
   deleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteMutation,
   detectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostMutation,
@@ -38,7 +40,6 @@ import {
   putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutMutation,
   putRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutMutation,
   putValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutMutation,
-  remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostMutation,
   resetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostMutation,
   runImpactApiV1ProjectsProjectIdStagesStageRunImpactPostMutation,
   runStageApiV1ProjectsProjectIdStagesStageRunPostMutation,
@@ -236,6 +237,38 @@ export function useMeasureBook(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...measureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostMutation(),
+    onSettled: () => invalidateJobs(queryClient, projectId),
+  });
+}
+
+/**
+ * Count what a collection would delete from the book now: the versions and the bytes of their files.
+ *
+ * The count is read again each time the question is asked, since a run or a mark changes it, so the query is on only
+ * while the dialog that shows it is open.
+ *
+ * @param projectId The book.
+ * @param enabled Whether the question is being asked.
+ */
+export function useCollectionReport(projectId: string, enabled: boolean) {
+  return useQuery({
+    ...collectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetOptions({
+      path: { project_id: projectId },
+    }),
+    enabled,
+  });
+}
+
+/**
+ * Delete the old results of the book in the background, with their files, which the activity of the book then follows.
+ *
+ * The job tells the screen when it ends, and the lists of results are read again then, so only the jobs are read again
+ * here.
+ */
+export function useCollectVersions(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...collectVersionsApiV1ProjectsProjectIdVersionsCollectPostMutation(),
     onSettled: () => invalidateJobs(queryClient, projectId),
   });
 }
@@ -457,20 +490,6 @@ export function useMarkResult(projectId: string) {
         }),
         invalidateAllStageRows(queryClient, projectId),
       ]),
-  });
-}
-
-/**
- * Make the picture of a result again, whose files a collection removed, in the background.
- *
- * The answer is the queued job, and the version becomes the current one of its stage when the job ends. The mutation
- * settles after the job list is read again, so the job is in it when the caller looks for it.
- */
-export function useRemakeVersion(projectId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostMutation(),
-    onSettled: () => invalidateJobs(queryClient, projectId),
   });
 }
 

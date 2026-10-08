@@ -158,7 +158,7 @@ describe('applyProjectEvent', () => {
       data: { ...job('succeeded', 2, 2), kind: 'collect-versions' },
     });
 
-    // A result whose files were taken away is made again before it is used, which the history has to know
+    // A result the job deleted is no longer offered, so the history of every page of the book is read again
     const stale = (key: ReturnType<typeof resultsOf>) =>
       queryClient.getQueryState(key)?.isInvalidated;
     expect(stale(resultsOf(PROJECT_ID, 'pg-1'))).toBe(true);

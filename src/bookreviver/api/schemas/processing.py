@@ -278,6 +278,17 @@ class RunImpactSchema(ResponseModel):
     affected: int
 
 
+class CollectionReportSchema(ResponseModel):
+    """What a collection would delete from a book now.
+
+    :ivar versions: How many versions it would delete, with their rows and the log of their marks.
+    :ivar size_bytes: How many bytes the files of those versions take, which the collection frees.
+    """
+
+    versions: int
+    size_bytes: int
+
+
 class StepPreviewBody(RequestModel):
     """The steps of a form to preview on one page, up to one of them; the stage is in the address.
 
@@ -461,9 +472,6 @@ class PageVersionSchema(ResponseModel):
     :ivar images: Paths of the images of a ready full run that has an image, or None.
     :ivar preview: Path of the preview image of a preview run, or None.
     :ivar created_at: When the version was created.
-    :ivar files_removed: Whether a collection removed the files of the version, so it has no image until a run makes it
-                         again.
-    :ivar files_removed_at: When the files were removed, or None while the version has them.
     :ivar mark: What the user judged of the result, or None while it is not judged.
     :ivar comment: What the user wrote about the result, or empty.
     """
@@ -486,8 +494,6 @@ class PageVersionSchema(ResponseModel):
     images: ImagePathsSchema | None
     preview: str | None
     created_at: datetime
-    files_removed: bool
-    files_removed_at: datetime | None
     mark: ResultMark | None
     comment: str
 
@@ -535,8 +541,6 @@ class PageVersionSchema(ResponseModel):
             images=images,
             preview=preview,
             created_at=version.created_at,
-            files_removed=version.files_removed,
-            files_removed_at=version.files_removed_at,
             mark=version.mark,
             comment=version.comment,
         )

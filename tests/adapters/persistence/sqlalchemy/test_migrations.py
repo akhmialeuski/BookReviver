@@ -175,6 +175,10 @@ KINDS_REVISION: str = '77356245ed16'
 VALUES_REVISION: str = 'b8e258b21279'
 # The revision that keys the values of the steps by the project and gives each page the recipe of its kind
 KEYED_REVISION: str = '7069c4fcf234'
+# The revision that drops the time a collection removed the files of a version, since a collection deletes the row too
+FILES_REMOVED_REVISION: str = 'ba28fd6fb352'
+FILES_REMOVED_COLUMN: str = 'files_removed_at'
+MARK_FILES_REMOVED: str = "UPDATE page_versions SET files_removed_at = '2026-10-02 00:00:00'"
 # The kinds of page in the order of the recipes of a stage, with the name the recipe of each takes in a downgrade
 RECIPE_KIND_LABELS: tuple[tuple[str, str], ...] = (
     ('text', 'Text'),
@@ -1866,4 +1870,65 @@ class TestKeyedValuesRevision:
                 for name in ('text', *TYPED_PAGES)
             )
         )
+        assert_expectations()
+
+
+class TestFilesRemovedRevision:
+    """Tests for the revision that drops the time a collection removed the files of a page version."""
+
+    async def _columns(self, database: SqlDatabase) -> list[str]:
+        """Read the names of the columns of ``page_versions``.
+
+        :param database: Migrated database.
+        :type database: SqlDatabase
+        :returns: The column names.
+        :rtype: list[str]
+        """
+        async with database.engine.connect() as connection:
+            return await connection.run_sync(
+                lambda sync: [column['name'] for column in inspect(sync).get_columns('page_versions')]
+            )
+
+    async def test_the_column_goes_and_the_row_of_a_version_stays_for_the_next_collection(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify a version whose files were removed keeps its row, which the next collection deletes as any other.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, KEYED_REVISION)
+        project = make_project(owner_id=await commit_account(fx_empty_database))
+        page = make_page(project_id=project.id)
+        async with fx_empty_database.sessions() as session:
+            uow = SqlAlchemyUnitOfWork(session)
+            await uow.projects.add(project)
+            await uow.pages.add(page)
+            await uow.commit()
+            # Plain SQL, since the model of the version no longer has the column this revision drops
+            await session.execute(text(INSERT_VERSION), {'id': OLD_VERSION_ID, 'page_id': page.id.bytes})
+            await session.execute(text(MARK_FILES_REMOVED))
+            await session.commit()
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        async with fx_empty_database.sessions() as session:
+            stored = await SqlAlchemyUnitOfWork(session).page_versions.get(OLD_VERSION_ID)
+        expect(FILES_REMOVED_COLUMN not in await self._columns(fx_empty_database))
+        expect(stored.id == OLD_VERSION_ID)
+        assert_expectations()
+
+    async def test_downgrade_brings_the_column_back_empty(self, fx_empty_database: SqlDatabase) -> None:
+        """Verify a downgrade adds the column again, with no time in it, and keeps the rows of the versions.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        await _commit_book(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.downgrade, KEYED_REVISION)
+        async with fx_empty_database.engine.connect() as connection:
+            stored = (await connection.execute(text('SELECT files_removed_at FROM page_versions'))).scalars().all()
+        expect(FILES_REMOVED_COLUMN in await self._columns(fx_empty_database))
+        expect(stored == [None])
         assert_expectations()

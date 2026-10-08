@@ -72,13 +72,9 @@ NAMELESS_SEGMENTS: frozenset[str] = frozenset({'', '.', '..'})
 # A Windows drive letter opening a path, as in ``C:\scans`` or ``C:scans``
 DRIVE_LETTER: re.Pattern[str] = re.compile(r'[A-Za-z]:')
 CONTROL_CHARACTERS: re.Pattern[str] = re.compile(r'[\x00-\x1f\x7f]')
-# Keys in the stored parameters of the jobs: the last step of a ``run-stage`` job to run, the version it makes again,
-# and the pages a job works on
+# Keys in the stored parameters of the jobs: the last step of a ``run-stage`` job to run, and the pages a job works on
 THROUGH_STEP_KEY: str = 'through_step'
-REMAKE_KEY: str = 'remake'
 PAGE_IDS_KEY: str = 'page_ids'
-REMAKE_ONE_PAGE: str = 'A run that makes a version again names exactly one page.'
-REMAKE_KEEPS: str = 'A run that makes a version again keeps the settings and edits of the page.'
 # Keys of the mode and of its confirmation in the stored parameters of a ``run-stage`` job
 MODE_KEY: str = 'mode'
 CONFIRM_OVERWRITE_KEY: str = 'confirm_overwrite'
@@ -1106,8 +1102,6 @@ class StageRun:
     :ivar through_step: Index in the recipe of each page of the last step to run, or None to run through the last step
                         that is on. The steps before it are found in the cache of versions when their inputs did not
                         change.
-    :ivar remake: Version whose files a collection removed, which the run makes again by the steps its chain stored
-                  instead of by a recipe, over the one page named, and makes current.
     :ivar mode: What the run does with the settings the pages changed for its steps and with the manual edits they read:
                 keeps both, which is the usual run, or takes one of them away from every page it goes over first.
     :ivar confirm_overwrite: Whether the user confirmed that a mode that takes work away does so on the pages it
@@ -1118,20 +1112,8 @@ class StageRun:
     page_ids: tuple[PageId, ...] | None = None
     confirm_unsplit: bool = False
     through_step: int | None = field(default=None, validator=validators.optional(validators.ge(0)))
-    remake: PageVersionId | None = None
     mode: RunMode = RunMode.KEEP
     confirm_overwrite: bool = False
-
-    def __attrs_post_init__(self) -> None:
-        """Check that a run that makes a version again names one page and keeps the work of the page.
-
-        :raises ValueError: If a run that makes a version again does not name exactly one page, or takes the settings or
-                            the edits of the page away.
-        """
-        if self.remake is not None and (self.page_ids is None or len(self.page_ids) != 1):
-            raise ValueError(REMAKE_ONE_PAGE)
-        if self.remake is not None and self.mode is not RunMode.KEEP:
-            raise ValueError(REMAKE_KEEPS)
 
     def to_map(self) -> dict[str, Any]:
         """Return the value as the JSON object a job stores.
@@ -1144,7 +1126,6 @@ class StageRun:
             PAGE_IDS_KEY: None if self.page_ids is None else [str(page_id) for page_id in self.page_ids],
             'confirm_unsplit': self.confirm_unsplit,
             THROUGH_STEP_KEY: self.through_step,
-            REMAKE_KEY: self.remake,
             MODE_KEY: self.mode.value,
             CONFIRM_OVERWRITE_KEY: self.confirm_overwrite,
         }
@@ -1166,7 +1147,6 @@ class StageRun:
                 page_ids=None if page_ids is None else tuple(PageId(UUID(page_id)) for page_id in page_ids),
                 confirm_unsplit=bool(stored.get('confirm_unsplit', False)),
                 through_step=stored.get(THROUGH_STEP_KEY),
-                remake=None if stored.get(REMAKE_KEY) is None else PageVersionId(stored[REMAKE_KEY]),
                 mode=RunMode(stored.get(MODE_KEY, RunMode.KEEP)),
                 confirm_overwrite=bool(stored.get(CONFIRM_OVERWRITE_KEY, False)),
             )
@@ -1355,3 +1335,15 @@ class VersionCollection:
             return cls(previews_older_than=datetime.fromisoformat(stored['previews_older_than']))
         except (KeyError, ValueError, TypeError) as error:
             raise _params_error(JobKind.COLLECT_VERSIONS, error) from error
+
+
+@frozen(kw_only=True)
+class CollectionReport:
+    """What a collection would delete from a book if it ran now, which the book's owner reads before starting it.
+
+    :ivar versions: Number of versions the collection would delete, with their rows and the log of their marks.
+    :ivar size_bytes: Size of the files of those versions, which the collection would free.
+    """
+
+    versions: int = field(validator=validators.ge(0))
+    size_bytes: int = field(validator=validators.ge(0))

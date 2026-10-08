@@ -160,7 +160,7 @@ class ProcessingKit:
         :rtype: ProcessingService
         """
         uow = InMemoryUnitOfWork(self.database)
-        return ProcessingService(uow=uow, catalogue=self.catalogue, parts=self.parts(uow))
+        return ProcessingService(uow=uow, assets=self.assets, catalogue=self.catalogue, parts=self.parts(uow))
 
     def profiles(self) -> RecipeProfiles:
         """Build the service of the recipe profiles over a new unit of work.
@@ -170,7 +170,7 @@ class ProcessingKit:
         """
         uow = InMemoryUnitOfWork(self.database)
         parts = self.parts(uow)
-        processing = ProcessingService(uow=uow, catalogue=self.catalogue, parts=parts)
+        processing = ProcessingService(uow=uow, assets=self.assets, catalogue=self.catalogue, parts=parts)
         return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing, clock=self.clock)
 
     async def recipe_of(

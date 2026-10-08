@@ -152,13 +152,14 @@ class TestRunStage:
         expect((fx_kit.fake.runs, versions.total) == (1, 1))
         assert_expectations()
 
-    async def test_rerun_with_other_parameters_makes_a_new_version_beside_the_old_one(
+    async def test_rerun_with_other_parameters_makes_a_new_version_and_going_back_makes_the_first_again(
         self, fx_kit: ProcessingKit
     ) -> None:
-        """Verify other parameters give another identifier, and going back makes the first version again in its row.
+        """Verify other parameters give another identifier, and going back makes the first version again.
 
-        The run of the second version leaves the first without its files, since it is no longer current and nothing
-        reads it, so going back runs the processor once more but adds no row.
+        The run of the second version deletes the first, since it is no longer current and nothing reads it, so going
+        back runs the processor once more and makes the version under the same identifier. The run that goes back
+        deletes the second version in its turn.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -170,14 +171,14 @@ class TestRunStage:
         await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, strong)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         second = await head_of(fx_kit, page, Stage.GEOMETRY)
-        replaced = await fx_kit.uow().page_versions.get(first.id)
+        replaced = await fx_kit.uow().page_versions.find(first.id)
         back_draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY)])
         await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, back_draft)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         back = await head_of(fx_kit, page, Stage.GEOMETRY)
         total = (await fx_kit.uow().page_versions.list_for_stage(page.id, Stage.GEOMETRY, None, EVERYTHING)).total
-        expect((first.id != second.id, back.id == first.id, total) == (True, True, 2))
-        expect((replaced.files_removed, back.files_removed) == (True, False))
+        expect((first.id != second.id, back.id == first.id, total) == (True, True, 1))
+        expect(replaced is None)
         expect((fx_kit.fake.runs, second.data) == (3, {'ran': 2}))
         assert_expectations()
 

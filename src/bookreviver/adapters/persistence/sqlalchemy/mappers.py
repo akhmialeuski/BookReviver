@@ -426,7 +426,6 @@ class PageVersionMapper(RowMapper[PageVersion, PageVersionRow]):
             edit_hash=row.edit_hash,
             tiles_ready=row.tiles_ready,
             created_at=row.created_at,
-            files_removed_at=row.files_removed_at,
             mark=row.mark,
             comment=row.comment,
         )
@@ -458,7 +457,6 @@ class PageVersionMapper(RowMapper[PageVersion, PageVersionRow]):
             edit_hash=entity.edit_hash,
             tiles_ready=entity.tiles_ready,
             created_at=entity.created_at,
-            files_removed_at=entity.files_removed_at,
             mark=entity.mark,
             comment=entity.comment,
         )

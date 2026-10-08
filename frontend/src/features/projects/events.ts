@@ -128,7 +128,7 @@ export function applyProjectEvent(
             void invalidateRecipes(queryClient, projectId, GEOMETRY_STAGE);
           }
           if (event.data.kind === COLLECT_VERSIONS_KIND) {
-            // The job took the files of the old results away, which have to be made again before they are used
+            // The job deleted the old results with their files, so the lists of results must not offer them any more
             void invalidateAllVersions(queryClient, projectId);
           }
         }

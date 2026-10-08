@@ -212,6 +212,20 @@ class AssetStore(ABC):
         """
 
     @abstractmethod
+    async def size_of(self, prefix: StorageKey) -> int:
+        """Return the size in bytes of the file, or of every file under the directory, at ``prefix``.
+
+        The prefix matches whole path segments, as in ``delete_prefix``, so the size is what removing that prefix
+        frees; a missing prefix takes no space.
+
+        :param prefix: Key of the file or directory to measure.
+        :type prefix: StorageKey
+        :returns: The total size of the files, 0 when nothing is stored at the prefix.
+        :rtype: int
+        :raises ValueError: If the prefix does not lie under ``projects/<id>/assets/``.
+        """
+
+    @abstractmethod
     async def delete_project(self, project_id: ProjectId) -> None:
         """Remove every derived file of the project; a project without any is not an error.
 

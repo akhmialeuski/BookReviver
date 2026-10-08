@@ -44,7 +44,7 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PageSize, PageStageKey, PageStepKey, Step
+from bookreviver.domain.values import PageSize, PageStageKey, PageStepKey
 from bookreviver.services.book_measure import NORMALIZE_KEY, BlockMeasure, BookBlocks, wants_the_book
 from bookreviver.services.spread_splits import SpreadSplit
 from bookreviver.services.stage_inputs import StageInputs
@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Project, Recipe
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StorageKey
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.values import MetadataMap, Step
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
@@ -70,14 +70,6 @@ SPLIT_NOT_AVAILABLE: str = 'The step {key} splits a scan, so it is the only step
 WRONG_OUTPUTS: str = 'The step {key} made {count} outputs, and a step of one page makes one.'
 EARLIER_STAGE_FAILED: str = (
     'The {stage} stage of the page is out of date and could not be run again, so a later stage cannot read it.'
-)
-REMAKE_CHANGED: str = (
-    'The result cannot be made again as it was: the processor, the manual edit or the page side it depends on has '
-    'changed since.'
-)
-REMAKE_INPUT_CHANGED: str = (
-    'The result cannot be made again as it was: the earlier stage of the page has another current result than the one '
-    'this result was made from.'
 )
 NO_PREVIEW_INPUT: str = 'The page has no image to preview a step on.'
 NO_STEP_TO_PREVIEW: str = 'Every step up to this one is switched off, so there is nothing to preview.'
@@ -273,8 +265,6 @@ class StageWork:
         stage: Stage,
         steps: Sequence[Step],
         source: StepSource,
-        *,
-        expected: Sequence[PageVersionId] | None = None,
     ) -> PageVersion | None:
         """Make the version of each step, each reading the one before, on the scale of the source.
 
@@ -287,21 +277,15 @@ class StageWork:
         :param source: What the first step reads, whose scale is the scale of every version made and whose book
                        is laid over the step that takes one.
         :type source: StepSource
-        :param expected: The identifier each version must have, in the order of the steps, when versions are made
-                         again, or None.
-        :type expected: Sequence[PageVersionId] | None
         :returns: The version of the last step, or the one that failed, which ends the chain, or None for no step.
         :rtype: PageVersion | None
-        :raises DomainError: If a processor is missing, its parameters do not fit, or the identifier is not the expected
-                             one.
+        :raises DomainError: If a processor is missing or its parameters do not fit.
         """
         version: PageVersion | None = None
         # The values of the parts of the book and the place of the page are read once for all the steps of the page
         layers = PageLayers(self._uow, page)
-        for index, step in enumerate(steps):
-            version = await self._make_version(
-                stage, step, source, layers, expected=None if expected is None else expected[index]
-            )
+        for step in steps:
+            version = await self._make_version(stage, step, source, layers)
             if version.state is not VersionState.READY:
                 return version
             # A preview made of a preview is as large of the full image as the preview it read, so the ratio goes on
@@ -391,16 +375,13 @@ class StageWork:
         step: Step,
         source: StepSource,
         layers: PageLayers,
-        *,
-        expected: PageVersionId | None = None,
     ) -> PageVersion:
         """Make the version a step gives on a source, or find the one an earlier run made.
 
-        A version that is ready and has its files is returned as it is. One that is new, or failed or left running by a
-        crash, or whose files a collection removed, is run, and returned as ready or failed. The one whose files were
-        removed keeps its row, its identifier and its creation time. The fields the page changes for the step are laid
-        over the parameters of the step first, so the version holds the parameters the step ran with, and the settings
-        of the page reach the identifier through them, except when the version is made again from its stored parameters.
+        A version that is ready is returned as it is. One that is new, or failed or left running by a crash, is run, and
+        returned as ready or failed. The fields the page changes for the step are laid over the parameters of the step
+        first, so the version holds the parameters the step ran with, and the settings of the page reach the identifier
+        through them.
         A page that shows a leaf the program drew is not run through the processor: its version holds the image of the
         source as it is, with no parameters, no settings and no edit, so every step that skips the same input shares it.
 
@@ -414,14 +395,11 @@ class StageWork:
         :param layers: The page being processed, and what the steps of the chain read of the values of the parts of
                        the book and of its place, read once for the page.
         :type layers: PageLayers
-        :param expected: Identifier the version must have, when the step makes a version again, or None.
-        :type expected: PageVersionId | None
         :returns: The version, in the state ready or failed.
         :rtype: PageVersion
         :raises NotFoundError: If the processor is not in the catalogue.
         :raises InvalidParametersError: If the parameters do not fit the processor.
-        :raises ConflictError: If the step is one that splits a scan, which this run cannot apply, or what it depends on
-                               gives another identifier than ``expected``, so the same version cannot be made again.
+        :raises ConflictError: If the step is one that splits a scan, which this run cannot apply.
         """
         scale = source.scale
         processor = self._catalogue.get(step.processor_key)
@@ -435,18 +413,8 @@ class StageWork:
         # The values of the page and of the parts of the book it is in are laid over the parameters of the step before
         # they are checked, so the identifier of the version hashes the parameters the step runs with, and two pages
         # that end up with equal ones share it.
-        # A version that is made again ran with the parameters it stored, which already hold the settings of its time
-        # and the size of the book it had then
-        base = (
-            {**step.params, **source.book}
-            if source.book and expected is None and step.processor_key == NORMALIZE_KEY
-            else step.params
-        )
-        laid = (
-            base
-            if skipped or expected is not None
-            else await layers.lay(step.step_id, base, None if state is None else state.params)
-        )
+        base = {**step.params, **source.book} if source.book and step.processor_key == NORMALIZE_KEY else step.params
+        laid = base if skipped else await layers.lay(step.step_id, base, None if state is None else state.params)
         checked = processor.validate_params(laid)
         params = {} if skipped else checked
         edit = None if state is None else state.edit
@@ -462,10 +430,8 @@ class StageWork:
             side=side,
             skipped=skipped,
         )
-        if expected is not None and inputs.identify() != expected:
-            raise ConflictError(REMAKE_CHANGED)
         existing = await self._uow.page_versions.find(inputs.identify())
-        if existing is not None and existing.state is VersionState.READY and not existing.files_removed:
+        if existing is not None and existing.state is VersionState.READY:
             return existing
         version = PageVersion(
             id=inputs.identify(),
@@ -596,83 +562,12 @@ class RecipeRun(StageWork):
         await self._records.announce(page.project_id, changed)
         return RunOutcome.DONE
 
-    async def remake(self, page: Page, version_id: PageVersionId) -> RunOutcome:
-        """Make a version again whose files a collection removed, and make it the current one of its stage.
-
-        The version is made by the steps its chain of inputs inside the stage stored, from the first of them, over the
-        current version of the earlier stage. Every version of the chain is found under the identifier it has and given
-        its files, so no row is added. The chain must read what the earlier stage has now, and its processors, edits
-        and page side must be what they were, since otherwise the identifier would differ and another result would be
-        made in its place. The steps are run with the parameters the versions stored, which already hold the settings
-        the page had when they were made, so a setting that was changed or taken back since does not prevent it, and the
-        settings of the page are not laid over them again.
-
-        :param page: Page owning the version.
-        :type page: Page
-        :param version_id: Version whose files are made again.
-        :type version_id: PageVersionId
-        :returns: Whether the version was made, skipped for lack of an image to read, or failed.
-        :rtype: RunOutcome
-        :raises NotFoundError: If the page has no such version.
-        :raises ConflictError: If the version cannot be made again as it was, or its step splits a scan.
-        """
-        target = await self._uow.page_versions.get(version_id)
-        if target.page_id != page.id:
-            raise NotFoundError(version_id)
-        chain = [target]
-        while (input_id := chain[-1].input_id) is not None:
-            earlier = await self._uow.page_versions.find(input_id)
-            if earlier is None or earlier.stage is not target.stage:
-                break
-            chain.append(earlier)
-        chain.reverse()
-        previous = await self._uow.page_stages.find(PageStageKey(page.id, target.stage))
-        # The edit of a step belongs to its identifier, so the chain is run with the steps of the
-        # recipe of the page, in their order, and a version no step of it made is run by a new step
-        recipe_steps = (
-            iter(())
-            if previous is None or previous.recipe_id is None
-            else iter((await self._uow.recipes.get(previous.recipe_id)).steps)
-        )
-        steps: list[Step] = []
-        for made in chain:
-            own = next(
-                (step for step in recipe_steps if step.enabled and step.processor_key == made.processor.key), None
-            )
-            steps.append(
-                Step(processor_key=made.processor.key, params=made.params)
-                if own is None
-                else evolve(own, params=own.params if made.data.get(VersionData.SKIPPED_LEAF) else made.params)
-            )
-        try:
-            source = await self._source(page, target.stage, VersionScale.FULL)
-            if source is None:
-                return RunOutcome.SKIPPED
-            if source.version_id != chain[0].input_id:
-                raise ConflictError(REMAKE_INPUT_CHANGED)
-            version = await self._run_steps(page, target.stage, steps, source, expected=[made.id for made in chain])
-        except DomainError:
-            await self._uow.rollback()
-            raise
-        if version is None:
-            return RunOutcome.FAILED
-        changed = await self._records.set_head(
-            PageStageKey(page.id, target.stage),
-            head_version_id=version.id,
-            recipe_id=None if previous is None else previous.recipe_id,
-        )
-        await self._uow.commit()
-        await self._records.announce(page.project_id, changed)
-        return RunOutcome.DONE
-
     async def _run_steps(
         self,
         page: Page,
         stage: Stage,
         steps: Sequence[Step],
         source: StepSource,
-        *,
-        expected: Sequence[PageVersionId] | None = None,
     ) -> PageVersion | None:
         """Make the version of each step, and cut the pyramid of the last.
 
@@ -684,15 +579,11 @@ class RecipeRun(StageWork):
         :type steps: Sequence[Step]
         :param source: What the first step reads.
         :type source: StepSource
-        :param expected: The identifier each version must have, in the order of the steps, when versions are made
-                         again, or None.
-        :type expected: Sequence[PageVersionId] | None
         :returns: The version of the last step run, or None when a step failed or there is no step.
         :rtype: PageVersion | None
-        :raises DomainError: If a processor is missing, its parameters do not fit, the identifier is not the expected
-                             one, or the pyramid cannot be cut.
+        :raises DomainError: If a processor is missing, its parameters do not fit, or the pyramid cannot be cut.
         """
-        version = await self._make_chain(page, stage, steps, source, expected=expected)
+        version = await self._make_chain(page, stage, steps, source)
         if version is None or version.state is not VersionState.READY:
             return None
         if version.renditions is not None and not version.tiles_ready:

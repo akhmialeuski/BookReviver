@@ -152,12 +152,14 @@ class ProcessingProvider(Provider):
 
     @provide(scope=Scope.REQUEST)
     def processing_service(
-        self, uow: UnitOfWork, catalogue: ProcessorCatalog, parts: ProcessingParts
+        self, uow: UnitOfWork, assets: AssetStore, catalogue: ProcessorCatalog, parts: ProcessingParts
     ) -> ProcessingService:
         """Build the processing service of a request.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
+        :param assets: Asset store of the application.
+        :type assets: AssetStore
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
         :param parts: The parts the processing use cases share.
@@ -165,7 +167,7 @@ class ProcessingProvider(Provider):
         :returns: The processing service.
         :rtype: ProcessingService
         """
-        return ProcessingService(uow=uow, catalogue=catalogue, parts=parts)
+        return ProcessingService(uow=uow, assets=assets, catalogue=catalogue, parts=parts)
 
     @provide(scope=Scope.REQUEST)
     def recipe_profiles(

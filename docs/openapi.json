@@ -4237,14 +4237,14 @@
         }
       }
     },
-    "/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}/remake": {
-      "post": {
+    "/api/v1/projects/{project_id}/versions/collectable": {
+      "get": {
         "tags": [
           "processing"
         ],
-        "summary": "Remake Version",
-        "description": "Make the picture of a version again, whose files a collection removed, and make the version current.\n\nThe job runs the step with the parameters and the edit the version stored, over the current version of the earlier\nstage, and finds the version under its own identifier. It fails with its reason, and makes nothing, when the earlier\nstage has another current version than the one this version was made from, or the edit changed. The answer is 409\nfor a version that has its files, is not ready or is a preview.",
-        "operationId": "remake_version_api_v1_projects__project_id__pages__page_id__versions__version_id__remake_post",
+        "summary": "Collectable Versions",
+        "description": "Count the versions a collection would delete now and the space their files take, and change nothing.\n\nThe versions are the ones ``POST /projects/{project_id}/versions/collect`` deletes, chosen by the same rule.",
+        "operationId": "collectable_versions_api_v1_projects__project_id__versions_collectable_get",
         "parameters": [
           {
             "name": "project_id",
@@ -4257,39 +4257,15 @@
               "title": "Project Id"
             },
             "description": "Identifier of the project"
-          },
-          {
-            "name": "page_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the page",
-              "title": "Page Id"
-            },
-            "description": "Identifier of the page"
-          },
-          {
-            "name": "version_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{16}$",
-              "description": "Identifier of the page version",
-              "title": "Version Id"
-            },
-            "description": "Identifier of the page version"
           }
         ],
         "responses": {
-          "202": {
+          "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JobSchema"
+                  "$ref": "#/components/schemas/CollectionReportSchema"
                 }
               }
             }
@@ -4345,7 +4321,7 @@
           "processing"
         ],
         "summary": "Collect Versions",
-        "description": "Remove the files of the versions nothing needs, in the background, and answer with the queued job.\n\nA version goes when it is not current, not in the chain of inputs of a current version, not a base version, not\nmarked Good and without a comment, and, for a preview, older than its retention period. A preview loses its row,\nand any other version keeps its row and loses its files, so it can be made again. A collection that is queued or\nrunning already is the answer. A run queues one by itself when it ends.",
+        "description": "Delete the versions nothing needs, in the background, and answer with the queued job.\n\nA version goes when it is not current, not in the chain of inputs of a current version, not a base version, not\nmarked Good and without a comment, and, for a preview, older than its retention period. It goes with its files, its\nrow and the log of its marks. A collection that is queued or running already is the answer. A run queues one by\nitself when it ends.",
         "operationId": "collect_versions_api_v1_projects__project_id__versions_collect_post",
         "parameters": [
           {
@@ -9412,6 +9388,25 @@
         "title": "ClearedSchema",
         "description": "What clearing a step on a page deleted.\n\n:ivar changes: How many changes of the history were deleted, which is none when the step had no history on the page.\n:ivar versions: How many versions were deleted: the results of the step on the page and the results that read them."
       },
+      "CollectionReportSchema": {
+        "properties": {
+          "versions": {
+            "type": "integer",
+            "title": "Versions"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "versions",
+          "size_bytes"
+        ],
+        "title": "CollectionReportSchema",
+        "description": "What a collection would delete from a book now.\n\n:ivar versions: How many versions it would delete, with their rows and the log of their marks.\n:ivar size_bytes: How many bytes the files of those versions take, which the collection frees."
+      },
       "ColorMode": {
         "type": "string",
         "enum": [
@@ -11085,22 +11080,6 @@
             "format": "date-time",
             "title": "Created At"
           },
-          "files_removed": {
-            "type": "boolean",
-            "title": "Files Removed"
-          },
-          "files_removed_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Files Removed At"
-          },
           "mark": {
             "anyOf": [
               {
@@ -11136,13 +11115,11 @@
           "images",
           "preview",
           "created_at",
-          "files_removed",
-          "files_removed_at",
           "mark",
           "comment"
         ],
         "title": "PageVersionSchema",
-        "description": "The result of one processing step on one page.\n\n:ivar id: Identifier of the version, the hash of what produced it.\n:ivar page_id: Page the version belongs to.\n:ivar stage: Stage of the step.\n:ivar processor: Processor that ran the step.\n:ivar input_id: Version the step read, or None for a base version.\n:ivar params: Parameters of the step.\n:ivar transform: Transform of coordinates from the input.\n:ivar data: Data the step found, such as an angle or a confidence.\n:ivar review: Why the step asks for a second look at the page though it finished, or None when it was sure.\n:ivar state: Where the version is in its life cycle.\n:ivar scale: Whether the step ran on the full image or on a preview.\n:ivar edit_hash: Hash of the manual edit the step read, or empty.\n:ivar origin: How the result came about: made by the step, or set by hand through a manual edit.\n:ivar tiles_ready: Whether the tile pyramid is cut, which a client asks for when it is not.\n:ivar error: Why the version failed, or empty.\n:ivar images: Paths of the images of a ready full run that has an image, or None.\n:ivar preview: Path of the preview image of a preview run, or None.\n:ivar created_at: When the version was created.\n:ivar files_removed: Whether a collection removed the files of the version, so it has no image until a run makes it\n                     again.\n:ivar files_removed_at: When the files were removed, or None while the version has them.\n:ivar mark: What the user judged of the result, or None while it is not judged.\n:ivar comment: What the user wrote about the result, or empty."
+        "description": "The result of one processing step on one page.\n\n:ivar id: Identifier of the version, the hash of what produced it.\n:ivar page_id: Page the version belongs to.\n:ivar stage: Stage of the step.\n:ivar processor: Processor that ran the step.\n:ivar input_id: Version the step read, or None for a base version.\n:ivar params: Parameters of the step.\n:ivar transform: Transform of coordinates from the input.\n:ivar data: Data the step found, such as an angle or a confidence.\n:ivar review: Why the step asks for a second look at the page though it finished, or None when it was sure.\n:ivar state: Where the version is in its life cycle.\n:ivar scale: Whether the step ran on the full image or on a preview.\n:ivar edit_hash: Hash of the manual edit the step read, or empty.\n:ivar origin: How the result came about: made by the step, or set by hand through a manual edit.\n:ivar tiles_ready: Whether the tile pyramid is cut, which a client asks for when it is not.\n:ivar error: Why the version failed, or empty.\n:ivar images: Paths of the images of a ready full run that has an image, or None.\n:ivar preview: Path of the preview image of a preview run, or None.\n:ivar created_at: When the version was created.\n:ivar mark: What the user judged of the result, or None while it is not judged.\n:ivar comment: What the user wrote about the result, or empty."
       },
       "Page_JobSchema_": {
         "properties": {

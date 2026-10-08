@@ -162,26 +162,34 @@ test('a reader runs and checks the Geometry stage', async ({ page }) => {
     );
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
-    await expect(page.getByTestId('stale-banner')).toContainText(
-      'Order changed after these pages were straightened',
-    );
+    // The foot of the panel counts the pages the saved recipe made out of date, and its button runs them once the pages
+    // out of date are chosen again: the button keeps the pages chosen for the run before, which were all of them
+    await expect(page.getByTestId('run-summary')).toContainText(`${PAGES} pages out of date`);
+    await page.getByTestId('run-menu').click();
+    await page.getByTestId('run-pages-attention').click();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('run-start')).toContainText(`${PAGES} out-of-date pages`);
   });
 
-  await test.step('the stale pages are run again and the page keeps both of its results', async () => {
-    await page.getByTestId('run-start').click();
-    await expect(page.getByTestId('stale-banner')).toHaveCount(0, { timeout: RUN_TIMEOUT_MS });
-    // The results are in the history that ends the panel, which is collapsed until it is opened
+  await test.step('the stale pages are run again and the page keeps the result that was marked good beside the new one', async () => {
+    // A result the run replaces is deleted by the collection that follows it, unless it is marked good or commented
     await openTimeline(page);
+    await page.locator(RESULT_ROWS).first().getByTestId('result-mark-good').click();
+    await expect(page.locator(RESULT_ROWS).first().getByTestId('result-mark-good')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await page.getByTestId('run-start').click();
+    await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
+      timeout: RUN_TIMEOUT_MS,
+    });
     await expect(page.locator(RESULT_ROWS)).toHaveCount(2, { timeout: RUN_TIMEOUT_MS });
     await expect(page.locator(RESULT_ROWS).first()).toHaveAttribute('data-current', 'true');
   });
 
-  await test.step('an earlier result is chosen from the history and becomes the current one', async () => {
-    // The collection that follows the run takes the files of the earlier result away, which the history learns when it
-    // ends, so the result is made again when it is used
+  await test.step('the earlier result is chosen from the history and becomes the current one', async () => {
     await waitForIdleJobs(page, openProjectId(page));
     const entries = page.locator(RESULT_ROWS);
-    await expect(entries.nth(1).getByTestId('page-history-removed')).toBeVisible();
     await expect(entries.nth(1)).toHaveAttribute('data-current', 'false');
     await entries.nth(1).getByTestId('page-history-use').click();
     await expect(entries.nth(1)).toHaveAttribute('data-current', 'true', {

@@ -253,6 +253,14 @@ class JobStarter:
                 return stored
         return job
 
+    def collection(self) -> VersionCollection:
+        """Say what a collection started now deletes: the versions nothing needs, and the previews old enough.
+
+        :returns: The collection, whose moment is the retention of a preview before now.
+        :rtype: VersionCollection
+        """
+        return VersionCollection(previews_older_than=self._clock.now() - self._config.preview_retention)
+
     def new_collection(self, project_id: ProjectId) -> Job:
         """Build the job that collects the old versions of a project, which is not stored yet.
 
@@ -261,14 +269,12 @@ class JobStarter:
         :returns: The queued job, to store with the end of the job that precedes it, or by ``enqueue``.
         :rtype: Job
         """
-        now = self._clock.now()
-        collection = VersionCollection(previews_older_than=now - self._config.preview_retention)
         return Job(
             id=JobId(uuid4()),
             project_id=project_id,
             kind=JobKind.COLLECT_VERSIONS,
-            params=collection.to_map(),
-            created_at=now,
+            params=self.collection().to_map(),
+            created_at=self._clock.now(),
         )
 
     async def enqueue_collection(self, project_id: ProjectId) -> Job | None:

@@ -1149,7 +1149,6 @@ class SqlAlchemyPageVersionRepository(
         session = self._rows.session
         may_go = and_(
             PageVersionRow.input_id.is_not(None),
-            PageVersionRow.files_removed_at.is_(None),
             or_(PageVersionRow.mark.is_(None), PageVersionRow.mark != ResultMark.GOOD),
             PageVersionRow.comment == EMPTY_TEXT,
             or_(PageVersionRow.scale != VersionScale.PREVIEW, PageVersionRow.created_at < previews_older_than),
