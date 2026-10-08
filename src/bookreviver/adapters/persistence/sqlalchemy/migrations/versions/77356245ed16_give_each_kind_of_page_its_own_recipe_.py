@@ -6,9 +6,7 @@ variants, the pin of a recipe to a page and the condition of a step have no plac
 
 The upgrade gives the active recipe of each stage of each book the kind text, and adds the three other kinds as copies
 of it, with the same steps and the same identifiers of them, so the settings and the edits a page kept for a step stay
-its own when the page moves to another kind. A page that the active recipe processed is then linked to the copy of the
-kind it has, and stays fresh since the steps that made its result are the same, so a change of a recipe reaches
-exactly the pages of its kind. The variants are deleted, and the pages that were processed by one lose
+its own when the page moves to another kind. The variants are deleted, and the pages that were processed by one lose
 the link to their recipe and become stale, since the steps that made their result are gone. The conditions are taken
 out of the steps of the recipes and of the profiles. The rules and the pins are dropped with their table and their
 column. The number of the variants deleted is printed by the command.
@@ -81,17 +79,12 @@ KIND_KEY: Final = 'uq_recipes_project_id'
 
 # The kinds of page in the order of the recipes of a stage, with the name the recipe of each had as a variant
 TEXT: Final = 'text'
-COLOR_PICTURE: Final = 'color-picture'
-BW_PICTURE: Final = 'bw-picture'
-BLANK: Final = 'blank'
 KINDS: Final = (
     (TEXT, 'Text'),
-    (COLOR_PICTURE, 'Colour picture'),
-    (BW_PICTURE, 'Black-and-white picture'),
-    (BLANK, 'Blank page'),
+    ('color-picture', 'Colour picture'),
+    ('bw-picture', 'Black-and-white picture'),
+    ('blank', 'Blank page'),
 )
-# The roles of a page that make it a picture whatever the program found on it, as ``PICTURE_KINDS`` has them
-PICTURE_ROLES: Final = ('plate', 'frontispiece')
 APPLIES_TO: Final = 'applies_to'
 STALE: Final = 'stale'
 FRESH: Final = 'fresh'
@@ -113,25 +106,6 @@ RECIPES = sa.table(
 PROFILES = sa.table('recipe_profiles', sa.column(ID, GUID), sa.column('steps', STEPS))
 PAGE_STAGES = sa.table(
     PAGE_STAGES_TABLE, sa.column('page_id', GUID), sa.column(RECIPE_ID, GUID), sa.column('state', sa.String())
-)
-PAGES = sa.table(
-    'pages',
-    sa.column(ID, GUID),
-    sa.column(KIND, sa.String()),
-    sa.column('content_type', sa.String()),
-    sa.column('content_by_hand', sa.Boolean()),
-)
-
-# The kind of recipe that processes a page, restating ``RecipeKind.of`` and ``ContentType.shown_by`` on the columns the
-# page has at this revision, since a migration must not import domain code that can change after it: a blank page is
-# the blank kind, a page the program or the user found a picture on is that picture, a plate or a frontispiece that
-# nobody set by hand is a picture in colour, and any other page is text
-RECIPE_KIND_OF_PAGE = sa.case(
-    (PAGES.c.kind == BLANK, BLANK),
-    (PAGES.c.content_type == COLOR_PICTURE, COLOR_PICTURE),
-    (PAGES.c.content_type == BW_PICTURE, BW_PICTURE),
-    (sa.and_(PAGES.c.kind.in_(PICTURE_ROLES), PAGES.c.content_by_hand == sa.false()), COLOR_PICTURE),
-    else_=TEXT,
 )
 
 
@@ -249,11 +223,10 @@ def data_upgrades() -> None:
             )
             bind.execute(sa.delete(RECIPES).where(RECIPES.c.id == variant.id))
             deleted += 1
-        copies = {kind: uuid4() for kind, _ in KINDS[1:]}
         for index, (kind, name) in enumerate(KINDS[1:], start=1):
             bind.execute(
                 sa.insert(RECIPES).values(
-                    id=copies[kind],
+                    id=uuid4(),
                     project_id=project_id,
                     stage=stage,
                     kind=kind,
@@ -264,16 +237,6 @@ def data_upgrades() -> None:
                     created_at=text.created_at + timedelta(microseconds=index),
                     updated_at=text.updated_at,
                 )
-            )
-        # The copy has the steps of the recipe that made the result, so the result stays fresh under its new recipe
-        for kind, copy_id in copies.items():
-            bind.execute(
-                sa.update(PAGE_STAGES)
-                .where(
-                    PAGE_STAGES.c.recipe_id == text.id,
-                    PAGE_STAGES.c.page_id.in_(sa.select(PAGES.c.id).where(sa.literal(kind) == RECIPE_KIND_OF_PAGE)),
-                )
-                .values(recipe_id=copy_id)
             )
     # A variant that is deleted is a recipe the user made, so the count is printed by the command and not left in a log
     util.msg(f'Gave the active recipes of {len(by_stage)} stages the kind text and deleted {deleted} variants.')
