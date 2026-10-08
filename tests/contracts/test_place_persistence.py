@@ -1,10 +1,11 @@
 """Contract of the persistence port of the places accounts left books at.
 
 Every test runs against each adapter registered in the conftest, the in-memory one and the SQL one, so both keep the
-promises of the port: one place for each account and book, a replacement on every save, and the removal of the places
-with the book.
+promises of the port: one place for each account and book, a replacement on every save that is whole even when two
+transactions write together, and the removal of the places with the book.
 """
 
+from datetime import timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -14,7 +15,7 @@ from attrs import evolve
 from bookreviver.domain.enums import PlaceMode, Stage
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import PageId
-from bookreviver.domain.values import BookPlaceKey
+from bookreviver.domain.values import BookPlaceKey, CanvasPosition
 from tests.helpers.builders import make_book_place, make_project
 
 if TYPE_CHECKING:
@@ -22,6 +23,9 @@ if TYPE_CHECKING:
     from tests.contracts.conftest import OwnerFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
+
+# How much later one write of a place is stamped than another
+LATER: timedelta = timedelta(minutes=5)
 
 
 async def _store_project(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory) -> ProjectId:
@@ -101,6 +105,65 @@ class TestBookPlaceRepository:
             await uow.book_places.save(place)
             await uow.commit()
         assert await (await fx_uow_factory()).book_places.find(first.key) == second
+
+    async def test_interleaved_saves_leave_the_later_place_whole(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the later of two places written one after the other is stored whole, the mode it shares with the old one too.
+
+        The stored place and the later one agree on the mode, and the earlier one differs from both, so a store that
+        wrote only the columns differing from the place it last read would leave the mode of the earlier place. The two
+        writes run one after the other here: the mixture the e2e run showed came from two requests whose read and
+        write overlapped inside one save, which only a run of concurrent requests reproduces.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project_id = await _store_project(fx_uow_factory, fx_new_owner)
+        account_id = await fx_new_owner()
+        stored = evolve(make_book_place(account_id=account_id, project_id=project_id), mode=PlaceMode.READING)
+        first = evolve(
+            stored, mode=PlaceMode.WORKSPACE, page_id=None, canvas=None, updated_at=stored.updated_at + LATER
+        )
+        second = evolve(
+            stored,
+            page_id=PageId(uuid4()),
+            canvas=CanvasPosition(zoom=1.0, centre_x=0.4348, centre_y=0.5),
+            updated_at=stored.updated_at + 2 * LATER,
+        )
+        seeding = await fx_uow_factory()
+        await seeding.book_places.save(stored)
+        await seeding.commit()
+        uow_first, uow_second = await fx_uow_factory(), await fx_uow_factory()
+        assert await uow_second.book_places.find(stored.key) == stored
+        await uow_first.book_places.save(first)
+        await uow_first.commit()
+        await uow_second.book_places.save(second)
+        await uow_second.commit()
+        assert await (await fx_uow_factory()).book_places.find(stored.key) == second
+
+    async def test_save_of_an_older_place_leaves_the_newer_one(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a write stamped before the stored place changes nothing and answers with the stored place.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project_id = await _store_project(fx_uow_factory, fx_new_owner)
+        older = make_book_place(account_id=await fx_new_owner(), project_id=project_id)
+        newer = evolve(older, stage=Stage.CLEANUP, page_id=PageId(uuid4()), updated_at=older.updated_at + LATER)
+        seeding = await fx_uow_factory()
+        await seeding.book_places.save(newer)
+        await seeding.commit()
+        late = await fx_uow_factory()
+        assert await late.book_places.save(older) == newer
+        await late.commit()
+        assert await (await fx_uow_factory()).book_places.find(older.key) == newer
 
     async def test_places_of_two_accounts_in_one_book_are_apart(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory

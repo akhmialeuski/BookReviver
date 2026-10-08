@@ -143,10 +143,16 @@ test('a border of the content is dragged on Select content without the picture l
       saves.push(request.url());
     }
   });
-  // An edit starts a run of the stage on the page, and the next change waits until that run is over
+  const banner = page.getByTestId('stale-banner');
+  // An edit starts a run of the stage on the page, and the next change waits until that run is over: the server has no
+  // active job, and the screen itself shows no editor busy, no run in the summary and no page out of date
   const settled = async (): Promise<void> => {
     await expect(page.getByTestId('editor-busy')).toHaveCount(0, { timeout: RUN_TIMEOUT_MS });
     await waitForIdleJobs(page, projectId);
+    await expect(page.getByTestId('run-summary-running')).toHaveCount(0, {
+      timeout: RUN_TIMEOUT_MS,
+    });
+    await expect(banner).toHaveCount(0, { timeout: RUN_TIMEOUT_MS });
   };
 
   await test.step('the stage runs on a scan and Select content shows the borders it found', async () => {
@@ -188,9 +194,23 @@ test('a border of the content is dragged on Select content without the picture l
 
   await test.step('the first border set by hand is saved, and the stage runs on the page again', async () => {
     const bottom = await pairOf(layer, 'data-handle-bottom');
+    // The top border is not touched by the drag, so it stands where it stood while the canvas keeps its size
+    const still = {
+      zoom: await canvas.getAttribute('data-zoom'),
+      top: await pairOf(layer, 'data-handle-top'),
+    };
+    const expectCanvasStill = async (): Promise<void> => {
+      expect(await canvas.getAttribute('data-zoom')).toBe(still.zoom);
+      expect(await pairOf(layer, 'data-handle-top')).toEqual(still.top);
+    };
     await dragFrom(page, layer, bottom, { x: 0, y: -DRAG_PX });
     await expect(layer).toHaveAttribute('data-figure', 'by-hand', { timeout: RUN_TIMEOUT_MS });
+    // The saved frame makes the page out of date, and the banner that says so lies over the canvas: neither its
+    // appearing nor its going away resizes the canvas or moves the border under the pointer
+    await expect(banner).toBeVisible({ timeout: RUN_TIMEOUT_MS });
+    await expectCanvasStill();
     await settled();
+    await expectCanvasStill();
     await expect(layer).toBeVisible();
     await waitForQuietCanvas(page);
     found = await numbersOf(layer, 'data-rect');

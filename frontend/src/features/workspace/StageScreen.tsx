@@ -524,9 +524,9 @@ export function StageScreen({
                 flagged={flagged}
               />
             ) : processed ? (
-              <div className="flex size-full flex-col">
+              <div className="relative size-full">
+                {canvasArea}
                 <StageBanners processing={processing} items={items} />
-                <div className="min-h-0 flex-1">{canvasArea}</div>
               </div>
             ) : (
               canvasArea

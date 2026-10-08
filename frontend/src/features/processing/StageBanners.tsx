@@ -13,7 +13,11 @@ import { Button } from '@/shared/ui/button';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
- * The banners above the canvas of a processing stage.
+ * The banners over the top edge of the canvas of a processing stage.
+ *
+ * They lie over the canvas instead of above it, so a banner that appears or goes away never changes the height of the
+ * canvas, which would change its zoom and move the picture under the pointer. The strip holding them lets the pointer
+ * through to the canvas, and each banner takes it back.
  *
  * One says the pages are out of date because a stage before this one changed after they were made. It has no button: a
  * run of the stage starts from the foot of the panel. The other, on the Split stage only, says that some scans are wider
@@ -56,11 +60,11 @@ export function StageBanners({
   }
 
   return (
-    <div className="grid gap-2 p-2">
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 grid gap-2 p-2">
       {showSplit ? (
         <div
           role="status"
-          className="flex flex-wrap items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950"
+          className="pointer-events-auto flex flex-wrap items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950 shadow-sm"
           data-testid="split-banner"
         >
           <LightbulbIcon className="size-4 shrink-0" aria-hidden="true" />
@@ -89,7 +93,7 @@ export function StageBanners({
       {showStale ? (
         <div
           role="status"
-          className="flex flex-wrap items-center gap-3 rounded-lg border border-status-attention/60 bg-status-attention/10 px-4 py-3 text-sm"
+          className="pointer-events-auto flex flex-wrap items-center gap-3 rounded-lg border border-status-attention/60 bg-[color-mix(in_oklab,var(--status-attention)_10%,var(--background))] px-4 py-3 text-sm shadow-sm"
           data-testid="stale-banner"
         >
           <RefreshCwIcon className="size-4 shrink-0 text-status-attention" aria-hidden="true" />
@@ -101,7 +105,11 @@ export function StageBanners({
           </p>
         </div>
       ) : null}
-      {run.error === null ? null : <ErrorAlert message={describeError(run.error)} />}
+      {run.error === null ? null : (
+        <div className="pointer-events-auto">
+          <ErrorAlert message={describeError(run.error)} />
+        </div>
+      )}
     </div>
   );
 }

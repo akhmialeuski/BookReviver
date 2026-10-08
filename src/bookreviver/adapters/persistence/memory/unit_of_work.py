@@ -1674,14 +1674,20 @@ class InMemoryResultMarkChangeRepository(
 class InMemoryBookPlaceRepository(InMemoryRepository[BookPlace, BookPlaceKey], BookPlaceRepository):
     """The places accounts left books at."""
 
-    def __init__(self, tables: InMemoryTables) -> None:
+    def __init__(self, tables: InMemoryTables, *, snapshot: InMemoryTables, committed: InMemoryTables) -> None:
         """Work on the book place table of the unit of work's copy, checking places against projects.
 
         :param tables: Every table of the working copy.
         :type tables: InMemoryTables
+        :param snapshot: The committed tables as the transaction began, which tell its own changes from others'.
+        :type snapshot: InMemoryTables
+        :param committed: The committed tables shared with every unit of work, read by a save.
+        :type committed: InMemoryTables
         """
         super().__init__(tables.book_places, tables)
         self._identify = attrgetter(KEY_ATTRIBUTE)
+        self._snapshot = snapshot
+        self._committed = committed
 
     @override
     def _check(self, entity: BookPlace) -> None:
@@ -1697,17 +1703,24 @@ class InMemoryBookPlaceRepository(InMemoryRepository[BookPlace, BookPlaceKey], B
 
     @override
     async def save(self, place: BookPlace) -> BookPlace:
-        """Store the place, replacing the one of the same account and book.
+        """Store the place whole, replacing the one of the same account and book unless that one was written later.
+
+        Like a database statement, the comparison sees the place as last committed by anyone, unless this transaction
+        wrote the place itself.
 
         :param place: Place to store.
         :type place: BookPlace
-        :returns: The place as stored.
+        :returns: The place as stored, which is the stored place when it was written later than ``place``.
         :rtype: BookPlace
         :raises NotFoundError: If the book is not stored.
         """
         self._check(place)
-        self._rows[place.key] = place
-        return place
+        own = self._rows.get(place.key)
+        changed_here = self._snapshot.book_places.get(place.key) is not own
+        current = own if changed_here else self._committed.book_places.get(place.key)
+        stored = current if current is not None and current.updated_at > place.updated_at else place
+        self._rows[place.key] = stored
+        return stored
 
     @override
     async def find(self, key: BookPlaceKey) -> BookPlace | None:
@@ -2072,7 +2085,9 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.jobs = InMemoryJobRepository(
             self._tables, snapshot=self._snapshot, committed=self._database.tables, guards=self._guards
         )
-        self.book_places = InMemoryBookPlaceRepository(self._tables)
+        self.book_places = InMemoryBookPlaceRepository(
+            self._tables, snapshot=self._snapshot, committed=self._database.tables
+        )
 
     @override
     async def commit(self) -> None:

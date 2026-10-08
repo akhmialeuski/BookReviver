@@ -969,14 +969,18 @@ class BookPlaceRepository(Repository[BookPlace, BookPlaceKey]):
 
     @abstractmethod
     async def save(self, place: BookPlace) -> BookPlace:
-        """Store the place of an account in a book, replacing the one stored.
+        """Store the place of an account in a book, replacing the one stored whole, unless that one is newer.
+
+        The write is atomic: of two transactions saving at once, the one with the later ``updated_at`` leaves its place
+        whole, and no field of the other is kept. A place whose ``updated_at`` is earlier than the stored one changes
+        nothing, so a request that arrives late never overwrites a newer one. The comparison sees the place as last
+        committed by anyone, not as this transaction read it.
 
         :param place: Place to store.
         :type place: BookPlace
-        :returns: The place as stored.
+        :returns: The place as stored, which is the stored place when it is newer than ``place``.
         :rtype: BookPlace
         :raises NotFoundError: If the book is not stored.
-        :raises ConflictError: If another transaction stored the first place of the account in the book meanwhile.
         """
 
     @abstractmethod

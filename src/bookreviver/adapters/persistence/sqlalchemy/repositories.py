@@ -22,14 +22,17 @@ from itertools import batched, chain
 from operator import attrgetter
 from typing import TYPE_CHECKING, Any, ClassVar, override
 
-from advanced_alchemy.exceptions import DuplicateKeyError, ForeignKeyError, RepositoryError
+from advanced_alchemy.exceptions import DuplicateKeyError, ForeignKeyError, RepositoryError, wrap_sqlalchemy_exception
 from advanced_alchemy.exceptions import NotFoundError as MissingRowError
 from advanced_alchemy.filters import CollectionFilter, LimitOffset
-from advanced_alchemy.repository import SQLAlchemyAsyncRepository
+from advanced_alchemy.repository import DEFAULT_ERROR_MESSAGE_TEMPLATES, SQLAlchemyAsyncRepository
 from attrs import evolve
 from sqlalchemy import Table, UniqueConstraint, and_, case, delete, exists, func, inspect, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm.exc import StaleDataError
 
+from bookreviver.adapters.persistence.sqlalchemy.database import SQLITE_DIALECT
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     BookPlaceMapper,
     JobMapper,
@@ -380,9 +383,51 @@ class ResultMarkChangeRows(RowRepository[ResultMarkChangeRow]):
 
 
 class BookPlaceRows(RowRepository[BookPlaceRow]):
-    """Rows of the ``book_places`` table."""
+    """Rows of the ``book_places`` table, written by one atomic upsert."""
 
     model_type = BookPlaceRow
+
+    async def replace_unless_newer(self, row: BookPlaceRow) -> BookPlaceRow:
+        """Store the row whole in one statement, unless the stored row was written later.
+
+        The statement inserts the row, or on a conflict of the primary key replaces every column of the stored row, as
+        long as that row's ``updated_at`` is not later than the new one. The database evaluates the condition against
+        the latest committed row and locks the row until the transaction ends, so two requests writing at once leave
+        exactly one of them, whole, and never a mixture of the two. Reading the row first and updating the columns that
+        differ would do the opposite: a request that read before the other committed writes only part of its columns.
+
+        :param row: Transient row to store.
+        :type row: BookPlaceRow
+        :returns: The row as stored, which is the stored row when it was written later than ``row``.
+        :rtype: BookPlaceRow
+        :raises NotFoundError: If the book of the place is not stored.
+        """
+        dialect = self.session.get_bind().dialect.name
+        mapper = inspect(BookPlaceRow)
+        values = {attribute.key: getattr(row, attribute.key) for attribute in mapper.column_attrs}
+        # Only a dialect's own INSERT has ON CONFLICT DO UPDATE, and the application runs on SQLite or PostgreSQL
+        insert = sqlite_insert if dialect == SQLITE_DIALECT else postgresql_insert
+        insertion = insert(BookPlaceRow).values(values)
+        # The columns are named as their attributes, so one list serves the conflict target and the update
+        key = [column.name for column in mapper.primary_key]
+        statement = (
+            insertion.on_conflict_do_update(
+                index_elements=key,
+                set_={name: insertion.excluded[name] for name in values if name not in key},
+                where=BookPlaceRow.updated_at <= insertion.excluded.updated_at,
+            )
+            .returning(BookPlaceRow)
+            .execution_options(populate_existing=True)
+        )
+        with (
+            self._reporting_integrity_errors([row]),
+            wrap_sqlalchemy_exception(error_messages=DEFAULT_ERROR_MESSAGE_TEMPLATES, dialect_name=dialect),
+        ):
+            stored = (await self.session.execute(statement)).scalar_one_or_none()
+        if stored is not None:
+            return stored
+        # The condition refused the write, so the row that was written later stays, reloaded into the session
+        return await self.get((row.account_id, row.project_id), execution_options={'populate_existing': True})
 
 
 class RecipeRows(RowRepository[RecipeRow]):
@@ -1807,7 +1852,10 @@ class SqlAlchemyResultMarkChangeRepository(
 
 
 class SqlAlchemyBookPlaceRepository(SqlAlchemyRepository[BookPlace, BookPlaceKey, BookPlaceRow], BookPlaceRepository):
-    """The places accounts left books at, addressed by the account and the book."""
+    """The places accounts left books at, addressed by the account and the book.
+
+    :ivar _places: The rows of the table as their own repository, whose upsert the generic rows do not have.
+    """
 
     def __init__(self, session: AsyncSession) -> None:
         """Create the repository over the ``book_places`` table.
@@ -1815,7 +1863,9 @@ class SqlAlchemyBookPlaceRepository(SqlAlchemyRepository[BookPlace, BookPlaceKey
         :param session: Session of the unit of work.
         :type session: AsyncSession
         """
-        super().__init__(rows=BookPlaceRows(session=session), mapper=BookPlaceMapper())
+        places = BookPlaceRows(session=session)
+        super().__init__(rows=places, mapper=BookPlaceMapper())
+        self._places = places
 
     @override
     async def get(self, entity_id: BookPlaceKey) -> BookPlace:
@@ -1842,18 +1892,15 @@ class SqlAlchemyBookPlaceRepository(SqlAlchemyRepository[BookPlace, BookPlaceKey
 
     @override
     async def save(self, place: BookPlace) -> BookPlace:
-        """Store the place, replacing the one of the same account and book.
+        """Store the place whole, replacing the one of the same account and book unless that one was written later.
 
         :param place: Place to store.
         :type place: BookPlace
-        :returns: The place as stored.
+        :returns: The place as stored, which is the stored place when it was written later than ``place``.
         :rtype: BookPlace
         :raises NotFoundError: If the book is not stored.
-        :raises ConflictError: If another transaction stored the first place of the account in the book meanwhile.
         """
-        if await self.find(place.key) is None:
-            return await self.add(place)
-        return await self.update(place)
+        return self._mapper.to_entity(await self._places.replace_unless_newer(self._mapper.to_row(place)))
 
     @override
     async def find(self, key: BookPlaceKey) -> BookPlace | None:

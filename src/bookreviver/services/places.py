@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 from attrs import asdict
 
 from bookreviver.domain.entities import BookPlace
-from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.values import BookPlaceKey
 from bookreviver.services.projects import owned_project
 
@@ -53,8 +52,8 @@ class PlaceService:
     async def save(self, actor: Actor, project_id: ProjectId, place: NewBookPlace) -> BookPlace:
         """Replace the place the actor left one of their books at.
 
-        Two requests may store the first place of a book together, when the client writes after a pause and again as
-        the page closes. The database lets one in and refuses the other, which is stored again as a replacement.
+        The request is stamped when it starts, and the store keeps the place of the later stamp whole, so two requests
+        writing together never leave a mixture of the two and a late one never overwrites a newer one.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -62,22 +61,19 @@ class PlaceService:
         :type project_id: ProjectId
         :param place: Where the actor left the book.
         :type place: NewBookPlace
-        :returns: The place as stored, with the time of the write.
+        :returns: The place as stored, which is a newer place of another request when that one was stamped later.
         :rtype: BookPlace
         :raises NotFoundError: If the actor has no such book.
         """
+        updated_at = self._clock.now()
         await owned_project(self._uow.projects, actor, project_id)
-        stored = BookPlace(
-            account_id=actor.account_id,
-            project_id=project_id,
-            updated_at=self._clock.now(),
-            **asdict(place, recurse=False),
+        stored = await self._uow.book_places.save(
+            BookPlace(
+                account_id=actor.account_id,
+                project_id=project_id,
+                updated_at=updated_at,
+                **asdict(place, recurse=False),
+            )
         )
-        try:
-            await self._uow.book_places.save(stored)
-            await self._uow.commit()
-        except ConflictError:
-            await self._uow.rollback()
-            await self._uow.book_places.save(stored)
-            await self._uow.commit()
+        await self._uow.commit()
         return stored
