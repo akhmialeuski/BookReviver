@@ -1,4 +1,4 @@
-import { CheckIcon, ChevronDownIcon, LoaderCircleIcon, PencilIcon } from 'lucide-react';
+import { ChevronDownIcon, LoaderCircleIcon, PencilIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { ContentType } from '@/api';
 import { useUpdatePages } from '@/features/pages/actions';
@@ -15,6 +15,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/shared/ui/dropdown-menu';
@@ -100,49 +102,58 @@ export function ContentTypeMenu({
         <DropdownMenuLabel className="text-xs text-muted-foreground uppercase">
           {labels.title}
         </DropdownMenuLabel>
-        {CONTENT_TYPES.map((type) => (
-          <DropdownMenuItem
-            key={type}
-            data-testid={`content-type-${type}`}
-            aria-checked={shown === type}
-            onSelect={() => {
-              setPending({ id: open.id, type });
-              update.mutate(
-                { pageIds: ids, changes: { content_type: type } },
-                { onSettled: () => setPending(null) },
-              );
-            }}
-          >
-            <span aria-hidden="true">{MESSAGES.workspace.steps.marks[markOfContent(type)]}</span>
-            {MESSAGES.pages.contentTypes[type]}
-            {open.content_source !== 'hand' && open.content_type === type ? (
-              <span className="ml-auto text-xs text-muted-foreground">{labels.found}</span>
-            ) : null}
-          </DropdownMenuItem>
-        ))}
+        <DropdownMenuRadioGroup
+          value={shown}
+          onValueChange={(next) => {
+            const type = CONTENT_TYPES.find((entry) => entry === next);
+            if (type === undefined) {
+              return;
+            }
+            setPending({ id: open.id, type });
+            update.mutate(
+              { pageIds: ids, changes: { content_type: type } },
+              { onSettled: () => setPending(null) },
+            );
+          }}
+        >
+          {CONTENT_TYPES.map((type) => (
+            <DropdownMenuRadioItem key={type} value={type} data-testid={`content-type-${type}`}>
+              <span className="flex items-center gap-2">
+                <span aria-hidden="true">
+                  {MESSAGES.workspace.steps.marks[markOfContent(type)]}
+                </span>
+                {MESSAGES.pages.contentTypes[type]}
+              </span>
+              {open.content_source !== 'hand' && open.content_type === type ? (
+                <span className="text-xs text-muted-foreground">{labels.found}</span>
+              ) : null}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuLabel className="text-xs text-muted-foreground uppercase">
           {labels.applyTo}
         </DropdownMenuLabel>
-        {scopes.map(([value, text, count]) => (
-          <DropdownMenuItem
-            key={value}
-            data-testid={`content-scope-${value}`}
-            aria-checked={reaching === value}
-            disabled={count === 0}
-            // The choice of pages is a setting of the menu, so picking it does not close the menu
-            onSelect={(event) => {
-              event.preventDefault();
-              setScope(value);
-            }}
-          >
-            <CheckIcon className={reaching === value ? 'opacity-100' : 'opacity-0'} />
-            {text}
-            {count === null ? null : (
-              <span className="ml-auto text-xs text-muted-foreground tabular-nums">{count}</span>
-            )}
-          </DropdownMenuItem>
-        ))}
+        <DropdownMenuRadioGroup
+          value={reaching}
+          onValueChange={(next) => setScope(next === Scope.Selected ? Scope.Selected : Scope.Page)}
+        >
+          {scopes.map(([value, text, count]) => (
+            <DropdownMenuRadioItem
+              key={value}
+              value={value}
+              data-testid={`content-scope-${value}`}
+              disabled={count === 0}
+              // The choice of pages is a setting of the menu, so picking it does not close the menu
+              onSelect={(event) => event.preventDefault()}
+            >
+              {text}
+              {count === null ? null : (
+                <span className="text-xs text-muted-foreground tabular-nums">{count}</span>
+              )}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem
           disabled={detecting}

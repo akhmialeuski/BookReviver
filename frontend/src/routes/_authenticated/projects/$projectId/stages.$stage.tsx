@@ -1,5 +1,6 @@
 import { createFileRoute, notFound, useParams } from '@tanstack/react-router';
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
+import type { Stage } from '@/api';
 import { ImportScreen } from '@/features/import/ImportScreen';
 import { OrderScreen } from '@/features/order/OrderScreen';
 import type { PlaceAddress } from '@/features/place/address';
@@ -45,60 +46,78 @@ function StageRoute(): React.JSX.Element {
 
 function StageOfBook({ projectId }: { projectId: string }): React.JSX.Element {
   const { stage } = Route.useParams();
+  const known = parseStage(stage);
+  return known === null ? (
+    <StageNotFound />
+  ) : (
+    <KnownStageOfBook projectId={projectId} stage={known} />
+  );
+}
+
+function KnownStageOfBook({
+  projectId,
+  stage,
+}: {
+  projectId: string;
+  stage: Stage;
+}): React.JSX.Element {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const stepId = parseIdentifier(useParams({ strict: false }).stepId);
-  const known = parseStage(stage);
-  const address = useMemo<PlaceAddress | null>(
-    () => (known === null ? null : { mode: 'workspace', stage: known, ...search }),
-    [known, search],
+  const address = useMemo<PlaceAddress>(
+    () => ({ mode: 'workspace', stage, ...search }),
+    [stage, search],
   );
   const writer = useBookPlaceWriter(projectId, address);
 
-  if (known === null) {
-    return <StageNotFound />;
-  }
   // The stage is named in the call, because a move made while the router is already on its way to a screen that has no
   // stage, such as the reading mode that is still loading, would otherwise read the stage from there and go to `undefined`
   const onSearchChange = (changes: Partial<StageSearch>): void => {
     if (stepId === undefined) {
       void navigate({
-        params: (previous) => ({ ...previous, stage: known }),
+        params: (previous) => ({ ...previous, stage }),
         search: (previous) => ({ ...previous, ...changes }),
       });
     } else {
       // A change of the page or of the layout keeps the step that is open
       void navigate({
         to: '/projects/$projectId/stages/$stage/steps/$stepId',
-        params: (previous) => ({ ...previous, stage: known, stepId }),
+        params: (previous) => ({ ...previous, stage, stepId }),
         search: (previous) => ({ ...previous, ...changes }),
       });
     }
   };
+  const goToStep = useCallback(
+    (next: string, replace: boolean): void => {
+      void navigate({
+        to: '/projects/$projectId/stages/$stage/steps/$stepId',
+        params: (previous) => ({ ...previous, stage, stepId: next }),
+        search: (previous) => previous,
+        replace,
+      });
+    },
+    [navigate, stage],
+  );
+  // The screen opens the step a stage with a bar starts on from an effect that depends on these two, so they keep their
+  // identity for as long as the stage does, and the effect runs once for each step it has to open and not on each render
+  const onStepChange = useCallback((next: string): void => goToStep(next, false), [goToStep]);
   // The step a stage with a bar opens on replaces an address that names none, so Back does not return to that address
-  const onStepChange = (next: string, replace = false): void => {
-    void navigate({
-      to: '/projects/$projectId/stages/$stage/steps/$stepId',
-      params: (previous) => ({ ...previous, stage: known, stepId: next }),
-      search: (previous) => previous,
-      replace,
-    });
-  };
+  const onDefaultStep = useCallback((next: string): void => goToStep(next, true), [goToStep]);
   let screen = (
     <StageScreen
       projectId={projectId}
-      stage={known}
+      stage={stage}
       search={search}
       stepId={stepId}
       onSearchChange={onSearchChange}
       onStepChange={onStepChange}
-      onDefaultStep={(next) => onStepChange(next, true)}
+      onDefaultStep={onDefaultStep}
     />
   );
   // Import works on files and scans, and the Order stage is a grid of pages with its own panel
-  if (known === 'import') {
+  if (stage === 'import') {
     screen = <ImportScreen projectId={projectId} search={search} onSearchChange={onSearchChange} />;
-  } else if (known === 'page-order') {
+  } else if (stage === 'page-order') {
     screen = <OrderScreen projectId={projectId} search={search} onSearchChange={onSearchChange} />;
   }
   return <PlaceWriterContext value={writer}>{screen}</PlaceWriterContext>;

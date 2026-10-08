@@ -37,8 +37,8 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * are all read at once and a result older than the oldest change loaded could still have an unloaded change above it.
  *
  * A result is the current one when the page stands on it, which is when it is the current version of the stage or one that
- * version was made from. The versions of the whole stage tell that, so it holds for a page that a variant of the recipe
- * ran, whose steps are not the steps of the recipe on the screen.
+ * version was made from. The versions of the whole stage tell that, so it holds for a page that the recipe ran with
+ * other steps than it has now, which are not the steps of the recipe on the screen.
  *
  * A change that stands has its own "Undo to here", which takes back that change and every change after it and asks first
  * when that is more than one; Ctrl+Z takes back the newest. A result that is not the current one may be made so when it
@@ -90,8 +90,8 @@ export function PageTimeline({
     stage,
     stepId === null ? {} : { step: stepId },
   );
-  // The versions of the whole stage tell what the page stands on, whichever recipe ran it: the step row of the server
-  // follows the recipe the page was run by, which a variant that the rules chose is not the recipe of the open step
+  // The versions of the whole stage tell what the page stands on, whatever steps ran it: the step row of the server
+  // follows the recipe the page was run by, which may have had other steps than the recipe of the open step
   const ofStage = useVersions(projectId, unsaved ? undefined : pageId, stage);
   const versions = stepId === null ? ofStage : ofStep;
   const undo = useUndo(projectId, stage);

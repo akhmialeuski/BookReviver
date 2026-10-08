@@ -6,7 +6,7 @@ import type { PageEditSchema, ScanSchema } from '@/api';
 import type { EditorScene } from '@/features/editors/scene';
 import type { EditorSession } from '@/features/editors/session';
 import { useEditorSession } from '@/features/editors/useEditorSession';
-import { SourceKind } from '@/features/processing/compare';
+import { type ImageSource, SourceKind } from '@/features/processing/compare';
 import {
   autoSplit,
   deskew,
@@ -30,6 +30,11 @@ import { ProblemError } from '@/shared/http/problem';
  * The generated client is replaced by functions the test reads, so every request is seen as the server gets it. The
  * editor is driven through the field of the angle in the panel, which is the part of an editor that needs no canvas.
  */
+
+/** The line the stand-in canvas of the split line hands back when a test presses it. */
+const handed = vi.hoisted(() => ({
+  line: { start: { x: 10, y: 0 }, end: { x: 12, y: 600 } },
+}));
 
 const sdk = vi.hoisted(() => ({
   edits: vi.fn(),
@@ -72,7 +77,7 @@ vi.mock('@/features/editors/LineCanvas', () => ({
       type="button"
       data-testid="commit-line"
       data-shape={JSON.stringify(shape)}
-      onClick={() => onCommit({ start: { x: 10, y: 0 }, end: { x: 12, y: 600 } })}
+      onClick={() => onCommit(handed.line)}
     >
       line
     </button>
@@ -194,7 +199,7 @@ describe('useEditorSession', () => {
     items?: readonly StripItem[];
     current?: StripItem;
     scans?: readonly ScanSchema[];
-    before?: typeof BEFORE | null;
+    before?: ImageSource | null;
     /** Whether to draw the canvas of the editor too, which only the split line has a stand-in for. */
     canvas?: boolean;
     /** The step open in the step workspace. */
@@ -297,6 +302,7 @@ describe('useEditorSession', () => {
     for (const mock of Object.values(sdk)) {
       mock.mockReset();
     }
+    handed.line = { start: { x: 10, y: 0 }, end: { x: 12, y: 600 } };
     sdk.edits.mockResolvedValue(listOf());
     sdk.put.mockResolvedValue({ data: edit({}) });
     sdk.remove.mockResolvedValue({ data: undefined });
@@ -866,6 +872,49 @@ describe('useEditorSession', () => {
       });
     });
 
+    it('keeps the line held last on screen while the save of an older line settles', async () => {
+      const items = pages([1, 2]);
+      const older = { start: { x: 100, y: 0 }, end: { x: 102, y: 600 } };
+      const newer = { start: { x: 200, y: 0 }, end: { x: 202, y: 600 } };
+      // Each save answers when the test says so, in the order the saves were made
+      const answers: ((answer: { data: PageEditSchema }) => void)[] = [];
+      const held = (): Promise<{ data: PageEditSchema }> =>
+        new Promise((resolve) => answers.push(resolve));
+      sdk.put.mockImplementationOnce(held).mockImplementationOnce(held);
+      const onServer = (line: typeof older): PageEditSchema =>
+        edit({
+          page_id: 'p0',
+          stage: 'page-split',
+          step_id: 'id-split.spread',
+          kind: 'line',
+          geometry: line,
+        });
+      await render({ state, items, current: items[1], scans: [SCAN], before: null, canvas: true });
+      const shown = (): string | null | undefined =>
+        container.querySelector('[data-testid="commit-line"]')?.getAttribute('data-shape');
+
+      // Two lines are let go one after the other, and the server takes them in that order
+      handed.line = older;
+      await commitLine();
+      handed.line = newer;
+      await commitLine();
+      expect(sdk.put).toHaveBeenCalledTimes(1);
+
+      // The save of the older line settles and the edit is read again while the newer one is still on its way
+      sdk.edits.mockResolvedValue(listOf(onServer(older)));
+      answers[0]?.({ data: onServer(older) });
+      await settle();
+      await settle();
+      expect(shown()).toBe(JSON.stringify(newer));
+
+      sdk.edits.mockResolvedValue(listOf(onServer(newer)));
+      answers[1]?.({ data: onServer(newer) });
+      await settle();
+      await settle();
+      expect(sdk.put).toHaveBeenCalledTimes(2);
+      expect(shown()).toBe(JSON.stringify(newer));
+    });
+
     it('does not cut a scan that is kept whole when its line is moved', async () => {
       const items = pages([0]);
       await render({ state, items, current: items[0], scans: [SCAN], before: null, canvas: true });
@@ -1109,15 +1158,17 @@ describe('useEditorSession', () => {
       expect(session?.steps[1]?.detail).toBe('0.3°');
     });
 
-    it('lays the sheet on the picture before the stage, and the frame on what the step before it made', async () => {
+    it('lies on the picture the server gives for the row of the open step, whichever step is picked', async () => {
+      const read = { kind: SourceKind.Iiif, url: '/read/info.json' } as const;
       await render({ state: STATE, items: ITEMS });
       expect(session?.picture).toEqual(BEFORE);
 
-      await act(async () => session?.choose('id-geometry.deskew'));
-      expect(session?.picture).toEqual({ kind: SourceKind.Iiif, url: '/version-v1/info.json' });
-
+      // The versions the page holds of the steps before are not asked for the picture
       await act(async () => session?.choose('id-geometry.crop'));
-      expect(session?.picture).toEqual({ kind: SourceKind.Image, url: '/version-v2/preview' });
+      expect(session?.picture).toEqual(BEFORE);
+
+      await render({ state: STATE, items: ITEMS, before: read });
+      expect(session?.picture).toEqual(read);
     });
 
     it('opens the editor of the step that is picked', async () => {
@@ -1187,11 +1238,11 @@ describe('useEditorSession', () => {
             'null',
         );
 
-      it('keeps the picture under the frame and the frame while the list of versions has not caught up with the row', async () => {
+      it('keeps the frame the step found while the list of versions has not caught up with the row', async () => {
         await render({ state: STATE, items: ITEMS, canvas: true });
         await act(async () => session?.choose('id-geometry.crop'));
         const picture = session?.picture;
-        expect(picture).toEqual({ kind: SourceKind.Image, url: '/version-v2/preview' });
+        expect(picture).toEqual(BEFORE);
 
         // The row names the version the run made, which the list of versions does not hold yet
         const made = joinRows([page('page')], [row('page', { version: MADE })]);
@@ -1209,7 +1260,7 @@ describe('useEditorSession', () => {
         });
         await settle();
 
-        // The picture the step reads is the one it read, so it is not loaded again, and the frame is the one it made
+        // The picture is the one the row gives, so it is not loaded again, and the frame is the one the step made
         expect(session?.picture).toEqual(picture);
         expect(shapeOnCanvas()).toEqual(FOUND_AFTER);
       });

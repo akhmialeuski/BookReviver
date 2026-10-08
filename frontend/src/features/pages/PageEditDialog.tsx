@@ -131,7 +131,7 @@ function EditForm({
             variant="ghost"
             className="text-destructive"
             onClick={() => onView(View.Remove)}
-            aria-label={`${MESSAGES.pages.edit.remove}: ${name}`}
+            aria-label={MESSAGES.pages.edit.removeNamed(name)}
           >
             <Trash2Icon />
             {MESSAGES.pages.edit.remove}

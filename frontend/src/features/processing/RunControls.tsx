@@ -33,8 +33,8 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * own. The text of the button follows the choice: "Run" when none of the pages has a result yet, "Run again" when some
  * has, then the pages and the step the run goes through.
  *
- * With the active recipe shown the run names no recipe, so each page is processed by the variant pinned to it or the
- * rule of the book that matches it. With another variant shown the run is a trial of that variant on the pages.
+ * Each page is processed by the one recipe of its kind of page, so the run names no recipe and the pages of several kinds
+ * can be run together.
  *
  * A run goes by the saved recipe, so while the draft has changes the run waits for them to be saved. A run that would
  * send a scan back to one page asks first, and carries the confirmation the server wants. The pages a run through some
@@ -74,7 +74,7 @@ function pageLabelOf(scope: RunScope, group: PageGroup | undefined, pageLabel: s
     case RunScope.Selected:
       return menu.selected;
     case RunScope.Group:
-      return `${menu.group} · ${GROUP_NAMES[group ?? 'text']}`;
+      return menu.groupOf(GROUP_NAMES[group ?? 'text']);
     case RunScope.Attention:
       return menu.attention;
     case RunScope.All:
@@ -158,7 +158,11 @@ export function RunControls({
         return menu.onAttention(runs, trouble.stale, trouble.failed);
     }
   };
-  const buttonText = `${chosen?.items.some(hasResult) ? menu.again : menu.first} ${pagesText()} ${menu.through(titleOf(throughStep ?? lastIndex))}`;
+  const buttonText = menu.button(
+    chosen?.items.some(hasResult) ?? false,
+    pagesText(),
+    titleOf(throughStep ?? lastIndex),
+  );
 
   return (
     <div className="grid grid-cols-1 gap-3">

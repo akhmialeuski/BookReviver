@@ -55,7 +55,7 @@ export function ProcessingPanel({
   // The history of the page is the last element of the panel on every stage. With a step open it holds the changes and the
   // results of that step: the step open in the bar, or on a stage without a bar the step open in the list of the recipe.
   // With none open it holds the results of the stage. What the page stands on is told by the current version of the stage,
-  // not by the row of the open step, since a variant of the recipe may have run the page
+  // not by the row of the open step, since the recipe that ran the page may have had other steps than the recipe on screen
   const historyStep: TimelineStep | null =
     step?.step ??
     (hasStepBar(processing.stage)

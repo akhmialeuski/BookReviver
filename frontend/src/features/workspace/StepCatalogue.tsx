@@ -92,7 +92,7 @@ export function StepCatalogue({
           size="icon-sm"
           className="shrink-0 border-dashed"
           aria-label={labels.open}
-          title={`${labels.open}. ${labels.hint}`}
+          title={labels.openHint}
           data-testid="step-catalogue"
         >
           <PlusIcon aria-hidden="true" />

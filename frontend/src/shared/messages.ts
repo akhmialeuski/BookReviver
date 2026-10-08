@@ -47,6 +47,10 @@ const STEP_FLAG_NAMES = {
   skipped: 'Skipped: a leaf the program drew',
 } satisfies Record<StepFlag, string>;
 
+/** The name of the button that adds a step to a recipe, and what it says of itself. */
+const ADD_STEP = 'Add a step';
+const ADD_STEP_HINT = 'A step can be added more than once, with its own settings and pages.';
+
 /**
  * Every text the interface shows, in one place.
  *
@@ -434,6 +438,7 @@ export const MESSAGES = {
       noScan: 'This page has no scan.',
       attach: 'Bind a scan',
       remove: 'Delete page',
+      removeNamed: (name: string) => `Delete page: ${name}`,
     },
     remove: {
       title: 'Delete this page?',
@@ -657,9 +662,10 @@ export const MESSAGES = {
         input: (number: number, title: string) => `Input of step ${number} · ${title}`,
       },
       catalogue: {
-        open: 'Add a step',
+        open: ADD_STEP,
         title: (stage: string) => `Add a ${stage.toLowerCase()} step`,
-        hint: 'A step can be added more than once, with its own settings and pages.',
+        hint: ADD_STEP_HINT,
+        openHint: `${ADD_STEP}. ${ADD_STEP_HINT}`,
         saveFirst:
           'The steps have changes that are not saved. Save or discard them, then add a step.',
         stale: (pages: number) =>
@@ -1221,7 +1227,7 @@ export const MESSAGES = {
       defaultMark: 'default',
       steps: {
         label: 'Steps',
-        off: 'off',
+        titleOff: (title: string) => `${title} (off)`,
         none: 'No steps',
       },
       applyBook: (kind: string) => `Apply to the recipe for ${kind.toLowerCase()}`,
@@ -1445,15 +1451,13 @@ export const MESSAGES = {
       page: (label: string) => (label === '' ? 'This page' : `This page · ${label}`),
       fromPage: 'This page and the pages after it',
       selected: 'Selected pages',
-      group: 'Pages of a kind',
+      groupOf: (kind: string) => `Pages of a kind · ${kind}`,
       attention: 'Out of date and failed',
       all: 'All pages',
       throughLabel: 'Through',
       throughOpen: (step: string) => `Up to the open step · ${step}`,
       throughAll: (step: string) => `The whole stage · ${step}`,
       step: (number: number, title: string) => `${number} ${title}`,
-      first: 'Run on',
-      again: 'Run again on',
       onPage: 'this page',
       onFromPage: (pages: number) =>
         `${pages} ${pluralize(pages, 'page', 'pages')} from this page on`,
@@ -1466,7 +1470,8 @@ export const MESSAGES = {
         return `${pages} ${what} ${pluralize(pages, 'page', 'pages')}`;
       },
       onAll: (pages: number) => `all ${pages} ${pluralize(pages, 'page', 'pages')}`,
-      through: (step: string) => `through ${step}`,
+      button: (again: boolean, pages: string, step: string) =>
+        `${again ? 'Run again on' : 'Run on'} ${pages} through ${step}`,
       menu: 'What to run',
     },
     compare: {

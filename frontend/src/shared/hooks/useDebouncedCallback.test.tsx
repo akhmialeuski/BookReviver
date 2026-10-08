@@ -13,15 +13,21 @@ describe('useDebouncedCallback', () => {
   let ask: (value: number) => void;
   const callback = vi.fn();
 
-  function Probe({ flushOnUnmount }: { flushOnUnmount: boolean }): null {
-    ask = useDebouncedCallback(callback, DELAY_MS, { flushOnUnmount });
+  function Probe({
+    flushOnUnmount,
+    handler,
+  }: {
+    flushOnUnmount: boolean;
+    handler: (value: number) => void;
+  }): null {
+    ask = useDebouncedCallback(handler, DELAY_MS, { flushOnUnmount });
     return null;
   }
 
-  function mount(flushOnUnmount: boolean): void {
+  function mount(flushOnUnmount: boolean, handler: (value: number) => void = callback): void {
     container = document.createElement('div');
     root = createRoot(container);
-    act(() => root.render(<Probe flushOnUnmount={flushOnUnmount} />));
+    act(() => root.render(<Probe flushOnUnmount={flushOnUnmount} handler={handler} />));
   }
 
   beforeEach(() => {
@@ -68,6 +74,21 @@ describe('useDebouncedCallback', () => {
     vi.advanceTimersByTime(DELAY_MS * 2);
 
     expect(callback).not.toHaveBeenCalled();
+  });
+
+  it('makes a waiting call with the callback of the latest render and the arguments of the call', () => {
+    const forFirstPage = vi.fn();
+    const forSecondPage = vi.fn();
+    mount(true, forFirstPage);
+    ask(7);
+
+    act(() => root.render(<Probe flushOnUnmount handler={forSecondPage} />));
+    vi.advanceTimersByTime(DELAY_MS);
+
+    // What a call has to act on travels in its arguments, since the closure it was asked with is not the one that runs
+    expect(forFirstPage).not.toHaveBeenCalled();
+    expect(forSecondPage).toHaveBeenCalledExactlyOnceWith(7);
+    act(() => root.unmount());
   });
 
   it('calls nothing when nothing was asked', () => {

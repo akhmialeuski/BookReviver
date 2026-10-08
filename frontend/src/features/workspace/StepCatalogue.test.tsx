@@ -115,6 +115,7 @@ describe('StepCatalogue', () => {
     const button = byId('step-catalogue');
     expect(button?.textContent).toBe('');
     expect(button?.getAttribute('aria-label')).toBe(MESSAGES.workspace.steps.catalogue.open);
+    expect(button?.getAttribute('title')).toBe(MESSAGES.workspace.steps.catalogue.openHint);
   });
 
   it('lists every processor of the stage with its line, and names the stage in its title', async () => {

@@ -7,9 +7,7 @@ import { type ImageSource, SourceKind, sourceOfResult } from '@/features/process
  *
  * @param picture Which picture the editor wants.
  * @param scan The scan the open page was cut from, if any.
- * @param before The picture before the stage on the page, if any.
- * @param stepInput The version an earlier step of the stage made and the step of the editor reads, if the step is not the
- *                  first of the stage.
+ * @param before The picture the server gives for the page, which is what the open step reads, if any.
  * @param made The version the step of the editor made, which is the picture of an editor that lies on the page its step made.
  * @returns The picture, or null when it is not there yet: a scan whose tiles are not cut, or a page without an image.
  */
@@ -17,7 +15,6 @@ export function pictureOf(
   picture: Picture,
   scan: ScanSchema | null,
   before: ImageSource | null,
-  stepInput: PageVersionSchema | null = null,
   made: PageVersionSchema | null = null,
 ): ImageSource | null {
   if (picture === Picture.Scan) {
@@ -27,7 +24,7 @@ export function pictureOf(
   if (picture === Picture.Output) {
     return sourceOfResult(made);
   }
-  // A step after the first reads what the step before it made, and the first reads the picture the server gives for the
-  // page; there is none while the row loads, and never the latest image of the page, which a later stage made
-  return stepInput === null ? before : sourceOfResult(stepInput);
+  // The server works out what the step reads for the row of the page, and the strip and the canvas draw it too; there is
+  // none while the row loads, and never the latest image of the page, which a later stage made
+  return before;
 }

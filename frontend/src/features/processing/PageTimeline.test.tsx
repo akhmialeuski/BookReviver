@@ -704,7 +704,7 @@ describe('PageTimeline', () => {
       expect(byId('page-history-use')).toBeNull();
     });
 
-    it('tags nothing while the page stands on no result of the open step, as when a variant of the recipe ran it', async () => {
+    it('tags nothing while the page stands on no result of the open step, as when the recipe that ran it had other steps', async () => {
       const deskew = version('deskew', { created_at: at(10) });
       const crop = version('crop', { created_at: at(11), input_id: 'deskew' });
       const other = version('other', { created_at: at(12) });

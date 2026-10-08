@@ -40,7 +40,7 @@ function stepsLine(profile: LibraryProfileSchema, titles: ReadonlyMap<string, st
   return profile.steps
     .map((step) => {
       const title = titles.get(step.processor_key) ?? step.processor_key;
-      return step.enabled ? title : `${title} (${labels.steps.off})`;
+      return step.enabled ? title : labels.steps.titleOff(title);
     })
     .join(' · ');
 }

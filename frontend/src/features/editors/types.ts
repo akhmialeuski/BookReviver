@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import type { FigureState, PageSchema, PageVersionSchema, ScanSchema } from '@/api';
+import type { FigureState, PageSchema, ScanSchema } from '@/api';
 import type { EditorScene } from '@/features/editors/scene';
 import type { Geometry, RectShape, Size } from '@/features/editors/shapes';
 import type { PageResult } from '@/features/processing/results';
@@ -32,8 +32,6 @@ export interface PageContext {
   items: readonly StripItem[];
   /** The scan the open page was cut from, or null for a page without one. */
   scan: ScanSchema | null;
-  /** The version the step of the editor read, or null when the step reads the picture before the stage. */
-  stepInput: PageVersionSchema | null;
   /** What the step of the editor found on the open page, or null when it has not run. */
   result: PageResult | null;
   /** The key of the processor of the step the editor sets. */

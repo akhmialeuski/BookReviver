@@ -59,6 +59,29 @@ describe('the values of a setting for parts of the pages', () => {
     });
   }
 
+  /** Press the chip of a setting to open the field of its value, and give the field. */
+  async function openEditor(name: string, chip: number): Promise<HTMLInputElement | null> {
+    await act(async () => {
+      field(name)?.querySelectorAll<HTMLElement>('[data-testid="value-chip-edit"]')[chip]?.click();
+    });
+    return (
+      field(name)?.querySelector<HTMLInputElement>(
+        '[data-testid="value-editor"] input[type="number"]',
+      ) ?? null
+    );
+  }
+
+  /** Type values into a field one after the other, as a reader does. */
+  function typeInto(input: HTMLInputElement | null, ...typed: string[]): void {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    for (const text of typed) {
+      act(() => {
+        setter?.call(input, text);
+        input?.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    }
+  }
+
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('ResizeObserver', SizeObserverStandIn);
@@ -73,6 +96,7 @@ describe('the values of a setting for parts of the pages', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     act(() => root.unmount());
     container.remove();
     document.body.querySelectorAll('[role="menu"]').forEach((node) => {
@@ -212,23 +236,10 @@ describe('the values of a setting for parts of the pages', () => {
   it('opens the field of a value when its chip is pressed, and sends what is typed in it once', async () => {
     vi.useFakeTimers();
     render(WITH_VALUES);
-    await act(async () => {
-      field('max_angle')
-        ?.querySelectorAll<HTMLElement>('[data-testid="value-chip-edit"]')[0]
-        ?.click();
-    });
-    const input = field('max_angle')?.querySelector<HTMLInputElement>(
-      '[data-testid="value-editor"] input[type="number"]',
-    );
+    const input = await openEditor('max_angle', 0);
     expect(input?.value).toBe('3');
 
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    for (const typed of ['7', '7.5']) {
-      act(() => {
-        setter?.call(input, typed);
-        input?.dispatchEvent(new Event('input', { bubbles: true }));
-      });
-    }
+    typeInto(input, '7', '7.5');
     expect(sdk.put).not.toHaveBeenCalled();
     await act(async () => {
       vi.advanceTimersByTime(500);
@@ -239,6 +250,71 @@ describe('the values of a setting for parts of the pages', () => {
       path: { step_id: STEP, name: 'max_angle' },
       body: { scope: 'even', value: 7.5 },
     });
-    vi.useRealTimers();
+  });
+
+  describe('with a value still waiting to be sent', () => {
+    const OWN = (pageId: string, name: string, angle: number): PageValues =>
+      pageValues({
+        page: { id: pageId, name },
+        settings: [stepSettings(STEP, { params: { max_angle: angle } })],
+      });
+
+    it('sends it to the page it was typed on when the reader turns to another page within the wait', async () => {
+      vi.useFakeTimers();
+      render(OWN('page-1', 'p. 1', 4));
+      typeInto(await openEditor('max_angle', 0), '7.5');
+
+      // The chip of the open page has the same identifier on every page, so the field stays open on the next page
+      render(OWN('page-2', 'p. 2', 9));
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+      });
+
+      expect(sdk.put).toHaveBeenCalledTimes(1);
+      expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({
+        body: { scope: 'pages', page_ids: ['page-1'], value: 7.5 },
+      });
+    });
+
+    it('opens the field of the next page on the value that page has', async () => {
+      render(OWN('page-1', 'p. 1', 4));
+      expect((await openEditor('max_angle', 0))?.value).toBe('4');
+
+      render(OWN('page-2', 'p. 2', 9));
+
+      const input = field('max_angle')?.querySelector<HTMLInputElement>(
+        '[data-testid="value-editor"] input[type="number"]',
+      );
+      expect(input?.value).toBe('9');
+    });
+
+    it('drops it when its value is taken back, so the value is not set again', async () => {
+      vi.useFakeTimers();
+      render(OWN('page-1', 'p. 1', 4));
+      typeInto(await openEditor('max_angle', 0), '7.5');
+
+      await act(async () => {
+        field('max_angle')
+          ?.querySelector<HTMLElement>('[data-testid="value-chip-remove"]')
+          ?.click();
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+      });
+
+      expect(sdk.remove).toHaveBeenCalledTimes(1);
+      expect(sdk.put).not.toHaveBeenCalled();
+    });
+
+    it('sends it at once when another chip takes the field', async () => {
+      vi.useFakeTimers();
+      render(WITH_VALUES);
+      typeInto(await openEditor('max_angle', 0), '2');
+
+      await openEditor('max_angle', 1);
+
+      expect(sdk.put).toHaveBeenCalledTimes(1);
+      expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({ body: { scope: 'even', value: 2 } });
+    });
   });
 });

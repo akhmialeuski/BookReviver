@@ -16,6 +16,12 @@ import { MESSAGES } from '@/shared/messages';
 /** Quiet time after the last key before the shape is saved. */
 const KEY_SAVE_DELAY_MS = 600;
 
+/** A save that waits for the reader to pause: the shape, and the save of the page and step it was asked for. */
+interface WaitingSave<S> {
+  shape: S;
+  commit: (shape: S) => void;
+}
+
 /** The editing of one shape on the canvas of a scene. */
 export interface ShapeEditing<S> {
   /**
@@ -26,7 +32,7 @@ export interface ShapeEditing<S> {
   change: (next: S) => void;
   /** Ask for a save of the shape, which is made once the reader pauses. */
   saveLater: (value: S) => void;
-  /** Save the latest shape at once, for a handle the reader let go. */
+  /** Save the latest shape at once, for a handle the reader let go, and drop a save that was still waiting. */
   release: () => void;
   /**
    * Make the drag handler of a handle.
@@ -66,10 +72,16 @@ export function useShapeEditing<S>(
   onChange: (shape: S) => void,
   onCommit: (shape: S) => void,
 ): ShapeEditing<S> {
-  const saveLater = useDebouncedCallback(onCommit, KEY_SAVE_DELAY_MS, {
-    // A shape still waiting when the editor goes away is saved at once, so a nudge is never lost to a page turn
-    flushOnUnmount: true,
-  });
+  // The canvas stays mounted when the reader turns to another page, and `onCommit` then saves for the new page. A waiting
+  // save therefore carries the `onCommit` it was asked with, which saves for its own page and step
+  const waiting = useDebouncedCallback(
+    ({ shape: waited, commit }: WaitingSave<S>) => commit(waited),
+    KEY_SAVE_DELAY_MS,
+    {
+      // A shape still waiting when the editor goes away is saved at once, so a nudge is never lost
+      flushOnUnmount: true,
+    },
+  );
   const latest = useRef(shape);
   useEffect(() => {
     latest.current = shape;
@@ -81,11 +93,17 @@ export function useShapeEditing<S>(
     onChange(next);
   };
 
+  const saveLater = (value: S): void => waiting({ shape: value, commit: onCommit });
+
   return {
     latest,
     change,
     saveLater,
-    release: () => onCommit(latest.current),
+    release: () => {
+      // The latest shape is newer than any that waits, and the waiting save would put the older one over it
+      waiting.cancel();
+      onCommit(latest.current);
+    },
     drag: (move, anchor, grab) => (event) => {
       grab?.();
       const next = move(

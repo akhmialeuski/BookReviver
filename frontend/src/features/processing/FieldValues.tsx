@@ -2,7 +2,7 @@ import Form, { generateTemplates } from '@rjsf/shadcn';
 import type { FieldTemplateProps, RJSFSchema } from '@rjsf/utils';
 import validator from '@rjsf/validator-ajv8';
 import { PlusIcon, XIcon } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { FORM_WIDGETS } from '@/features/processing/BoundedNumberWidget';
 import {
   chipsOf,
@@ -93,7 +93,12 @@ export function ValuesFieldTemplate(props: FieldTemplateProps): React.JSX.Elemen
   );
 }
 
-/** The chips of one setting and the menu that adds one, with the field that changes the value of a chip open under them. */
+/**
+ * The chips of one setting and the menu that adds one, with the field that changes the value of a chip open under them.
+ *
+ * The value typed in the field is sent a moment after the last change, so a drag of a slider is one request. The send is
+ * kept here and not in the field, so that taking the value back can drop it, and it holds the whole request.
+ */
 function FieldValues({
   values,
   schema,
@@ -118,6 +123,12 @@ function FieldValues({
   const path = { project_id: projectId, stage, step_id: stepId, name };
   const edited = chips.find((chip) => chip.id === editing);
   const failure = set.error ?? remove.error;
+  // The value waiting to be sent carries the whole request, since it is made after the page may have turned
+  const send = useDebouncedCallback(set.mutate, SEND_AFTER_MS, { flushOnUnmount: true });
+  // The chips of the setting have the same ids on every page, so the editor belongs to the page as well as to the chip.
+  // A value still waiting is sent to its own page before another chip or page takes the editor
+  const editedKey = edited === undefined ? null : `${page.page.id}|${edited.id}`;
+  useEffect(() => (editedKey === null ? undefined : () => send.flush()), [editedKey, send]);
 
   const add = (choice: ValueChoice): void => {
     set.mutate({ path, body: { ...choice.target, value: current } });
@@ -134,6 +145,10 @@ function FieldValues({
             editing={chip.id === editing}
             onEdit={() => setEditing(chip.id === editing ? null : chip.id)}
             onRemove={() => {
+              // A value waiting to be sent would set the value that is taken back now
+              if (chip.id === editing) {
+                send.cancel();
+              }
               remove.mutate({ path, query: chip.target });
               setEditing(null);
             }}
@@ -143,12 +158,12 @@ function FieldValues({
       </div>
       {edited === undefined ? null : (
         <ValueEditor
-          // Another chip starts from its own value, and not from the one the last was changed to
-          key={edited.id}
+          // Another chip or another page starts from its own value, and not from the one the last was changed to
+          key={editedKey}
           schema={schema}
           name={name}
           value={edited.value}
-          onSend={(value) => set.mutate({ path, body: { ...edited.target, value } })}
+          onSend={(value) => send({ path, body: { ...edited.target, value } })}
         />
       )}
       {failure === null ? null : <ErrorAlert message={describeError(failure)} />}
@@ -256,8 +271,7 @@ function AddValue({
 /**
  * The field of one setting, drawn the way the form of the step draws it, which changes the value of a chip.
  *
- * The value is sent a moment after the last change, so a drag of a slider is one request, and a value the schema refuses
- * is not sent at all.
+ * Every change the schema accepts is handed to `onSend`, and a value it refuses is not.
  */
 function ValueEditor({
   schema,
@@ -271,7 +285,6 @@ function ValueEditor({
   onSend: (value: unknown) => void;
 }): React.JSX.Element | null {
   const [held, setHeld] = useState(value);
-  const send = useDebouncedCallback(onSend, SEND_AFTER_MS, { flushOnUnmount: true });
   const field = useMemo(() => {
     const property = fieldSchemaOf(schema, name);
     if (property === undefined) {
@@ -309,7 +322,7 @@ function ValueEditor({
           const next = (event.formData as Record<string, unknown> | undefined)?.[name];
           setHeld(next);
           if (next !== undefined && event.errors.length === 0) {
-            send(next);
+            onSend(next);
           }
         }}
       />

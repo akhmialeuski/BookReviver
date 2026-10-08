@@ -236,7 +236,7 @@ export function StageScreen({
           selected: pickedKind,
           onSelect: (kind) => setKindPick({ stage, kind }),
         };
-  // The steps a run stopped at narrow the list too; the choice belongs to one stage, like the variant
+  // The steps a run stopped at narrow the list too; the choice belongs to one stage, like the kind of page
   const [stopPick, setStopPick] = useState<{ stage: Stage; step: number | null }>({
     stage,
     step: null,
@@ -331,7 +331,7 @@ export function StageScreen({
       page: items[currentIndex]?.page.id,
     });
 
-  // The compare draws the picture before beside the picture after, which is the preview while one is on
+  // The compare draws the picture before beside the picture after, which is the result of the open step or of the stage
   const processed = processing.available;
   // While an editor is open the canvas shows the one picture it lies on, so nothing is compared. The editor of an open
   // step is always open, so it gives way to the compare once the reader asks for one, and comes back when it is off
@@ -367,8 +367,8 @@ export function StageScreen({
                 ? { before: null, after: editing.picture }
                 : {
                     before: pair.before,
-                    // With the compare off the canvas draws the one picture of the strip, which is the picture before; with
-                    // no step open a preview that is on replaces it
+                    // With the compare off the canvas draws one picture: the picture of the strip, which is the picture before,
+                    // while a step is open, and the result of the stage when none is, or the picture before until it has one
                     after:
                       compareMode !== CompareMode.Off
                         ? pair.after

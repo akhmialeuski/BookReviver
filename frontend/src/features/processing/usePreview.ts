@@ -58,7 +58,7 @@ interface State {
   /** The previews already made in this session by the key of their ask, so an ask that comes again starts no work. */
   known: Readonly<Record<string, PageVersionSchema>>;
   inflight: Inflight | null;
-  /** The key of the ask that failed or was cancelled, which is not asked again until the form changes. */
+  /** The key of the ask that failed, which is not asked again until the form changes. */
   failedKey: string | null;
   error: string | null;
   /** Whether the server turned the last ask away because another job of the book is going. */
@@ -70,7 +70,7 @@ type Action =
   | { type: 'resolved'; shown: Shown }
   | { type: 'recalled'; shown: Shown }
   | { type: 'failed'; key: string; error: string }
-  | { type: 'cancelled'; key: string }
+  | { type: 'cancelled' }
   | { type: 'busy' }
   | { type: 'idle' };
 
@@ -98,7 +98,9 @@ function reduce(state: State, action: Action): State {
     case 'failed':
       return { ...state, inflight: null, failedKey: action.key, error: action.error, busy: false };
     case 'cancelled':
-      return { ...state, inflight: null, failedKey: action.key, error: null, busy: false };
+      // A job that was cancelled was no fault of the form, so the ask waits for the book to be free as one that was turned
+      // away does
+      return { ...state, inflight: null, error: null, busy: true };
     case 'busy':
       return { ...state, busy: true };
     case 'idle':
@@ -269,9 +271,9 @@ export function usePreview(
       return;
     }
     // A run or a measure of the book takes the project from a preview by cancelling it, which is no failure of the preview,
-    // so the hook stops waiting for it and says nothing
+    // so the hook says nothing and asks again once that job has ended
     if (jobState === 'cancelled') {
-      dispatch({ type: 'cancelled', key: inflight.key });
+      dispatch({ type: 'cancelled' });
       return;
     }
     if (jobState === 'failed') {
@@ -300,7 +302,7 @@ export function usePreview(
   const matches = on && key !== null && state.shown?.key === key;
   return {
     shown: state.shown?.version ?? null,
-    // An ask that was given up, whether it failed or was cancelled, is no longer being made
+    // An ask that failed is no longer being made
     working: on && key !== null && !matches && state.failedKey !== key,
     waiting: on && key !== null && !matches && inflight === null && (busy || anotherJobGoing),
     error: on && state.error !== null && state.failedKey === settledKey ? state.error : null,

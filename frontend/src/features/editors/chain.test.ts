@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stepChain, stepVersions } from '@/features/editors/chain';
+import { stepChain, stepVersion } from '@/features/editors/chain';
 import { step, version } from '@/features/processing/fixtures';
 
 /** Finding the versions that made the current one of a stage, one for each step. */
@@ -52,23 +52,20 @@ describe('stepChain', () => {
   });
 });
 
-describe('stepVersions', () => {
+describe('stepVersion', () => {
   const chain = [PERSPECTIVE, DESKEW, CROP];
   const steps = [step('geometry.perspective'), step('geometry.deskew'), step('geometry.crop')];
 
-  it('gives the version of a step and the version it read', () => {
-    expect(stepVersions(chain, steps, 2)).toEqual({ made: CROP, read: DESKEW });
-    expect(stepVersions(chain, steps, 1)).toEqual({ made: DESKEW, read: PERSPECTIVE });
-  });
-
-  it('gives no version read for the first step, which reads the picture before the stage', () => {
-    expect(stepVersions(chain, steps, 0)).toEqual({ made: PERSPECTIVE, read: null });
+  it('gives the version a step made', () => {
+    expect(stepVersion(chain, steps, 2)).toBe(CROP);
+    expect(stepVersion(chain, steps, 1)).toBe(DESKEW);
+    expect(stepVersion(chain, steps, 0)).toBe(PERSPECTIVE);
   });
 
   it('gives nothing for a step the page has not reached, or one whose processor changed', () => {
-    expect(stepVersions([PERSPECTIVE], steps, 2)).toEqual({ made: null, read: null });
+    expect(stepVersion([PERSPECTIVE], steps, 2)).toBeNull();
     const changed = [step('geometry.perspective'), step('geometry.dewarp'), step('geometry.crop')];
-    expect(stepVersions(chain, changed, 1)).toEqual({ made: null, read: null });
+    expect(stepVersion(chain, changed, 1)).toBeNull();
   });
 
   it('tells two steps of one processor apart by their place, and counts only the steps that are on', () => {
@@ -79,8 +76,8 @@ describe('stepVersions', () => {
       step('geometry.deskew', { step_id: 'second' }),
     ];
 
-    expect(stepVersions([DESKEW, second], twice, 2)).toEqual({ made: second, read: DESKEW });
-    expect(stepVersions([DESKEW, second], twice, 0)).toEqual({ made: DESKEW, read: null });
-    expect(stepVersions([DESKEW, second], twice, 1)).toEqual({ made: null, read: null });
+    expect(stepVersion([DESKEW, second], twice, 2)).toBe(second);
+    expect(stepVersion([DESKEW, second], twice, 0)).toBe(DESKEW);
+    expect(stepVersion([DESKEW, second], twice, 1)).toBeNull();
   });
 });

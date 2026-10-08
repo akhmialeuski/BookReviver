@@ -22,34 +22,27 @@ describe('pictureOf', () => {
     expect(pictureOf(Picture.Scan, null, BEFORE)).toBeNull();
   });
 
-  it('gives the picture before the stage for an editor that works on what the step reads', () => {
+  it('gives the picture the server gives for the page, which is what the step reads, for an editor that works on it', () => {
     expect(pictureOf(Picture.Input, null, BEFORE)).toBe(BEFORE);
+  });
+
+  it('gives the picture of the server for an editor on the input, whatever version the step made itself', () => {
+    const made = version('v1', { tiles_ready: true, images: images('made') });
+
+    expect(pictureOf(Picture.Input, null, BEFORE, made)).toBe(BEFORE);
   });
 
   it('gives nothing while the picture of the page is not there, never the image the page has', () => {
     expect(pictureOf(Picture.Input, null, null)).toBeNull();
   });
 
-  it('gives what the step before made for a step that is not the first of the stage', () => {
-    const made = version('v1', { tiles_ready: false, images: images('made') });
-
-    expect(pictureOf(Picture.Input, null, BEFORE, made)).toEqual({
-      kind: SourceKind.Image,
-      url: '/made/preview',
-    });
-    expect(pictureOf(Picture.Input, null, BEFORE, { ...made, tiles_ready: true })).toEqual({
-      kind: SourceKind.Iiif,
-      url: '/made/info.json',
-    });
-  });
-
   it('gives the page the step made itself for an editor that lies on the page of the book', () => {
     const made = version('v2', { tiles_ready: true, images: images('page') });
 
-    expect(pictureOf(Picture.Output, null, BEFORE, null, made)).toEqual({
+    expect(pictureOf(Picture.Output, null, BEFORE, made)).toEqual({
       kind: SourceKind.Iiif,
       url: '/page/info.json',
     });
-    expect(pictureOf(Picture.Output, null, BEFORE, null, null)).toBeNull();
+    expect(pictureOf(Picture.Output, null, BEFORE, null)).toBeNull();
   });
 });
