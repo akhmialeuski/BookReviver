@@ -95,11 +95,11 @@ async function changeHeaders(page: Page): Promise<Record<string, string>> {
   };
 }
 
-/** Set the value a page uses for the largest slant of the step, as the settings of a page do. */
+/** Set the value a page uses for the largest slant of the step, as a value for the open page does. */
 async function putSlant(page: Page, pageId: string, stepId: string, value: number): Promise<void> {
   const response = await page.request.put(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/settings/geometry/${stepId}/max_angle`,
-    { headers: await changeHeaders(page), data: { value } },
+    `/api/v1/projects/${openProjectId(page)}/stages/geometry/steps/${stepId}/values/max_angle`,
+    { headers: await changeHeaders(page), data: { scope: 'pages', page_ids: [pageId], value } },
   );
   expect(response.ok()).toBe(true);
 }
@@ -157,7 +157,8 @@ test('a reader sees what changed on a page, takes the last change back with the 
   const step = page.getByTestId('step-panel');
   const history = page.getByTestId('stage-panel').getByTestId('page-history');
   const rows = history.locator(CHANGE_ROWS);
-  const settings = step.getByTestId('page-settings');
+  // The values of the page for the largest slant are the chips under that setting, in the panel of the open step
+  const slant = step.getByTestId('field-values').and(page.locator('[data-field="max_angle"]'));
   let pageId = '';
   let stepId = '';
 
@@ -185,12 +186,14 @@ test('a reader sees what changed on a page, takes the last change back with the 
     await history.getByTestId('page-history-toggle').click();
     await expect(rows).toHaveCount(1);
     await expect(rows.first()).toContainText('Set by hand');
-    await settings.getByTestId('page-settings-edit').click();
-    await settings.locator('form input[type="number"]').first().fill(SLANT_OF_THE_PAGE);
+    await slant.getByTestId('value-add').click();
+    await page.getByTestId('value-choice-page').click();
+    await slant.getByTestId('value-chip-edit').click();
+    await slant.locator('input[type="number"]').fill(SLANT_OF_THE_PAGE);
     await expect(rows).toHaveCount(CHANGES_WRITTEN);
     await expect(rows.first()).toContainText('Settings of the page');
     await expect(rows.first()).toContainText(SLANT_OF_THE_PAGE);
-    await expect(settings.getByTestId('page-settings-list')).toBeVisible();
+    await expect(slant.getByTestId('value-chip')).toBeVisible();
     await history.scrollIntoViewIfNeeded();
     await snap(page, 'page-history-before-undo');
   });
@@ -200,7 +203,7 @@ test('a reader sees what changed on a page, takes the last change back with the 
     await expect(rows).toHaveCount(ROWS_AFTER_ONE_UNDO);
     await expect(rows.nth(0)).toContainText('An undo');
     await expect(rows.nth(1)).toHaveAttribute('data-undone', 'true');
-    await expect(settings.getByTestId('page-settings-none')).toBeVisible();
+    await expect(slant.getByTestId('value-chip')).toHaveCount(0);
     await history.scrollIntoViewIfNeeded();
     await snap(page, 'page-history-after-undo');
   });

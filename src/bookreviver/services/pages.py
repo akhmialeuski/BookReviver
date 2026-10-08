@@ -289,6 +289,11 @@ class PageService:
         # The kind of the page decides which recipe of the stages after the page order processes it
         if before.recipe_kind is not page.recipe_kind:
             records.extend(await self._records.mark_content_stale(page_id))
+        # A page takes the values its group has for a step, so joining or leaving a group changes what it runs with
+        if before.group_label != page.group_label:
+            records.extend(
+                await self._records.mark_group_stale(project_id, page_id, {before.group_label, page.group_label})
+            )
         # A label, a kind or an inclusion changes what the sections give the pages, the page itself included
         if any(field is not None for field in (changes.label, changes.kind, changes.included)) and (
             await self._labels.recompute(project_id)

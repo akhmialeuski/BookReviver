@@ -1,8 +1,19 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { deskew, processing, processor, recipe, step, whole } from '@/features/processing/fixtures';
+import {
+  deskew,
+  pageValues,
+  processing,
+  processor,
+  recipe,
+  step,
+  stepSettings,
+  whole,
+} from '@/features/processing/fixtures';
 import type { OrderIssue } from '@/features/processing/order';
+import type { PageValues } from '@/features/processing/pageSettings';
 import { draftOf } from '@/features/processing/recipe';
 import { StepList } from '@/features/processing/StepList';
 import { OrderNotice } from '@/features/processing/StepSorter';
@@ -46,23 +57,25 @@ describe('StepList', () => {
   function render(
     steps = STEPS,
     openId: string | undefined = undefined,
-    pageValuesOf?: (step: (typeof STEPS)[number]) => Record<string, unknown>,
+    values?: PageValues,
     showParams = true,
     overrides: Parameters<typeof processing>[0] = {},
   ): void {
     act(() =>
       root.render(
-        <StepList
-          processing={processing({
-            steps,
-            catalogue: [deskew(), whole()],
-            openId,
-            ...handlers,
-            ...overrides,
-          })}
-          showParams={showParams}
-          pageValuesOf={pageValuesOf}
-        />,
+        <QueryClientProvider client={new QueryClient()}>
+          <StepList
+            processing={processing({
+              steps,
+              catalogue: [deskew(), whole()],
+              openId,
+              ...handlers,
+              ...overrides,
+            })}
+            showParams={showParams}
+            values={values}
+          />
+        </QueryClientProvider>,
       ),
     );
   }
@@ -124,19 +137,40 @@ describe('StepList', () => {
     expect(steps()[1]?.querySelector('form')).toBeNull();
   });
 
-  it('marks in the form of the open step the fields the open page changes for itself', () => {
-    render(STEPS, 'step-0', () => ({ min_confidence: 0.6 }));
-
-    const labels = [...(steps()[0]?.querySelectorAll('form label') ?? [])].map(
-      (label) => label.textContent,
+  it('draws under each setting of the open step the values the open page and its parts have', () => {
+    render(
+      STEPS,
+      'step-0',
+      pageValues({
+        settings: [
+          stepSettings('id-geometry.deskew', {
+            params: { min_confidence: 0.6 },
+            parts: [
+              {
+                scope: 'even',
+                group_label: '',
+                params: { max_angle: 3 },
+                updated_at: '2026-10-01T00:00:00Z',
+              },
+            ],
+          }),
+        ],
+      }),
     );
-    expect(labels).toEqual(['Largest slant', 'Least confidence · changed for this page']);
+
+    const fields = [...(steps()[0]?.querySelectorAll('[data-testid="field-values"]') ?? [])].map(
+      (field) => [field.getAttribute('data-field'), field.textContent],
+    );
+    expect(fields).toEqual([
+      ['max_angle', expect.stringContaining('Even pages 3')],
+      ['min_confidence', expect.stringContaining('p. 143 0.6')],
+    ]);
   });
 
-  it('draws no mark when no page is open', () => {
+  it('draws no values when no page is open', () => {
     render(STEPS, 'step-0');
 
-    expect(steps()[0]?.textContent).not.toContain('changed for this page');
+    expect(steps()[0]?.querySelector('[data-testid="field-values"]')).toBeNull();
   });
 
   it('switches a step off and on with its switch', () => {

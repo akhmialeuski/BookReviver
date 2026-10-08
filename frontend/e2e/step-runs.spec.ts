@@ -13,8 +13,7 @@ import {
 
 /**
  * A stage run step by step: the Geometry recipe is run through its first step on every page from the panel of that step and
- * checked, then through its last step, and the first step is found in the cache of versions and not computed again. The
- * panel of the open step says how many pages passed it.
+ * checked, then through its last step, and the first step is found in the cache of versions and not computed again.
  */
 
 const PAGES = 4;
@@ -60,7 +59,6 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
   const steps = page.getByTestId('bar-step');
-  const passed = page.getByTestId('step-passed');
   let stepCount = 0;
   let firstStepVersion: StoredVersion | undefined;
 
@@ -97,17 +95,12 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
     expect(stepCount).toBeGreaterThan(1);
     // Nothing has run, so no step has been passed and no page stopped short
     await openStep(FIRST);
-    await expect(passed).toHaveText(`0 of ${PAGES} pages passed`);
     await expect(page.getByTestId('strip-stopped-filter')).toHaveCount(0);
   });
 
   await test.step('"Auto on all pages" in the panel of the first step runs it on every page and leaves the rest', async () => {
     await runThrough(FIRST);
-    await expect(passed).toHaveText(`${PAGES} of ${PAGES} pages passed`, {
-      timeout: RUN_TIMEOUT_MS,
-    });
     await openStep(stepCount - 1);
-    await expect(passed).toHaveText(`0 of ${PAGES} pages passed`);
     await expect(page.getByTestId('run-stopped')).toHaveText(
       `Done through step 1 of ${stepCount}: ${PAGES} pages`,
     );
@@ -134,9 +127,6 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
 
   await test.step('"Auto on all pages" in the panel of the last step finds the first in the cache and makes the rest', async () => {
     await runThrough(stepCount - 1);
-    await expect(passed).toHaveText(`${PAGES} of ${PAGES} pages passed`, {
-      timeout: RUN_TIMEOUT_MS,
-    });
     await expect(page.getByTestId('run-stopped')).toHaveCount(0);
     await expect(page.getByTestId('strip-stopped-filter')).toHaveCount(0);
     await expect(page.getByTestId('stage-stopped')).toHaveCount(0);

@@ -1,21 +1,15 @@
 import { TriangleAlertIcon } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { EditorControls } from '@/features/editors/EditorControls';
 import { isPlacement } from '@/features/editors/placement';
 import type { EditorSession } from '@/features/editors/session';
 import { CarryOver } from '@/features/processing/CarryOver';
 import { MeasureBook } from '@/features/processing/MeasureBook';
-import { PageStepSettings } from '@/features/processing/PageStepSettings';
 import { ParamsForm } from '@/features/processing/ParamsForm';
-import { pageValuesOf } from '@/features/processing/pageSettings';
-import { usePageSettings } from '@/features/processing/queries';
+import type { PageValues } from '@/features/processing/pageSettings';
 import { readResult } from '@/features/processing/results';
-import { StepReset } from '@/features/processing/StepReset';
-import { passedPages } from '@/features/processing/stepRuns';
 import type { Processing } from '@/features/processing/useProcessing';
-import type { StageRun } from '@/features/processing/useStageRun';
 import type { BarStep } from '@/features/workspace/steps';
-import type { StripItem } from '@/features/workspace/strip';
 import type { StepWorkspace } from '@/features/workspace/useStepWorkspace';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
@@ -24,14 +18,13 @@ import { CheckboxField } from '@/shared/ui/checkbox-field';
 
 /**
  * The section of the panel for the step that is open, which is where a step of a stage with a bar is set and looked at:
- * its settings, where it stands in the order and what is wrong with that, what it did on the open page and what the
- * page changes for it, and how the pages of the book stand at it and how many passed it. A run starts from the foot of the
- * panel and not from here.
+ * its settings, with the values the open page and the parts of the pages have for each, where it stands in the order and
+ * what is wrong with that, and what it did on the open page. A run starts from the foot of the panel and not from here.
  *
  * It stands above the sections of the recipe and of the open page and takes none of them away. The settings are the
  * draft of the recipe, which the window of the gear and the save bar share, so a change made here is the change made
- * there. At the end is the menu that resets the step to its defaults. The changes and the results of the
- * step on the open page are not listed here but in the history that ends the panel of the stage.
+ * there. The changes and the results of the step on the open page are not listed here but in the history that ends the
+ * panel of the stage.
  */
 
 const labels = MESSAGES.workspace.stepPanel;
@@ -53,10 +46,9 @@ export function StepPanel({
   step,
   pageLabel,
   pageId,
-  items,
+  values,
   selected = NO_PAGES,
   editor,
-  run,
 }: {
   processing: Processing;
   workspace: StepWorkspace;
@@ -66,26 +58,20 @@ export function StepPanel({
   pageLabel: string;
   /** The open page, or undefined when the book has none. */
   pageId: string | undefined;
-  /** Every page of the book with where it stands in the stage, which the pages of the kind of the step are counted from. */
-  items: readonly StripItem[];
+  /** The open page and what it and the parts of the pages have for the steps, or undefined when the book has no page. */
+  values: PageValues | undefined;
   /** The pages selected in the grid, which a shape set by hand can be carried over to. */
   selected?: ReadonlySet<string>;
   /** The page editor of the step on the open page, or null when the step has none or the page passes the step by. */
   editor: EditorSession | null;
-  /** The run of the stage, which says how many pages the book has for the count of the pages that passed the step. */
-  run: StageRun;
 }): React.JSX.Element {
-  const { catalogue, recipe } = processing;
+  const { catalogue } = processing;
   const [overwrite, setOverwrite] = useState(false);
-  const pageSettings = usePageSettings(processing.projectId, pageId, processing.stage);
   const draft = processing.steps.find((entry) => entry.stepId === step.stepId);
-  const pageValues = pageValuesOf(pageSettings.data, step.stepId);
-  const marked = useMemo(() => new Set(Object.keys(pageValues)), [pageValues]);
   const issues = draft === undefined ? [] : (processing.orderIssues.get(draft.id) ?? []);
   const issueKind = issues.some((issue) => issue.kind === 'required') ? 'required' : 'usual';
-  const stageRows = items.flatMap((item) => (item.row === undefined ? [] : [item.row]));
   const processor = catalogue.find((entry) => entry.key === step.processorKey);
-  const { page, counts } = workspace;
+  const { page } = workspace;
   const state = page?.state ?? null;
   const found =
     page?.version === null || page?.version === undefined ? null : readResult(page.version);
@@ -135,7 +121,7 @@ export function StepPanel({
             processor={processor}
             params={draft.params}
             idPrefix="step-panel"
-            marked={marked}
+            values={values === undefined ? undefined : { page: values, stepId: step.stepId }}
             onChange={(params) => processing.change(draft.id, params)}
           />
         )}
@@ -172,65 +158,14 @@ export function StepPanel({
               />
             </div>
             <CheckboxField
-              label={MESSAGES.processing.steps.pageSettings.carry.overwrite}
+              label={stepLabels.carry.overwrite}
               checked={overwrite}
               data-testid="step-carry-overwrite"
               onChange={(event) => setOverwrite(event.target.checked)}
             />
           </div>
         ) : null}
-        {draft === undefined || pageId === undefined ? null : (
-          <PageStepSettings
-            // The form of the page holds the values of one step, so another step starts from its own and not from these
-            key={draft.id}
-            processing={processing}
-            step={draft}
-            processor={processor}
-            pageId={pageId}
-            pageValues={pageValues}
-            selected={selected}
-          />
-        )}
       </div>
-
-      <div className="grid gap-2" data-testid="step-panel-book">
-        <Heading>{labels.book}</Heading>
-        {recipe === undefined || !step.enabled || recipe.steps.length < 2 ? null : (
-          <p className="text-sm" title={stepLabels.passedHint} data-testid="step-passed">
-            {stepLabels.passed(passedPages(stageRows, recipe.id, step.index), run.total)}
-          </p>
-        )}
-        {counts === null ? (
-          <p className="text-sm text-muted-foreground">{MESSAGES.workspace.steps.reading}</p>
-        ) : (
-          <dl className="grid gap-1 text-sm">
-            {(
-              [
-                ['found', counts.found],
-                ['byHand', counts.byHand],
-                ['check', counts.check],
-                ['unusual', counts.unusual],
-                ['skipped', counts.skipped],
-                ['notRun', counts.notRun],
-              ] as const
-            )
-              // A step that finds nothing to compare with the book has no pages that differ, so the line is left out
-              .filter(([key, value]) => key !== 'unusual' || value > 0)
-              .map(([key, value]) => (
-                <div
-                  key={key}
-                  className="flex justify-between gap-4"
-                  data-testid={`step-count-${key}`}
-                >
-                  <dt className="text-muted-foreground">{labels.counts[key]}</dt>
-                  <dd className="font-medium">{labels.pages(value)}</dd>
-                </div>
-              ))}
-          </dl>
-        )}
-      </div>
-
-      <StepReset processing={processing} pageId={pageId} stepId={step.stepId} title={step.title} />
     </section>
   );
 }

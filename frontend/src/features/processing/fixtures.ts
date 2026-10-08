@@ -1,10 +1,12 @@
 import type {
+  PageStepSettingsSchema,
   PageVersionSchema,
   ProcessorSchema,
   RecipeSchema,
   ScanSchema,
   StepSchema,
 } from '@/api';
+import type { PageValues } from '@/features/processing/pageSettings';
 import { draftOf } from '@/features/processing/recipe';
 import type { Processing } from '@/features/processing/useProcessing';
 import { images } from '@/features/workspace/fixtures';
@@ -479,6 +481,44 @@ export function processing(overrides: Partial<Processing> = {}): Processing {
     change: () => undefined,
     add: () => undefined,
     discard: () => undefined,
+    ...overrides,
+  };
+}
+
+/**
+ * The open page of a book of a hundred text pages, with what it and the parts of the pages have for the steps.
+ *
+ * @param overrides What a test changes of the values.
+ */
+export function pageValues(overrides: Partial<PageValues> = {}): PageValues {
+  return {
+    projectId: 'project',
+    stage: 'geometry',
+    page: { id: 'page-143', name: 'p. 143' },
+    settings: [],
+    selected: [],
+    sides: { odd: 50, even: 50 },
+    groups: [],
+    ...overrides,
+  };
+}
+
+/**
+ * The settings of one step as the server lists them for a page.
+ *
+ * @param stepId The step.
+ * @param overrides What a test changes of the entry.
+ */
+export function stepSettings(
+  stepId: string,
+  overrides: Partial<PageStepSettingsSchema> = {},
+): PageStepSettingsSchema {
+  return {
+    step_id: stepId,
+    params: {},
+    parts: [],
+    effective: {},
+    updated_at: null,
     ...overrides,
   };
 }

@@ -6,10 +6,10 @@ import {
   Trash2Icon,
   TriangleAlertIcon,
 } from 'lucide-react';
-import { useMemo } from 'react';
 import type { OrderMode, ProcessorSchema } from '@/api';
 import type { OrderIssue } from '@/features/processing/order';
 import { ParamsForm } from '@/features/processing/ParamsForm';
+import type { PageValues } from '@/features/processing/pageSettings';
 import type { StepDraft } from '@/features/processing/recipe';
 import { StepSorter } from '@/features/processing/StepSorter';
 import { fitsSchema, formSchemaOf } from '@/features/processing/schema';
@@ -31,14 +31,11 @@ import { Switch } from '@/shared/ui/switch';
  * still shows, with a note, so a recipe is never edited blind and the step can still be removed.
  *
  * When the list is given the progress of the pages, each step of a recipe of several says how many pages already passed
- * it. A run starts from the foot of the panel and not from here. When it is given the fields the open page changes for
- * itself, the form of a step marks them. A step shows the form of its settings only where they are not set elsewhere.
+ * it. A run starts from the foot of the panel and not from here. When it is given the open page, the form of a step shows
+ * under each setting the values the page and the parts of the pages have for it. A step shows the form of its settings only where they are not set elsewhere.
  */
 
 const labels = MESSAGES.processing.steps;
-
-/** The fields of a step the open page does not change, which is what a step has when no page is open. */
-const NO_PAGE_VALUES: Readonly<Record<string, unknown>> = {};
 
 /** What the steps need to show how far the pages have come. */
 export interface StepProgress {
@@ -55,7 +52,7 @@ function StepCard({
   open,
   extra,
   progress,
-  pageValues,
+  values,
   issues,
   hover,
   showParams,
@@ -69,8 +66,8 @@ function StepCard({
   /** What the step shows under its settings when it is open, such as the button that measures the book. */
   extra: React.ReactNode;
   progress: StepProgress | undefined;
-  /** The fields the open page changes for this step, which its form marks. */
-  pageValues: Readonly<Record<string, unknown>>;
+  /** The open page, whose values for this step and the parts of the pages the form shows under each setting. */
+  values: PageValues | undefined;
   /** What is wrong with the place of this step. */
   issues: readonly OrderIssue[];
   /** How a dragged step that is over this one is received, or null when nothing is held over it. */
@@ -83,7 +80,6 @@ function StepCard({
     id: step.id,
   });
   const title = processor?.title ?? step.processorKey;
-  const marked = useMemo(() => new Set(Object.keys(pageValues)), [pageValues]);
   const outOfLimits =
     processor !== undefined && !fitsSchema(formSchemaOf(processor.parameters), step.params);
   const kind = issues.some((issue) => issue.kind === 'required') ? 'required' : 'usual';
@@ -210,7 +206,11 @@ function StepCard({
             <ParamsForm
               processor={processor}
               params={step.params}
-              marked={marked}
+              values={
+                values === undefined || step.stepId === null
+                  ? undefined
+                  : { page: values, stepId: step.stepId }
+              }
               onChange={(params) => processing.change(step.id, params)}
             />
           ) : processor.summary === '' ? null : (
@@ -229,7 +229,7 @@ export function StepList({
   showParams,
   extraOf,
   progress,
-  pageValuesOf,
+  values,
 }: {
   processing: Processing;
   /** A heading drawn beside the switch of the order, or absent where the list stands under a title of its own. */
@@ -240,8 +240,8 @@ export function StepList({
   extraOf?: (step: StepDraft) => React.ReactNode;
   /** How far the pages have come, or absent for a list that only edits. A recipe of one step has no such thing. */
   progress?: StepProgress;
-  /** The fields the open page changes for a step, or absent when no page is open. */
-  pageValuesOf?: (step: StepDraft) => Readonly<Record<string, unknown>>;
+  /** The open page and what it and the parts of the pages have for the steps, or absent when no page is open. */
+  values?: PageValues;
 }): React.JSX.Element {
   const { steps, catalogue } = processing;
   return (
@@ -284,7 +284,7 @@ export function StepList({
                   open={step.id === processing.openId}
                   extra={extraOf?.(step) ?? null}
                   progress={steps.length > 1 ? progress : undefined}
-                  pageValues={pageValuesOf?.(step) ?? NO_PAGE_VALUES}
+                  values={values}
                   issues={processing.orderIssues.get(step.id) ?? []}
                   hover={hoverOf(step.id)}
                   showParams={showParams}

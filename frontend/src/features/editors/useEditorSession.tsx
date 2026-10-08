@@ -21,13 +21,13 @@ import { useHeld } from '@/features/editors/useHeld';
 import { usePictureSize } from '@/features/editors/usePictureSize';
 import { type ImageSource, sourceOfPreview } from '@/features/processing/compare';
 import { invalidateHistory, useUndo } from '@/features/processing/historyQueries';
-import { effectiveParams, pageValuesOf } from '@/features/processing/pageSettings';
+import { settingsOf } from '@/features/processing/pageSettings';
 import type { PreviewRequest } from '@/features/processing/preview';
 import {
   usePageSettings,
   useRunInFlight,
   useRunStage,
-  useSetPageSetting,
+  useSetValue,
   useVersions,
 } from '@/features/processing/queries';
 import { bodyOf, draftOf } from '@/features/processing/recipe';
@@ -155,8 +155,8 @@ export function useEditorSession({
   // The settings the open page has for the step, which the editor of the content box reads and sets besides its shape
   const sets = kind === 'content-box';
   const pageSettings = usePageSettings(projectId, current?.page.id, stage, sets);
-  const setting = useSetPageSetting(projectId, stage);
-  const pageValues = pageValuesOf(pageSettings.data, step?.step_id ?? null);
+  const setting = useSetValue(projectId, stage);
+  const pageSettingsOfStep = settingsOf(pageSettings.data, step?.step_id ?? null);
   // A page the step has not made a result on is looked at by a preview of the step, which finds what a run would find, so
   // the editor shows it as found without a run
   const wantsFound =
@@ -171,13 +171,8 @@ export function useEditorSession({
     wantsFound && recipe !== undefined && entry !== undefined && current !== undefined
       ? {
           pageId: current.page.id,
-          steps: bodyOf(
-            draftOf(recipe).map((draft, index) =>
-              index === entry.index
-                ? { ...draft, params: effectiveParams(draft.params, pageValues) }
-                : draft,
-            ),
-          ),
+          // The server lays the values of the page and of the parts of the book it is in over the step of a preview
+          steps: bodyOf(draftOf(recipe)),
           stepIndex: entry.index,
         }
       : null;
@@ -322,8 +317,8 @@ export function useEditorSession({
     }
     setting.mutate(
       {
-        path: { project_id: projectId, page_id: owner.id, stage, step_id: step.step_id, name },
-        body: { value },
+        path: { project_id: projectId, stage, step_id: step.step_id, name },
+        body: { scope: 'pages', page_ids: [owner.id], value },
       },
       {
         onSuccess: () => {
@@ -427,7 +422,7 @@ export function useEditorSession({
   };
   const saving = save.isPending || remove.isPending;
   const stepSettings: StepSettings = {
-    values: effectiveParams(step?.params ?? {}, pageValues),
+    values: pageSettingsOfStep?.effective ?? step?.params ?? {},
     set: setSetting,
     busy: saving || setting.isPending || wanted !== null || run.isPending,
   };

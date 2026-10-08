@@ -6,6 +6,7 @@ import { RunControls } from '@/features/processing/RunControls';
 import { SplitSection } from '@/features/processing/SplitSection';
 import { StepPanel } from '@/features/processing/StepPanel';
 import { ThisPageSection } from '@/features/processing/ThisPageSection';
+import { usePageValues } from '@/features/processing/usePageValues';
 import type { Processing } from '@/features/processing/useProcessing';
 import { useStageRun } from '@/features/processing/useStageRun';
 import { ProfileLibraryPanel } from '@/features/profiles/ProfileLibraryPanel';
@@ -49,6 +50,7 @@ export function ProcessingPanel({
 }): React.JSX.Element {
   const rows = items.flatMap((item) => (item.row === undefined ? [] : [item.row]));
   const run = useStageRun(processing, items, current, selected);
+  const values = usePageValues(processing, items, current, selected);
   const [libraryOpen, setLibraryOpen] = useState(false);
   // The history of the page is the last element of the panel on every stage. With a step open it holds the changes and the
   // results of that step: the step open in the bar, or on a stage without a bar the step open in the list of the recipe.
@@ -97,10 +99,9 @@ export function ProcessingPanel({
             step={step.step}
             pageLabel={step.pageLabel}
             pageId={current?.page.id}
-            items={items}
+            values={values}
             selected={selected}
             editor={editor}
-            run={run}
           />
         )}
         {processing.stage === 'page-split' && current !== undefined ? (
@@ -110,9 +111,8 @@ export function ProcessingPanel({
           processing={processing}
           rows={rows}
           run={run}
-          pageId={current?.page.id}
+          values={values}
           onManageProfiles={() => setLibraryOpen(true)}
-          selected={selected}
         />
         {current === undefined ? null : (
           <ThisPageSection

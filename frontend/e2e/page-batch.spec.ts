@@ -14,9 +14,9 @@ import {
 } from './support/account';
 
 /**
- * Work on many pages at once: a setting of the open page is carried over to the pages after it, which skips the page that
- * has a value of its own and is taken back by one undo, and a run in the mode that replaces the hand settings warns with
- * the number of pages that lose their edit, takes it away when it is confirmed, and gives it back by one undo.
+ * Work on many pages at once: a value of a setting for the even pages reaches the even page and not the page that has a
+ * value of its own, and is taken back by one undo, and a run in the mode that replaces the hand settings warns with the
+ * number of pages that lose their edit, takes it away when it is confirmed, and gives it back by one undo.
  */
 
 const PAGES = 3;
@@ -26,6 +26,7 @@ const DESKEW_TITLE = 'Deskew';
 const FIELD = 'max_angle';
 const SLANT_OF_THE_PAGE = 3;
 const SLANT_OF_THE_OTHER_PAGE = 4;
+const SLANT_OF_THE_EVEN_PAGES = 7;
 const ANGLE_OF_THE_EDIT = 1.5;
 const FIRST = 0;
 const SECOND = 1;
@@ -63,8 +64,8 @@ async function putSetting(
   value: number,
 ): Promise<void> {
   const response = await page.request.put(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/settings/geometry/${stepId}/${FIELD}`,
-    { headers: await changeHeaders(page), data: { value } },
+    `/api/v1/projects/${openProjectId(page)}/stages/geometry/steps/${stepId}/values/${FIELD}`,
+    { headers: await changeHeaders(page), data: { scope: 'pages', page_ids: [pageId], value } },
   );
   expect(response.ok()).toBe(true);
 }
@@ -90,6 +91,15 @@ async function readSettings(page: Page, pageId: string): Promise<Record<string, 
   return body.items.map((item) => item.params);
 }
 
+/** Read the value of the field the step runs with on a page, which the part of the book it is in may give it. */
+async function readEffective(page: Page, pageId: string): Promise<number | undefined> {
+  const response = await page.request.get(
+    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/settings/geometry`,
+  );
+  const body = (await response.json()) as { items: { effective: Record<string, number> }[] };
+  return body.items[0]?.effective[FIELD];
+}
+
 /** Count the manual edits a page has in the stage. */
 async function countEdits(page: Page, pageId: string): Promise<number> {
   const response = await page.request.get(
@@ -106,14 +116,14 @@ async function readHistory(page: Page, pageId: string, stepId: string): Promise<
   return ((await response.json()) as { items: HistoryItem[] }).items;
 }
 
-test('a reader carries a setting to the pages after it, and a run that replaces the hand settings warns first and is undone in one action', async ({
+test('a reader sets a value for the even pages and takes it back in one action, and a run that replaces the hand settings warns first and is undone in one action', async ({
   page,
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
   // The settings of the page and its history are in the panel of the open step
   const step = page.getByTestId('step-panel');
-  const settings = step.getByTestId('page-settings');
+  const slant = step.locator('[data-testid="field-values"][data-field="max_angle"]');
   let ids: string[] = [];
   let stepId = '';
 
@@ -134,35 +144,36 @@ test('a reader carries a setting to the pages after it, and a run that replaces 
     await expect(page.getByTestId('page-strip').getByTestId('strip-page')).toHaveCount(PAGES);
     await page.getByTestId('bar-step').filter({ hasText: DESKEW_TITLE }).click();
     await expect(step).toBeVisible();
-    await expect(settings.getByTestId('page-settings-list')).toContainText(
-      `Largest slant: ${SLANT_OF_THE_PAGE}`,
-    );
+    await expect(slant.getByTestId('value-chip')).toContainText(`${SLANT_OF_THE_PAGE}`);
   });
 
-  await test.step('carrying the setting to the following pages skips the page that has its own value', async () => {
-    await settings.getByTestId('carry-menu').click();
-    await page.getByTestId('carry-following').click();
-    await expect(settings.getByTestId('carry-result')).toContainText(
-      'Carried over to 1 page, 1 page was skipped for a value of their own.',
-    );
-    expect(await readSettings(page, ids[SECOND] ?? '')).toEqual([{ [FIELD]: SLANT_OF_THE_PAGE }]);
-    expect(await readSettings(page, ids[THIRD] ?? '')).toEqual([
-      { [FIELD]: SLANT_OF_THE_OTHER_PAGE },
-    ]);
-    await snap(page, 'page-batch-carry-over');
+  await test.step('a value for the even pages reaches the second page and leaves the pages that are odd', async () => {
+    await slant.getByTestId('value-add').click();
+    await expect(page.getByTestId('value-choice-even')).toContainText(`${Math.floor(PAGES / 2)}`);
+    await page.getByTestId('value-choice-even').click();
+    await slant.getByTestId('value-chip-edit').filter({ hasText: 'Even pages' }).click();
+    await slant.locator('input[type="number"]').fill(`${SLANT_OF_THE_EVEN_PAGES}`);
+    await expect.poll(() => readEffective(page, ids[SECOND] ?? '')).toBe(SLANT_OF_THE_EVEN_PAGES);
+    expect(await readEffective(page, ids[FIRST] ?? '')).toBe(SLANT_OF_THE_PAGE);
+    expect(await readEffective(page, ids[THIRD] ?? '')).toBe(SLANT_OF_THE_OTHER_PAGE);
+    expect(await readSettings(page, ids[SECOND] ?? '')).toEqual([{}]);
+    await snap(page, 'page-batch-even-pages');
   });
 
-  await test.step('one undo takes the value back from the page it reached, and the page with its own value is as it was', async () => {
-    await settings.getByTestId('carry-undo').click();
-    await expect(settings.getByTestId('carry-result')).toHaveCount(0);
-    expect(await readSettings(page, ids[SECOND] ?? '')).toEqual([]);
-    expect(await readSettings(page, ids[THIRD] ?? '')).toEqual([
-      { [FIELD]: SLANT_OF_THE_OTHER_PAGE },
-    ]);
+  await test.step('the cross takes the value back, and the history of the page names the pages it was for', async () => {
+    await slant
+      .getByTestId('value-chip')
+      .filter({ hasText: 'Even pages' })
+      .getByTestId('value-chip-remove')
+      .click();
+    await expect
+      .poll(() => readEffective(page, ids[SECOND] ?? ''))
+      .not.toBe(SLANT_OF_THE_EVEN_PAGES);
     const history = await readHistory(page, ids[SECOND] ?? '', stepId);
     expect(history.map((item) => [item.layer, item.source, item.undone])).toEqual([
-      ['settings', 'undo', false],
-      ['settings', 'carry-over', true],
+      ['settings', 'user', false],
+      ['settings', 'user', false],
+      ['settings', 'user', false],
       ['hand', 'user', false],
     ]);
   });

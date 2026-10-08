@@ -31,7 +31,6 @@ import {
   listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetQueryKey,
   listScansApiV1ProjectsProjectIdScansGetQueryKey,
   listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetOptions,
-  listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetQueryKey,
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey,
   measureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostMutation,
   previewStepApiV1ProjectsProjectIdStagesStagePreviewPostMutation,
@@ -44,7 +43,7 @@ import {
   runImpactApiV1ProjectsProjectIdStagesStageRunImpactPostMutation,
   runStageApiV1ProjectsProjectIdStagesStageRunPostMutation,
 } from '@/api/@tanstack/react-query.gen';
-import { invalidateHistory, invalidatePageLayers } from '@/features/processing/historyQueries';
+import { invalidatePageLayers } from '@/features/processing/historyQueries';
 import {
   invalidateAllStageRows,
   invalidateJobs,
@@ -332,7 +331,11 @@ export function usePageSettings(
 }
 
 /** Mark stale what a change of a value of a setting changes: the settings of every page, and the rows and the summary of the stage. */
-async function refreshValues(queryClient: QueryClient, projectId: string, stage: Stage): Promise<void> {
+async function refreshValues(
+  queryClient: QueryClient,
+  projectId: string,
+  stage: Stage,
+): Promise<void> {
   await Promise.all([
     invalidatePageLayers(queryClient),
     invalidateStageRows(queryClient, projectId, stage),
@@ -414,5 +417,92 @@ export function useOwnWork(projectId: string, stage: Stage, body: StageRunBody |
     },
     enabled: body !== null,
     staleTime: 0,
+  });
+}
+
+/** Make one of the results of a page its current result in the stage. */
+export function useChooseVersion(projectId: string, stage: Stage) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutMutation(),
+    onSettled: (_data, _error, variables) =>
+      Promise.all([
+        refreshStage(queryClient, projectId, stage),
+        queryClient.invalidateQueries({
+          queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
+            path: { project_id: projectId, page_id: variables.path.page_id },
+          }),
+        }),
+      ]),
+  });
+}
+
+/**
+ * Set the mark and the comment of a result, which are the user's notes and change nothing the step reads.
+ *
+ * Both are replaced together, so a caller that changes one sends the other as it is. The versions of the page are read
+ * again, since every list of results shows the notes, and so are the rows of the stages, since the strip marks the pages
+ * whose result is marked bad.
+ */
+export function useMarkResult(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutMutation(),
+    onSettled: (_data, _error, variables) =>
+      Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
+            path: { project_id: projectId, page_id: variables.path.page_id },
+          }),
+        }),
+        invalidateAllStageRows(queryClient, projectId),
+      ]),
+  });
+}
+
+/**
+ * Make the picture of a result again, whose files a collection removed, in the background.
+ *
+ * The answer is the queued job, and the version becomes the current one of its stage when the job ends. The mutation
+ * settles after the job list is read again, so the job is in it when the caller looks for it.
+ */
+export function useRemakeVersion(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostMutation(),
+    onSettled: () => invalidateJobs(queryClient, projectId),
+  });
+}
+
+/**
+ * Read every scan of the book as one list, which the Split stage needs for the size of each.
+ *
+ * The key extends the generated key of the list of scans, so the invalidation of the scans reaches it, and the extra
+ * part keeps it apart from the one-page lists the Import stage reads.
+ */
+export function useAllScans(projectId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [
+      ...listScansApiV1ProjectsProjectIdScansGetQueryKey({ path: { project_id: projectId } }),
+      'all',
+    ],
+    queryFn: async ({ signal }): Promise<ScanSchema[]> => {
+      const scans: ScanSchema[] = [];
+      let page = 1;
+      let total = 1;
+      while (page <= total) {
+        const { data } = await listScansApiV1ProjectsProjectIdScansGet({
+          path: { project_id: projectId },
+          query: { page, size: LIST_SIZE },
+          signal,
+          throwOnError: true,
+        });
+        scans.push(...data.items);
+        total = data.pages;
+        page += 1;
+      }
+      return scans;
+    },
+    enabled,
   });
 }

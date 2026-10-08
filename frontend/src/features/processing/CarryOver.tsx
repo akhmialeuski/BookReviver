@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { CarryOverSchema, CarryScope } from '@/api';
 import { useUndo } from '@/features/processing/historyQueries';
-import { useCarryOver, useCarryShape } from '@/features/processing/queries';
+import { useCarryShape } from '@/features/processing/queries';
 import type { Processing } from '@/features/processing/useProcessing';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
@@ -15,47 +15,37 @@ import {
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
- * The menu that carries what the open page has for a step over to other pages, and what it did: the value of one field of
- * the settings, or, when no field is named, the whole shape the page has set by hand.
+ * The menu that carries the whole shape the open page has set by hand for a step over to other pages, and what it did.
  *
- * What is carried goes to the pages after the open one, to the pages selected in the grid, or to every page of the
- * kind of the open page. A page that has a value of its own for the field is skipped, and the line under the menu says how many
- * were, unless the reader asked to write over them. The pages the value reached are one batch of the history, so the
+ * The shape goes to the pages after the open one, to the pages selected in the grid, or to every page of the kind of the
+ * open page. A page that has a shape of its own is skipped, and the line under the menu says how many were, unless the
+ * reader asked to write over them. The pages the value reached are one batch of the history, so the
  * undo beside the line takes it back from all of them at once. The server decides which pages the value reaches, so the
  * menu names no count for the first and the last choice.
  */
 
-const labels = MESSAGES.processing.steps.pageSettings.carry;
+const labels = MESSAGES.processing.steps.carry;
 
 export function CarryOver({
   processing,
   pageId,
   stepId,
-  name,
   title,
   selected,
   overwrite,
-  children,
 }: {
   processing: Pick<Processing, 'projectId' | 'stage'>;
   pageId: string;
   stepId: string;
-  /** The field in the parameters of the step, or absent to carry the shape set by hand. */
-  name?: string;
-  /** What is carried is called, such as the title of the field in the form. */
+  /** What is carried is called, such as the shape. */
   title: string;
   /** The pages selected in the grid, which the open page may be one of. */
   selected: ReadonlySet<string>;
-  /** Whether a page that has another value of its own takes the value as well. */
+  /** Whether a page that has a shape of its own takes this one as well. */
   overwrite: boolean;
-  /** What stands beside the menu, such as the way back to the value of the recipe. */
-  children?: React.ReactNode;
 }): React.JSX.Element {
   const { projectId, stage } = processing;
-  const carryField = useCarryOver(projectId, stage);
-  const carryShape = useCarryShape(projectId, stage);
-  const pending = carryField.isPending || carryShape.isPending;
-  const carryError = carryField.error ?? carryShape.error;
+  const carry = useCarryShape(projectId, stage);
   const undo = useUndo(projectId, stage);
   const [result, setResult] = useState<CarryOverSchema | null>(null);
   const others = [...selected].filter((id) => id !== pageId);
@@ -64,11 +54,7 @@ export function CarryOver({
   const send = (scope: CarryScope): void => {
     const body = { scope, overwrite, ...(scope === 'selected' ? { page_ids: others } : {}) };
     const path = { project_id: projectId, page_id: pageId, stage, step_id: stepId };
-    if (name === undefined) {
-      carryShape.mutate({ path, body }, { onSuccess: setResult });
-    } else {
-      carryField.mutate({ path: { ...path, name }, body }, { onSuccess: setResult });
-    }
+    carry.mutate({ path, body }, { onSuccess: setResult });
   };
 
   return (
@@ -80,7 +66,7 @@ export function CarryOver({
               variant="ghost"
               size="sm"
               aria-label={labels.ofField(title)}
-              disabled={pending}
+              disabled={carry.isPending}
               data-testid="carry-menu"
             >
               {labels.label}
@@ -102,7 +88,6 @@ export function CarryOver({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        {children}
       </div>
       {result === null ? null : (
         <p
@@ -136,8 +121,8 @@ export function CarryOver({
           )}
         </p>
       )}
-      {carryError === null && undo.error === null ? null : (
-        <ErrorAlert message={describeError(carryError ?? undo.error)} />
+      {carry.error === null && undo.error === null ? null : (
+        <ErrorAlert message={describeError(carry.error ?? undo.error)} />
       )}
     </div>
   );

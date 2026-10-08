@@ -1,15 +1,11 @@
 import { PlusIcon } from 'lucide-react';
-import type { ProcessorSchema, StagePageSchema } from '@/api';
+import type { StagePageSchema } from '@/api';
 import { isPlacement } from '@/features/editors/placement';
 import { MeasureBook } from '@/features/processing/MeasureBook';
-import { PageStepSettings } from '@/features/processing/PageStepSettings';
-import { pageValuesOf } from '@/features/processing/pageSettings';
-import { usePageSettings } from '@/features/processing/queries';
+import type { PageValues } from '@/features/processing/pageSettings';
 import { RecipePicker } from '@/features/processing/RecipePicker';
 import { RecipeSaveBar } from '@/features/processing/RecipeSaveBar';
-import type { StepDraft } from '@/features/processing/recipe';
 import { StepList, type StepProgress } from '@/features/processing/StepList';
-import { StepReset } from '@/features/processing/StepReset';
 import { passedPages } from '@/features/processing/stepRuns';
 import type { Processing } from '@/features/processing/useProcessing';
 import type { StageRun } from '@/features/processing/useStageRun';
@@ -36,8 +32,8 @@ import {
  * Nothing is saved while a step is edited. The draft lives in the state of the screen, so a preview can use it, and the
  * recipe is written only by the button, which says first how many pages the save makes out of date.
  *
- * When a page is open, a step that is open in the list also shows what that page changes for the step, and marks those
- * fields in its form.
+ * When a page is open, a step that is open in the list shows under each setting the values that page and the parts of the
+ * pages have for it.
  */
 
 const labels = MESSAGES.processing;
@@ -46,20 +42,17 @@ export function RecipeSection({
   processing,
   rows,
   run,
-  pageId,
+  values,
   onManageProfiles,
-  selected,
 }: {
   processing: Processing;
   rows: readonly StagePageSchema[];
   /** The run of the stage, which tells how many pages the steps can be passed by. Absent for steps that only edit. */
   run?: StageRun;
-  /** The page that is open, whose own settings of the steps are shown, or absent when none is. */
-  pageId?: string;
+  /** The open page and what it and the parts of the pages have for the steps, or absent when none is open. */
+  values?: PageValues;
   /** Opens the library of profiles, which the profile menu offers when it is given. */
   onManageProfiles?: () => void;
-  /** The pages selected in the grid, which a setting of the open page can be carried over to. */
-  selected?: ReadonlySet<string>;
 }): React.JSX.Element | null {
   const { stage, recipe } = processing;
   if (recipe === undefined) {
@@ -79,13 +72,7 @@ export function RecipeSection({
       )}
 
       {hasStepBar(stage) ? null : (
-        <RecipeSteps
-          processing={processing}
-          rows={rows}
-          run={run}
-          pageId={pageId}
-          selected={selected}
-        />
+        <RecipeSteps processing={processing} rows={rows} run={run} values={values} />
       )}
 
       <RecipeSaveBar processing={processing} rows={rows} />
@@ -98,22 +85,17 @@ function RecipeSteps({
   processing,
   rows,
   run,
-  pageId,
-  selected,
+  values,
 }: {
   processing: Processing;
   rows: readonly StagePageSchema[];
   run?: StageRun;
-  pageId?: string;
-  selected?: ReadonlySet<string>;
+  values?: PageValues;
 }): React.JSX.Element | null {
-  const { projectId, stage, recipe, catalogue } = processing;
-  const pageSettings = usePageSettings(projectId, pageId, stage);
+  const { stage, recipe, catalogue } = processing;
   if (recipe === undefined) {
     return null;
   }
-  const processorOf = (step: StepDraft): ProcessorSchema | undefined =>
-    catalogue.find((processor) => processor.key === step.processorKey);
   const installed = new Set(catalogue.map((processor) => processor.key));
   const coming = roadmapOf(stage, installed);
   const progress: StepProgress | undefined =
@@ -130,34 +112,12 @@ function RecipeSteps({
         processing={processing}
         heading={labels.steps.title}
         showParams
-        extraOf={(step) => (
-          <>
-            {isPlacement(step.processorKey) ? (
-              <MeasureBook processing={processing} step={step} />
-            ) : null}
-            {pageId === undefined ? null : (
-              <PageStepSettings
-                processing={processing}
-                step={step}
-                processor={processorOf(step)}
-                pageId={pageId}
-                pageValues={pageValuesOf(pageSettings.data, step.stepId)}
-                selected={selected}
-              />
-            )}
-            {pageId === undefined || step.stepId === null ? null : (
-              <StepReset
-                processing={processing}
-                pageId={pageId}
-                stepId={step.stepId}
-                title={processorOf(step)?.title ?? step.processorKey}
-              />
-            )}
-          </>
-        )}
-        pageValuesOf={
-          pageId === undefined ? undefined : (step) => pageValuesOf(pageSettings.data, step.stepId)
+        extraOf={(step) =>
+          isPlacement(step.processorKey) ? (
+            <MeasureBook processing={processing} step={step} />
+          ) : null
         }
+        values={values}
         progress={progress}
       />
       <DropdownMenu>

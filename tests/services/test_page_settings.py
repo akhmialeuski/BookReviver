@@ -532,6 +532,40 @@ class TestValuesForPartsOfTheBook:
                 actor, project.id, strength_field(step_id, on(ValueScope.GROUP, label=GROUP)), STRONGER
             )
 
+    async def test_a_page_that_changes_its_group_goes_stale_only_where_a_group_has_a_value(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify joining or leaving a group marks the stage stale when that group has a value, and not otherwise.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, pages, step_id = await ran_book(fx_kit, count=2)
+        await put_in_group(fx_kit, pages[1], GROUP)
+        await fx_kit.page_settings().change(
+            actor, project.id, strength_field(step_id, on(ValueScope.GROUP, label=GROUP)), STRONGER
+        )
+        await run_geometry(fx_kit, actor, project)
+
+        async def moved(page: Page, labels: set[str]) -> list[StageState]:
+            """Mark the stage of a page for a change between groups, commit it and read the stages of the book.
+
+            :param page: The page that changed its group.
+            :type page: Page
+            :param labels: The groups it left and joined.
+            :type labels: set[str]
+            :returns: The state of the stage of each page of the book.
+            :rtype: list[StageState]
+            """
+            uow = fx_kit.uow()
+            await fx_kit.parts(uow).records.mark_group_stale(project.id, page.id, labels)
+            await uow.commit()
+            return await stages_of(fx_kit, pages)
+
+        expect(await moved(pages[0], {'', 'Plates'}) == [StageState.FRESH, StageState.FRESH])
+        expect(await moved(pages[0], {'', GROUP}) == [StageState.STALE, StageState.FRESH])
+        assert_expectations()
+
 
 class TestUndoOfAValueForParts:
     """Tests for taking back, from the history of a page, a value for the odd pages, the even pages or a group."""

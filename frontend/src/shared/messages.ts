@@ -17,13 +17,13 @@ import type {
   PageStageStatus,
   RecipeKind,
   RejectionReason,
-  ResetScope,
   ReviewReason,
   RightsStatus,
   Script,
   Stage,
   StageStatus,
   StepFlag,
+  ValueScope,
   VersionOrigin,
 } from '@/api';
 import type { Problem } from '@/features/about/fields';
@@ -696,16 +696,6 @@ export const MESSAGES = {
       thisPage: (label: string) => (label === '' ? 'This page' : `This page · ${label}`),
       notReached:
         'The page has not been through the earlier steps yet, so this step reads the page as it is.',
-      book: 'This step on the book',
-      counts: {
-        found: 'Found',
-        byHand: STEP_FLAG_NAMES['by-hand'],
-        check: 'To check',
-        unusual: STEP_FLAG_NAMES.unusual,
-        skipped: STEP_FLAG_NAMES.skipped,
-        notRun: 'Not run yet',
-      },
-      pages: (count: number) => `${count} ${pluralize(count, 'page', 'pages')}`,
       carry: {
         title: 'the shape',
         hint: 'The whole shape set by hand goes to the pages you choose. A page that set its own shape keeps it.',
@@ -1340,33 +1330,40 @@ export const MESSAGES = {
         useMeasuredHint:
           'Let the next measure of the book fill in the margins again. Save the recipe, then measure the book.',
       },
-      pageSettings: {
-        title: 'This page only',
-        hint: 'A setting changed here is used by this page alone. The other pages keep the value of the recipe, and this page keeps its value when the recipe changes.',
-        none: 'This page uses the value of the recipe for every setting of this step.',
-        changedMark: 'changed for this page',
-        label: (title: string, mark: string) => `${title} · ${mark}`,
-        current: (title: string, value: string) => `${title}: ${value}`,
-        change: 'Change for this page',
-        done: 'Done',
-        takeBack: (title: string) => `Use the value of the recipe for ${title}`,
-        failed: 'The settings of this page could not be read.',
-        saveFirst:
-          'Save the recipe first, since a step that is not saved has no settings of a page.',
-        carry: {
-          label: 'Carry over',
-          ofField: (title: string) => `Carry ${title} over to other pages`,
-          following: 'To the following pages',
-          selected: (count: number) => `To the selected pages · ${count}`,
-          kind: 'To all pages of the same kind',
-          overwrite: 'Also write over pages that have a value of their own',
-          done: (changed: number, skipped: number) =>
-            `Carried over to ${changed} ${pluralize(changed, 'page', 'pages')}` +
-            (skipped === 0
-              ? '.'
-              : `, ${skipped} ${pluralize(skipped, 'page was', 'pages were')} skipped for a value of their own.`),
-          undo: 'Undo the carry-over',
-        },
+      carry: {
+        label: 'Carry over',
+        ofField: (title: string) => `Carry ${title} over to other pages`,
+        following: 'To the following pages',
+        selected: (count: number) => `To the selected pages · ${count}`,
+        kind: 'To all pages of the same kind',
+        overwrite: 'Also write over pages that have a value of their own',
+        done: (changed: number, skipped: number) =>
+          `Carried over to ${changed} ${pluralize(changed, 'page', 'pages')}` +
+          (skipped === 0
+            ? '.'
+            : `, ${skipped} ${pluralize(skipped, 'page was', 'pages were')} skipped for a value of their own.`),
+        undo: 'Undo the carry-over',
+      },
+      values: {
+        add: 'Value for…',
+        addFor: (title: string) => `Add a value of ${title} for part of the pages`,
+        menu: (title: string) => `Value of ${title} for`,
+        thisPage: (name: string) => `This page · ${name}`,
+        pageName: (label: string) => `p. ${label}`,
+        pageAt: (place: number) => `page ${place}`,
+        groupOf: (label: string) => `Group · ${label}`,
+        group: 'Group',
+        noGroups: 'No groups in the book',
+        scopes: {
+          pages: 'Pages',
+          selected: 'Selected pages',
+          odd: 'Odd pages',
+          even: 'Even pages',
+          group: 'Group',
+        } satisfies Record<ValueScope | 'selected', string>,
+        edit: (title: string) => `Change the value for ${title}`,
+        remove: (title: string) => `Remove the value for ${title}`,
+        failed: 'The value could not be saved.',
       },
       drag: {
         instructions:
@@ -1440,30 +1437,6 @@ export const MESSAGES = {
           `${pages} ${pluralize(pages, 'page loses', 'pages lose')} the settings and the hand edits on the steps of this run, and the run goes by the recipe.`,
         undo: 'The change is written to the history of each page, and one undo gives it back.',
         confirm: 'Run anyway',
-        cancel: 'Cancel',
-      },
-    },
-    reset: {
-      label: 'Reset',
-      ofStep: (title: string) => `Reset ${title} to the defaults`,
-      hint: 'A reset takes away the settings of the page and the hand edits, so the page uses the recipe again and the next run finds the shape anew. One undo gives them back.',
-      scopes: {
-        'page-step': 'This step on this page',
-        page: 'Every step on this page',
-        step: 'This step on every page',
-        stage: 'Every step of the stage on every page',
-      } satisfies Record<ResetScope, string>,
-      done: (changes: number, pages: number) =>
-        changes === 0
-          ? 'There was nothing to reset.'
-          : `Reset ${changes} ${pluralize(changes, 'layer', 'layers')} on ${pages} ${pluralize(pages, 'page', 'pages')}.`,
-      undo: 'Undo the reset',
-      warning: {
-        title: 'Reset to the defaults?',
-        body: (scope: string, affected: number, hand: number, settings: number) =>
-          `${scope}. ${affected} ${pluralize(affected, 'page loses', 'pages lose')} work of their own: ${hand} ${pluralize(hand, 'page has', 'pages have')} a hand edit and ${settings} ${pluralize(settings, 'page changes', 'pages change')} a setting.`,
-        undo: 'The reset is written to the history of each page, and one undo gives it back.',
-        confirm: 'Reset',
         cancel: 'Cancel',
       },
     },
@@ -1630,7 +1603,6 @@ export const MESSAGES = {
         user: 'You',
         run: 'A run',
         'carry-over': 'A carry-over',
-        reset: 'A reset',
         undo: 'An undo',
       },
       what: (layer: string, source: string) => `${layer} · ${source}`,

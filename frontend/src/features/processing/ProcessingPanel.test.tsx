@@ -28,6 +28,7 @@ vi.mock('@/features/processing/ThisPageSection', () => ({ ThisPageSection: stub(
 vi.mock('@/features/processing/RunControls', () => ({ RunControls: stub('run-controls') }));
 vi.mock('@/features/profiles/ProfileLibraryPanel', () => ({ ProfileLibraryPanel: () => null }));
 vi.mock('@/features/processing/useStageRun', () => ({ useStageRun: () => ({}) }));
+vi.mock('@/features/processing/usePageValues', () => ({ usePageValues: () => undefined }));
 vi.mock('@/features/processing/PageTimeline', () => ({
   PageTimeline: ({
     step,

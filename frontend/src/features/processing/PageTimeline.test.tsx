@@ -56,6 +56,8 @@ function change(overrides: Partial<PageStepChangeSchema>): PageStepChangeSchema 
     stage: 'geometry',
     step_id: STEP_ID,
     layer: 'settings',
+    scope: 'pages',
+    group_label: '',
     before: null,
     after: { max_angle: 3 },
     source: 'user',
@@ -411,6 +413,20 @@ describe('PageTimeline', () => {
       expect(hand?.textContent).not.toContain('{');
       expect(setting?.textContent).toContain('Settings of the page · You');
       expect(setting?.textContent).toContain('nothing → Largest slant: 3');
+    });
+
+    it('names the part of the pages a value was set for, which is not the settings of this page alone', async () => {
+      serve([
+        change({ id: 'group', scope: 'group', group_label: 'Index', sequence: 2 }),
+        change({ id: 'even', scope: 'even', sequence: 1 }),
+      ]);
+      open();
+      await render();
+
+      const [group, even] = rows();
+      expect(group?.textContent).toContain('Group · Index · You');
+      expect(even?.textContent).toContain('Even pages · You');
+      expect(even?.textContent).not.toContain('Settings of the page');
     });
 
     it('marks the changes an undo took back and offers no undo for them or for an undo', async () => {

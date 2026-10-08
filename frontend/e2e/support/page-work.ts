@@ -38,7 +38,7 @@ export async function pageIds(page: Page): Promise<string[]> {
   return items.sort((a, b) => a.position - b.position).map((item) => item.id);
 }
 
-/** Set the value a page uses for the field of the step, as the settings of a page do. */
+/** Set the value a page uses for the field of the step, as a value for the open page does. */
 export async function putSetting(
   page: Page,
   pageId: string,
@@ -46,8 +46,8 @@ export async function putSetting(
   value: number,
 ): Promise<void> {
   const response = await page.request.put(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/settings/geometry/${stepId}/${FIELD}`,
-    { headers: await changeHeaders(page), data: { value } },
+    `/api/v1/projects/${openProjectId(page)}/stages/geometry/steps/${stepId}/values/${FIELD}`,
+    { headers: await changeHeaders(page), data: { scope: 'pages', page_ids: [pageId], value } },
   );
   expect(response.ok()).toBe(true);
 }
@@ -64,13 +64,22 @@ export async function saveRotation(page: Page, pageId: string, stepId: string): 
   expect(response.ok()).toBe(true);
 }
 
-/** Read the fields a page changes for the steps of the stage, by name, one entry for each step that has any. */
+/** Read the fields a page changes for itself in the steps of the stage, by name, one entry for each step that has any. */
 export async function readSettings(page: Page, pageId: string): Promise<Record<string, number>[]> {
   const response = await page.request.get(
     `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/settings/geometry`,
   );
   const body = (await response.json()) as { items: { params: Record<string, number> }[] };
   return body.items.map((item) => item.params);
+}
+
+/** Read the value of the field the step runs with on a page, which the part of the book it is in may give it. */
+export async function readEffective(page: Page, pageId: string): Promise<number | undefined> {
+  const response = await page.request.get(
+    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/settings/geometry`,
+  );
+  const body = (await response.json()) as { items: { effective: Record<string, number> }[] };
+  return body.items[0]?.effective[FIELD];
 }
 
 /** Count the manual edits a page has in the stage. */

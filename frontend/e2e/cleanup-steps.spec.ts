@@ -59,7 +59,10 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
   const barSteps = page.getByTestId('bar-step');
   const strip = page.getByTestId('strip-page');
   const flagFilter = page.getByTestId('strip-step-filter');
-  const settings = page.getByTestId('step-panel').getByTestId('page-settings');
+  // The values of the page for the amount are the chips under that setting, in the panel of the open step
+  const amount = page
+    .getByTestId('step-panel')
+    .locator('[data-testid="field-values"][data-field="amount"]');
   let bookPath = '';
   let stepId = '';
 
@@ -146,16 +149,17 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
   });
 
   await test.step('a page that has an amount of its own for the step is set by hand, and the filter lists it alone', async () => {
-    await settings.getByTestId('page-settings-edit').click();
-    await settings.getByRole('spinbutton', { name: 'Amount' }).fill(PAGE_AMOUNT);
-    await expect(settings.getByTestId('page-settings-list')).toBeVisible();
+    await amount.getByTestId('value-add').click();
+    await page.getByTestId('value-choice-page').click();
+    await amount.getByTestId('value-chip-edit').click();
+    await amount.getByRole('spinbutton').fill(PAGE_AMOUNT);
+    await expect(amount.getByTestId('value-chip')).toBeVisible();
     await expect(flagFilter.locator('option').nth(3)).toHaveText('Set by hand · 1');
     expect((await flagsAt(page, stepId)).filter((flags) => flags.includes('by-hand'))).toHaveLength(
       1,
     );
     await flagFilter.selectOption('by-hand');
     await expect(strip).toHaveCount(1);
-    await expect(page.getByTestId('step-count-byHand')).toContainText('1 page');
     await snap(page, 'cleanup-thickness-set-by-hand');
   });
 

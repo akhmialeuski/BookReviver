@@ -14,12 +14,12 @@ from typing import TYPE_CHECKING
 from attrs import evolve
 
 from bookreviver.domain.entities import PageStage
-from bookreviver.domain.enums import Stage, StageState
+from bookreviver.domain.enums import Stage, StageState, ValueScope
 from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.values import PageStageKey
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Collection, Sequence
 
     from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
     from bookreviver.ports.persistence import UnitOfWork
@@ -113,6 +113,30 @@ class StageRecords:
         stale = evolve(record, state=StageState.STALE, updated_at=self._clock.now())
         await self._uow.page_stages.save(stale)
         return [stale]
+
+    async def mark_group_stale(
+        self, project_id: ProjectId, page_id: PageId, labels: Collection[str]
+    ) -> list[PageStage]:
+        """Mark the stages of a page stale in which a group it joined or left has values for a step.
+
+        A page takes the values of its group over those of its side, so a page that changes its group runs with other
+        parameters wherever one of the two groups has a value, and in no other stage.
+
+        :param project_id: Project owning the page and the values.
+        :type project_id: ProjectId
+        :param page_id: Page whose group changed.
+        :type page_id: PageId
+        :param labels: The group the page was in and the one it is in now, either of which may be empty for none.
+        :type labels: Collection[str]
+        :returns: The records that became stale, none for a page that has not been through such a stage.
+        :rtype: list[PageStage]
+        """
+        stale: list[PageStage] = []
+        for record in await self._uow.page_stages.list_for_page(page_id):
+            valued = await self._uow.step_values.list_for_stage(project_id, record.stage)
+            if any(values.scope is ValueScope.GROUP and values.group_label in labels for values in valued):
+                stale.extend(await self.mark_stale(page_id, record.stage))
+        return stale
 
     async def mark_content_stale(self, page_id: PageId) -> list[PageStage]:
         """Mark every stage of a page after the page order stale, because what the page shows changed.

@@ -54,7 +54,7 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   undoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPost: sdk.undo,
   listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
   listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGet: sdk.settings,
-  putSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePut: sdk.putSetting,
+  putValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePut: sdk.putSetting,
   listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGet: sdk.history,
 }));
 
@@ -307,7 +307,7 @@ describe('useEditorSession', () => {
       data: { items: [], total: 0, page: 1, size: 50, pages: 1 },
     });
     sdk.putSetting.mockResolvedValue({
-      data: { page_id: 'page', stage: 'geometry', step_id: 'id-geometry.normalize', params: {} },
+      data: { batch_id: 'batch', changes: [] },
     });
     sdk.versions.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 50, pages: 1 } });
     sdk.history.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 100, pages: 1 } });
@@ -1314,13 +1314,8 @@ describe('useEditorSession', () => {
       await settle();
 
       expect(sdk.putSetting.mock.calls[0]?.[0]).toMatchObject({
-        path: {
-          page_id: 'page',
-          stage: 'geometry',
-          step_id: 'id-geometry.normalize',
-          name: 'align_vertical',
-        },
-        body: { value: 'bottom' },
+        path: { stage: 'geometry', step_id: 'id-geometry.normalize', name: 'align_vertical' },
+        body: { scope: 'pages', page_ids: ['page'], value: 'bottom' },
       });
       expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
         body: { page_ids: ['page'] },

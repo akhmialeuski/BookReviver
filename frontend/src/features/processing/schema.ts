@@ -123,6 +123,23 @@ export function snapToSlider(value: number, spec: SliderSpec): number {
 }
 
 /**
+ * Find the schema of one field, in the schema itself or in the schema of one of its methods.
+ *
+ * @param schema The form schema.
+ * @param name The name of the field.
+ * @returns The schema of the field, or undefined when no method has one by that name.
+ */
+export function fieldSchemaOf(schema: RJSFSchema, name: string): RJSFSchema | undefined {
+  for (const candidate of [schema, ...methodsOf(schema)]) {
+    const property = propertiesOf(candidate)[name];
+    if (isRecord(property)) {
+      return property as RJSFSchema;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Give the title a field has in the form, which is the name a reader knows it by.
  *
  * @param schema The form schema.
@@ -130,20 +147,12 @@ export function snapToSlider(value: number, spec: SliderSpec): number {
  * @returns The title of the field, or its name when the schema gives none.
  */
 export function fieldTitleOf(schema: RJSFSchema, name: string): string {
-  for (const candidate of [schema, ...methodsOf(schema)]) {
-    const property = propertiesOf(candidate)[name];
-    if (isRecord(property) && typeof property.title === 'string') {
-      return property.title;
-    }
-  }
-  return name;
+  const title = fieldSchemaOf(schema, name)?.title;
+  return typeof title === 'string' ? title : name;
 }
 
-/** How a field that a page changes is labelled, from the title the form would give it. */
-export type MarkLabel = (title: string) => string;
-
-/** Choose the widget of each field of one schema, and the label of each field that is marked. */
-function widgetsOf(schema: RJSFSchema, marked: ReadonlySet<string>, label: MarkLabel): UiSchema {
+/** Choose the widget of each field of one schema. */
+function widgetsOf(schema: RJSFSchema): UiSchema {
   const ui: UiSchema = {};
   for (const [name, property] of Object.entries(propertiesOf(schema))) {
     if (isRecord(property) && 'const' in property) {
@@ -151,11 +160,6 @@ function widgetsOf(schema: RJSFSchema, marked: ReadonlySet<string>, label: MarkL
       ui[name] = { 'ui:widget': 'hidden' };
     } else if (sliderSpecOf(property) !== null) {
       ui[name] = { 'ui:widget': BOUNDED_NUMBER_WIDGET };
-    }
-    if (marked.has(name)) {
-      const title =
-        isRecord(property) && typeof property.title === 'string' ? property.title : name;
-      ui[name] = { ...ui[name], 'ui:title': label(title) };
     }
   }
   return ui;
@@ -166,24 +170,18 @@ function widgetsOf(schema: RJSFSchema, marked: ReadonlySet<string>, label: MarkL
  * name of a method that is fixed.
  *
  * @param schema The form schema.
- * @param marked The names of the fields a page changes for itself, whose label says so.
- * @param label How the label of a marked field is made from its title.
  * @returns The `uiSchema` of the form.
  */
-export function uiSchemaOf(
-  schema: RJSFSchema,
-  marked: ReadonlySet<string> = new Set(),
-  label: MarkLabel = (title) => title,
-): UiSchema {
+export function uiSchemaOf(schema: RJSFSchema): UiSchema {
   const ui: UiSchema = {
     'ui:submitButtonOptions': { norender: true },
-    ...widgetsOf(schema, marked, label),
+    ...widgetsOf(schema),
   };
   const methods = methodsOf(schema);
   if (methods.length > 0) {
     // The name of the method is in the choice above its fields, so the fields need no heading of the same words
     ui.oneOf = methods.map((method) => ({
-      ...widgetsOf(method, marked, label),
+      ...widgetsOf(method),
       'ui:options': { label: false },
     }));
   }
