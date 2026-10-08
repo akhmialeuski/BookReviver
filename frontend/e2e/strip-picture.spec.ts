@@ -11,7 +11,7 @@ import {
   waitForIdleJobs,
   writeSheetsFolder,
 } from './support/account';
-import { finishedRuns } from './support/page-work';
+import { runPages } from './support/page-work';
 
 /**
  * The strip of pages and the canvas show one picture of a page on every stage and at every step of it: the picture the
@@ -108,11 +108,7 @@ test('the strip and the canvas show the same picture of the page at every step o
     await expect(page).toHaveURL(STEP_ADDRESS);
     await expect(page.getByTestId('strip-page')).toHaveCount(1);
     await previewAsked;
-    await waitForIdleJobs(page, projectId);
-    const before = await finishedRuns(page);
-    await page.getByTestId('step-auto').click();
-    await expect.poll(() => finishedRuns(page), { timeout: RUN_TIMEOUT_MS }).toBe(before + 1);
-    await waitForIdleJobs(page, projectId);
+    await runPages(page);
   });
 
   await test.step('a click on Geometry in the stage bar opens a step, not the stage alone', async () => {

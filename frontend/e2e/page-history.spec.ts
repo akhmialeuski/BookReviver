@@ -17,7 +17,7 @@ import {
   writeSheetsFolder,
 } from './support/account';
 import { dragFrom, pairOf } from './support/layer';
-import { CHANGE_ROWS, openTimeline, RESULT_ROWS } from './support/page-work';
+import { CHANGE_ROWS, openTimeline, RESULT_ROWS, runPages } from './support/page-work';
 
 /**
  * The history of a page, a collapsible section at the end of the panel of every stage that lists the changes of the open
@@ -39,10 +39,11 @@ const CROP = 'geometry.crop';
 const FIRST_PAGE = 0;
 const ANGLE_OF_THE_EDIT = 1.5;
 const SLANT_OF_THE_PAGE = '3';
-const CHANGES_WRITTEN = 2;
-const ROWS_AFTER_ONE_UNDO = 3;
-const CHANGES_AFTER_TWO_UNDOS = 4;
+// The edit by hand, the value added for the page with the value of the recipe, and the value typed into it
+const CHANGES_WRITTEN = 3;
+const CHANGES_AFTER_THE_UNDOS = 6;
 const ROWS_SHOWN = 3;
+const SLANT_OF_THE_RECIPE = '5';
 const SLANTS_OF_THE_PAGE = [1, 2, 3, 4];
 const OLDEST_SLANT = 1;
 const THIRD_ROW = 2;
@@ -188,7 +189,8 @@ test('a reader sees what changed on a page, takes the last change back with the 
     await expect(rows.first()).toContainText('Set by hand');
     await slant.getByTestId('value-add').click();
     await page.getByTestId('value-choice-page').click();
-    await slant.getByTestId('value-chip-edit').click();
+    // The value just added opens its field at once
+    await expect(slant.getByTestId('value-chip-edit')).toHaveAttribute('aria-expanded', 'true');
     await slant.locator('input[type="number"]').fill(SLANT_OF_THE_PAGE);
     await expect(rows).toHaveCount(CHANGES_WRITTEN);
     await expect(rows.first()).toContainText('Settings of the page');
@@ -200,19 +202,22 @@ test('a reader sees what changed on a page, takes the last change back with the 
 
   await test.step('the button takes back the newest change, writes the undo and marks the change it took back', async () => {
     await rows.first().getByTestId('page-history-undo-here').click();
-    await expect(rows).toHaveCount(ROWS_AFTER_ONE_UNDO);
+    await expect(rows).toHaveCount(ROWS_SHOWN);
     await expect(rows.nth(0)).toContainText('An undo');
     await expect(rows.nth(1)).toHaveAttribute('data-undone', 'true');
-    await expect(slant.getByTestId('value-chip')).toHaveCount(0);
+    // The value the page was given when it was added is left
+    await expect(slant.getByTestId('value-chip')).toContainText(SLANT_OF_THE_RECIPE);
     await history.scrollIntoViewIfNeeded();
     await snap(page, 'page-history-after-undo');
   });
 
-  await test.step('Ctrl+Z takes back the edit that is left, and the server keeps all four entries', async () => {
+  await test.step('Ctrl+Z takes back the value and then the edit that are left, and the server keeps every entry', async () => {
     await step.getByTestId('step-panel-title').click();
     await page.keyboard.press('Control+z');
+    await expect(slant.getByTestId('value-chip')).toHaveCount(0);
+    await page.keyboard.press('Control+z');
     await expect(history.getByTestId('page-history-count')).toHaveText(
-      `${CHANGES_AFTER_TWO_UNDOS} events`,
+      `${CHANGES_AFTER_THE_UNDOS} events`,
     );
     await expect(rows).toHaveCount(ROWS_SHOWN);
     await expect(history.getByTestId('page-history-undo-here')).toHaveCount(0);
@@ -220,6 +225,8 @@ test('a reader sees what changed on a page, takes the last change back with the 
     expect(stored.map((item) => [item.layer, item.source, item.undone])).toEqual([
       ['hand', 'undo', false],
       ['settings', 'undo', false],
+      ['settings', 'undo', false],
+      ['settings', 'user', true],
       ['settings', 'user', true],
       ['hand', 'user', true],
     ]);
@@ -340,7 +347,7 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await waitForIdleJobs(page, projectId);
   };
 
-  await test.step('Auto on Select content makes a result, which the collapsed section counts', async () => {
+  await test.step('a run through Select content makes a result, which the collapsed section counts', async () => {
     await registerAndSignIn(page);
     await createBook(page, 'A book with a timeline');
     await uploadFolder(page, folder, 1);
@@ -358,11 +365,8 @@ test('a reader reads the changes and the results of a step in one timeline that 
     // The page has no result yet, so the section is grey and says so
     await expect(history).toHaveAttribute('aria-disabled', 'true');
     await expect(history.getByTestId('page-history-reason')).toContainText('Nothing has happened');
-    await page.getByTestId('step-auto').click();
-    await expect(history.getByTestId('page-history-count')).toHaveText('1 event', {
-      timeout: RUN_TIMEOUT_MS,
-    });
-    await waitForIdleJobs(page, projectId);
+    await runPages(page, { throughOpenStep: true });
+    await expect(history.getByTestId('page-history-count')).toHaveText('1 event');
     await expect(history).toHaveAttribute('aria-disabled', 'false');
     await expect(history.getByTestId('page-history-toggle')).toHaveAttribute(
       'data-state',

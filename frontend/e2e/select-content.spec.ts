@@ -3,6 +3,7 @@ import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 import {
   createBook,
+  markPagesAsText,
   openProjectId,
   registerAndSignIn,
   snap,
@@ -11,7 +12,7 @@ import {
   writeSheetsFolder,
 } from './support/account';
 import { dragFrom, numbersOf, pairOf } from './support/layer';
-import { finishedRuns, pageIds } from './support/page-work';
+import { pageIds, runPages } from './support/page-work';
 
 /**
  * The borders of the content on the Select content step: they are only placed. The step records the frame of the content
@@ -90,16 +91,10 @@ async function watchCanvas(page: Page): Promise<void> {
     const log = [canvas?.getAttribute('data-state') ?? 'missing'];
     window.canvasStates = log;
     if (canvas !== null) {
-      new MutationObserver(() => {
-        log.push(canvas.getAttribute('data-state') ?? 'missing');
-        console.log(
-          'DBGSTATE',
-          location.pathname.slice(10, 16),
-          Date.now() % 100000,
-          canvas.getAttribute('data-state'),
-          (canvas.getAttribute('data-sources') ?? '').split('/').slice(-3).join('/'),
-        );
-      }).observe(canvas, { attributes: true, attributeFilter: ['data-state', 'data-sources'] });
+      new MutationObserver(() => log.push(canvas.getAttribute('data-state') ?? 'missing')).observe(
+        canvas,
+        { attributes: true, attributeFilter: ['data-state'] },
+      );
     }
     let present = document.querySelector('[data-testid="editor-layer"]') !== null;
     new MutationObserver(() => {
@@ -136,20 +131,6 @@ test('a border of the content is dragged on Select content without the picture l
   page,
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
-  page.on('console', (m) => {
-    if (m.text().startsWith('DBG')) console.log(m.text().slice(0, 400));
-  });
-  page.on('framenavigated', (f) =>
-    console.log(
-      'DBGNAV',
-      f.url().slice(32, 38),
-      Date.now() % 100000,
-      f
-        .url()
-        .replace(/^.*stages/, '')
-        .slice(0, 60),
-    ),
-  );
   const folder = await writeSheetsFolder(1);
   const layer = page.getByTestId('editor-layer');
   const canvas = page.getByTestId('viewer-canvas');
@@ -174,17 +155,17 @@ test('a border of the content is dragged on Select content without the picture l
     await uploadFolder(page, folder, 1);
     projectId = openProjectId(page);
     await waitForIdleJobs(page, projectId);
+    // The detection takes the sheet for a picture, which the recipe for pictures processes, and the step open here
+    // belongs to the recipe for text, so the page is said to be text
+    await markPagesAsText(page);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('strip-page')).toHaveCount(1);
     await page.getByTestId('bar-step').filter({ hasText: 'Select content' }).click();
     await expect(page).toHaveURL(STEP_ADDRESS);
     await expect(layer).toHaveAttribute('aria-label', 'Frame of the content');
-    // "Auto on all pages" runs the stage, so the step has found the frame on the page
-    const before = await finishedRuns(page);
-    await page.getByTestId('step-auto').click();
-    await expect.poll(() => finishedRuns(page), { timeout: RUN_TIMEOUT_MS }).toBe(before + 1);
-    await waitForIdleJobs(page, projectId);
+    // A run of all pages through the open step makes the step find the frame on the page
+    await runPages(page, { throughOpenStep: true });
     await expect(layer).not.toHaveAttribute('data-figure', 'by-hand');
     await expect(canvas).toHaveAttribute('data-state', 'ready');
     await waitForQuietCanvas(page);
@@ -205,9 +186,7 @@ test('a border of the content is dragged on Select content without the picture l
     expect(crop?.data.frame).toBeDefined();
   });
 
-  await test.step('the first border set by hand is saved, and the stage runs by the recipe that is shown', async () => {
-    // The page the stage ran on was sent to the recipe of its kind, and an edit runs the one that is shown, so the first
-    // edit may change what the step reads. The next ones are the ones the reader works with
+  await test.step('the first border set by hand is saved, and the stage runs on the page again', async () => {
     const bottom = await pairOf(layer, 'data-handle-bottom');
     await dragFrom(page, layer, bottom, { x: 0, y: -DRAG_PX });
     await expect(layer).toHaveAttribute('data-figure', 'by-hand', { timeout: RUN_TIMEOUT_MS });

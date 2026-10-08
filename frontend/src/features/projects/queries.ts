@@ -151,6 +151,19 @@ export function invalidateVersions(
   });
 }
 
+/**
+ * Refresh the results of every page of a book, which a collection of old versions changes by taking the files of some
+ * away. The key names the book alone, so it matches the results of each of its pages.
+ */
+export function invalidateAllVersions(queryClient: QueryClient, projectId: string): Promise<void> {
+  const [{ _id, baseUrl }] = listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
+    path: { project_id: projectId, page_id: '' },
+  });
+  return queryClient.invalidateQueries({
+    queryKey: [{ _id, baseUrl, path: { project_id: projectId } }],
+  });
+}
+
 /** Refresh the recipes of a stage, which a job that writes their parameters, such as the measure of a book, changed. */
 export function invalidateRecipes(
   queryClient: QueryClient,

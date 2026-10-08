@@ -171,7 +171,7 @@ export function StageScreen({
   // A stage built from processors adds its recipe and its before-and-after compare to the frame
   const compareChoice = search.compare ?? CompareMode.Off;
   const currentItem = items[currentIndex];
-  const processing = useProcessing(projectId, stage);
+  const processing = useProcessing(projectId, stage, barStage ? stepId : undefined);
   const workspace = useStepWorkspace(processing, barStage ? stepId : undefined, currentItem);
   const openStep = workspace.open;
   // A stage with a bar always has a step open: the one a run has brought the pages of the recipe furthest to
@@ -397,7 +397,7 @@ export function StageScreen({
           </p>
         ) : null}
         {hasLevelGrid && levelGridOn ? <GridOverlay /> : null}
-        <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center">
+        <div className="@container pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center">
           <div className="pointer-events-auto">
             <CanvasToolbar
               caption={captionOf(shown, count)}

@@ -19,7 +19,6 @@ test('a reader turns the pages of a book in the viewer', async ({ page }) => {
     await registerAndSignIn(page);
     await createBook(page, 'A book to read');
     await uploadFolder(page, folder, PAGES);
-    await expect(page.getByTestId('stage-page-order')).toContainText('6 pages');
   });
 
   await test.step('open the viewer on the first page', async () => {

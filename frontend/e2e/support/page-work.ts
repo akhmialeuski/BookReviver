@@ -24,7 +24,7 @@ export interface HistoryItem {
 }
 
 /** The headers a change made straight through the API carries, as the screen sends them. */
-async function changeHeaders(page: Page): Promise<Record<string, string>> {
+export async function changeHeaders(page: Page): Promise<Record<string, string>> {
   const cookies = await page.context().cookies();
   return {
     [CSRF_HEADER_NAME]: cookies.find((cookie) => cookie.name === CSRF_COOKIE_NAME)?.value ?? '',
@@ -123,13 +123,6 @@ export async function openTimeline(page: Page): Promise<Locator> {
   return history;
 }
 
-/** Count the runs of a stage that ended well in the open book, which tells that a run the reader started is over. */
-export async function finishedRuns(page: Page): Promise<number> {
-  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/jobs?size=50`);
-  const items = ((await listed.json()) as { items: { kind: string; state: string }[] }).items;
-  return items.filter((job) => job.kind === 'run-stage' && job.state === 'succeeded').length;
-}
-
 /** Read the identifiers of the newest runs of a stage that ended well in the open book. */
 async function endedRunIds(page: Page): Promise<Set<string>> {
   const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/jobs?size=100`);
@@ -142,29 +135,41 @@ async function endedRunIds(page: Page): Promise<Set<string>> {
   );
 }
 
-/** How long a run on all pages may take before the scenario gives up on it. */
-const RUN_ALL_TIMEOUT_MS = 120_000;
+/** How long a run of the stage may take before the scenario gives up on it. */
+const RUN_TIMEOUT_MS = 120_000;
 
 /**
- * Run the stage on all pages from the menu of the run, and wait until that run has ended and the book is idle.
+ * Run the stage from the menu of the run on all pages or on the open page, and wait until that run has ended and the
+ * book is idle.
  *
  * The summary of the stage reads "up to date" before a run of pages that are up to date has begun, and while the run still
  * places the pages, so the end of the job is what is waited for, and then for whatever the book queued after it.
  *
  * @param page The page of the browser, on a stage with a run menu.
+ * @param options `pages` chooses all pages or the open page, and `throughOpenStep` stops the run at the step open in the
+ * bar instead of going through the last step.
  */
-export async function runAllPages(page: Page): Promise<void> {
+export async function runPages(
+  page: Page,
+  {
+    pages = 'all',
+    throughOpenStep = false,
+  }: { pages?: 'all' | 'page'; throughOpenStep?: boolean } = {},
+): Promise<void> {
   // A run an edit started is over first, so it is not counted as the one asked for here
   await waitForIdleJobs(page, openProjectId(page));
   const known = await endedRunIds(page);
   await page.getByTestId('run-menu').click();
-  await page.getByTestId('run-pages-all').click();
+  await page.getByTestId(`run-pages-${pages}`).click();
+  if (throughOpenStep) {
+    await page.getByTestId('run-through-open').click();
+  }
   await page.keyboard.press('Escape');
   await page.getByTestId('run-start').click();
   // The jobs listed are the newest ones, so a scenario with many runs is told by the identifiers and not by their number
   await expect
     .poll(async () => [...(await endedRunIds(page))].some((id) => !known.has(id)), {
-      timeout: RUN_ALL_TIMEOUT_MS,
+      timeout: RUN_TIMEOUT_MS,
     })
     .toBe(true);
   await waitForIdleJobs(page, openProjectId(page));

@@ -14,7 +14,7 @@ import {
   writeSheetsFolder,
 } from './support/account';
 import { dragFrom } from './support/layer';
-import { runAllPages } from './support/page-work';
+import { runPages } from './support/page-work';
 
 /**
  * The Cleanup stage on scans of a sheet of paper: the default recipe of a new book has four steps in the bar and one
@@ -97,7 +97,7 @@ test('the Cleanup stage binarizes, despeckles and erases, with a recipe for plat
     await waitForIdleJobs(page, openProjectId(page));
   };
   const runAll = async (): Promise<void> => {
-    await runAllPages(page);
+    await runPages(page);
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });
@@ -192,10 +192,12 @@ test('the Cleanup stage binarizes, despeckles and erases, with a recipe for plat
       PAGES - 1,
     );
     await expect(
-      page.locator('[data-testid="strip-content"][data-content="color-picture"]'),
+      page.locator('[data-testid="strip-content"][data-content="bw-picture"]'),
     ).toHaveCount(1);
     await expect(page.getByTestId('recipe-select')).toContainText(`Text · ${PAGES - 1} pages`);
-    await expect(page.getByTestId('recipe-select')).toContainText('Colour picture · 1 page');
+    await expect(page.getByTestId('recipe-select')).toContainText(
+      'Black-and-white picture · 1 page',
+    );
     await strip.first().click();
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
     await expect(page.getByTestId('this-page-facts')).toContainText('Sauvola', {
@@ -230,7 +232,7 @@ test('the Cleanup stage binarizes, despeckles and erases, with a recipe for plat
     await expect.poll(() => saves.length).toBe(1);
     expect(saves[0]).toBe((await stepIdsOf(page, 'cleanup', 'cleanup.binarize'))[0]);
     await settled();
-    await page.getByTestId('editor-auto').click();
+    await page.getByTestId('canvas-auto').click();
     await expect(layer).toHaveAttribute('data-zones', '0', { timeout: RUN_TIMEOUT_MS });
     await settled();
   });
@@ -300,7 +302,7 @@ test('the Cleanup stage binarizes, despeckles and erases, with a recipe for plat
   await test.step('a run on all pages keeps the stroke of the reader and the kinds of the pages', async () => {
     await runAll();
     await expect(
-      page.locator('[data-testid="strip-content"][data-content="color-picture"]'),
+      page.locator('[data-testid="strip-content"][data-content="bw-picture"]'),
     ).toHaveCount(1);
     await page.getByTestId('compare-menu').click();
     await page.getByTestId('compare-off').click();

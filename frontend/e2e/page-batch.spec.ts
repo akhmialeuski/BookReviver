@@ -1,7 +1,6 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
-import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../src/shared/http/csrf';
+import { expect, test } from '@playwright/test';
 import {
   createBook,
   openProjectId,
@@ -12,109 +11,38 @@ import {
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
+import {
+  changeHeaders,
+  countEdits,
+  pageIds,
+  putSetting,
+  readEffective,
+  readHistory,
+  readSettings,
+  saveRotation,
+} from './support/page-work';
 
 /**
  * Work on many pages at once: a value of a setting for the even pages reaches the even page and not the page that has a
  * value of its own, and is taken back by one undo, and a run in the mode that replaces the hand settings warns with the
- * number of pages that lose their edit, takes it away when it is confirmed, and gives it back by one undo.
+ * number of pages that lose their values and edits, takes them away when it is confirmed, and gives them back by one undo.
  */
 
 const PAGES = 3;
 const SCENARIO_TIMEOUT_MS = 240_000;
 const DESKEW = 'geometry.deskew';
 const DESKEW_TITLE = 'Deskew';
+// The field the helpers of the work of the pages set and read
 const FIELD = 'max_angle';
 const SLANT_OF_THE_PAGE = 3;
 const SLANT_OF_THE_OTHER_PAGE = 4;
 const SLANT_OF_THE_EVEN_PAGES = 7;
-const ANGLE_OF_THE_EDIT = 1.5;
 const FIRST = 0;
 const SECOND = 1;
 const THIRD = 2;
 
 // Tall enough for the pictures of the key states to show the open step with its settings
 test.use({ viewport: { width: 1280, height: 1100 } });
-
-interface HistoryItem {
-  layer: string;
-  source: string;
-  undone: boolean;
-}
-
-/** The headers a change made straight through the API carries, as the screen sends them. */
-async function changeHeaders(page: Page): Promise<Record<string, string>> {
-  const cookies = await page.context().cookies();
-  return {
-    [CSRF_HEADER_NAME]: cookies.find((cookie) => cookie.name === CSRF_COOKIE_NAME)?.value ?? '',
-  };
-}
-
-/** Read the identifiers of the pages of the open book in the order of the book. */
-async function pageIds(page: Page): Promise<string[]> {
-  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/pages?size=100`);
-  const items = ((await listed.json()) as { items: { id: string; position: number }[] }).items;
-  return items.sort((a, b) => a.position - b.position).map((item) => item.id);
-}
-
-/** Set the value a page uses for the field of the step, as the settings of a page do. */
-async function putSetting(
-  page: Page,
-  pageId: string,
-  stepId: string,
-  value: number,
-): Promise<void> {
-  const response = await page.request.put(
-    `/api/v1/projects/${openProjectId(page)}/stages/geometry/steps/${stepId}/values/${FIELD}`,
-    { headers: await changeHeaders(page), data: { scope: 'pages', page_ids: [pageId], value } },
-  );
-  expect(response.ok()).toBe(true);
-}
-
-/** Save the rotation edit of a step as the editor does. */
-async function saveRotation(page: Page, pageId: string, stepId: string): Promise<void> {
-  const response = await page.request.put(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/edits/geometry/${stepId}`,
-    {
-      headers: await changeHeaders(page),
-      multipart: { kind: 'rotation', geometry: JSON.stringify({ degrees: ANGLE_OF_THE_EDIT }) },
-    },
-  );
-  expect(response.ok()).toBe(true);
-}
-
-/** Read the fields a page changes for the steps of the stage, by name, one entry for each step that has any. */
-async function readSettings(page: Page, pageId: string): Promise<Record<string, number>[]> {
-  const response = await page.request.get(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/settings/geometry`,
-  );
-  const body = (await response.json()) as { items: { params: Record<string, number> }[] };
-  return body.items.map((item) => item.params);
-}
-
-/** Read the value of the field the step runs with on a page, which the part of the book it is in may give it. */
-async function readEffective(page: Page, pageId: string): Promise<number | undefined> {
-  const response = await page.request.get(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/settings/geometry`,
-  );
-  const body = (await response.json()) as { items: { effective: Record<string, number> }[] };
-  return body.items[0]?.effective[FIELD];
-}
-
-/** Count the manual edits a page has in the stage. */
-async function countEdits(page: Page, pageId: string): Promise<number> {
-  const response = await page.request.get(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/edits/geometry`,
-  );
-  return ((await response.json()) as { total: number }).total;
-}
-
-/** Read the history of a step on a page from the server, the newest change first. */
-async function readHistory(page: Page, pageId: string, stepId: string): Promise<HistoryItem[]> {
-  const response = await page.request.get(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/history/geometry/${stepId}?size=100`,
-  );
-  return ((await response.json()) as { items: HistoryItem[] }).items;
-}
 
 test('a reader sets a value for the even pages and takes it back in one action, and a run that replaces the hand settings warns first and is undone in one action', async ({
   page,
@@ -151,7 +79,10 @@ test('a reader sets a value for the even pages and takes it back in one action, 
     await slant.getByTestId('value-add').click();
     await expect(page.getByTestId('value-choice-even')).toContainText(`${Math.floor(PAGES / 2)}`);
     await page.getByTestId('value-choice-even').click();
-    await slant.getByTestId('value-chip-edit').filter({ hasText: 'Even pages' }).click();
+    // The value just added opens its field at once
+    await expect(
+      slant.getByTestId('value-chip-edit').filter({ hasText: 'Even pages' }),
+    ).toHaveAttribute('aria-expanded', 'true');
     await slant.locator('input[type="number"]').fill(`${SLANT_OF_THE_EVEN_PAGES}`);
     await expect.poll(() => readEffective(page, ids[SECOND] ?? '')).toBe(SLANT_OF_THE_EVEN_PAGES);
     expect(await readEffective(page, ids[FIRST] ?? '')).toBe(SLANT_OF_THE_PAGE);
@@ -170,8 +101,9 @@ test('a reader sets a value for the even pages and takes it back in one action, 
       .poll(() => readEffective(page, ids[SECOND] ?? ''))
       .not.toBe(SLANT_OF_THE_EVEN_PAGES);
     const history = await readHistory(page, ids[SECOND] ?? '', stepId);
+    // The value added for the even pages started from the one of the recipe, which changed nothing on the second page, so
+    // the page has a change for the value typed and one for the value taken back
     expect(history.map((item) => [item.layer, item.source, item.undone])).toEqual([
-      ['settings', 'user', false],
       ['settings', 'user', false],
       ['settings', 'user', false],
       ['hand', 'user', false],
@@ -186,29 +118,32 @@ test('a reader sets a value for the even pages and takes it back in one action, 
     await page.getByTestId('run-start').click();
     const dialog = page.getByTestId('overwrite-dialog');
     await expect(dialog).toBeVisible();
+    // The first page and the third have a value of their own, and the second an edit
     await expect(dialog.getByTestId('overwrite-pages')).toContainText(
-      '1 page loses the settings and the hand edits',
+      `${PAGES} pages lose the settings and the hand edits`,
     );
     expect(await countEdits(page, ids[SECOND] ?? '')).toBe(1);
     await snap(page, 'page-batch-warning');
   });
 
-  await test.step('the confirmed run takes the edit away and the history of the page says a run did it', async () => {
+  await test.step('the confirmed run takes the edit and the values away and the history of the pages says a run did it', async () => {
     await page.getByTestId('overwrite-confirm').click();
     await expect.poll(() => countEdits(page, ids[SECOND] ?? '')).toBe(0);
     await waitForIdleJobs(page, openProjectId(page));
     const history = await readHistory(page, ids[SECOND] ?? '', stepId);
     expect(history[0]).toMatchObject({ layer: 'hand', source: 'run', undone: false });
-    expect(await readSettings(page, ids[FIRST] ?? '')).toEqual([{ [FIELD]: SLANT_OF_THE_PAGE }]);
+    const first = await readHistory(page, ids[FIRST] ?? '', stepId);
+    expect(first[0]).toMatchObject({ layer: 'settings', source: 'run', undone: false });
   });
 
-  await test.step('one undo gives the edit back', async () => {
+  await test.step('one undo gives the edit and the values back on every page', async () => {
     const response = await page.request.post(
       `/api/v1/projects/${openProjectId(page)}/pages/${ids[SECOND]}/history/geometry/${stepId}/undo`,
       { headers: await changeHeaders(page), data: {} },
     );
     expect(response.ok()).toBe(true);
     expect(await countEdits(page, ids[SECOND] ?? '')).toBe(1);
+    expect(await readSettings(page, ids[FIRST] ?? '')).toEqual([{ [FIELD]: SLANT_OF_THE_PAGE }]);
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

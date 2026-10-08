@@ -76,10 +76,15 @@ export interface Processing {
 /**
  * Read the processing state of a stage.
  *
+ * The recipe shown is the one the reader chose in the picker while the address named the step it names now, and
+ * otherwise the recipe that owns the step of the address, so a link to a step of any recipe opens that recipe. Without
+ * either it is the first recipe of the stage.
+ *
  * @param projectId The book.
  * @param stage The stage.
+ * @param stepId The step the address names, or undefined when it names none.
  */
-export function useProcessing(projectId: string, stage: Stage): Processing {
+export function useProcessing(projectId: string, stage: Stage, stepId?: string): Processing {
   const processors = useProcessors();
   const catalogue = useMemo(
     () => (processors.data ?? []).filter((processor) => processor.stage === stage),
@@ -88,11 +93,22 @@ export function useProcessing(projectId: string, stage: Stage): Processing {
   const available = catalogue.length > 0;
   const recipes = useRecipes(projectId, stage, available);
 
-  const [chosenId, setChosenId] = useState<{ stage: Stage; id: string } | null>(null);
+  // The choice of the picker remembers the step the address named when it was made, since a later step outranks it
+  const [chosenId, setChosenId] = useState<{
+    stage: Stage;
+    id: string;
+    stepId: string | undefined;
+  } | null>(null);
   const list = recipes.data ?? [];
-  const recipe =
-    list.find((entry) => entry.id === (chosenId?.stage === stage ? chosenId.id : undefined)) ??
-    list[0];
+  const owner =
+    stepId === undefined
+      ? undefined
+      : list.find((entry) => entry.steps.some((step) => step.step_id === stepId));
+  const chosen =
+    chosenId?.stage === stage && (owner === undefined || chosenId.stepId === stepId)
+      ? list.find((entry) => entry.id === chosenId.id)
+      : undefined;
+  const recipe = chosen ?? owner ?? list[0];
 
   const draftOwner = recipe === undefined ? '' : `${recipe.id}@${recipe.updated_at}`;
   const [edit, setEdit] = useState<{ owner: string; steps: StepDraft[] } | null>(null);
@@ -146,7 +162,7 @@ export function useProcessing(projectId: string, stage: Stage): Processing {
     catalogue,
     recipes: list,
     recipe,
-    chooseRecipe: (id) => setChosenId({ stage, id }),
+    chooseRecipe: (id) => setChosenId({ stage, id, stepId }),
     steps,
     openId,
     open: (id) => setOpenChoice({ owner: recipe?.id, id }),

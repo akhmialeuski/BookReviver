@@ -10,7 +10,7 @@ import {
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
-import { openTimeline, RESULT_ROWS, runAllPages } from './support/page-work';
+import { openTimeline, RESULT_ROWS, runPages } from './support/page-work';
 
 /**
  * The notes a user puts on a result: a good or bad mark and a comment of several lines, which can be changed later,
@@ -47,7 +47,7 @@ test('a result is marked and commented, and the notes can be changed later', asy
     await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
     // The import leaves jobs behind it, and a run asked for while they last is refused
     await waitForIdleJobs(page, projectId);
-    await runAllPages(page);
+    await runPages(page);
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });

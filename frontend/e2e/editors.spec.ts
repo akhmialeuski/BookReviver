@@ -11,7 +11,7 @@ import {
   writeScansFolder,
 } from './support/account';
 import { dragFrom, pairOf } from './support/layer';
-import { runAllPages } from './support/page-work';
+import { runPages } from './support/page-work';
 
 /**
  * The page editors on the canvas: the rotation handles of the Geometry stage with its field, its wheel, its undo and its
@@ -59,7 +59,7 @@ test('a reader turns a page by hand with the handle, the field and the wheel, ta
   });
 
   await test.step('the editors of the sheet and the frame start from what their step found, so the stage runs first', async () => {
-    await runAllPages(page);
+    await runPages(page);
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });
@@ -68,7 +68,7 @@ test('a reader turns a page by hand with the handle, the field and the wheel, ta
     await waitForIdleJobs(page, openProjectId(page));
     // The sheet, the angle, the curves, the frame and the block on the page
     await expect(page.getByTestId('bar-step')).toHaveCount(5);
-    await expect(page.getByTestId('editor-auto')).toBeDisabled();
+    await expect(page.getByTestId('canvas-auto')).toHaveCount(0);
   });
 
   await test.step('picking the angle opens its editor on the page, with the handle, and the compare stays off until it is asked for', async () => {
@@ -88,7 +88,7 @@ test('a reader turns a page by hand with the handle, the field and the wheel, ta
     await expect(facts).toContainText('2.5°', { timeout: RUN_TIMEOUT_MS });
     await expect(facts).toContainText('By hand');
     expect(saves).toHaveLength(1);
-    await expect(page.getByTestId('editor-auto')).toBeEnabled();
+    await expect(page.getByTestId('canvas-auto')).toBeEnabled();
   });
 
   await test.step('Alt and the wheel change the angle by a tenth, and a run of notches is saved once', async () => {
@@ -118,10 +118,10 @@ test('a reader turns a page by hand with the handle, the field and the wheel, ta
   });
 
   await test.step('Auto deletes the edit and the step finds the result by itself again', async () => {
-    await page.getByTestId('editor-auto').click();
+    await page.getByTestId('canvas-auto').click();
     await expect(facts).toContainText('Automatic', { timeout: RUN_TIMEOUT_MS });
     await expect(facts).not.toContainText('By hand');
-    await expect(page.getByTestId('editor-auto')).toBeDisabled();
+    await expect(page.getByTestId('canvas-auto')).toHaveCount(0);
   });
 
   await test.step('Ctrl+Z after Auto brings the angle back', async () => {
@@ -218,7 +218,7 @@ test('a reader moves the split line of the automatic split with the keys and the
 
   await test.step('a run on all pages keeps the line, so the halves are still cut by it', async () => {
     const back = found + NUDGES * NUDGE_SHIFT_PX - 1;
-    await runAllPages(page);
+    await runPages(page);
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });
@@ -230,10 +230,10 @@ test('a reader moves the split line of the automatic split with the keys and the
   });
 
   await test.step('Auto deletes the line and the cut goes back to the one the step found', async () => {
-    await page.getByTestId('editor-auto').click();
+    await page.getByTestId('canvas-auto').click();
     await expect(facts).toContainText('Automatic', { timeout: RUN_TIMEOUT_MS });
     await expect(facts).toContainText(`${found} px`);
-    await expect(page.getByTestId('editor-auto')).toBeDisabled();
+    await expect(page.getByTestId('canvas-auto')).toHaveCount(0);
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

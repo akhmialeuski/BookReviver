@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobSchema, Stage } from '@/api';
 import {
   listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey,
+  listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey,
   readJobApiV1JobsJobIdGetQueryKey,
 } from '@/api/@tanstack/react-query.gen';
 import { pagesScope, versionReadyKey } from '@/features/projects/queries';
@@ -136,6 +137,33 @@ describe('applyProjectEvent', () => {
       event: EventName.JobChanged,
       data: job('succeeded', 4),
     });
+  });
+
+  it('marks the results of every page of the book stale when the collection of old versions finishes', () => {
+    const resultsOf = (projectId: string, pageId: string) =>
+      listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
+        path: { project_id: projectId, page_id: pageId },
+        query: { stage: 'geometry' },
+      });
+    for (const key of [
+      resultsOf(PROJECT_ID, 'pg-1'),
+      resultsOf(PROJECT_ID, 'pg-2'),
+      resultsOf('p-2', 'pg-3'),
+    ]) {
+      queryClient.setQueryData(key, []);
+    }
+
+    applyProjectEvent(queryClient, PROJECT_ID, {
+      event: EventName.JobChanged,
+      data: { ...job('succeeded', 2, 2), kind: 'collect-versions' },
+    });
+
+    // A result whose files were taken away is made again before it is used, which the history has to know
+    const stale = (key: ReturnType<typeof resultsOf>) =>
+      queryClient.getQueryState(key)?.isInvalidated;
+    expect(stale(resultsOf(PROJECT_ID, 'pg-1'))).toBe(true);
+    expect(stale(resultsOf(PROJECT_ID, 'pg-2'))).toBe(true);
+    expect(stale(resultsOf('p-2', 'pg-3'))).toBe(false);
   });
 
   it('keeps the version a page-version-ready event names and marks the results of that page stale', () => {

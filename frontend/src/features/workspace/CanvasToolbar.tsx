@@ -33,7 +33,14 @@ import {
  *
  * The compare button is drawn and disabled for a stage that does not process pages. A stage that does gives it the mode
  * and the way to change it, and it becomes a menu of the ways to compare.
+ *
+ * The bar is one row high, which is the room the canvas keeps clear under a fitted page (`TOOLBAR_INSET_PX`), so the
+ * caption never wraps, and in a canvas too narrow for the whole row the buttons drop their words and keep their icons.
+ * The caller makes the box the bar stands in a container, which the width is read from.
  */
+
+/** The words of a button, which only screen readers get in a narrow canvas. */
+const BUTTON_WORDS = '@max-3xl:sr-only';
 
 const COMPARE_CHOICES = [
   [CompareMode.Off, MESSAGES.processing.compare.off],
@@ -111,7 +118,7 @@ export function CanvasToolbar({
         <ChevronLeftIcon />
       </Button>
       <span
-        className="min-w-28 px-2 text-center text-sm tabular-nums"
+        className="min-w-28 px-2 text-center text-sm whitespace-nowrap tabular-nums"
         aria-live="polite"
         data-testid="canvas-caption"
       >
@@ -178,7 +185,7 @@ export function CanvasToolbar({
           onClick={grid.onToggle}
         >
           <Grid3x3Icon />
-          {labels.grid}
+          <span className={BUTTON_WORDS}>{labels.grid}</span>
         </Button>
       )}
       {contentType}
@@ -192,13 +199,13 @@ export function CanvasToolbar({
           onClick={auto.onClick}
         >
           <UndoIcon />
-          {MESSAGES.editors.auto}
+          <span className={BUTTON_WORDS}>{MESSAGES.editors.auto}</span>
         </Button>
       )}
       {compare === undefined ? (
         <Button variant="ghost" size="sm" disabled title={labels.compareSoon}>
           <GitCompareIcon />
-          {labels.compare}
+          <span className={BUTTON_WORDS}>{labels.compare}</span>
         </Button>
       ) : (
         <DropdownMenu>
@@ -211,7 +218,7 @@ export function CanvasToolbar({
               data-testid="compare-menu"
             >
               <GitCompareIcon />
-              {MESSAGES.processing.compare.toggle}
+              <span className={BUTTON_WORDS}>{MESSAGES.processing.compare.toggle}</span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" side="top">

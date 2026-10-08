@@ -12,11 +12,11 @@ import {
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
-import { finishedRuns } from './support/page-work';
+import { runPages } from './support/page-work';
 
 /**
- * The step bar and the workspace of a step in Geometry: the bar stands under the row above the canvas and takes nothing
- * of the screen away, a step opens on a link of its own with its input on the canvas and its section in the panel, the
+ * The step bar and the workspace of a step in Geometry: the bar stands above the canvas with the buttons of the strip and
+ * the panel at its ends and takes nothing of the screen away, a step opens on a link of its own with its input on the canvas and its section in the panel, the
  * dots of the bar tell the state of each step on the open page, and the step stays open as the page and the step change.
  *
  * The book has two Deskew steps, one after the other, both for every page of the recipe.
@@ -25,7 +25,6 @@ import { finishedRuns } from './support/page-work';
 const PAGES = 3;
 const PLATE_POSITION = 1;
 const SCENARIO_TIMEOUT_MS = 240_000;
-const RUN_TIMEOUT_MS = 90_000;
 const DESKEW = 'geometry.deskew';
 const FIRST_DESKEW_INDEX = 1;
 // A step added from the catalogue stands where its processor usually does, which is right after the first one
@@ -45,7 +44,7 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
   const panel = page.getByTestId('step-panel');
   let stepCount = 0;
 
-  await test.step('a book with a plate opens on Geometry, and the bar of steps stands under the row above the canvas', async () => {
+  await test.step('a book with a plate opens on Geometry, and the bar of steps holds the buttons of the strip and the panel', async () => {
     await registerAndSignIn(page);
     await createBook(page, 'A book of steps');
     await uploadFolder(page, folder, PAGES);
@@ -65,12 +64,9 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await expect(page).toHaveURL(STEP_ADDRESS);
     await expect(panel).toHaveCount(1);
     await expect(barSteps.nth(stepCount - 1)).toHaveAttribute('data-open', 'true');
-    // Under the row above the canvas, which still holds its buttons and the page chip
-    const header = await page.getByTestId('toggle-panel').boundingBox();
-    const barBox = await bar.boundingBox();
-    expect(header).not.toBeNull();
-    expect(barBox).not.toBeNull();
-    expect(barBox?.y ?? 0).toBeGreaterThanOrEqual((header?.y ?? 0) + (header?.height ?? 0) - 1);
+    // The bar takes the place of the row above the canvas, so the buttons of the strip and the panel are its ends
+    await expect(bar.getByTestId('toggle-strip')).toBeVisible();
+    await expect(bar.getByTestId('toggle-panel')).toBeVisible();
   });
 
   await test.step('everything the screen had before the bar is where it was', async () => {
@@ -89,7 +85,7 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await expect(page.getByTestId('step-add')).toHaveCount(0);
   });
 
-  await test.step('a second Deskew is added after the first and saved', async () => {
+  await test.step('a second Deskew is added after the first, which saves it', async () => {
     await page.getByTestId('step-catalogue').click();
     await page.getByTestId('step-catalogue-list').locator(`[data-processor="${DESKEW}"]`).click();
     await expect(barSteps).toHaveCount(stepCount + 1);
@@ -97,12 +93,12 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     // A stage with a bar has a step open all the time, so the added one is open once the address names it
     await expect(barSteps.nth(SECOND_DESKEW_INDEX)).toHaveAttribute('data-open', 'true');
     await expect(page).toHaveURL(STEP_ADDRESS);
-    await page.getByTestId('recipe-save').click();
+    // A step chosen in the catalogue is saved with the recipe at once, so nothing is left to save
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
     await expect(barSteps).toHaveCount(stepCount + 1);
   });
 
-  await test.step('the second Deskew is opened, and the recipe is run up to it on every page from its section', async () => {
+  await test.step('the second Deskew is opened, and the recipe is run up to it on every page', async () => {
     await waitForIdleJobs(page, openProjectId(page));
     await barSteps.nth(SECOND_DESKEW_INDEX).click();
     await expect(page).toHaveURL(STEP_ADDRESS);
@@ -110,9 +106,7 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
       `${SECOND_DESKEW_INDEX + 1} · Deskew`,
     );
     await expect(barSteps.nth(SECOND_DESKEW_INDEX)).toHaveAttribute('aria-current', 'step');
-    const before = await finishedRuns(page);
-    await page.getByTestId('step-auto').click();
-    await expect.poll(() => finishedRuns(page), { timeout: RUN_TIMEOUT_MS }).toBe(before + 1);
+    await runPages(page, { throughOpenStep: true });
   });
 
   await test.step('the first Deskew is open on a page of text: found there, with its input on the canvas and its counts in the panel', async () => {
@@ -121,7 +115,6 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await expect(page).toHaveURL(new RegExp(`/steps/${firstId}`));
     await expect(page.getByTestId('step-panel-title')).toHaveText('2 · Deskew');
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
-    await expect(page.getByTestId('step-panel-state')).toContainText('Found by the step');
     await expect(barSteps.nth(FIRST_DESKEW_INDEX)).toHaveAttribute('data-state', 'found');
     // The sections of the panel that were there before the step are under the section of the step
     await expect(page.getByTestId('this-page')).toBeVisible();

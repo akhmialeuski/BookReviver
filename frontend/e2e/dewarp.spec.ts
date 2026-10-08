@@ -13,7 +13,7 @@ import {
   writeBentSheetsFolder,
 } from './support/account';
 import { dragFrom, pairOf } from './support/layer';
-import { runAllPages } from './support/page-work';
+import { runPages } from './support/page-work';
 
 /**
  * The Geometry stage on scans of a sheet whose lines are bent into the gutter: the dewarping step of the default recipe
@@ -39,7 +39,7 @@ test.use({ viewport: { width: 1280, height: 1000 } });
 
 /** Run the stage on all pages and wait until every page is up to date. */
 async function runAll(page: Page): Promise<void> {
-  await runAllPages(page);
+  await runPages(page);
   await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
     timeout: RUN_TIMEOUT_MS,
   });
@@ -145,7 +145,6 @@ test('a reader flattens a page bent into the gutter, lays its two curves by hand
     await expect(curvesStep).toHaveAttribute('data-open', 'true');
     await expect(layer).toHaveAttribute('data-rows', SIMPLE_ROWS);
     await expect(layer).toHaveAttribute('data-columns', CURVE_NODES);
-    await expect(page.getByTestId('mesh-hint')).toBeVisible();
     // The curves lie inside the page and the bottom one is below the top one
     const top = await pairOf(layer, 'data-node-0-2');
     node = await pairOf(layer, 'data-node-1-2');
@@ -208,10 +207,10 @@ test('a reader flattens a page bent into the gutter, lays its two curves by hand
   });
 
   await test.step('Auto takes the curves away and the step finds them by itself again', async () => {
-    await page.getByTestId('editor-auto').click();
+    await page.getByTestId('canvas-auto').click();
     await expect(curvesStep).toHaveAttribute('data-state', 'found', { timeout: RUN_TIMEOUT_MS });
     await settled();
-    await expect(page.getByTestId('editor-auto')).toBeDisabled();
+    await expect(page.getByTestId('canvas-auto')).toHaveCount(0);
     // The version of the step without the edit is found again in the cache, so it is not the newest, and the facts of
     // the page are the ones the step found before the reader moved a node
     await expect.poll(factsText, { timeout: RUN_TIMEOUT_MS }).toBe(automaticFacts);

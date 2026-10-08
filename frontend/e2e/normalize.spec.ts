@@ -11,7 +11,7 @@ import {
   waitForIdleJobs,
   writeScaledSheetsFolder,
 } from './support/account';
-import { runAllPages } from './support/page-work';
+import { runPages } from './support/page-work';
 
 /**
  * Making the pages of a book alike: the book is measured and the Geometry stage puts the content box of every page on a page of
@@ -48,7 +48,7 @@ interface Result {
 
 /** Run the stage on all pages and wait until every page is up to date. */
 async function runAll(page: Page): Promise<void> {
-  await runAllPages(page);
+  await runPages(page);
   await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
     timeout: RUN_TIMEOUT_MS,
   });

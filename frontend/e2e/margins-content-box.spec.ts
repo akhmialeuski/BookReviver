@@ -12,7 +12,7 @@ import {
   writeScaledSheetsFolder,
 } from './support/account';
 import { dragFrom, numbersOf, pairOf } from './support/layer';
-import { countEdits, pageIds, readSettings, runAllPages } from './support/page-work';
+import { countEdits, pageIds, readSettings, runPages } from './support/page-work';
 
 /**
  * The content box and the border of the page on the Margins step: both are found when the step is opened on a page that has
@@ -82,7 +82,7 @@ async function sizesOf(page: Page, projectId: string): Promise<(Size | null)[]> 
 
 /** Run the stage on all pages and wait until every page is up to date. */
 async function runAll(page: Page): Promise<void> {
-  await runAllPages(page);
+  await runPages(page);
   await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
     timeout: RUN_TIMEOUT_MS,
   });
@@ -101,7 +101,11 @@ test('the content box and the border of a page are found on opening, edited with
   let boxByHand: number[] = [];
 
   page.on('request', (request) => {
-    if (request.method() === 'PUT' && request.url().includes('/settings/geometry/')) {
+    // A margin set on the page is a value of the step for that page
+    if (
+      request.method() === 'PUT' &&
+      /\/stages\/geometry\/steps\/[^/]+\/values\//.test(request.url())
+    ) {
       settingSaves.push(request.url());
     }
   });
@@ -157,7 +161,7 @@ test('the content box and the border of a page are found on opening, edited with
     expect(outerTop).toBeLessThan(top);
     expect(outerLeft + outerWidth).toBeGreaterThan(left + width);
     expect(outerTop + outerHeight).toBeGreaterThan(top + height);
-    await expect(page.getByTestId('editor-auto')).toBeDisabled();
+    await expect(page.getByTestId('canvas-auto')).toHaveCount(0);
     await snap(page, 'margins-found-on-open');
   });
 
@@ -170,7 +174,7 @@ test('the content box and the border of a page are found on opening, edited with
     expect(boxByHand[2]).toBeLessThan(found[2] ?? 0);
     expect(boxByHand[3]).toBeLessThan(found[3] ?? 0);
     expect(await countEdits(page, (await pageIds(page))[0] ?? '')).toBe(1);
-    await expect(page.getByTestId('editor-auto')).toBeEnabled();
+    await expect(page.getByTestId('canvas-auto')).toBeEnabled();
     await snap(page, 'margins-box-dragged');
   });
 
@@ -243,7 +247,7 @@ test('the content box and the border of a page are found on opening, edited with
   });
 
   await test.step('Auto takes the box away and the step finds it again, where the settings of the page stay', async () => {
-    await page.getByTestId('editor-auto').click();
+    await page.getByTestId('canvas-auto').click();
     await expect(layer).toHaveAttribute('data-figure', 'found', { timeout: RUN_TIMEOUT_MS });
     await settled();
     // The box is drawn from the result again once the page has been read after the run, which the busy mark does not wait for

@@ -53,7 +53,8 @@ export function ParamsForm({
       liveValidate
       showErrorList={false}
       noHtml5Validate
-      className="grid gap-3"
+      // One column as wide as the panel, which a long label of a choice is cut to instead of widening the form
+      className="grid grid-cols-1 gap-3"
       onChange={(event) => onChange({ ...(event.formData ?? {}) })}
     />
   );

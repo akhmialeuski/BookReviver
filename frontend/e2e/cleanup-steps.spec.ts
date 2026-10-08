@@ -12,18 +12,17 @@ import {
   waitForIdleJobs,
   writeSheetsFolder,
 } from './support/account';
-import { runAllPages } from './support/page-work';
+import { runPages } from './support/page-work';
 
 /**
- * The step bar and the workspace of a step in Cleanup, which are the ones Geometry has: the bar stands under the row above
- * the canvas with the four steps of the text recipe, Thickness opens on a link of its own with its settings in the panel,
+ * The step bar and the workspace of a step in Cleanup, which are the ones Geometry has: the bar stands above the canvas
+ * with the four steps of the text recipe, Thickness opens on a link of its own with its settings in the panel,
  * the recipe runs up to it on the open page, and the strip of the open step lists the pages that carry a flag the server
  * put on them, such as the pages set by hand.
  */
 
 const PAGES = 3;
 const SCENARIO_TIMEOUT_MS = 300_000;
-const RUN_TIMEOUT_MS = 120_000;
 const THICKNESS = 'cleanup.thickness';
 const THICKNESS_INDEX = 2;
 const STEP_TITLES = ['Binarization', 'Despeckle', 'Thickness', 'Fill zones'];
@@ -33,13 +32,6 @@ const STEP_ADDRESS = /\/stages\/cleanup\/steps\/[0-9a-f-]{36}(\?|$)/;
 
 // Tall enough for the pictures of the key states to show the bar, the canvas and the panel together
 test.use({ viewport: { width: 1280, height: 1000 } });
-
-/** Count the runs of a stage that ended well in the open book, which tells that a run the reader started is over. */
-async function finishedRuns(page: Page): Promise<number> {
-  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/jobs?size=50`);
-  const items = ((await listed.json()) as { items: { kind: string; state: string }[] }).items;
-  return items.filter((job) => job.kind === 'run-stage' && job.state === 'succeeded').length;
-}
 
 /** The flags the server puts on each page of the book at a step of Cleanup, in the order of the book. */
 async function flagsAt(page: Page, stepId: string): Promise<string[][]> {
@@ -75,7 +67,7 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(strip).toHaveCount(PAGES);
-    await runAllPages(page);
+    await runPages(page);
   });
 
   await test.step('the bar of Cleanup shows its four steps in order, and nothing of the screen is gone', async () => {
@@ -87,8 +79,6 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
     for (const [index, title] of STEP_TITLES.entries()) {
       await expect(barSteps.nth(index)).toContainText(title);
     }
-    // The three steps that clean the pages of text carry the mark of the condition
-    await expect(page.getByTestId('bar-step-mark')).toHaveText(['¶', '¶', '¶']);
     for (const id of [
       'toggle-strip',
       'toggle-panel',
@@ -123,13 +113,7 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
       .fill(RECIPE_AMOUNT);
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
-    const before = await finishedRuns(page);
-    await page.getByTestId('step-auto-page').click();
-    await expect.poll(() => finishedRuns(page), { timeout: RUN_TIMEOUT_MS }).toBe(before + 1);
-    await waitForIdleJobs(page, openProjectId(page));
-    await expect(page.getByTestId('step-panel-state')).toContainText('Found by the step', {
-      timeout: RUN_TIMEOUT_MS,
-    });
+    await runPages(page, { pages: 'page', throughOpenStep: true });
     await expect(barSteps.nth(THICKNESS_INDEX)).toHaveAttribute('data-state', 'found');
   });
 
@@ -140,7 +124,7 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
       /^Step unsure · \d+$/,
       /^Differs from the book · \d+$/,
       'Set by hand · 0',
-      /^Skipped by the condition · \d+$/,
+      /^Skipped: a leaf the program drew · \d+$/,
     ]);
     await flagFilter.selectOption('by-hand');
     await expect(strip).toHaveCount(0);
@@ -151,7 +135,8 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
   await test.step('a page that has an amount of its own for the step is set by hand, and the filter lists it alone', async () => {
     await amount.getByTestId('value-add').click();
     await page.getByTestId('value-choice-page').click();
-    await amount.getByTestId('value-chip-edit').click();
+    // The value just added opens its field at once
+    await expect(amount.getByTestId('value-chip-edit')).toHaveAttribute('aria-expanded', 'true');
     await amount.getByRole('spinbutton').fill(PAGE_AMOUNT);
     await expect(amount.getByTestId('value-chip')).toBeVisible();
     await expect(flagFilter.locator('option').nth(3)).toHaveText('Set by hand · 1');

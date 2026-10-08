@@ -3,6 +3,7 @@ import type { JobKind, JobSchema, JobState, Stage } from '@/api';
 import { readJobApiV1JobsJobIdGetQueryKey } from '@/api/@tanstack/react-query.gen';
 import {
   invalidateAllStageRows,
+  invalidateAllVersions,
   invalidateJobs,
   invalidatePages,
   invalidateProject,
@@ -64,6 +65,8 @@ const ACTIVE_JOB_STATES: ReadonlySet<string> = new Set<JobState>(['queued', 'run
 /** The kind of the job that measures the book, and the stage whose recipe it writes into. */
 const MEASURE_BOOK_KIND: JobKind = 'measure-book';
 const GEOMETRY_STAGE: Stage = 'geometry';
+/** The kind of the job that takes the files of the old results of the pages away. */
+const COLLECT_VERSIONS_KIND: JobKind = 'collect-versions';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -123,6 +126,10 @@ export function applyProjectEvent(
           if (event.data.kind === MEASURE_BOOK_KIND) {
             // The job wrote the line height and the page size into the recipe of the Geometry stage
             void invalidateRecipes(queryClient, projectId, GEOMETRY_STAGE);
+          }
+          if (event.data.kind === COLLECT_VERSIONS_KIND) {
+            // The job took the files of the old results away, which have to be made again before they are used
+            void invalidateAllVersions(queryClient, projectId);
           }
         }
       }

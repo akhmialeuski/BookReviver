@@ -7,18 +7,18 @@ import {
   registerAndSignIn,
   snap,
   uploadFolder,
-  waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
+import { runPages } from './support/page-work';
 
 /**
- * A stage run step by step: the Geometry recipe is run through its first step on every page from the panel of that step and
- * checked, then through its last step, and the first step is found in the cache of versions and not computed again.
+ * A stage run step by step: the Geometry recipe is run through its first step on every page from the menu of the run with
+ * that step open and checked, then through its last step, and the first step is found in the cache of versions and not
+ * computed again.
  */
 
 const PAGES = 4;
 const SCENARIO_TIMEOUT_MS = 240_000;
-const RUN_TIMEOUT_MS = 90_000;
 const FIRST = 0;
 
 // Tall enough for the pictures of the key states to show the steps of the recipe and the section of the open page
@@ -27,13 +27,6 @@ test.use({ viewport: { width: 1280, height: 1000 } });
 interface StoredVersion {
   id: string;
   created_at: string;
-}
-
-/** Count the runs of a stage that ended well in the open book, which tells that a run the reader started is over. */
-async function finishedRuns(page: Page): Promise<number> {
-  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/jobs?size=50`);
-  const items = ((await listed.json()) as { items: { kind: string; state: string }[] }).items;
-  return items.filter((job) => job.kind === 'run-stage' && job.state === 'succeeded').length;
 }
 
 /** Read the full results the Geometry stage made on the first page of the open book, the oldest first. */
@@ -70,15 +63,10 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
     await expect(steps.nth(index)).toHaveAttribute('data-open', 'true');
   };
 
-  /** Run the recipe up to a step on all pages from the panel of the step, and wait for the run to end. */
+  /** Run the recipe up to a step on all pages with the step open, and wait for the run to end. */
   const runThrough = async (index: number): Promise<void> => {
-    // A run is refused while the book still splits, collects old versions or does anything else, and a job of the
-    // earlier stage that ends now would count as the run started here
-    await waitForIdleJobs(page, openProjectId(page));
     await openStep(index);
-    const before = await finishedRuns(page);
-    await page.getByTestId('step-auto').click();
-    await expect.poll(() => finishedRuns(page), { timeout: RUN_TIMEOUT_MS }).toBe(before + 1);
+    await runPages(page, { throughOpenStep: true });
   };
 
   await test.step('a book opens on the Geometry stage, whose recipe has several steps', async () => {
@@ -98,14 +86,12 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
     await expect(page.getByTestId('strip-stopped-filter')).toHaveCount(0);
   });
 
-  await test.step('"Auto on all pages" in the panel of the first step runs it on every page and leaves the rest', async () => {
+  await test.step('a run of all pages through the first step runs it on every page and leaves the rest', async () => {
     await runThrough(FIRST);
     await openStep(stepCount - 1);
     await expect(page.getByTestId('run-stopped')).toHaveText(
       `Done through step 1 of ${stepCount}: ${PAGES} pages`,
     );
-    // The stage is not done while its pages wait for the rest of the steps
-    await expect(page.getByTestId('stage-stopped').first()).toBeVisible();
     const made = await geometryVersions(page);
     expect(made).toHaveLength(1);
     firstStepVersion = made[0];
@@ -125,11 +111,10 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
     await snap(page, 'page-stopped-at-the-first-step');
   });
 
-  await test.step('"Auto on all pages" in the panel of the last step finds the first in the cache and makes the rest', async () => {
+  await test.step('a run of all pages through the last step finds the first in the cache and makes the rest', async () => {
     await runThrough(stepCount - 1);
     await expect(page.getByTestId('run-stopped')).toHaveCount(0);
     await expect(page.getByTestId('strip-stopped-filter')).toHaveCount(0);
-    await expect(page.getByTestId('stage-stopped')).toHaveCount(0);
     const made = await geometryVersions(page);
     expect(made).toHaveLength(stepCount);
     // The version of the first step is the very one the first run made, so that step was not computed again

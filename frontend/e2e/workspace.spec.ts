@@ -64,8 +64,8 @@ test('a reader works through the stages of a book', async ({ page }) => {
     await expect(bar.getByRole('link', { name: /^Order/ })).toHaveAttribute('aria-current', 'page');
     // A stage without a processor says so, and still opens
     await expect(page.getByTestId('stage-layout')).toContainText('Soon');
-    await expect(page.getByTestId('stage-page-order')).toContainText('6 pages');
-    await expect(page.getByTestId('stage-import')).toContainText('6 files');
+    await expect(page.getByTestId('stage-page-order')).toContainText('Done');
+    await expect(page.getByTestId('stage-import')).toHaveAttribute('data-status', 'done');
   });
 
   await test.step('moving between stages changes the address', async () => {

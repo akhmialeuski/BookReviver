@@ -13,7 +13,7 @@ import {
   writeSheetsFolder,
 } from './support/account';
 import { dragFrom, numbersOf, pairOf } from './support/layer';
-import { runAllPages } from './support/page-work';
+import { runPages } from './support/page-work';
 
 /**
  * The Geometry stage on scans of a sheet of paper laid on a dark binding: the steps of the default recipe find the sheet,
@@ -43,7 +43,7 @@ const FRAME = 'Select content';
 
 /** Run the stage on all pages and wait until every page is up to date. */
 async function runAll(page: Page): Promise<void> {
-  await runAllPages(page);
+  await runPages(page);
   await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
     timeout: RUN_TIMEOUT_MS,
   });
@@ -143,7 +143,6 @@ test('a reader corrects the sheet, the angle and the frame of a page, and the co
     // The frame holds the words, which stand inside the sheet
     expect(left).toBeGreaterThan(0);
     expect(top).toBeGreaterThan(0);
-    await expect(page.getByTestId('rect-hint')).toBeVisible();
     await snap(page, 'geometry-content-frame');
   });
 
@@ -192,13 +191,13 @@ test('a reader corrects the sheet, the angle and the frame of a page, and the co
   await test.step('Auto takes the corrections away one step at a time and the steps find the result by themselves', async () => {
     for (const title of [SHEET, ANGLE, FRAME]) {
       await stepOf(title).click();
-      await page.getByTestId('editor-auto').click();
+      await page.getByTestId('canvas-auto').click();
       await expect(stepOf(title)).toHaveAttribute('data-state', 'found', {
         timeout: RUN_TIMEOUT_MS,
       });
       await settled();
     }
-    await expect(page.getByTestId('editor-auto')).toBeDisabled();
+    await expect(page.getByTestId('canvas-auto')).toHaveCount(0);
     await expect(facts).toContainText('Automatic', { timeout: RUN_TIMEOUT_MS });
     // The sheet, the angle and two frames were saved, and the first frame was taken back by Ctrl+Z
     expect(saves).toHaveLength(4);

@@ -10,7 +10,7 @@ import {
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
-import { openTimeline, RESULT_ROWS, runAllPages } from './support/page-work';
+import { openTimeline, RESULT_ROWS, runPages } from './support/page-work';
 
 /**
  * The results a page keeps after their pictures are collected: the collection that a run queues when it ends removes
@@ -60,7 +60,7 @@ test('a result whose picture was collected is made again when it is used', async
     // The import leaves jobs behind it, and a run asked for while they last is refused
     await waitForIdleJobs(page, projectId);
 
-    await runAllPages(page);
+    await runPages(page);
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });
@@ -77,7 +77,7 @@ test('a result whose picture was collected is made again when it is used', async
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
     // The page is marked to check, which the stale banner does not offer to run, so the stage is run on all pages
-    await runAllPages(page);
+    await runPages(page);
     await expect(entries).toHaveCount(2, { timeout: RUN_TIMEOUT_MS });
     await expect(entries.first()).toHaveAttribute('data-current', 'true');
     await waitForIdleJobs(page, projectId);

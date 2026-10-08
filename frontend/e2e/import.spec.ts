@@ -8,6 +8,7 @@ import {
   uploadFolder,
   writePagesFolder,
 } from './support/account';
+import { pageIds } from './support/page-work';
 
 /**
  * The Import stage of a book with files: the list with its counts, the panel of the chosen file, a scan opened large
@@ -29,9 +30,8 @@ test('the Import stage lists the files, opens their scans and leads on to Order'
     importPath = new URL(page.url()).pathname;
   });
 
-  await test.step('the list and the stage bar count the files and their scans', async () => {
+  await test.step('the list counts the files and their scans', async () => {
     await expect(page.getByTestId('files-summary')).toContainText('4 files · 4 scans');
-    await expect(page.getByTestId('stage-import')).toContainText('4 files · 4 scans');
     await expect(page.getByTestId('source-name')).toHaveText([
       'book/page-01.png',
       'book/page-02.png',
@@ -106,9 +106,8 @@ test('the Import stage lists the files, opens their scans and leads on to Order'
     await page.getByRole('button', { name: 'Delete file' }).click();
     await expect(page.getByTestId('source-name')).toHaveCount(FILES - 1);
     await expect(page.getByTestId('files-summary')).toContainText('3 files · 3 scans');
-    await expect(page.getByTestId('stage-import')).toContainText('3 files · 3 scans');
     // The pages cut from the file stay in the book
-    await expect(page.getByTestId('stage-page-order')).toContainText('4 pages');
+    expect(await pageIds(page)).toHaveLength(FILES);
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

@@ -4,7 +4,7 @@ import { expect, type Page, test } from '@playwright/test';
 import { MESSAGES } from '../src/shared/messages';
 import {
   createBook,
-  openProjectId,
+  recipeOf,
   registerAndSignIn,
   snap,
   uploadFolder,
@@ -113,7 +113,8 @@ test('a step off its usual place is marked and put back, a place where it cannot
     const mark = windowStepOf(page, CROP).getByTestId('step-order-mark');
     await expect(mark).toHaveText('Out of place');
     await expect(mark).toHaveAttribute('data-kind', 'usual');
-    await expect(windowStepOf(page, CROP).getByTestId('step-order-reason')).toContainText(
+    // The first step of the window is open, so its reasons are written out under it
+    await expect(windowStepOf(page, CROP).getByTestId('step-order-details')).toContainText(
       'Select content',
     );
     await expect(marks).toHaveCount(1);
@@ -167,13 +168,7 @@ test('a step off its usual place is marked and put back, a place where it cannot
     await window.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
 
-    const saved = await page.request.get(
-      `/api/v1/projects/${openProjectId(page)}/stages/geometry/recipe`,
-    );
-    const recipe = (await saved.json()) as {
-      steps: { processor_key: string }[];
-      order_issues: { kind: string; processor_key: string }[];
-    };
+    const recipe = await recipeOf(page, 'geometry');
     expect(recipe.steps.map((step) => step.processor_key)).toEqual(placed);
     expect(recipe.order_issues).toMatchObject([{ kind: 'required', processor_key: NORMALIZE }]);
     // A recipe saved in the free order is opened in it, so the next save is not refused

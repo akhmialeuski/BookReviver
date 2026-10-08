@@ -13,8 +13,8 @@ import {
 
 /**
  * The content type of a page: the program finds text, a colour picture or a black-and-white one on each page as the
- * pages are made, the strip marks every page with it, and the selected pages are changed at once and given back to the
- * program.
+ * pages are made, the strip marks every page with it, and the selected pages are changed at once from the menu of the
+ * canvas toolbar and given back to the program.
  */
 
 const SCENARIO_TIMEOUT_MS = 240_000;
@@ -49,7 +49,8 @@ test('the program finds what each page shows, the strip marks it, and the select
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writeMixedFolder();
   const marks = page.getByTestId('strip-content');
-  const select = page.getByTestId('content-type-select');
+  const menu = page.getByTestId('content-type-menu');
+  const selectedScope = page.getByTestId('content-scope-selected');
 
   await test.step('the pages made from the scans are detected without being asked', async () => {
     await registerAndSignIn(page);
@@ -85,40 +86,48 @@ test('the program finds what each page shows, the strip marks it, and the select
     await tiles.nth(COLOUR_POSITION).click();
     await tiles.nth(BW_POSITION).click({ modifiers: ['ControlOrMeta'] });
     await expect(page.getByTestId('grid-selection')).toHaveText('2 pages selected');
-    await expect(select).toHaveValue('');
-    await expect(page.getByTestId('content-type-pages')).toHaveText('2 selected pages');
+    // The selection stays as the strip comes back, and the menu of the canvas toolbar reaches the selected pages
+    await page.getByTestId('strip-view-switch').click();
+    await expect(page).not.toHaveURL(/view=grid/);
+    await menu.click();
+    await expect(selectedScope).toContainText('2');
+    await selectedScope.click();
+    await expect(selectedScope).toHaveAttribute('aria-checked', 'true');
     await snap(page, 'content-type-two-pages-selected');
 
-    await select.selectOption('text');
+    await page.getByTestId('content-type-text').click();
     await expect
       .poll(() => contentOf(page))
       .toEqual(['text:detected', 'text:hand', 'text:hand', 'text:detected']);
     await expect(marks.nth(COLOUR_POSITION)).toHaveAttribute('data-content', 'text');
     await expect(marks.nth(COLOUR_POSITION)).toHaveAttribute('data-source', 'hand');
     await expect(marks.nth(BW_POSITION)).toHaveAttribute('data-source', 'hand');
-    await expect(select).toHaveValue('text');
-    await expect(page.getByTestId('content-type-sources')).toHaveText(
-      '0 found by the program · 2 set by hand',
-    );
     await snap(page, 'content-type-set-by-hand');
   });
 
   await test.step('the pages set by hand are given back to the program, which finds the pictures again', async () => {
+    await menu.click();
+    await expect(selectedScope).toHaveAttribute('aria-checked', 'true');
     await page.getByTestId('content-type-detect').click();
     await expect
       .poll(() => contentOf(page), { timeout: DETECT_TIMEOUT_MS })
       .toEqual(['text:detected', 'color-picture:detected', 'bw-picture:detected', 'text:detected']);
+    // The menu stays open while the program works, so it is shut once the pages are found again
+    await page.keyboard.press('Escape');
     await expect(marks.nth(COLOUR_POSITION)).toHaveAttribute('data-source', 'detected');
     await expect(marks.nth(BW_POSITION)).toHaveAttribute('data-content', 'bw-picture');
     await snap(page, 'content-type-detected-again');
   });
 
   await test.step('a single open page is changed without a selection', async () => {
+    await page.getByTestId('strip-view-switch').click();
+    await expect(page).toHaveURL(/view=grid/);
     await page.getByRole('button', { name: 'Clear the selection' }).click();
     await page.getByTestId('strip-page').nth(LAST_POSITION).dblclick();
     await expect(page).not.toHaveURL(/view=grid/);
-    await expect(select).toHaveValue('text');
-    await select.selectOption('bw-picture');
+    await expect(menu).toHaveAttribute('data-content', 'text');
+    await menu.click();
+    await page.getByTestId('content-type-bw-picture').click();
     await expect
       .poll(() => contentOf(page))
       .toEqual([

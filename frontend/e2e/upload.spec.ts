@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { confirmationLink, PASSWORD } from './support/account';
+import { pageIds } from './support/page-work';
 import { solidPng } from './support/png';
 
 /**
@@ -82,8 +83,7 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
     await expect(page.getByTestId('import-empty')).toBeVisible();
     await expect(page.getByText('Drop a folder or files here')).toBeVisible();
     await expect(page.getByTestId('import-tips')).toContainText('Good to know');
-    await expect(page.getByTestId('stage-import')).toContainText('No files yet');
-    await expect(page.getByTestId('stage-page-order')).toContainText('Waits for pages');
+    await expect(page.getByTestId('stage-page-order')).toHaveAttribute('data-status', 'waiting');
   });
 
   await test.step('a file dropped on the empty stage is imported without a dialog', async () => {
@@ -102,7 +102,6 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.getByTestId('import-row')).toHaveCount(0);
     await expect(page.getByTestId('files-summary')).toContainText('1 file · 1 scan');
-    await expect(page.getByTestId('stage-import')).toContainText('1 file · 1 scan');
   });
 
   await test.step('choose the folder and check the list before sending', async () => {
@@ -159,7 +158,7 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
   });
 
   await test.step('the book lists its files in the order that was chosen, and counts their pages', async () => {
-    await expect(page.getByTestId('stage-page-order')).toContainText('5 pages');
+    expect(await pageIds(page)).toHaveLength(5);
     await expect(page.getByTestId('source-name')).toHaveText([
       'cover.png',
       'book/vol2/a-1.png',
@@ -167,7 +166,7 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
       'book/vol1/2.png',
       'book/vol1/10.png',
     ]);
-    await expect(page.getByTestId('stage-import')).toContainText('5 files · 5 scans');
+    await expect(page.getByTestId('files-summary')).toContainText('5 files · 5 scans');
   });
 
   await test.step('choose a file to see its scans and what became of its pages', async () => {

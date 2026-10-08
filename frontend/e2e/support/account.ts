@@ -240,18 +240,45 @@ export function openProjectId(page: Page): string {
   return id;
 }
 
+/** A recipe of a stage as the API gives it: the kind of page it is for, its steps and what is wrong with their order. */
+export interface StoredRecipe {
+  kind: string;
+  steps: { processor_key: string; step_id: string }[];
+  order_issues: { kind: string; processor_key: string }[];
+}
+
 /**
- * Read the identifiers of the steps of the active recipe of a stage that run a processor, in the order of the recipe.
- * A manual edit is addressed by the identifier of its step, which the saves of a scenario are told apart by.
+ * Read the recipe of a kind of page of a stage of the open book. A stage has one recipe for each kind of page, each with
+ * steps of its own.
+ *
+ * @param kind The kind of page the recipe is for, `text` unless the scenario is about another kind.
  */
-export async function stepIdsOf(page: Page, stage: string, processor: string): Promise<string[]> {
+export async function recipeOf(page: Page, stage: string, kind = 'text'): Promise<StoredRecipe> {
   const response = await page.request.get(
-    `/api/v1/projects/${openProjectId(page)}/stages/${stage}/recipe`,
+    `/api/v1/projects/${openProjectId(page)}/stages/${stage}/recipes`,
   );
-  const recipe = (await response.json()) as {
-    steps: { processor_key: string; step_id: string }[];
-  };
-  return recipe.steps
+  const recipe = ((await response.json()) as { items: StoredRecipe[] }).items.find(
+    (entry) => entry.kind === kind,
+  );
+  if (recipe === undefined) {
+    throw new Error(`The stage ${stage} has no recipe for pages of the kind ${kind}.`);
+  }
+  return recipe;
+}
+
+/**
+ * Read the identifiers of the steps of the recipe of a kind of page of a stage that run a processor, in the order of the
+ * recipe. A manual edit is addressed by the identifier of its step, which the saves of a scenario are told apart by.
+ *
+ * @param kind The kind of page the recipe is for, `text` unless the scenario is about another kind.
+ */
+export async function stepIdsOf(
+  page: Page,
+  stage: string,
+  processor: string,
+  kind = 'text',
+): Promise<string[]> {
+  return (await recipeOf(page, stage, kind)).steps
     .filter((step) => step.processor_key === processor)
     .map((step) => step.step_id);
 }
