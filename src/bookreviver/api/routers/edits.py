@@ -14,9 +14,8 @@ from fastapi_pagination import Page, Params
 
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
-from bookreviver.api.schemas.edits import EditForm, PageEditSchema
+from bookreviver.api.schemas.edits import CarryForm, CarryOverSchema, EditForm, PageEditSchema
 from bookreviver.api.schemas.page_history import PageStepChangeSchema
-from bookreviver.api.schemas.page_settings import CarryForm, CarryOverSchema
 from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import PageId, ProjectId, StepId
@@ -157,7 +156,7 @@ async def carry_over_edit(
 ) -> CarryOverSchema:
     """Carry the shape this page has set by hand for a step over to other pages, as one batch, and mark them stale.
 
-    The pages are the following ones, the selected ones, or every page of the condition of the step. The whole shape is
+    The pages are the following ones, the selected ones, or every page of the kind of the step. The whole shape is
     carried and not a part of it, and the settings of each page stay as they are. A page that has a shape of its own set
     by hand is left as it is and listed as skipped, unless the form asks to write over it, and a page that has the same
     shape is neither written nor listed. The changes share a batch, so one undo takes the shape back from every page.

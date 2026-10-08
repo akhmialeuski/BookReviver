@@ -63,11 +63,7 @@ export function StepCatalogue({
     save.mutate(
       {
         path: { project_id: projectId, stage, recipe_id: recipe.id },
-        body: {
-          name: recipe.name,
-          steps: bodyOf(addStep(saved, processor, index)),
-          order: processing.orderMode,
-        },
+        body: { steps: bodyOf(addStep(saved, processor, index)), order: processing.orderMode },
       },
       {
         onSuccess: (updated) => {

@@ -47,11 +47,11 @@ interface ScreenStep {
 
 /** Read the steps the open window of the gear lists, in the order they are listed. */
 async function stepsInWindow(page: Page): Promise<ScreenStep[]> {
-  return page.getByTestId('window-step').evaluateAll((items) =>
+  return page.getByTestId('recipe-step').evaluateAll((items) =>
     items.map((item) => ({
       processor: item.getAttribute('data-processor') ?? '',
       on:
-        item.querySelector('[data-testid="window-step-enabled"]')?.getAttribute('data-state') ===
+        item.querySelector('[data-testid="step-enabled"]')?.getAttribute('data-state') ===
         'checked',
     })),
   );
@@ -116,7 +116,7 @@ test('a recipe is saved as a profile, applied in another book, made the default,
       DEWARP,
       NORMALIZE,
     ]);
-    await windowStepOf(page, PERSPECTIVE).getByTestId('window-step-enabled').click();
+    await windowStepOf(page, PERSPECTIVE).getByTestId('step-enabled').click();
     setUp = await stepsInWindow(page);
     expect(setUp).toEqual([
       { processor: CROP, on: true },
@@ -137,17 +137,15 @@ test('a recipe is saved as a profile, applied in another book, made the default,
     await expect(page.getByTestId('profile-saved')).toContainText(PROFILE_NAME);
   });
 
-  let secondBookPath = '';
-  await test.step('another book applies the profile as a variant, with the same steps in the same order', async () => {
-    secondBookPath = await newBookWithPages(page, 'A flatbed book', folder);
+  await test.step('another book applies the profile to its recipe for text, with the same steps in the same order', async () => {
+    const secondBookPath = await newBookWithPages(page, 'A flatbed book', folder);
     await openGeometry(page, secondBookPath);
-    // The built-in recipe is the active one and has the steps in their own order
+    // The built-in recipe has the steps in their own order
     expect((await stepsOnScreen(page)).map((step) => step.processor)).toEqual(BUILT_IN);
-    // The library is opened from the profile menu, and the profile is added as a variant, not made the active recipe
+    // The library is opened from the profile menu and applies the profile to the recipe for text, the kind of the open page
     await page.getByTestId('profile-button').click();
     await page.getByTestId('profile-manage').click();
     await expect(page.getByTestId('profile-library-panel')).toBeVisible();
-    await page.getByTestId('profile-activate').uncheck();
     const card = page.locator(`[data-testid="profile-row"][data-name="${PROFILE_NAME}"]`);
     await expect(card).toHaveCount(1);
     await snap(page, 'apply-profile-from-library');
@@ -156,10 +154,7 @@ test('a recipe is saved as a profile, applied in another book, made the default,
     await expect(page.getByTestId('profile-left-out')).toHaveCount(0);
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('profile-library-panel')).toHaveCount(0);
-    await expect(page.getByTestId('recipe-select')).toContainText(`${PROFILE_NAME} · 0 pages`);
     await expect.poll(() => stepsOnScreen(page)).toEqual(setUp);
-    // Applied as a variant, the profile leaves the built-in recipe the active one
-    await expect(page.getByTestId('recipe-active')).toHaveCount(0);
   });
 
   await test.step('the profile is made the default for new books and renamed in the settings of the account', async () => {
@@ -186,14 +181,7 @@ test('a recipe is saved as a profile, applied in another book, made the default,
   await test.step('a new book starts the Geometry stage with the default profile instead of the built-in recipe', async () => {
     const thirdBookPath = await newBookWithPages(page, 'A third book', folder);
     await openGeometry(page, thirdBookPath);
-    await expect(page.getByTestId('recipe-active')).toBeVisible();
-    await expect(page.getByTestId('recipe-select')).toContainText(`${RENAMED} · active`);
     await expect.poll(() => stepsOnScreen(page)).toEqual(setUp);
     await snap(page, 'new-book-starts-with-default-profile');
-  });
-
-  await test.step('the book that was open before the default was chosen keeps its own recipes', async () => {
-    await openGeometry(page, secondBookPath);
-    await expect(page.getByTestId('recipe-select')).not.toContainText(`${RENAMED} · active`);
   });
 });

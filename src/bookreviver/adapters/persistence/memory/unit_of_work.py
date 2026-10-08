@@ -10,8 +10,8 @@ transaction isolation:
   owner of a project is not checked, because accounts belong to fastapi-users and have no port.
 - Unique keys: the digest of a source's main file within its project, the number of a scan within its source, the
   order key of a page within its project, the pair of a scan and a slot, the project of a queued or running
-  import job, so a project runs one import at a time, and the project and stage of an active recipe, so a stage has
-  one active recipe.
+  import job, so a project runs one import at a time, and the project, stage and kind of a recipe, so a stage has
+  one recipe for each kind.
 - Referential actions: a project takes its sources, scans, pages, recipes and jobs with it, a source its scans, and a
   page its versions, stage records, step states and step changes. A deleted cover page leaves its project without a
   cover, a deleted scan leaves its pages without their scan, a deleted job leaves the sources it imported without
@@ -44,12 +44,22 @@ from bookreviver.domain.entities import (
     ProjectOverview,
     Recipe,
     RecipeProfile,
-    RecipeRule,
     ResultMarkChange,
     Scan,
     Source,
 )
-from bookreviver.domain.enums import JobKind, JobState, PageOrigin, Side, Stage, StageState, VersionScale, VersionState
+from bookreviver.domain.enums import (
+    JobKind,
+    JobState,
+    PageOrigin,
+    ResultMark,
+    Side,
+    Stage,
+    StageState,
+    ValueScope,
+    VersionScale,
+    VersionState,
+)
 from bookreviver.domain.errors import ConcurrentChangeError, ConflictError, DomainError, NotFoundError
 from bookreviver.domain.ids import (
     JobId,
@@ -60,12 +70,12 @@ from bookreviver.domain.ids import (
     ProjectId,
     RecipeId,
     RecipeProfileId,
-    RecipeRuleId,
     ResultMarkChangeId,
     ScanId,
     SourceId,
 )
-from bookreviver.domain.stage_summaries import StageTally, StepTally, VariantTally
+from bookreviver.domain.stage_summaries import StageTally, StepTally
+from bookreviver.domain.step_values import StepValues, StepValuesKey
 from bookreviver.domain.values import BookPlaceKey, PageSize, PageStageKey, PageStepKey, Slice, SliceRequest
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
@@ -80,11 +90,11 @@ from bookreviver.ports.persistence import (
     ProjectRepository,
     RecipeProfileRepository,
     RecipeRepository,
-    RecipeRuleRepository,
     Repository,
     ResultMarkChangeRepository,
     ScanRepository,
     SourceRepository,
+    StepValuesRepository,
     UnitOfWork,
 )
 
@@ -92,8 +102,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Hashable, Iterable, Mapping, Sequence
     from datetime import datetime
 
-    from bookreviver.domain.enums import ResultMark
+    from bookreviver.domain.enums import RecipeKind
     from bookreviver.domain.ids import AccountId, ChangeBatchId, StepId
+    from bookreviver.domain.values import ProcessorRef
 
 # Attribute holding the identifier of every entity addressed by one
 ID_ATTRIBUTE: str = 'id'
@@ -124,9 +135,9 @@ class InMemoryTables:
     :ivar page_stages: Page stage records by page and stage.
     :ivar page_step_states: Settings and manual edits of the steps by page, stage and step.
     :ivar page_step_changes: Changes of the layers of the steps of the pages by identifier.
+    :ivar step_values: Values of the steps for the odd pages, the even pages and the groups by step and part.
     :ivar result_mark_changes: Changes of the marks and comments of the results by identifier.
     :ivar recipes: Recipes by identifier.
-    :ivar recipe_rules: Rules of the stages by identifier.
     :ivar recipe_profiles: Recipe profiles of the accounts by identifier.
     :ivar jobs: Jobs by identifier.
     :ivar book_places: Places of books by account and book.
@@ -141,9 +152,9 @@ class InMemoryTables:
     page_stages: dict[PageStageKey, PageStage] = field(factory=dict)
     page_step_states: dict[PageStepKey, PageStepState] = field(factory=dict)
     page_step_changes: dict[PageStepChangeId, PageStepChange] = field(factory=dict)
+    step_values: dict[StepValuesKey, StepValues] = field(factory=dict)
     result_mark_changes: dict[ResultMarkChangeId, ResultMarkChange] = field(factory=dict)
     recipes: dict[RecipeId, Recipe] = field(factory=dict)
-    recipe_rules: dict[RecipeRuleId, RecipeRule] = field(factory=dict)
     recipe_profiles: dict[RecipeProfileId, RecipeProfile] = field(factory=dict)
     jobs: dict[JobId, Job] = field(factory=dict)
     book_places: dict[BookPlaceKey, BookPlace] = field(factory=dict)
@@ -352,9 +363,9 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
         remove_where(self._tables.page_stages, lambda stage: stage.page_id in doomed_pages)
         remove_where(self._tables.page_step_states, lambda state: state.page_id in doomed_pages)
         remove_where(self._tables.page_step_changes, lambda change: change.page_id in doomed_pages)
+        remove_where(self._tables.step_values, lambda values: values.project_id == entity.id)
         remove_where(self._tables.pagination_sections, lambda section: section.project_id == entity.id)
         remove_where(self._tables.pages, lambda page: page.id in doomed_pages)
-        remove_where(self._tables.recipe_rules, lambda rule: rule.project_id == entity.id)
         remove_where(self._tables.recipes, lambda recipe: recipe.project_id == entity.id)
         remove_where(self._tables.sources, lambda source: source.project_id == entity.id)
         remove_where(self._tables.scans, lambda scan: scan.project_id == entity.id)
@@ -808,6 +819,21 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         keys = [page.order_key for page in self._rows.values() if page.project_id == project_id]
         return max(keys, key=str.encode, default=None)
 
+    @override
+    async def kind_tally(self, project_id: ProjectId) -> Mapping[RecipeKind, int]:
+        """Count the pages with an image of each kind, leaving out the placeholders.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: The number of pages of each kind that has any page.
+        :rtype: Mapping[RecipeKind, int]
+        """
+        return Counter(
+            page.recipe_kind
+            for page in self._rows.values()
+            if page.project_id == project_id and page.origin is not PageOrigin.PLACEHOLDER
+        )
+
 
 class InMemoryPaginationSectionRepository(
     InMemoryRepository[PaginationSection, PaginationSectionId], PaginationSectionRepository
@@ -1048,15 +1074,11 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
         return Slice(items=matching[request.offset : request.offset + request.limit], total=len(matching))
 
     @override
-    async def collectable(
-        self, project_id: ProjectId, older_than: datetime, previews_older_than: datetime
-    ) -> Sequence[PageVersion]:
-        """Return the old versions that are neither base versions nor in the chain of a current version.
+    async def collectable(self, project_id: ProjectId, previews_older_than: datetime) -> Sequence[PageVersion]:
+        """Return the versions that are neither base versions nor in the chain of a current version.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
-        :param older_than: Full runs created before this moment may go.
-        :type older_than: datetime
         :param previews_older_than: Previews created before this moment may go.
         :type previews_older_than: datetime
         :returns: The versions that may be deleted, the earliest first, ties by identifier.
@@ -1074,7 +1096,9 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
             for version in versions.values()
             if version.input_id is not None
             and version.files_removed_at is None
-            and version.created_at < (previews_older_than if version.scale is VersionScale.PREVIEW else older_than)
+            and version.mark is not ResultMark.GOOD
+            and not version.comment
+            and (version.scale is not VersionScale.PREVIEW or version.created_at < previews_older_than)
         ]
         goes = collectable_versions(
             {version.id: version.input_id for version in versions.values()}, eligible=eligible, heads=heads
@@ -1198,6 +1222,31 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         )
 
     @override
+    async def list_replaced(self, stage: Stage, processor: ProcessorRef) -> Sequence[PageStage]:
+        """Return the records of a stage whose current version a replaced version of a processor made.
+
+        :param stage: The stage whose records are read.
+        :type stage: Stage
+        :param processor: The processor by key and installed version.
+        :type processor: ProcessorRef
+        :returns: The records whose current version was made by the key in another version, by page identifier.
+        :rtype: Sequence[PageStage]
+        """
+        versions = self._tables.page_versions
+        return sorted(
+            (
+                record
+                for record in self._rows.values()
+                if record.stage is stage
+                and record.head_version_id is not None
+                and (head := versions.get(record.head_version_id)) is not None
+                and head.processor.key == processor.key
+                and head.processor.version != processor.version
+            ),
+            key=attrgetter('page_id'),
+        )
+
+    @override
     async def list_for_project_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[PageStage]:
         """Return the records of one stage over the pages of a project, by page identifier.
 
@@ -1229,26 +1278,6 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
             for record in self._rows.values()
             if record.page_id in pages and record.head_version_id is not None
         }
-
-    @override
-    async def variant_tally(self, project_id: ProjectId) -> Sequence[VariantTally]:
-        """Count the pages each recipe processed, for every stage of the project, leaving out the pages with no image.
-
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
-        :returns: One tally for each recipe that processed a page.
-        :rtype: Sequence[VariantTally]
-        """
-        counts: Counter[tuple[Stage, RecipeId]] = Counter(
-            (record.stage, record.recipe_id)
-            for record in self._rows.values()
-            if record.recipe_id is not None
-            and (page := self._tables.pages[record.page_id]).project_id == project_id
-            and page.origin is not PageOrigin.PLACEHOLDER
-        )
-        return [
-            VariantTally(stage=stage, recipe_id=recipe_id, pages=pages) for (stage, recipe_id), pages in counts.items()
-        ]
 
     @override
     async def tally(self, project_ids: Collection[ProjectId]) -> Sequence[StageTally]:
@@ -1406,6 +1435,84 @@ class InMemoryPageStepStateRepository(InMemoryRepository[PageStepState, PageStep
                 if state.page_id in page_ids and state.stage == stage and state.step_id == step_id
             ),
             key=lambda state: str(state.page_id),
+        )
+
+
+class InMemoryStepValuesRepository(InMemoryRepository[StepValues, StepValuesKey], StepValuesRepository):
+    """The values of the steps for the odd pages, the even pages and the groups."""
+
+    def __init__(self, tables: InMemoryTables) -> None:
+        """Work on the step values table of the unit of work's copy, checking values against projects.
+
+        :param tables: Every table of the working copy.
+        :type tables: InMemoryTables
+        """
+        super().__init__(tables.step_values, tables)
+        self._identify = attrgetter(KEY_ATTRIBUTE)
+
+    @override
+    def _check(self, entity: StepValues) -> None:
+        """Require the project of the values.
+
+        :param entity: Values about to be stored.
+        :type entity: StepValues
+        :raises NotFoundError: If the project is not stored.
+        """
+        require(self._tables.projects, entity.project_id)
+
+    @override
+    async def save(self, values: StepValues) -> StepValues:
+        """Store the values, replacing the ones of the same step and part of the pages.
+
+        :param values: Values to store.
+        :type values: StepValues
+        :returns: The values as stored.
+        :rtype: StepValues
+        :raises NotFoundError: If the project is not stored.
+        """
+        self._check(values)
+        self._rows[values.key] = values
+        return values
+
+    @override
+    async def find(self, key: StepValuesKey) -> StepValues | None:
+        """Return the values one part of the pages has for one step.
+
+        :param key: The step and the part of the pages.
+        :type key: StepValuesKey
+        :returns: The values, or None.
+        :rtype: StepValues | None
+        """
+        return self._rows.get(key)
+
+    @override
+    async def list_for_step(self, step_id: StepId) -> Sequence[StepValues]:
+        """Return the values every part of the pages has for one step, by scope and group.
+
+        :param step_id: The step of a recipe.
+        :type step_id: StepId
+        :returns: The values of the step.
+        :rtype: Sequence[StepValues]
+        """
+        return sorted(
+            (values for values in self._rows.values() if values.step_id == step_id),
+            key=lambda values: (list(ValueScope).index(values.scope), values.group_label),
+        )
+
+    @override
+    async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[StepValues]:
+        """Return the values of every step of one stage of a project, by step, scope and group.
+
+        :param project_id: Project owning the steps.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The values of the stage.
+        :rtype: Sequence[StepValues]
+        """
+        return sorted(
+            (values for values in self._rows.values() if values.project_id == project_id and values.stage == stage),
+            key=lambda values: (str(values.step_id), list(ValueScope).index(values.scope), values.group_label),
         )
 
 
@@ -1616,7 +1723,7 @@ class InMemoryBookPlaceRepository(InMemoryRepository[BookPlace, BookPlaceKey], B
 
 
 class InMemoryRecipeRepository(InMemoryRepository[Recipe, RecipeId], RecipeRepository):
-    """Recipes of the projects, one active per stage of a project."""
+    """Recipes of the projects, one for each kind of a stage of a project."""
 
     def __init__(self, tables: InMemoryTables) -> None:
         """Work on the recipe table of the unit of work's copy, checking recipes against projects.
@@ -1628,19 +1735,16 @@ class InMemoryRecipeRepository(InMemoryRepository[Recipe, RecipeId], RecipeRepos
 
     @override
     def _check(self, entity: Recipe) -> None:
-        """Require the recipe's project, and no other active recipe of its stage, as the partial unique index does.
+        """Require the recipe's project, and no other recipe of its kind in its stage, as the unique index does.
 
         :param entity: Recipe about to be stored.
         :type entity: Recipe
         :raises NotFoundError: If the project, or the profile the recipe refers to, is not stored.
-        :raises ConflictError: If the recipe is active and another recipe of the stage is too.
+        :raises ConflictError: If another recipe of the stage is of the kind of the recipe.
         """
         require(self._tables.projects, entity.project_id)
         require(self._tables.recipe_profiles, entity.profile_id)
-        if entity.active:
-            self._require_unique(
-                entity, lambda recipe: (recipe.project_id, recipe.stage) if recipe.active else recipe.id
-            )
+        self._require_unique(entity, attrgetter('project_id', 'stage', 'kind'))
 
     @override
     def _cascade(self, entity: Recipe) -> None:
@@ -1651,97 +1755,35 @@ class InMemoryRecipeRepository(InMemoryRepository[Recipe, RecipeId], RecipeRepos
         """
         for stage in [stage for stage in self._tables.page_stages.values() if stage.recipe_id == entity.id]:
             self._tables.page_stages[stage.key] = evolve(stage, recipe_id=None)
-        remove_where(self._tables.recipe_rules, lambda rule: rule.recipe_id == entity.id)
 
     @override
     async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[Recipe]:
-        """Return the recipes of one stage, the active one first, then by creation, ties by identifier.
+        """Return the recipes of one stage by creation, ties by identifier.
 
         :param project_id: Project owning the recipes.
         :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
-        :returns: The active recipe and the variants.
+        :returns: The recipes of the stage.
         :rtype: Sequence[Recipe]
         """
         return sorted(
             (recipe for recipe in self._rows.values() if recipe.project_id == project_id and recipe.stage == stage),
-            key=lambda recipe: (not recipe.active, recipe.created_at, recipe.id),
+            key=attrgetter('created_at', 'id'),
         )
 
     @override
-    async def find_active(self, project_id: ProjectId, stage: Stage) -> Recipe | None:
-        """Return the active recipe of a stage of a project.
-
-        :param project_id: Project owning the recipe.
-        :type project_id: ProjectId
-        :param stage: The stage.
-        :type stage: Stage
-        :returns: The active recipe, or None.
-        :rtype: Recipe | None
-        """
-        return next(
-            (
-                recipe
-                for recipe in self._rows.values()
-                if recipe.project_id == project_id and recipe.stage == stage and recipe.active
-            ),
-            None,
-        )
-
-    @override
-    async def list_active(self, project_id: ProjectId) -> Sequence[Recipe]:
-        """Return the active recipe of every stage of a project that has one, in the order of the stages.
+    async def list_for_project(self, project_id: ProjectId) -> Sequence[Recipe]:
+        """Return the recipes of every stage of a project, in the order of the stages and then by creation.
 
         :param project_id: Project owning the recipes.
         :type project_id: ProjectId
-        :returns: The active recipes.
+        :returns: The recipes of the stages that have been used.
         :rtype: Sequence[Recipe]
         """
         return sorted(
-            (recipe for recipe in self._rows.values() if recipe.project_id == project_id and recipe.active),
-            key=lambda recipe: recipe.stage.position,
-        )
-
-
-class InMemoryRecipeRuleRepository(InMemoryRepository[RecipeRule, RecipeRuleId], RecipeRuleRepository):
-    """The rules that send pages to recipes of a stage."""
-
-    def __init__(self, tables: InMemoryTables) -> None:
-        """Work on the rule table of the unit of work's copy, checking rules against projects and recipes.
-
-        :param tables: Every table of the working copy.
-        :type tables: InMemoryTables
-        """
-        super().__init__(tables.recipe_rules, tables)
-
-    @override
-    def _check(self, entity: RecipeRule) -> None:
-        """Require the project and the recipe of the rule, and one rule for each condition of a stage, as its key does.
-
-        :param entity: Rule about to be stored.
-        :type entity: RecipeRule
-        :raises NotFoundError: If the project or the recipe is not stored.
-        :raises ConflictError: If the stage already has a rule for the condition and the group label.
-        """
-        require(self._tables.projects, entity.project_id)
-        require(self._tables.recipes, entity.recipe_id)
-        self._require_unique(entity, lambda rule: (rule.project_id, rule.stage, rule.condition, rule.group_label))
-
-    @override
-    async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[RecipeRule]:
-        """Return the rules of one stage in the order they are tried, ties by identifier.
-
-        :param project_id: Project owning the rules.
-        :type project_id: ProjectId
-        :param stage: The stage.
-        :type stage: Stage
-        :returns: The rules of the stage, the first to try first.
-        :rtype: Sequence[RecipeRule]
-        """
-        return sorted(
-            (rule for rule in self._rows.values() if rule.project_id == project_id and rule.stage is stage),
-            key=lambda rule: (rule.order, rule.id),
+            (recipe for recipe in self._rows.values() if recipe.project_id == project_id),
+            key=lambda recipe: (recipe.stage.position, recipe.created_at, recipe.id),
         )
 
 
@@ -1980,9 +2022,9 @@ class InMemoryUnitOfWork(UnitOfWork):
     :ivar page_stages: Page stage repository over the working copy.
     :ivar page_step_states: Page step state repository over the working copy.
     :ivar page_step_changes: Page step change repository over the working copy.
+    :ivar step_values: Step values repository over the working copy.
     :ivar result_mark_changes: Result mark change repository over the working copy.
     :ivar recipes: Recipe repository over the working copy.
-    :ivar recipe_rules: Recipe rule repository over the working copy.
     :ivar recipe_profiles: Recipe profile repository over the working copy.
     :ivar jobs: Job repository over the working copy.
     :ivar book_places: Book place repository over the working copy.
@@ -2024,9 +2066,9 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.page_stages = InMemoryPageStageRepository(self._tables)
         self.page_step_states = InMemoryPageStepStateRepository(self._tables)
         self.page_step_changes = InMemoryPageStepChangeRepository(self._tables)
+        self.step_values = InMemoryStepValuesRepository(self._tables)
         self.result_mark_changes = InMemoryResultMarkChangeRepository(self._tables)
         self.recipes = InMemoryRecipeRepository(self._tables)
-        self.recipe_rules = InMemoryRecipeRuleRepository(self._tables)
         self.recipe_profiles = InMemoryRecipeProfileRepository(self._tables)
         self.jobs = InMemoryJobRepository(
             self._tables, snapshot=self._snapshot, committed=self._database.tables, guards=self._guards

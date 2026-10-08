@@ -58,7 +58,7 @@ const SAVED = recipe('r1', {
   steps: [
     step('geometry.perspective', { step_id: 'a' }),
     step('geometry.deskew', { step_id: 'b', params: { max_angle: 5, min_confidence: 0.3 } }),
-    step('geometry.deskew', { step_id: 'c', applies_to: 'pictures' }),
+    step('geometry.deskew', { step_id: 'c' }),
   ],
 });
 const CATALOGUE = [processor('geometry.perspective', { title: 'Perspective' }), deskew()];
@@ -108,22 +108,21 @@ describe('StepPanel', () => {
   let root: Root;
   let client: QueryClient;
   const start = vi.fn();
-  const startPages = vi.fn();
-  const condition = vi.fn();
   const change = vi.fn();
   const restoreOrder = vi.fn();
 
   function runStub(overrides: Partial<StageRun> = {}): StageRun {
     return {
+      pageLabel: '',
+      total: 0,
       choices: [],
-      describe: () => '',
+      bodyOf: () => null,
       disabled: false,
       dirty: false,
       busy: false,
       pending: false,
       error: null,
       start,
-      startPages,
       confirming: false,
       confirm: vi.fn(),
       cancel: vi.fn(),
@@ -184,7 +183,6 @@ describe('StepPanel', () => {
           processorKey: 'geometry.perspective',
           params: {},
           enabled: true,
-          appliesTo: 'all',
         },
         {
           id: 'step-1',
@@ -192,7 +190,6 @@ describe('StepPanel', () => {
           processorKey: 'geometry.deskew',
           params: { max_angle: 5, min_confidence: 0.3 },
           enabled: true,
-          appliesTo: 'all',
         },
         {
           id: 'step-2',
@@ -200,12 +197,10 @@ describe('StepPanel', () => {
           processorKey: 'geometry.deskew',
           params: {},
           enabled: true,
-          appliesTo: 'pictures',
         },
       ],
       orderIssues: new Map(extra.issues === undefined ? [] : [['step-1', extra.issues]]),
       restoreOrder,
-      condition,
       change,
     });
     act(() =>
@@ -234,7 +229,7 @@ describe('StepPanel', () => {
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('ResizeObserver', SizeObserverStandIn);
-    for (const mock of [start, startPages, condition, change, restoreOrder]) {
+    for (const mock of [start, change, restoreOrder]) {
       mock.mockReset();
     }
     sdk.versions.mockReset();
@@ -273,26 +268,17 @@ describe('StepPanel', () => {
     expect(find('step-panel')?.getAttribute('data-step-id')).toBe('b');
   });
 
-  it('shows the state of the shape on the open page and what the step found', () => {
+  it('shows what the step found on the open page, and no angle for a page the step skipped', () => {
     render();
-
-    expect(text('step-panel-state')).toContain('Found by the step');
     expect(text('step-panel-angle')).toContain('-1.4°');
-  });
-
-  it('says a shape was set by hand, and shows no angle for a page the step skipped', () => {
-    render(1, placed('by-hand', { angle: 0.5 }));
-    expect(text('step-panel-state')).toContain('Set by hand');
 
     render(1, placed('skipped', { skipped: true, angle: 0.5 }));
-    expect(text('step-panel-state')).toContain('Skipped on this page');
     expect(find('step-panel-angle')).toBeNull();
   });
 
-  it('says a page that has not been through the step holds the default shape', () => {
+  it('says a page that has not been through the step has not reached it', () => {
     render(1, stepPage('b', 'default'));
 
-    expect(text('step-panel-state')).toContain('Default shape');
     expect(find('step-panel-not-reached')).not.toBeNull();
   });
 
@@ -328,33 +314,7 @@ describe('StepPanel', () => {
     expect(text('step-count-check')).toContain('1 page');
   });
 
-  it('runs the recipe up to the step on every page', () => {
-    render(1);
-    act(() => find('step-auto')?.click());
-
-    expect(start).toHaveBeenCalledWith('all', 1);
-  });
-
-  it('runs the recipe up to the step on the open page alone', () => {
-    render(1);
-    act(() => find('step-auto-page')?.click());
-
-    expect(startPages).toHaveBeenCalledWith(['p1'], 1);
-  });
-
-  it('offers a run on the pages of the condition only to a step that has one, over the pages it may meet', () => {
-    render(1);
-    expect(find('step-auto-condition')).toBeNull();
-
-    render(2);
-    expect(text('step-auto-condition')).toContain('1 page');
-    act(() => find('step-auto-condition')?.click());
-
-    // The plate, and not the pages of text, and not the placeholder, which has no image to process
-    expect(startPages).toHaveBeenCalledWith(['p3'], 2);
-  });
-
-  it('puts the controls of the page editor in the section of the page, and says what the state of the shape means', () => {
+  it('puts the controls of the page editor in the section of the page', () => {
     render(1, placed('by-hand', { angle: 0.5 }), runStub(), { editor: editorStub() });
 
     expect(
@@ -363,23 +323,12 @@ describe('StepPanel', () => {
     expect(
       find('step-panel-page')?.querySelector('[data-testid="editor-own-part"]'),
     ).not.toBeNull();
-    expect(text('step-panel-hint')).toContain('Orange');
-
-    render(1, placed('default'));
-    expect(text('step-panel-hint')).toContain('grey');
   });
 
   it('draws no controls of the editor for a step that has none or a page the step passed by', () => {
     render(1);
 
     expect(find('editor-controls')).toBeNull();
-  });
-
-  it('waits for the recipe to be saved before it runs, and says so', () => {
-    render(1, placed('found'), runStub({ disabled: true, dirty: true }));
-
-    expect(find('step-auto')?.hasAttribute('disabled')).toBe(true);
-    expect(container.textContent).toContain('Save the recipe to run it.');
   });
 
   it('has no buttons to the steps either side, since the bar of the steps moves between them', () => {
@@ -397,17 +346,6 @@ describe('StepPanel', () => {
     expect(find('step-close')).toBeNull();
   });
 
-  it('changes the condition of the step in the draft of the recipe', () => {
-    render();
-    const select = find('step-panel-condition') as HTMLSelectElement;
-    act(() => {
-      select.value = 'text';
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-
-    expect(condition).toHaveBeenCalledWith('step-1', 'text');
-  });
-
   it('draws the settings of the step with ids of their own, so the form of the page can stand beside it', () => {
     render();
 
@@ -418,13 +356,7 @@ describe('StepPanel', () => {
   describe('the pages that passed the step', () => {
     const runOver = (count: number): StageRun =>
       runStub({
-        choices: [
-          { scope: 'page', count: 1 },
-          { scope: 'selected', count: 0 },
-          { scope: 'attention', count: 2 },
-          { scope: 'all', count: count },
-        ],
-        describe: (scope, covered) => `${scope}:${covered}`,
+        total: count,
       });
     const passedItems = (): StripItem[] =>
       joinRows(
@@ -477,44 +409,6 @@ describe('StepPanel', () => {
 
       expect(find('step-order-details')).toBeNull();
       expect(find('step-restore-order')).toBeNull();
-    });
-  });
-
-  describe('the run over the pages the buttons of "Auto" do not name', () => {
-    const choices: StageRun['choices'] = [
-      { scope: 'page', count: 1 },
-      { scope: 'selected', count: 2 },
-      { scope: 'attention', count: 0 },
-      { scope: 'all', count: 4 },
-    ];
-    const open = async (): Promise<HTMLElement[]> => {
-      await act(async () => {
-        const trigger = find('step-auto-more');
-        trigger?.focus();
-        trigger?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      });
-      return [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')];
-    };
-
-    it('offers the selected pages and the pages that need a look, and runs up to the step over the one chosen', async () => {
-      render(
-        1,
-        placed('found'),
-        runStub({ choices, describe: (scope, count) => `${scope}:${count}` }),
-      );
-
-      const items = await open();
-      expect(items.map((item) => item.textContent)).toEqual(['selected:2', 'attention:0']);
-      expect(items[1]?.getAttribute('aria-disabled')).toBe('true');
-      await act(async () => items[0]?.click());
-
-      expect(start).toHaveBeenCalledWith('selected', 1);
-    });
-
-    it('is off while the whole run is', () => {
-      render(1, placed('found'), runStub({ choices, disabled: true }));
-
-      expect(find('step-auto-more')?.hasAttribute('disabled')).toBe(true);
     });
   });
 
@@ -626,13 +520,13 @@ describe('StepPanel', () => {
       });
     });
 
-    it('carries it to every page of the condition, over the pages with a shape of their own when asked', async () => {
+    it('carries it to every page of the same kind, over the pages with a shape of their own when asked', async () => {
       render(1, placed('by-hand', { angle: 0.5 }));
       act(() => find('step-carry-overwrite')?.click());
-      await choose('carry-condition');
+      await choose('carry-kind');
 
       expect(sdk.carry.mock.calls[0]?.[0]).toMatchObject({
-        body: { scope: 'condition', overwrite: true },
+        body: { scope: 'kind', overwrite: true },
       });
     });
 

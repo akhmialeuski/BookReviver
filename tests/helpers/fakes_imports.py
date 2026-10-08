@@ -38,7 +38,7 @@ from tests.adapters.imaging.samples import PdfPage, ScanImage, write_image, writ
 from tests.helpers.builders import EPOCH
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.fakes_jobs import JobFakes, RecordingEventBus
-from tests.helpers.processing import DEFAULTS, PREVIEW_LONG_SIDE_PX, PREVIEW_RETENTION_HOURS, RETENTION_DAYS
+from tests.helpers.processing import DEFAULTS, PREVIEW_LONG_SIDE_PX, PREVIEW_RETENTION_HOURS
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
@@ -500,7 +500,6 @@ class ImportRig:
             self.defaults,
             ProcessingRuntime(publisher=self.fakes.events, clock=self.fakes.clock, queue=self.queue),
             ProcessingConfig(
-                version_retention=timedelta(days=RETENTION_DAYS),
                 preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
                 preview_long_side_px=PREVIEW_LONG_SIDE_PX,
             ),

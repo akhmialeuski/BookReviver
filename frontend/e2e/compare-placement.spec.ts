@@ -65,14 +65,12 @@ test('the compare of Margins draws the block of text inside the page at the plac
     await expect(page.getByTestId('this-page-facts')).toContainText('Confidence', {
       timeout: RUN_TIMEOUT_MS,
     });
-    // The sheet is taken for a colour picture, so the page was made by the recipe of Plates, which the stage shows once it is in use
-    const plates = await page
+    // The sheet is taken for a colour picture, so the page was made by the recipe of the colour pictures
+    const pictures = await page
       .getByTestId('recipe-select')
-      .locator('option', { hasText: /^Plates/ })
+      .locator('option', { hasText: /^Colour picture/ })
       .getAttribute('value');
-    await page.getByTestId('recipe-select').selectOption(plates ?? '');
-    await page.getByTestId('recipe-use').click();
-    await expect(page.getByTestId('recipe-active')).toBeVisible();
+    await page.getByTestId('recipe-select').selectOption(pictures ?? '');
     const [stepId = ''] = await stepIdsOf(page, 'geometry', NORMALIZE);
     const stepRow = async () => {
       const listed = await page.request.get(

@@ -42,6 +42,7 @@ from bookreviver.domain.enums import (
     JobState,
     PageChange,
     PageOrigin,
+    RecipeKind,
     RejectionReason,
     Stage,
     SystemFile,
@@ -728,10 +729,11 @@ class ImportService:
             await self._publisher.publish(JobChanged(project_id=stored.project_id, job=stored))
 
     async def _queue_split(self, run: ImportRun) -> None:
-        """Queue a run of the page split on the pages an import made, when the active recipe of the stage decides it.
+        """Queue a run of the page split on the pages an import made, when the recipe of text pages decides it.
 
-        The book gets its pages with no action of the user, even with the tab closed. A book whose recipe was chosen by
-        hand is left as it is, and so is a book whose project is processing something already, since the user can run
+        The book gets its pages with no action of the user, even with the tab closed. The pages of an import are text
+        until their content is detected. A book whose recipe was chosen by hand is left as it is, and so is a book whose
+        project is processing something already, since the user can run
         the stage. Neither is an error of the import, which has succeeded.
 
         :param run: The run that ended, whose result lists the sources it imported.
@@ -739,7 +741,7 @@ class ImportService:
         """
         project_id = run.job.project_id
         try:
-            steps = (await self._recipes.active(project_id, Stage.PAGE_SPLIT)).enabled_steps
+            steps = (await self._recipes.of_kind(project_id, Stage.PAGE_SPLIT, RecipeKind.TEXT)).enabled_steps
             if not steps or steps[0].processor_key != AUTOMATIC_SPLIT:
                 return
             pages = [

@@ -27,14 +27,14 @@ export async function closeStepsWindow(page: Page): Promise<void> {
 /** The row of the first step of a processor in the window of the gear. */
 export function windowStepOf(page: Page, processor: string): Locator {
   return stepsWindow(page)
-    .locator(`[data-testid="window-step"][data-processor="${processor}"]`)
+    .locator(`[data-testid="recipe-step"][data-processor="${processor}"]`)
     .first();
 }
 
 /** Switch the first step of a processor on or off in the window of the gear, which is left shut. */
 export async function toggleStepInWindow(page: Page, processor: string): Promise<void> {
   await openStepsWindow(page);
-  await windowStepOf(page, processor).getByTestId('window-step-enabled').click();
+  await windowStepOf(page, processor).getByTestId('step-enabled').click();
   await closeStepsWindow(page);
 }
 
@@ -42,7 +42,7 @@ export async function toggleStepInWindow(page: Page, processor: string): Promise
 export async function isStepOn(page: Page, processor: string): Promise<boolean> {
   await openStepsWindow(page);
   const state = await windowStepOf(page, processor)
-    .getByTestId('window-step-enabled')
+    .getByTestId('step-enabled')
     .getAttribute('data-state');
   await closeStepsWindow(page);
   return state === 'checked';
@@ -51,7 +51,7 @@ export async function isStepOn(page: Page, processor: string): Promise<boolean> 
 /** The processors of the steps the window of the gear lists, in the order they are listed. */
 export async function processorsInWindow(page: Page): Promise<string[]> {
   return stepsWindow(page)
-    .getByTestId('window-step')
+    .getByTestId('recipe-step')
     .evaluateAll((items) => items.map((item) => item.getAttribute('data-processor') ?? ''));
 }
 

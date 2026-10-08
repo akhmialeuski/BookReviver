@@ -20,7 +20,7 @@ const sdk = vi.hoisted(() => ({ save: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPut: sdk.save,
+  putRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPut: sdk.save,
 }));
 
 const A_REASON = 'B reads what A leaves, so it usually comes after A.';
@@ -165,7 +165,7 @@ describe('StepCatalogue', () => {
       null,
       'sb',
     ]);
-    expect(body).toMatchObject({ name: 'Deskew', order: 'usual' });
+    expect(body).toMatchObject({ order: 'usual' });
     expect(onAdded).toHaveBeenCalledWith('new');
     expect(byId('step-catalogue-list')).toBeNull();
   });

@@ -1,18 +1,26 @@
 import type { ContentType, PageSchema } from '@/api';
-import { ConditionMark } from '@/features/workspace/steps';
 import { MESSAGES } from '@/shared/messages';
 
 /**
- * What a page shows, as the strip and the panel of a stage write it: the mark of the content on the thumbnail, and the
+ * What a page shows, as the strip and the toolbar of a stage write it: the mark of the content on the thumbnail, and the
  * choice of pages a change of the content is made on.
  *
  * The server says what a page shows and where that comes from, so nothing here works the type out from the kind of the
  * page or the colour of its image.
  */
 
-/** Give the mark a content type carries, the one the step bar gives the condition that processes the same pages. */
-export function markOfContent(type: ContentType): ConditionMark {
-  return type === 'text' ? ConditionMark.Text : ConditionMark.Picture;
+/** The marks a content type carries on the thumbnail of a page. */
+export const ContentMark = {
+  Text: 'text',
+  Picture: 'picture',
+} as const;
+
+/** One mark (derived from {@link ContentMark}). */
+export type ContentMark = (typeof ContentMark)[keyof typeof ContentMark];
+
+/** Give the mark a content type carries. */
+export function markOfContent(type: ContentType): ContentMark {
+  return type === 'text' ? ContentMark.Text : ContentMark.Picture;
 }
 
 /** Write what a page shows and where that comes from, as the title of the mark and its text for a reader of a screen. */
@@ -38,12 +46,4 @@ export function pagesToChange(
   const chosen = items.filter(({ page }) => selected.has(page.id));
   const pages = chosen.length > 0 ? chosen : items.filter(({ page }) => page.id === currentId);
   return pages.map(({ page }) => page).filter((page) => page.origin !== 'placeholder');
-}
-
-/** How many of the pages have the content from the program, and how many from the reader. */
-export function sourcesOf(pages: readonly PageSchema[]): { found: number; hand: number } {
-  return {
-    found: pages.filter((page) => page.content_source === 'detected').length,
-    hand: pages.filter((page) => page.content_source === 'hand').length,
-  };
 }

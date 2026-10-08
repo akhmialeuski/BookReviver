@@ -71,12 +71,10 @@ class ProcessingRuntime:
 class ProcessingConfig:
     """The bounds of processing, from the settings.
 
-    :ivar version_retention: How long a full run that is not current is kept before a collection may delete it.
     :ivar preview_retention: How long a preview is kept before a collection may delete it.
     :ivar preview_long_side_px: Longer side of a preview in pixels.
     """
 
-    version_retention: timedelta
     preview_retention: timedelta
     preview_long_side_px: int
 
@@ -91,7 +89,7 @@ class JobStarter:
         :type uow: UnitOfWork
         :param runtime: The publisher, the clock and the queue.
         :type runtime: ProcessingRuntime
-        :param config: The retention periods, which a collection is started with.
+        :param config: The retention period of a preview, which a collection is started with.
         :type config: ProcessingConfig
         """
         self._uow = uow
@@ -264,9 +262,7 @@ class JobStarter:
         :rtype: Job
         """
         now = self._clock.now()
-        collection = VersionCollection(
-            older_than=now - self._config.version_retention, previews_older_than=now - self._config.preview_retention
-        )
+        collection = VersionCollection(previews_older_than=now - self._config.preview_retention)
         return Job(
             id=JobId(uuid4()),
             project_id=project_id,
@@ -351,7 +347,7 @@ class ProcessingParts:
         :type defaults: DefaultRecipes
         :param runtime: The publisher, the clock and the queue.
         :type runtime: ProcessingRuntime
-        :param config: The retention periods and the size of a preview.
+        :param config: The retention period and the size of a preview.
         :type config: ProcessingConfig
         :returns: The parts.
         :rtype: ProcessingParts

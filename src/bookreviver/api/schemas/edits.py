@@ -13,15 +13,19 @@ from pydantic import Json, model_validator
 
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
-from bookreviver.domain.enums import EditorKind, Stage
+from bookreviver.api.schemas.page_history import PageStepChangeSchema
+from bookreviver.api.schemas.types import PageIdList
+from bookreviver.domain.enums import CarryScope, EditorKind, Stage
 from bookreviver.domain.geometry import geometry_from_data
-from bookreviver.domain.ids import PageId, StepId
-from bookreviver.domain.values import NewPageEdit
+from bookreviver.domain.ids import ChangeBatchId, PageId, StepId
+from bookreviver.domain.values import CarryRequest, NewPageEdit
+from bookreviver.services.page_carry import SELECTED_NEEDS_PAGES
 
 if TYPE_CHECKING:
     from starlette.requests import Request
 
     from bookreviver.domain.entities import PageEdit
+    from bookreviver.domain.values import PageStepKey
 
 SHAPE_DOES_NOT_FIT: str = 'The shape does not fit the {editor} editor: {reason}.'
 
@@ -110,3 +114,56 @@ class PageEditSchema(ResponseModel):
             edit_hash=edit.edit_hash,
             updated_at=edit.updated_at,
         )
+
+
+class CarryForm(RequestModel):
+    """The pages the shape a page set by hand for a step is carried over to.
+
+    :ivar scope: The following pages, the selected pages, or every page of the kind of the step.
+    :ivar page_ids: The selected pages, which the scope of the selected pages needs and the other scopes ignore.
+    :ivar overwrite: Whether a page that has a shape of its own takes the shape as well, instead of being skipped.
+    """
+
+    scope: CarryScope
+    page_ids: PageIdList | None = None
+    overwrite: bool = False
+
+    @model_validator(mode='after')
+    def _selected_names_pages(self) -> Self:
+        """Check that a carry-over to the selected pages names them.
+
+        :returns: The form unchanged.
+        :rtype: Self
+        :raises ValueError: If the scope is the selected pages and no page is named.
+        """
+        if self.scope is CarryScope.SELECTED and self.page_ids is None:
+            raise ValueError(SELECTED_NEEDS_PAGES)
+        return self
+
+    def to_request(self, key: PageStepKey) -> CarryRequest:
+        """Return the carry-over as the domain states it.
+
+        :param key: The source page, the stage and the step from the address.
+        :type key: PageStepKey
+        :returns: The request.
+        :rtype: CarryRequest
+        """
+        return CarryRequest(
+            key=key,
+            scope=self.scope,
+            page_ids=() if self.page_ids is None else tuple(self.page_ids),
+            overwrite=self.overwrite,
+        )
+
+
+class CarryOverSchema(ResponseModel):
+    """What a carry-over did, which is one batch of the history.
+
+    :ivar batch_id: The batch the changes share, which an undo of any of them takes back as a whole.
+    :ivar changes: The changes written, one on each page that took the shape.
+    :ivar skipped: The pages left as they were because they have a shape of their own.
+    """
+
+    batch_id: ChangeBatchId
+    changes: list[PageStepChangeSchema]
+    skipped: list[PageId]

@@ -5,7 +5,6 @@ import {
   draftOf,
   moveStep,
   removeStep,
-  setStepCondition,
   setStepParams,
   toggleStep,
 } from '@/features/processing/recipe';
@@ -71,14 +70,6 @@ describe('profileChanges', () => {
 
     expect(profileChanges(PROFILE, off, CATALOGUE)).toEqual([
       { kind: 'switched', title: 'geometry.perspective', enabled: false },
-    ]);
-  });
-
-  it('names the pages a step was given to', () => {
-    const picture = setStepCondition(draftOf({ steps: PROFILE }), 'step-0', 'pictures');
-
-    expect(profileChanges(PROFILE, picture, CATALOGUE)).toEqual([
-      { kind: 'condition', title: 'Deskew', appliesTo: 'pictures' },
     ]);
   });
 

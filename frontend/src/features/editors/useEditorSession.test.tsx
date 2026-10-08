@@ -423,7 +423,7 @@ describe('useEditorSession', () => {
     expect(sdk.run).toHaveBeenCalledTimes(1);
     expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
       path: { project_id: 'project', stage: 'geometry' },
-      body: { recipe_id: 'r1', page_ids: ['page'] },
+      body: { page_ids: ['page'] },
     });
   });
 
@@ -503,9 +503,11 @@ describe('useEditorSession', () => {
     expect(session?.error).toBeNull();
   });
 
-  it('follows the recipe on screen, and runs that recipe, not another one that also has the processor', async () => {
-    const other = recipe('r2', { steps: [step('geometry.deskew')] });
-    const shown = recipe('r1', { steps: [step('geometry.crop'), step('geometry.deskew')] });
+  it('follows the recipe on screen, and saves for its step, not for another recipe that also has the processor', async () => {
+    const other = recipe('r2', { steps: [step('geometry.deskew', { step_id: 'other-deskew' })] });
+    const shown = recipe('r1', {
+      steps: [step('geometry.crop'), step('geometry.deskew', { step_id: 'shown-deskew' })],
+    });
     await render({
       state: processing({
         catalogue: [processor('geometry.crop'), deskew()],
@@ -516,7 +518,8 @@ describe('useEditorSession', () => {
 
     await typeAngle('3');
 
-    expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({ body: { recipe_id: 'r1' } });
+    expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({ path: { step_id: 'shown-deskew' } });
+    expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({ body: { page_ids: ['page'] } });
   });
 
   it('has no editor when the recipe on screen does not use a processor that offers one', async () => {
@@ -859,7 +862,7 @@ describe('useEditorSession', () => {
         },
       });
       expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
-        body: { recipe_id: 'cut', page_ids: ['p0'] },
+        body: { page_ids: ['p0'] },
       });
     });
 
@@ -931,7 +934,7 @@ describe('useEditorSession', () => {
         },
       });
       expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
-        body: { recipe_id: 'auto', page_ids: ['p0'] },
+        body: { page_ids: ['p0'] },
       });
     });
 
@@ -943,7 +946,7 @@ describe('useEditorSession', () => {
 
       expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({ body: { kind: 'split' } });
       expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
-        body: { recipe_id: 'auto', page_ids: ['p0'] },
+        body: { page_ids: ['p0'] },
       });
     });
 
@@ -1013,7 +1016,7 @@ describe('useEditorSession', () => {
         path: { page_id: 'p0', step_id: 'id-split.spread' },
         body: { kind: 'line' },
       });
-      expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({ body: { recipe_id: 'cut' } });
+      expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({ body: { page_ids: ['p0'] } });
     });
 
     it('deletes the choice and runs the automatic split again on "Auto"', async () => {
@@ -1038,7 +1041,7 @@ describe('useEditorSession', () => {
       expect(sdk.remove.mock.calls[0]?.[0]).toMatchObject({
         path: { page_id: 'p0', step_id: 'id-split.auto' },
       });
-      expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({ body: { recipe_id: 'auto' } });
+      expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({ body: { page_ids: ['p0'] } });
     });
   });
 
@@ -1156,7 +1159,7 @@ describe('useEditorSession', () => {
         body: { kind: 'rect', geometry: '{"left":50,"top":60,"width":700,"height":900}' },
       });
       expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
-        body: { recipe_id: 'r1', page_ids: ['page'] },
+        body: { page_ids: ['page'] },
       });
     });
 
@@ -1293,7 +1296,7 @@ describe('useEditorSession', () => {
         body: { kind: 'content-box', geometry: '{"left":20,"top":30,"width":600,"height":900}' },
       });
       expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
-        body: { recipe_id: 'm', page_ids: ['page'] },
+        body: { page_ids: ['page'] },
       });
     });
 
@@ -1320,7 +1323,7 @@ describe('useEditorSession', () => {
         body: { value: 'bottom' },
       });
       expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
-        body: { recipe_id: 'm', page_ids: ['page'] },
+        body: { page_ids: ['page'] },
       });
     });
 

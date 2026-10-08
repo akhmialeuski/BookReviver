@@ -1,7 +1,6 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../src/shared/http/csrf';
 import {
   createBook,
   openProjectId,
@@ -14,18 +13,15 @@ import {
 import { openTimeline, RESULT_ROWS, runAllPages } from './support/page-work';
 
 /**
- * The results a page keeps after their pictures are collected: a collection removes the files of the old results and
- * leaves their rows, the list of results says the picture was removed, and using such a result makes the picture again
- * under the same identifier and makes the result the current one.
- *
- * The retention of a result is thirty days, so the scenario moves the creation time of the versions of its own book
- * back through a route of the test server, and then queues the collection through the real route of the application.
+ * The results a page keeps after their pictures are collected: the collection that a run queues when it ends removes
+ * the files of the results that are no longer current and leaves their rows, the list of results says the picture was
+ * removed, and using such a result makes the picture again under the same identifier and makes the result the current
+ * one.
  */
 
 const PAGES = 1;
 const SCENARIO_TIMEOUT_MS = 240_000;
 const RUN_TIMEOUT_MS = 90_000;
-const AGE_DAYS = 40;
 const PAGE_SIZE = 100;
 
 /** The versions of a stage of the first page of the open book, as the API lists them. */
@@ -87,21 +83,7 @@ test('a result whose picture was collected is made again when it is used', async
     await waitForIdleJobs(page, projectId);
   });
 
-  await test.step('a collection past the retention removes the picture of the earlier result and keeps its row', async () => {
-    // The CSRF check guards every POST of the server, the route of the scenarios too
-    const cookies = await page.context().cookies();
-    const token = cookies.find((cookie) => cookie.name === CSRF_COOKIE_NAME)?.value ?? '';
-    const aged = await page.request.post(
-      `/e2e/age-versions?project_id=${projectId}&days=${AGE_DAYS}`,
-      { headers: { [CSRF_HEADER_NAME]: token } },
-    );
-    expect(aged.ok()).toBe(true);
-    const collected = await page.request.post(`/api/v1/projects/${projectId}/versions/collect`, {
-      headers: { [CSRF_HEADER_NAME]: token },
-    });
-    expect(collected.status()).toBe(202);
-    await waitForIdleJobs(page, projectId);
-
+  await test.step('the run that replaced a result removed its picture and kept its row', async () => {
     const removed = (await listVersions()).filter((version) => version.files_removed);
     expect(removed).toHaveLength(1);
     expect(removed[0]?.images).toBeNull();
@@ -126,8 +108,8 @@ test('a result whose picture was collected is made again when it is used', async
     await expect(entries.nth(1).getByTestId('page-history-removed')).toHaveCount(0);
     await expect(entries.nth(1)).toContainText('Top margin, mm 10');
 
-    // The run queues a collection after it, and the result it replaced is past the retention too, so only the one that
-    // was used is sure to have its picture
+    // The run queues a collection after it, and the result it replaced loses its picture the same way, so only the one
+    // that was used is sure to have its picture
     const versions = await listVersions();
     // The same version, not another one, has its picture again
     const remade = versions.find((version) => version.id === removedId);

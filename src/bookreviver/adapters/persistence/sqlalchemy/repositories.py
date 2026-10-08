@@ -15,6 +15,7 @@ such as the project of a source or the source of a scan, so a violated one means
 404. Any other integrity error means the adapter wrote a row the schema forbids, a defect that propagates unchanged.
 """
 
+from collections import Counter
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, override
 
@@ -38,12 +39,13 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     ProjectMapper,
     RecipeMapper,
     RecipeProfileMapper,
-    RecipeRuleMapper,
     ResultMarkChangeMapper,
     ScanMapper,
     SourceMapper,
+    StepValuesMapper,
 )
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
+    EMPTY_TEXT,
     BookPlaceRow,
     JobRow,
     PageRow,
@@ -55,10 +57,10 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     ProjectRow,
     RecipeProfileRow,
     RecipeRow,
-    RecipeRuleRow,
     ResultMarkChangeRow,
     ScanRow,
     SourceRow,
+    StepValuesRow,
 )
 from bookreviver.domain.entities import (
     BookPlace,
@@ -73,12 +75,22 @@ from bookreviver.domain.entities import (
     ProjectOverview,
     Recipe,
     RecipeProfile,
-    RecipeRule,
     ResultMarkChange,
     Scan,
     Source,
 )
-from bookreviver.domain.enums import PageOrigin, Side, Stage, StageState, VersionScale, VersionState
+from bookreviver.domain.enums import (
+    ContentType,
+    PageOrigin,
+    RecipeKind,
+    ResultMark,
+    Side,
+    Stage,
+    StageState,
+    ValueScope,
+    VersionScale,
+    VersionState,
+)
 from bookreviver.domain.errors import ConcurrentChangeError, ConflictError, NotFoundError
 from bookreviver.domain.ids import (
     JobId,
@@ -89,12 +101,12 @@ from bookreviver.domain.ids import (
     ProjectId,
     RecipeId,
     RecipeProfileId,
-    RecipeRuleId,
     ResultMarkChangeId,
     ScanId,
     SourceId,
 )
-from bookreviver.domain.stage_summaries import StageTally, StepTally, VariantTally
+from bookreviver.domain.stage_summaries import StageTally, StepTally
+from bookreviver.domain.step_values import StepValues, StepValuesKey
 from bookreviver.domain.values import BookPlaceKey, PageSize, PageStageKey, PageStepKey, Slice
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
@@ -109,11 +121,11 @@ from bookreviver.ports.persistence import (
     ProjectRepository,
     RecipeProfileRepository,
     RecipeRepository,
-    RecipeRuleRepository,
     Repository,
     ResultMarkChangeRepository,
     ScanRepository,
     SourceRepository,
+    StepValuesRepository,
 )
 
 if TYPE_CHECKING:
@@ -128,9 +140,9 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import QueryableAttribute
 
     from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
-    from bookreviver.domain.enums import JobState, ResultMark
+    from bookreviver.domain.enums import JobState
     from bookreviver.domain.ids import AccountId, ChangeBatchId, StepId
-    from bookreviver.domain.values import SliceRequest
+    from bookreviver.domain.values import ProcessorRef, SliceRequest
 
 
 class RowRepository[RowT: ModelProtocol](SQLAlchemyAsyncRepository[RowT]):
@@ -304,6 +316,12 @@ class PageStepStateRows(RowRepository[PageStepStateRow]):
     model_type = PageStepStateRow
 
 
+class StepValuesRows(RowRepository[StepValuesRow]):
+    """Rows of the ``step_values`` table."""
+
+    model_type = StepValuesRow
+
+
 class PageStepChangeRows(RowRepository[PageStepChangeRow]):
     """Rows of the ``page_step_changes`` table."""
 
@@ -326,12 +344,6 @@ class RecipeRows(RowRepository[RecipeRow]):
     """Rows of the ``recipes`` table."""
 
     model_type = RecipeRow
-
-
-class RecipeRuleRows(RowRepository[RecipeRuleRow]):
-    """Rows of the ``recipe_rules`` table."""
-
-    model_type = RecipeRuleRow
 
 
 class RecipeProfileRows(RowRepository[RecipeProfileRow]):
@@ -873,6 +885,25 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
         statement = select(func.max(PageRow.order_key)).where(PageRow.project_id == project_id)
         return await self._rows.session.scalar(statement)
 
+    @override
+    async def kind_tally(self, project_id: ProjectId) -> Mapping[RecipeKind, int]:
+        """Count the pages with an image of each kind with one grouped statement over the columns the kind is read from.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: The number of pages of each kind that has any page.
+        :rtype: Mapping[RecipeKind, int]
+        """
+        statement = (
+            select(PageRow.kind, PageRow.content_type, PageRow.content_by_hand, func.count())
+            .where(PageRow.project_id == project_id, PageRow.origin != PageOrigin.PLACEHOLDER)
+            .group_by(PageRow.kind, PageRow.content_type, PageRow.content_by_hand)
+        )
+        tally: Counter[RecipeKind] = Counter()
+        for kind, content_type, by_hand, pages in await self._rows.session.execute(statement):
+            tally[RecipeKind.of(kind, ContentType.shown_by(kind, content_type, by_hand=by_hand))] += pages
+        return tally
+
 
 class SqlAlchemyPaginationSectionRepository(
     SqlAlchemyRepository[PaginationSection, PaginationSectionId, PaginationSectionRow], PaginationSectionRepository
@@ -1061,37 +1092,32 @@ class SqlAlchemyPageVersionRepository(
         return Slice(items=[self._mapper.to_entity(row) for row in rows], total=total)
 
     @override
-    async def collectable(
-        self, project_id: ProjectId, older_than: datetime, previews_older_than: datetime
-    ) -> Sequence[PageVersion]:
-        """Return the old versions that are neither base versions nor in the chain of a current version.
+    async def collectable(self, project_id: ProjectId, previews_older_than: datetime) -> Sequence[PageVersion]:
+        """Return the versions that are neither base versions nor in the chain of a current version.
 
         The chains are followed here, from the heads of the stage records through the input of each version, over the
         two columns of the project's versions, since a recursive query is not portable to every database.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
-        :param older_than: Full runs created before this moment may go.
-        :type older_than: datetime
         :param previews_older_than: Previews created before this moment may go.
         :type previews_older_than: datetime
         :returns: The versions that may be deleted, the earliest first, ties by identifier.
         :rtype: Sequence[PageVersion]
         """
         session = self._rows.session
-        eligible_by_age = and_(
+        may_go = and_(
             PageVersionRow.input_id.is_not(None),
             PageVersionRow.files_removed_at.is_(None),
-            or_(
-                and_(PageVersionRow.scale == VersionScale.FULL, PageVersionRow.created_at < older_than),
-                and_(PageVersionRow.scale == VersionScale.PREVIEW, PageVersionRow.created_at < previews_older_than),
-            ),
+            or_(PageVersionRow.mark.is_(None), PageVersionRow.mark != ResultMark.GOOD),
+            PageVersionRow.comment == EMPTY_TEXT,
+            or_(PageVersionRow.scale != VersionScale.PREVIEW, PageVersionRow.created_at < previews_older_than),
         )
-        # The two columns of every version of the project, and whether it is old enough to go, since the chains are
-        # followed here and a recursive query is not portable to every database
+        # The two columns of every version of the project, and whether it may go, since the chains are followed here
+        # and a recursive query is not portable to every database
         rows = (
             await session.execute(
-                select(PageVersionRow.id, PageVersionRow.input_id, eligible_by_age)
+                select(PageVersionRow.id, PageVersionRow.input_id, may_go)
                 .join(PageRow, PageVersionRow.page_id == PageRow.id)
                 .where(PageRow.project_id == project_id)
             )
@@ -1105,7 +1131,7 @@ class SqlAlchemyPageVersionRepository(
         ).all()
         goes = collectable_versions(
             {PageVersionId(version_id): input_id for version_id, input_id, _ in rows},
-            eligible=[PageVersionId(version_id) for version_id, _, old in rows if old],
+            eligible=[PageVersionId(version_id) for version_id, _, can_go in rows if can_go],
             heads=[PageVersionId(head) for head in heads if head is not None],
         )
         statement = (
@@ -1236,6 +1262,29 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
         return sorted(records, key=lambda record: (str(record.page_id), order.index(record.stage)))
 
     @override
+    async def list_replaced(self, stage: Stage, processor: ProcessorRef) -> Sequence[PageStage]:
+        """Return the records of a stage whose current version a replaced version of a processor made, in one query.
+
+        :param stage: The stage whose records are read.
+        :type stage: Stage
+        :param processor: The processor by key and installed version.
+        :type processor: ProcessorRef
+        :returns: The records whose current version was made by the key in another version, by page identifier.
+        :rtype: Sequence[PageStage]
+        """
+        statement = (
+            select(PageStageRow)
+            .join(PageVersionRow, PageStageRow.head_version_id == PageVersionRow.id)
+            .where(
+                PageStageRow.stage == stage,
+                PageVersionRow.processor_key == processor.key,
+                PageVersionRow.processor_version != processor.version,
+            )
+            .order_by(PageStageRow.page_id)
+        )
+        return [self._mapper.to_entity(row) for row in (await self._rows.session.scalars(statement)).all()]
+
+    @override
     async def list_for_project_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[PageStage]:
         """Return the records of one stage over the pages of a project, by page identifier.
 
@@ -1274,30 +1323,6 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
             for version_id in (await self._rows.session.scalars(statement)).all()
             if version_id
         }
-
-    @override
-    async def variant_tally(self, project_id: ProjectId) -> Sequence[VariantTally]:
-        """Count the pages each recipe processed, for every stage of the project, with one grouped statement.
-
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
-        :returns: One tally for each recipe that processed a page.
-        :rtype: Sequence[VariantTally]
-        """
-        statement = (
-            select(PageStageRow.stage, PageStageRow.recipe_id, func.count())
-            .join(PageRow, PageStageRow.page_id == PageRow.id)
-            .where(
-                PageRow.project_id == project_id,
-                PageRow.origin != PageOrigin.PLACEHOLDER,
-                PageStageRow.recipe_id.is_not(None),
-            )
-            .group_by(PageStageRow.stage, PageStageRow.recipe_id)
-        )
-        return [
-            VariantTally(stage=stage, recipe_id=RecipeId(recipe_id), pages=pages)
-            for stage, recipe_id, pages in await self._rows.session.execute(statement)
-        ]
 
     @override
     async def tally(self, project_ids: Collection[ProjectId]) -> Sequence[StageTally]:
@@ -1478,6 +1503,97 @@ class SqlAlchemyPageStepStateRepository(
             step_id=step_id,
         )
         return [self._mapper.to_entity(row) for row in rows]
+
+
+class SqlAlchemyStepValuesRepository(
+    SqlAlchemyRepository[StepValues, StepValuesKey, StepValuesRow], StepValuesRepository
+):
+    """The values of the steps for the odd pages, the even pages and the groups, addressed by the step and the part."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Create the repository over the ``step_values`` table.
+
+        :param session: Session of the unit of work.
+        :type session: AsyncSession
+        """
+        super().__init__(rows=StepValuesRows(session=session), mapper=StepValuesMapper())
+
+    @override
+    async def get(self, entity_id: StepValuesKey) -> StepValues:
+        """Return the values one part of the pages has for one step.
+
+        :param entity_id: The step and the part of the pages.
+        :type entity_id: StepValuesKey
+        :returns: The stored values.
+        :rtype: StepValues
+        :raises NotFoundError: If the part changes no field of the step.
+        """
+        row = await self._rows.get((entity_id.step_id, entity_id.scope, entity_id.group_label))
+        return self._mapper.to_entity(row)
+
+    @override
+    async def delete(self, entity_id: StepValuesKey) -> None:
+        """Remove the values one part of the pages has for one step.
+
+        :param entity_id: The step and the part of the pages.
+        :type entity_id: StepValuesKey
+        :raises NotFoundError: If the part changes no field of the step.
+        """
+        await self._rows.delete((entity_id.step_id, entity_id.scope, entity_id.group_label))
+
+    @override
+    async def save(self, values: StepValues) -> StepValues:
+        """Store values, replacing the ones of the same step and part of the pages.
+
+        :param values: Values to store.
+        :type values: StepValues
+        :returns: The values as stored.
+        :rtype: StepValues
+        :raises NotFoundError: If the project is not stored.
+        """
+        if await self.find(values.key) is None:
+            return await self.add(values)
+        return await self.update(values)
+
+    @override
+    async def find(self, key: StepValuesKey) -> StepValues | None:
+        """Return the values one part of the pages has for one step.
+
+        :param key: The step and the part of the pages.
+        :type key: StepValuesKey
+        :returns: The values, or None.
+        :rtype: StepValues | None
+        """
+        row = await self._rows.get_one_or_none(step_id=key.step_id, scope=key.scope, group_label=key.group_label)
+        return None if row is None else self._mapper.to_entity(row)
+
+    @override
+    async def list_for_step(self, step_id: StepId) -> Sequence[StepValues]:
+        """Return the values every part of the pages has for one step, by scope and group.
+
+        :param step_id: The step of a recipe.
+        :type step_id: StepId
+        :returns: The values of the step.
+        :rtype: Sequence[StepValues]
+        """
+        order = list(ValueScope)
+        found = [self._mapper.to_entity(row) for row in await self._rows.get_many(step_id=step_id)]
+        return sorted(found, key=lambda values: (order.index(values.scope), values.group_label))
+
+    @override
+    async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[StepValues]:
+        """Return the values of every step of one stage of a project, by step, scope and group.
+
+        :param project_id: Project owning the steps.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The values of the stage.
+        :rtype: Sequence[StepValues]
+        """
+        order = list(ValueScope)
+        found = [self._mapper.to_entity(row) for row in await self._rows.get_many(project_id=project_id, stage=stage)]
+        return sorted(found, key=lambda values: (str(values.step_id), order.index(values.scope), values.group_label))
 
 
 class SqlAlchemyPageStepChangeRepository(
@@ -1702,7 +1818,7 @@ class SqlAlchemyBookPlaceRepository(SqlAlchemyRepository[BookPlace, BookPlaceKey
 
 
 class SqlAlchemyRecipeRepository(SqlAlchemyRepository[Recipe, RecipeId, RecipeRow], RecipeRepository):
-    """Recipes of the projects, of which a stage has one active."""
+    """Recipes of the projects, of which a stage has one for each kind."""
 
     def __init__(self, session: AsyncSession) -> None:
         """Create the repository over the ``recipes`` table.
@@ -1714,77 +1830,33 @@ class SqlAlchemyRecipeRepository(SqlAlchemyRepository[Recipe, RecipeId, RecipeRo
 
     @override
     async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[Recipe]:
-        """Return the recipes of one stage, the active one first, then by creation, ties by identifier.
+        """Return the recipes of one stage by creation, ties by identifier.
 
         :param project_id: Project owning the recipes.
         :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
-        :returns: The active recipe and the variants.
+        :returns: The recipes of the stage.
         :rtype: Sequence[Recipe]
         """
         rows = await self._rows.get_many(
-            order_by=[RecipeRow.active.desc(), RecipeRow.created_at.asc(), RecipeRow.id.asc()],
-            project_id=project_id,
-            stage=stage,
+            order_by=[RecipeRow.created_at.asc(), RecipeRow.id.asc()], project_id=project_id, stage=stage
         )
         return [self._mapper.to_entity(row) for row in rows]
 
     @override
-    async def find_active(self, project_id: ProjectId, stage: Stage) -> Recipe | None:
-        """Return the active recipe of a stage of a project.
-
-        :param project_id: Project owning the recipe.
-        :type project_id: ProjectId
-        :param stage: The stage.
-        :type stage: Stage
-        :returns: The active recipe, or None.
-        :rtype: Recipe | None
-        """
-        row = await self._rows.get_one_or_none(project_id=project_id, stage=stage, active=True)
-        return None if row is None else self._mapper.to_entity(row)
-
-    @override
-    async def list_active(self, project_id: ProjectId) -> Sequence[Recipe]:
-        """Return the active recipe of every stage of a project that has one, in the order of the stages.
+    async def list_for_project(self, project_id: ProjectId) -> Sequence[Recipe]:
+        """Return the recipes of every stage of a project, in the order of the stages and then by creation.
 
         :param project_id: Project owning the recipes.
         :type project_id: ProjectId
-        :returns: The active recipes.
+        :returns: The recipes of the stages that have been used.
         :rtype: Sequence[Recipe]
         """
-        rows = await self._rows.get_many(project_id=project_id, active=True)
+        rows = await self._rows.get_many(
+            order_by=[RecipeRow.created_at.asc(), RecipeRow.id.asc()], project_id=project_id
+        )
         return sorted((self._mapper.to_entity(row) for row in rows), key=lambda recipe: recipe.stage.position)
-
-
-class SqlAlchemyRecipeRuleRepository(
-    SqlAlchemyRepository[RecipeRule, RecipeRuleId, RecipeRuleRow], RecipeRuleRepository
-):
-    """The rules that send pages to recipes of a stage."""
-
-    def __init__(self, session: AsyncSession) -> None:
-        """Create the repository over the ``recipe_rules`` table.
-
-        :param session: Session of the unit of work.
-        :type session: AsyncSession
-        """
-        super().__init__(rows=RecipeRuleRows(session=session), mapper=RecipeRuleMapper())
-
-    @override
-    async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[RecipeRule]:
-        """Return the rules of one stage in the order they are tried, ties by identifier.
-
-        :param project_id: Project owning the rules.
-        :type project_id: ProjectId
-        :param stage: The stage.
-        :type stage: Stage
-        :returns: The rules of the stage, the first to try first.
-        :rtype: Sequence[RecipeRule]
-        """
-        rows = await self._rows.get_many(
-            order_by=[RecipeRuleRow.order.asc(), RecipeRuleRow.id.asc()], project_id=project_id, stage=stage
-        )
-        return [self._mapper.to_entity(row) for row in rows]
 
 
 class SqlAlchemyRecipeProfileRepository(

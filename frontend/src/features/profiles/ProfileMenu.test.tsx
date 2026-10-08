@@ -28,9 +28,9 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   createProfileApiV1RecipeProfilesPost: sdk.create,
   listProfilesApiV1RecipeProfilesGet: sdk.list,
   putProfileApiV1RecipeProfilesProfileIdPut: sdk.replace,
-  putRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePut: sdk.link,
-  listVariantsApiV1ProjectsProjectIdStagesStageVariantsGet: sdk.recipes,
-  putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPut: sdk.saveRecipe,
+  putRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePut: sdk.link,
+  listRecipesApiV1ProjectsProjectIdStagesStageRecipesGet: sdk.recipes,
+  putRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPut: sdk.saveRecipe,
   applyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPost: sdk.apply,
   listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
 }));
@@ -39,7 +39,7 @@ const STEPS = [
   step('geometry.deskew', { params: { max_angle: 5, min_confidence: 0.3 } }),
   step('geometry.crop'),
 ];
-const LINKED = recipe('r1', { name: 'Deskew', profile_id: 'p1', steps: STEPS });
+const LINKED = recipe('r1', { profile_id: 'p1', steps: STEPS });
 const PROFILE = profile('p1', { name: 'Photographed book', steps: STEPS, order: 'free' });
 
 describe('ProfileMenu', () => {
@@ -104,7 +104,7 @@ describe('ProfileMenu', () => {
     sdk.jobs.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 20, pages: 1 } });
     sdk.apply.mockResolvedValue({
       data: {
-        recipe: recipe('applied', { name: 'Clean flatbed scan', active: true }),
+        recipe: recipe('applied'),
         missing_processors: [],
         job: null,
       },
@@ -182,7 +182,7 @@ describe('ProfileMenu', () => {
     expect(sdk.saveRecipe).toHaveBeenCalledWith(
       expect.objectContaining({
         path: { project_id: 'project', stage: 'geometry', recipe_id: 'r1' },
-        body: { name: 'Deskew', steps: bodyOf(off), order: 'free' },
+        body: { steps: bodyOf(off), order: 'free' },
       }),
     );
     expect(sdk.replace).toHaveBeenCalledWith(
@@ -215,7 +215,7 @@ describe('ProfileMenu', () => {
     const off = toggleStep(draftOf(LINKED), 'step-1');
     await render(
       processing({
-        recipe: recipe('r1', { name: 'Deskew', steps: STEPS }),
+        recipe: recipe('r1', { steps: STEPS }),
         steps: off,
         dirty: true,
       }),
@@ -282,7 +282,7 @@ describe('ProfileMenu', () => {
   it('saves the steps as a new profile and links the recipe to it', async () => {
     await render(
       processing({
-        recipe: recipe('r1', { name: 'Deskew', steps: STEPS }),
+        recipe: recipe('r1', { steps: STEPS }),
         steps: draftOf(LINKED),
         orderMode: 'free',
       }),
@@ -290,7 +290,7 @@ describe('ProfileMenu', () => {
     await click('profile-button');
     await click('profile-save-new');
     const name = document.body.querySelector<HTMLInputElement>('input[name="profile-name"]');
-    expect(name?.value).toBe('Deskew');
+    expect(name?.value).toBe('Text');
     await type(name, 'Clean flatbed scan');
     await click('profile-save-submit');
     await flush();
@@ -357,7 +357,7 @@ describe('ProfileMenu', () => {
       expect(byId('profile-others')).toBeNull();
     });
 
-    it('applies a listed profile to the book as the active recipe, and opens it in the panel', async () => {
+    it('applies a listed profile to the recipe on screen, and opens it in the panel', async () => {
       sdk.list.mockResolvedValue(profilePage([PROFILE, OTHER]));
       const chooseRecipe = vi.fn();
 
@@ -369,7 +369,7 @@ describe('ProfileMenu', () => {
       expect(sdk.apply).toHaveBeenCalledWith(
         expect.objectContaining({
           path: { project_id: 'project', profile_id: 'p2' },
-          body: { activate: true },
+          body: { kind: 'text' },
         }),
       );
       expect(chooseRecipe).toHaveBeenCalledWith('applied');

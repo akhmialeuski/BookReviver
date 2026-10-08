@@ -36,7 +36,6 @@ const SAVED: StepDraft = {
   processorKey: 'geometry.deskew',
   params: { max_angle: 5, min_confidence: 0.3 },
   enabled: true,
-  appliesTo: 'all',
 };
 
 describe('PageStepSettings', () => {

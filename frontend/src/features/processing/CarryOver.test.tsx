@@ -123,12 +123,12 @@ describe('CarryOver', () => {
     expect(sdk.carry.mock.calls[0]?.[0].body).not.toHaveProperty('page_ids');
   });
 
-  it('carries the value to every page of the step', async () => {
+  it('carries the value to every page of the kind of the open page', async () => {
     render();
 
-    await choose('carry-condition');
+    await choose('carry-kind');
 
-    expect(sdk.carry.mock.calls[0]?.[0].body).toEqual({ scope: 'condition', overwrite: false });
+    expect(sdk.carry.mock.calls[0]?.[0].body).toEqual({ scope: 'kind', overwrite: false });
   });
 
   it('carries the value to the selected pages without the open page, and counts them in the menu', async () => {
@@ -218,13 +218,13 @@ describe('CarryOver', () => {
     it('carries the shape set by hand through the route of the edits, naming no field', async () => {
       render(new Set(['page']), true, null);
 
-      await choose('carry-condition');
+      await choose('carry-kind');
 
       expect(sdk.carry).not.toHaveBeenCalled();
       expect(sdk.shape).toHaveBeenCalledTimes(1);
       expect(sdk.shape.mock.calls[0]?.[0]).toMatchObject({
         path: { project_id: 'project', page_id: 'page', stage: 'geometry', step_id: 'step' },
-        body: { scope: 'condition', overwrite: true },
+        body: { scope: 'kind', overwrite: true },
       });
       expect(sdk.shape.mock.calls[0]?.[0].path).not.toHaveProperty('name');
     });

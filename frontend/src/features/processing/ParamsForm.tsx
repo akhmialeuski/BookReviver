@@ -63,7 +63,7 @@ export function ParamsForm({
       liveValidate
       showErrorList={false}
       noHtml5Validate
-      className="grid gap-3"
+      className="grid grid-cols-1 gap-3"
       onChange={(event) => onChange({ ...(event.formData ?? {}) })}
     />
   );

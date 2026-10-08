@@ -66,8 +66,8 @@ class StepRun:
     :ivar ratio: Size of the image the step reads over the size of the full image, 1 for a full run.
     :ivar side: Side of the book the page lies on, for a step that reads it, or None.
     :ivar references: Keys of the ``full`` images of other pages the step looks at without processing them, or none.
-    :ivar skipped: Whether the page did not meet the condition of the step, so the processor is not run and the page
-                   passes with its image and its data as they are.
+    :ivar skipped: Whether the page is a leaf the program drew, so the processor is not run and the page passes with
+                   its image and its data as they are.
     """
 
     processor_key: str
@@ -164,7 +164,7 @@ class StepRunner:
         :type run: StepRun
         :param image: Local path of the image of the input.
         :type image: Path | None
-        :returns: One output with the image of the input and the flag that the condition skipped the step.
+        :returns: One output with the image of the input and the flag that the leaf skipped the step.
         :rtype: StepResult
         """
         carried = run.input_data.get(VersionData.REVIEW)
@@ -174,7 +174,7 @@ class StepRunner:
                 StepOutput(
                     image=image,
                     color_mode=ColorMode(stated) if stated in set(ColorMode) else ColorMode.UNKNOWN,
-                    data={**run.input_data, VersionData.SKIPPED: True, VersionData.SKIPPED_BY_CONDITION: True},
+                    data={**run.input_data, VersionData.SKIPPED: True, VersionData.SKIPPED_LEAF: True},
                     review=ReviewReason(carried) if carried in set(ReviewReason) else None,
                 )
             ]

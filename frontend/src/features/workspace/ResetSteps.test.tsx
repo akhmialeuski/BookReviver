@@ -16,7 +16,7 @@ const sdk = vi.hoisted(() => ({ reset: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  resetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPost: sdk.reset,
+  resetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPost: sdk.reset,
 }));
 
 describe('ResetSteps', () => {

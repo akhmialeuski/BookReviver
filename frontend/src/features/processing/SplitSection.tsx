@@ -90,9 +90,7 @@ export function SplitSection({
     }
     run.mutate({
       path: { project_id: projectId, stage },
-      body: confirm
-        ? { recipe_id: recipe.id, page_ids: [driver.id], confirm_unsplit: true }
-        : { recipe_id: recipe.id, page_ids: [driver.id] },
+      body: confirm ? { page_ids: [driver.id], confirm_unsplit: true } : { page_ids: [driver.id] },
     });
   };
   const choose = async (value: SplitChoice, confirm: boolean): Promise<void> => {

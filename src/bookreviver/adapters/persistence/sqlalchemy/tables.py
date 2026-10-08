@@ -1,7 +1,7 @@
 """Tables of the books feature, private to the SQLAlchemy persistence adapter.
 
 The module declares the ``projects``, ``jobs``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
-``page_step_states``, ``page_step_changes``, ``pagination_sections``, ``book_places``, ``recipes``, ``recipe_rules``
+``page_step_states``, ``page_step_changes``, ``step_values``, ``pagination_sections``, ``book_places``, ``recipes``
 and ``recipe_profiles`` tables in the SQLAlchemy 2.0 declarative style: ``Mapped`` annotations, ``mapped_column`` and
 ``relationship`` with ``back_populates``. Every table derives from advanced-alchemy's
 :class:`~advanced_alchemy.base.DefaultBase`, which is a ``DeclarativeBase`` carrying the metadata shared with the
@@ -56,16 +56,17 @@ from bookreviver.domain.enums import (
     PageKind,
     PageOrigin,
     PlaceMode,
+    RecipeKind,
     Rendition,
     ResultMark,
     ReviewReason,
     RightsStatus,
-    RuleCondition,
     Script,
     SourceKind,
     Stage,
     StageState,
     StepLayer,
+    ValueScope,
     VersionScale,
     VersionState,
     ViewMode,
@@ -94,7 +95,6 @@ PAGES_TABLE: Final = 'pages'
 PAGE_VERSIONS_TABLE: Final = 'page_versions'
 PAGINATION_SECTIONS_TABLE: Final = 'pagination_sections'
 RECIPES_TABLE: Final = 'recipes'
-RECIPE_RULES_TABLE: Final = 'recipe_rules'
 RECIPE_PROFILES_TABLE: Final = 'recipe_profiles'
 # Length of a page version identifier, a hash cut to 16 hexadecimal digits
 VERSION_ID_LENGTH: Final = 16
@@ -103,8 +103,6 @@ POSTGRESQL_DIALECT: Final = 'postgresql'
 ORDER_KEY_TYPE: Final = String().with_variant(String(collation='C'), POSTGRESQL_DIALECT)
 # Server default of a column that holds a JSON object
 EMPTY_OBJECT: Final = '{}'
-# The rows of the partial unique index of ``recipes``: the active recipe of a stage
-ACTIVE_RECIPE: Final = text('active')
 # The rows of the partial unique index of ``recipe_profiles``: the default profile of a stage of an account
 DEFAULT_PROFILE: Final = text('is_default')
 # The rows of the partial unique index of ``jobs``: the imports that are queued or running
@@ -648,7 +646,6 @@ class PageStageRow(DefaultBase):
     :ivar recipe_id: Recipe the page was processed by, or null.
     :ivar head_version_id: Current version of the stage, or null.
     :ivar state: Whether the current version matches the inputs of the stage, stored by value.
-    :ivar pinned: Whether the recipe of the record is pinned to the page, so a run without a recipe keeps it.
     :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
                         that is on, or null for a page run through all of them.
     :ivar updated_at: Time the record last changed.
@@ -663,7 +660,6 @@ class PageStageRow(DefaultBase):
     recipe_id: Mapped[UUID | None] = mapped_column(ForeignKey(f'{RECIPES_TABLE}.id', ondelete=SET_NULL), index=True)
     head_version_id: Mapped[str | None] = mapped_column(ForeignKey(PageVersionRow.id, ondelete=SET_NULL), index=True)
     state: Mapped[StageState] = mapped_column(enum_by_value(StageState))
-    pinned: Mapped[bool] = mapped_column(server_default=false())
     through_step: Mapped[int | None]
     updated_at: Mapped[datetime]
 
@@ -707,6 +703,33 @@ class PageStepStateRow(DefaultBase):
     page: Mapped[PageRow] = relationship(back_populates=Relation.STEP_STATES, lazy=NO_IMPLICIT_LOAD)
 
 
+class StepValuesRow(DefaultBase):
+    """Row of the values of one step for the odd pages, the even pages or one group of pages.
+
+    The step is named by the identifier its recipe gives it, with no foreign key, as in ``page_step_states``. The label
+    of a group is empty for the odd and the even pages, so it can belong to the key.
+
+    :ivar step_id: Identifier of the step.
+    :ivar scope: The odd pages, the even pages or a group, stored by value.
+    :ivar group_label: Label of the group, or empty.
+    :ivar project_id: Project owning the step, whose deletion removes the values.
+    :ivar stage: Stage of the step, stored by value.
+    :ivar params: The fields of the parameters of the step that the pages change, as a JSON object.
+    :ivar updated_at: Time the values were last saved.
+    """
+
+    __tablename__ = 'step_values'
+    __table_args__ = (Index(None, 'project_id', 'stage'),)
+
+    step_id: Mapped[UUID] = mapped_column(primary_key=True)
+    scope: Mapped[ValueScope] = mapped_column(enum_by_value(ValueScope), primary_key=True)
+    group_label: Mapped[str] = mapped_column(primary_key=True, server_default=EMPTY_TEXT)
+    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE))
+    stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
+    params: Mapped[dict[str, Any]] = mapped_column(JsonB, server_default=EMPTY_OBJECT)
+    updated_at: Mapped[datetime]
+
+
 class PageStepChangeRow(DefaultBase):
     """Row of one change of a layer of a step on a page, which the history of the page keeps and never rewrites.
 
@@ -718,6 +741,8 @@ class PageStepChangeRow(DefaultBase):
     :ivar stage: Stage of the step, stored by value.
     :ivar step_id: Identifier of the step.
     :ivar layer: The layer that changed, stored by value.
+    :ivar scope: Whose settings the layer holds, the page's own or a part of the pages it takes, stored by value.
+    :ivar group_label: Label of the group for the scope of a group, or empty.
     :ivar before: Content of the layer before the change, or null for an empty layer.
     :ivar after: Content of the layer after the change, or null when it is emptied.
     :ivar source: What made the change, stored by value.
@@ -741,6 +766,8 @@ class PageStepChangeRow(DefaultBase):
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
     step_id: Mapped[UUID]
     layer: Mapped[StepLayer] = mapped_column(enum_by_value(StepLayer))
+    scope: Mapped[ValueScope] = mapped_column(enum_by_value(ValueScope), server_default=ValueScope.PAGES.value)
+    group_label: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     before: Mapped[dict[str, Any] | None] = mapped_column(JsonB)
     after: Mapped[dict[str, Any] | None] = mapped_column(JsonB)
     source: Mapped[ChangeSource] = mapped_column(enum_by_value(ChangeSource))
@@ -823,16 +850,15 @@ class BookPlaceRow(DefaultBase):
 
 
 class RecipeRow(DefaultBase):
-    """Row of one recipe of a stage of a project, of which at most one per stage is active.
+    """Row of one recipe of a stage of a project, of which there is one for each kind of page.
 
     The steps are a JSON list of ``{processor_key, params}`` objects, since no query looks inside them.
 
     :ivar id: Recipe identifier, assigned by the domain.
     :ivar project_id: Project owning the recipe.
     :ivar stage: Stage the recipe processes, stored by value.
-    :ivar name: Name the user sees.
+    :ivar kind: Kind of the pages the recipe processes, stored by value.
     :ivar steps: The steps in order, as JSON.
-    :ivar active: Whether the recipe is the one the stage runs by default.
     :ivar profile_id: Profile of the account the recipe was made from, emptied when the profile is deleted.
     :ivar created_at: Time the recipe was created.
     :ivar updated_at: Time the recipe last changed.
@@ -840,25 +866,14 @@ class RecipeRow(DefaultBase):
     """
 
     __tablename__ = RECIPES_TABLE
-    # The database keeps two requests that both switch the active recipe of a stage from both succeeding
-    __table_args__ = (
-        Index('ix_recipes_project_id_stage', 'project_id', 'stage'),
-        Index(
-            'ix_recipes_one_active',
-            'project_id',
-            'stage',
-            unique=True,
-            sqlite_where=ACTIVE_RECIPE,
-            postgresql_where=ACTIVE_RECIPE,
-        ),
-    )
+    # The database keeps two requests that both make the recipes of a stage from both succeeding
+    __table_args__ = (UniqueConstraint('project_id', 'stage', 'kind'),)
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE))
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
-    name: Mapped[str]
+    kind: Mapped[RecipeKind] = mapped_column(enum_by_value(RecipeKind))
     steps: Mapped[list[dict[str, Any]]] = mapped_column(JsonB)
-    active: Mapped[bool]
     profile_id: Mapped[UUID | None] = mapped_column(
         ForeignKey(f'{RECIPE_PROFILES_TABLE}.id', ondelete=SET_NULL), index=True
     )
@@ -866,33 +881,6 @@ class RecipeRow(DefaultBase):
     updated_at: Mapped[datetime]
 
     project: Mapped[ProjectRow] = relationship(back_populates=Relation.RECIPES, lazy=NO_IMPLICIT_LOAD)
-
-
-class RecipeRuleRow(DefaultBase):
-    """Row of one rule of a stage of a project, which sends the pages meeting a condition to a recipe of the stage.
-
-    A project owns its rules and a recipe owns the rules that name it, so the database removes both with their owner.
-    A condition is given once per stage, and a manual group once per label, which the unique key keeps.
-
-    :ivar id: Rule identifier, assigned by the domain.
-    :ivar project_id: Project owning the rule.
-    :ivar stage: Stage whose pages the rule sends to a recipe, stored by value.
-    :ivar condition: What a page must be for the rule to match it, stored by value.
-    :ivar group_label: The group a page must be in, for the condition on the group, and empty for any other.
-    :ivar recipe_id: Recipe that processes the pages the rule matches.
-    :ivar order: Place of the rule among the rules of the stage, the lowest being tried first.
-    """
-
-    __tablename__ = RECIPE_RULES_TABLE
-    __table_args__ = (UniqueConstraint('project_id', 'stage', 'condition', 'group_label'),)
-
-    id: Mapped[UUID] = mapped_column(primary_key=True)
-    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), index=True)
-    stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
-    condition: Mapped[RuleCondition] = mapped_column(enum_by_value(RuleCondition))
-    group_label: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
-    recipe_id: Mapped[UUID] = mapped_column(ForeignKey(RecipeRow.id, ondelete=CASCADE), index=True)
-    order: Mapped[int]
 
 
 class RecipeProfileRow(DefaultBase):

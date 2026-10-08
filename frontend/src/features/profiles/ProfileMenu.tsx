@@ -22,15 +22,14 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
  * both sides and no false difference appears. Putting the profile back changes the draft only, and the recipe changes
  * when it is saved.
  *
- * Under the three actions stand the other profiles of the stage, each of which is applied to the book as the active
- * recipe by a press, and the entry that opens the library of profiles.
+ * Under the three actions stand the other profiles of the stage, each of which is applied to the recipe shown by a
+ * press, and the entry that opens the library of profiles.
  */
 
 const labels = MESSAGES.profiles.link;
 
 /** Write one difference as the sentence the menu lists. */
 function sentenceOf(change: ProfileChange): string {
-  const conditions = MESSAGES.processing.steps.condition.options;
   switch (change.kind) {
     case 'added':
       return labels.changes.added(change.title);
@@ -42,8 +41,6 @@ function sentenceOf(change: ProfileChange): string {
       return change.enabled
         ? labels.changes.switchedOn(change.title)
         : labels.changes.switchedOff(change.title);
-    case 'condition':
-      return labels.changes.condition(change.title, conditions[change.appliesTo].toLowerCase());
     case 'params':
       return labels.changes.params(change.title, change.fields);
   }
@@ -158,11 +155,7 @@ export function ProfileMenu({
                     const kept = processing.dirty
                       ? await saveRecipe.mutateAsync({
                           path: { project_id: processing.projectId, stage, recipe_id: recipe.id },
-                          body: {
-                            name: recipe.name,
-                            steps: bodyOf(steps),
-                            order: processing.orderMode,
-                          },
+                          body: { steps: bodyOf(steps), order: processing.orderMode },
                         })
                       : { steps: bodyOf(steps) };
                     const saved = await replace.mutateAsync({
@@ -231,14 +224,17 @@ export function ProfileMenu({
                           apply.mutate(
                             {
                               path: { project_id: processing.projectId, profile_id: profile.id },
-                              body: { activate: true },
+                              body: { kind: recipe.kind },
                             },
                             {
                               onSuccess: (applied) => {
                                 processing.chooseRecipe(applied.recipe.id);
                                 setNotice(
                                   [
-                                    MESSAGES.profiles.library.appliedBook(applied.recipe.name),
+                                    MESSAGES.profiles.library.appliedBook(
+                                      MESSAGES.processing.recipe.kinds[applied.recipe.kind],
+                                      profile.name,
+                                    ),
                                     ...(applied.missing_processors.length === 0
                                       ? []
                                       : [

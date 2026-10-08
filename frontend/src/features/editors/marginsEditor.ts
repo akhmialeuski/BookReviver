@@ -1,10 +1,10 @@
 import { contentBoxOf } from '@/features/editors/contentBox';
+import { INPUT_EDITOR } from '@/features/editors/inputEditor';
 import { MarginsCanvas } from '@/features/editors/MarginsCanvas';
 import { MarginsPanel } from '@/features/editors/MarginsPanel';
 import { rectEditor } from '@/features/editors/rectEditor';
 import { type ContentBoxShape, readContentBox, writeContentBox } from '@/features/editors/shapes';
-import { type EditorDefinition, Picture } from '@/features/editors/types';
-import { sourceSize } from '@/features/processing/results';
+import type { EditorDefinition } from '@/features/editors/types';
 
 /**
  * The editor of the Margins step: the box of the content of the page, which is the edit, and the border of the page grown
@@ -16,12 +16,7 @@ import { sourceSize } from '@/features/processing/results';
  */
 
 export const marginsEditor: EditorDefinition<ContentBoxShape> = {
-  picture: Picture.Input,
-  alwaysOn: false,
-  needsResult: true,
-  owner: ({ current }) => current.page,
-  size: ({ result, pictureSize }) => sourceSize(result) ?? pictureSize,
-  runsAfterEdit: () => true,
+  ...INPUT_EDITOR,
   // The border of the page is wider than the picture when the margins are, so the canvas is fitted to hold it
   reach: ({ result }) => result?.marginBox ?? null,
   fallback: ({ size, result }) => contentBoxOf(result, size),

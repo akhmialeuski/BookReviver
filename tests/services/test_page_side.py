@@ -6,7 +6,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import PageSide, Stage
+from bookreviver.domain.enums import PageSide, RecipeKind, Stage
 from bookreviver.domain.values import PageStageKey, StageRun
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import StepResult
@@ -56,8 +56,8 @@ def fx_sided_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
     """
     defaults = DefaultRecipes(
         {
-            Stage.PAGE_SPLIT: (RecipeTemplate(name='Whole scan', processor_keys=(SPLIT_NONE.key,)),),
-            Stage.GEOMETRY: (RecipeTemplate(name='Sided', processor_keys=(SIDED_KEY,)),),
+            Stage.PAGE_SPLIT: dict.fromkeys(RecipeKind, RecipeTemplate(processor_keys=(SPLIT_NONE.key,))),
+            Stage.GEOMETRY: dict.fromkeys(RecipeKind, RecipeTemplate(processor_keys=(SIDED_KEY,))),
         }
     )
     return ProcessingKit(fx_asset_store, processors=[SplitNone(), SidedProcessor()], defaults=defaults)

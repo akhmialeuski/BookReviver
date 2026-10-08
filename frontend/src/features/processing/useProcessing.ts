@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { AppliesTo, OrderMode, ProcessorSchema, RecipeSchema, Stage } from '@/api';
+import type { OrderMode, ProcessorSchema, RecipeSchema, Stage } from '@/api';
 import {
   issuesByStep,
   type OrderIssue,
@@ -7,53 +7,26 @@ import {
   refusalOf,
   restoreUsualOrder,
 } from '@/features/processing/order';
-import type { PreviewRequest } from '@/features/processing/preview';
 import { useProcessors, useRecipes } from '@/features/processing/queries';
 import {
   addStep,
-  bodyOf,
-  canPreview,
   draftOf,
   moveStep,
   removeStep,
   type StepDraft,
   sameAsSaved,
-  setStepCondition,
   setStepParams,
   toggleStep,
 } from '@/features/processing/recipe';
 import { fitsSchema, formSchemaOf } from '@/features/processing/schema';
-import { type PreviewResult, usePreview } from '@/features/processing/usePreview';
-import type { StripItem } from '@/features/workspace/strip';
 
 /**
  * The state of the processing panel of a stage: the catalogue of its processors, its recipes and the one being looked
- * at, the draft of the steps the reader is editing, and the preview of that draft on the open page.
+ * at, and the draft of the steps the reader is editing.
  *
  * The draft belongs to the saved recipe it was made from. When the recipe is saved or changed on the server it has a new
  * `updated_at`, and the draft is made again from it, so what the panel shows is never a draft of a recipe that is gone.
- * The panel and the canvas both read this, so a preview asked for by the panel is drawn by the canvas.
  */
-
-/** The preview of the draft and what it needs to be asked for. */
-export interface PreviewControl extends PreviewResult {
-  /** Whether the reader asked for the preview. */
-  on: boolean;
-  toggle: () => void;
-  /** Why the preview cannot be asked for now, or null when it can. */
-  blocked: PreviewBlock | null;
-}
-
-/** Why there is no preview to ask for. */
-export const PreviewBlock = {
-  NoPage: 'no-page',
-  NoStep: 'no-step',
-  Invalid: 'invalid',
-  Split: 'split',
-} as const;
-
-/** One reason of {@link PreviewBlock}. */
-export type PreviewBlock = (typeof PreviewBlock)[keyof typeof PreviewBlock];
 
 /** The steps of the stage panel as the screen reads and changes them. */
 export interface Processing {
@@ -66,7 +39,7 @@ export interface Processing {
   failed: boolean;
   /** The processors of this stage. */
   catalogue: readonly ProcessorSchema[];
-  /** Every recipe of the stage, the active one first. */
+  /** Every recipe of the stage, one for each kind of page, in the order of the kinds. */
   recipes: readonly RecipeSchema[];
   /** The recipe the panel shows. */
   recipe: RecipeSchema | undefined;
@@ -96,17 +69,8 @@ export interface Processing {
   toggle: (id: string) => void;
   remove: (id: string) => void;
   change: (id: string, params: Record<string, unknown>) => void;
-  /** Change which pages a step processes. */
-  condition: (id: string, appliesTo: AppliesTo) => void;
   add: (processor: ProcessorSchema) => void;
   discard: () => void;
-  preview: PreviewControl;
-}
-
-/** Index of the step whose result a preview is wanted of: the open one, else the last. */
-function previewIndex(steps: readonly StepDraft[], openId: string | undefined): number {
-  const found = steps.findIndex((step) => step.id === openId);
-  return found >= 0 ? found : steps.length - 1;
 }
 
 /**
@@ -114,18 +78,8 @@ function previewIndex(steps: readonly StepDraft[], openId: string | undefined): 
  *
  * @param projectId The book.
  * @param stage The stage.
- * @param current The page open on the canvas, which a preview is made of.
- * @param onPreviewStart Called when the reader turns the preview on, so the canvas can show the picture after.
- * @param focusStepId The saved step open in the step workspace, which a preview is wanted of in place of the step open in
- * the list, or undefined when no step is open there.
  */
-export function useProcessing(
-  projectId: string,
-  stage: Stage,
-  current: StripItem | undefined,
-  onPreviewStart: () => void,
-  focusStepId?: string,
-): Processing {
+export function useProcessing(projectId: string, stage: Stage): Processing {
   const processors = useProcessors();
   const catalogue = useMemo(
     () => (processors.data ?? []).filter((processor) => processor.stage === stage),
@@ -181,31 +135,6 @@ export function useProcessing(
   const issuesOf = useMemo(() => issuesByStep(issues), [issues]);
   const refused = orderMode === 'free' ? [] : issues.filter((issue) => issue.kind === 'required');
 
-  const [previewOn, setPreviewOn] = useState(false);
-  const focused = steps.find((step) => step.stepId === focusStepId)?.id;
-  const index = previewIndex(steps, focused ?? openId);
-  let blocked: PreviewBlock | null = null;
-  if (current === undefined) {
-    blocked = PreviewBlock.NoPage;
-  } else if (!valid) {
-    blocked = PreviewBlock.Invalid;
-  } else if (!canPreview(steps, catalogue, index)) {
-    blocked = steps
-      .slice(0, index + 1)
-      .some(
-        (step) =>
-          step.enabled &&
-          catalogue.find((entry) => entry.key === step.processorKey)?.scope === 'split',
-      )
-      ? PreviewBlock.Split
-      : PreviewBlock.NoStep;
-  }
-  const request: PreviewRequest | null =
-    blocked === null && current !== undefined
-      ? { pageId: current.page.id, steps: bodyOf(steps), stepIndex: index }
-      : null;
-  const result = usePreview(projectId, stage, request, previewOn && blocked === null);
-
   const write = (next: StepDraft[]): void => setEdit({ owner: draftOwner, steps: next });
 
   return {
@@ -237,23 +166,11 @@ export function useProcessing(
     toggle: (id) => write(toggleStep(steps, id)),
     remove: (id) => write(removeStep(steps, id)),
     change: (id, params) => write(setStepParams(steps, id, params)),
-    condition: (id, appliesTo) => write(setStepCondition(steps, id, appliesTo)),
     add: (processor) => {
       const next = addStep(steps, processor);
       write(next);
       setOpenChoice({ owner: recipe?.id, id: next.at(-1)?.id });
     },
     discard: () => setEdit(null),
-    preview: {
-      ...result,
-      on: previewOn,
-      toggle: () => {
-        if (!previewOn) {
-          onPreviewStart();
-        }
-        setPreviewOn(!previewOn);
-      },
-      blocked,
-    },
   };
 }

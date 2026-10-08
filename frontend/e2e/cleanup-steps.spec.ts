@@ -92,7 +92,6 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
       'page-strip',
       'recipe-select',
       'run-menu',
-      'preview-toggle',
       'this-page',
     ]) {
       await expect(page.getByTestId(id)).toBeVisible();

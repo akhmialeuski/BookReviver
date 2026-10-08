@@ -5,8 +5,6 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from attrs import evolve
-
 from bookreviver.domain.entities import (
     BookPlace,
     Job,
@@ -20,7 +18,6 @@ from bookreviver.domain.entities import (
     Project,
     Recipe,
     RecipeProfile,
-    RecipeRule,
     ResultMarkChange,
     Scan,
     Source,
@@ -41,14 +38,15 @@ from bookreviver.domain.enums import (
     PageKind,
     PageOrigin,
     PlaceMode,
+    RecipeKind,
     ResultMark,
     RightsStatus,
-    RuleCondition,
     Script,
     SourceKind,
     Stage,
     StageState,
     StepLayer,
+    ValueScope,
     ViewMode,
 )
 from bookreviver.domain.geometry import Rotation
@@ -62,7 +60,6 @@ from bookreviver.domain.ids import (
     ProjectId,
     RecipeId,
     RecipeProfileId,
-    RecipeRuleId,
     ResultMarkChangeId,
     ScanId,
     SourceId,
@@ -72,6 +69,7 @@ from bookreviver.domain.ids import (
 if TYPE_CHECKING:
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.values import MetadataMap
+from bookreviver.domain.step_values import StepValues
 from bookreviver.domain.values import (
     BookDetails,
     BookIdentifier,
@@ -338,8 +336,7 @@ def make_recipe(
     *,
     project_id: ProjectId,
     stage: Stage = Stage.GEOMETRY,
-    name: str = 'Deskew',
-    active: bool = False,
+    kind: RecipeKind = RecipeKind.TEXT,
     minutes: int = 0,
 ) -> Recipe:
     """Build a recipe of one deskew step, created ``minutes`` after the epoch.
@@ -348,10 +345,8 @@ def make_recipe(
     :type project_id: ProjectId
     :param stage: Stage the recipe processes.
     :type stage: Stage
-    :param name: Name of the recipe.
-    :type name: str
-    :param active: Whether the recipe is the active one of its stage.
-    :type active: bool
+    :param kind: Kind of the pages the recipe processes.
+    :type kind: RecipeKind
     :param minutes: Minutes after ``EPOCH`` the recipe was created.
     :type minutes: int
     :returns: A recipe with a fresh identifier.
@@ -362,9 +357,8 @@ def make_recipe(
         id=RecipeId(uuid4()),
         project_id=project_id,
         stage=stage,
-        name=name,
+        kind=kind,
         steps=(Step(processor_key=DESKEW.key, params=DESKEW_PARAMS, step_id=DESKEW_STEP_ID),),
-        active=active,
         created_at=moment,
         updated_at=moment,
     )
@@ -436,52 +430,6 @@ def make_page_stage(
         head_version_id=head_version_id,
         state=state,
         updated_at=EPOCH,
-    )
-
-
-def make_pinned_stage(*, page_id: PageId, recipe_id: RecipeId | None, stage: Stage = Stage.GEOMETRY) -> PageStage:
-    """Build the record of a stage of a page whose recipe the user pinned to it.
-
-    :param page_id: Page the record belongs to.
-    :type page_id: PageId
-    :param recipe_id: Recipe pinned to the page.
-    :type recipe_id: RecipeId | None
-    :param stage: The stage.
-    :type stage: Stage
-    :returns: A pinned record changed at the epoch.
-    :rtype: PageStage
-    """
-    return evolve(make_page_stage(page_id=page_id, stage=stage, recipe_id=recipe_id), pinned=True)
-
-
-def make_recipe_rule(
-    *,
-    recipe: Recipe,
-    condition: RuleCondition = RuleCondition.PLATES,
-    group_label: str = '',
-    order: int = 0,
-) -> RecipeRule:
-    """Build a rule that sends the pages meeting a condition to a recipe, of the stage and the project of the recipe.
-
-    :param recipe: Recipe the rule names, whose project and stage the rule takes.
-    :type recipe: Recipe
-    :param condition: What a page must be for the rule to match it.
-    :type condition: RuleCondition
-    :param group_label: The group a page must be in, for the condition on a manual group.
-    :type group_label: str
-    :param order: Place of the rule among the rules of the stage.
-    :type order: int
-    :returns: A rule with a fresh identifier.
-    :rtype: RecipeRule
-    """
-    return RecipeRule(
-        id=RecipeRuleId(uuid4()),
-        project_id=recipe.project_id,
-        stage=recipe.stage,
-        condition=condition,
-        group_label=group_label,
-        recipe_id=recipe.id,
-        order=order,
     )
 
 
@@ -624,6 +572,40 @@ def make_page_step_change(
         after=after,
         source=ChangeSource.USER,
         created_at=created_at,
+    )
+
+
+def make_step_values(
+    *,
+    project_id: ProjectId,
+    scope: ValueScope = ValueScope.EVEN,
+    group_label: str = '',
+    step_id: StepId = DESKEW_STEP_ID,
+    params: MetadataMap | None = None,
+) -> StepValues:
+    """Build the values of a step of the geometry stage for a part of the pages, by default the deskew step, even pages.
+
+    :param project_id: Project owning the step.
+    :type project_id: ProjectId
+    :param scope: The odd pages, the even pages or a group.
+    :type scope: ValueScope
+    :param group_label: Label of the group, for the scope of a group.
+    :type group_label: str
+    :param step_id: The step of a recipe.
+    :type step_id: StepId
+    :param params: The fields the part changes, or None for one field.
+    :type params: MetadataMap | None
+    :returns: Values saved at the epoch.
+    :rtype: StepValues
+    """
+    return StepValues(
+        project_id=project_id,
+        stage=Stage.GEOMETRY,
+        step_id=step_id,
+        scope=scope,
+        group_label=group_label,
+        params={'max_angle_deg': 3} if params is None else params,
+        updated_at=EPOCH,
     )
 
 

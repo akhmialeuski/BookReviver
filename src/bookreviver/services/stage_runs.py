@@ -3,10 +3,9 @@
 A run reads the current version of the nearest earlier stage of the page, or the scan itself for the page split, and
 makes one version for each step of the recipe, each reading the one before. Before a step is run its identifier is
 worked out from everything it depends on, so a version that was made already is found and used again, and only a step
-whose parameters, edit or input changed is computed. A page that does not meet the condition of a step (``AppliesTo``)
-passes it unchanged: the version of the step holds the image of its input, flagged as skipped by the condition. A
-page that shows a generated leaf meets no condition, so it passes every step unchanged, with the mark of review its
-input has, which a leaf has none of. A version that is made is stored in its own directory and never changed, and one
+whose parameters, edit or input changed is computed. A page that shows a generated leaf passes every step unchanged: the
+version of the step holds the image of its input, flagged as skipped, with the mark of review its input has, which a
+leaf has none of. A version that is made is stored in its own directory and never changed, and one
 that fails is stored as failed with its reason, so a repeated run makes it again under the same identifier.
 
 ``RecipeRun`` ends a page's run by making the last version the current one of the stage, which marks the later stages of
@@ -31,7 +30,6 @@ from attrs import evolve, frozen
 
 from bookreviver.domain.entities import Page, PageVersion, VersionInputs
 from bookreviver.domain.enums import (
-    ColorMode,
     PageOrigin,
     PageSide,
     ProcessorScope,
@@ -46,10 +44,11 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import COLOR_MODE_KEY, PageSize, PageStageKey, PageStepKey, Step
+from bookreviver.domain.values import PageSize, PageStageKey, PageStepKey, Step
 from bookreviver.services.book_measure import NORMALIZE_KEY, BlockMeasure, BookBlocks, wants_the_book
 from bookreviver.services.spread_splits import SpreadSplit
 from bookreviver.services.stage_inputs import StageInputs
+from bookreviver.services.step_params import lay_step_values
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
@@ -95,8 +94,6 @@ class StepSource:
     :ivar data: ``data`` of the version, or the facts of the scan.
     :ivar scale: Whether the image is the full one or the preview, which is what the step reading it runs on.
     :ivar ratio: Size of the image over the size of the full image, 1 for a full run.
-    :ivar stage_color: Colour mode of the image the stage started from, which the condition of a step reads, or None
-                       when the source is that image.
     :ivar book: What the book gives the fields of the normalize step that are 0, which lies under the settings of the
                 page, or None for a run that has not worked it out.
     """
@@ -106,14 +103,7 @@ class StepSource:
     data: MetadataMap
     scale: VersionScale = VersionScale.FULL
     ratio: float = 1.0
-    stage_color: ColorMode | None = None
     book: MetadataMap | None = None
-
-    @property
-    def color_mode(self) -> ColorMode:
-        """The colour mode the image says it has, or unknown when it says none."""
-        stated = self.data.get(COLOR_MODE_KEY)
-        return ColorMode(stated) if stated in set(ColorMode) else ColorMode.UNKNOWN
 
 
 @frozen(kw_only=True)
@@ -306,8 +296,6 @@ class StageWork:
                              one.
         """
         version: PageVersion | None = None
-        # The colour of a picture is the one the stage started from, so a step that binarises it does not change it
-        stage_color = source.color_mode
         for index, step in enumerate(steps):
             version = await self._make_version(
                 page, stage, step, source, expected=None if expected is None else expected[index]
@@ -315,12 +303,7 @@ class StageWork:
             if version.state is not VersionState.READY:
                 return version
             # A preview made of a preview is as large of the full image as the preview it read, so the ratio goes on
-            source = evolve(
-                self._version_source(version, source.scale),
-                stage_color=stage_color,
-                book=source.book,
-                ratio=source.ratio,
-            )
+            source = evolve(self._version_source(version, source.scale), book=source.book, ratio=source.ratio)
         return version
 
     def _book_fields(self, steps: Sequence[Step]) -> MetadataMap | None:
@@ -416,9 +399,8 @@ class StageWork:
         removed keeps its row, its identifier and its creation time. The fields the page changes for the step are laid
         over the parameters of the step first, so the version holds the parameters the step ran with, and the settings
         of the page reach the identifier through them, except when the version is made again from its stored parameters.
-        A page that does not meet the condition of the step is not run through the processor: its version holds the
-        image of the source as it is, with no parameters, no settings and no edit, so every step that skips the same
-        input shares it.
+        A page that shows a leaf the program drew is not run through the processor: its version holds the image of the
+        source as it is, with no parameters, no settings and no edit, so every step that skips the same input shares it.
 
         :param page: Page being processed.
         :type page: Page
@@ -427,8 +409,7 @@ class StageWork:
         :param step: The step to run.
         :type step: Step
         :param source: What the step reads, whose scale says whether the step runs on the full image or on the preview,
-                       whose colour of the start of the stage the condition of the step reads, and whose book gives the
-                       fields of the step that are 0 their values.
+                       and whose book gives the fields of the step that are 0 their values.
         :type source: StepSource
         :param expected: Identifier the version must have, when the step makes a version again, or None.
         :type expected: PageVersionId | None
@@ -444,10 +425,11 @@ class StageWork:
         if processor.spec.scope is ProcessorScope.SPLIT:
             raise ConflictError(SPLIT_NOT_AVAILABLE.format(key=step.processor_key))
         # A leaf the program drew has nothing for a step to find, so it passes every step unchanged and unmarked
-        skipped = page.is_leaf or not step.applies_to.matches(page.content_of(source.stage_color or source.color_mode))
+        skipped = page.is_leaf
         state = None if skipped else await self._uow.page_step_states.find(PageStepKey(page.id, stage, step.step_id))
-        # The settings of the page are laid over the parameters of the step before they are checked, so the identifier
-        # of the version hashes the parameters the step runs with, and two pages that end up with equal ones share it.
+        # The values of the page and of the parts of the book it is in are laid over the parameters of the step before
+        # they are checked, so the identifier of the version hashes the parameters the step runs with, and two pages
+        # that end up with equal ones share it.
         # A version that is made again ran with the parameters it stored, which already hold the settings of its time
         # and the size of the book it had then
         base = (
@@ -455,7 +437,11 @@ class StageWork:
             if source.book and expected is None and step.processor_key == NORMALIZE_KEY
             else step.params
         )
-        laid = base if state is None or expected is not None else state.apply_to(base)
+        laid = (
+            base
+            if skipped or expected is not None
+            else await lay_step_values(self._uow, page, step.step_id, base, None if state is None else state.params)
+        )
         checked = processor.validate_params(laid)
         params = {} if skipped else checked
         edit = None if state is None else state.edit
@@ -553,7 +539,6 @@ class RecipeRun(StageWork):
         recipe: Recipe,
         *,
         confirmed: bool = False,
-        pin: bool | None = None,
         through_step: int | None = None,
     ) -> RunOutcome:
         """Run the steps of the recipe on the page, and make the version of the last one current.
@@ -569,8 +554,6 @@ class RecipeRun(StageWork):
         :type recipe: Recipe
         :param confirmed: Whether the user confirmed that undoing a split deletes the right half of a spread.
         :type confirmed: bool
-        :param pin: Whether the recipe is pinned to the page, or None to keep the pin the page has.
-        :type pin: bool | None
         :param through_step: Index in the recipe of the last step to run, or None for every step that is on.
         :type through_step: int | None
         :returns: Whether the page was processed, skipped for lack of an image, or failed.
@@ -587,7 +570,7 @@ class RecipeRun(StageWork):
                 return (
                     RunOutcome.DONE
                     if await self._splits.split(page, recipe, source, confirmed=confirmed)
-                    else await self._fail(page, recipe, pin=pin)
+                    else await self._fail(page, recipe)
                 )
             undoing = await self._splits.undoing(page, recipe, confirmed=confirmed)
             version = await self._run_steps(
@@ -595,14 +578,13 @@ class RecipeRun(StageWork):
             )
         except DomainError:
             await self._uow.rollback()
-            return await self._fail(page, recipe, pin=pin)
+            return await self._fail(page, recipe)
         if version is None:
-            return await self._fail(page, recipe, pin=pin)
+            return await self._fail(page, recipe)
         changed = await self._records.set_head(
             PageStageKey(page.id, stage),
             head_version_id=version.id,
             recipe_id=recipe.id,
-            pin=pin,
             through_step=recipe.stopped_at(through_step),
         )
         if undoing is not None:
@@ -644,7 +626,7 @@ class RecipeRun(StageWork):
             chain.append(earlier)
         chain.reverse()
         previous = await self._uow.page_stages.find(PageStageKey(page.id, target.stage))
-        # The edit and the condition of a step belong to its identifier, so the chain is run with the steps of the
+        # The edit of a step belongs to its identifier, so the chain is run with the steps of the
         # recipe of the page, in their order, and a version no step of it made is run by a new step
         recipe_steps = (
             iter(())
@@ -659,7 +641,7 @@ class RecipeRun(StageWork):
             steps.append(
                 Step(processor_key=made.processor.key, params=made.params)
                 if own is None
-                else evolve(own, params=own.params if made.data.get(VersionData.SKIPPED_BY_CONDITION) else made.params)
+                else evolve(own, params=own.params if made.data.get(VersionData.SKIPPED_LEAF) else made.params)
             )
         try:
             source = await self._source(page, target.stage, VersionScale.FULL)
@@ -792,38 +774,31 @@ class RecipeRun(StageWork):
 
     @override
     async def _refresh(self, page: Page, stage: Stage) -> None:
-        """Run the recipe that made an earlier stage again, which finds its versions in the cache when nothing changed.
+        """Run an earlier stage again by the recipe of the kind of the page, which finds its versions in the cache.
 
         :param page: Page whose earlier stage is stale.
         :type page: Page
         :param stage: The stale stage.
         :type stage: Stage
         """
-        record = await self._uow.page_stages.get(PageStageKey(page.id, stage))
         try:
-            recipe = (
-                await self._uow.recipes.get(record.recipe_id)
-                if record.recipe_id is not None
-                else await self._recipes.active(page.project_id, stage)
-            )
+            recipe = (await self._recipes.for_pages(page.project_id, stage, [page]))[page.id]
         except NotFoundError:
             # A stage without a recipe, such as the page order, has nothing to run again
             return
         await self.run(page, recipe)
 
-    async def _fail(self, page: Page, recipe: Recipe, *, pin: bool | None) -> RunOutcome:
+    async def _fail(self, page: Page, recipe: Recipe) -> RunOutcome:
         """Record that the stage failed on the page.
 
         :param page: Page whose stage failed.
         :type page: Page
         :param recipe: Recipe that failed.
         :type recipe: Recipe
-        :param pin: Whether the recipe is pinned to the page, or None to keep the pin the page has.
-        :type pin: bool | None
         :returns: The outcome failed.
         :rtype: RunOutcome
         """
-        record = await self._records.mark_failed(page.id, recipe.stage, recipe_id=recipe.id, pin=pin)
+        record = await self._records.mark_failed(page.id, recipe.stage, recipe_id=recipe.id)
         await self._uow.commit()
         await self._records.announce(page.project_id, [record])
         return RunOutcome.FAILED

@@ -16,6 +16,7 @@ from bookreviver.domain.enums import NormalizeParam, Stage, TransformKind, Versi
 from bookreviver.domain.geometry import ContentBox, Rect
 from bookreviver.domain.margins import NOMINAL_BLOCK_MM
 from bookreviver.domain.values import NewPageEdit, RecipeDraft, StageRun, Step
+from tests.helpers.page_batches import PageValues
 from tests.helpers.samples import PAPER, png_bytes, text_page
 from tests.helpers.spreads import book_of, head_of, run_stage, use_recipe
 
@@ -120,7 +121,7 @@ class TestOnePageSizeForTheBook:
         versions = [await margins_of(fx_cv_kit, page) for page in pages]
         sizes = {size_of(version) for version in versions}
         largest = Rect.from_data(versions[LARGEST].data[VersionData.CONTENT_BOX])
-        params = (await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)).steps[0].params
+        params = (await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)).steps[0].params
         width, height = next(iter(sizes))
         expect(len(sizes) == 1)
         # The margins of a book that is not measured are the ones the step starts with, in millimetres of a block that is
@@ -184,9 +185,7 @@ class TestWhatTheUserSetsOnAPage:
         await fx_cv_kit.edits().save(
             actor, project.id, key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
         )
-        await fx_cv_kit.page_settings().change(
-            actor, project.id, key, NormalizeParam.MARGIN_TOP.value, MARGIN_TOP_BY_HAND
-        )
+        await PageValues(fx_cv_kit, actor, project.id).set(key, NormalizeParam.MARGIN_TOP.value, MARGIN_TOP_BY_HAND)
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         changed = await margins_of(fx_cv_kit, pages[CHANGED])
         other = await margins_of(fx_cv_kit, pages[LARGEST])
@@ -231,8 +230,8 @@ class TestMarginsAfterSelectContent:
         :rtype: tuple[Actor, Project, list[Page]]
         """
         actor, project, pages = await seed_book(kit)
-        draft = RecipeDraft(name='frame', steps=[Step(processor_key=CROP), Step(processor_key=NORMALIZE)])
-        await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, draft)
+        draft = RecipeDraft(steps=[Step(processor_key=CROP), Step(processor_key=NORMALIZE)])
+        await kit.edit_recipe(actor, project, Stage.GEOMETRY, draft)
         return actor, project, pages
 
     async def test_a_step_before_margins_does_not_take_the_size_of_the_book(self, fx_cv_kit: ProcessingKit) -> None:

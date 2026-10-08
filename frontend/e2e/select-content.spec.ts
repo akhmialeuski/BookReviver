@@ -90,10 +90,16 @@ async function watchCanvas(page: Page): Promise<void> {
     const log = [canvas?.getAttribute('data-state') ?? 'missing'];
     window.canvasStates = log;
     if (canvas !== null) {
-      new MutationObserver(() => { log.push(canvas.getAttribute('data-state') ?? 'missing'); console.log('DBGSTATE', location.pathname.slice(10, 16), Date.now() % 100000, canvas.getAttribute('data-state'), (canvas.getAttribute('data-sources') ?? '').split('/').slice(-3).join('/')); }).observe(
-        canvas,
-        { attributes: true, attributeFilter: ['data-state', 'data-sources'] },
-      );
+      new MutationObserver(() => {
+        log.push(canvas.getAttribute('data-state') ?? 'missing');
+        console.log(
+          'DBGSTATE',
+          location.pathname.slice(10, 16),
+          Date.now() % 100000,
+          canvas.getAttribute('data-state'),
+          (canvas.getAttribute('data-sources') ?? '').split('/').slice(-3).join('/'),
+        );
+      }).observe(canvas, { attributes: true, attributeFilter: ['data-state', 'data-sources'] });
     }
     let present = document.querySelector('[data-testid="editor-layer"]') !== null;
     new MutationObserver(() => {
@@ -130,8 +136,20 @@ test('a border of the content is dragged on Select content without the picture l
   page,
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
-  page.on('console', (m) => { if (m.text().startsWith('DBG')) console.log(m.text().slice(0, 400)); });
-  page.on('framenavigated', (f) => console.log('DBGNAV', f.url().slice(32, 38), Date.now() % 100000, f.url().replace(/^.*stages/, '').slice(0, 60)));
+  page.on('console', (m) => {
+    if (m.text().startsWith('DBG')) console.log(m.text().slice(0, 400));
+  });
+  page.on('framenavigated', (f) =>
+    console.log(
+      'DBGNAV',
+      f.url().slice(32, 38),
+      Date.now() % 100000,
+      f
+        .url()
+        .replace(/^.*stages/, '')
+        .slice(0, 60),
+    ),
+  );
   const folder = await writeSheetsFolder(1);
   const layer = page.getByTestId('editor-layer');
   const canvas = page.getByTestId('viewer-canvas');

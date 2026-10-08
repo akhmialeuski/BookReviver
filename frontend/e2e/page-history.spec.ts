@@ -343,7 +343,7 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await uploadFolder(page, folder, 1);
     projectId = openProjectId(page);
     await waitForIdleJobs(page, projectId);
-    // The detection takes the sheet for a picture, which the rules send to the recipe for plates, and the step open here
+    // The detection takes the sheet for a picture, which the recipe for pictures processes, and the step open here
     // belongs to the recipe for text, so the page is said to be text
     await markPagesAsText(page);
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');

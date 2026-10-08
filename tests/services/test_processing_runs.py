@@ -11,6 +11,7 @@ from bookreviver.domain.enums import (
     EditorKind,
     ImagePolicy,
     JobState,
+    RecipeKind,
     Rendition,
     Stage,
     StageState,
@@ -154,7 +155,10 @@ class TestRunStage:
     async def test_rerun_with_other_parameters_makes_a_new_version_beside_the_old_one(
         self, fx_kit: ProcessingKit
     ) -> None:
-        """Verify other parameters give another identifier, and going back to the first finds the first version.
+        """Verify other parameters give another identifier, and going back makes the first version again in its row.
+
+        The run of the second version leaves the first without its files, since it is no longer current and nothing
+        reads it, so going back runs the processor once more but adds no row.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -162,18 +166,19 @@ class TestRunStage:
         actor, project, page = await prepared_page(fx_kit)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         first = await head_of(fx_kit, page, Stage.GEOMETRY)
-        service = fx_kit.service()
-        strong = RecipeDraft(name='Strong', steps=[Step(processor_key=FAKE_KEY, params={'strength': 2})])
-        await service.save_recipe(actor, project.id, Stage.GEOMETRY, strong)
+        strong = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={'strength': 2})])
+        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, strong)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         second = await head_of(fx_kit, page, Stage.GEOMETRY)
-        back_draft = RecipeDraft(name='Back', steps=[Step(processor_key=FAKE_KEY)])
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, back_draft)
+        replaced = await fx_kit.uow().page_versions.get(first.id)
+        back_draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY)])
+        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, back_draft)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         back = await head_of(fx_kit, page, Stage.GEOMETRY)
         total = (await fx_kit.uow().page_versions.list_for_stage(page.id, Stage.GEOMETRY, None, EVERYTHING)).total
         expect((first.id != second.id, back.id == first.id, total) == (True, True, 2))
-        expect((fx_kit.fake.runs, second.data) == (2, {'ran': 2}))
+        expect((replaced.files_removed, back.files_removed) == (True, False))
+        expect((fx_kit.fake.runs, second.data) == (3, {'ran': 2}))
         assert_expectations()
 
     async def test_events_announce_the_version_and_the_stage(self, fx_kit: ProcessingKit) -> None:
@@ -207,8 +212,8 @@ class TestRunStage:
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
         cleanup_before = await head_of(fx_kit, page, Stage.CLEANUP)
-        strong = RecipeDraft(name='Strong', steps=[Step(processor_key=FAKE_KEY, params={'strength': 2})])
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, strong)
+        strong = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={'strength': 2})])
+        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, strong)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         stale = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.CLEANUP))
         expect((stale.state, stale.head_version_id) == (StageState.STALE, cleanup_before.id))
@@ -227,8 +232,8 @@ class TestRunStage:
         """
         actor, project, page = await prepared_page(fx_kit)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-        strong = RecipeDraft(name='Strong', steps=[Step(processor_key=FAKE_KEY, params={'strength': 2})])
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, strong)
+        strong = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={'strength': 2})])
+        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, strong)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
         geometry = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         cleanup = await head_of(fx_kit, page, Stage.CLEANUP)
@@ -248,8 +253,8 @@ class TestRunStage:
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
         cleanup_before = await head_of(fx_kit, page, Stage.CLEANUP)
-        failing = RecipeDraft(name='Failing', steps=[Step(processor_key=FAKE_KEY, params={'fail': True})])
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, failing)
+        failing = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={'fail': True})])
+        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, failing)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
         geometry = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         cleanup = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.CLEANUP))
@@ -282,8 +287,8 @@ class TestRunStage:
         actor, project, first = await prepared_page(fx_kit)
         second, _ = await fx_kit.seed_scan_page(project, order_key='a1')
         await fx_kit.seed_base_version(second)
-        failing = RecipeDraft(name='Failing', steps=[Step(processor_key=FAKE_KEY, params={'fail': True})])
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, failing)
+        failing = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={'fail': True})])
+        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, failing)
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         await fx_kit.jobs().run_stage(job.id)
         versions = await fx_kit.uow().page_versions.list_for_stage(first.id, Stage.GEOMETRY, None, EVERYTHING)
@@ -376,10 +381,8 @@ class TestRunStage:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared_page(fx_kit)
-        twice = RecipeDraft(
-            name='Twice', steps=[Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={'strength': 2})]
-        )
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, twice)
+        twice = RecipeDraft(steps=[Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={'strength': 2})])
+        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, twice)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         last = await head_of(fx_kit, page, Stage.GEOMETRY)
         assert last.input_id is not None
@@ -394,9 +397,7 @@ class TestRunStage:
         """
         actor, project, page = await prepared_page(fx_kit)
         steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={'strength': 7}, enabled=False)]
-        await fx_kit.service().save_recipe(
-            actor, project.id, Stage.GEOMETRY, RecipeDraft(name='One of two', steps=steps)
-        )
+        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=steps))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         versions = await fx_kit.uow().page_versions.list_for_stage(page.id, Stage.GEOMETRY, None, EVERYTHING)
         head = await head_of(fx_kit, page, Stage.GEOMETRY)
@@ -448,7 +449,7 @@ async def save_three_steps(kit: ProcessingKit, actor: Actor, project: Project) -
     :type project: Project
     """
     steps = [Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: strength}) for strength in range(1, 4)]
-    await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, RecipeDraft(name='Three', steps=steps))
+    await kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=steps))
 
 
 class TestRunThroughStep:
@@ -504,9 +505,7 @@ class TestRunThroughStep:
             Step(processor_key=FAKE_KEY),
             Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2}, enabled=False),
         ]
-        await fx_kit.service().save_recipe(
-            actor, project.id, Stage.GEOMETRY, RecipeDraft(name='Off at the end', steps=steps)
-        )
+        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=steps))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=0))
         record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         assert record.through_step is None
@@ -543,7 +542,7 @@ class TestRunThroughStep:
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=0))
         first = await head_of(fx_kit, page, Stage.GEOMETRY)
         edit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=1.5))
-        recipe = await fx_kit.parts(fx_kit.uow()).recipes.active(project.id, Stage.GEOMETRY)
+        recipe = await fx_kit.parts(fx_kit.uow()).recipes.of_kind(project.id, Stage.GEOMETRY, RecipeKind.TEXT)
         key = PageStepKey(page.id, Stage.GEOMETRY, recipe.steps[-1].step_id)
         await fx_kit.edits().save(actor, project.id, key, edit, None)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
@@ -560,9 +559,7 @@ class TestRunThroughStep:
         """
         actor, project, page = await prepared_page(fx_kit)
         steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={FAILING_PARAMETER: True})]
-        await fx_kit.service().save_recipe(
-            actor, project.id, Stage.GEOMETRY, RecipeDraft(name='Fails second', steps=steps)
-        )
+        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=steps))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=0))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=1))
         record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
@@ -595,9 +592,7 @@ class TestRunThroughStep:
         """
         actor, project, _ = await prepared_page(fx_kit)
         steps = [Step(processor_key=FAKE_KEY, enabled=False), Step(processor_key=FAKE_KEY)]
-        await fx_kit.service().save_recipe(
-            actor, project.id, Stage.GEOMETRY, RecipeDraft(name='Off first', steps=steps)
-        )
+        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=steps))
         with pytest.raises(ConflictError):
             await fx_kit.service().start_run(
                 actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY, through_step=0)

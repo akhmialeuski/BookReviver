@@ -8,7 +8,6 @@ import {
   VERTICAL_CHOICES,
   type VerticalChoice,
 } from '@/features/editors/alignment';
-import { HintPanel } from '@/features/editors/HintPanel';
 import { useStepSettings } from '@/features/editors/stepSettings';
 import { SegmentedRadio } from '@/features/pages/SegmentedRadio';
 import { MESSAGES } from '@/shared/messages';
@@ -33,7 +32,6 @@ export function MarginsPanel(): React.JSX.Element {
   );
   return (
     <div className="grid basis-full gap-3" data-testid="margins-panel">
-      <HintPanel hint={MESSAGES.editors.margins.hint} testId="margins-hint" />
       <div data-testid="align-vertical">
         <SegmentedRadio
           legend={labels.vertical}

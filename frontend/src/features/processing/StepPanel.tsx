@@ -1,6 +1,5 @@
-import { ChevronDownIcon, PlayIcon, TriangleAlertIcon } from 'lucide-react';
+import { TriangleAlertIcon } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import type { AppliesTo, FigureState } from '@/api';
 import { EditorControls } from '@/features/editors/EditorControls';
 import { isPlacement } from '@/features/editors/placement';
 import type { EditorSession } from '@/features/editors/session';
@@ -10,11 +9,9 @@ import { PageStepSettings } from '@/features/processing/PageStepSettings';
 import { ParamsForm } from '@/features/processing/ParamsForm';
 import { pageValuesOf } from '@/features/processing/pageSettings';
 import { usePageSettings } from '@/features/processing/queries';
-import { CONDITIONS } from '@/features/processing/recipe';
 import { readResult } from '@/features/processing/results';
 import { StepReset } from '@/features/processing/StepReset';
-import { pagesOfCondition, RunScope } from '@/features/processing/scope';
-import { canRunThrough, passedPages } from '@/features/processing/stepRuns';
+import { passedPages } from '@/features/processing/stepRuns';
 import type { Processing } from '@/features/processing/useProcessing';
 import type { StageRun } from '@/features/processing/useStageRun';
 import type { BarStep } from '@/features/workspace/steps';
@@ -24,40 +21,23 @@ import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 import { CheckboxField } from '@/shared/ui/checkbox-field';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from '@/shared/ui/dropdown-menu';
 
 /**
  * The section of the panel for the step that is open, which is where a step of a stage with a bar is set and looked at:
  * its settings, where it stands in the order and what is wrong with that, what it did on the open page and what the
- * page changes for it, how the pages of the book stand at it and how many passed it, and the buttons that run the recipe
- * up to it.
+ * page changes for it, and how the pages of the book stand at it and how many passed it. A run starts from the foot of the
+ * panel and not from here.
  *
  * It stands above the sections of the recipe and of the open page and takes none of them away. The settings are the
  * draft of the recipe, which the window of the gear and the save bar share, so a change made here is the change made
- * there. Under the buttons of "Auto" is the menu that resets the step to its defaults. The changes and the results of the
+ * there. At the end is the menu that resets the step to its defaults. The changes and the results of the
  * step on the open page are not listed here but in the history that ends the panel of the stage.
  */
 
 const labels = MESSAGES.workspace.stepPanel;
 const stepLabels = MESSAGES.processing.steps;
 
-const DOT: Readonly<Record<FigureState, string>> = {
-  default: 'bg-muted-foreground/60',
-  found: 'bg-status-done',
-  'by-hand': 'bg-status-attention',
-  skipped: 'bg-muted-foreground/25',
-};
-
 const NO_PAGES: ReadonlySet<string> = new Set();
-
-/** The scopes of a run that the buttons of "Auto" do not name: the pages selected in the grid and those that need a look. */
-const OTHER_SCOPES: ReadonlySet<RunScope> = new Set([RunScope.Selected, RunScope.Attention]);
 
 function Heading({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
@@ -86,13 +66,13 @@ export function StepPanel({
   pageLabel: string;
   /** The open page, or undefined when the book has none. */
   pageId: string | undefined;
-  /** Every page of the book with where it stands in the stage, which the pages of the condition are counted from. */
+  /** Every page of the book with where it stands in the stage, which the pages of the kind of the step are counted from. */
   items: readonly StripItem[];
   /** The pages selected in the grid, which a shape set by hand can be carried over to. */
   selected?: ReadonlySet<string>;
   /** The page editor of the step on the open page, or null when the step has none or the page passes the step by. */
   editor: EditorSession | null;
-  /** The run of the stage, which the buttons of "Auto" ask for. */
+  /** The run of the stage, which says how many pages the book has for the count of the pages that passed the step. */
   run: StageRun;
 }): React.JSX.Element {
   const { catalogue, recipe } = processing;
@@ -109,13 +89,10 @@ export function StepPanel({
   const state = page?.state ?? null;
   const found =
     page?.version === null || page?.version === undefined ? null : readResult(page.version);
-  const runnable = recipe !== undefined && canRunThrough(recipe.steps, step.index);
-  const ofCondition = pagesOfCondition(items, draft?.appliesTo ?? step.appliesTo);
-  const hasCondition = (draft?.appliesTo ?? step.appliesTo) !== 'all';
 
   return (
     <section
-      className="grid gap-4 border-b pb-4"
+      className="grid grid-cols-1 gap-4 border-b pb-4"
       aria-label={labels.label(step.number, step.title)}
       data-testid="step-panel"
       data-step-id={step.stepId}
@@ -151,29 +128,8 @@ export function StepPanel({
         </div>
       )}
 
-      <div className="grid gap-3" data-testid="step-panel-settings">
+      <div className="grid grid-cols-1 gap-3" data-testid="step-panel-settings">
         <Heading>{labels.settings}</Heading>
-        {draft === undefined ? null : (
-          <label
-            className="grid gap-1 text-xs text-muted-foreground"
-            title={stepLabels.condition.hint}
-          >
-            {stepLabels.condition.label(step.title)}
-            <select
-              aria-label={labels.condition(step.title)}
-              data-testid="step-panel-condition"
-              className="h-9 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              value={draft.appliesTo}
-              onChange={(event) => processing.condition(draft.id, event.target.value as AppliesTo)}
-            >
-              {CONDITIONS.map((condition) => (
-                <option key={condition} value={condition}>
-                  {stepLabels.condition.options[condition]}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
         {draft === undefined || processor === undefined ? null : (
           <ParamsForm
             processor={processor}
@@ -190,30 +146,10 @@ export function StepPanel({
 
       <div className="grid gap-2" data-testid="step-panel-page">
         <Heading>{labels.thisPage(pageLabel)}</Heading>
-        <p className="flex items-center gap-2 text-sm" data-testid="step-panel-state">
-          <span
-            className={cn(
-              'size-2 shrink-0 rounded-full',
-              state === null ? 'ring-1 ring-border' : DOT[state],
-            )}
-            aria-hidden="true"
-          />
-          <span className="text-muted-foreground">{labels.shape}</span>
-          <span className="font-medium">
-            {state === null
-              ? MESSAGES.workspace.steps.reading
-              : MESSAGES.workspace.steps.state[state]}
-          </span>
-        </p>
         {found === null || found.skipped || found.angle === null ? null : (
           <p className="flex justify-between gap-4 text-sm" data-testid="step-panel-angle">
             <span className="text-muted-foreground">{MESSAGES.processing.thisPage.angle}</span>
             <span className="font-medium">{MESSAGES.processing.thisPage.degrees(found.angle)}</span>
-          </p>
-        )}
-        {state === null ? null : (
-          <p className="text-xs text-muted-foreground" data-testid="step-panel-hint">
-            {MESSAGES.editors.figure.hint[state]}
           </p>
         )}
         {page !== null && page.version === null && page.input_version === null ? (
@@ -261,10 +197,7 @@ export function StepPanel({
         <Heading>{labels.book}</Heading>
         {recipe === undefined || !step.enabled || recipe.steps.length < 2 ? null : (
           <p className="text-sm" title={stepLabels.passedHint} data-testid="step-passed">
-            {stepLabels.passed(
-              passedPages(stageRows, recipe.id, step.index),
-              run.choices.find(({ scope }) => scope === RunScope.All)?.count ?? 0,
-            )}
+            {stepLabels.passed(passedPages(stageRows, recipe.id, step.index), run.total)}
           </p>
         )}
         {counts === null ? (
@@ -295,74 +228,6 @@ export function StepPanel({
               ))}
           </dl>
         )}
-      </div>
-
-      <div className="grid gap-2">
-        <Button
-          variant="outline"
-          disabled={!runnable || run.disabled || pageId === undefined}
-          data-testid="step-auto-page"
-          onClick={() => pageId !== undefined && run.startPages([pageId], step.index)}
-        >
-          <PlayIcon />
-          {labels.autoPage}
-        </Button>
-        {hasCondition ? (
-          <Button
-            variant="outline"
-            disabled={!runnable || run.disabled || ofCondition.length === 0}
-            data-testid="step-auto-condition"
-            onClick={() =>
-              run.startPages(
-                ofCondition.map((item) => item.page.id),
-                step.index,
-              )
-            }
-          >
-            <PlayIcon />
-            {labels.autoCondition(ofCondition.length)}
-          </Button>
-        ) : null}
-        <Button
-          disabled={!runnable || run.disabled}
-          title={labels.autoHint}
-          data-testid="step-auto"
-          onClick={() => run.start(RunScope.All, step.index)}
-        >
-          <PlayIcon />
-          {labels.auto}
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              disabled={!runnable || run.disabled}
-              data-testid="step-auto-more"
-            >
-              <PlayIcon />
-              {labels.autoMore}
-              <ChevronDownIcon />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuLabel>{stepLabels.runThrough}</DropdownMenuLabel>
-            {run.choices
-              .filter(({ scope }) => OTHER_SCOPES.has(scope))
-              .map(({ scope, count }) => (
-                <DropdownMenuItem
-                  key={scope}
-                  disabled={count === 0}
-                  data-testid={`step-run-${scope}`}
-                  onSelect={() => run.start(scope, step.index)}
-                >
-                  {run.describe(scope, count)}
-                </DropdownMenuItem>
-              ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <p className="text-xs text-muted-foreground">
-          {run.dirty ? labels.saveFirst : labels.autoHint}
-        </p>
       </div>
 
       <StepReset processing={processing} pageId={pageId} stepId={step.stepId} title={step.title} />

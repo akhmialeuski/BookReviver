@@ -15,9 +15,9 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 /**
  * The banners above the canvas of a processing stage.
  *
- * One says the pages are out of date because a stage before this one changed after they were made, and offers to run the
- * stage again on them. The other, on the Split stage only, says that some scans are wider than tall and look like open
- * books, and offers to cut them all with one run of the recipe that cuts, after which the cut is checked on each.
+ * One says the pages are out of date because a stage before this one changed after they were made. It has no button: a
+ * run of the stage starts from the foot of the panel. The other, on the Split stage only, says that some scans are wider
+ * than tall and look like open books, and offers to cut them all with one run, after which the cut is checked on each.
  */
 
 const labels = MESSAGES.processing;
@@ -41,15 +41,15 @@ export function StageBanners({
   const runInFlight = useRunInFlight(projectId);
   const idle = (activeJobs.data?.length ?? 0) === 0 && !runInFlight && !processing.dirty;
 
-  const staleIds = items
-    .filter((item) => item.row?.status === 'stale' && item.page.origin !== 'placeholder')
-    .map((item) => item.page.id);
+  const anyStale = items.some(
+    (item) => item.row?.status === 'stale' && item.page.origin !== 'placeholder',
+  );
   const offer = offerFor(
     items.map((item) => item.page),
     wideScanIds(scans.data ?? []),
   );
   const cutter = cutterOf(processing.recipes);
-  const showStale = recipe !== undefined && staleIds.length > 0;
+  const showStale = recipe !== undefined && anyStale;
   const showSplit = stage === 'page-split' && offer.toCut > 0 && cutter !== undefined && !dismissed;
   if (!showStale && !showSplit && run.error === null) {
     return null;
@@ -74,7 +74,7 @@ export function StageBanners({
             onClick={() =>
               run.mutate({
                 path: { project_id: projectId, stage },
-                body: { recipe_id: cutter.id, page_ids: offer.pageIds },
+                body: { page_ids: offer.pageIds },
               })
             }
           >
@@ -99,20 +99,6 @@ export function StageBanners({
               VERBS[stage] ?? labels.stale.otherVerb,
             )}
           </p>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!idle}
-            data-testid="stale-banner-run"
-            onClick={() =>
-              run.mutate({
-                path: { project_id: projectId, stage },
-                body: { recipe_id: recipe.id, page_ids: staleIds },
-              })
-            }
-          >
-            {labels.stale.rerun(staleIds.length)}
-          </Button>
         </div>
       ) : null}
       {run.error === null ? null : <ErrorAlert message={describeError(run.error)} />}

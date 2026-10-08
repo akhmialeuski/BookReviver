@@ -3,41 +3,36 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   GripVerticalIcon,
-  StepForwardIcon,
   Trash2Icon,
   TriangleAlertIcon,
 } from 'lucide-react';
 import { useMemo } from 'react';
-import type { AppliesTo, OrderMode, ProcessorSchema } from '@/api';
+import type { OrderMode, ProcessorSchema } from '@/api';
 import type { OrderIssue } from '@/features/processing/order';
 import { ParamsForm } from '@/features/processing/ParamsForm';
-import { CONDITIONS, type StepDraft } from '@/features/processing/recipe';
-import { OrderNotice, type StepOrder, StepSorter } from '@/features/processing/StepSorter';
+import type { StepDraft } from '@/features/processing/recipe';
+import { StepSorter } from '@/features/processing/StepSorter';
 import { fitsSchema, formSchemaOf } from '@/features/processing/schema';
-import type { RunScope, ScopeChoice } from '@/features/processing/scope';
-import { canRunThrough } from '@/features/processing/stepRuns';
+import type { Processing } from '@/features/processing/useProcessing';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from '@/shared/ui/dropdown-menu';
 import { Switch } from '@/shared/ui/switch';
 
 /**
  * The steps of the recipe as a list the reader reorders by dragging a handle or with the keyboard, switches on and off,
- * removes, and opens to change their settings.
+ * removes and opens to change their settings. It is the one editor of that list: the panel of a stage
+ * without a step bar and the window of the gear of a stage with one both draw it, over the same draft.
+ *
+ * The switch of the order of the steps and the button that puts them back in their usual order belong to it too, since
+ * the marks of a step out of its place are drawn here.
  *
  * A step shows the title of its processor from the catalogue. A step whose processor is not installed on this machine
  * still shows, with a note, so a recipe is never edited blind and the step can still be removed.
  *
- * When the list is given a way to run, each step of a recipe of several offers "Run up to here" over the scopes of a run,
- * and says how many pages already passed it. When it is given the fields the open page changes for itself, the form of a
- * step marks them.
+ * When the list is given the progress of the pages, each step of a recipe of several says how many pages already passed
+ * it. A run starts from the foot of the panel and not from here. When it is given the fields the open page changes for
+ * itself, the form of a step marks them. A step shows the form of its settings only where they are not set elsewhere.
  */
 
 const labels = MESSAGES.processing.steps;
@@ -45,22 +40,13 @@ const labels = MESSAGES.processing.steps;
 /** The fields of a step the open page does not change, which is what a step has when no page is open. */
 const NO_PAGE_VALUES: Readonly<Record<string, unknown>> = {};
 
-/** What the steps need to run the recipe up to one of them and to show how far the pages have come. */
-export interface StepRunControl {
-  /** The scopes of the menu with the number of pages each covers now. */
-  choices: readonly ScopeChoice[];
-  describe: (scope: RunScope, count: number) => string;
-  /** Whether a run cannot be asked for now. */
-  disabled: boolean;
+/** What the steps need to show how far the pages have come. */
+export interface StepProgress {
   /** How many pages passed the step with this index. */
   passed: (index: number) => number;
   /** The pages a step can be passed by. */
   total: number;
-  /** Run the recipe up to the step with this index, over a scope. */
-  onRun: (index: number, scope: RunScope) => void;
 }
-
-export { OrderNotice, type StepOrder };
 
 function StepCard({
   step,
@@ -68,17 +54,12 @@ function StepCard({
   processor,
   open,
   extra,
-  runnable,
-  run,
+  progress,
   pageValues,
   issues,
   hover,
-  onRestore,
-  onOpen,
-  onToggle,
-  onRemove,
-  onChange,
-  onCondition,
+  showParams,
+  processing,
 }: {
   step: StepDraft;
   /** Its place in the recipe, from one. */
@@ -87,21 +68,16 @@ function StepCard({
   open: boolean;
   /** What the step shows under its settings when it is open, such as the button that measures the book. */
   extra: React.ReactNode;
-  /** Whether a step or one before it is on, so the recipe can be run up to this one. */
-  runnable: boolean;
-  run: StepRunControl | undefined;
+  progress: StepProgress | undefined;
   /** The fields the open page changes for this step, which its form marks. */
   pageValues: Readonly<Record<string, unknown>>;
   /** What is wrong with the place of this step. */
   issues: readonly OrderIssue[];
   /** How a dragged step that is over this one is received, or null when nothing is held over it. */
   hover: OrderMode | null;
-  onRestore: (() => void) | undefined;
-  onOpen: (open: boolean) => void;
-  onToggle: () => void;
-  onRemove: () => void;
-  onChange: (params: Record<string, unknown>) => void;
-  onCondition: (appliesTo: AppliesTo) => void;
+  /** Whether the open step draws the form of its settings, which a stage with a step bar sets in the panel of the step. */
+  showParams: boolean;
+  processing: Processing;
 }): React.JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: step.id,
@@ -148,45 +124,16 @@ function StepCard({
           aria-expanded={open}
           aria-label={open ? labels.hideSettings(title) : labels.showSettings(title)}
           data-testid="step-toggle"
-          onClick={() => onOpen(!open)}
+          onClick={() => processing.open(open ? undefined : step.id)}
         >
           {open ? <ChevronDownIcon className="size-4" /> : <ChevronRightIcon className="size-4" />}
           <span className="truncate">{labels.step(number, title)}</span>
         </button>
-        {run === undefined ? null : (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`${labels.runThrough}: ${title}`}
-                title={runnable ? labels.runThroughHint(title) : labels.runThroughOff}
-                disabled={!runnable || run.disabled}
-                data-testid="step-run"
-              >
-                <StepForwardIcon />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>{labels.runThrough}</DropdownMenuLabel>
-              {run.choices.map(({ scope, count }) => (
-                <DropdownMenuItem
-                  key={scope}
-                  disabled={count === 0}
-                  data-testid={`step-run-${scope}`}
-                  onSelect={() => run.onRun(number - 1, scope)}
-                >
-                  {run.describe(scope, count)}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
         <Switch
           checked={step.enabled}
           aria-label={labels.switchLabel(title)}
           data-testid="step-enabled"
-          onCheckedChange={onToggle}
+          onCheckedChange={() => processing.toggle(step.id)}
         />
         <Button
           variant="ghost"
@@ -194,20 +141,20 @@ function StepCard({
           aria-label={labels.remove(title)}
           title={labels.remove(title)}
           data-testid="step-remove"
-          onClick={onRemove}
+          onClick={() => processing.remove(step.id)}
         >
           <Trash2Icon />
         </Button>
       </div>
-      {issues.length === 0 && (run === undefined || !step.enabled) ? null : (
+      {issues.length === 0 && (progress === undefined || !step.enabled) ? null : (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 pb-1.5 text-xs">
-          {run === undefined || !step.enabled ? null : (
+          {progress === undefined || !step.enabled ? null : (
             <p
               className="text-muted-foreground"
               title={labels.passedHint}
               data-testid="step-passed"
             >
-              {labels.passed(run.passed(number - 1), run.total)}
+              {labels.passed(progress.passed(number - 1), progress.total)}
             </p>
           )}
           {issues.length === 0 ? null : (
@@ -255,45 +202,19 @@ function StepCard({
                   {issue.reason}
                 </p>
               ))}
-              {onRestore === undefined ? null : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-fit"
-                  title={labels.order.restoreHint}
-                  data-testid="step-restore-order"
-                  onClick={onRestore}
-                >
-                  {labels.order.restore}
-                </Button>
-              )}
             </div>
           )}
-          <label className="grid gap-1 text-xs text-muted-foreground" title={labels.condition.hint}>
-            {labels.condition.label(title)}
-            <select
-              aria-label={labels.condition.label(title)}
-              data-testid="step-condition"
-              className="h-9 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              value={step.appliesTo}
-              onChange={(event) => onCondition(event.target.value as AppliesTo)}
-            >
-              {CONDITIONS.map((condition) => (
-                <option key={condition} value={condition}>
-                  {labels.condition.options[condition]}
-                </option>
-              ))}
-            </select>
-          </label>
           {processor === undefined ? (
             <p className="text-sm text-muted-foreground">{labels.unknownProcessor}</p>
-          ) : (
+          ) : showParams ? (
             <ParamsForm
               processor={processor}
               params={step.params}
               marked={marked}
-              onChange={onChange}
+              onChange={(params) => processing.change(step.id, params)}
             />
+          ) : processor.summary === '' ? null : (
+            <p className="text-xs text-muted-foreground">{processor.summary}</p>
           )}
           {extra}
         </div>
@@ -303,68 +224,89 @@ function StepCard({
 }
 
 export function StepList({
-  steps,
-  catalogue,
-  openId,
+  processing,
+  heading,
+  showParams,
   extraOf,
-  run,
+  progress,
   pageValuesOf,
-  order,
-  onOpen,
-  onMove,
-  onToggle,
-  onRemove,
-  onChange,
-  onCondition,
 }: {
-  steps: readonly StepDraft[];
-  catalogue: readonly ProcessorSchema[];
-  openId: string | undefined;
+  processing: Processing;
+  /** A heading drawn beside the switch of the order, or absent where the list stands under a title of its own. */
+  heading?: string;
+  /** Whether an open step draws the form of its settings, which a stage with a step bar sets in the panel of the step. */
+  showParams: boolean;
   /** What a step shows under its settings when it is open, or nothing. */
   extraOf?: (step: StepDraft) => React.ReactNode;
-  /** How to run the recipe up to a step, or absent for a list that only edits. A recipe of one step has no such thing. */
-  run?: StepRunControl;
+  /** How far the pages have come, or absent for a list that only edits. A recipe of one step has no such thing. */
+  progress?: StepProgress;
   /** The fields the open page changes for a step, or absent when no page is open. */
   pageValuesOf?: (step: StepDraft) => Readonly<Record<string, unknown>>;
-  /** The order the steps are kept in, or absent for a list that does not guard it. */
-  order?: StepOrder;
-  onOpen: (id: string | undefined) => void;
-  onMove: (activeId: string, overId: string) => void;
-  onToggle: (id: string) => void;
-  onRemove: (id: string) => void;
-  onChange: (id: string, params: Record<string, unknown>) => void;
-  onCondition: (id: string, appliesTo: AppliesTo) => void;
 }): React.JSX.Element {
-  if (steps.length === 0) {
-    return <p className="text-sm text-muted-foreground">{labels.empty}</p>;
-  }
+  const { steps, catalogue } = processing;
   return (
-    <StepSorter steps={steps} catalogue={catalogue} order={order} onMove={onMove}>
-      {(hoverOf) => (
-        <ol aria-label={labels.title} className="grid grid-cols-1 gap-2" data-testid="recipe-steps">
-          {steps.map((step, index) => (
-            <StepCard
-              key={step.id}
-              step={step}
-              number={index + 1}
-              processor={catalogue.find((entry) => entry.key === step.processorKey)}
-              open={step.id === openId}
-              extra={extraOf?.(step) ?? null}
-              runnable={canRunThrough(steps, index)}
-              run={steps.length > 1 ? run : undefined}
-              pageValues={pageValuesOf?.(step) ?? NO_PAGE_VALUES}
-              issues={order?.issues.get(step.id) ?? []}
-              hover={hoverOf(step.id)}
-              onRestore={order?.onRestore}
-              onOpen={(open) => onOpen(open ? step.id : undefined)}
-              onToggle={() => onToggle(step.id)}
-              onRemove={() => onRemove(step.id)}
-              onChange={(params) => onChange(step.id, params)}
-              onCondition={(appliesTo) => onCondition(step.id, appliesTo)}
-            />
-          ))}
-        </ol>
+    <>
+      <div className="flex min-h-6 items-center justify-between gap-2">
+        {heading === undefined ? null : (
+          <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+            {heading}
+          </h3>
+        )}
+        <div
+          className="ml-auto flex items-center gap-2 text-xs text-muted-foreground"
+          title={labels.order.modeHint}
+        >
+          <span>{labels.order.modeLabel}</span>
+          <Switch
+            checked={processing.orderMode === 'free'}
+            aria-label={labels.order.modeLabel}
+            data-testid="order-free"
+            onCheckedChange={(free) => processing.setOrderMode(free ? 'free' : 'usual')}
+          />
+        </div>
+      </div>
+      {steps.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{labels.empty}</p>
+      ) : (
+        <StepSorter processing={processing}>
+          {(hoverOf) => (
+            <ol
+              aria-label={labels.title}
+              className="grid grid-cols-1 gap-2"
+              data-testid="recipe-steps"
+            >
+              {steps.map((step, index) => (
+                <StepCard
+                  key={step.id}
+                  step={step}
+                  number={index + 1}
+                  processor={catalogue.find((entry) => entry.key === step.processorKey)}
+                  open={step.id === processing.openId}
+                  extra={extraOf?.(step) ?? null}
+                  progress={steps.length > 1 ? progress : undefined}
+                  pageValues={pageValuesOf?.(step) ?? NO_PAGE_VALUES}
+                  issues={processing.orderIssues.get(step.id) ?? []}
+                  hover={hoverOf(step.id)}
+                  showParams={showParams}
+                  processing={processing}
+                />
+              ))}
+            </ol>
+          )}
+        </StepSorter>
       )}
-    </StepSorter>
+      {processing.orderIssues.size === 0 ? null : (
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-fit"
+          title={labels.order.restoreHint}
+          data-testid="steps-restore-order"
+          onClick={processing.restoreOrder}
+        >
+          {labels.order.restore}
+        </Button>
+      )}
+    </>
   );
 }

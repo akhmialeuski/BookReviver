@@ -1,16 +1,15 @@
 import type { QueryClient } from '@tanstack/react-query';
 import type { Stage } from '@/api';
 import {
-  getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey,
   listPagesApiV1ProjectsProjectIdPagesGetQueryKey,
   listPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetQueryKey,
   listProjectJobsApiV1ProjectsProjectIdJobsGetQueryKey,
   listProjectsApiV1ProjectsGetQueryKey,
+  listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetQueryKey,
   listScansApiV1ProjectsProjectIdScansGetQueryKey,
   listSourcesApiV1ProjectsProjectIdSourcesGetQueryKey,
   listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey,
   listStagesApiV1ProjectsProjectIdStagesGetQueryKey,
-  listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey,
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey,
   projectApiV1ProjectsProjectIdGetQueryKey,
 } from '@/api/@tanstack/react-query.gen';
@@ -103,6 +102,22 @@ export function invalidateStageRows(
   });
 }
 
+/**
+ * Refresh the rows of a stage and of every stage after it. A row draws the version its stage reads, which is the
+ * current version of an earlier stage, so a change of a page in a stage changes the picture of the later stages too,
+ * even for the pages they have not run on and that no event of their own names.
+ */
+export async function invalidateStageRowsFrom(
+  queryClient: QueryClient,
+  projectId: string,
+  stage: Stage,
+): Promise<void> {
+  const first = STAGES.findIndex((entry) => entry.stage === stage);
+  await Promise.all(
+    STAGES.slice(first).map((entry) => invalidateStageRows(queryClient, projectId, entry.stage)),
+  );
+}
+
 /** Refresh the rows of every stage; only the stage on screen is read again at once, the others when it is opened. */
 export async function invalidateAllStageRows(
   queryClient: QueryClient,
@@ -143,14 +158,9 @@ export function invalidateRecipes(
   stage: Stage,
 ): Promise<void> {
   const path = { project_id: projectId, stage };
-  return Promise.all([
-    queryClient.invalidateQueries({
-      queryKey: getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey({ path }),
-    }),
-    queryClient.invalidateQueries({
-      queryKey: listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey({ path }),
-    }),
-  ]).then(() => undefined);
+  return queryClient.invalidateQueries({
+    queryKey: listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetQueryKey({ path }),
+  });
 }
 
 /** Refresh the jobs of a book, those running and the latest of any state, which the activity shows. */

@@ -24,6 +24,7 @@ from bookreviver.domain.enums import (
     PageKind,
     PageOrigin,
     PaperFill,
+    RecipeKind,
     Rendition,
     Stage,
     StageState,
@@ -34,7 +35,7 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.events import PagesChanged
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import NewPage, Renditions, Step
+from bookreviver.domain.values import NewPage, ProcessorRef, Renditions, Step
 from bookreviver.services.base_versions import PAGES_BLANK, BaseVersions
 from tests.helpers.builders import (
     EPOCH,
@@ -394,13 +395,13 @@ class TestChooseALeaf:
     async def test_a_leaf_has_the_size_the_normalize_step_gives_the_pages_once_the_book_is_measured(
         self, fx_desk: LeafDesk
     ) -> None:
-        """Verify the size of the active normalize step wins over the median, and a step that is off does not.
+        """Verify the size of the normalize step of the recipe for blank pages wins over the median, and a step that is off does not.
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
         """
         book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK, PageKind.BLANK])
-        recipe = make_recipe(project_id=book.project.id, active=True)
+        recipe = make_recipe(project_id=book.project.id, kind=RecipeKind.BLANK)
         width, height = NORMALIZED_SIZE
         step = Step(
             processor_key=NORMALIZE_KEY, params={NormalizeParam.PAGE_WIDTH: width, NormalizeParam.PAGE_HEIGHT: height}
@@ -430,7 +431,7 @@ class TestChooseALeaf:
         :type fx_desk: LeafDesk
         """
         book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK])
-        recipe = make_recipe(project_id=book.project.id, active=True)
+        recipe = make_recipe(project_id=book.project.id, kind=RecipeKind.BLANK)
         step = Step(
             processor_key=NORMALIZE_KEY, params={NormalizeParam.PAGE_WIDTH: 500, NormalizeParam.PAGE_HEIGHT: 600}
         )
@@ -602,6 +603,111 @@ class TestGetTheScanBack:
 
         expect(fx_desk.page(blank).blank_fill is BlankFill.WHITE)
         expect(Stage.PAGE_ORDER in fx_desk.heads(blank))
+        assert_expectations()
+
+
+class TestRemakeOutdatedLeaves:
+    """Tests for PageService.remake_outdated_leaves() making the leaves of a replaced version of the processor again."""
+
+    async def outdate(self, desk: LeafDesk, book: LeafBook, position: int) -> None:
+        """Turn the leaf the page shows into one that the version 1 of the processor made, and mark its stage stale.
+
+        The version 1 drew the paper of a book as a white leaf, so the old leaf is a white image under the old identifier.
+
+        :param desk: What the tests of the choice of leaves share.
+        :type desk: LeafDesk
+        :param book: The book.
+        :type book: LeafBook
+        :param position: Position of the page, from zero.
+        :type position: int
+        """
+        page = book.pages[position]
+        [leaf] = desk.leaves(page)
+        old = evolve(
+            leaf, id=PageVersionId(f'{position:016x}'), processor=ProcessorRef(key=PAGES_BLANK.key, version='1')
+        )
+        tables = desk.database.tables
+        del tables.page_versions[leaf.id]
+        tables.page_versions[old.id] = old
+        stale = evolve(desk.heads(page)[Stage.PAGE_ORDER], head_version_id=old.id, state=StageState.STALE)
+        tables.page_stages[stale.key] = stale
+        keys = ProjectKeys(book.project.id)
+        assert old.renditions is not None
+        async with desk.assets.writable(keys.version_rendition(old, old.renditions.full)) as target:
+            Image.new(BILEVEL, (SCAN_WIDTH_PX, SCAN_HEIGHT_PX), 1).save(target, format='PNG')
+
+    async def test_a_leaf_of_an_older_version_is_drawn_again_with_the_paper_and_its_stage_is_fresh(
+        self, fx_desk: LeafDesk
+    ) -> None:
+        """Verify a stale record an earlier start left gets the leaf of the current version, by the same job.
+
+        The service is given nothing but the database, so the page is found from its record alone.
+
+        :param fx_desk: What the tests of the choice of leaves share.
+        :type fx_desk: LeafDesk
+        """
+        book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK, PageKind.TEXT])
+        blank = book.pages[1]
+        await fx_desk.choose(book, [1], BlankFill.PAPER)
+        await fx_desk.prepare()
+        await self.outdate(fx_desk, book, 1)
+        queued = len(fx_desk.queue.enqueued)
+
+        await fx_desk.service().remake_outdated_leaves()
+        await fx_desk.prepare()
+
+        [leaf] = fx_desk.leaves(blank)
+        record = fx_desk.heads(blank)[Stage.PAGE_ORDER]
+        image = fx_desk.image(book, leaf)
+        expect(len(fx_desk.queue.enqueued) == queued + 1)
+        expect((record.head_version_id, record.state) == (leaf.id, StageState.FRESH))
+        expect((leaf.state, leaf.params[BlankParam.FILL]) == (VersionState.READY, PaperFill.PAPER))
+        expect(same_colour(pixel(image, (0, 0)), PAPER))
+        expect(fx_desk.page(blank).blank_fill is BlankFill.PAPER)
+        assert_expectations()
+
+    async def test_a_start_that_ended_before_the_job_ran_is_finished_by_the_next_one(self, fx_desk: LeafDesk) -> None:
+        """Verify the pending leaf stays the only one and the job is queued again when the leaf was not written yet.
+
+        :param fx_desk: What the tests of the choice of leaves share.
+        :type fx_desk: LeafDesk
+        """
+        book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK, PageKind.TEXT])
+        blank = book.pages[1]
+        await fx_desk.choose(book, [1], BlankFill.PAPER)
+        await fx_desk.prepare()
+        await self.outdate(fx_desk, book, 1)
+        await fx_desk.service().remake_outdated_leaves()
+        [pending] = fx_desk.leaves(blank)
+        [first_job] = fx_desk.queue.enqueued[-1:]
+        fx_desk.database.tables.jobs[first_job.id] = evolve(first_job, state=JobState.FAILED)
+
+        await fx_desk.service().remake_outdated_leaves()
+        await fx_desk.prepare()
+
+        [leaf] = fx_desk.leaves(blank)
+        expect((leaf.id, leaf.state) == (pending.id, VersionState.READY))
+        expect(fx_desk.heads(blank)[Stage.PAGE_ORDER].state is StageState.FRESH)
+        assert_expectations()
+
+    async def test_a_leaf_of_the_current_version_and_a_stage_that_is_not_a_leaf_are_left_alone(
+        self, fx_desk: LeafDesk
+    ) -> None:
+        """Verify no version is added and no job is queued when every leaf is of the installed version.
+
+        :param fx_desk: What the tests of the choice of leaves share.
+        :type fx_desk: LeafDesk
+        """
+        book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK])
+        blank = book.pages[1]
+        await fx_desk.choose(book, [1], BlankFill.WHITE)
+        await fx_desk.prepare()
+        queued, leaves = len(fx_desk.queue.enqueued), fx_desk.leaves(blank)
+
+        await fx_desk.service().remake_outdated_leaves()
+
+        expect(len(fx_desk.queue.enqueued) == queued)
+        expect(fx_desk.leaves(blank) == leaves)
         assert_expectations()
 
 

@@ -1,5 +1,4 @@
 import type {
-  AppliesTo,
   BlankFill,
   ContentSource,
   ContentType,
@@ -16,12 +15,11 @@ import type {
   Orthography,
   PageKind,
   PageStageStatus,
+  RecipeKind,
   RejectionReason,
   ResetScope,
   ReviewReason,
   RightsStatus,
-  RuleCondition,
-  RunMode,
   Script,
   Stage,
   StageStatus,
@@ -36,8 +34,8 @@ import type { TimelineFilter } from '@/features/processing/timeline';
 import type { FileProblem } from '@/features/profiles/profileFile';
 import type { RoadmapKey } from '@/features/stages/roadmap';
 import type { Phase } from '@/features/stages/stages';
+import type { ContentMark } from '@/features/workspace/content';
 import type { PageFilter } from '@/features/workspace/params';
-import type { ConditionMark } from '@/features/workspace/steps';
 import { ProblemCode } from '@/shared/http/codes';
 import { pluralize } from '@/shared/lib/format';
 
@@ -46,7 +44,7 @@ const STEP_FLAG_NAMES = {
   unsure: 'Step unsure',
   unusual: 'Differs from the book',
   'by-hand': 'Set by hand',
-  skipped: 'Skipped by the condition',
+  skipped: 'Skipped: a leaf the program drew',
 } satisfies Record<StepFlag, string>;
 
 /**
@@ -573,16 +571,6 @@ export const MESSAGES = {
       label: 'Stages of the book',
       about: 'About the book',
       otherStages: 'Other stages',
-      noFiles: 'No files yet',
-      waitsForPages: 'Waits for pages',
-      files: (files: number, scans: number) =>
-        `${files} ${pluralize(files, 'file', 'files')} · ${scans} ${pluralize(scans, 'scan', 'scans')}`,
-      pages: (count: number) => `${count} ${pluralize(count, 'page', 'pages')}`,
-      done: (done: number, total: number) => `${done} of ${total}`,
-      check: (count: number) => `${count} ${pluralize(count, 'page', 'pages')} to check`,
-      failed: (count: number) => `${count} failed`,
-      stopped: (count: number) =>
-        `${count} ${pluralize(count, 'page', 'pages')} stopped before the last step`,
     },
     layout: {
       toggleStrip: 'Show or hide the pages',
@@ -610,12 +598,10 @@ export const MESSAGES = {
         empty: 'No page of the book carries this reason at the open step.',
         option: (flag: StepFlag, pages: number) => `${STEP_FLAG_NAMES[flag]} · ${pages}`,
       },
-      variant: {
-        label: 'Variant',
-        all: 'All variants',
+      kind: {
+        label: 'Kind of page',
+        all: 'All kinds',
         option: (name: string, pages: number) => `${name} · ${pages}`,
-        none: 'Not processed',
-        mark: (name: string, pinned: boolean) => (pinned ? `${name} · pinned` : name),
       },
       grid: 'Show the pages as a grid',
       list: 'Show the pages as a strip',
@@ -651,11 +637,9 @@ export const MESSAGES = {
       gridTitle: 'Show or hide the grid over the page (G)',
       compareSoon: 'Comparing a page with the stage before it comes with processing',
       empty: 'This book has no pages yet. Add files on the Import stage to see them here.',
-      chip: (label: string, kind: string) => (label === '' ? kind : `p. ${label} · ${kind}`),
     },
     steps: {
       label: 'Steps of the stage',
-      recipe: 'Set of steps',
       step: (number: number, title: string) => `${number} · ${title}`,
       open: (number: number, title: string) => `Open step ${number}, ${title}`,
       off: 'Off',
@@ -666,7 +650,7 @@ export const MESSAGES = {
         'by-hand': 'Set by hand',
         skipped: 'Skipped on this page',
       } satisfies Record<FigureState, string>,
-      marks: { text: '¶', picture: '▣' } satisfies Record<ConditionMark, string>,
+      marks: { text: '¶', picture: '▣' } satisfies Record<ContentMark, string>,
       canvas: {
         before: (number: number) => `Input of step ${number}`,
         after: (number: number, title: string) => `Result of step ${number} · ${title}`,
@@ -708,10 +692,8 @@ export const MESSAGES = {
     stepPanel: {
       label: (number: number, title: string) => `Step ${number} · ${title}`,
       settings: 'Settings of the step',
-      condition: (title: string) => `Pages the ${title} step processes, in its settings`,
       off: 'This step is off, so a run and a preview skip it.',
       thisPage: (label: string) => (label === '' ? 'This page' : `This page · ${label}`),
-      shape: 'Shape',
       notReached:
         'The page has not been through the earlier steps yet, so this step reads the page as it is.',
       book: 'This step on the book',
@@ -724,14 +706,6 @@ export const MESSAGES = {
         notRun: 'Not run yet',
       },
       pages: (count: number) => `${count} ${pluralize(count, 'page', 'pages')}`,
-      autoPage: 'Auto on this page',
-      autoCondition: (count: number) =>
-        `Auto on the pages of the step (${count} ${pluralize(count, 'page', 'pages')})`,
-      auto: 'Auto on all pages',
-      autoMore: 'Auto on other pages',
-      autoHint:
-        'Run the recipe up to this step on every page. The steps before it come from the earlier run, and pages set by hand keep their shape.',
-      saveFirst: 'Save the recipe to run it.',
       carry: {
         title: 'the shape',
         hint: 'The whole shape set by hand goes to the pages you choose. A page that set its own shape keeps it.',
@@ -1185,10 +1159,6 @@ export const MESSAGES = {
       deleteNote:
         'Its pages stay in the book with their images, but can no longer be cut from the file again.',
     },
-    bar: {
-      progress: (done: number, total: number) =>
-        total > 0 ? `Importing ${done} of ${total}` : 'Importing…',
-    },
   },
   profiles: {
     menu: 'Recipe profiles',
@@ -1205,7 +1175,7 @@ export const MESSAGES = {
       loadFailed: 'The profile could not be read.',
       others: 'Other profiles',
       othersEmpty: 'You have no other profile for this stage.',
-      switchHint: 'Apply this profile to this book, as the active recipe of the stage',
+      switchHint: 'Apply this profile to the recipe shown, which replaces its steps',
       switchBlocked: 'Save the recipe or revert it before applying a profile.',
       manage: 'Manage profiles…',
       manageHint: 'Open the library of your profiles, to apply, copy, import and export them',
@@ -1226,7 +1196,6 @@ export const MESSAGES = {
         order: 'The order of the steps changed',
         switchedOn: (step: string) => `${step} switched on`,
         switchedOff: (step: string) => `${step} switched off`,
-        condition: (step: string, pages: string) => `${step}: pages changed to ${pages}`,
         params: (step: string, fields: readonly string[]) =>
           `${step}: ${fields.join(', ')} changed`,
       },
@@ -1265,24 +1234,14 @@ export const MESSAGES = {
         off: 'off',
         none: 'No steps',
       },
-      applyBook: 'Apply to this book',
+      applyBook: (kind: string) => `Apply to the recipe for ${kind.toLowerCase()}`,
       applyBookHint:
-        'Add the profile to this book. Whether it becomes the active recipe is the choice above the list',
-      activate: 'Make it the active recipe',
-      activateHint:
-        'The stage runs by it from now on, and the pages the old recipe made go out of date. Left off, the profile is added as a variant and no page is processed again until the stage is run',
-      applyPages: 'Apply to selected pages',
-      applyPagesHint:
-        'The profile becomes a variant of this book, pinned to the selected pages, and the stage runs on them',
-      applyPagesNone: 'Select pages in the grid first',
-      applyBusy: 'The book is busy with another job',
+        'Put the steps of the profile into the recipe of the kind chosen above the list. The pages that recipe made go out of date',
+      applyKind: 'Kind of page whose recipe takes the profile',
       applyDirty: 'Save the recipe or revert it first',
       applying: 'Applying…',
-      appliedBook: (name: string) =>
-        `Applied the profile “${name}”. It is the active recipe of this book now.`,
-      appliedVariant: (name: string) => `Applied the profile “${name}” as a variant of this book.`,
-      appliedPages: (name: string, pages: number) =>
-        `Applied the profile “${name}” to ${pages} ${pluralize(pages, 'page', 'pages')}. The stage is running on them.`,
+      appliedBook: (kind: string, name: string) =>
+        `Applied the profile “${name}” to the recipe for ${kind.toLowerCase()} of this book.`,
       duplicate: 'Duplicate',
       duplicateHint: 'Keep a copy of this profile under another name',
       duplicated: (name: string) => `Saved the copy “${name}”.`,
@@ -1332,56 +1291,27 @@ export const MESSAGES = {
     loading: 'Loading the steps of this stage…',
     loadFailed: 'The steps of this stage could not be read.',
     content: {
-      title: 'What the pages show',
-      hint: 'The steps for text and the steps for pictures process the pages that show that. The program proposes it from the share of the page that pictures cover, and the choice here is yours.',
-      pages: (count: number) => `${count} selected pages`,
+      title: 'What the page shows',
       picture: 'Picture',
-      label: 'Shows',
-      mixed: 'The pages differ',
-      sources: (found: number, hand: number) =>
-        `${found} found by the program · ${hand} set by hand`,
+      found: 'found',
+      applyTo: 'Apply to',
+      thisPage: 'This page',
+      selectedPages: 'Selected pages',
       detect: 'Detect again',
       detectHint: 'Let the program decide again, also for the pages set by hand',
       detecting: 'Detecting…',
     },
     recipe: {
       label: 'Recipe',
-      active: 'Active',
-      option: (name: string, active: boolean, pages: number) =>
-        `${name}${active ? ' · active' : ''} · ${pages} ${pluralize(pages, 'page', 'pages')}`,
-      activeBadge: (pages: number) => `Active · ${pages} ${pluralize(pages, 'page', 'pages')}`,
-      newRecipe: 'New recipe',
-      newRecipeHint: 'A copy of this recipe, to try other settings on some pages',
-      copyName: (name: string) => `${name} (copy)`,
-      use: 'Use this recipe',
-      useHint: 'The stage runs by it from now on, and the pages the old one made go out of date',
       choose: 'Recipe of the stage',
-      counts: 'Pages by variant',
-      countOf: (name: string, pages: number) => `${name} ${pages}`,
-    },
-    usedFor: {
-      title: 'Used for',
-      pages: (pages: number) => `Made ${pages} ${pluralize(pages, 'page', 'pages')}`,
-      empty: 'No rule sends pages here. A page gets this variant when it is pinned to it.',
-      add: 'Add a rule',
-      addHint: 'Send every page of a kind to this variant, whenever the stage runs',
-      conditions: {
-        plates: 'Plates and frontispieces',
-        covers: 'Covers',
-        blanks: 'Blank pages',
-        illustrated: 'Pages with illustrations',
-        odd: 'Odd pages',
-        even: 'Even pages',
-        group: 'Pages of a group',
-      } satisfies Record<RuleCondition, string>,
-      notYet: 'Takes effect when the Layout stage finds illustrations',
-      rule: (condition: string, groupLabel: string) =>
-        groupLabel === '' ? condition : `${condition} · ${groupLabel}`,
-      remove: (rule: string) => `Remove the rule for ${rule}`,
-      groupLabel: 'Name of the group',
-      groupAdd: 'Add the rule',
-      moves: (rule: string, from: string) => `${rule} go to this variant instead of ${from}`,
-      failed: 'The rules could not be read.',
+      option: (kind: string, pages: number) =>
+        `${kind} · ${pages} ${pluralize(pages, 'page', 'pages')}`,
+      kinds: {
+        text: 'Text',
+        'color-picture': 'Colour picture',
+        'bw-picture': 'Black-and-white picture',
+        blank: 'Blank page',
+      } satisfies Record<RecipeKind, string>,
     },
     steps: {
       title: 'Steps',
@@ -1393,27 +1323,12 @@ export const MESSAGES = {
       hideSettings: (title: string) => `Hide the settings of the ${title} step`,
       noSettings: 'This step has no settings.',
       switchedOff: 'Off: the step is kept, but a run and a preview skip it.',
-      runThrough: 'Run up to here',
-      runThroughHint: (title: string) =>
-        `Run the recipe up to the ${title} step, taking the steps before it from the earlier run when nothing changed`,
-      runThroughOff: 'Switch this step on, or a step before it, to run up to it.',
       passed: (passed: number, total: number) => `${passed} of ${total} pages passed`,
       passedHint: 'Pages whose result of this stage was made through this step or a later one',
       empty: 'This recipe has no steps. Add one from the list below.',
       add: 'Add a step',
       unknownProcessor: 'This step is not installed on this machine.',
       outOfLimits: 'A value is outside its limits, so the recipe cannot be saved.',
-      condition: {
-        label: (title: string) => `Pages the ${title} step processes`,
-        hint: 'A page that is not one of these passes the step as it is',
-        options: {
-          all: 'All pages',
-          text: 'Text pages',
-          pictures: 'Pictures',
-          'color-pictures': 'Colour pictures',
-          'bw-pictures': 'Black-and-white pictures',
-        } satisfies Record<AppliesTo, string>,
-      },
       measure: {
         button: 'Measure the book',
         hint: 'Read the content box and the line height Margins recorded on every page, and fill in the line height from their median and the page size from the largest box, and the margins too while they are measured. The pages of this recipe go out of date.',
@@ -1443,7 +1358,7 @@ export const MESSAGES = {
           ofField: (title: string) => `Carry ${title} over to other pages`,
           following: 'To the following pages',
           selected: (count: number) => `To the selected pages · ${count}`,
-          condition: 'To all pages of the step',
+          kind: 'To all pages of the same kind',
           overwrite: 'Also write over pages that have a value of their own',
           done: (changed: number, skipped: number) =>
             `Carried over to ${changed} ${pluralize(changed, 'page', 'pages')}` +
@@ -1505,30 +1420,24 @@ export const MESSAGES = {
       failed: (pages: number) => `${pages} failed`,
       stoppedAt: (step: number, total: number, pages: number) =>
         `Done through step ${step} of ${total}: ${pages} ${pluralize(pages, 'page', 'pages')}`,
-      preview: 'Preview this page',
-      previewOn: 'Stop the preview',
-      previewNoPage: 'Open a page to preview it.',
-      previewNoStep: 'Switch on a step that makes a picture to preview it.',
-      previewInvalid: 'A value is outside its limits, so there is nothing to preview.',
-      previewSplit: 'A cut of a scan into pages has no preview. Try it on a scan instead.',
-      run: 'Run',
       busy: 'Another job of this book is still going.',
     },
     modes: {
-      label: 'Pages with work of their own',
-      hint: 'A run keeps the settings and the hand edits of each page. The other two take them away from the pages it goes over, after a warning, and one undo gives them back.',
+      label: (own: number | null) =>
+        own === null
+          ? 'Pages with work of their own'
+          : `Pages with work of their own · ${own} among them`,
+      hint: 'A run keeps the settings and the hand edits of each page. A run that drops them does so after a warning, and one undo gives them back.',
       options: {
-        keep: 'Keep hand settings',
-        'replace-hand': 'Replace hand settings',
-        'reset-page-settings': 'Reset page settings',
-      } satisfies Record<RunMode, string>,
+        keep: 'Run them and keep their settings and hand edits',
+        'skip-own-work': 'Leave them out',
+        'drop-own-work': 'Run them by the recipe and drop their work',
+      } satisfies Record<'keep' | 'skip-own-work' | 'drop-own-work', string>,
+      left: (pages: number) => `−${pages}`,
       warning: {
-        title: (mode: RunMode) =>
-          mode === 'replace-hand' ? 'Replace the hand settings?' : 'Reset the page settings?',
-        body: (mode: RunMode, pages: number) =>
-          mode === 'replace-hand'
-            ? `${pages} ${pluralize(pages, 'page loses', 'pages lose')} the shape set by hand on the steps of this run, and the run finds the shape again.`
-            : `${pages} ${pluralize(pages, 'page goes', 'pages go')} back to the settings of the recipe on the steps of this run.`,
+        title: 'Drop the work of the pages?',
+        body: (pages: number) =>
+          `${pages} ${pluralize(pages, 'page loses', 'pages lose')} the settings and the hand edits on the steps of this run, and the run goes by the recipe.`,
         undo: 'The change is written to the history of each page, and one undo gives it back.',
         confirm: 'Run anyway',
         cancel: 'Cancel',
@@ -1558,18 +1467,34 @@ export const MESSAGES = {
         cancel: 'Cancel',
       },
     },
-    scope: {
-      menu: 'Run on',
+    runMenu: {
+      pages: 'Pages',
       page: (label: string) => (label === '' ? 'This page' : `This page · ${label}`),
-      selected: (count: number) => `Selected pages · ${count}`,
-      attention: (count: number) => `Out of date and failed · ${count}`,
-      all: (count: number) => `All pages · ${count}`,
-    },
-    preview: {
-      working: 'Making the preview…',
-      failed: 'The preview could not be made.',
-      busy: 'Another job of this book is running, so the preview waits for it.',
-      after: (stage: string) => `After · ${stage} preview`,
+      fromPage: 'This page and the pages after it',
+      selected: 'Selected pages',
+      group: 'Pages of a kind',
+      attention: 'Out of date and failed',
+      all: 'All pages',
+      throughLabel: 'Through',
+      throughOpen: (step: string) => `Up to the open step · ${step}`,
+      throughAll: (step: string) => `The whole stage · ${step}`,
+      step: (number: number, title: string) => `${number} ${title}`,
+      first: 'Run on',
+      again: 'Run again on',
+      onPage: 'this page',
+      onFromPage: (pages: number) =>
+        `${pages} ${pluralize(pages, 'page', 'pages')} from this page on`,
+      onSelected: (pages: number) => `${pages} selected ${pluralize(pages, 'page', 'pages')}`,
+      onGroup: (pages: number, kind: string) =>
+        `${pages} ${pluralize(pages, 'page', 'pages')} of the kind ${kind}`,
+      onAttention: (pages: number, stale: number, failed: number) => {
+        const what =
+          failed === 0 ? 'out-of-date' : stale === 0 ? 'failed' : 'out-of-date and failed';
+        return `${pages} ${what} ${pluralize(pages, 'page', 'pages')}`;
+      },
+      onAll: (pages: number) => `all ${pages} ${pluralize(pages, 'page', 'pages')}`,
+      through: (step: string) => `through ${step}`,
+      menu: 'What to run',
     },
     compare: {
       before: (stage: string) => (stage === '' ? 'Before' : `Before · result of ${stage}`),
@@ -1646,23 +1571,6 @@ export const MESSAGES = {
       how: 'Method',
       automatic: 'Automatic',
       manual: 'By hand',
-      variant: 'Variant',
-      pinned: 'Pinned to this page',
-      byRules: 'By the rules of the book',
-      useRules: "Use the book's rules",
-      useRulesHint:
-        'Take the pin off, so a run of the stage chooses the variant of this page again',
-    },
-    apply: {
-      menu: (name: string) => `Apply ${name} to…`,
-      label: 'Apply to',
-      hint: 'Pin the variant you are looking at to pages, or send a whole kind of page to it',
-      page: 'This page',
-      selected: (count: number) => `Selected pages · ${count}`,
-      kind: (kind: string, count: number) => `All pages of this kind · ${kind} · ${count}`,
-      noRuleForKind: (kind: string) => `${kind} has no rule of its own`,
-      all: (count: number) => `All pages · ${count}`,
-      saveFirst: 'Save the recipe before applying it.',
     },
     timeline: {
       hint: {
@@ -1773,7 +1681,6 @@ export const MESSAGES = {
         geometry: 'straightened',
       } satisfies Partial<Record<Stage, string>>,
       otherVerb: 'processed',
-      rerun: (pages: number) => `Run again on ${pages} ${pluralize(pages, 'page', 'pages')}`,
     },
     reasons: {
       atStep: (number: number, title: string, reason: string) =>
@@ -1858,29 +1765,18 @@ export const MESSAGES = {
       zeroTitle: 'Do not turn the page',
       hint: 'Drag a handle of the axis, move the slider, or press the left and right arrows to turn the page by 0.05° until the lines of text lie along the grid.',
     },
-    figure: {
-      hint: {
-        default: 'Dashed grey: where the step starts from. It changes nothing on the page.',
-        found: 'Green: what the step found on this page.',
-        'by-hand': 'Orange: set by you, and kept by every run until you press Auto.',
-        skipped: 'This page does not meet the condition of the step, so the step passes it by.',
-      } satisfies Record<FigureState, string>,
-    },
     quad: {
       name: 'Corners of the sheet',
       corner: (corner: string) => `Corner of the sheet: ${corner}`,
-      hint: 'Drag the corners of the outline to the corners of the paper, or nudge the last one you grabbed with the arrow keys. The page is straightened again at once.',
     },
     rect: {
       name: 'Frame of the content',
       handle: (handle: string) => `Handle of the frame: ${handle}`,
-      hint: 'Drag the handles of the frame until it holds all the text and the pictures of the page, or nudge it with the arrow keys. The frame is saved when you let go, and nothing is cut: the page is cut by the frame on the Margins step.',
     },
     margins: {
       name: 'Content box and margins of the page',
       handle: (handle: string) => `Handle of the content box: ${handle}`,
       side: (side: string) => `Margin of the page: ${side}`,
-      hint: 'Drag the handles of the inner box to the edges of the text, and the sides of the outer border to set the margins of this page, or nudge the box with the arrow keys. The page is placed again at once, and Auto brings back the box the step found.',
       finding: 'Looking for the content box of this page…',
       alignment: {
         vertical: 'Vertical alignment',
@@ -1898,7 +1794,6 @@ export const MESSAGES = {
       name: 'Curves of the lines',
       node: (curve: number, node: number) => `Node ${node} of the curve ${curve}`,
       valueText: (curves: number, nodes: number) => `${curves} curves of ${nodes} nodes each`,
-      hint: 'Lay the top curve on the first line of text and the bottom curve on the last, by dragging their nodes, or nudge the node you grabbed last with the arrow keys. The page is flattened between the curves again at once.',
       moreControl: 'More control',
       fewerControls: 'Fewer controls',
     },

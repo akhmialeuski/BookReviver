@@ -76,26 +76,13 @@ describe('StageBanners', () => {
       ],
     );
 
-    it('names the stage before and what this stage did, and counts the pages to run again', async () => {
+    it('names the stage before and what this stage did', async () => {
       await render(processing(), items);
 
       expect(banner('stale-banner')?.textContent).toContain(
         'Order changed after these pages were straightened',
       );
-      expect(banner('stale-banner-run')?.textContent).toBe('Run again on 2 pages');
-    });
-
-    it('runs the recipe on the pages that are out of date and no others', async () => {
-      await render(processing(), items);
-
-      await act(async () => {
-        banner('stale-banner-run')?.click();
-      });
-
-      expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
-        path: { project_id: 'project', stage: 'geometry' },
-        body: { recipe_id: 'r1', page_ids: ['b', 'c'] },
-      });
+      expect(banner('stale-banner-run')).toBeNull();
     });
 
     it('is not there when no page is out of date', async () => {
@@ -103,18 +90,12 @@ describe('StageBanners', () => {
 
       expect(banner('stale-banner')).toBeNull();
     });
-
-    it('keeps the run off while the recipe has changes that are not saved', async () => {
-      await render(processing({ dirty: true }), items);
-
-      expect(banner('stale-banner-run')?.hasAttribute('disabled')).toBe(true);
-    });
   });
 
   describe('the banner of the Split stage', () => {
     const cutter = recipe('spread', {
       stage: 'page-split',
-      active: false,
+      kind: 'bw-picture',
       steps: [step('split.spread')],
     });
     const whole = recipe('whole', { stage: 'page-split', steps: [step('split.none')] });
@@ -156,17 +137,14 @@ describe('StageBanners', () => {
       expect(banner('split-banner-cut')?.textContent).toBe('Split the 2 scans');
     });
 
-    it('cuts the scans still whole with the recipe that cuts, in one run', async () => {
+    it('cuts the scans still whole in one run', async () => {
       await render(state, items);
 
       await act(async () => {
         banner('split-banner-cut')?.click();
       });
 
-      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({
-        recipe_id: 'spread',
-        page_ids: ['b', 'c'],
-      });
+      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ page_ids: ['b', 'c'] });
     });
 
     it('goes away for now when the reader says not now', async () => {

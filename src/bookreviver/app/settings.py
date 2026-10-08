@@ -103,14 +103,12 @@ class ProcessingSettings(BaseModel):
     """Processing of pages by plugins.
 
     :ivar worker_pools: Pools of workers this process serves, whose processors the catalogue offers.
-    :ivar version_retention_days: Days a page version that is not current is kept before a collection may delete it.
     :ivar preview_retention_hours: Hours a preview is kept before a collection may delete it.
     :ivar models_dir: Directory of the files of neural models, into which a processor downloads a model the first time
                       it runs.
     """
 
     worker_pools: frozenset[WorkerPool] = frozenset(WorkerPool)
-    version_retention_days: PositiveInt = 30
     preview_retention_hours: PositiveInt = 24
     models_dir: Path = Path('data/models')
 

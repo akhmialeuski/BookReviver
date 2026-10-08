@@ -18,8 +18,8 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * The menu that carries what the open page has for a step over to other pages, and what it did: the value of one field of
  * the settings, or, when no field is named, the whole shape the page has set by hand.
  *
- * What is carried goes to the pages after the open one, to the pages selected in the grid, or to every page the step
- * processes. A page that has a value of its own for the field is skipped, and the line under the menu says how many
+ * What is carried goes to the pages after the open one, to the pages selected in the grid, or to every page of the
+ * kind of the open page. A page that has a value of its own for the field is skipped, and the line under the menu says how many
  * were, unless the reader asked to write over them. The pages the value reached are one batch of the history, so the
  * undo beside the line takes it back from all of them at once. The server decides which pages the value reaches, so the
  * menu names no count for the first and the last choice.
@@ -97,8 +97,8 @@ export function CarryOver({
             >
               {labels.selected(others.length)}
             </DropdownMenuItem>
-            <DropdownMenuItem data-testid="carry-condition" onSelect={() => send('condition')}>
-              {labels.condition}
+            <DropdownMenuItem data-testid="carry-kind" onSelect={() => send('kind')}>
+              {labels.kind}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

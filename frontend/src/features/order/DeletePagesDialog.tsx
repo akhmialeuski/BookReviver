@@ -1,16 +1,7 @@
 import { useDeletePages } from '@/features/pages/actions';
 import { describePageError } from '@/features/pages/errors';
 import { MESSAGES } from '@/shared/messages';
-import { Button } from '@/shared/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/shared/ui/dialog';
-import { ErrorAlert } from '@/shared/ui/error-alert';
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 
 /**
  * Asks to confirm the deletion of the selected pages, which removes them with their images and versions and leaves
@@ -30,7 +21,7 @@ export function DeletePagesDialog({
   const remove = useDeletePages(projectId);
   const count = pageIds?.length ?? 0;
   return (
-    <Dialog
+    <ConfirmDialog
       open={pageIds !== null}
       onOpenChange={(open) => {
         if (!open) {
@@ -38,32 +29,18 @@ export function DeletePagesDialog({
           onClose();
         }
       }}
-    >
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{MESSAGES.order.remove.title(count)}</DialogTitle>
-          <DialogDescription>{MESSAGES.order.remove.description}</DialogDescription>
-        </DialogHeader>
-        {remove.isError ? <ErrorAlert message={describePageError(remove.error)} /> : null}
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
-            {MESSAGES.common.cancel}
-          </Button>
-          <Button
-            variant="destructive"
-            disabled={remove.isPending || pageIds === null}
-            onClick={() => {
-              if (pageIds !== null) {
-                remove.mutate(pageIds, { onSuccess: onClose });
-              }
-            }}
-          >
-            {remove.isPending
-              ? MESSAGES.order.remove.submitting
-              : MESSAGES.order.remove.submit(count)}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      title={MESSAGES.order.remove.title(count)}
+      description={MESSAGES.order.remove.description}
+      error={remove.isError ? describePageError(remove.error) : null}
+      submitLabel={
+        remove.isPending ? MESSAGES.order.remove.submitting : MESSAGES.order.remove.submit(count)
+      }
+      submitDisabled={remove.isPending || pageIds === null}
+      onConfirm={() => {
+        if (pageIds !== null) {
+          remove.mutate(pageIds, { onSuccess: onClose });
+        }
+      }}
+    />
   );
 }

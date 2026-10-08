@@ -96,7 +96,7 @@ test('the strip and the canvas show the same picture of the page at every step o
     await uploadFolder(page, folder, 1);
     projectId = openProjectId(page);
     await waitForIdleJobs(page, projectId);
-    // A sheet of the fixture is taken for a picture, which the variant for plates processes rather than the Text recipe
+    // A sheet of the fixture is taken for a picture, which the recipe for pictures processes rather than the recipe for text
     await markPagesAsText(page);
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     // A stage that never ran opens on the last step of its recipe, which is Margins, and asks for a preview of the page;

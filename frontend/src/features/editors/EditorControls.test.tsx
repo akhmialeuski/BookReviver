@@ -5,7 +5,7 @@ import { EditorControls } from '@/features/editors/EditorControls';
 import type { EditorSession } from '@/features/editors/session';
 import { SourceKind } from '@/features/processing/compare';
 
-/** The controls of the page editor in the panel: the editor's own part, "Set by hand" and "Auto". */
+/** The controls of the page editor in the panel: the editor's own part and "Set by hand". "Auto" is on the canvas toolbar. */
 
 function session(overrides: Partial<EditorSession> = {}): EditorSession {
   return {
@@ -55,12 +55,11 @@ describe('EditorControls', () => {
     vi.unstubAllGlobals();
   });
 
-  it('draws the part the editor puts in the panel next to the two buttons', () => {
+  it('draws the part the editor puts in the panel next to the Set by hand button', () => {
     render(session());
 
     expect(container.querySelector('[data-testid="own-part"]')).not.toBeNull();
     expect(button('Set by hand')).toBeDefined();
-    expect(button('Auto')).toBeDefined();
   });
 
   it('opens the editor with Set by hand and shuts it with the same button', () => {
@@ -81,22 +80,12 @@ describe('EditorControls', () => {
     render(session({ alwaysOn: true, active: true }));
 
     expect(button('Set by hand')).toBeUndefined();
-    expect(button('Auto')).toBeDefined();
   });
 
-  it('offers Auto only for a page that has an edit, and not while a change is being made', () => {
-    render(session({ hasEdit: false }));
-    expect(button('Auto')?.disabled).toBe(true);
+  it('says that a change is being saved', () => {
+    render(session({ busy: true }));
 
-    render(session({ hasEdit: true, busy: true }));
-    expect(button('Auto')?.disabled).toBe(true);
     expect(container.querySelector('[data-testid="editor-busy"]')).not.toBeNull();
-
-    const ready = session({ hasEdit: true });
-    render(ready);
-    expect(button('Auto')?.disabled).toBe(false);
-    act(() => button('Auto')?.click());
-    expect(ready.auto).toHaveBeenCalledTimes(1);
   });
 
   it('lists the steps of a stage that have an editor and shows the one that is chosen', () => {

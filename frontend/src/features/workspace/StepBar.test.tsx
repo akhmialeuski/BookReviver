@@ -7,7 +7,7 @@ import { StepBar } from '@/features/workspace/StepBar';
 import { barStepsOf, type StepStates } from '@/features/workspace/steps';
 
 /**
- * The bar of the steps under the row above the canvas: the steps in order with their numbers, a mark for a condition, a
+ * The bar of the steps under the row above the canvas: the steps in order with their numbers, a
  * dot with the state of the shape on the open page, an underline for the open step, and a press that opens or closes one.
  */
 
@@ -19,8 +19,8 @@ const STEPS = barStepsOf(
   recipe('r', {
     steps: [
       step('geometry.perspective', { step_id: 'a' }),
-      step('geometry.deskew', { step_id: 'b', applies_to: 'text' }),
-      step('geometry.deskew', { step_id: 'c', applies_to: 'pictures', enabled: false }),
+      step('geometry.deskew', { step_id: 'b' }),
+      step('geometry.deskew', { step_id: 'c', enabled: false }),
     ],
   }),
   CATALOGUE,
@@ -30,13 +30,12 @@ describe('StepBar', () => {
   let container: HTMLDivElement;
   let root: Root;
   const onOpen = vi.fn();
-  const onChooseRecipe = vi.fn();
 
   function render(
     openId: string | undefined,
     states: Record<string, FigureState | null> = {},
-    recipes = [{ id: 'r', name: 'Book' }],
     actions?: React.ReactNode,
+    recipePicker?: React.ReactNode,
   ): void {
     act(() =>
       root.render(
@@ -44,9 +43,7 @@ describe('StepBar', () => {
           steps={STEPS}
           openId={openId}
           states={new Map(Object.entries(states)) as StepStates}
-          recipes={recipes}
-          recipeId="r"
-          onChooseRecipe={onChooseRecipe}
+          recipePicker={recipePicker}
           onOpen={onOpen}
           actions={actions}
         />,
@@ -61,7 +58,6 @@ describe('StepBar', () => {
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     onOpen.mockReset();
-    onChooseRecipe.mockReset();
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -81,22 +77,6 @@ describe('StepBar', () => {
       '1 · Perspective · Reading the page',
       '2 · Deskew · Reading the page',
       '3 · Deskew · Reading the page',
-    ]);
-  });
-
-  it('marks a step that processes some pages only, with the words of its condition for a tooltip', () => {
-    render(undefined);
-    const marks = [...container.querySelectorAll('[data-testid="bar-step-mark"]')];
-
-    expect(
-      marks.map((mark) => [
-        mark.getAttribute('data-mark'),
-        mark.textContent,
-        mark.getAttribute('title'),
-      ]),
-    ).toEqual([
-      ['text', '¶', 'Text pages'],
-      ['picture', '▣', 'Pictures'],
     ]);
   });
 
@@ -137,27 +117,15 @@ describe('StepBar', () => {
     expect(onOpen.mock.calls).toEqual([['a'], ['b']]);
   });
 
-  it('offers the sets of steps of the stage only when there are several', () => {
-    render(undefined);
-    expect(container.querySelector('[data-testid="step-bar-recipe"]')).toBeNull();
+  it('draws the choice of the set of steps the caller gives it before the steps', () => {
+    render(undefined, {}, undefined, <select data-testid="picker" />);
 
-    render(undefined, {}, [
-      { id: 'r', name: 'Book' },
-      { id: 'q', name: 'Plates' },
-    ]);
-    const select = container.querySelector<HTMLSelectElement>('[data-testid="step-bar-recipe"]');
-    act(() => {
-      if (select !== null) {
-        select.value = 'q';
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-    });
-
-    expect(onChooseRecipe).toHaveBeenCalledWith('q');
+    const picker = container.querySelector('[data-testid="picker"]');
+    expect(picker?.nextElementSibling).toBe(container.querySelector('ol'));
   });
 
   it('draws the actions the caller gives it after the last step, outside the list of steps', () => {
-    render(undefined, {}, undefined, <button type="button" data-testid="action" />);
+    render(undefined, {}, <button type="button" data-testid="action" />);
 
     const action = container.querySelector('[data-testid="action"]');
     const list = container.querySelector('ol');
@@ -167,14 +135,14 @@ describe('StepBar', () => {
   });
 
   describe('for the steps of Cleanup', () => {
-    // The text recipe of Cleanup: the three steps that clean the pages of text, then the one the reader fills zones with
+    // The recipe of text pages of Cleanup: the three steps that clean the pages of text, then the one the reader fills zones with
     const CLEANUP = barStepsOf(
       recipe('c', {
         stage: 'cleanup',
         steps: [
-          step('cleanup.binarize', { step_id: 'bin', applies_to: 'text' }),
-          step('cleanup.despeckle', { step_id: 'dust', applies_to: 'text' }),
-          step('cleanup.thickness', { step_id: 'thick', applies_to: 'text' }),
+          step('cleanup.binarize', { step_id: 'bin' }),
+          step('cleanup.despeckle', { step_id: 'dust' }),
+          step('cleanup.thickness', { step_id: 'thick' }),
           step('cleanup.eraser', { step_id: 'fill' }),
         ],
       }),
@@ -196,16 +164,13 @@ describe('StepBar', () => {
             steps={CLEANUP}
             openId={openId}
             states={new Map(Object.entries(states)) as StepStates}
-            recipes={[{ id: 'c', name: 'Text' }]}
-            recipeId="c"
-            onChooseRecipe={onChooseRecipe}
             onOpen={onOpen}
           />,
         ),
       );
     }
 
-    it('lists the four steps in the order they run, with the text mark on the three that clean text', () => {
+    it('lists the four steps in the order they run', () => {
       renderCleanup(undefined);
 
       expect(buttons().map((button) => button.getAttribute('data-step-id'))).toEqual([
@@ -220,11 +185,6 @@ describe('StepBar', () => {
         'Open step 3, Thickness',
         'Open step 4, Fill zones',
       ]);
-      expect(
-        [...container.querySelectorAll('[data-testid="bar-step-mark"]')].map(
-          (mark) => mark.textContent,
-        ),
-      ).toEqual(['¶', '¶', '¶']);
     });
 
     it('opens the step of Thickness that is pressed, and shows the state of each on the open page', () => {

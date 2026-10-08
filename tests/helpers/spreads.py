@@ -56,8 +56,8 @@ async def use_recipe(kit: ProcessingKit, actor: Actor, project: Project, stage: 
     :param processor_key: Key of the processor of the one step.
     :type processor_key: str
     """
-    draft = RecipeDraft(name=processor_key, steps=[Step(processor_key=processor_key)])
-    await kit.service().save_recipe(actor, project.id, stage, draft)
+    draft = RecipeDraft(steps=[Step(processor_key=processor_key)])
+    await kit.edit_recipe(actor, project, stage, draft)
 
 
 async def run_stage(kit: ProcessingKit, actor: Actor, project: Project, run: StageRun) -> None:

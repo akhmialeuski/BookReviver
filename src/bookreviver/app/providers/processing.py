@@ -31,12 +31,10 @@ from bookreviver.services.processing_jobs import ProcessingJobs
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import RecipeProfiles
-from bookreviver.services.recipe_rules import RecipeRules
 from bookreviver.services.recipes import DefaultRecipes
 from bookreviver.services.result_marks import ResultMarksService
 from bookreviver.services.run_plans import RunImpactService
 from bookreviver.services.stage_runs import StageRuntime
-from bookreviver.services.step_resets import StepResetService
 from bookreviver.services.steps import StepRunner
 
 
@@ -80,7 +78,7 @@ class ProcessingProvider(Provider):
 
     @provide(scope=Scope.APP)
     def processing_config(self, settings: Settings) -> ProcessingConfig:
-        """Read the retention periods and the size of a preview from the settings.
+        """Read the retention period and the size of a preview from the settings.
 
         :param settings: Application settings, of which the ``processing`` and ``imaging`` groups are read.
         :type settings: Settings
@@ -88,7 +86,6 @@ class ProcessingProvider(Provider):
         :rtype: ProcessingConfig
         """
         return ProcessingConfig(
-            version_retention=timedelta(days=settings.processing.version_retention_days),
             preview_retention=timedelta(hours=settings.processing.preview_retention_hours),
             preview_long_side_px=settings.imaging.preview_long_side_px,
         )
@@ -146,7 +143,7 @@ class ProcessingProvider(Provider):
         :type defaults: DefaultRecipes
         :param runtime: The publisher, the clock and the queue.
         :type runtime: ProcessingRuntime
-        :param config: The retention periods and the size of a preview.
+        :param config: The retention period and the size of a preview.
         :type config: ProcessingConfig
         :returns: The parts.
         :rtype: ProcessingParts
@@ -171,19 +168,6 @@ class ProcessingProvider(Provider):
         return ProcessingService(uow=uow, catalogue=catalogue, parts=parts)
 
     @provide(scope=Scope.REQUEST)
-    def recipe_rules(self, uow: UnitOfWork, parts: ProcessingParts) -> RecipeRules:
-        """Build the service of the rules of the stages of a request.
-
-        :param uow: Unit of work of the current request.
-        :type uow: UnitOfWork
-        :param parts: The parts the processing use cases share, of which the recipes are used.
-        :type parts: ProcessingParts
-        :returns: The rules service.
-        :rtype: RecipeRules
-        """
-        return RecipeRules(uow=uow, recipes=parts.recipes)
-
-    @provide(scope=Scope.REQUEST)
     def recipe_profiles(
         self, uow: UnitOfWork, parts: ProcessingParts, processing: ProcessingService, clock: Clock
     ) -> RecipeProfiles:
@@ -193,7 +177,7 @@ class ProcessingProvider(Provider):
         :type uow: UnitOfWork
         :param parts: The parts the processing use cases share, of which the recipes are used.
         :type parts: ProcessingParts
-        :param processing: The processing service of the request, which adds the variant a profile makes.
+        :param processing: The processing service of the request, which puts the steps of a profile into a recipe.
         :type processing: ProcessingService
         :param clock: Clock of the application.
         :type clock: Clock
@@ -221,7 +205,7 @@ class ProcessingProvider(Provider):
         :type runtime: ProcessingRuntime
         :param order_keys: Order keys of the application.
         :type order_keys: OrderKeys
-        :param config: The retention periods and the size of a preview.
+        :param config: The retention period and the size of a preview.
         :type config: ProcessingConfig
         :returns: The runtime of a stage run.
         :rtype: StageRuntime
@@ -308,15 +292,11 @@ class ProcessingProvider(Provider):
         return RunImpactService(uow=uow, recipes=parts.recipes, clock=parts.clock)
 
     @provide(scope=Scope.REQUEST)
-    def carry_over_service(
-        self, uow: UnitOfWork, catalogue: ProcessorCatalog, parts: ProcessingParts, clock: Clock
-    ) -> CarryOverService:
+    def carry_over_service(self, uow: UnitOfWork, parts: ProcessingParts, clock: Clock) -> CarryOverService:
         """Build the carry-over service of a request.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
         :param parts: The parts the processing use cases share, of which the stage records are used.
         :type parts: ProcessingParts
         :param clock: Clock of the application.
@@ -324,20 +304,7 @@ class ProcessingProvider(Provider):
         :returns: The carry-over service.
         :rtype: CarryOverService
         """
-        return CarryOverService(uow=uow, catalogue=catalogue, records=parts.records, clock=clock)
-
-    @provide(scope=Scope.REQUEST)
-    def step_reset_service(self, uow: UnitOfWork, parts: ProcessingParts) -> StepResetService:
-        """Build the service of the resets of steps of a request.
-
-        :param uow: Unit of work of the current request.
-        :type uow: UnitOfWork
-        :param parts: The parts the processing use cases share, of which the stage records and the clock are used.
-        :type parts: ProcessingParts
-        :returns: The step reset service.
-        :rtype: StepResetService
-        """
-        return StepResetService(uow=uow, records=parts.records, clock=parts.clock)
+        return CarryOverService(uow=uow, records=parts.records, clock=clock)
 
     @provide(scope=Scope.REQUEST)
     def page_history_service(

@@ -25,27 +25,16 @@ import numpy as np
 from pydantic import Field
 
 from bookreviver.domain.enums import ProcessorScope, Stage, VersionData, VersionOutput
-from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.values import OrderRule, ProcessorSpec
-from bookreviver.plugins.base import ModelProcessor, Params
-from bookreviver.plugins.cv_image import (
-    BLACK,
-    COLOR_PLANES,
-    NO_IMAGE,
-    WHITE,
-    color_mode_of,
-    content_frame_of,
-    image_data,
-    read_samples,
-    settle_review,
-    write_png,
-)
-from bookreviver.ports.processing import StepOutput, StepResult
+from bookreviver.plugins.base import Params
+from bookreviver.plugins.cv_image import BLACK, WHITE, write_png
+from bookreviver.plugins.ink import InkProcessor
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from bookreviver.ports.processing import StepInput
+    from bookreviver.plugins.cv_image import Samples
+    from bookreviver.ports.processing import StepInput, StepResult
 
 MASK_IMAGE_NAME: str = 'mask.png'
 DESPECKLED_IMAGE_NAME: str = 'despeckled.png'
@@ -85,7 +74,10 @@ class DespeckleParams(Params):
 
 
 class SpeckFinder:
-    """Finds the specks of a page that is black on white."""
+    """Finds the specks of a page that is black on white.
+
+    :ivar line_height: The height of a line of the page in pixels, which the size of a speck is counted in.
+    """
 
     def __init__(self, ink: NDArray[np.bool_], params: DespeckleParams) -> None:
         """Join the ink into components and work out the line height of the page.
@@ -124,7 +116,7 @@ class SpeckFinder:
         return np.asarray(specks[self._labels], dtype=np.bool_), int(specks.sum())
 
 
-class Despeckle(ModelProcessor):
+class Despeckle(InkProcessor):
     """Removes the specks of dust from a black and white page."""
 
     params_model = DespeckleParams
@@ -149,33 +141,22 @@ class Despeckle(ModelProcessor):
     )
 
     @override
-    def run(self, step_input: StepInput) -> StepResult:
+    def process(self, step_input: StepInput, image: Samples) -> StepResult:
         """Remove the specks and write the mask of what was removed.
 
         :param step_input: The image of the page and the parameters.
         :type step_input: StepInput
+        :param image: The samples of the page.
+        :type image: Samples
         :returns: One output holding the page and the mask, with the number of specks removed in its data.
         :rtype: StepResult
-        :raises ConflictError: If there is no image, or it cannot be read.
         """
-        if step_input.image is None:
-            raise ConflictError(NO_IMAGE.format(key=self.spec.key))
         params = DespeckleParams.model_validate(step_input.params)
-        image = read_samples(step_input.image)
-        ink = np.all(image == BLACK, axis=2) if image.ndim == COLOR_PLANES else image == BLACK
-        removed, count = SpeckFinder(ink, params).find()
+        removed, count = SpeckFinder(self.ink_of(image), params).find()
         cleaned = image.copy()
         cleaned[removed] = WHITE
         target = step_input.workdir / DESPECKLED_IMAGE_NAME
         write_png(cleaned, target)
         mask = step_input.workdir / MASK_IMAGE_NAME
         write_png(np.where(removed, WHITE, BLACK).astype(np.uint8), mask)
-        color_mode = color_mode_of(cleaned, step_input.input_data)
-        data = image_data(cleaned, step_input.input_data, color_mode)
-        data[VersionData.SPECKS] = count
-        if frame := content_frame_of(step_input.input_data):
-            data[VersionData.CONTENT_FRAME] = frame.to_data()
-        review = settle_review(data, None, step_input.input_data)
-        return StepResult(
-            outputs=[StepOutput(image=target, color_mode=color_mode, data=data, review=review, mask=mask)]
-        )
+        return self.finish(step_input, shown=target, samples=cleaned, data={VersionData.SPECKS: count}, mask=mask)

@@ -27,7 +27,7 @@ const PAGES = 4;
 const SCENARIO_TIMEOUT_MS = 240_000;
 const RUN_TIMEOUT_MS = 90_000;
 
-test('a reader previews, runs and checks the Geometry stage', async ({ page }) => {
+test('a reader runs and checks the Geometry stage', async ({ page }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
   const canvas = page.getByTestId('viewer-canvas');
@@ -38,8 +38,6 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     }
   });
   let bookPath = '';
-  // The previews the editor of the open step asked for by itself, before the reader asked for any
-  let editorAsked = 0;
 
   await test.step('a book with pages opens on the Geometry stage', async () => {
     await registerAndSignIn(page);
@@ -55,12 +53,10 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     await expect(page).toHaveURL(/\/stages\/geometry\/steps\/[0-9a-f-]{36}(\?|$)/);
     await expect.poll(() => previews.length).toBe(1);
     await waitForIdleJobs(page, openProjectId(page));
-    editorAsked = previews.length;
   });
 
   await test.step('the recipe is drawn from the processor and its schema', async () => {
     await expect(page.getByTestId('recipe-select')).toContainText('Text');
-    await expect(page.getByTestId('recipe-active')).toBeVisible();
     // A new book is straightened in five steps, the sheet first, the flattening after the turn and the page of the book
     // last. They are in the bar only, and the panel of the recipe lists none
     const barSteps = page.getByTestId('bar-step');
@@ -93,32 +89,8 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     await speck.fill('99999');
     await expect(speck).toHaveAttribute('aria-invalid', 'true');
     await expect(page.getByTestId('recipe-save')).toBeDisabled();
-    await expect(page.getByTestId('preview-toggle')).toBeDisabled();
     await speck.fill('4');
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
-  });
-
-  await test.step('a preview is asked for once and not again for what is shown', async () => {
-    await page.getByTestId('preview-toggle').click();
-    // The picture after is the half of the compare that the preview fills
-    await expect(page).toHaveURL(/compare=swipe/);
-    await expect(page.getByTestId('compare-handle')).toBeVisible();
-    await expect(page.getByText('After · Geometry preview')).toBeVisible({
-      timeout: RUN_TIMEOUT_MS,
-    });
-    expect(previews).toHaveLength(editorAsked + 1);
-
-    const speck = page.getByRole('spinbutton', { name: 'Smallest speck' });
-    await speck.fill('12');
-    await expect(page.getByTestId('preview-working')).toBeVisible();
-    await expect(page.getByTestId('preview-working')).toBeHidden({ timeout: RUN_TIMEOUT_MS });
-    expect(previews).toHaveLength(editorAsked + 2);
-
-    // Back to the settings that were shown first: the preview made for them is shown again
-    await speck.fill('4');
-    await expect(page.getByTestId('preview-working')).toBeHidden();
-    await page.waitForTimeout(1_000);
-    expect(previews).toHaveLength(editorAsked + 2);
   });
 
   await test.step('the page before and after is compared by a swipe, side by side and with a key held', async () => {
@@ -143,10 +115,6 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     await expect(canvas).toHaveAttribute('data-holding', 'true');
     await page.keyboard.up('Space');
     await expect(canvas).toHaveAttribute('data-holding', 'false');
-
-    // Without a preview and without a result of the step there is nothing to put beside the page, so the compare is off
-    await page.getByTestId('preview-toggle').click();
-    await expect(canvas).toHaveAttribute('data-mode', 'off');
   });
 
   await test.step('a run on all pages goes over every page and the strip follows it', async () => {
@@ -187,11 +155,10 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     await expect(page.getByTestId('stale-banner')).toContainText(
       'Order changed after these pages were straightened',
     );
-    await expect(page.getByTestId('stale-banner-run')).toContainText(`Run again on ${PAGES} pages`);
   });
 
   await test.step('the stale pages are run again and the page keeps both of its results', async () => {
-    await page.getByTestId('stale-banner-run').click();
+    await page.getByTestId('run-start').click();
     await expect(page.getByTestId('stale-banner')).toHaveCount(0, { timeout: RUN_TIMEOUT_MS });
     // The results are in the history that ends the panel, which is collapsed until it is opened
     await openTimeline(page);

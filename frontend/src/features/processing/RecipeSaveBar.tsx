@@ -55,7 +55,7 @@ export function RecipeSaveBar({
           onClick={() =>
             save.mutate({
               path: { project_id: projectId, stage, recipe_id: recipe.id },
-              body: { name: recipe.name, steps: bodyOf(steps), order: processing.orderMode },
+              body: { steps: bodyOf(steps), order: processing.orderMode },
             })
           }
         >

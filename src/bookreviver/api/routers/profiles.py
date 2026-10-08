@@ -2,9 +2,8 @@
 
 A profile is the account's, so these routes take no project except the ones that apply a profile to a book and that
 record which profile a recipe of a book was made from. A profile of another account answers 404 like a missing one.
-Applying a profile to a book runs nothing and processes no page; like adding a variant, it only stores a recipe, and
-making it the active one marks the pages the old active recipe processed stale. Applying it to some pages also queues
-a run of the stage on them, as giving a variant to pages does. A profile leaves the account and enters another as a
+Applying a profile to a book runs nothing and processes no page; it only puts the steps into the recipe of one kind of
+page, which marks the pages the recipe processed stale. A profile leaves the account and enters another as a
 file, through the export and the import.
 """
 
@@ -17,13 +16,13 @@ from fastapi_pagination import Page
 
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
-from bookreviver.api.routers.processing import PROJECT_ID_DESCRIPTION, VariantPath
-from bookreviver.api.schemas.jobs import JobSchema
-from bookreviver.api.schemas.processing import RecipeBody, RecipeSchema
+from bookreviver.api.routers.processing import PROJECT_ID_DESCRIPTION, RecipePath
+from bookreviver.api.schemas.processing import RecipeSchema
 from bookreviver.api.schemas.profiles import (
     AppliedProfileSchema,
     ApplyProfileBody,
     LibraryProfileSchema,
+    ProfileBody,
     ProfileFileSchema,
     ProfileLinkBody,
     ProfileQuery,
@@ -44,7 +43,7 @@ DUPLICATE_PATH: str = PROFILE_PATH + '/duplicate'
 EXPORT_PATH: str = PROFILE_PATH + '/export'
 IMPORT_PATH: str = PROFILES_PATH + '/import'
 APPLY_PATH: str = '/projects/{project_id}' + PROFILES_PATH + '/{profile_id}/apply'
-LINK_PATH: str = '/projects/{project_id}/stages/{stage}/variants/{recipe_id}/profile'
+LINK_PATH: str = '/projects/{project_id}/stages/{stage}/recipes/{recipe_id}/profile'
 
 router = APIRouter(tags=['profiles'], route_class=DishkaRoute)
 
@@ -172,7 +171,7 @@ async def duplicate_profile(
 
 @router.put(PROFILE_PATH)
 async def put_profile(
-    profile_id: ProfilePath, body: RecipeBody, actor: ActorDep, profiles: FromDishka[RecipeProfiles]
+    profile_id: ProfilePath, body: ProfileBody, actor: ActorDep, profiles: FromDishka[RecipeProfiles]
 ) -> RecipeProfileSchema:
     """Replace the name, the steps and the order of a profile, which is how a book saves its changes to its profile.
 
@@ -184,7 +183,7 @@ async def put_profile(
     :param profile_id: Identifier of the profile.
     :type profile_id: RecipeProfileId
     :param body: The new name, steps and order.
-    :type body: RecipeBody
+    :type body: ProfileBody
     :param actor: The signed-in account.
     :type actor: Actor
     :param profiles: Profiles service of the request.
@@ -281,17 +280,16 @@ async def apply_profile(
     profiles: FromDishka[RecipeProfiles],
     order: FromDishka[RecipeOrder],
 ) -> AppliedProfileSchema:
-    """Add the steps of a profile to a book as a variant of the profile's stage, and optionally make it the active one.
+    """Put the steps of a profile into the recipe of one kind of page of the profile's stage in a book.
 
     A step whose processor is not installed on the server is left out and the processor is named in the answer. A
-    profile with no step left to run answers 422. A profile of another account answers 404. With pages, the variant is
-    also pinned to them and the stage is run on them in the background, and the queued job is in the answer; a book
-    that is busy answers 409 then, and keeps the variant.
+    profile with no step left to run answers 422. A profile of another account answers 404. The recipe is linked to the
+    profile, and the pages it processed become stale.
 
     \N{FORM FEED}
     :param address: Identifiers of the project and the profile.
     :type address: AppliedPath
-    :param body: Whether the new variant becomes the active recipe, and the pages to give it to.
+    :param body: The kind of page whose recipe takes the steps.
     :type body: ApplyProfileBody
     :param actor: The signed-in account.
     :type actor: Actor
@@ -299,22 +297,19 @@ async def apply_profile(
     :type profiles: RecipeProfiles
     :param order: Finder of the steps that stand off the place their processors ask for.
     :type order: RecipeOrder
-    :returns: The recipe, with the steps that are out of their place, the processors whose steps were left out, and the
-              queued run when there were pages.
+    :returns: The recipe, with the steps that are out of their place, and the processors whose steps were left out.
     :rtype: AppliedProfileSchema
     """
-    pages = None if body.page_ids is None else tuple(body.page_ids)
-    applied = await profiles.apply(actor, address.project_id, address.profile_id, activate=body.activate, pages=pages)
+    applied = await profiles.apply(actor, address.project_id, address.profile_id, kind=body.kind)
     return AppliedProfileSchema(
         recipe=RecipeSchema.of(applied.recipe, order.issues(applied.recipe.steps)),
         missing_processors=list(applied.missing_processors),
-        job=None if applied.job is None else JobSchema.model_validate(applied.job),
     )
 
 
 @router.put(LINK_PATH)
 async def put_recipe_profile(
-    address: Annotated[VariantPath, Depends()],
+    address: Annotated[RecipePath, Depends()],
     body: ProfileLinkBody,
     actor: ActorDep,
     profiles: FromDishka[RecipeProfiles],
@@ -327,7 +322,7 @@ async def put_recipe_profile(
 
     \N{FORM FEED}
     :param address: Identifiers of the project, the stage and the recipe.
-    :type address: VariantPath
+    :type address: RecipePath
     :param body: The profile, or null to unlink the recipe.
     :type body: ProfileLinkBody
     :param actor: The signed-in account.

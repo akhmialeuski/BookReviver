@@ -1,4 +1,11 @@
-import type { PageSchema, PageVersionSchema, StagePageSchema, StepFlag } from '@/api';
+import type {
+  PageSchema,
+  PageVersionSchema,
+  RecipeKind,
+  StagePageSchema,
+  StageSummarySchema,
+  StepFlag,
+} from '@/api';
 import { SourceKind, sourceOfResult } from '@/features/processing/compare';
 import { PageFilter } from '@/features/workspace/params';
 
@@ -22,33 +29,21 @@ export interface StripItem {
 /** How many pages each filter of the strip would list. */
 export type FilterCounts = Record<PageFilter, number>;
 
-/** What a page shows of the variant of the recipe it was processed by. */
-export interface VariantMark {
-  name: string;
-  /** The class that paints the dot of the variant. */
-  tone: string;
-  /** Whether the variant is pinned to the page. */
-  pinned: boolean;
-}
-
-/** A variant the strip can be narrowed to, with the pages it processed. */
-export interface VariantOption {
-  id: string;
-  name: string;
+/** A kind of page the strip can be narrowed to, with the pages of the book that are of the kind. */
+export interface KindOption {
+  kind: RecipeKind;
   pages: number;
 }
 
 /**
- * The variants of a stage as the strip and the grid draw them: a mark on each page, and the choice of one variant to
- * list the pages of. A stage with a single recipe has no such view, since every mark would be the same.
+ * The kinds of page of a stage as the strip and the grid offer them: the choice of one kind to list the pages of. A stage
+ * with pages of a single kind has no such view, since it would list every page.
  */
-export interface VariantView {
-  /** The mark of a page, or null for a page no recipe processed. */
-  markOf: (item: StripItem) => VariantMark | null;
-  options: readonly VariantOption[];
-  /** The variant whose pages are listed, or null for every page. */
-  selected: string | null;
-  onSelect: (id: string | null) => void;
+export interface KindView {
+  options: readonly KindOption[];
+  /** The kind whose pages are listed, or null for every page. */
+  selected: RecipeKind | null;
+  onSelect: (kind: RecipeKind | null) => void;
 }
 
 /** A step the strip can be narrowed to, with the pages a run of the stage stopped at it. */
@@ -95,6 +90,31 @@ export interface FlagView {
   /** The flag whose pages are listed, or null for every page. */
   selected: StepFlag | null;
   onSelect: (flag: StepFlag | null) => void;
+}
+
+/** What a list of pages needs to be narrowed, which the toolbar, the strip and the grid all take. */
+export interface PageListFilters {
+  /** The pages of the book, which the filters narrow down. */
+  total: number;
+  counts: FilterCounts;
+  filter: PageFilter;
+  /** Whether the filter of the pages cut from wide scans is offered, which the Split stage has. */
+  withWide?: boolean;
+  /** The kinds of page, which narrow the pages to those of one kind. Absent for none to choose from. */
+  kinds?: KindView;
+  /** The steps a run stopped at, which narrow the pages to those stopped at one. Absent when no run stopped short. */
+  stopped?: StopView;
+  /** The reasons a page asks for a look at the open step, which narrow the pages to those with one. Absent for no step. */
+  flagged?: FlagView;
+  onFilter: (filter: PageFilter) => void;
+}
+
+/** What the strip and the grid take to list pages: the pages the filter lists, and the filters that narrowed them. */
+export interface PageListProps extends PageListFilters {
+  /** The pages the filter lists, in book order. */
+  items: readonly StripItem[];
+  /** Says why a page asks for a look; the Check filter writes it under the page. Absent for no reasons. */
+  reasonOf?: (item: StripItem) => string | null;
 }
 
 /** The flags each page carries at the open step, by the identifier of the page. */
@@ -157,6 +177,25 @@ export function needsCheck(item: StripItem): boolean {
 /** Tell whether the user marked bad the result the page stands on: of the open step, or of the stage when none is open. */
 export function isMarkedBad(item: StripItem): boolean {
   return item.row?.marked_bad === true;
+}
+
+/**
+ * List the kinds the strip can be narrowed to: the kinds of page the book has, with how many pages each has.
+ *
+ * @param summary The summary of the stage, or undefined while it is read.
+ * @returns The options in the order of the kinds, or none when the book has pages of one kind only.
+ */
+export function kindOptionsOf(summary: StageSummarySchema | undefined): KindOption[] {
+  const present = (summary?.recipes ?? []).filter((entry) => entry.pages > 0);
+  return present.length < 2 ? [] : present.map(({ kind, pages }) => ({ kind, pages }));
+}
+
+/** Keep the pages of a kind, or every page for no kind. */
+export function applyKind(
+  items: readonly StripItem[],
+  kind: RecipeKind | null,
+): readonly StripItem[] {
+  return kind === null ? items : items.filter((item) => item.row?.kind === kind);
 }
 
 /** Tell whether the result of a page was made through some of the steps of its recipe only. */

@@ -1,7 +1,6 @@
 import { TriangleAlertIcon } from 'lucide-react';
 import { EditorControls } from '@/features/editors/EditorControls';
 import type { EditorSession } from '@/features/editors/session';
-import { ApplyTo } from '@/features/processing/ApplyTo';
 import { type Fact, factsOf } from '@/features/processing/facts';
 import { readChainResult } from '@/features/processing/results';
 import { usePageChain } from '@/features/processing/usePageChain';
@@ -22,18 +21,12 @@ const labels = MESSAGES.processing;
 
 export function ThisPageSection({
   processing,
-  items,
   item,
-  selected,
   editor = null,
   controls = true,
 }: {
   processing: Processing;
-  /** Every page of the book with where it stands in the stage, which "Apply to" counts the pages of. */
-  items: readonly StripItem[];
   item: StripItem;
-  /** The pages selected in the grid. */
-  selected: ReadonlySet<string>;
   /** The page editor of the stage on this page, or null when the stage has none. */
   editor?: EditorSession | null;
   /** Whether the controls of the editor stand here, which they do not while the section of an open step holds them. */
@@ -113,7 +106,6 @@ export function ThisPageSection({
         </div>
       )}
       {editor === null || !controls ? null : <EditorControls session={editor} />}
-      <ApplyTo processing={processing} items={items} item={item} selected={selected} />
     </section>
   );
 }

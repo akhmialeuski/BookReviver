@@ -1,7 +1,10 @@
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { JobSchema } from '@/api';
-import { readJobApiV1JobsJobIdGetQueryKey } from '@/api/@tanstack/react-query.gen';
+import type { JobSchema, Stage } from '@/api';
+import {
+  listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey,
+  readJobApiV1JobsJobIdGetQueryKey,
+} from '@/api/@tanstack/react-query.gen';
 import { pagesScope, versionReadyKey } from '@/features/projects/queries';
 import { STAGES } from '@/features/stages/stages';
 import { applyProjectEvent, BURST_DELAY_MS, EventName, isActiveJob, isJob } from './events';
@@ -121,8 +124,7 @@ describe('applyProjectEvent', () => {
       data: { ...job('succeeded', 3, 3), kind: 'measure-book' },
     });
 
-    expect(invalidated()).toContain('getRecipeApiV1ProjectsProjectIdStagesStageRecipeGet');
-    expect(invalidated()).toContain('listVariantsApiV1ProjectsProjectIdStagesStageVariantsGet');
+    expect(invalidated()).toContain('listRecipesApiV1ProjectsProjectIdStagesStageRecipesGet');
   });
 
   it('leaves the recipes alone while the measure runs, and when another job finishes', () => {
@@ -134,8 +136,6 @@ describe('applyProjectEvent', () => {
       event: EventName.JobChanged,
       data: job('succeeded', 4),
     });
-
-    expect(invalidated()).not.toContain('getRecipeApiV1ProjectsProjectIdStagesStageRecipeGet');
   });
 
   it('keeps the version a page-version-ready event names and marks the results of that page stale', () => {
@@ -240,7 +240,8 @@ describe('applyProjectEvent for the events of a burst', () => {
   }
 
   it('marks the summary, the rows of that stage, the book and the list stale once for a burst of page events', () => {
-    stageChanged('burst-1', 'geometry', 50);
+    // The last stage has no later one, so its rows are the only rows the burst marks
+    stageChanged('burst-1', 'typesetting', 50);
     expect(invalidated()).toEqual([]);
 
     vi.advanceTimersByTime(BURST_DELAY_MS);
@@ -253,7 +254,7 @@ describe('applyProjectEvent for the events of a burst', () => {
     ]);
   });
 
-  it('reads only the rows of the stage that changed', () => {
+  it('reads the rows of the stage that changed and of the stages after it, which draw what it made', () => {
     stageChanged('burst-2', 'geometry');
     vi.advanceTimersByTime(BURST_DELAY_MS);
 
@@ -268,19 +269,43 @@ describe('applyProjectEvent for the events of a burst', () => {
         ? [head.path.stage]
         : [];
     });
-    expect(stages).toEqual(['geometry']);
+    expect(stages).toEqual([
+      'geometry',
+      'cleanup',
+      'layout',
+      'background',
+      'recognition',
+      'proofreading',
+      'typesetting',
+    ]);
+  });
+
+  it('marks the cached rows of a later stage stale when a page changes in an earlier one', () => {
+    const rowsKey = (stage: Stage) =>
+      listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey({
+        path: { project_id: 'burst-2b', stage },
+      });
+    const keys = { earlier: rowsKey('page-order'), later: rowsKey('cleanup') };
+    queryClient.setQueryData(keys.earlier, []);
+    queryClient.setQueryData(keys.later, []);
+
+    stageChanged('burst-2b', 'geometry');
+    vi.advanceTimersByTime(BURST_DELAY_MS);
+
+    expect(queryClient.getQueryState(keys.later)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(keys.earlier)?.isInvalidated).toBe(false);
   });
 
   it('keeps the bursts of two stages apart', () => {
-    stageChanged('burst-3', 'geometry', 3);
-    stageChanged('burst-3', 'cleanup', 3);
+    stageChanged('burst-3', 'proofreading', 3);
+    stageChanged('burst-3', 'typesetting', 3);
     vi.advanceTimersByTime(BURST_DELAY_MS);
 
     expect(
       invalidated().filter(
         (id) => id === 'listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet',
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
   });
 
   it('ignores a page-stage-changed event that names no stage', () => {

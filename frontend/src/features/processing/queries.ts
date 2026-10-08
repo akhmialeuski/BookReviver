@@ -12,46 +12,37 @@ import {
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet,
   type PageVersionSchema,
   type ResultMark,
+  type RunImpactSchema,
+  runImpactApiV1ProjectsProjectIdStagesStageRunImpactPost,
   type ScanSchema,
   type Stage,
+  type StageRunBody,
 } from '@/api';
 import {
-  activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostMutation,
   carryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostMutation,
-  carryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostMutation,
   chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutMutation,
-  createRuleApiV1ProjectsProjectIdStagesStageRulesPostMutation,
-  createVariantApiV1ProjectsProjectIdStagesStageVariantsPostMutation,
   deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteMutation,
-  deleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteMutation,
-  deleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteMutation,
+  deleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteMutation,
   detectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostMutation,
-  getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey,
   listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetOptions,
   listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetQueryKey,
   listProcessorsApiV1ProcessorsGetOptions,
-  listRulesApiV1ProjectsProjectIdStagesStageRulesGetOptions,
-  listRulesApiV1ProjectsProjectIdStagesStageRulesGetQueryKey,
+  listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetOptions,
+  listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetQueryKey,
   listScansApiV1ProjectsProjectIdScansGetQueryKey,
   listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetOptions,
   listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetQueryKey,
-  listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetOptions,
-  listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey,
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey,
   measureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostMutation,
   previewStepApiV1ProjectsProjectIdStagesStagePreviewPostMutation,
   putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutMutation,
   putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutMutation,
-  putRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutMutation,
-  putSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutMutation,
-  putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation,
+  putRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutMutation,
+  putValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutMutation,
   remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostMutation,
-  resetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostMutation,
-  resetStepsApiV1ProjectsProjectIdStagesStageResetPostMutation,
-  resetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostMutation,
+  resetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostMutation,
   runImpactApiV1ProjectsProjectIdStagesStageRunImpactPostMutation,
   runStageApiV1ProjectsProjectIdStagesStageRunPostMutation,
-  unpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteMutation,
 } from '@/api/@tanstack/react-query.gen';
 import { invalidateHistory, invalidatePageLayers } from '@/features/processing/historyQueries';
 import {
@@ -67,8 +58,7 @@ import {
  * versions of a page, and the saving, running, previewing and choosing that act on them.
  *
  * The keys are the generated ones, so a change of a recipe marks exactly the reads of that stage stale. A recipe is
- * always saved through the route of its id, which serves the active recipe as well as a variant, so one change covers
- * both. A save marks the pages it processed out of date on the server, and the rows and the summary of the stage are
+ * always saved through the route of its id. A save marks the pages it processed out of date on the server, and the rows and the summary of the stage are
  * read again at once, since the counts on the panel and the bar depend on them.
  */
 
@@ -85,10 +75,10 @@ export function useProcessors() {
   });
 }
 
-/** Read the recipes of a stage, the active one first and then the variants. */
+/** Read the recipes of a stage, one for each kind of page, in the order of the kinds. */
 export function useRecipes(projectId: string, stage: Stage, enabled: boolean) {
   return useQuery({
-    ...listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetOptions({
+    ...listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetOptions({
       path: { project_id: projectId, stage },
       query: { size: LIST_SIZE },
     }),
@@ -164,54 +154,6 @@ export function useVersions(
   });
 }
 
-/** Read the rules of a stage in the order they are tried, which send pages to its variants. */
-export function useRules(projectId: string, stage: Stage, enabled: boolean) {
-  return useQuery({
-    ...listRulesApiV1ProjectsProjectIdStagesStageRulesGetOptions({
-      path: { project_id: projectId, stage },
-      query: { size: LIST_SIZE },
-    }),
-    select: (page) => page.items,
-    enabled,
-  });
-}
-
-/** Read the rules of a stage again, after one was added, moved to another variant or removed. */
-function refreshRules(queryClient: QueryClient, projectId: string, stage: Stage): Promise<void> {
-  return queryClient.invalidateQueries({
-    queryKey: listRulesApiV1ProjectsProjectIdStagesStageRulesGetQueryKey({
-      path: { project_id: projectId, stage },
-    }),
-  });
-}
-
-/** Add a rule that sends the pages meeting a condition to a variant. */
-export function useCreateRule(projectId: string, stage: Stage) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...createRuleApiV1ProjectsProjectIdStagesStageRulesPostMutation(),
-    onSettled: () => refreshRules(queryClient, projectId, stage),
-  });
-}
-
-/** Send the pages a rule matches to another variant. */
-export function useRetargetRule(projectId: string, stage: Stage) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...putRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutMutation(),
-    onSettled: () => refreshRules(queryClient, projectId, stage),
-  });
-}
-
-/** Remove a rule, so the pages it matched fall to the rules after it or to the active recipe. */
-export function useDeleteRule(projectId: string, stage: Stage) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...deleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteMutation(),
-    onSettled: () => refreshRules(queryClient, projectId, stage),
-  });
-}
-
 /** Mark stale what a change of the recipes or of the results of a stage changes. */
 export async function refreshStage(
   queryClient: QueryClient,
@@ -220,12 +162,7 @@ export async function refreshStage(
 ): Promise<void> {
   await Promise.all([
     queryClient.invalidateQueries({
-      queryKey: listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey({
-        path: { project_id: projectId, stage },
-      }),
-    }),
-    queryClient.invalidateQueries({
-      queryKey: getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey({
+      queryKey: listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetQueryKey({
         path: { project_id: projectId, stage },
       }),
     }),
@@ -236,11 +173,11 @@ export async function refreshStage(
   ]);
 }
 
-/** Save the name and the steps of a recipe, the active one or a variant. */
+/** Save the steps of a recipe. */
 export function useSaveRecipe(projectId: string, stage: Stage) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutMutation(),
+    ...putRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutMutation(),
     onSettled: () => refreshStage(queryClient, projectId, stage),
   });
 }
@@ -252,25 +189,7 @@ export function useSaveRecipe(projectId: string, stage: Stage) {
 export function useResetRecipe(projectId: string, stage: Stage) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...resetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostMutation(),
-    onSettled: () => refreshStage(queryClient, projectId, stage),
-  });
-}
-
-/** Add a variant of the stage, which is not active until it is activated. */
-export function useCreateVariant(projectId: string, stage: Stage) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...createVariantApiV1ProjectsProjectIdStagesStageVariantsPostMutation(),
-    onSettled: () => refreshStage(queryClient, projectId, stage),
-  });
-}
-
-/** Make a variant the recipe the stage runs by, which marks the pages the old one processed out of date. */
-export function useActivateRecipe(projectId: string, stage: Stage) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostMutation(),
+    ...resetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostMutation(),
     onSettled: () => refreshStage(queryClient, projectId, stage),
   });
 }
@@ -412,70 +331,39 @@ export function usePageSettings(
   });
 }
 
-/** Mark stale what a change of a setting of a page changes: its settings, and the rows and the summary of the stage. */
-async function refreshSettings(
-  queryClient: QueryClient,
-  projectId: string,
-  stage: Stage,
-  pageId: string,
-): Promise<void> {
+/** Mark stale what a change of a value of a setting changes: the settings of every page, and the rows and the summary of the stage. */
+async function refreshValues(queryClient: QueryClient, projectId: string, stage: Stage): Promise<void> {
   await Promise.all([
-    queryClient.invalidateQueries({
-      queryKey: listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetQueryKey({
-        path: { project_id: projectId, page_id: pageId, stage },
-      }),
-    }),
-    invalidateHistory(queryClient),
+    invalidatePageLayers(queryClient),
     invalidateStageRows(queryClient, projectId, stage),
     invalidateStageSummary(queryClient, projectId),
   ]);
 }
 
 /**
- * Set the value a page uses for one field of a step, which marks the stage of the page out of date.
+ * Set the value pages use for one field of a step: the open page, the pages selected, the odd pages, the even pages or
+ * a group. The stage of each page whose parameters change is marked out of date on the server.
  *
- * The changes of settings share one mutation scope per book, so they reach the server in the order they were made and
- * an older value never lands over a newer one.
+ * The changes of values share one mutation scope per book, so they reach the server in the order they were made and an
+ * older value never lands over a newer one. The settings of every page are read again, since a value for the odd pages
+ * reaches half the book.
  */
-export function useSetPageSetting(projectId: string, stage: Stage) {
+export function useSetValue(projectId: string, stage: Stage) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...putSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutMutation(),
+    ...putValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutMutation(),
     scope: { id: `page-settings:${projectId}` },
-    onSettled: (_data, _error, variables) =>
-      refreshSettings(queryClient, projectId, stage, variables.path.page_id),
+    onSettled: () => refreshValues(queryClient, projectId, stage),
   });
 }
 
-/** Take a field back from a page, so it uses the value of the recipe again, which marks its stage out of date. */
-export function useResetPageSetting(projectId: string, stage: Stage) {
+/** Take a value of a field back from the pages it was set for, so they use the next by strength, which marks their stages out of date. */
+export function useRemoveValue(projectId: string, stage: Stage) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...deleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteMutation(),
+    ...deleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteMutation(),
     scope: { id: `page-settings:${projectId}` },
-    onSettled: (_data, _error, variables) =>
-      refreshSettings(queryClient, projectId, stage, variables.path.page_id),
-  });
-}
-
-/**
- * Carry the value a page has for a field of a step over to other pages, as one batch, which marks their stages out of
- * date.
- *
- * It shares the mutation scope of the settings of the book, so it reaches the server after the change of the source
- * page that was made just before it. The settings and the histories of every page it reached are read again.
- */
-export function useCarryOver(projectId: string, stage: Stage) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...carryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostMutation(),
-    scope: { id: `page-settings:${projectId}` },
-    onSettled: () =>
-      Promise.all([
-        invalidatePageLayers(queryClient),
-        invalidateStageRows(queryClient, projectId, stage),
-        invalidateStageSummary(queryClient, projectId),
-      ]),
+    onSettled: () => refreshValues(queryClient, projectId, stage),
   });
 }
 
@@ -504,125 +392,27 @@ export function useRunImpact() {
   return useMutation(runImpactApiV1ProjectsProjectIdStagesStageRunImpactPostMutation());
 }
 
-/** Count the pages a reset of steps to their defaults would take work from, which nothing is written for. */
-export function useResetImpact() {
-  return useMutation(resetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostMutation());
-}
-
 /**
- * Reset steps to their defaults on one page or on every page, as one batch, which marks the stages of the pages that
- * lost work out of date.
+ * Count how many pages of a run have work of their own, which is read again each time it is asked for, since a setting
+ * or an edit of a page changes it without the run changing.
  *
- * It shares the mutation scope of the edits of the book with the undo, so it reaches the server after the edit that was
- * saved just before it. The settings, the edits and the histories of the pages are read again, since a reset may reach
- * every page of the book.
+ * @param projectId The book.
+ * @param stage The stage.
+ * @param body The run that keeps the work, or null when nothing is asked, such as while the menu of the run is shut.
  */
-export function useResetSteps(projectId: string, stage: Stage) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...resetStepsApiV1ProjectsProjectIdStagesStageResetPostMutation(),
-    scope: { id: `page-edits:${projectId}` },
-    onSettled: () =>
-      Promise.all([
-        invalidatePageLayers(queryClient),
-        invalidateStageRows(queryClient, projectId, stage),
-        invalidateStageSummary(queryClient, projectId),
-      ]),
-  });
-}
-
-/** Take the pinned variant off a page, so a run of the stage chooses its variant by the rules again. */
-export function useUnpin(projectId: string, stage: Stage) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...unpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteMutation(),
-    onSettled: () => refreshStage(queryClient, projectId, stage),
-  });
-}
-
-/** Make one of the results of a page its current result in the stage. */
-export function useChooseVersion(projectId: string, stage: Stage) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutMutation(),
-    onSettled: (_data, _error, variables) =>
-      Promise.all([
-        refreshStage(queryClient, projectId, stage),
-        queryClient.invalidateQueries({
-          queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
-            path: { project_id: projectId, page_id: variables.path.page_id },
-          }),
-        }),
-      ]),
-  });
-}
-
-/**
- * Set the mark and the comment of a result, which are the user's notes and change nothing the step reads.
- *
- * Both are replaced together, so a caller that changes one sends the other as it is. The versions of the page are read
- * again, since every list of results shows the notes, and so are the rows of the stages, since the strip marks the pages
- * whose result is marked bad.
- */
-export function useMarkResult(projectId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutMutation(),
-    onSettled: (_data, _error, variables) =>
-      Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
-            path: { project_id: projectId, page_id: variables.path.page_id },
-          }),
-        }),
-        invalidateAllStageRows(queryClient, projectId),
-      ]),
-  });
-}
-
-/**
- * Make the picture of a result again, whose files a collection removed, in the background.
- *
- * The answer is the queued job, and the version becomes the current one of its stage when the job ends. The mutation
- * settles after the job list is read again, so the job is in it when the caller looks for it.
- */
-export function useRemakeVersion(projectId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostMutation(),
-    onSettled: () => invalidateJobs(queryClient, projectId),
-  });
-}
-
-/**
- * Read every scan of the book as one list, which the Split stage needs for the size of each.
- *
- * The key extends the generated key of the list of scans, so the invalidation of the scans reaches it, and the extra
- * part keeps it apart from the one-page lists the Import stage reads.
- */
-export function useAllScans(projectId: string, enabled: boolean) {
+export function useOwnWork(projectId: string, stage: Stage, body: StageRunBody | null) {
   return useQuery({
-    queryKey: [
-      ...listScansApiV1ProjectsProjectIdScansGetQueryKey({ path: { project_id: projectId } }),
-      'all',
-    ],
-    queryFn: async ({ signal }): Promise<ScanSchema[]> => {
-      const scans: ScanSchema[] = [];
-      let page = 1;
-      let total = 1;
-      while (page <= total) {
-        const { data } = await listScansApiV1ProjectsProjectIdScansGet({
-          path: { project_id: projectId },
-          query: { page, size: LIST_SIZE },
-          signal,
-          throwOnError: true,
-        });
-        scans.push(...data.items);
-        total = data.pages;
-        page += 1;
-      }
-      return scans;
+    queryKey: ['run-own-work', projectId, stage, body],
+    queryFn: async ({ signal }): Promise<RunImpactSchema> => {
+      const { data } = await runImpactApiV1ProjectsProjectIdStagesStageRunImpactPost({
+        path: { project_id: projectId, stage },
+        body: body ?? {},
+        signal,
+        throwOnError: true,
+      });
+      return data;
     },
-    enabled,
+    enabled: body !== null,
+    staleTime: 0,
   });
 }

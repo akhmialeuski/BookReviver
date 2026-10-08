@@ -8,8 +8,8 @@ import {
   countFilters,
   type FlagView,
   joinRows,
+  type KindView,
   type StripItem,
-  type VariantView,
 } from '@/features/workspace/strip';
 
 /**
@@ -49,7 +49,7 @@ describe('StageStrip', () => {
       filter?: PageFilter;
       reasonOf?: (item: StripItem) => string | null;
       withWide?: boolean;
-      variants?: VariantView;
+      kinds?: KindView;
       flagged?: FlagView;
     } = {},
   ): void {
@@ -71,7 +71,7 @@ describe('StageStrip', () => {
           onGrid={vi.fn()}
           reasonOf={extra.reasonOf}
           withWide={extra.withWide}
-          variants={extra.variants}
+          kinds={extra.kinds}
           flagged={extra.flagged}
         />,
       ),
@@ -121,15 +121,12 @@ describe('StageStrip', () => {
     expect(container.querySelector('[data-testid="strip-reason"]')).toBeNull();
   });
 
-  describe('the variants of the stage', () => {
-    const PLATES_MARK = { name: 'Plates', tone: 'bg-variant-2', pinned: true };
-
-    function variantView(overrides: Partial<VariantView> = {}): VariantView {
+  describe('the kinds of page of the stage', () => {
+    function kindView(overrides: Partial<KindView> = {}): KindView {
       return {
-        markOf: (item) => (item.page.id === 'p-0' ? PLATES_MARK : null),
         options: [
-          { id: 'text', name: 'Text', pages: 1 },
-          { id: 'plates', name: 'Plates', pages: 1 },
+          { kind: 'text', pages: 1 },
+          { kind: 'color-picture', pages: 1 },
         ],
         selected: null,
         onSelect: vi.fn(),
@@ -137,41 +134,27 @@ describe('StageStrip', () => {
       };
     }
 
-    it('marks the page with its variant, and says in words that it is pinned', () => {
-      render(2, { variants: variantView() });
+    const filter = (): HTMLSelectElement | null =>
+      container.querySelector<HTMLSelectElement>('[data-testid="strip-kind-filter"]');
 
-      const marks = container.querySelectorAll('[data-testid="strip-variant"]');
-      expect(marks).toHaveLength(1);
-      expect(marks[0]?.getAttribute('data-variant')).toBe('Plates');
-      expect(marks[0]?.getAttribute('data-pinned')).toBe('true');
-      expect(container.querySelector('[data-testid="strip-page"]')?.textContent).toContain(
-        'Plates · pinned',
-      );
-    });
+    it('offers the kinds to narrow the pages to, with the pages of each', () => {
+      render(2, { kinds: kindView() });
 
-    it('offers the variants to narrow the pages to, with the pages each made', () => {
-      render(2, { variants: variantView() });
-
-      const select = container.querySelector<HTMLSelectElement>(
-        '[data-testid="strip-variant-filter"]',
-      );
-      expect([...(select?.options ?? [])].map((option) => option.textContent)).toEqual([
-        'All variants',
+      expect([...(filter()?.options ?? [])].map((option) => option.textContent)).toEqual([
+        'All kinds',
         'Text · 1',
-        'Plates · 1',
+        'Colour picture · 1',
       ]);
     });
 
-    it('tells the screen which variant was chosen, and that all of them were', () => {
+    it('tells the screen which kind was chosen, and that all of them were', () => {
       const onSelect = vi.fn();
-      render(2, { variants: variantView({ onSelect }) });
-      const select = container.querySelector<HTMLSelectElement>(
-        '[data-testid="strip-variant-filter"]',
-      );
+      render(2, { kinds: kindView({ onSelect }) });
+      const select = filter();
 
       act(() => {
         if (select !== null) {
-          select.value = 'plates';
+          select.value = 'color-picture';
           select.dispatchEvent(new Event('change', { bubbles: true }));
         }
       });
@@ -182,14 +165,13 @@ describe('StageStrip', () => {
         }
       });
 
-      expect(onSelect.mock.calls).toEqual([['plates'], [null]]);
+      expect(onSelect.mock.calls).toEqual([['color-picture'], [null]]);
     });
 
-    it('shows no mark and no choice for a stage with a single recipe', () => {
+    it('shows no choice for a stage with pages of a single kind', () => {
       render(2);
 
-      expect(container.querySelector('[data-testid="strip-variant"]')).toBeNull();
-      expect(container.querySelector('[data-testid="strip-variant-filter"]')).toBeNull();
+      expect(filter()).toBeNull();
     });
   });
 
@@ -254,7 +236,7 @@ describe('StageStrip', () => {
         'Step unsure · 2',
         'Differs from the book · 0',
         'Set by hand · 1',
-        'Skipped by the condition · 3',
+        'Skipped: a leaf the program drew · 3',
       ]);
     });
 

@@ -1,3 +1,4 @@
+import { type DebouncedFunc, debounce } from 'lodash-es';
 import type { BookPlaceBody, BookPlaceSchema, CanvasPositionSchema } from '@/api';
 import {
   addressOfPlace,
@@ -63,7 +64,7 @@ export class PlaceWriter {
   private address: PlaceAddress | null;
   private readonly send: PlaceWriterOptions['send'];
   private readonly remember: PlaceWriterOptions['remember'];
-  private readonly delayMs: number;
+  private readonly pause: DebouncedFunc<() => void>;
   private readonly restoreAddress: PlaceAddress | null;
   private restoreCanvas: CanvasPositionSchema | null;
   private restoreStrip: string | null;
@@ -71,14 +72,15 @@ export class PlaceWriter {
   private stripSource: StripSource | null = null;
   private lastCanvas: Reading<CanvasPositionSchema> | null = null;
   private lastStrip: Reading<string> | null = null;
-  private timer: ReturnType<typeof setTimeout> | null = null;
   private sent: string | null;
+  // Whether the write that a flush runs is marked `keepalive`, which lodash cannot pass through `flush()`
+  private keepalive = false;
 
   constructor(options: PlaceWriterOptions) {
     this.address = options.address;
     this.send = options.send;
     this.remember = options.remember;
-    this.delayMs = options.delayMs ?? WRITE_DELAY_MS;
+    this.pause = debounce(() => this.write(this.keepalive), options.delayMs ?? WRITE_DELAY_MS);
     const { initial } = options;
     this.restoreAddress = initial === null ? null : addressOfPlace(initial);
     this.restoreCanvas = initial?.canvas ?? null;
@@ -128,13 +130,7 @@ export class PlaceWriter {
 
   /** Note that the canvas or the strip moved, and write after a pause. */
   touch(): void {
-    if (this.timer !== null) {
-      clearTimeout(this.timer);
-    }
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      this.write(false);
-    }, this.delayMs);
+    this.pause();
   }
 
   /**
@@ -193,12 +189,12 @@ export class PlaceWriter {
 
   /** Write at once what a pause has not written yet. */
   flush(keepalive: boolean): void {
-    if (this.timer === null) {
-      return;
+    this.keepalive = keepalive;
+    try {
+      this.pause.flush();
+    } finally {
+      this.keepalive = false;
     }
-    clearTimeout(this.timer);
-    this.timer = null;
-    this.write(keepalive);
   }
 
   private readonly onHide = (): void => this.flush(true);

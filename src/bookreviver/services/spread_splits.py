@@ -49,6 +49,7 @@ from bookreviver.domain.ids import PageId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import PageStageKey, PageStepKey
 from bookreviver.services.page_labels import PageLabels
+from bookreviver.services.step_params import lay_step_values
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
@@ -164,7 +165,9 @@ class SpreadSplit:
         step = recipe.enabled_steps[0]
         processor = self._catalogue.get(step.processor_key)
         state = await self._uow.page_step_states.find(PageStepKey(page.id, Stage.PAGE_SPLIT, step.step_id))
-        params = processor.validate_params(step.params if state is None else state.apply_to(step.params))
+        params = processor.validate_params(
+            await lay_step_values(self._uow, page, step.step_id, step.params, None if state is None else state.params)
+        )
         edit = None if state is None else state.edit
         halves = await self._halves(page)
         templates = [self._template(half, processor, params, edit) for half in (halves.left, halves.right)]

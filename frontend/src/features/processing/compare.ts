@@ -5,7 +5,7 @@ import type { WorldRect } from '@/features/viewer/layout';
  * The two pictures a before-and-after compare puts side by side, and the arithmetic of the swipe.
  *
  * The picture before is the picture of the page that the server gives with its row, and the picture after is what the
- * open step made, or the result of the stage, or the preview. A result with its tile pyramid cut is drawn from the
+ * open step made, or the result of the stage. A result with its tile pyramid cut is drawn from the
  * pyramid, and one without is drawn from its plain preview image, so the canvas never points at tiles that do not exist
  * yet.
  */
@@ -60,22 +60,19 @@ export function sameImage(a: ImageSource | null, b: ImageSource | null): boolean
  * Give the two pictures of a compare for a page.
  *
  * The picture before is the picture of the page, which is what the strip shows too: what the open step reads, else what
- * the stage reads. The picture after is what the open step made, or, with no step open, the result of the stage; a
- * preview that is on stands in for either.
+ * the stage reads. The picture after is what the open step made, or, with no step open, the result of the stage.
  *
  * @param picture The picture of the page, which is the version the strip shows.
  * @param row The row of the page, asked for the open step when one is open, or undefined while it loads.
- * @param preview The preview shown on the page, or null for none.
  */
 export function comparePairOf(
   picture: PageVersionSchema | null,
   row: StagePageSchema | undefined,
-  preview: PageVersionSchema | null,
 ): ComparePair {
   const made = row?.step === null || row?.step === undefined ? row?.version : row.step.version;
   return {
     before: sourceOfResult(picture),
-    after: sourceOfPreview(preview) ?? sourceOfResult(made),
+    after: sourceOfResult(made),
   };
 }
 

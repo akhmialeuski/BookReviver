@@ -13,8 +13,8 @@ import {
 
 /**
  * The content type of a page: the program finds text, a colour picture or a black-and-white one on each page as the
- * pages are made, the strip marks every page with it, the selected pages are changed at once and given back to the
- * program, and the steps of the first recipes process the pages they are for.
+ * pages are made, the strip marks every page with it, and the selected pages are changed at once and given back to the
+ * program.
  */
 
 const SCENARIO_TIMEOUT_MS = 240_000;
@@ -41,29 +41,6 @@ async function contentOf(page: Page): Promise<string[]> {
   return items
     .toSorted((a, b) => a.position - b.position)
     .map((item) => `${item.content_type}:${item.content_source}`);
-}
-
-/** The steps of a recipe as the window of the gear lists them, with the pages each one processes. */
-interface StepConditions {
-  processors: (string | null)[];
-  conditions: string[];
-}
-
-/** Read the processors and the conditions of the steps of the recipe in the window of the gear, and close the window. */
-async function conditionsOf(page: Page): Promise<StepConditions> {
-  await page.getByTestId('steps-gear').click();
-  const window = page.getByTestId('steps-window');
-  await expect(window).toBeVisible();
-  const steps = window.getByTestId('window-step');
-  const processors = await steps.evaluateAll((items) =>
-    items.map((item) => item.getAttribute('data-processor')),
-  );
-  const conditions = await window
-    .getByTestId('window-step-condition')
-    .evaluateAll((selects) => selects.map((select) => (select as HTMLSelectElement).value));
-  await window.getByRole('button', { name: 'Close' }).click();
-  await expect(window).toHaveCount(0);
-  return { processors, conditions };
 }
 
 test('the program finds what each page shows, the strip marks it, and the selected pages are changed and given back at once', async ({
@@ -99,12 +76,6 @@ test('the program finds what each page shows, the strip marks it, and the select
       'Black-and-white picture · Found by the program',
     );
     await snap(page, 'content-type-marks-in-the-strip');
-  });
-
-  await test.step('the steps of the first recipes process the pages they are for', async () => {
-    await expect(page.getByTestId('bar-step').first()).toBeVisible();
-    // Perspective, Deskew, Dewarp, Select content and Margins: the two that follow the lines of text are for text
-    expect((await conditionsOf(page)).conditions).toEqual(['all', 'text', 'text', 'all', 'all']);
   });
 
   await test.step('two selected pages of different types are changed to text at once', async () => {
@@ -157,35 +128,6 @@ test('the program finds what each page shows, the strip marks it, and the select
         'bw-picture:hand',
       ]);
   });
-
-  await rm(path.dirname(folder), { recursive: true, force: true });
-});
-
-test('the first recipe of the Cleanup stage keeps binarization, despeckling and thickness off the pictures', async ({
-  page,
-}) => {
-  test.setTimeout(SCENARIO_TIMEOUT_MS);
-  const folder = await writeMixedFolder();
-
-  await registerAndSignIn(page);
-  await createBook(page, 'A book to clean');
-  await uploadFolder(page, folder, PAGES);
-  // The split and the detection that follow the import read the recipes again, which closes an open step
-  await waitForIdleJobs(page, openProjectId(page));
-  const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
-  await page.goto(`${bookPath}/stages/cleanup`);
-  await expect(page.getByTestId('stage-title')).toHaveText('Cleanup');
-  await expect(page.getByTestId('bar-step').first()).toBeVisible();
-
-  const { processors, conditions } = await conditionsOf(page);
-  expect(processors).toEqual([
-    'cleanup.binarize',
-    'cleanup.despeckle',
-    'cleanup.thickness',
-    'cleanup.eraser',
-  ]);
-  expect(conditions).toEqual(['text', 'text', 'text', 'all']);
-  await snap(page, 'content-type-cleanup-conditions');
 
   await rm(path.dirname(folder), { recursive: true, force: true });
 });

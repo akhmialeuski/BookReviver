@@ -1,4 +1,4 @@
-import type { AppliesTo, ProcessorSchema, StepSchema } from '@/api';
+import type { ProcessorSchema, StepSchema } from '@/api';
 import { type StepDraft, sameValue } from '@/features/processing/recipe';
 import { formSchemaOf, methodsOf } from '@/features/processing/schema';
 
@@ -17,7 +17,6 @@ export type ProfileChange =
   | { kind: 'removed'; title: string }
   | { kind: 'order' }
   | { kind: 'switched'; title: string; enabled: boolean }
-  | { kind: 'condition'; title: string; appliesTo: AppliesTo }
   | { kind: 'params'; title: string; fields: readonly string[] };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -73,9 +72,6 @@ export function profileChanges(
     const title = titleOf(step.processorKey);
     if (before.enabled !== step.enabled) {
       found.push({ kind: 'switched', title, enabled: step.enabled });
-    }
-    if (before.applies_to !== step.appliesTo) {
-      found.push({ kind: 'condition', title, appliesTo: step.appliesTo });
     }
     const fields = changedFields(before.params, step.params);
     if (fields.length > 0) {

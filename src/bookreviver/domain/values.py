@@ -9,7 +9,6 @@ from uuid import UUID, uuid4
 from attrs import evolve, field, fields_dict, frozen, validators
 
 from bookreviver.domain.enums import (
-    AppliesTo,
     CompareMode,
     ContributorRole,
     EditorKind,
@@ -21,13 +20,11 @@ from bookreviver.domain.enums import (
     PageFilter,
     ProcessorScope,
     Rendition,
-    ResetScope,
     RightsStatus,
     RunMode,
     Script,
     Stage,
     StepField,
-    StepLayer,
     UploadProblem,
     VersionData,
     VersionOutput,
@@ -35,14 +32,13 @@ from bookreviver.domain.enums import (
     WorkerPool,
 )
 from bookreviver.domain.errors import InvalidIdentifierError, InvalidParametersError, UploadRejectedError
-from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StepId
+from bookreviver.domain.ids import PageId, PageVersionId, StepId
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Sequence
 
     from attrs import Attribute
 
-    from bookreviver.domain.entities import PageStepState
     from bookreviver.domain.enums import (
         CarryScope,
         ColorMode,
@@ -60,7 +56,7 @@ if TYPE_CHECKING:
         VersionScale,
     )
     from bookreviver.domain.geometry import EditGeometry
-    from bookreviver.domain.ids import AccountId, ProjectId, RecipeProfileId, ScanId, SourceId
+    from bookreviver.domain.ids import AccountId, ProjectId, RecipeId, RecipeProfileId, ScanId, SourceId
     from bookreviver.domain.page_label_rules import PageLabelRule
 
 # JSON-compatible metadata as read from a source file
@@ -76,16 +72,13 @@ NAMELESS_SEGMENTS: frozenset[str] = frozenset({'', '.', '..'})
 # A Windows drive letter opening a path, as in ``C:\scans`` or ``C:scans``
 DRIVE_LETTER: re.Pattern[str] = re.compile(r'[A-Za-z]:')
 CONTROL_CHARACTERS: re.Pattern[str] = re.compile(r'[\x00-\x1f\x7f]')
-PIN_NEEDS_RECIPE: str = 'A run pins a recipe to its pages only when it names the recipe.'
 # Keys in the stored parameters of the jobs: the last step of a ``run-stage`` job to run, the version it makes again,
 # and the pages a job works on
 THROUGH_STEP_KEY: str = 'through_step'
 REMAKE_KEY: str = 'remake'
 PAGE_IDS_KEY: str = 'page_ids'
-REMAKE_ONE_PAGE: str = 'A run that makes a version again names no recipe and exactly one page.'
+REMAKE_ONE_PAGE: str = 'A run that makes a version again names exactly one page.'
 REMAKE_KEEPS: str = 'A run that makes a version again keeps the settings and edits of the page.'
-RESET_NEEDS_PAGE: str = 'A reset of the open page names the page.'
-RESET_NEEDS_STEP: str = 'A reset of one step names the step.'
 # Keys of the mode and of its confirmation in the stored parameters of a ``run-stage`` job
 MODE_KEY: str = 'mode'
 CONFIRM_OVERWRITE_KEY: str = 'confirm_overwrite'
@@ -435,30 +428,28 @@ class ProcessorRef:
 
 @frozen(kw_only=True)
 class Step:
-    """One step of a recipe: a processor, the parameters it runs with and the pages it runs on.
+    """One step of a recipe: a processor and the parameters it runs with.
 
-    The processor key is not unique in a recipe, since a processor may be added twice with other parameters or another
-    condition, so the step has an identifier of its own. A manual edit belongs to it, and it stays as the step is moved,
-    saved, copied into a variant or kept in a profile.
+    The processor key is not unique in a recipe, since a processor may be added twice with other parameters, so the step
+    has an identifier of its own. A manual edit belongs to it, and it stays as the step is moved, saved or kept in a
+    profile.
 
     :ivar processor_key: Key of the processor, such as ``geometry.deskew``.
     :ivar params: Parameters of the step, following the processor's JSON Schema.
     :ivar enabled: Whether a run and a preview run the step. A step that is off stays in the recipe with its parameters,
                    so switching it on again loses nothing.
     :ivar step_id: Identifier of the step, made when the step is added.
-    :ivar applies_to: Which pages the step processes. A page that does not meet the condition passes the step as it is.
     """
 
     processor_key: str = field(validator=validators.min_len(1))
     params: MetadataMap = field(factory=dict)
     enabled: bool = True
     step_id: StepId = field(factory=lambda: StepId(uuid4()))
-    applies_to: AppliesTo = AppliesTo.ALL
 
     def to_map(self) -> dict[str, Any]:
         """Return the step as the JSON object a recipe and the parameters of a job store.
 
-        :returns: The processor key, the parameters, whether the step is on, its identifier and its condition.
+        :returns: The processor key, the parameters, whether the step is on and its identifier.
         :rtype: dict[str, Any]
         """
         return {
@@ -466,7 +457,6 @@ class Step:
             StepField.PARAMS: dict(self.params),
             StepField.ENABLED: self.enabled,
             StepField.STEP_ID: str(self.step_id),
-            StepField.APPLIES_TO: self.applies_to.value,
         }
 
     @classmethod
@@ -474,16 +464,15 @@ class Step:
         """Read the step from the JSON object ``to_map`` wrote.
 
         A step stored before the switch existed has no ``enabled`` key and is on, as every step was. One stored before
-        the identifier and the condition existed has no ``step_id`` and gets a new one, and has no condition and is
-        processing every page. The migration of the recipes gives the stored steps their identifiers, so only the
-        parameters of a job queued before it can lack one.
+        the identifier existed has no ``step_id`` and gets a new one. The migration of the recipes gives the stored
+        steps their identifiers, so only the parameters of a job queued before it can lack one.
 
         :param stored: The stored object.
         :type stored: MetadataMap
         :returns: The step.
         :rtype: Self
         :raises KeyError: If the object has no processor key or no parameters.
-        :raises ValueError: If the identifier or the condition is not valid.
+        :raises ValueError: If the identifier is not valid.
         """
         step_id = stored.get(StepField.STEP_ID)
         return cls(
@@ -491,7 +480,6 @@ class Step:
             params=stored[StepField.PARAMS],
             enabled=stored.get(StepField.ENABLED, True),
             step_id=StepId(uuid4() if step_id is None else UUID(step_id)),
-            applies_to=AppliesTo(stored.get(StepField.APPLIES_TO, AppliesTo.ALL)),
         )
 
 
@@ -523,19 +511,27 @@ def _steps_tuple(steps: list[Step] | tuple[Step, ...]) -> tuple[Step, ...]:
 
 @frozen(kw_only=True)
 class RecipeDraft:
-    """The name and the steps of a recipe or a profile as a user gives them, with the order they are to be kept in.
+    """The steps of a recipe as a user gives them, with the order they are to be kept in.
 
-    :ivar name: Name the user sees.
     :ivar steps: The steps in the order they run, not yet checked against their processors.
     :ivar order: Whether a step that stands where it cannot work is refused or only warned of.
-    :ivar profile_id: The profile the steps come from, which a recipe added from the draft is linked to. A recipe that
+    :ivar profile_id: The profile the steps come from, which a recipe made from the draft is linked to. A recipe that
                       is rewritten keeps the link it has, and a profile ignores it.
     """
 
-    name: str = field(validator=validators.min_len(1))
     steps: tuple[Step, ...] = field(converter=_steps_tuple)
     order: OrderMode = OrderMode.USUAL
     profile_id: RecipeProfileId | None = None
+
+
+@frozen(kw_only=True)
+class ProfileDraft(RecipeDraft):
+    """The name and the steps of a recipe profile as a user gives them.
+
+    :ivar name: Name the user sees.
+    """
+
+    name: str = field(validator=validators.min_len(1))
 
 
 @frozen
@@ -564,41 +560,20 @@ class PageStepKey:
     step_id: StepId
 
 
-CARRY_NAME_MISMATCH: str = (
-    'A carry-over of the layer "{layer}" must name a field exactly when the layer is the settings.'
-)
-
-
 @frozen(kw_only=True)
 class CarryRequest:
-    """What a carry-over asks for: a layer of a step on a page, and the pages it goes to.
-
-    The layer is either one field of the settings of the step, which ``name`` names, or the manual edit of the step, the
-    whole shape the user set by hand, which has no name.
+    """What a carry-over asks for: the shape a page has set by hand for a step, and the pages it goes to.
 
     :ivar key: The source page, the stage and the step.
-    :ivar layer: The layer carried, the settings of the page or its manual edit.
-    :ivar name: Name of the field in the parameters of the step, for the layer of the settings, and None for the edit.
-    :ivar scope: The pages the value goes to.
+    :ivar scope: The pages the shape goes to.
     :ivar page_ids: The pages of a carry-over to the selected pages, which the other scopes ignore.
-    :ivar overwrite: Whether a page that has another value of its own takes the value as well, instead of being skipped.
+    :ivar overwrite: Whether a page that has a shape of its own takes the shape as well, instead of being skipped.
     """
 
     key: PageStepKey
-    layer: StepLayer = StepLayer.SETTINGS
-    name: str | None = None
     scope: CarryScope
     page_ids: tuple[PageId, ...] = ()
     overwrite: bool = False
-
-    def __attrs_post_init__(self) -> None:
-        """Check that a carry of the settings names its field and that a carry of the edit names none.
-
-        :raises ValueError: If the layer is the settings and no field is named, or the layer is the edit and one is.
-        """
-        if (self.layer is StepLayer.SETTINGS) != (self.name is not None):
-            err_msg = CARRY_NAME_MISMATCH.format(layer=self.layer.label)
-            raise ValueError(err_msg)
 
 
 @frozen
@@ -1124,17 +1099,15 @@ class ResultNote:
 class StageRun:
     """What a ``run-stage`` job runs: a stage over some pages by a recipe.
 
-    :ivar stage: Stage to run.
-    :ivar recipe_id: Recipe to run it by, or None for the active recipe of the stage.
+    :ivar stage: Stage to run, each page by the recipe of its kind.
     :ivar page_ids: Pages to run it on, or None for every page with an image.
     :ivar confirm_unsplit: Whether the user confirmed that a page split that is undone deletes the right half of a
                            spread, which a run that would do so refuses without it.
-    :ivar pin: Whether the recipe is pinned to the pages of the run, so that a later run without a recipe keeps it. A
-               run without a recipe chooses the recipe of each page and pins nothing.
-    :ivar through_step: Index in the recipe of the last step to run, or None to run through the last step that is on.
-                        The steps before it are found in the cache of versions when their inputs did not change.
+    :ivar through_step: Index in the recipe of each page of the last step to run, or None to run through the last step
+                        that is on. The steps before it are found in the cache of versions when their inputs did not
+                        change.
     :ivar remake: Version whose files a collection removed, which the run makes again by the steps its chain stored
-                  instead of by a recipe, over the one page named, and makes current. It names no recipe.
+                  instead of by a recipe, over the one page named, and makes current.
     :ivar mode: What the run does with the settings the pages changed for its steps and with the manual edits they read:
                 keeps both, which is the usual run, or takes one of them away from every page it goes over first.
     :ivar confirm_overwrite: Whether the user confirmed that a mode that takes work away does so on the pages it
@@ -1142,24 +1115,20 @@ class StageRun:
     """
 
     stage: Stage
-    recipe_id: RecipeId | None = None
     page_ids: tuple[PageId, ...] | None = None
     confirm_unsplit: bool = False
-    pin: bool = False
     through_step: int | None = field(default=None, validator=validators.optional(validators.ge(0)))
     remake: PageVersionId | None = None
     mode: RunMode = RunMode.KEEP
     confirm_overwrite: bool = False
 
     def __attrs_post_init__(self) -> None:
-        """Check that only a run by a recipe pins, and that a run that makes a version again names one page.
+        """Check that a run that makes a version again names one page and keeps the work of the page.
 
-        :raises ValueError: If a run without a recipe asks to pin, a run that makes a version again names a recipe or
-                            not exactly one page, or takes the settings or the edits of the page away.
+        :raises ValueError: If a run that makes a version again does not name exactly one page, or takes the settings or
+                            the edits of the page away.
         """
-        if self.pin and self.recipe_id is None:
-            raise ValueError(PIN_NEEDS_RECIPE)
-        if self.remake is not None and (self.recipe_id is not None or self.page_ids is None or len(self.page_ids) != 1):
+        if self.remake is not None and (self.page_ids is None or len(self.page_ids) != 1):
             raise ValueError(REMAKE_ONE_PAGE)
         if self.remake is not None and self.mode is not RunMode.KEEP:
             raise ValueError(REMAKE_KEEPS)
@@ -1167,15 +1136,13 @@ class StageRun:
     def to_map(self) -> dict[str, Any]:
         """Return the value as the JSON object a job stores.
 
-        :returns: The stage, the recipe, the pages as text, the confirmations, the pin, the last step and the mode.
+        :returns: The stage, the pages as text, the confirmations, the last step and the mode.
         :rtype: dict[str, Any]
         """
         return {
             'stage': self.stage.value,
-            'recipe_id': None if self.recipe_id is None else str(self.recipe_id),
             PAGE_IDS_KEY: None if self.page_ids is None else [str(page_id) for page_id in self.page_ids],
             'confirm_unsplit': self.confirm_unsplit,
-            'pin': self.pin,
             THROUGH_STEP_KEY: self.through_step,
             REMAKE_KEY: self.remake,
             MODE_KEY: self.mode.value,
@@ -1196,10 +1163,8 @@ class StageRun:
             page_ids = stored[PAGE_IDS_KEY]
             return cls(
                 stage=Stage(stored['stage']),
-                recipe_id=None if stored['recipe_id'] is None else RecipeId(UUID(stored['recipe_id'])),
                 page_ids=None if page_ids is None else tuple(PageId(UUID(page_id)) for page_id in page_ids),
                 confirm_unsplit=bool(stored.get('confirm_unsplit', False)),
-                pin=bool(stored.get('pin', False)),
                 through_step=stored.get(THROUGH_STEP_KEY),
                 remake=None if stored.get(REMAKE_KEY) is None else PageVersionId(stored[REMAKE_KEY]),
                 mode=RunMode(stored.get(MODE_KEY, RunMode.KEEP)),
@@ -1215,107 +1180,18 @@ class RunImpact:
 
     :ivar mode: The mode of the run.
     :ivar pages: How many pages the run goes over.
-    :ivar hand_pages: How many of them have a manual edit on a step the run goes over.
-    :ivar settings_pages: How many of them change at least one field of a step the run goes over.
+    :ivar own_pages: How many of them have a manual edit or change at least one field on a step the run goes over,
+                     which are the pages with work of their own.
     """
 
     mode: RunMode
     pages: int
-    hand_pages: int
-    settings_pages: int
+    own_pages: int
 
     @property
     def affected(self) -> int:
         """How many pages lose work to the mode, which is none for a run that keeps it."""
-        match self.mode:
-            case RunMode.KEEP:
-                return 0
-            case RunMode.REPLACE_HAND:
-                return self.hand_pages
-            case RunMode.RESET_SETTINGS:
-                return self.settings_pages
-
-
-@frozen(kw_only=True)
-class ResetRequest:
-    """What a reset of the steps of a stage to their defaults asks for: where it goes, and whether it was confirmed.
-
-    A reset removes the settings a page changed for a step and the manual edit the step reads on it, so the page uses
-    the values of the recipe again and the automatic run finds the shape anew.
-
-    :ivar stage: The stage whose steps are reset.
-    :ivar scope: The steps and the pages the reset goes over.
-    :ivar page_id: The open page, which the scopes of one page name and the others ignore.
-    :ivar step_id: The step, which the scopes of one step name and the others ignore.
-    :ivar confirm: Whether the user confirmed that a reset that reaches other pages takes the work of them, which a
-                   request for such a reset refuses without.
-    """
-
-    stage: Stage
-    scope: ResetScope
-    page_id: PageId | None = None
-    step_id: StepId | None = None
-    confirm: bool = False
-
-    def __attrs_post_init__(self) -> None:
-        """Check that the scope has the page and the step it needs.
-
-        :raises ValueError: If a scope of one page names no page, or a scope of one step names no step.
-        """
-        if self.scope in {ResetScope.PAGE_STEP, ResetScope.PAGE} and self.page_id is None:
-            raise ValueError(RESET_NEEDS_PAGE)
-        if self.scope in {ResetScope.PAGE_STEP, ResetScope.STEP} and self.step_id is None:
-            raise ValueError(RESET_NEEDS_STEP)
-
-    @property
-    def open_page(self) -> PageId | None:
-        """The page the reset goes over, or None for a scope that goes over every page of the book."""
-        return self.page_id if self.scope in {ResetScope.PAGE_STEP, ResetScope.PAGE} else None
-
-    @property
-    def chosen_step(self) -> StepId | None:
-        """The step the reset goes over, or None for a scope that goes over every step of the stage."""
-        return self.step_id if self.scope in {ResetScope.PAGE_STEP, ResetScope.STEP} else None
-
-    @property
-    def reaches_other_pages(self) -> bool:
-        """Whether the reset may take the work of pages other than the open one, which asks for a confirmation."""
-        return self.scope in {ResetScope.STEP, ResetScope.STAGE}
-
-
-@frozen(kw_only=True)
-class ResetImpact:
-    """What a reset would take away, counted over the steps and the pages it goes over.
-
-    :ivar scope: The scope of the reset.
-    :ivar hand_pages: How many pages have a manual edit on a step the reset goes over.
-    :ivar settings_pages: How many pages change at least one field of a step the reset goes over.
-    :ivar affected: How many pages lose work, which is a page with an edit, a setting or both counted once.
-    """
-
-    scope: ResetScope
-    hand_pages: int
-    settings_pages: int
-    affected: int
-
-    @classmethod
-    def of(cls, scope: ResetScope, states: Iterable[PageStepState]) -> Self:
-        """Count what a reset would take away from the states it goes over.
-
-        :param scope: The scope of the reset.
-        :type scope: ResetScope
-        :param states: The states of the steps the reset goes over, which are those that hold a setting or an edit.
-        :type states: Iterable[PageStepState]
-        :returns: The count.
-        :rtype: Self
-        """
-        held = list(states)
-        return cls(
-            scope=scope,
-            hand_pages=len({state.page_id for state in held if state.edit is not None}),
-            settings_pages=len({state.page_id for state in held if state.params}),
-            affected=len({state.page_id for state in held}),
-        )
+        return self.own_pages if self.mode is RunMode.DROP_OWN else 0
 
 
 @frozen(kw_only=True)
@@ -1447,25 +1323,23 @@ class ContentDetection:
 
 @frozen(kw_only=True)
 class VersionCollection:
-    """What a ``collect-versions`` job deletes: the versions older than two moments that nothing needs.
+    """What a ``collect-versions`` job deletes: the versions that nothing needs, and the previews older than a moment.
 
-    :ivar older_than: Full runs created before this moment may be deleted.
+    A full run needs no age to go, since it is not shown to anyone once it is not current. A preview is shown by the
+    editor that asked for it, so it goes only after some time.
+
     :ivar previews_older_than: Previews created before this moment may be deleted.
     """
 
-    older_than: datetime
     previews_older_than: datetime
 
     def to_map(self) -> dict[str, Any]:
         """Return the value as the JSON object a job stores.
 
-        :returns: The two moments as ISO 8601 text.
+        :returns: The moment as ISO 8601 text.
         :rtype: dict[str, Any]
         """
-        return {
-            'older_than': self.older_than.isoformat(),
-            'previews_older_than': self.previews_older_than.isoformat(),
-        }
+        return {'previews_older_than': self.previews_older_than.isoformat()}
 
     @classmethod
     def from_map(cls, stored: MetadataMap) -> Self:
@@ -1478,9 +1352,6 @@ class VersionCollection:
         :raises InvalidParametersError: If the object is not one of a ``collect-versions`` job.
         """
         try:
-            return cls(
-                older_than=datetime.fromisoformat(stored['older_than']),
-                previews_older_than=datetime.fromisoformat(stored['previews_older_than']),
-            )
+            return cls(previews_older_than=datetime.fromisoformat(stored['previews_older_than']))
         except (KeyError, ValueError, TypeError) as error:
             raise _params_error(JobKind.COLLECT_VERSIONS, error) from error

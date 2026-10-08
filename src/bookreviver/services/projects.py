@@ -20,7 +20,6 @@ from bookreviver.domain.entities import Project, ProjectOverview
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import ProjectId
 from bookreviver.domain.values import Slice, SliceRequest
-from bookreviver.services.recipe_picks import PAGE_WINDOW
 
 if TYPE_CHECKING:
     from bookreviver.domain.changes import ProjectChanges
@@ -33,6 +32,9 @@ if TYPE_CHECKING:
     from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore, SourceStore
     from bookreviver.services.stage_summaries import StageSummaries
+
+# How many pages are read from the book at a time, when a use case needs all of them
+PAGE_WINDOW: int = 1_000
 
 
 async def owned_project(projects: ProjectRepository, actor: Actor, project_id: ProjectId) -> Project:

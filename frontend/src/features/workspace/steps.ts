@@ -1,11 +1,4 @@
-import type {
-  AppliesTo,
-  FigureState,
-  ProcessorSchema,
-  RecipeSchema,
-  Stage,
-  StagePageSchema,
-} from '@/api';
+import type { FigureState, ProcessorSchema, RecipeSchema, Stage, StagePageSchema } from '@/api';
 
 /**
  * The steps of the open recipe as the step bar and the step panel read them: the saved steps with their titles, the step
@@ -35,18 +28,7 @@ export interface BarStep {
   title: string;
   processorKey: string;
   enabled: boolean;
-  /** Which pages the step processes. */
-  appliesTo: AppliesTo;
 }
-
-/** The marks a condition has on the bar, in the order the select of a step lists the conditions. */
-export const ConditionMark = {
-  Text: 'text',
-  Picture: 'picture',
-} as const;
-
-/** One mark (derived from {@link ConditionMark}). */
-export type ConditionMark = (typeof ConditionMark)[keyof typeof ConditionMark];
 
 /**
  * List the saved steps of a recipe with the titles of their processors.
@@ -65,22 +47,7 @@ export function barStepsOf(
     title: catalogue.find((entry) => entry.key === step.processor_key)?.title ?? step.processor_key,
     processorKey: step.processor_key,
     enabled: step.enabled,
-    appliesTo: step.applies_to,
   }));
-}
-
-/** Give the mark a condition carries on the bar, or null for a step that processes every page. */
-export function markOfCondition(appliesTo: AppliesTo): ConditionMark | null {
-  switch (appliesTo) {
-    case 'all':
-      return null;
-    case 'text':
-      return ConditionMark.Text;
-    case 'pictures':
-    case 'color-pictures':
-    case 'bw-pictures':
-      return ConditionMark.Picture;
-  }
 }
 
 /** Find the step an address names among the steps of the recipe, or null when the recipe has none such. */
@@ -125,7 +92,7 @@ export interface StepCounts {
   found: number;
   /** Pages with a setting of their own for the step or a shape the reader set by hand. */
   byHand: number;
-  /** Pages the step passes by its condition. */
+  /** Pages the step passed unchanged, which are the leaves the program drew. */
   skipped: number;
   /** Pages the step has not run on and that hold the default shape. */
   notRun: number;

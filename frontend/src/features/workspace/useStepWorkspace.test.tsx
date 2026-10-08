@@ -27,7 +27,7 @@ const SAVED = recipe('r1', {
   steps: [
     step('geometry.perspective', { step_id: 'a' }),
     step('geometry.deskew', { step_id: 'b' }),
-    step('geometry.deskew', { step_id: 'c', applies_to: 'pictures' }),
+    step('geometry.deskew', { step_id: 'c' }),
   ],
 });
 const STATE = processing({
@@ -227,8 +227,8 @@ describe('useStepWorkspace', () => {
     const cleanup = recipe('c1', {
       stage: 'cleanup',
       steps: [
-        step('cleanup.binarize', { step_id: 'a', applies_to: 'text' }),
-        step('cleanup.thickness', { step_id: 'b', applies_to: 'text' }),
+        step('cleanup.binarize', { step_id: 'a' }),
+        step('cleanup.thickness', { step_id: 'b' }),
       ],
     });
     await render('b', {

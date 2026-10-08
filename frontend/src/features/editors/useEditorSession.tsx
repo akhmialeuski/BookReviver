@@ -71,7 +71,6 @@ const EMPTY_SIZE = { width: 0, height: 0 };
 
 /** A run that waits for the book to be free. */
 interface WantedRun {
-  recipeId: string;
   pageId: string;
 }
 
@@ -253,7 +252,7 @@ export function useEditorSession({
     startRun(
       {
         path: { project_id: projectId, stage },
-        body: { recipe_id: wanted.recipeId, page_ids: [wanted.pageId] },
+        body: { page_ids: [wanted.pageId] },
       },
       {
         onError: (failure) => {
@@ -299,7 +298,7 @@ export function useEditorSession({
       }
       setError(null);
       if (editor.runsAfterEdit(context) && recipe !== undefined) {
-        setWanted({ recipeId: recipe.id, pageId: owner.id });
+        setWanted({ pageId: owner.id });
       }
     } catch (failure) {
       setError(describeError(failure));
@@ -329,7 +328,7 @@ export function useEditorSession({
       {
         onSuccess: () => {
           setError(null);
-          setWanted({ recipeId: recipe.id, pageId: owner.id });
+          setWanted({ pageId: owner.id });
         },
         onError: (failure) => setError(describeError(failure)),
       },
@@ -358,7 +357,7 @@ export function useEditorSession({
             editor.runsAfterEdit(context) &&
             undone.changes.some((change) => change.layer === 'hand')
           ) {
-            setWanted({ recipeId: recipe.id, pageId: owner.id });
+            setWanted({ pageId: owner.id });
           }
         },
         onError: (failure) => setError(describeError(failure)),

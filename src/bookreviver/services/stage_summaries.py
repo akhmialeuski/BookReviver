@@ -25,9 +25,10 @@ from bookreviver.services.step_rows import StepRows
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
-    from bookreviver.domain.entities import PageVersion, Project, ProjectOverview
-    from bookreviver.domain.ids import PageVersionId, ProjectId, RecipeId, StepId
-    from bookreviver.domain.stage_summaries import StageTally, StepTally, VariantTally
+    from bookreviver.domain.entities import PageVersion, Project, ProjectOverview, Recipe
+    from bookreviver.domain.enums import RecipeKind
+    from bookreviver.domain.ids import PageVersionId, ProjectId, StepId
+    from bookreviver.domain.stage_summaries import StageTally, StepTally
     from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
@@ -52,19 +53,19 @@ class StageSummaries:
 
         :param overview: The book with the number of its pages that have an image.
         :type overview: ProjectOverview
-        :returns: One summary for each stage, with the recipe the stage runs by when it has one.
+        :returns: One summary for each stage, with the recipe of each kind of page when the stage has them.
         :rtype: list[StageSummary]
         """
         project_id = overview.project.id
         tallies = {tally.stage: tally for tally in await self._uow.page_stages.tally({project_id})}
-        recipes = {recipe.stage: recipe.id for recipe in await self._uow.recipes.list_active(project_id)}
-        variants: defaultdict[Stage, list[VariantTally]] = defaultdict(list)
-        for tally in await self._uow.page_stages.variant_tally(project_id):
-            variants[tally.stage].append(tally)
+        recipes: defaultdict[Stage, list[Recipe]] = defaultdict(list)
+        for recipe in await self._uow.recipes.list_for_project(project_id):
+            recipes[recipe.stage].append(recipe)
+        kinds = await self._uow.pages.kind_tally(project_id)
         stopped: defaultdict[Stage, list[StepTally]] = defaultdict(list)
         for step_tally in await self._uow.page_stages.step_tally(project_id):
             stopped[step_tally.stage].append(step_tally)
-        return self._summarize(overview, tallies, recipes, variants, stopped)
+        return self._summarize(overview, tallies, recipes, kinds, stopped)
 
     async def rows(
         self, project: Project, stage: Stage, request: SliceRequest, step_id: StepId | None = None
@@ -112,14 +113,14 @@ class StageSummaries:
             own = head if step is None else step.preceding
             picture = reads.get(page.id) if own is None else own
             if record is None:
-                rows.append(StageRow(page_id=page.id, step=step, picture=picture))
+                rows.append(StageRow(page_id=page.id, kind=page.recipe_kind, step=step, picture=picture))
                 continue
             rows.append(
                 StageRow(
                     page_id=page.id,
                     status=PageStageStatus.of(record.state),
                     recipe_id=record.recipe_id,
-                    pinned=record.pinned,
+                    kind=page.recipe_kind,
                     head_version=head,
                     through_step=record.through_step,
                     review_processor=None if head is None else markers.get(head.id),
@@ -194,8 +195,8 @@ class StageSummaries:
         self,
         overview: ProjectOverview,
         tallies: Mapping[Stage, StageTally],
-        recipes: Mapping[Stage, RecipeId],
-        variants: Mapping[Stage, Sequence[VariantTally]],
+        recipes: Mapping[Stage, Sequence[Recipe]],
+        kinds: Mapping[RecipeKind, int],
         stopped: Mapping[Stage, Sequence[StepTally]],
     ) -> list[StageSummary]:
         """Sum every stage of a book from the counts already read.
@@ -204,11 +205,10 @@ class StageSummaries:
         :type overview: ProjectOverview
         :param tallies: The counts of the records of each stage that has any.
         :type tallies: Mapping[Stage, StageTally]
-        :param recipes: The active recipe of each stage that has one.
-        :type recipes: Mapping[Stage, RecipeId]
-        :param variants: How many pages each recipe processed, for each stage that has any, or none for a list of
-                         books, which does not show them.
-        :type variants: Mapping[Stage, Sequence[VariantTally]]
+        :param recipes: The recipes of each stage that has any, or none for a list of books, which does not show them.
+        :type recipes: Mapping[Stage, Sequence[Recipe]]
+        :param kinds: How many pages with an image each kind has in the book.
+        :type kinds: Mapping[RecipeKind, int]
         :param stopped: How many pages stopped at each step, for each stage that has any, or none for a list of books.
         :type stopped: Mapping[Stage, Sequence[StepTally]]
         :returns: One summary for each stage, in the order of the pipeline.
@@ -221,9 +221,8 @@ class StageSummaries:
                 available=stage.manual or stage in with_processor,
                 pages=overview.image_page_count,
                 tally=tallies.get(stage),
-                active_recipe_id=recipes.get(stage),
             )
-            .with_variants(variants.get(stage, ()))
+            .with_recipes(recipes.get(stage, ()), kinds)
             .with_stopped(stopped.get(stage, ()))
             for stage in Stage
         ]

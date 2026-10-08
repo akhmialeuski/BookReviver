@@ -42,7 +42,6 @@ describe('MeasureBook', () => {
       processorKey: PLACEMENT_KEY,
       params,
       enabled: true,
-      appliesTo: 'all',
     };
     act(() =>
       root.render(

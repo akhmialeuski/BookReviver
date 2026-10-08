@@ -13,6 +13,7 @@ from bookreviver.domain.enums import (
     JobState,
     MarginsSource,
     NormalizeParam,
+    RecipeKind,
     Stage,
     StageState,
     VersionData,
@@ -172,7 +173,7 @@ async def normalize_params(kit: ProcessingKit, actor: Actor, project: Project) -
     :returns: The parameters of the step.
     :rtype: dict[str, object]
     """
-    recipe = await kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+    recipe = await kit.recipe_of(actor, project, Stage.GEOMETRY)
     [step] = [step for step in recipe.steps if step.processor_key == NORMALIZE_KEY]
     return dict(step.params)
 
@@ -189,12 +190,12 @@ async def set_normalize_params(kit: ProcessingKit, actor: Actor, project: Projec
     :param changes: The parameters to set.
     :type changes: dict[str, object]
     """
-    recipe = await kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+    recipe = await kit.recipe_of(actor, project, Stage.GEOMETRY)
     steps = [
         evolve(step, params={**step.params, **changes}) if step.processor_key == NORMALIZE_KEY else step
         for step in recipe.steps
     ]
-    await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, RecipeDraft(name=recipe.name, steps=steps))
+    await kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=steps))
 
 
 class TestMeasureBook:
@@ -209,7 +210,7 @@ class TestMeasureBook:
         :type fx_cv_kit: ProcessingKit
         """
         actor, project = await fx_cv_kit.seed_project()
-        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
         for index, (width, height, line_height) in enumerate(BLOCKS):
             await placed_page(fx_cv_kit, project, recipe, f'a{index}', block_data(width, height, line_height))
         before = await normalize_params(fx_cv_kit, actor, project)
@@ -240,7 +241,7 @@ class TestMeasureBook:
         :type fx_cv_kit: ProcessingKit
         """
         actor, project = await fx_cv_kit.seed_project()
-        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
         for index, (width, height, line_height, dpi) in enumerate(((2000, 3000, 30, 300), (2400, 3600, 36, 360))):
             data = block_data(width, height, line_height, dpi)
             await placed_page(fx_cv_kit, project, recipe, f'a{index}', data)
@@ -265,7 +266,7 @@ class TestMeasureBook:
         :type fx_cv_kit: ProcessingKit
         """
         actor, project = await fx_cv_kit.seed_project()
-        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
         for index, (width, height) in enumerate(((300, 500), (260, 640), (280, 600))):
             await placed_page(fx_cv_kit, project, recipe, f'a{index}', block_data(width, height, MEDIAN_LINE_HEIGHT_PX))
         await measure(fx_cv_kit, actor, project)
@@ -299,7 +300,7 @@ class TestMeasureBook:
         actor, project = await fx_cv_kit.seed_project()
         if limit is not None:
             await set_normalize_params(fx_cv_kit, actor, project, {NormalizeParam.MAX_SCALE_CHANGE: limit})
-        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
         for index, (box_width, box_height, line_height) in enumerate(FAR_PAGE_BLOCKS):
             await placed_page(fx_cv_kit, project, recipe, f'a{index}', block_data(box_width, box_height, line_height))
         await measure(fx_cv_kit, actor, project)
@@ -317,7 +318,7 @@ class TestMeasureBook:
         :type fx_cv_kit: ProcessingKit
         """
         actor, project = await fx_cv_kit.seed_project()
-        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
         pages = [
             await placed_page(fx_cv_kit, project, recipe, f'a{index}', block_data(width, height, line_height))
             for index, (width, height, line_height) in enumerate(BLOCKS)
@@ -336,7 +337,7 @@ class TestMeasureBook:
         :type fx_cv_kit: ProcessingKit
         """
         actor, project = await fx_cv_kit.seed_project()
-        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
         page = await placed_page(fx_cv_kit, project, recipe, FIRST_KEY, block_data(300, 600, 30))
         await measure(fx_cv_kit, actor, project)
         written = await fx_cv_kit.uow().recipes.get(recipe.id)
@@ -363,7 +364,7 @@ class TestMeasureBook:
         :type fx_cv_kit: ProcessingKit
         """
         actor, project = await fx_cv_kit.seed_project()
-        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
         await placed_page(fx_cv_kit, project, recipe, FIRST_KEY, block_data(300, 600, 30))
         await placed_page(fx_cv_kit, project, recipe, 'a1', block_data(300, 600, None))
         await placed_page(fx_cv_kit, project, recipe, 'a2', {VersionData.SKIPPED: True, VersionData.CONFIDENCE: 0.0})
@@ -393,17 +394,19 @@ class TestMeasureBook:
     async def test_a_recipe_without_a_normalize_step_has_nowhere_to_write_the_measures(
         self, fx_cv_kit: ProcessingKit
     ) -> None:
-        """Verify the job fails with the reason, and no page is marked stale.
+        """Verify the job fails with the reason when no recipe of the stage has the step, and no page is marked stale.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
         actor, project = await fx_cv_kit.seed_project()
-        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
-        recipe = await fx_cv_kit.service().save_recipe(
-            actor, project.id, Stage.GEOMETRY, RecipeDraft(name=recipe.name, steps=[Step(processor_key=CROP_KEY)])
-        )
-        page = await placed_page(fx_cv_kit, project, recipe, FIRST_KEY, block_data(300, 600, 30))
+        recipes = [
+            await fx_cv_kit.edit_recipe(
+                actor, project, Stage.GEOMETRY, RecipeDraft(steps=[Step(processor_key=CROP_KEY)]), kind
+            )
+            for kind in RecipeKind
+        ]
+        page = await placed_page(fx_cv_kit, project, recipes[0], FIRST_KEY, block_data(300, 600, 30))
         job = await measure(fx_cv_kit, actor, project)
         record = await fx_cv_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         expect(job.state is JobState.FAILED)
@@ -420,7 +423,7 @@ class TestMeasureBook:
         :type fx_cv_kit: ProcessingKit
         """
         actor, project = await fx_cv_kit.seed_project()
-        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
         await placed_page(fx_cv_kit, project, recipe, FIRST_KEY, block_data(TOO_WIDE_PX, 600, 30))
         before = await normalize_params(fx_cv_kit, actor, project)
         job = await measure(fx_cv_kit, actor, project)
@@ -462,7 +465,7 @@ class TestMarginsSource:
         :type fx_cv_kit: ProcessingKit
         """
         actor, project = await fx_cv_kit.seed_project()
-        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
         for index, (width, height, line_height) in enumerate(BLOCKS):
             await placed_page(fx_cv_kit, project, recipe, f'a{index}', block_data(width, height, line_height))
         margins: dict[str, object] = {
@@ -494,7 +497,7 @@ class TestMarginsSource:
         :type fx_cv_kit: ProcessingKit
         """
         actor, project = await fx_cv_kit.seed_project()
-        recipe = await fx_cv_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
         for index, (width, height, line_height) in enumerate(BLOCKS):
             await placed_page(fx_cv_kit, project, recipe, f'a{index}', block_data(width, height, line_height))
         await set_normalize_params(

@@ -2,11 +2,9 @@ import { readFile } from 'node:fs/promises';
 import { expect, type Page, test } from '@playwright/test';
 import {
   createBook,
-  openProjectId,
   registerAndSignIn,
   snap,
   uploadFolder,
-  waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
 
@@ -132,15 +130,14 @@ test('the library applies, copies, exports and imports profiles and counts the b
     await expect(cardsOf(page, PROFILE_NAME)).toHaveCount(2);
   });
 
-  await test.step('the profile is applied to the book as its active recipe', async () => {
+  await test.step('the profile is applied to the recipe for text of the book', async () => {
     await cardsOf(page, PROFILE_NAME).first().getByTestId('profile-apply-book').click();
     await expect(cardsOf(page, PROFILE_NAME).first().getByTestId('profile-notice')).toContainText(
-      `Applied the profile “${PROFILE_NAME}”`,
+      `Applied the profile “${PROFILE_NAME}” to the recipe for text`,
     );
     await snap(page, 'profile-applied');
     await closeLibrary(page);
     await expect(page.getByTestId('profile-name')).toHaveText(PROFILE_NAME);
-    await expect(page.getByTestId('recipe-select')).toContainText(`${PROFILE_NAME} · active`);
   });
 
   await test.step('two books use the profile now', async () => {
@@ -149,22 +146,5 @@ test('the library applies, copies, exports and imports profiles and counts the b
       'Used in 2 books',
     );
     await closeLibrary(page);
-  });
-
-  await test.step('the profile is applied to the selected pages only, which the stage then runs on', async () => {
-    await page.getByTestId('strip-view-switch').click();
-    await expect(page).toHaveURL(/view=grid/);
-    await openLibrary(page);
-    // Nothing is selected yet, so the profile cannot be given to pages
-    await expect(cardsOf(page, COPY_NAME).getByTestId('profile-apply-pages')).toBeDisabled();
-    await closeLibrary(page);
-    await page.getByTestId('strip-page').first().click();
-    await expect(page.getByTestId('grid-selection')).toHaveText('1 page selected');
-    await openLibrary(page);
-    await cardsOf(page, COPY_NAME).getByTestId('profile-apply-pages').click();
-    await expect(cardsOf(page, COPY_NAME).getByTestId('profile-notice')).toContainText('to 1 page');
-    await closeLibrary(page);
-    await waitForIdleJobs(page, openProjectId(page));
-    await expect(page.getByTestId('recipe-select')).toContainText(COPY_NAME);
   });
 });

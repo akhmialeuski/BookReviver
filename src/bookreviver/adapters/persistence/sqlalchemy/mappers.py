@@ -32,10 +32,10 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     ProjectRow,
     RecipeProfileRow,
     RecipeRow,
-    RecipeRuleRow,
     ResultMarkChangeRow,
     ScanRow,
     SourceRow,
+    StepValuesRow,
 )
 from bookreviver.domain.entities import (
     BookPlace,
@@ -50,7 +50,6 @@ from bookreviver.domain.entities import (
     Project,
     Recipe,
     RecipeProfile,
-    RecipeRule,
     ResultMarkChange,
     Scan,
     Source,
@@ -68,13 +67,13 @@ from bookreviver.domain.ids import (
     ProjectId,
     RecipeId,
     RecipeProfileId,
-    RecipeRuleId,
     ResultMarkChangeId,
     ScanId,
     SourceId,
     StepId,
     StorageKey,
 )
+from bookreviver.domain.step_values import StepValues
 from bookreviver.domain.values import (
     BookDetails,
     BookIdentifier,
@@ -707,7 +706,6 @@ class PageStageMapper(RowMapper[PageStage, PageStageRow]):
             recipe_id=None if row.recipe_id is None else RecipeId(row.recipe_id),
             head_version_id=None if row.head_version_id is None else PageVersionId(row.head_version_id),
             state=row.state,
-            pinned=row.pinned,
             through_step=row.through_step,
             updated_at=row.updated_at,
         )
@@ -727,7 +725,6 @@ class PageStageMapper(RowMapper[PageStage, PageStageRow]):
             recipe_id=entity.recipe_id,
             head_version_id=entity.head_version_id,
             state=entity.state,
-            pinned=entity.pinned,
             through_step=entity.through_step,
             updated_at=entity.updated_at,
         )
@@ -808,6 +805,8 @@ class PageStepChangeMapper(RowMapper[PageStepChange, PageStepChangeRow]):
             stage=row.stage,
             step_id=StepId(row.step_id),
             layer=row.layer,
+            scope=row.scope,
+            group_label=row.group_label,
             before=row.before,
             after=row.after,
             source=row.source,
@@ -832,6 +831,8 @@ class PageStepChangeMapper(RowMapper[PageStepChange, PageStepChangeRow]):
             stage=entity.stage,
             step_id=entity.step_id,
             layer=entity.layer,
+            scope=entity.scope,
+            group_label=entity.group_label,
             before=None if entity.before is None else dict(entity.before),
             after=None if entity.after is None else dict(entity.after),
             source=entity.source,
@@ -839,6 +840,48 @@ class PageStepChangeMapper(RowMapper[PageStepChange, PageStepChangeRow]):
             undoes_id=entity.undoes,
             created_at=entity.created_at,
             sequence=entity.sequence,
+        )
+
+
+class StepValuesMapper(RowMapper[StepValues, StepValuesRow]):
+    """Translation of the values of a step for a part of the pages, whose fields are stored as a JSON object."""
+
+    @override
+    def to_entity(self, row: StepValuesRow) -> StepValues:
+        """Build the values stored in ``row``.
+
+        :param row: Step values row loaded from the database.
+        :type row: StepValuesRow
+        :returns: The values.
+        :rtype: StepValues
+        """
+        return StepValues(
+            project_id=ProjectId(row.project_id),
+            stage=row.stage,
+            step_id=StepId(row.step_id),
+            scope=row.scope,
+            group_label=row.group_label,
+            params=row.params,
+            updated_at=row.updated_at,
+        )
+
+    @override
+    def to_row(self, entity: StepValues) -> StepValuesRow:
+        """Build the row of ``entity``.
+
+        :param entity: Values to store.
+        :type entity: StepValues
+        :returns: Transient step values row.
+        :rtype: StepValuesRow
+        """
+        return StepValuesRow(
+            step_id=entity.step_id,
+            scope=entity.scope,
+            group_label=entity.group_label,
+            project_id=entity.project_id,
+            stage=entity.stage,
+            params=dict(entity.params),
+            updated_at=entity.updated_at,
         )
 
 
@@ -965,9 +1008,8 @@ class RecipeMapper(RowMapper[Recipe, RecipeRow]):
             id=RecipeId(row.id),
             project_id=ProjectId(row.project_id),
             stage=row.stage,
-            name=row.name,
+            kind=row.kind,
             steps=tuple(Step.from_map(step) for step in row.steps),
-            active=row.active,
             profile_id=None if row.profile_id is None else RecipeProfileId(row.profile_id),
             created_at=row.created_at,
             updated_at=row.updated_at,
@@ -986,9 +1028,8 @@ class RecipeMapper(RowMapper[Recipe, RecipeRow]):
             id=entity.id,
             project_id=entity.project_id,
             stage=entity.stage,
-            name=entity.name,
+            kind=entity.kind,
             steps=[step.to_map() for step in entity.steps],
-            active=entity.active,
             profile_id=entity.profile_id,
             created_at=entity.created_at,
             updated_at=entity.updated_at,
@@ -1038,46 +1079,4 @@ class RecipeProfileMapper(RowMapper[RecipeProfile, RecipeProfileRow]):
             is_default=entity.is_default,
             created_at=entity.created_at,
             updated_at=entity.updated_at,
-        )
-
-
-class RecipeRuleMapper(RowMapper[RecipeRule, RecipeRuleRow]):
-    """Translation of a rule of a stage, whose columns are the fields of the entity."""
-
-    @override
-    def to_entity(self, row: RecipeRuleRow) -> RecipeRule:
-        """Build the rule stored in ``row``.
-
-        :param row: Rule row loaded from the database.
-        :type row: RecipeRuleRow
-        :returns: The rule with its condition and recipe.
-        :rtype: RecipeRule
-        """
-        return RecipeRule(
-            id=RecipeRuleId(row.id),
-            project_id=ProjectId(row.project_id),
-            stage=row.stage,
-            condition=row.condition,
-            group_label=row.group_label,
-            recipe_id=RecipeId(row.recipe_id),
-            order=row.order,
-        )
-
-    @override
-    def to_row(self, entity: RecipeRule) -> RecipeRuleRow:
-        """Build the row of ``entity``.
-
-        :param entity: Rule to store.
-        :type entity: RecipeRule
-        :returns: Transient rule row.
-        :rtype: RecipeRuleRow
-        """
-        return RecipeRuleRow(
-            id=entity.id,
-            project_id=entity.project_id,
-            stage=entity.stage,
-            condition=entity.condition,
-            group_label=entity.group_label,
-            recipe_id=entity.recipe_id,
-            order=entity.order,
         )

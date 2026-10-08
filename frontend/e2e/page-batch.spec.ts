@@ -167,14 +167,16 @@ test('a reader carries a setting to the pages after it, and a run that replaces 
     ]);
   });
 
-  await test.step('a run that replaces the hand settings warns with the number of pages that lose their edit', async () => {
-    await page.getByTestId('run-mode').selectOption('replace-hand');
+  await test.step('a run that drops the work of the pages warns with the number of pages that lose it', async () => {
     await page.getByTestId('run-menu').click();
-    await page.getByTestId('run-all').click();
+    await page.getByTestId('run-pages-all').click();
+    await page.getByTestId('run-own-drop-own-work').click();
+    await page.keyboard.press('Escape');
+    await page.getByTestId('run-start').click();
     const dialog = page.getByTestId('overwrite-dialog');
     await expect(dialog).toBeVisible();
     await expect(dialog.getByTestId('overwrite-pages')).toContainText(
-      '1 page loses the shape set by hand',
+      '1 page loses the settings and the hand edits',
     );
     expect(await countEdits(page, ids[SECOND] ?? '')).toBe(1);
     await snap(page, 'page-batch-warning');

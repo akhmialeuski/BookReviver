@@ -6,19 +6,18 @@ exchanged as a file, whose format has a version, so a later change of the format
 """
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, override
 
 from fastapi import Query
 from fastapi_pagination import Params
 from pydantic import Field
 
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
-from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.processing import RecipeBody, RecipeSchema, StepSchema
-from bookreviver.api.schemas.types import RECIPE_STEPS_MAX_LENGTH, PageIdList, RecipeName
-from bookreviver.domain.enums import AppliesTo, OrderMode, ProfileFileVersion, Stage
+from bookreviver.api.schemas.types import RECIPE_STEPS_MAX_LENGTH, RecipeName
+from bookreviver.domain.enums import OrderMode, ProfileFileVersion, RecipeKind, Stage
 from bookreviver.domain.ids import RecipeProfileId
-from bookreviver.domain.values import RecipeDraft, Step
+from bookreviver.domain.values import ProfileDraft, Step
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import RecipeProfile
@@ -69,12 +68,29 @@ class LibraryProfileSchema(RecipeProfileSchema):
         return cls.model_validate({**profile.model_dump(), 'books': listed.books})
 
 
-class RecipeProfileBody(RecipeBody):
-    """The name and the steps of a profile to save, with the stage whose recipes it fits.
+class ProfileBody(RecipeBody):
+    """The name and the steps of a profile.
 
     :ivar name: Name of the profile.
     :ivar steps: Its steps in the order they run, each checked against its processor.
     :ivar order: The order the profile is saved in, which a book opened from it starts in.
+    """
+
+    name: RecipeName
+
+    @override
+    def to_draft(self) -> ProfileDraft:
+        """Return the name, the steps and the order as the domain states them.
+
+        :returns: The draft.
+        :rtype: ProfileDraft
+        """
+        return ProfileDraft(name=self.name, steps=[step.to_step() for step in self.steps], order=self.order)
+
+
+class RecipeProfileBody(ProfileBody):
+    """The name and the steps of a profile to save, with the stage whose recipes it fits.
+
     :ivar stage: Stage whose recipes the profile can be applied to.
     """
 
@@ -104,27 +120,21 @@ class ProfileQuery(Params):
 class ApplyProfileBody(RequestModel):
     """How to apply a profile to a book.
 
-    :ivar activate: Whether the new variant also becomes the active recipe of the stage.
-    :ivar page_ids: The pages to pin the new variant to and to run the stage on, or omitted to apply the profile to the
-                    book only.
+    :ivar kind: The kind of page whose recipe of the profile's stage takes the steps of the profile.
     """
 
-    activate: bool = False
-    page_ids: PageIdList | None = None
+    kind: RecipeKind
 
 
 class AppliedProfileSchema(ResponseModel):
-    """The recipe a profile made in a book, and what was left out of it.
+    """The recipe a profile changed in a book, and what was left out of it.
 
-    :ivar recipe: The variant added to the book, which is the active recipe when the request asked for that.
+    :ivar recipe: The recipe that took the steps of the profile.
     :ivar missing_processors: Keys of the processors of the profile that are not installed, whose steps were left out.
-    :ivar job: The queued run of the stage on the pages the profile was applied to, or null when it was applied to the
-               book only.
     """
 
     recipe: RecipeSchema
     missing_processors: list[str]
-    job: JobSchema | None = None
 
 
 class ProfileLinkBody(RequestModel):
@@ -137,7 +147,7 @@ class ProfileLinkBody(RequestModel):
 
 
 class ProfileFileStep(RequestModel):
-    """One step of a profile file: a processor, its parameters, whether it is on, and the pages it runs on.
+    """One step of a profile file: a processor, its parameters, and whether it is on.
 
     The step has no identifier, since the identifier belongs to the recipe a step is in, and an import gives each step a
     new one.
@@ -145,13 +155,11 @@ class ProfileFileStep(RequestModel):
     :ivar processor_key: Key of the processor.
     :ivar params: Parameters of the step, which an import checks against the processor.
     :ivar enabled: Whether a run runs the step.
-    :ivar applies_to: Which pages the step processes.
     """
 
     processor_key: Annotated[str, Field(min_length=1)]
     params: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
-    applies_to: AppliesTo = AppliesTo.ALL
 
 
 class ProfileFileSchema(RequestModel):
@@ -185,24 +193,18 @@ class ProfileFileSchema(RequestModel):
             name=profile.name,
             order=profile.order,
             steps=[
-                ProfileFileStep(
-                    processor_key=step.processor_key,
-                    params=dict(step.params),
-                    enabled=step.enabled,
-                    applies_to=step.applies_to,
-                )
+                ProfileFileStep(processor_key=step.processor_key, params=dict(step.params), enabled=step.enabled)
                 for step in profile.steps
             ],
         )
 
-    def to_draft(self) -> RecipeDraft:
+    def to_draft(self) -> ProfileDraft:
         """Return the name, the steps and the order of the file as the domain states them.
 
         :returns: The draft, whose steps have new identifiers.
-        :rtype: RecipeDraft
+        :rtype: ProfileDraft
         """
         steps = [
-            Step(processor_key=step.processor_key, params=step.params, enabled=step.enabled, applies_to=step.applies_to)
-            for step in self.steps
+            Step(processor_key=step.processor_key, params=step.params, enabled=step.enabled) for step in self.steps
         ]
-        return RecipeDraft(name=self.name, steps=steps, order=self.order)
+        return ProfileDraft(name=self.name, steps=steps, order=self.order)

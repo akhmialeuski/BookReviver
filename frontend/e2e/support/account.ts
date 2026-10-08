@@ -329,7 +329,7 @@ export async function setKind(page: Page, position: number, kind: string): Promi
  * Say by hand that every page of the open book is a page of text, but the pages at the positions that are left out.
  *
  * The scans the sheet fixtures draw show a sheet on a dark table, which the detection of the content reads as a picture,
- * and a picture is sent to the variants for plates and passed by the steps of text. A scenario about the steps of a page of
+ * and a picture is processed by the recipe for pictures, not by the steps of text. A scenario about the steps of a page of
  * text says so, and the detection leaves a content type that was set by hand alone.
  */
 export async function markPagesAsText(page: Page, leftOut: readonly number[] = []): Promise<void> {

@@ -22,9 +22,8 @@ const FILE: ProfileFileSchema = {
       processor_key: 'geometry.deskew',
       params: { max_angle: 9 },
       enabled: true,
-      applies_to: 'all',
     },
-    { processor_key: 'geometry.crop', params: {}, enabled: false, applies_to: 'text' },
+    { processor_key: 'geometry.crop', params: {}, enabled: false },
   ],
 };
 

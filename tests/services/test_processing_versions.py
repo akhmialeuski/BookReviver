@@ -89,7 +89,7 @@ async def ran_two_steps(
     page, _ = await kit.seed_scan_page(project)
     await kit.seed_base_version(page)
     steps = [Step(processor_key=FakeProcessor.spec.key, enabled=first_on), Step(processor_key=FakeProcessor.spec.key)]
-    recipe = await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, RecipeDraft(name='Two', steps=steps))
+    recipe = await kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=steps))
     await run_stage(kit, actor, project, StageRun(stage=Stage.GEOMETRY))
     found = await kit.uow().page_versions.list_for_page(page.id)
     in_stage = [version for version in found if version.stage is Stage.GEOMETRY]
@@ -458,6 +458,42 @@ class TestCollection:
         expect((await fx_kit.uow().jobs.get(job.id)).state is JobState.SUCCEEDED)
         assert_expectations()
 
+    async def test_run_removes_the_files_of_a_version_it_left_behind_without_a_request(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify the collection a run queues when it ends clears a version that is no longer current at once.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, current, old = await self.collectable_book(fx_kit)
+        # The version was made a moment ago, so only the end of a run, and not its age, can clear it
+        uow = fx_kit.uow()
+        await uow.page_versions.update(evolve(old, created_at=EPOCH))
+        await uow.commit()
+        run = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        await fx_kit.jobs().run_stage(run.id)
+        await fx_kit.work_queue()
+        jobs = await fx_kit.uow().jobs.list_for_project(project.id, frozenset(JobState))
+        cleared = await fx_kit.uow().page_versions.get(old.id)
+        kept = await fx_kit.uow().page_versions.get(current.id)
+        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        keys = ProjectKeys(project.id)
+        with pytest.raises(NotFoundError):
+            async with fx_kit.assets.readable(keys.version_directory(old)):
+                pass
+        async with fx_kit.assets.readable(keys.version_rendition(current, Rendition.FULL_JPEG)):
+            pass
+        collections = [job for job in jobs if job.kind is JobKind.COLLECT_VERSIONS]
+        expect(all(job.state is JobState.SUCCEEDED for job in collections) and bool(collections))
+        expect((cleared.files_removed, cleared.state, cleared.params) == (True, VersionState.READY, old.params))
+        expect(not kept.files_removed)
+        expect(record.head_version_id == current.id)
+        expect(
+            current.input_id is not None and not (await fx_kit.uow().page_versions.get(current.input_id)).files_removed
+        )
+        assert_expectations()
+
     async def test_a_collection_does_not_clear_a_version_twice(self, fx_kit: ProcessingKit) -> None:
         """Verify a version whose files are removed is not chosen again, so its time of removal stays.
 
@@ -500,17 +536,30 @@ class TestCollection:
         expect(await fx_kit.uow().page_versions.find(old.id) is not None)
         assert_expectations()
 
-    async def test_recent_version_is_kept(self, fx_kit: ProcessingKit) -> None:
-        """Verify a version younger than the retention period is not collected, current or not.
+    async def test_young_preview_is_kept_since_the_editor_still_shows_it(self, fx_kit: ProcessingKit) -> None:
+        """Verify a preview younger than its retention period keeps its row and its files.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        fx_kit.clock.moment = EPOCH - timedelta(days=80)
         actor, project, _, _, old = await self.collectable_book(fx_kit)
+        preview = evolve(
+            old,
+            id=PageVersionId('fedcbafedcbafedc'),
+            scale=VersionScale.PREVIEW,
+            created_at=EPOCH - timedelta(minutes=5),
+        )
+        keys = ProjectKeys(project.id)
+        async with fx_kit.assets.writable(keys.version_rendition(preview, Rendition.PREVIEW)) as target:
+            target.write_bytes(IMAGE_CONTENT)
+        uow = fx_kit.uow()
+        await uow.page_versions.add(preview)
+        await uow.commit()
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.jobs().collect_versions(job.id)
-        assert (await fx_kit.uow().page_versions.find(old.id)) is not None
+        async with fx_kit.assets.readable(keys.version_rendition(preview, Rendition.PREVIEW)):
+            pass
+        assert (await fx_kit.uow().page_versions.find(preview.id)) is not None
 
     async def test_a_second_request_while_one_is_active_gets_the_active_job(self, fx_kit: ProcessingKit) -> None:
         """Verify a project has one collection at a time.
@@ -606,7 +655,7 @@ class TestCollection:
         assert kept.state is old.state
 
     async def test_an_old_input_of_a_version_that_stays_is_kept(self, fx_kit: ProcessingKit) -> None:
-        """Verify a collection does not clear the input of a recent version, so its files stay and it keeps its input.
+        """Verify a collection does not clear the input of a current version, so its files stay and it keeps its input.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -617,6 +666,9 @@ class TestCollection:
         )
         uow = fx_kit.uow()
         await uow.page_versions.add(reader)
+        await uow.page_stages.save(
+            make_page_stage(page_id=reader.page_id, stage=Stage.CLEANUP, head_version_id=reader.id)
+        )
         await uow.commit()
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.jobs().collect_versions(job.id)

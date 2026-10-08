@@ -1,22 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useMatch, useParams, useSearch } from '@tanstack/react-router';
-import {
-  CheckCircle2Icon,
-  ChevronsRightIcon,
-  CircleXIcon,
-  InfoIcon,
-  ListIcon,
-  Loader2Icon,
-  TriangleAlertIcon,
-} from 'lucide-react';
-import type { JobSchema, ProjectSchema, Stage, StageStatus, StageSummarySchema } from '@/api';
+import { CheckCircle2Icon, InfoIcon, ListIcon, Loader2Icon } from 'lucide-react';
+import type { Stage, StageStatus, StageSummarySchema } from '@/api';
 import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-query.gen';
 import { parseStage } from '@/features/stages/parse';
-import { PAGE_STATUS_TONE, STAGES, type StageEntry } from '@/features/stages/stages';
+import { STAGES, type StageEntry } from '@/features/stages/stages';
 import { parseIdentifier } from '@/features/viewer/params';
-import { latestActiveJob } from '@/features/workspace/jobs';
-import { stageProgress } from '@/features/workspace/progress';
-import { useActiveJobs, useStageSummaries } from '@/features/workspace/queries';
+import { useStageSummaries } from '@/features/workspace/queries';
 import { useIsNarrow } from '@/shared/hooks/useMediaQuery';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
@@ -30,10 +20,10 @@ import {
 } from '@/shared/ui/dropdown-menu';
 
 /**
- * The bar of the ten stages above every screen of a book: four phases, and for each stage its number or state mark,
- * its name, and how far it has come.
+ * The bar of the ten stages above every screen of a book: four phases, and for each stage its number or state mark and
+ * its name. The counts of the pages live in the strip and the panel of the open stage, not here.
  *
- * What is drawn comes from the summary of the stages and from the status of each stage in the book. A stage that
+ * What is drawn comes from the status of each stage in the book and from the summary of the stages. A stage that
  * cannot be worked in yet says "Soon" but still opens, with its panel and an empty canvas. The state of a stage is
  * never carried by colour alone: it has a mark, and the word is read out. The "About the book" tab ends the bar.
  */
@@ -65,121 +55,15 @@ function StageMark({ number, status }: { number: number; status: StageStatus }):
   );
 }
 
-/** The line under the name of a stage: what it holds, or how far it has come. */
-function StageNote({
-  entry,
-  summary,
-  project,
-  importing,
-}: {
-  entry: StageEntry;
-  summary: StageSummarySchema | undefined;
-  project: ProjectSchema | undefined;
-  /** The import that runs in the book, which the Import stage shows in place of its counts. */
-  importing: JobSchema | undefined;
-}): React.JSX.Element | null {
-  const labels = MESSAGES.workspace.bar;
-  if (summary === undefined || project === undefined) {
-    return null;
-  }
-  if (!summary.available) {
-    return (
-      <span className="text-xs text-muted-foreground">{MESSAGES.stages.status.unavailable}</span>
-    );
-  }
-  if (entry.stage === 'import') {
-    if (importing !== undefined) {
-      return (
-        <span
-          className="flex items-center gap-1 text-xs text-status-running"
-          data-testid="import-progress"
-        >
-          <Loader2Icon className="size-3 motion-safe:animate-spin" aria-hidden="true" />
-          {MESSAGES.import.bar.progress(importing.progress.done, importing.progress.total)}
-        </span>
-      );
-    }
-    return (
-      <span className="text-xs text-muted-foreground">
-        {project.source_count === 0
-          ? labels.noFiles
-          : labels.files(project.source_count, project.scan_count)}
-      </span>
-    );
-  }
-  if (project.page_count === 0) {
-    return <span className="text-xs text-muted-foreground">{labels.waitsForPages}</span>;
-  }
-  if (summary.manual) {
-    return (
-      <span className="text-xs text-muted-foreground">{labels.pages(project.page_count)}</span>
-    );
-  }
-
-  const progress = stageProgress(summary);
-  return (
-    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-      <span
-        className="flex h-1 w-10 overflow-hidden rounded-full bg-status-idle"
-        aria-hidden="true"
-      >
-        {progress.segments.map((segment) => (
-          <span
-            key={segment.status}
-            className={PAGE_STATUS_TONE[segment.status]}
-            style={{ width: `${segment.percent}%` }}
-          />
-        ))}
-      </span>
-      <span>{labels.done(progress.done, progress.total)}</span>
-      {progress.check > 0 ? (
-        <span
-          className="flex items-center gap-0.5 text-status-attention"
-          title={labels.check(progress.check)}
-        >
-          <TriangleAlertIcon className="size-3" aria-hidden="true" />
-          {progress.check}
-          <span className="sr-only">{labels.check(progress.check)}</span>
-        </span>
-      ) : null}
-      {progress.stopped > 0 ? (
-        <span
-          className="flex items-center gap-0.5"
-          title={labels.stopped(progress.stopped)}
-          data-testid="stage-stopped"
-        >
-          <ChevronsRightIcon className="size-3" aria-hidden="true" />
-          {progress.stopped}
-          <span className="sr-only">{labels.stopped(progress.stopped)}</span>
-        </span>
-      ) : null}
-      {progress.failed > 0 ? (
-        <span
-          className="flex items-center gap-0.5 text-status-failed"
-          title={labels.failed(progress.failed)}
-        >
-          <CircleXIcon className="size-3" aria-hidden="true" />
-          {progress.failed}
-          <span className="sr-only">{labels.failed(progress.failed)}</span>
-        </span>
-      ) : null}
-    </span>
-  );
-}
-
-/** A stage as the bar writes it: its mark, its name, the word for its state read out, and the note under the name. */
+/** A stage as the bar writes it: its mark, its name, the word for its state read out, and "Soon" for a stage not open yet. */
 function StageBody({
   entry,
   status,
   summary,
-  project,
-  importing,
 }: {
   entry: StageEntry;
   status: StageStatus;
   summary: StageSummarySchema | undefined;
-  project: ProjectSchema | undefined;
-  importing: JobSchema | undefined;
 }): React.JSX.Element {
   return (
     <>
@@ -191,7 +75,11 @@ function StageBody({
         {status === 'unavailable' ? null : (
           <span className="sr-only">{MESSAGES.stages.status[status]}</span>
         )}
-        <StageNote entry={entry} summary={summary} project={project} importing={importing} />
+        {summary?.available === false ? (
+          <span className="text-xs text-muted-foreground">
+            {MESSAGES.stages.status.unavailable}
+          </span>
+        ) : null}
       </span>
     </>
   );
@@ -202,10 +90,6 @@ export function StageBar({ projectId }: { projectId: string }): React.JSX.Elemen
     projectApiV1ProjectsProjectIdGetOptions({ path: { project_id: projectId } }),
   );
   const summaries = useStageSummaries(projectId);
-  const activeJobs = useActiveJobs(projectId);
-  const importing = latestActiveJob(
-    (activeJobs.data ?? []).filter((job) => job.kind === 'import-source'),
-  );
   const narrow = useIsNarrow();
   const { stage } = useParams({ strict: false });
   const page = parseIdentifier(useSearch({ strict: false }).page);
@@ -247,8 +131,6 @@ export function StageBar({ projectId }: { projectId: string }): React.JSX.Elemen
               entry={currentEntry}
               status={statusOf(currentEntry.stage)}
               summary={summaryOf(currentEntry.stage)}
-              project={project.data}
-              importing={importing}
             />
           </Link>
         )}
@@ -272,13 +154,7 @@ export function StageBar({ projectId }: { projectId: string }): React.JSX.Elemen
                     data-status={status}
                     className={cn(status === 'unavailable' && 'text-muted-foreground')}
                   >
-                    <StageBody
-                      entry={entry}
-                      status={status}
-                      summary={summaryOf(entry.stage)}
-                      project={project.data}
-                      importing={importing}
-                    />
+                    <StageBody entry={entry} status={status} summary={summaryOf(entry.stage)} />
                   </Link>
                 </DropdownMenuItem>
               );
@@ -336,13 +212,7 @@ export function StageBar({ projectId }: { projectId: string }): React.JSX.Elemen
                     status === 'unavailable' && 'text-muted-foreground',
                   )}
                 >
-                  <StageBody
-                    entry={entry}
-                    status={status}
-                    summary={summaryOf(entry.stage)}
-                    project={project.data}
-                    importing={importing}
-                  />
+                  <StageBody entry={entry} status={status} summary={summaryOf(entry.stage)} />
                 </Link>
               );
             })}

@@ -1,15 +1,12 @@
 import OpenSeadragon from 'openseadragon';
-import type { CanvasPositionSchema } from '@/api';
-import { fittedWidth, positionOf, viewportZoom } from '@/features/place/canvas';
+import type { ViewSize } from '@/features/place/canvas';
+import { CanvasStage, HIDDEN, SHAPE_DIGITS, toRect, VISIBLE } from '@/features/viewer/canvasStage';
 import {
   layoutView,
   PAGE_HEIGHT,
   pageRect,
-  TOOLBAR_INSET_PX,
   type ViewLayout,
-  type WorldRect,
   widthRect,
-  withBottomInset,
 } from '@/features/viewer/layout';
 
 /**
@@ -38,14 +35,6 @@ export interface StagePage {
   infoUrl: string | null;
 }
 
-/** What the screen lets the stage ask for and tell, so the place of the reader can be kept and restored. */
-export interface StageHooks {
-  /** Asked once, when the first view is placed: where the canvas looked when the book was left, or null for fitted. */
-  restore?: () => CanvasPositionSchema | null;
-  /** Called when the canvas has stopped moving. */
-  onViewChange?: () => void;
-}
-
 /** What `show` found out about the view it put on the stage. */
 export interface ShownView {
   layout: ViewLayout;
@@ -53,95 +42,11 @@ export interface ShownView {
   failed: string[];
 }
 
-const ZOOM_STEP = 1.5;
-/** Decimal digits of the width of a view, in page heights, that tell one layout from another. */
-const SHAPE_DIGITS = 2;
-const ANIMATION_SECONDS = 0.35;
-const HIDDEN = 0;
-const VISIBLE = 1;
-
-/** Pull the added image out of the object OpenSeadragon passes to the `success` callback of `addTiledImage`. */
-export function addedItem(event: unknown): OpenSeadragon.TiledImage | null {
-  if (typeof event === 'object' && event !== null && 'item' in event) {
-    return event.item as OpenSeadragon.TiledImage;
-  }
-  return null;
-}
-
-// OpenSeadragon asks for the tile that is a whole image at full size as `full/max/`, which an IIIF 3 server
-// resolves, while the pyramid is stored as files that `dzsave` named `full/<width>,<height>/`
-const WHOLE_IMAGE_SIZE = '/full/max/';
-
-/**
- * Make a pyramid whose single tile is the whole image findable.
- *
- * The tile route serves the files as they are stored and resolves no IIIF size keywords, so a page of at most one
- * tile in each direction would otherwise stay blank. The size keyword is rewritten to the stored one, and every
- * other tile address is left as OpenSeadragon builds it.
- */
-export function nameWholeImageTile(item: OpenSeadragon.TiledImage): void {
-  const { source } = item;
-  const original = source.getTileUrl.bind(source);
-  const stored = `/full/${source.dimensions.x},${source.dimensions.y}/`;
-  source.getTileUrl = (level, x, y) => {
-    const url = original(level, x, y);
-    // OpenSeadragon allows a function that makes the address later, which an IIIF source never returns
-    return typeof url === 'string' ? url.replace(WHOLE_IMAGE_SIZE, stored) : url;
-  };
-}
-
-function toRect(rect: WorldRect): OpenSeadragon.Rect {
-  return new OpenSeadragon.Rect(rect.x, rect.y, rect.width, rect.height);
-}
-
-export class ViewerStage {
-  private readonly viewer: OpenSeadragon.Viewer;
-  private readonly element: HTMLElement;
-  private readonly hooks: StageHooks;
+export class ViewerStage extends CanvasStage {
   /** Image of each page that is loading or loaded, by the path of its `info.json`. */
   private readonly pending = new Map<string, Promise<OpenSeadragon.TiledImage | null>>();
   private readonly loaded = new Map<string, OpenSeadragon.TiledImage>();
   private layout: ViewLayout | null = null;
-  private generation = 0;
-  private hasFitted = false;
-  /**
-   * The pages, the fit and the layout of the view that was last fitted whole, or null while none was. A view that is
-   * the same keeps the reader's zoom when only the pictures of the pages are swapped, such as when a stage makes a new
-   * result of them.
-   */
-  private fittedFor: string | null = null;
-  /** Whether the latest view is on the stage, so the position of the canvas belongs to it. */
-  private settled = false;
-
-  /**
-   * Create the viewer inside an element.
-   *
-   * @param element The element OpenSeadragon fills; it needs a size of its own.
-   * @param hooks What the screen asks of the stage and is told by it about the position of the canvas.
-   */
-  constructor(element: HTMLElement, hooks: StageHooks = {}) {
-    this.element = element;
-    this.hooks = hooks;
-    this.viewer = OpenSeadragon({
-      element,
-      // The screen has its own buttons and its own keys, so a page turn is not an arrow key panning the image
-      showNavigationControl: false,
-      showNavigator: false,
-      keyboardNavEnabled: false,
-      // The stage fits and restores the view itself, and a world that is down to one picture must not send it home
-      preserveViewport: true,
-      animationTime: ANIMATION_SECONDS,
-      visibilityRatio: 0.5,
-      minZoomImageRatio: 0.5,
-      maxZoomPixelRatio: 3,
-      gestureSettingsMouse: { scrollToZoom: true, clickToZoom: false, dblClickToZoom: true },
-      gestureSettingsTouch: { pinchToZoom: true, clickToZoom: false, dblClickToZoom: true },
-    });
-    this.viewer.addHandler('animation-finish', () => {
-      this.publishZoom();
-      this.hooks.onViewChange?.();
-    });
-  }
 
   /**
    * Put a view on the stage and start loading the views around it.
@@ -157,8 +62,7 @@ export class ViewerStage {
     around: ReadonlyArray<readonly StagePage[]>,
     fit: FitMode,
   ): Promise<ShownView | null> {
-    const token = ++this.generation;
-    this.settled = false;
+    const token = this.begin();
     const wanted = new Set<string>();
     for (const page of [...view, ...around.flat()]) {
       if (page.infoUrl !== null) {
@@ -176,43 +80,13 @@ export class ViewerStage {
     for (const [url, item] of this.loaded) {
       item.setOpacity(current.has(url) ? VISIBLE : HIDDEN);
     }
-    // A view with no picture to draw, such as pages whose rows are still being read, is not a view of the reader: it leaves
-    // the place to be restored, the fit and the zoom of the view before it as they are, for the first picture to take up
     if (current.size > 0) {
-      // The first view of a screen goes back to where the reader left the canvas, and every later one is fitted, unless
-      // it shows the same pages as the one fitted before, laid out the same, and only their pictures changed
-      const fittedFor = `${fit}:${view.map((page) => page.id).join(',')}:${layout.width.toFixed(SHAPE_DIGITS)}`;
-      const restored = this.hasFitted ? null : (this.hooks.restore?.() ?? null);
-      if (restored !== null) {
-        this.look(restored);
-      } else if (fittedFor !== this.fittedFor) {
-        this.fit(fit, !this.hasFitted);
-      }
-      this.fittedFor = failed.length === 0 ? fittedFor : null;
-      this.hasFitted = true;
-      this.settled = true;
+      const key = `${fit}:${view.map((page) => page.id).join(',')}:${layout.width.toFixed(SHAPE_DIGITS)}`;
+      this.arrive(key, (immediately) => this.fit(fit, immediately), failed.length === 0);
     }
 
     void this.preload(around, token);
     return { layout, failed };
-  }
-
-  /**
-   * Tell where the canvas looks, in terms that do not depend on the size of the window.
-   *
-   * @returns The position, or null while a view is still being put on the stage, so a position never pairs the
-   * zoom of the page that is leaving with the page that is arriving.
-   */
-  readView(): CanvasPositionSchema | null {
-    if (!this.settled || this.layout === null) {
-      return null;
-    }
-    const { viewport } = this.viewer;
-    return positionOf(
-      viewport.getZoom(),
-      viewport.getCenter(),
-      fittedWidth(this.layout, viewport.getAspectRatio()),
-    );
   }
 
   /** Fit the current view to the viewport. */
@@ -221,57 +95,19 @@ export class ViewerStage {
       return;
     }
     const { viewport } = this.viewer;
-    const container = viewport.getContainerSize();
-    const rect =
-      mode === FitMode.Page
-        ? withBottomInset(
-            pageRect(this.layout),
-            { width: container.x, height: container.y },
-            TOOLBAR_INSET_PX,
-          )
-        : widthRect(this.layout, viewport.getAspectRatio());
-    viewport.fitBounds(toRect(rect), immediately);
-  }
-
-  /** Put the canvas at a position that `readView` gave, at once. */
-  private look(position: CanvasPositionSchema): void {
-    if (this.layout === null) {
-      return;
-    }
-    const { viewport } = this.viewer;
-    viewport.zoomTo(
-      viewportZoom(position, fittedWidth(this.layout, viewport.getAspectRatio())),
-      undefined,
-      true,
-    );
-    viewport.panTo(new OpenSeadragon.Point(position.centre_x, position.centre_y), true);
-    viewport.applyConstraints(true);
-  }
-
-  /** Show the zoom in the document, where the end-to-end scenarios read it. */
-  private publishZoom(): void {
-    const view = this.readView();
-    if (view !== null) {
-      this.element.dataset.zoom = String(view.zoom);
+    if (mode === FitMode.Page) {
+      this.fitAboveToolbar(this.viewer, pageRect(this.layout), immediately);
+    } else {
+      viewport.fitBounds(toRect(widthRect(this.layout, viewport.getAspectRatio())), immediately);
     }
   }
 
-  /** Zoom in by one step around the centre of the viewport. */
-  zoomIn(): void {
-    this.viewer.viewport.zoomBy(ZOOM_STEP);
-    this.viewer.viewport.applyConstraints();
+  protected override fittedSize(): ViewSize | null {
+    return this.layout;
   }
 
-  /** Zoom out by one step around the centre of the viewport. */
-  zoomOut(): void {
-    this.viewer.viewport.zoomBy(1 / ZOOM_STEP);
-    this.viewer.viewport.applyConstraints();
-  }
-
-  /** Release the viewer, its canvases and its listeners. */
-  destroy(): void {
-    this.generation += 1;
-    this.viewer.destroy();
+  override destroy(): void {
+    super.destroy();
     this.pending.clear();
     this.loaded.clear();
   }
@@ -326,27 +162,14 @@ export class ViewerStage {
     if (known !== undefined) {
       return known;
     }
-    const request = new Promise<OpenSeadragon.TiledImage | null>((resolve) => {
-      this.viewer.addTiledImage({
-        tileSource: infoUrl,
-        opacity: HIDDEN,
-        preload: true,
-        height: PAGE_HEIGHT,
-        success: (event) => {
-          const item = addedItem(event);
-          if (item !== null) {
-            // Before the next frame, which is the first that asks for a tile
-            nameWholeImageTile(item);
-            this.loaded.set(infoUrl, item);
-          }
-          resolve(item);
-        },
+    const request = this.loadPicture(this.viewer, infoUrl).then((item) => {
+      if (item === null) {
         // A pyramid that is not cut yet is tried again by the next view that asks for the page
-        error: () => {
-          this.pending.delete(infoUrl);
-          resolve(null);
-        },
-      });
+        this.pending.delete(infoUrl);
+      } else {
+        this.loaded.set(infoUrl, item);
+      }
+      return item;
     });
     this.pending.set(infoUrl, request);
     return request;
@@ -361,9 +184,7 @@ export class ViewerStage {
       this.pending.delete(url);
       this.loaded.delete(url);
       void request.then((item) => {
-        if (item !== null && !this.viewer.isDestroyed()) {
-          this.viewer.world.removeItem(item);
-        }
+        this.drop(this.viewer, item);
       });
     }
   }

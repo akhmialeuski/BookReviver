@@ -58,7 +58,6 @@ describe('comparePairOf', () => {
     const pair = comparePairOf(
       read,
       row('a', { version: head, picture: read, step: stepPage('s', 'found', { version: made }) }),
-      null,
     );
 
     expect(pair.before?.url).toBe('/version-read/info.json');
@@ -69,7 +68,6 @@ describe('comparePairOf', () => {
     const pair = comparePairOf(
       read,
       row('a', { version: head, picture: read, step: stepPage('s', 'default', { version: null }) }),
-      null,
     );
 
     expect(pair.before?.url).toBe('/version-read/info.json');
@@ -77,23 +75,13 @@ describe('comparePairOf', () => {
   });
 
   it('draws the result of the stage after when no step is open', () => {
-    const pair = comparePairOf(head, row('a', { version: head, picture: head }), null);
+    const pair = comparePairOf(head, row('a', { version: head, picture: head }));
 
     expect(pair.after?.url).toBe('/version-head/info.json');
   });
 
-  it('draws a preview that is on in place of what the step made', () => {
-    const pair = comparePairOf(
-      read,
-      row('a', { picture: read, step: stepPage('s', 'found', { version: made }) }),
-      version('shown', { preview: '/previews/shown.png' }),
-    );
-
-    expect(pair.after).toEqual({ kind: SourceKind.Image, url: '/previews/shown.png' });
-  });
-
   it('draws nothing before while the row loads, never the image of the page', () => {
-    expect(comparePairOf(null, undefined, null)).toEqual({ before: null, after: null });
+    expect(comparePairOf(null, undefined)).toEqual({ before: null, after: null });
   });
 });
 

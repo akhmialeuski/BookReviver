@@ -149,7 +149,9 @@ export async function runAllPages(page: Page): Promise<void> {
   await waitForIdleJobs(page, openProjectId(page));
   const known = await endedRunIds(page);
   await page.getByTestId('run-menu').click();
-  await page.getByTestId('run-all').click();
+  await page.getByTestId('run-pages-all').click();
+  await page.keyboard.press('Escape');
+  await page.getByTestId('run-start').click();
   // The jobs listed are the newest ones, so a scenario with many runs is told by the identifiers and not by their number
   await expect
     .poll(async () => [...(await endedRunIds(page))].some((id) => !known.has(id)), {

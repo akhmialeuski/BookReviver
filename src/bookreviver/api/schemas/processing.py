@@ -1,8 +1,8 @@
 """Schemas of the processing framework: processors, recipes, runs and previews, stages of a page and page versions.
 
 A processor tells the interface its parameters as a JSON Schema, from which the interface builds the form, so the
-schema of a processor is a free-form object here. A recipe is the steps of one stage, and the body of one is the same
-for the active recipe and a variant. A run and a preview start a job and answer with it, so their bodies only say what
+schema of a processor is a free-form object here. A recipe is the steps of one stage for one kind of page. A run and a
+preview start a job and answer with it, so their bodies only say what
 to run. A page version carries its provenance, its transform and, once its files are written, the paths of its images,
 which are those of the IIIF route as for every other image; a preview has only the path of its preview image.
 """
@@ -22,15 +22,14 @@ from bookreviver.api.schemas.types import (
     RECIPE_STEPS_MAX_LENGTH,
     PageIdList,
     ProcessorKeyText,
-    RecipeName,
     VersionIdentifier,
 )
 from bookreviver.domain.enums import (
-    AppliesTo,
     EditorKind,
     OrderMode,
     OrderRuleKind,
     ProcessorScope,
+    RecipeKind,
     Rendition,
     ResultMark,
     ReviewReason,
@@ -47,7 +46,7 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId, RecipeProfileId, StepId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PIN_NEEDS_RECIPE, RecipeDraft, StageRun, Step, StepPreview, VersionFilter
+from bookreviver.domain.values import RecipeDraft, StageRun, Step, StepPreview, VersionFilter
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -111,14 +110,12 @@ class StepSchema(ResponseModel):
     :ivar params: Parameters of the step, with the defaults of the processor filled in.
     :ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters.
     :ivar step_id: Identifier of the step, which stays as the step is moved and saved and which its manual edits name.
-    :ivar applies_to: Which pages the step processes; the others pass it unchanged.
     """
 
     processor_key: str
     params: dict[str, Any]
     enabled: bool
     step_id: StepId
-    applies_to: AppliesTo
 
 
 class OrderIssueSchema(ResponseModel):
@@ -141,14 +138,13 @@ class OrderIssueSchema(ResponseModel):
 
 
 class RecipeSchema(ResponseModel):
-    """A recipe: the ordered steps of one stage, active or a variant.
+    """A recipe: the ordered steps of one stage for one kind of page.
 
     :ivar id: Identifier of the recipe.
     :ivar project_id: Project owning the recipe.
     :ivar stage: Stage the recipe processes.
-    :ivar name: Name the user sees.
+    :ivar kind: Kind of the pages the recipe processes, which is also its name.
     :ivar steps: The steps in the order they run.
-    :ivar active: Whether the recipe is the one the stage runs by default.
     :ivar profile_id: The profile of the account the recipe was made from, or null for a recipe that was not.
     :ivar created_at: When the recipe was created.
     :ivar updated_at: When the recipe was last changed.
@@ -159,9 +155,8 @@ class RecipeSchema(ResponseModel):
     id: RecipeId
     project_id: ProjectId
     stage: Stage
-    name: str
+    kind: RecipeKind
     steps: list[StepSchema]
-    active: bool
     profile_id: RecipeProfileId | None
     created_at: datetime
     updated_at: datetime
@@ -191,14 +186,12 @@ class StepBody(RequestModel):
     :ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.
     :ivar step_id: Identifier of a step that already exists, which the interface sends back to keep its edits, or
                    omitted for a step that is added, which gets a new one.
-    :ivar applies_to: Which pages the step processes, all of them unless the interface says otherwise.
     """
 
     processor_key: ProcessorKeyText
     params: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
     step_id: StepId | None = None
-    applies_to: AppliesTo = AppliesTo.ALL
 
     def to_step(self) -> Step:
         """Return the step as the domain states it.
@@ -206,43 +199,36 @@ class StepBody(RequestModel):
         :returns: The step, with the identifier it came with or a new one.
         :rtype: Step
         """
-        step = Step(
-            processor_key=self.processor_key, params=self.params, enabled=self.enabled, applies_to=self.applies_to
-        )
+        step = Step(processor_key=self.processor_key, params=self.params, enabled=self.enabled)
         return step if self.step_id is None else evolve(step, step_id=self.step_id)
 
 
 class RecipeBody(RequestModel):
-    """The name and the steps of a recipe, for the active recipe and for a variant alike.
+    """The steps of a recipe, for a recipe of a book and for a profile alike.
 
-    :ivar name: Name of the recipe.
     :ivar steps: Its steps in the order they run, each checked against its processor.
     :ivar order: ``usual`` refuses a step that stands where it cannot work, with the reason as the detail of a 422, and
                  ``free`` saves it and reports it in the answer. A step off its usual place is saved either way.
     """
 
-    name: RecipeName
     steps: Annotated[list[StepBody], Field(min_length=1, max_length=RECIPE_STEPS_MAX_LENGTH)]
     order: OrderMode = OrderMode.USUAL
 
     def to_draft(self) -> RecipeDraft:
-        """Return the name, the steps and the order as the domain states them.
+        """Return the steps and the order as the domain states them.
 
         :returns: The draft.
         :rtype: RecipeDraft
         """
-        return RecipeDraft(name=self.name, steps=[step.to_step() for step in self.steps], order=self.order)
+        return RecipeDraft(steps=[step.to_step() for step in self.steps], order=self.order)
 
 
 class StageRunBody(RequestModel):
     """What a run of a stage is asked to do; the stage is in the address.
 
-    :ivar recipe_id: Recipe to run it by, or omitted for the active recipe.
     :ivar page_ids: Pages to run it on, or omitted for every page with an image.
     :ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a
                            run that would do so leaves that page failed.
-    :ivar pin: Whether to pin the recipe to the pages of the run, so a later run without a recipe keeps it there. It is
-               given with a recipe, since a run that chooses the recipes pins nothing.
     :ivar through_step: Index in the recipe of the last step to run, from zero, or omitted to run through the last step
                         that is on. The steps before it come from the cache of versions when their inputs did not
                         change.
@@ -252,25 +238,11 @@ class StageRunBody(RequestModel):
                              which such a run is refused with 409. A run that keeps the work needs none.
     """
 
-    recipe_id: RecipeId | None = None
     page_ids: PageIdList | None = None
     confirm_unsplit: bool = False
-    pin: bool = False
     through_step: Annotated[int, Field(ge=0, lt=RECIPE_STEPS_MAX_LENGTH)] | None = None
     mode: RunMode = RunMode.KEEP
     confirm_overwrite: bool = False
-
-    @model_validator(mode='after')
-    def _pin_names_a_recipe(self) -> Self:
-        """Check that a run that pins also names the recipe to pin.
-
-        :returns: The body unchanged.
-        :rtype: Self
-        :raises ValueError: If the run pins and names no recipe.
-        """
-        if self.pin and self.recipe_id is None:
-            raise ValueError(PIN_NEEDS_RECIPE)
-        return self
 
     def to_run(self, stage: Stage) -> StageRun:
         """Return the run as the domain states it.
@@ -282,10 +254,8 @@ class StageRunBody(RequestModel):
         """
         return StageRun(
             stage=stage,
-            recipe_id=self.recipe_id,
             page_ids=None if self.page_ids is None else tuple(self.page_ids),
             confirm_unsplit=self.confirm_unsplit,
-            pin=self.pin,
             through_step=self.through_step,
             mode=self.mode,
             confirm_overwrite=self.confirm_overwrite,
@@ -297,15 +267,14 @@ class RunImpactSchema(ResponseModel):
 
     :ivar mode: The mode of the run.
     :ivar pages: How many pages the run goes over.
-    :ivar hand_pages: How many of them have a manual edit on a step the run goes over.
-    :ivar settings_pages: How many of them change at least one field of a step the run goes over.
+    :ivar own_pages: How many of them have a manual edit or change at least one field on a step the run goes over,
+                     which are the pages with work of their own.
     :ivar affected: How many pages lose work to the mode, which is none for a run that keeps the work.
     """
 
     mode: RunMode
     pages: int
-    hand_pages: int
-    settings_pages: int
+    own_pages: int
     affected: int
 
 
@@ -357,7 +326,6 @@ class PageStageSchema(ResponseModel):
     :ivar recipe_id: Recipe the page was processed by, or None.
     :ivar head_version_id: The current version of the stage, or None.
     :ivar state: Whether the current version matches the inputs of the stage.
-    :ivar pinned: Whether the recipe is pinned to the page, so a run without a recipe keeps it.
     :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
                         that is on, so the page is not ready for the next stage, or None.
     :ivar updated_at: When the record last changed.
@@ -368,7 +336,6 @@ class PageStageSchema(ResponseModel):
     recipe_id: RecipeId | None
     head_version_id: PageVersionId | None
     state: StageState
-    pinned: bool
     through_step: int | None
     updated_at: datetime
 

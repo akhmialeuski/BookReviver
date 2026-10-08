@@ -4,8 +4,8 @@ Each entry point reads its job back, moves it to running, does its work and leav
 that reports its progress does, through ``JobTracker``. The parameters of a job are read into the value of its kind, and
 a job whose parameters are not valid fails with the reason.
 
-A run goes by the pages of the stage and the steps of the recipe. A run that names no recipe gives each page its own,
-the pinned one, else the one of the first matching rule, else the active one (``RecipePicker``). The mode of the run
+A run goes by the pages of the stage and the steps of the recipe, which is the recipe of the kind of each page. The mode
+of the run
 says what it does first with the settings and the manual edits of the pages (``RunPlan``), which it keeps unless it was
 asked to take them away. A recipe whose normalize step leaves the page size to the book is run twice over: the pages
 are first taken as far as the step to find their content boxes, then the size of the book is worked out once from all
@@ -13,11 +13,12 @@ of them, and the pages are run by it, so every page comes out of one size withou
 The run reads the current version of the nearest earlier stage of a page, finds the versions it made before by their
 identifier, makes only what is new, and makes the last version the current one of the stage. A page that fails is
 recorded as failed and the job goes on to the next, and the job succeeds when it processed at least one page. When it
-ends it queues a collection of the project's old versions, so old versions go by their age without the user asking. The
-collection is stored in the same commit as the end of the run, so the project is never free between the two.
+ends it queues a collection of the project's versions that are no longer current, so their files go as soon as the run
+has replaced them, without the user asking. The collection is stored in the same commit as the end of the run, so the
+project is never free between the two.
 
 A measure of the book reads the content boxes the normalize step recorded on every page and writes the parameters of
-that step of the active Geometry recipe, which marks the pages of that recipe stale.
+that step of every Geometry recipe, which marks the pages of those recipes stale.
 
 A project processes one thing at a time, so a collection never overlaps a run that may be reusing the versions it
 clears. A collection chooses the versions, marks them failed so that none can be chosen or reused any more, removes
@@ -328,21 +329,17 @@ class ProcessingJobs:
         :type page: Page
         :param recipe: Recipe to run.
         :type recipe: Recipe
-        :param run: What the job was asked to run, whose confirmation, pin and last step apply to the page.
+        :param run: What the job was asked to run, whose confirmation and last step apply to the page.
         :type run: StageRun
         :returns: What the run came to.
         :rtype: RunOutcome
         """
-        # A run by a named recipe pins it only when asked to, and a run that chooses the recipes keeps the pins it finds
-        pin = True if run.pin else None
         try:
-            return await executor.run(
-                page, recipe, confirmed=run.confirm_unsplit, pin=pin, through_step=run.through_step
-            )
+            return await executor.run(page, recipe, confirmed=run.confirm_unsplit, through_step=run.through_step)
         except Exception:
             logger.exception('The stage %s failed on page %s', recipe.stage, page.id)
             await self._uow.rollback()
-            record = await self._records.mark_failed(page.id, recipe.stage, recipe_id=recipe.id, pin=pin)
+            record = await self._records.mark_failed(page.id, recipe.stage, recipe_id=recipe.id)
             await self._uow.commit()
             await self._records.announce(page.project_id, [record])
             return RunOutcome.FAILED
@@ -387,7 +384,7 @@ class ProcessingJobs:
         return len(cut.version_ids)
 
     async def _collect(self, job: Job) -> int | None:
-        """Clear the old versions that nothing needs: mark them, remove their directories, then settle their rows.
+        """Clear the versions that nothing needs: mark them, remove their directories, then settle their rows.
 
         A preview loses its row. A version of a full run keeps its row, with its parameters, data and edit hash, and
         loses its files, which a run makes again under the same identifier. The mark is a failed state that nothing can
@@ -401,9 +398,7 @@ class ProcessingJobs:
         :raises DomainError: If the parameters of the job are not valid.
         """
         collection = VersionCollection.from_map(job.params)
-        old = await self._uow.page_versions.collectable(
-            job.project_id, collection.older_than, collection.previews_older_than
-        )
+        old = await self._uow.page_versions.collectable(job.project_id, collection.previews_older_than)
         if await self._tracker.advance(job, done=0, total=len(old)) is None:
             return None
         for version in old:

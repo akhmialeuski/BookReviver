@@ -4,8 +4,9 @@
 lines of the box. The pages of one book are made alike by the same step, which needs a target for that distance and a
 size for the page, and no step sees more than one page. ``BookBlocks`` reads what the step recorded on the current
 version of every page, and ``BookSize`` works the target and the page out of it, in one place for the two ways it is
-used. The ``measure-book`` job writes them into the parameters of the normalize step of the active Geometry recipe,
-where the user sees them in the form and may change them. A run of the stage, and the preview of the step, lay them over
+used. The ``measure-book`` job writes them into the parameters of the normalize step of every Geometry recipe, since
+the pages of all kinds have one size, where the user sees them in the form and may change them. A run of the stage,
+and the preview of the step, lay them over
 the parameters that are 0, which is the size by the book, without writing them anywhere, so a book needs no press of the
 button to have one page size.
 
@@ -47,7 +48,7 @@ if TYPE_CHECKING:
     from bookreviver.services.stage_records import StageRecords
 
 NORMALIZE_KEY: str = 'geometry.normalize'
-NO_NORMALIZE_STEP: str = 'The active recipe of the Geometry stage has no {key} step to write the measures into.'
+NO_NORMALIZE_STEP: str = 'No recipe of the Geometry stage has a {key} step to write the measures into.'
 NOTHING_TO_MEASURE: str = (
     'Margins has not placed any page of the book yet, so there is nothing to measure. Run the Geometry stage first.'
 )
@@ -420,7 +421,7 @@ class BookMeasure:
 
         :param uow: Unit of work whose commit ends the job.
         :type uow: UnitOfWork
-        :param recipes: The recipes of the project, which supply the active recipe and rewrite it.
+        :param recipes: The recipes of the project, which supply the Geometry recipes and rewrite them.
         :type recipes: RecipeBook
         :param records: Writer of the stage records, which marks the stage of the pages stale.
         :type records: StageRecords
@@ -432,41 +433,51 @@ class BookMeasure:
     async def run(self, project_id: ProjectId) -> int:
         """Measure the pages of the book and write the result into the parameters of the normalize step.
 
+        The step is written into every recipe of the Geometry stage that has one, since the pages of every kind of the
+        book are placed on one page size.
+
         :param project_id: Project whose pages are measured.
         :type project_id: ProjectId
         :returns: The number of pages that were measured.
         :rtype: int
         :raises NotFoundError: If the Geometry stage has no recipe.
-        :raises ConflictError: If the active recipe has no normalize step, or the step has placed no page yet.
+        :raises ConflictError: If no recipe has a normalize step, or the step has placed no page yet.
         :raises InvalidParametersError: If the measured page does not fit the bounds of the step.
         """
-        recipe = await self._recipes.active(project_id, Stage.GEOMETRY)
-        position = next((index for index, step in enumerate(recipe.steps) if step.processor_key == NORMALIZE_KEY), None)
-        if position is None:
+        holders: list[tuple[Recipe, int]] = []
+        for recipe in await self._recipes.recipes(project_id, Stage.GEOMETRY):
+            keys = [step.processor_key for step in recipe.steps]
+            if NORMALIZE_KEY in keys:
+                holders.append((recipe, keys.index(NORMALIZE_KEY)))
+        if not holders:
             raise ConflictError(NO_NORMALIZE_STEP.format(key=NORMALIZE_KEY))
         measures = list((await BookBlocks(self._uow).read(project_id, Stage.GEOMETRY)).values())
         if not measures:
             raise ConflictError(NOTHING_TO_MEASURE)
-        step = recipe.steps[position]
-        measured = evolve(step, params={**step.params, **BookSize(measures).measured(step.params)})
-        if measured.params != step.params:
-            await self._write(recipe, position, measured)
+        stale: list[PageStage] = []
+        for recipe, position in holders:
+            step = recipe.steps[position]
+            measured = evolve(step, params={**step.params, **BookSize(measures).measured(step.params)})
+            if measured.params != step.params:
+                stale.extend(await self._write(recipe, position, measured))
+        await self._uow.commit()
+        await self._records.announce(project_id, stale)
         return len(measures)
 
-    async def _write(self, recipe: Recipe, position: int, step: Step) -> None:
-        """Store the recipe with the measured step, mark the pages it processed stale, and commit.
+    async def _write(self, recipe: Recipe, position: int, step: Step) -> list[PageStage]:
+        """Store the recipe with the measured step, and mark the pages it processed stale.
 
-        :param recipe: The active recipe of the Geometry stage.
+        :param recipe: A recipe of the Geometry stage.
         :type recipe: Recipe
         :param position: Place of the normalize step among the steps of the recipe.
         :type position: int
         :param step: The normalize step with the measured parameters.
         :type step: Step
+        :returns: The records of the pages that became stale, which the caller announces after it commits.
+        :rtype: list[PageStage]
         :raises InvalidParametersError: If the measured page does not fit the bounds of the step.
         """
         steps = (*recipe.steps[:position], step, *recipe.steps[position + 1 :])
         # The steps keep the order they were saved in, whatever mode that was
-        await self._recipes.rewrite(recipe, RecipeDraft(name=recipe.name, steps=steps, order=OrderMode.FREE))
-        stale = await self._records.mark_recipe_stale(recipe.id)
-        await self._uow.commit()
-        await self._records.announce(recipe.project_id, stale)
+        await self._recipes.rewrite(recipe, RecipeDraft(steps=steps, order=OrderMode.FREE))
+        return await self._records.mark_recipe_stale(recipe.id)

@@ -12,7 +12,7 @@ import {
   listProfilesApiV1RecipeProfilesGetQueryKey,
   putDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutMutation,
   putProfileApiV1RecipeProfilesProfileIdPutMutation,
-  putRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutMutation,
+  putRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutMutation,
   renameProfileApiV1RecipeProfilesProfileIdPatchMutation,
 } from '@/api/@tanstack/react-query.gen';
 import { refreshStage } from '@/features/processing/queries';
@@ -77,7 +77,7 @@ export function useReplaceProfile() {
 export function useLinkProfile(projectId: string, stage: Stage) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...putRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutMutation(),
+    ...putRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutMutation(),
     onSettled: () => refreshStage(queryClient, projectId, stage),
   });
 }

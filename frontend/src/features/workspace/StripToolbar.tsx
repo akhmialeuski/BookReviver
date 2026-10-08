@@ -1,7 +1,7 @@
 import { LayoutGridIcon, ListIcon, TriangleAlertIcon } from 'lucide-react';
-import type { StepFlag } from '@/api';
+import type { RecipeKind, StepFlag } from '@/api';
 import { PageFilter } from '@/features/workspace/params';
-import type { FilterCounts, FlagView, StopView, VariantView } from '@/features/workspace/strip';
+import type { PageListFilters } from '@/features/workspace/strip';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 
@@ -17,29 +17,16 @@ export function StripToolbar({
   filter,
   grid,
   withWide = false,
-  variants,
+  kinds,
   stopped,
   flagged,
   onFilter,
   onSwitchView,
-}: {
-  /** The pages of the book. */
-  total: number;
+}: PageListFilters & {
   /** The pages the filter lists. */
   shown: number;
-  counts: FilterCounts;
-  filter: PageFilter;
   /** Whether the pages are drawn as a grid, so the switch goes back to the strip. */
   grid: boolean;
-  /** Whether the filter of the pages cut from wide scans is offered, which the Split stage has. */
-  withWide?: boolean;
-  /** The variants of the stage, which narrow the pages to those one variant processed. Absent for none to choose from. */
-  variants?: VariantView;
-  /** The steps a run stopped at, which narrow the pages to those stopped at one. Absent when no run stopped short. */
-  stopped?: StopView;
-  /** The reasons a page asks for a look at the open step, which narrow the pages to those with one. Absent for no step. */
-  flagged?: FlagView;
-  onFilter: (filter: PageFilter) => void;
   onSwitchView: () => void;
 }): React.JSX.Element {
   const labels = MESSAGES.workspace.strip;
@@ -72,20 +59,20 @@ export function StripToolbar({
         {withWide
           ? filterButton(PageFilter.Wide, labels.filters.wide(counts[PageFilter.Wide]))
           : null}
-        {variants === undefined || variants.options.length === 0 ? null : (
+        {kinds === undefined || kinds.options.length === 0 ? null : (
           <select
-            aria-label={labels.variant.label}
-            data-testid="strip-variant-filter"
+            aria-label={labels.kind.label}
+            data-testid="strip-kind-filter"
             className="h-8 max-w-40 min-w-0 rounded-md border border-input bg-background px-2 text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-            value={variants.selected ?? ''}
+            value={kinds.selected ?? ''}
             onChange={(event) =>
-              variants.onSelect(event.target.value === '' ? null : event.target.value)
+              kinds.onSelect(event.target.value === '' ? null : (event.target.value as RecipeKind))
             }
           >
-            <option value="">{labels.variant.all}</option>
-            {variants.options.map((option) => (
-              <option key={option.id} value={option.id}>
-                {labels.variant.option(option.name, option.pages)}
+            <option value="">{labels.kind.all}</option>
+            {kinds.options.map((option) => (
+              <option key={option.kind} value={option.kind}>
+                {labels.kind.option(MESSAGES.processing.recipe.kinds[option.kind], option.pages)}
               </option>
             ))}
           </select>

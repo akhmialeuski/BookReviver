@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import type { LibraryProfileSchema, Stage } from '@/api';
+import type { LibraryProfileSchema, RecipeKind, Stage } from '@/api';
 import { useProcessors } from '@/features/processing/queries';
 import { type LibraryBook, ProfileCard } from '@/features/profiles/ProfileCard';
 import { type FileProblem, readProfileFile } from '@/features/profiles/profileFile';
@@ -10,20 +10,21 @@ import { describeError } from '@/shared/http/problem';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
-import { CheckboxField } from '@/shared/ui/checkbox-field';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
  * The library of the profiles of the account: a tab for each stage that has profiles and one for all of them, a card
  * for each profile, and under them the two ways to add one, from the steps of the open book and from a file.
  *
- * Opened from a book, it starts on the stage of the book and its cards apply profiles to the book and to the selected
- * pages. Opened from the account it starts on all stages and the cards leave out what needs a book. A file is read here
+ * Opened from a book, it starts on the stage of the book and its cards apply profiles to the recipe of the kind of page
+ * chosen above the list. Opened from the account it starts on all stages and the cards leave out what needs a book. A file is read here
  * and sent as it is, and the server's answer, which names what is wrong with it, is shown under the list.
  */
 
 const labels = MESSAGES.profiles.library;
 const ALL = 'all';
+/** The kinds of page a recipe is for, in the order the select lists them. */
+const RECIPE_KINDS = Object.keys(MESSAGES.processing.recipe.kinds) as RecipeKind[];
 
 /** The tab of a stage, or the one that shows every stage. */
 type Tab = Stage | typeof ALL;
@@ -43,7 +44,7 @@ export function ProfileLibrary({ book }: { book?: LibraryBook }): React.JSX.Elem
   const importer = useImportProfile();
   const [tab, setTab] = useState<Tab>(book?.processing.stage ?? ALL);
   const [saveOpen, setSaveOpen] = useState(false);
-  const [activate, setActivate] = useState(true);
+  const [kind, setKind] = useState<RecipeKind>(book?.processing.recipe?.kind ?? 'text');
   const [notice, setNotice] = useState<string | null>(null);
   const [problem, setProblem] = useState<FileProblem | null>(null);
   const picker = useRef<HTMLInputElement | null>(null);
@@ -104,7 +105,7 @@ export function ProfileLibrary({ book }: { book?: LibraryBook }): React.JSX.Elem
                     profile={profile}
                     titles={titles}
                     book={book}
-                    activate={activate}
+                    kind={kind}
                   />
                 ))}
             </ul>
@@ -116,13 +117,7 @@ export function ProfileLibrary({ book }: { book?: LibraryBook }): React.JSX.Elem
     body = (
       <ul className="grid gap-2">
         {shown.map((profile) => (
-          <ProfileCard
-            key={profile.id}
-            profile={profile}
-            titles={titles}
-            book={book}
-            activate={activate}
-          />
+          <ProfileCard key={profile.id} profile={profile} titles={titles} book={book} kind={kind} />
         ))}
       </ul>
     );
@@ -150,15 +145,19 @@ export function ProfileLibrary({ book }: { book?: LibraryBook }): React.JSX.Elem
         ))}
       </div>
       {book === undefined ? null : (
-        <div className="grid gap-1">
-          <CheckboxField
-            label={labels.activate}
-            checked={activate}
-            data-testid="profile-activate"
-            onChange={(event) => setActivate(event.target.checked)}
-          />
-          <p className="text-xs text-muted-foreground">{labels.activateHint}</p>
-        </div>
+        <select
+          aria-label={labels.applyKind}
+          data-testid="profile-kind"
+          className="h-9 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          value={kind}
+          onChange={(event) => setKind(event.target.value as RecipeKind)}
+        >
+          {RECIPE_KINDS.map((entry) => (
+            <option key={entry} value={entry}>
+              {MESSAGES.processing.recipe.kinds[entry]}
+            </option>
+          ))}
+        </select>
       )}
       {body}
       <div className="flex flex-wrap gap-2 border-t pt-3">

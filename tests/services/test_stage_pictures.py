@@ -3,9 +3,9 @@
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
-from attrs import frozen
+from attrs import evolve, frozen
 
-from bookreviver.domain.enums import Stage
+from bookreviver.domain.enums import PageKind, RecipeKind, Stage
 from bookreviver.domain.values import RecipeDraft, SliceRequest, StageRun, Step
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
 from tests.helpers.spreads import head_of, run_stage
@@ -119,19 +119,20 @@ async def seed_staged_book(kit: ProcessingKit, case: StageCase) -> StagedBook:
         await kit.seed_base_version(page)
         pages.append(page)
     full, partial, idle, other = pages
+    uow = kit.uow()
+    other = evolve(other, kind=PageKind.PLATE)
+    await uow.pages.update(other)
+    await uow.commit()
     if case.stage is Stage.CLEANUP:
         await run_stage(kit, actor, project, StageRun(stage=Stage.GEOMETRY))
     steps = [Step(processor_key=case.processor_key) for _ in range(STEP_COUNT)]
-    await kit.service().save_recipe(actor, project.id, case.stage, RecipeDraft(name='Three steps', steps=steps))
-    one_step = RecipeDraft(
-        name=ONE_STEP_NAME, steps=[Step(processor_key=case.processor_key, params={'strength': OTHER_STRENGTH})]
-    )
-    variant = await kit.service().add_variant(actor, project.id, case.stage, one_step)
+    await kit.edit_recipe(actor, project, case.stage, RecipeDraft(steps=steps))
+    one_step = RecipeDraft(steps=[Step(processor_key=case.processor_key, params={'strength': OTHER_STRENGTH})])
+    await kit.edit_recipe(actor, project, case.stage, one_step, RecipeKind.COLOR_PICTURE)
     await run_stage(kit, actor, project, StageRun(stage=case.stage, page_ids=(full.id,)))
     await run_stage(kit, actor, project, StageRun(stage=case.stage, page_ids=(partial.id,), through_step=0))
-    await run_stage(kit, actor, project, StageRun(stage=case.stage, recipe_id=variant.id, page_ids=(other.id,)))
-    recipe = await kit.uow().recipes.find_active(project.id, case.stage)
-    assert recipe is not None
+    await run_stage(kit, actor, project, StageRun(stage=case.stage, page_ids=(other.id,)))
+    recipe = await kit.recipe_of(actor, project, case.stage)
     reads = {page.id: await head_of(kit, page, case.earlier) for page in pages}
     chains = {page.id: await chain_of(kit, page, case.stage) for page in (full, partial, other)}
     return StagedBook(
@@ -311,8 +312,8 @@ class TestPicture:
         """
         actor, project = await fx_kit.seed_project()
         await fx_kit.seed_scan_page(project, order_key=PAGE_KEYS[0])
-        one_step = RecipeDraft(name=ONE_STEP_NAME, steps=[Step(processor_key=FakeProcessor.spec.key)])
-        recipe = await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, one_step)
+        one_step = RecipeDraft(steps=[Step(processor_key=FakeProcessor.spec.key)])
+        recipe = await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, one_step)
         step_id = recipe.steps[0].step_id
         alone = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
         at_step = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), step_id)

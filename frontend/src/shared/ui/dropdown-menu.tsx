@@ -4,7 +4,7 @@ import { useRef } from 'react';
 import { cn } from '@/shared/lib/utils';
 
 /**
- * The shadcn/ui dropdown menu over Radix: a list of actions that opens under a button.
+ * The shadcn/ui dropdown menu over Radix: a list of actions, or of radio choices, that opens under a button.
  */
 
 function DropdownMenu(
@@ -77,6 +77,36 @@ function DropdownMenuItem({
   );
 }
 
+function DropdownMenuRadioGroup(
+  props: React.ComponentProps<typeof DropdownMenuPrimitive.RadioGroup>,
+): React.JSX.Element {
+  return <DropdownMenuPrimitive.RadioGroup {...props} />;
+}
+
+function DropdownMenuRadioItem({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.RadioItem>): React.JSX.Element {
+  return (
+    <DropdownMenuPrimitive.RadioItem
+      className={cn(
+        'relative flex cursor-default items-center justify-between gap-4 rounded-sm py-1.5 pr-2 pl-8 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[state=checked]:font-medium',
+        className,
+      )}
+      {...props}
+    >
+      <span className="absolute left-2 flex size-4 items-center justify-center">
+        <span className="size-3.5 rounded-full border border-input" aria-hidden="true" />
+        <DropdownMenuPrimitive.ItemIndicator className="absolute">
+          <span className="block size-2 rounded-full bg-foreground" aria-hidden="true" />
+        </DropdownMenuPrimitive.ItemIndicator>
+      </span>
+      {children}
+    </DropdownMenuPrimitive.RadioItem>
+  );
+}
+
 function DropdownMenuLabel({
   className,
   ...props
@@ -106,6 +136,8 @@ export {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 };

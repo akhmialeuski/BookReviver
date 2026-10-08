@@ -1,6 +1,5 @@
 """Tests for making the picture of a version again, whose files a collection removed, and for refusing to."""
 
-from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -34,7 +33,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 EVERYTHING: SliceRequest = SliceRequest(limit=100)
-AFTER_RETENTION_DAYS: int = 40
 STRONGER: int = 2
 EDITED_RECIPE: str = 'Edited'
 ROTATION: NewPageEdit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=1.5))
@@ -56,7 +54,7 @@ async def run_geometry(kit: ProcessingKit, actor: Actor, project: Project) -> No
 
 
 async def collected_book(kit: ProcessingKit) -> tuple[Actor, Project, Page, PageVersion, PageVersion]:
-    """Run the geometry stage twice with different parameters and collect the old version of the first run.
+    """Run the geometry stage twice with different parameters, so the second run collects the version of the first.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
@@ -65,17 +63,14 @@ async def collected_book(kit: ProcessingKit) -> tuple[Actor, Project, Page, Page
     """
     actor, project, page, first = await ran_geometry(kit)
     fake = kit.fake.spec.key
-    stronger = RecipeDraft(name='Stronger', steps=[Step(processor_key=fake, params={STRENGTH_PARAMETER: STRONGER})])
-    await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, stronger)
+    stronger = RecipeDraft(steps=[Step(processor_key=fake, params={STRENGTH_PARAMETER: STRONGER})])
+    await kit.edit_recipe(actor, project, Stage.GEOMETRY, stronger)
     run = await kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
     await kit.jobs().run_stage(run.id)
     await kit.work_queue()
     head = (await kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))).head_version_id
     assert head is not None
     current = await kit.stored_version(head)
-    kit.clock.moment = EPOCH + timedelta(days=AFTER_RETENTION_DAYS)
-    collection = await kit.service().start_collection(actor, project.id)
-    await kit.jobs().collect_versions(collection.id)
     return actor, project, page, await kit.uow().page_versions.get(first.id), current
 
 
@@ -193,21 +188,14 @@ class TestRemake:
         page, _ = await fx_kit.seed_scan_page(project)
         await fx_kit.seed_base_version(page)
         step = Step(processor_key=fx_kit.fake.spec.key, params={STRENGTH_PARAMETER: 1})
-        await fx_kit.service().save_recipe(
-            actor, project.id, Stage.GEOMETRY, RecipeDraft(name=EDITED_RECIPE, steps=[step])
-        )
+        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=[step]))
         await fx_kit.edits().save(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step.step_id), ROTATION, None)
         await run_geometry(fx_kit, actor, project)
         first = await head_of(fx_kit, page, Stage.GEOMETRY)
         # The same step with another parameter, as the settings of a step are changed in the interface
         stronger = evolve(step, params={STRENGTH_PARAMETER: STRONGER})
-        await fx_kit.service().save_recipe(
-            actor, project.id, Stage.GEOMETRY, RecipeDraft(name=EDITED_RECIPE, steps=[stronger])
-        )
+        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=[stronger]))
         await run_geometry(fx_kit, actor, project)
-        fx_kit.clock.moment = EPOCH + timedelta(days=AFTER_RETENTION_DAYS)
-        collection = await fx_kit.service().start_collection(actor, project.id)
-        await fx_kit.jobs().collect_versions(collection.id)
         assert (await fx_kit.uow().page_versions.get(first.id)).files_removed
 
         job = await fx_kit.service().start_remake(actor, project.id, page.id, first.id)

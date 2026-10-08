@@ -14,9 +14,9 @@ from bookreviver.api.schemas.profiles import (
     ProfileFileSchema,
     RecipeProfileSchema,
 )
-from bookreviver.domain.enums import JobKind, JobState, Stage
+from bookreviver.domain.enums import RecipeKind, Stage
 from bookreviver.domain.values import Step
-from tests.helpers.builders import make_page, make_project, make_recipe_profile, new_account_id
+from tests.helpers.builders import make_project, make_recipe_profile, new_account_id
 from tests.helpers.processing import ProcessingFakesProvider
 from tests.helpers.seeding import commit_project
 
@@ -68,15 +68,22 @@ def _default_path(profile_id: object) -> str:
     return f'{PROFILES_PATH}/{profile_id}/default'
 
 
-def _recipe_path(project: Project) -> str:
-    """Return the path of the active recipe of the geometry stage of a project.
+async def _text_recipe(client: httpx.AsyncClient, project: Project) -> RecipeSchema:
+    """Read the recipe of text pages of the geometry stage of a project, which a book creates when it is first asked.
 
+    :param client: Client of the running application.
+    :type client: httpx.AsyncClient
     :param project: The project.
     :type project: Project
-    :returns: The path of the request.
-    :rtype: str
+    :returns: The recipe.
+    :rtype: RecipeSchema
     """
-    return f'{PROJECTS_PATH}/{project.id}/stages/geometry/recipe'
+    listed = await client.get(f'{PROJECTS_PATH}/{project.id}/stages/geometry/recipes')
+    return next(
+        recipe
+        for recipe in (RecipeSchema.model_validate(item) for item in listed.json()[ITEMS])
+        if recipe.kind is RecipeKind.TEXT
+    )
 
 
 def _step(key: str, **params: object) -> Step:
@@ -120,7 +127,7 @@ def _link_path(project: Project, recipe_id: object) -> str:
     :returns: The path of the request.
     :rtype: str
     """
-    return f'{PROJECTS_PATH}/{project.id}/stages/geometry/variants/{recipe_id}/profile'
+    return f'{PROJECTS_PATH}/{project.id}/stages/geometry/recipes/{recipe_id}/profile'
 
 
 def _apply_path(project: Project, profile_id: object) -> str:
@@ -259,7 +266,7 @@ class TestProfiles:
         foreign = await _store(fx_database, make_recipe_profile(account_id=new_account_id(), steps=(_step(FAKE_KEY),)))
         path = f'{PROFILES_PATH}/{foreign.id}'
         listed = await fx_client.get(PROFILES_PATH)
-        recipe = RecipeSchema.model_validate_json((await fx_client.get(_recipe_path(fx_project))).content)
+        recipe = await _text_recipe(fx_client, fx_project)
         responses = [
             await fx_client.patch(path, json={NAME_FIELD: OTHER_NAME}),
             await fx_client.put(
@@ -269,7 +276,7 @@ class TestProfiles:
             await fx_client.put(_default_path(foreign.id)),
             await fx_client.delete(_default_path(foreign.id)),
             await fx_client.delete(path),
-            await fx_client.post(_apply_path(fx_project, foreign.id), json={}),
+            await fx_client.post(_apply_path(fx_project, foreign.id), json={'kind': 'text'}),
         ]
         expect(listed.json()[TOTAL_FIELD] == 0)
         expect([response.status_code for response in responses] == [status.HTTP_404_NOT_FOUND] * len(responses))
@@ -279,10 +286,10 @@ class TestProfiles:
 class TestApplyProfile:
     """Tests for applying a profile to a book."""
 
-    async def test_apply_adds_a_variant_with_the_steps_of_the_profile(
+    async def test_apply_puts_the_steps_of_the_profile_into_the_recipe_of_the_kind(
         self, fx_client: httpx.AsyncClient, fx_project: Project
     ) -> None:
-        """Verify the answer is 201 with the variant, whose steps are the profile's, and the active recipe stays.
+        """Verify the answer is 201 with the recipe of the kind, whose steps are the profile's, and no other changes.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -290,18 +297,21 @@ class TestApplyProfile:
         :type fx_project: Project
         """
         profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
-        response = await fx_client.post(_apply_path(fx_project, profile.id), json={})
+        before = await _text_recipe(fx_client, fx_project)
+        response = await fx_client.post(_apply_path(fx_project, profile.id), json={'kind': 'blank'})
         applied = AppliedProfileSchema.model_validate_json(response.content)
-        active = await fx_client.get(_recipe_path(fx_project))
+        after = await _text_recipe(fx_client, fx_project)
         expect(response.status_code == status.HTTP_201_CREATED)
-        expect((applied.recipe.name, applied.recipe.active) == (PROFILE_NAME, False))
+        expect((applied.recipe.kind, applied.recipe.profile_id) == (RecipeKind.BLANK, profile.id))
         expect(applied.recipe.steps == profile.steps)
         expect(applied.missing_processors == [])
-        expect(RecipeSchema.model_validate_json(active.content).id != applied.recipe.id)
+        expect(after == before)
         assert_expectations()
 
-    async def test_apply_may_activate_the_variant(self, fx_client: httpx.AsyncClient, fx_project: Project) -> None:
-        """Verify ``activate`` makes the new recipe the active one.
+    async def test_apply_needs_the_kind_and_knows_no_activation_or_pages(
+        self, fx_client: httpx.AsyncClient, fx_project: Project
+    ) -> None:
+        """Verify a body without the kind of page, with one that is not a kind, or with the fields of the old body is refused.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -309,12 +319,13 @@ class TestApplyProfile:
         :type fx_project: Project
         """
         profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
-        response = await fx_client.post(_apply_path(fx_project, profile.id), json={'activate': True})
-        applied = AppliedProfileSchema.model_validate_json(response.content)
-        active = await fx_client.get(_recipe_path(fx_project))
-        expect(applied.recipe.active)
-        expect(RecipeSchema.model_validate_json(active.content).id == applied.recipe.id)
-        assert_expectations()
+        bodies = [{}, {'kind': 'plates'}, {'kind': 'text', 'activate': True, 'page_ids': []}]
+        responses = [await fx_client.post(_apply_path(fx_project, profile.id), json=body) for body in bodies]
+        assert [response.status_code for response in responses] == [
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+        ]
 
     async def test_a_missing_processor_is_named_in_the_answer(
         self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor, fx_project: Project
@@ -336,7 +347,7 @@ class TestApplyProfile:
                 account_id=fx_actor.account_id, steps=(_step(MISSING_KEY), _step(FAKE_KEY, strength=2))
             ),
         )
-        response = await fx_client.post(_apply_path(fx_project, profile.id), json={})
+        response = await fx_client.post(_apply_path(fx_project, profile.id), json={'kind': 'text'})
         applied = AppliedProfileSchema.model_validate_json(response.content)
         expect(response.status_code == status.HTTP_201_CREATED)
         expect([step.processor_key for step in applied.recipe.steps] == [FAKE_KEY])
@@ -359,9 +370,8 @@ class TestApplyProfile:
         await fx_client.put(_default_path(profile.id))
         fresh = make_project(owner_id=fx_actor.account_id, title='Fresh')
         await commit_project(fx_database, fresh)
-        response = await fx_client.get(_recipe_path(fresh))
-        recipe = RecipeSchema.model_validate_json(response.content)
-        expect((recipe.name, recipe.active, recipe.steps) == (PROFILE_NAME, True, profile.steps))
+        recipe = await _text_recipe(fx_client, fresh)
+        expect((recipe.profile_id, recipe.steps) == (profile.id, profile.steps))
         assert_expectations()
 
 
@@ -430,7 +440,7 @@ class TestLinkRecipeToProfile:
     async def test_an_applied_profile_is_the_profile_of_the_recipe_it_made(
         self, fx_client: httpx.AsyncClient, fx_project: Project
     ) -> None:
-        """Verify the answer of applying, and the active recipe once it is activated, name the profile.
+        """Verify the answer of applying, and the recipe read after it, name the profile.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -439,9 +449,9 @@ class TestLinkRecipeToProfile:
         """
         profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
         applied = AppliedProfileSchema.model_validate_json(
-            (await fx_client.post(_apply_path(fx_project, profile.id), json={'activate': True})).content
+            (await fx_client.post(_apply_path(fx_project, profile.id), json={'kind': 'text'})).content
         )
-        active = RecipeSchema.model_validate_json((await fx_client.get(_recipe_path(fx_project))).content)
+        active = await _text_recipe(fx_client, fx_project)
         expect(applied.recipe.profile_id == profile.id)
         expect((active.id, active.profile_id) == (applied.recipe.id, profile.id))
         assert_expectations()
@@ -456,8 +466,7 @@ class TestLinkRecipeToProfile:
         :param fx_project: A book of the signed-in account.
         :type fx_project: Project
         """
-        response = await fx_client.get(_recipe_path(fx_project))
-        assert response.json()[PROFILE_ID_FIELD] is None
+        assert (await _text_recipe(fx_client, fx_project)).profile_id is None
 
     async def test_put_links_a_recipe_to_a_profile_and_null_unlinks_it(
         self, fx_client: httpx.AsyncClient, fx_project: Project
@@ -470,10 +479,10 @@ class TestLinkRecipeToProfile:
         :type fx_project: Project
         """
         profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
-        before = RecipeSchema.model_validate_json((await fx_client.get(_recipe_path(fx_project))).content)
+        before = await _text_recipe(fx_client, fx_project)
         path = _link_path(fx_project, before.id)
         linked = await fx_client.put(path, json={PROFILE_ID_FIELD: str(profile.id)})
-        read = RecipeSchema.model_validate_json((await fx_client.get(_recipe_path(fx_project))).content)
+        read = await _text_recipe(fx_client, fx_project)
         unlinked = await fx_client.put(path, json={PROFILE_ID_FIELD: None})
         expect(linked.status_code == status.HTTP_200_OK)
         expect(RecipeSchema.model_validate_json(linked.content).profile_id == profile.id)
@@ -497,7 +506,7 @@ class TestLinkRecipeToProfile:
             STEPS_FIELD: [{PROCESSOR_FIELD: 'cleanup.fake', PARAMS_FIELD: {}}],
         }
         profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=cleanup)).content)
-        recipe = RecipeSchema.model_validate_json((await fx_client.get(_recipe_path(fx_project))).content)
+        recipe = await _text_recipe(fx_client, fx_project)
         response = await fx_client.put(_link_path(fx_project, recipe.id), json={PROFILE_ID_FIELD: str(profile.id)})
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
@@ -512,10 +521,9 @@ class TestLinkRecipeToProfile:
         :type fx_project: Project
         """
         profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
-        await fx_client.post(_apply_path(fx_project, profile.id), json={'activate': True})
+        await fx_client.post(_apply_path(fx_project, profile.id), json={'kind': 'text'})
         await fx_client.delete(f'{PROFILES_PATH}/{profile.id}')
-        response = await fx_client.get(_recipe_path(fx_project))
-        assert (response.status_code, response.json()[PROFILE_ID_FIELD]) == (status.HTTP_200_OK, None)
+        assert (await _text_recipe(fx_client, fx_project)).profile_id is None
 
 
 def _file(**overrides: object) -> dict[str, object]:
@@ -559,7 +567,7 @@ class TestLibrary:
         other = make_project(owner_id=fx_actor.account_id, title='Another book')
         await commit_project(fx_database, other)
         for book in (fx_project, other, fx_project):
-            await fx_client.post(_apply_path(book, used.id), json={})
+            await fx_client.post(_apply_path(book, used.id), json={'kind': 'text'})
         listed = await fx_client.get(PROFILES_PATH)
         assert [(item[NAME_FIELD], item[BOOKS_FIELD]) for item in listed.json()[ITEMS]] == [
             (PROFILE_NAME, MANY_BOOKS),
@@ -665,63 +673,3 @@ class TestLibrary:
             await fx_client.post(f'{PROFILES_PATH}/{foreign.id}/duplicate'),
         ]
         assert [response.status_code for response in responses] == [status.HTTP_404_NOT_FOUND] * len(responses)
-
-
-class TestApplyProfileToPages:
-    """Tests for applying a profile to some pages of a book through the apply route."""
-
-    async def test_apply_to_pages_answers_the_queued_run(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
-    ) -> None:
-        """Verify the answer holds the variant, which stays inactive, and the queued run of the stage on the pages.
-
-        :param fx_client: Client of the running application.
-        :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
-        :param fx_actor: The signed-in account.
-        :type fx_actor: Actor
-        """
-        project = make_project(owner_id=fx_actor.account_id, title='With pages')
-        page = make_page(project_id=project.id)
-        await commit_project(fx_database, project, page)
-        profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
-        response = await fx_client.post(_apply_path(project, profile.id), json={'page_ids': [str(page.id)]})
-        applied = AppliedProfileSchema.model_validate_json(response.content)
-        expect(response.status_code == status.HTTP_201_CREATED)
-        expect(applied.recipe.active is False)
-        assert applied.job is not None
-        expect((applied.job.kind, applied.job.state) == (JobKind.RUN_STAGE, JobState.QUEUED))
-        expect(applied.job.stage is Stage.GEOMETRY)
-        assert_expectations()
-
-    async def test_apply_without_pages_answers_no_job(self, fx_client: httpx.AsyncClient, fx_project: Project) -> None:
-        """Verify applying to the book alone answers a null job.
-
-        :param fx_client: Client of the running application.
-        :type fx_client: httpx.AsyncClient
-        :param fx_project: A book of the signed-in account.
-        :type fx_project: Project
-        """
-        profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
-        response = await fx_client.post(_apply_path(fx_project, profile.id), json={})
-        assert response.json()['job'] is None
-
-    async def test_a_page_that_is_not_in_the_book_is_a_404_problem(
-        self, fx_client: httpx.AsyncClient, fx_project: Project
-    ) -> None:
-        """Verify pages of no book of the account answer 404, and an empty list of pages answers 422.
-
-        :param fx_client: Client of the running application.
-        :type fx_client: httpx.AsyncClient
-        :param fx_project: A book of the signed-in account.
-        :type fx_project: Project
-        """
-        profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
-        stray = make_page(project_id=make_project(owner_id=new_account_id()).id)
-        missing = await fx_client.post(_apply_path(fx_project, profile.id), json={'page_ids': [str(stray.id)]})
-        empty = await fx_client.post(_apply_path(fx_project, profile.id), json={'page_ids': []})
-        assert (missing.status_code, empty.status_code) == (
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-        )

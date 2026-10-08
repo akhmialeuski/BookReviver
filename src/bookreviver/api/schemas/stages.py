@@ -11,7 +11,15 @@ from typing import TYPE_CHECKING, Self
 
 from bookreviver.api.schemas.base import ResponseModel
 from bookreviver.api.schemas.processing import PageVersionSchema
-from bookreviver.domain.enums import FigureState, PageStageStatus, ReviewReason, Stage, StageStatus, StepFlag
+from bookreviver.domain.enums import (
+    FigureState,
+    PageStageStatus,
+    RecipeKind,
+    ReviewReason,
+    Stage,
+    StageStatus,
+    StepFlag,
+)
 from bookreviver.domain.ids import PageId, RecipeId, StepId
 
 if TYPE_CHECKING:
@@ -21,13 +29,15 @@ if TYPE_CHECKING:
     from bookreviver.domain.stage_summaries import StageRow, StepRow
 
 
-class VariantPagesSchema(ResponseModel):
-    """How many pages of a stage one recipe processed.
+class KindRecipeSchema(ResponseModel):
+    """The recipe of one kind of page of a stage, with how many pages of the book are of the kind.
 
+    :ivar kind: The kind of page, which is also the name of the recipe.
     :ivar recipe_id: The recipe.
-    :ivar pages: Pages with an image whose result of the stage the recipe made.
+    :ivar pages: Pages with an image that are of the kind, which are the pages the recipe processes.
     """
 
+    kind: RecipeKind
     recipe_id: RecipeId
     pages: int
 
@@ -58,8 +68,8 @@ class StageSummarySchema(ResponseModel):
     :ivar review: Pages, not failed, whose result asks for a second look.
     :ivar check: Pages the strip lists under Check: stale, failed or marked, each counted once.
     :ivar partial: Pages, not failed, that were run through some of the steps of their recipe only.
-    :ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used.
-    :ivar variants: How many pages each recipe of the stage processed, the recipe with the most pages first.
+    :ivar recipes: The recipe of each kind of page the stage has, in the order of the kinds, each with the number of
+                   pages of the kind. Empty before the stage is first used.
     :ivar stopped: How many pages stopped at each step, the first step first.
     """
 
@@ -74,8 +84,7 @@ class StageSummarySchema(ResponseModel):
     review: int
     check: int
     partial: int
-    active_recipe_id: RecipeId | None
-    variants: list[VariantPagesSchema]
+    recipes: list[KindRecipeSchema]
     stopped: list[StepPagesSchema]
 
 
@@ -84,12 +93,13 @@ class StepPageSchema(ResponseModel):
 
     :ivar step_id: The step of the recipe.
     :ivar state: Where the shape of the step on the page comes from: the default, found by the step, set by hand, or
-                 skipped because the page does not meet the condition of the step.
+                 skipped because the page is a leaf the program drew.
     :ivar input_version: The version the step reads on the page, which the canvas of the step shows, or None when the
                          page has not come as far as the step or is not run.
     :ivar version: The version the step made on the page, or None when the page was not run through the step.
     :ivar flags: Why the page asks for a look at the step: the step is unsure of it, what it found departs from the
-                 book, it is set by hand, or the condition skipped it. The strip of the open step lists pages by these.
+                 book, it is set by hand, or it is a leaf the program drew and was skipped. The strip of the open step
+                 lists pages by these.
     """
 
     step_id: StepId
@@ -129,7 +139,7 @@ class StagePageSchema(ResponseModel):
     :ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.
     :ivar review: Why the result asks for a second look, or None.
     :ivar recipe_id: Recipe the page was processed by, or None.
-    :ivar pinned: Whether the recipe is pinned to the page.
+    :ivar kind: The kind of the page, by which the recipe that processes it in the stage is chosen.
     :ivar version: The current version of the stage on the page with its data and images, or None.
     :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
                         that is on, so the page is not ready for the next stage, or None.
@@ -150,7 +160,7 @@ class StagePageSchema(ResponseModel):
     status: PageStageStatus
     review: ReviewReason | None
     recipe_id: RecipeId | None
-    pinned: bool
+    kind: RecipeKind
     version: PageVersionSchema | None
     through_step: int | None
     review_processor: str | None
@@ -177,7 +187,7 @@ class StagePageSchema(ResponseModel):
             status=row.status,
             review=row.review,
             recipe_id=row.recipe_id,
-            pinned=row.pinned,
+            kind=row.kind,
             version=version,
             through_step=row.through_step,
             review_processor=row.review_processor,

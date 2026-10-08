@@ -11,7 +11,7 @@ from attrs import evolve, field, frozen, validators
 from bookreviver.domain.enums import (
     PICTURE_KINDS,
     BlankFill,
-    ColorMode,
+    ChangeSource,
     CompareMode,
     ContentSource,
     ContentType,
@@ -24,9 +24,10 @@ from bookreviver.domain.enums import (
     PageFilter,
     PageKind,
     PageOrigin,
-    RuleCondition,
+    RecipeKind,
     StageState,
     StepLayer,
+    ValueScope,
     VersionOrigin,
     VersionScale,
     VersionState,
@@ -51,7 +52,6 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.domain.enums import (
-        ChangeSource,
         FileType,
         LabelStyle,
         PageSide,
@@ -71,13 +71,13 @@ if TYPE_CHECKING:
         ProjectId,
         RecipeId,
         RecipeProfileId,
-        RecipeRuleId,
         ResultMarkChangeId,
         ScanId,
         SourceId,
         StepId,
     )
     from bookreviver.domain.stage_summaries import BookProgress
+    from bookreviver.domain.step_values import StepValues
     from bookreviver.domain.values import (
         BookDetails,
         CanvasPosition,
@@ -93,8 +93,6 @@ if TYPE_CHECKING:
 # The length of a page version identifier: a hash cut to 16 hexadecimal digits
 VERSION_ID_LENGTH: int = 16
 VERSION_ID_PATTERN: str = rf'[0-9a-f]{{{VERSION_ID_LENGTH}}}'
-GROUP_LABEL_MISSING: str = 'A rule on a manual group needs the label of the group.'
-GROUP_LABEL_UNEXPECTED: str = 'The condition {condition} takes no group label.'
 LAYER_NOT_KEPT: str = 'The layer {layer} of a step is not kept on the page yet.'
 # The names of the fields of a manual edit as the history keeps it and of its shape as the hash of the edit reads it
 KIND_FIELD: str = 'kind'
@@ -260,8 +258,7 @@ class Page:
                       page stays linked whatever the choice, so choosing the scan again brings it back.
     :ivar included: Whether the page is part of the book; off for a colour chart or a duplicate.
     :ivar notes: Notes of the user.
-    :ivar group_label: Label of the group the user put the page in by hand, or empty for no group, which a rule of a
-                       stage may send to a variant of its recipe.
+    :ivar group_label: Label of the group the user put the page in by hand, or empty for no group.
     :ivar created_at: When the page was created.
     :ivar updated_at: When the page was last changed.
     :ivar revision: How many times the stored page has been written since it was added, which a write has to match so
@@ -320,35 +317,14 @@ class Page:
         return self.origin is PageOrigin.BLANK or self.blank_fill is not BlankFill.SCAN
 
     @property
-    def is_picture(self) -> bool:
-        """Whether the page is a picture, which the conditions of the steps and the rule on plates read.
+    def content(self) -> ContentType:
+        """What the page shows: the content type the user set, else the one found, else the one its kind gives."""
+        return ContentType.shown_by(self.kind, self.content_type, by_hand=self.content_by_hand)
 
-        What the user set decides. Otherwise a plate or a frontispiece is a picture, since the user gave the page that
-        role, and any other page is a picture when the program found one on it.
-        """
-        if self.content_by_hand:
-            return self.content_type is not None and self.content_type.is_picture
-        return self.kind in PICTURE_KINDS or (self.content_type is not None and self.content_type.is_picture)
-
-    def content_of(self, color_mode: ColorMode) -> ContentType:
-        """Work out what the page shows, for the condition of a step.
-
-        A picture whose colour nobody set takes the colour of the image the stage starts from, and an unknown colour
-        mode counts as colour, since a step for black and white pictures must not touch a page that may be a colour
-        plate.
-
-        :param color_mode: Colour mode of the image the stage starts from.
-        :type color_mode: ColorMode
-        :returns: Text, or the picture in the colour it has.
-        :rtype: ContentType
-        """
-        if not self.is_picture:
-            return ContentType.TEXT
-        if self.content_type is not None and self.content_type.is_picture:
-            return self.content_type
-        return (
-            ContentType.COLOR_PICTURE if color_mode in {ColorMode.COLOR, ColorMode.UNKNOWN} else ContentType.BW_PICTURE
-        )
+    @property
+    def recipe_kind(self) -> RecipeKind:
+        """The kind of the page, by which every stage that has recipes chooses the recipe that processes the page."""
+        return RecipeKind.of(self.kind, self.content)
 
     @property
     def content_source(self) -> ContentSource:
@@ -444,7 +420,7 @@ class VersionInputs:
     Equal inputs give equal results, so a repeated step finds the files of its earlier result, and an input that changes
     the image must change the identifier or the cache would return another result. What does not change the image, such
     as the time of the run or the recipe a step came from, is not an input, so one step with the same parameters in two
-    variants of a recipe is one version.
+    recipes is one version.
 
     :ivar page_id: Page the step runs on. It is hashed because a base version has no input version, and two blank
                    leaves of one size would share an identifier without it.
@@ -454,7 +430,7 @@ class VersionInputs:
     :ivar edit_hash: Hash of the manual edit the step reads, or empty for none.
     :ivar scale: Whether the step runs on the full image or on the preview.
     :ivar side: Side of the book the page lies on, for a step that reads it, or None for a step that does not.
-    :ivar skipped: Whether the page did not meet the condition of the step and passes it unchanged. Such a version
+    :ivar skipped: Whether the page is a leaf the program drew and passes the step unchanged. Such a version
                    holds the image of its input whatever the parameters and the edit of the step are, so it has none.
     """
 
@@ -640,17 +616,16 @@ class Job:
 
 @frozen(kw_only=True)
 class Recipe:
-    """The ordered steps of one stage, saved in a project, which the pages of the stage are processed by.
+    """The ordered steps of one stage for one kind of page, saved in a project.
 
-    A stage has exactly one active recipe, by which a page without a choice of its own is processed. Every other recipe
-    of the stage is a variant, which the user tries on some pages or compares with the active one.
+    A stage that has recipes has exactly one for each ``RecipeKind``, and a page is processed by the recipe of its kind.
+    The name of a recipe is the label of its kind.
 
     :ivar id: Identifier of the recipe.
     :ivar project_id: Project owning the recipe.
     :ivar stage: Stage the recipe processes.
-    :ivar name: Name the user sees, such as ``Spread``.
+    :ivar kind: Kind of the pages the recipe processes, which is unique among the recipes of the stage.
     :ivar steps: The steps in the order they run, each a processor with its parameters.
-    :ivar active: Whether the recipe is the one the stage runs by default, which no variant is.
     :ivar profile_id: The profile of the account the recipe was made from, or None for a recipe that was not. The
                       steps may have changed since, and the link survives that, so the book can tell how it differs
                       from the profile. Deleting the profile clears it.
@@ -661,9 +636,8 @@ class Recipe:
     id: RecipeId
     project_id: ProjectId
     stage: Stage
-    name: str = field(validator=validators.min_len(1))
+    kind: RecipeKind
     steps: tuple[Step, ...]
-    active: bool = False
     profile_id: RecipeProfileId | None = None
     created_at: datetime
     updated_at: datetime
@@ -721,7 +695,7 @@ class RecipeProfile:
 
     A recipe belongs to one book, and a profile to the account, so a book that is set up once can be set up again in
     another by applying the profile. The steps keep their order, their parameters and their ``enabled`` switch. An
-    account has at most one default profile for each stage, which a new book takes as the active recipe of the stage.
+    account has at most one default profile for each stage, which a new book takes as the recipe of text pages.
 
     :ivar id: Identifier of the profile.
     :ivar account_id: Account owning the profile, the only one that may read or change it.
@@ -759,8 +733,6 @@ class PageStage:
     :ivar recipe_id: Recipe the page was processed by, or None when the recipe was deleted or none ran yet.
     :ivar head_version_id: Last version of the recipe's steps, which is the current version of the stage, or None.
     :ivar state: Whether the current version matches the inputs of the stage.
-    :ivar pinned: Whether the user pinned ``recipe_id`` to the page, so that a run without a recipe processes the page
-                  by it and not by a rule or the active recipe. A pin without a recipe holds nothing.
     :ivar through_step: Index in the recipe of the last step the page was run through, when that is before the last
                         step that is on, so the page is not ready for the next stage. None for a page run through every
                         step that is on, and for a record no recipe made.
@@ -772,7 +744,6 @@ class PageStage:
     recipe_id: RecipeId | None = None
     head_version_id: PageVersionId | None = None
     state: StageState = StageState.FRESH
-    pinned: bool = False
     through_step: int | None = field(default=None, validator=validators.optional(validators.ge(0)))
     updated_at: datetime
 
@@ -780,74 +751,6 @@ class PageStage:
     def key(self) -> PageStageKey:
         """The key the record is stored under."""
         return PageStageKey(self.page_id, self.stage)
-
-    @property
-    def pinned_recipe_id(self) -> RecipeId | None:
-        """The recipe pinned to the page, or None when the page is not pinned or the pinned recipe was deleted."""
-        return self.recipe_id if self.pinned else None
-
-
-@frozen(kw_only=True)
-class RecipeRule:
-    """A rule of a stage that sends the pages meeting a condition to a variant of its recipe.
-
-    The rules of a stage are tried in the order of ``order``, and the first that matches a page wins, so a page that
-    meets no rule is processed by the active recipe. A page that has a recipe pinned to it skips the rules.
-
-    :ivar id: Identifier of the rule.
-    :ivar project_id: Project owning the rule.
-    :ivar stage: Stage whose pages the rule sends to a variant.
-    :ivar condition: What a page must be for the rule to match it.
-    :ivar group_label: The group the page must be in, for the condition ``group``, and empty for any other.
-    :ivar recipe_id: Recipe of the stage that processes the pages the rule matches.
-    :ivar order: Place of the rule among the rules of the stage, from zero, the lowest being tried first.
-    """
-
-    id: RecipeRuleId
-    project_id: ProjectId
-    stage: Stage
-    condition: RuleCondition
-    group_label: str = ''
-    recipe_id: RecipeId
-    order: int = field(validator=validators.ge(0))
-
-    def __attrs_post_init__(self) -> None:
-        """Check that a group label is given exactly for the condition on the group.
-
-        :raises ValueError: If the condition on the group has no label, or another condition has one.
-        """
-        if self.condition is RuleCondition.GROUP and not self.group_label:
-            raise ValueError(GROUP_LABEL_MISSING)
-        if self.condition is not RuleCondition.GROUP and self.group_label:
-            raise ValueError(GROUP_LABEL_UNEXPECTED.format(condition=self.condition.label.lower()))
-
-    def matches(self, page: Page, position: int) -> bool:
-        """Tell whether the page meets the condition of the rule.
-
-        The condition on illustrations matches no page, since the Layout stage that finds them does not exist yet. The
-        condition on plates matches the pictures, which are the plates and frontispieces and the pages whose content
-        type is a picture.
-
-        :param page: The page.
-        :type page: Page
-        :param position: Place of the page in the book counted from 1, which the parity of the page is read from.
-        :type position: int
-        :returns: Whether the rule applies to the page.
-        :rtype: bool
-        """
-        match self.condition:
-            case RuleCondition.ODD:
-                return position % 2 == 1
-            case RuleCondition.EVEN:
-                return position % 2 == 0
-            case RuleCondition.GROUP:
-                return page.group_label == self.group_label
-            case RuleCondition.ILLUSTRATED:
-                return False
-            case RuleCondition.PLATES:
-                return page.is_picture
-            case _:
-                return page.kind in self.condition.kinds
 
 
 @frozen(kw_only=True)
@@ -993,9 +896,10 @@ class PageStepState:
     """What a page keeps for one step of a recipe: its own settings of the step and the manual edit the step reads.
 
     The settings are only the fields of the parameters of the step that the user changed for this page. A run takes
-    every other field from the step of the recipe, so a field changed in the recipe reaches each page that did not
-    change it itself. The values join the parameters the step runs with, which the identifier of a version hashes, so
-    a page whose effective parameters equal those of another finds the same version in the cache.
+    every other field from the odd or the even pages, from the group of the page, or from the step of the recipe, in
+    that order of weakness, so a field changed in one of them reaches each page that did not change it itself. The
+    values join the parameters the step runs with, which the identifier of a version hashes, so a page whose effective
+    parameters equal those of another finds the same version in the cache.
 
     :ivar page_id: Page the state belongs to.
     :ivar stage: Stage of the step.
@@ -1021,17 +925,6 @@ class PageStepState:
     def is_empty(self) -> bool:
         """Whether the state holds neither a setting nor an edit, so there is nothing left to store."""
         return not self.params and self.edit is None
-
-    def apply_to(self, params: MetadataMap) -> dict[str, Any]:
-        """Lay the settings of the page over the parameters of the step of a recipe.
-
-        :param params: Parameters of the step as the recipe, or the form of a preview, gives them.
-        :type params: MetadataMap
-        :returns: The parameters with each field the page changes taken from the page, which are the parameters the
-                  step runs with on this page.
-        :rtype: dict[str, Any]
-        """
-        return {**params, **self.params}
 
     def layer(self, layer: StepLayer) -> dict[str, Any] | None:
         """Return the content of one layer as the history keeps it.
@@ -1085,6 +978,9 @@ class PageStepChange:
     :ivar stage: Stage of the step.
     :ivar step_id: The step whose layer changed.
     :ivar layer: The layer that changed.
+    :ivar scope: Whose settings the layer holds: those of the page itself, or those of the odd pages, the even pages or
+                 a group the page takes values from, which the history of each page they change keeps a change of.
+    :ivar group_label: Label of the group for the scope of a group, and empty for the others.
     :ivar before: Content of the layer before the change, or None when the layer was empty.
     :ivar after: Content of the layer after the change, or None when the change emptied it.
     :ivar source: What made the change.
@@ -1101,6 +997,8 @@ class PageStepChange:
     stage: Stage
     step_id: StepId
     layer: StepLayer
+    scope: ValueScope = ValueScope.PAGES
+    group_label: str = ''
     before: MetadataMap | None = None
     after: MetadataMap | None = None
     source: ChangeSource
@@ -1137,6 +1035,57 @@ class PageStepChange:
             layer=layer,
             before=before.layer(layer),
             after=after.layer(layer),
+            source=source,
+            created_at=after.updated_at,
+        )
+
+    def taken_back(self, moment: datetime, batch_id: ChangeBatchId | None) -> Self:
+        """Describe the undo of this change: the same layer changed from what it left to what it replaced.
+
+        :param moment: When the change is taken back.
+        :type moment: datetime
+        :param batch_id: The batch the undos of one action share, or None for an undo of one change.
+        :type batch_id: ChangeBatchId | None
+        :returns: The undo, with a new identifier, naming this change and with no sequence yet.
+        :rtype: Self
+        """
+        return evolve(
+            self,
+            id=PageStepChangeId(uuid4()),
+            before=self.after,
+            after=self.before,
+            source=ChangeSource.UNDO,
+            batch_id=batch_id,
+            undoes=self.id,
+            created_at=moment,
+            sequence=0,
+        )
+
+    @classmethod
+    def of_values(cls, page_id: PageId, before: StepValues, after: StepValues, source: ChangeSource) -> Self:
+        """Describe a change of the values of a part of the pages, as the history of one of its pages keeps it.
+
+        :param page_id: The page whose history keeps the change, which is one that takes the values.
+        :type page_id: PageId
+        :param before: The values of the part before the change, which are empty for a part that had none.
+        :type before: StepValues
+        :param after: The values after the change, which carry the time of the change.
+        :type after: StepValues
+        :param source: What made the change.
+        :type source: ChangeSource
+        :returns: The change, with a new identifier, no batch, nothing undone and no sequence yet.
+        :rtype: Self
+        """
+        return cls(
+            id=PageStepChangeId(uuid4()),
+            page_id=page_id,
+            stage=after.stage,
+            step_id=after.step_id,
+            layer=StepLayer.SETTINGS,
+            scope=after.scope,
+            group_label=after.group_label,
+            before=dict(before.params) or None,
+            after=dict(after.params) or None,
             source=source,
             created_at=after.updated_at,
         )

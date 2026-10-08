@@ -41,14 +41,6 @@ describe('MarginsPanel', () => {
       `[data-testid="${group}"] input[type="radio"][value="${value}"]`,
     );
 
-  it('says how the box and the border are moved', () => {
-    render({});
-
-    expect(container.querySelector('[data-testid="margins-hint"]')?.textContent).toContain(
-      'outer border',
-    );
-  });
-
   it('shows the alignment the page runs with', () => {
     render({ align_vertical: 'bottom', align_horizontal: 'outer', margins_by: 'inner-outer' });
 

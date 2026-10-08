@@ -46,8 +46,9 @@ function register<K extends EditableKind>(
   }
   function Panel(props: GeometryPanelProps): React.JSX.Element | null {
     const shape = definition.read(props.geometry);
-    return shape === null ? null : (
-      <definition.Panel
+    const { Panel: Content } = definition;
+    return shape === null || Content === undefined ? null : (
+      <Content
         shape={shape}
         processorKey={props.processorKey}
         params={props.params}

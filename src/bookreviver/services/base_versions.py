@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 # The step that gives a page cut from a whole scan its base version while the page split is skipped, and the step that
 # gives a generated blank leaf its base version
 SPLIT_NONE: ProcessorRef = ProcessorRef(key='split.none', version='1')
-PAGES_BLANK: ProcessorRef = ProcessorRef(key='pages.blank', version='1')
+PAGES_BLANK: ProcessorRef = ProcessorRef(key='pages.blank', version='2')
 
 
 class BaseVersions:
@@ -94,9 +94,10 @@ class BaseVersions:
     ) -> PageVersion:
         """Build the pending base version of a generated blank leaf, whose image a job writes.
 
-        A white leaf has the size alone for its parameters, as a leaf had before it could be anything else, so the
-        identifiers of the leaves already stored stay as they are. A leaf of the colour of the paper names the versions
-        of the pages it takes the paper from, which is what makes a leaf made from other pages another version.
+        A white leaf has the size alone for its parameters, as a leaf had before it could be anything else. A leaf of
+        the colour of the paper names the versions of the pages it takes the paper from, which is what makes a leaf made
+        from other pages another version. The version of the processor is part of the identifier too, so a leaf made
+        before the processor measured the paper differently is not found again when its choice is made again.
 
         :param page: The blank page.
         :type page: Page

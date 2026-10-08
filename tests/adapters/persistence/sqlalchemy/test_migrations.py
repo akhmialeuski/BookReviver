@@ -38,7 +38,8 @@ from bookreviver.app.container import build_container
 from bookreviver.app.main import create_app
 from bookreviver.app.providers.database import MIGRATE_COMMAND, MIGRATE_DOWNGRADE_COMMAND
 from bookreviver.app.settings import PersistenceBackend
-from bookreviver.domain.enums import EditorKind, OrderMode, Rendition, ResultMark
+from bookreviver.domain.enums import EditorKind, OrderMode, RecipeKind, Rendition, ResultMark, Stage
+from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.ids import PageVersionId, RecipeId, RecipeProfileId
 from bookreviver.domain.values import Renditions
 from tests.helpers.builders import (
@@ -47,6 +48,7 @@ from tests.helpers.builders import (
     make_page,
     make_page_version,
     make_project,
+    make_recipe,
     make_result_mark_change,
     make_scan,
     make_source,
@@ -141,6 +143,12 @@ INSERT_CHANGE: str = (
     "VALUES (:id, :page_id, 'geometry', :step_id, 'settings', NULL, '{\"method\": \"otsu\"}', 'user', "
     "'2026-01-01 00:00:00', 1)"
 )
+# A change of the history written by a reset of steps, a source that the revision of the values of parts gave up
+INSERT_RESET_CHANGE: str = (
+    'INSERT INTO page_step_changes (id, page_id, stage, step_id, layer, before, after, source, created_at, sequence) '
+    "VALUES (:id, :page_id, 'geometry', :step_id, 'settings', '{\"method\": \"otsu\"}', NULL, 'reset',"
+    " '2026-01-01 00:00:00', 1)"
+)
 # The revision before the one that adds the mark and the comment of a result
 BEFORE_MARKS_REVISION: str = '8cf44472edb6'
 OLD_VERSION_ID: PageVersionId = PageVersionId('0123456789abcdef')
@@ -154,6 +162,31 @@ INSERT_VERSION: str = (
 # The revision before the one that adds the content box editor and takes the frames of Margins away
 BEFORE_CONTENT_BOX_REVISION: str = 'a8b6015ddb1b'
 CONTENT_BOX_REVISION: str = '59387d89514e'
+# The revision that turns the margins of the steps into millimetres, and the one that gives each kind of page a recipe
+MILLIMETRES_REVISION: str = '0a48f30fe1bc'
+KINDS_REVISION: str = '77356245ed16'
+# The revision that adds the values of the steps for the odd pages, the even pages and the groups
+VALUES_REVISION: str = 'b8e258b21279'
+# The kinds of page in the order of the recipes of a stage, with the name the recipe of each takes in a downgrade
+RECIPE_KIND_LABELS: tuple[tuple[str, str], ...] = (
+    ('text', 'Text'),
+    ('color-picture', 'Colour picture'),
+    ('bw-picture', 'Black-and-white picture'),
+    ('blank', 'Blank page'),
+)
+# Rows as the revision before the recipes had a kind wrote them
+INSERT_KIND_RECIPE: str = (
+    'INSERT INTO recipes (id, project_id, stage, name, steps, active, created_at, updated_at) '
+    "VALUES (:id, :project_id, :stage, :name, :steps, :active, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+)
+INSERT_KIND_STAGE: str = (
+    'INSERT INTO page_stages (page_id, stage, recipe_id, state, pinned, updated_at) '
+    "VALUES (:page_id, 'geometry', :recipe_id, 'fresh', 1, '2026-01-01 00:00:00')"
+)
+INSERT_RULE: str = (
+    'INSERT INTO recipe_rules (id, project_id, stage, condition, group_label, recipe_id, "order") '
+    "VALUES (:id, :project_id, 'geometry', 'plates', '', :recipe_id, 0)"
+)
 NORMALIZE: str = 'geometry.normalize'
 FRAME: str = '{"left": 1, "top": 2, "width": 3, "height": 4}'
 # A state with an edit of the given editor and the given settings
@@ -460,12 +493,15 @@ class TestStepIdentityRevision:
         migrations = fx_empty_database.migrations
         await _migrate(fx_empty_database, migrations.upgrade, BEFORE_STEPS_REVISION)
         _, pages = await self._seed(fx_empty_database)
-        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        await _migrate(fx_empty_database, migrations.upgrade, BEFORE_STATES_REVISION)
         async with fx_empty_database.sessions() as session:
-            recipes = {row.name: row.steps for row in (await session.execute(select(RecipeRow))).scalars()}
-            edits = (await session.execute(select(PageStepStateRow))).scalars().all()
+            recipes = {
+                row.name: json.loads(row.steps)
+                for row in (await session.execute(text('SELECT name, steps FROM recipes')))
+            }
+            edits = (await session.execute(text('SELECT page_id, step_id FROM page_edits'))).all()
         step_ids = {name: {step[PROCESSOR]: step['step_id'] for step in steps} for name, steps in recipes.items()}
-        moved = sorted((edit.page_id.bytes, str(edit.step_id)) for edit in edits)
+        moved = sorted((edit.page_id, str(UUID(bytes=edit.step_id))) for edit in edits)
         expect(all(step['applies_to'] == 'all' for steps in recipes.values() for step in steps))
         expect(len({step['step_id'] for steps in recipes.values() for step in steps}) == 3)
         expect(
@@ -492,7 +528,7 @@ class TestStepIdentityRevision:
         migrations = fx_empty_database.migrations
         await _migrate(fx_empty_database, migrations.upgrade, BEFORE_STEPS_REVISION)
         await self._seed(fx_empty_database)
-        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        await _migrate(fx_empty_database, migrations.upgrade, BEFORE_STATES_REVISION)
         await _migrate(fx_empty_database, migrations.downgrade, BEFORE_STEPS_REVISION)
         async with fx_empty_database.sessions() as session:
             keys = (await session.execute(text('SELECT processor_key FROM page_edits'))).scalars().all()
@@ -692,9 +728,9 @@ class TestProfileLinkRevision:
         await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
         async with fx_empty_database.sessions() as session:
-            recipe = (await session.execute(select(RecipeRow))).scalar_one()
+            recipe = (await session.execute(select(RecipeRow).where(RecipeRow.kind == RecipeKind.TEXT))).scalar_one()
             profile = (await session.execute(select(RecipeProfileRow))).scalar_one()
-        expect((recipe.name, recipe.profile_id) == ('Text', None))
+        expect((recipe.kind, recipe.profile_id) == (RecipeKind.TEXT, None))
         expect((profile.name, profile.order) == ('Photographed book', OrderMode.USUAL))
         assert_expectations()
 
@@ -719,8 +755,8 @@ class TestProfileLinkRevision:
             await SqlAlchemyUnitOfWork(session).recipe_profiles.delete(RecipeProfileId(UUID(bytes=profile_id)))
             await session.commit()
         async with fx_empty_database.sessions() as session:
-            row = (await session.execute(select(RecipeRow))).scalar_one()
-        assert (row.name, row.profile_id) == ('Text', None)
+            row = (await session.execute(select(RecipeRow).where(RecipeRow.kind == RecipeKind.TEXT))).scalar_one()
+        assert (row.kind, row.profile_id) == (RecipeKind.TEXT, None)
 
     async def test_downgrade_drops_the_link_and_the_order_and_keeps_the_rows(
         self, fx_empty_database: SqlDatabase
@@ -749,7 +785,10 @@ class TestProfileLinkRevision:
             ).all()
         expect('profile_id' not in recipe_columns)
         expect('order' not in profile_columns)
-        expect(sorted(row[0] for row in names) == ['Photographed book', 'Text'])
+        expect(
+            sorted(row[0] for row in names)
+            == sorted(['Photographed book', *(label for _, label in RECIPE_KIND_LABELS)])
+        )
         assert_expectations()
 
 
@@ -1405,7 +1444,7 @@ class TestMillimetresRevision:
         migrations = fx_empty_database.migrations
         await _migrate(fx_empty_database, migrations.upgrade, CONTENT_BOX_REVISION)
         _page, margins, other = await self._seed(fx_empty_database)
-        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        await _migrate(fx_empty_database, migrations.upgrade, MILLIMETRES_REVISION)
         stored = await self._stored(fx_empty_database)
         expect(stored['recipe'][0]['params'] == self.MILLIMETRES)
         expect(stored['profile'][0]['params'] == self.MILLIMETRES)
@@ -1432,7 +1471,7 @@ class TestMillimetresRevision:
         await _migrate(fx_empty_database, migrations.upgrade, CONTENT_BOX_REVISION)
         await self._seed(fx_empty_database)
         before = await self._stored(fx_empty_database)
-        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        await _migrate(fx_empty_database, migrations.upgrade, MILLIMETRES_REVISION)
         await _migrate(fx_empty_database, migrations.downgrade, CONTENT_BOX_REVISION)
         expect(await self._stored(fx_empty_database) == before)
         assert_expectations()
@@ -1457,8 +1496,245 @@ class TestMillimetresRevision:
                 {'id': uuid4().bytes, 'project_id': project.id.bytes, 'name': 'Text', 'steps': steps, 'active': True},
             )
             await session.commit()
-        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        await _migrate(fx_empty_database, migrations.upgrade, MILLIMETRES_REVISION)
         async with fx_empty_database.sessions() as session:
             [recipe] = (await session.execute(select(RecipeRow.steps))).scalars().all()
         expect(recipe[0]['params'] == {'margin_top': 50.0})
+        assert_expectations()
+
+
+class TestRecipeKindsRevision:
+    """Tests for the revision that gives each kind of page its own recipe and drops the rules, the pins and the conditions."""
+
+    @staticmethod
+    async def _seed(database: SqlDatabase) -> dict[str, bytes]:
+        """Store a book as the revision before left it: an active recipe and a variant that a rule and a pin name.
+
+        The geometry stage has the active recipe Text and the variant Plates, the cleanup stage the active recipe
+        alone. The page ``text`` was processed by the active recipe, the page ``plate`` by the variant, which a rule
+        sends the plates to and which is pinned to the page. Every step has a condition, and so has the one of the profile.
+
+        :param database: Database migrated to the revision before.
+        :type database: SqlDatabase
+        :returns: The identifiers of the rows by name, as bytes.
+        :rtype: dict[str, bytes]
+        """
+        account_id = await commit_account(database)
+        project = make_project(owner_id=account_id)
+        ids = {name: uuid4().bytes for name in ('text', 'plates', 'cleanup', 'profile')}
+        step = {PROCESSOR: DESKEW, 'params': {}, 'enabled': True, 'step_id': str(uuid4()), 'applies_to': 'text'}
+        pages = {name: make_page(project_id=project.id, order_key=name) for name in ('text', 'plate')}
+        async with database.sessions() as session:
+            await SqlAlchemyUnitOfWork(session).projects.add(project)
+            await session.commit()
+            for name, stage, active in (
+                ('text', 'geometry', True),
+                ('plates', 'geometry', False),
+                ('cleanup', 'cleanup', True),
+            ):
+                await session.execute(
+                    text(INSERT_KIND_RECIPE),
+                    {
+                        'id': ids[name],
+                        'project_id': project.id.bytes,
+                        'stage': stage,
+                        'name': name.title(),
+                        'steps': json.dumps([step]),
+                        'active': active,
+                    },
+                )
+            await session.execute(
+                text(INSERT_PROFILE),
+                {'id': ids['profile'], 'account_id': str(account_id), 'name': 'Own', 'steps': json.dumps([step])},
+            )
+            await session.execute(
+                text(INSERT_RULE), {'id': uuid4().bytes, 'project_id': project.id.bytes, 'recipe_id': ids['plates']}
+            )
+            for name, page in pages.items():
+                await session.execute(
+                    text(INSERT_PAGE), {'id': page.id.bytes, 'project_id': project.id.bytes, 'order_key': name}
+                )
+                await session.execute(
+                    text(INSERT_KIND_STAGE),
+                    {'page_id': page.id.bytes, 'recipe_id': ids['text' if name == 'text' else 'plates']},
+                )
+            await session.commit()
+        return {**ids, **{f'page-{name}': page.id.bytes for name, page in pages.items()}}
+
+    async def test_the_active_recipe_becomes_text_and_the_other_kinds_are_copies_of_it(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify each stage gets the four kinds, the text recipe keeps its identifier and steps, and the variant goes.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, MILLIMETRES_REVISION)
+        ids = await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, KINDS_REVISION)
+        async with fx_empty_database.sessions() as session:
+            rows = (
+                await session.execute(text('SELECT id, stage, kind, steps FROM recipes ORDER BY stage, created_at'))
+            ).all()
+        by_stage: dict[str, list[Any]] = {}
+        for row in rows:
+            by_stage.setdefault(row.stage, []).append(row)
+        geometry = by_stage['geometry']
+        steps = [json.loads(row.steps) for row in geometry]
+        expect([row.kind for row in geometry] == [kind for kind, _ in RECIPE_KIND_LABELS])
+        expect([row.kind for row in by_stage['cleanup']] == [kind for kind, _ in RECIPE_KIND_LABELS])
+        expect(ids['plates'] not in {row.id for row in rows})
+        expect(geometry[0].id == ids['text'])
+        expect(all(PROCESSOR in step and 'applies_to' not in step for kind_steps in steps for step in kind_steps))
+        expect(len({kind_steps[0]['step_id'] for kind_steps in steps}) == 1)
+        assert_expectations()
+
+    async def test_the_pages_of_a_deleted_variant_lose_the_link_to_it_and_go_stale(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify a page of the active recipe is untouched, and a page of the variant has no recipe and is stale.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, MILLIMETRES_REVISION)
+        ids = await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, KINDS_REVISION)
+        async with fx_empty_database.sessions() as session:
+            rows = (await session.execute(text('SELECT page_id, recipe_id, state FROM page_stages'))).all()
+        stored = {row.page_id: (row.recipe_id, row.state) for row in rows}
+        expect(stored[ids['page-text']] == (ids['text'], 'fresh'))
+        expect(stored[ids['page-plate']] == (None, 'stale'))
+        assert_expectations()
+
+    async def test_the_conditions_of_the_profiles_the_rules_and_the_pins_are_dropped(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify no step of a profile keeps its condition, and the table of the rules and the column of the pins go.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, MILLIMETRES_REVISION)
+        await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, KINDS_REVISION)
+        async with fx_empty_database.engine.connect() as connection:
+            tables = await connection.run_sync(lambda sync: inspect(sync).get_table_names())
+            stage_columns = await connection.run_sync(
+                lambda sync: {column['name'] for column in inspect(sync).get_columns('page_stages')}
+            )
+            recipe_columns = await connection.run_sync(
+                lambda sync: {column['name'] for column in inspect(sync).get_columns('recipes')}
+            )
+            profile_steps = json.loads(
+                (await connection.execute(text('SELECT steps FROM recipe_profiles'))).scalar_one()
+            )
+        expect('recipe_rules' not in tables)
+        expect('pinned' not in stage_columns)
+        expect({'kind'} <= recipe_columns and not {'name', 'active'} & recipe_columns)
+        expect(all('applies_to' not in step for step in profile_steps))
+        assert_expectations()
+
+    async def test_two_recipes_of_a_kind_in_a_stage_are_refused(self, fx_empty_database: SqlDatabase) -> None:
+        """Verify the database keeps the one recipe for each kind of a stage.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        project = make_project(owner_id=await commit_account(fx_empty_database))
+        async with fx_empty_database.sessions() as session:
+            uow = SqlAlchemyUnitOfWork(session)
+            await uow.projects.add(project)
+            await uow.recipes.add(make_recipe(project_id=project.id))
+            await uow.commit()
+            with pytest.raises(ConflictError):
+                await uow.recipes.add(make_recipe(project_id=project.id, minutes=1))
+
+    async def test_a_downgrade_makes_the_text_recipe_active_and_names_the_others_by_their_kind(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify the recipe of text pages is the active one of its stage and the others are variants with a label.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, MILLIMETRES_REVISION)
+        await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, KINDS_REVISION)
+        await _migrate(fx_empty_database, migrations.downgrade, MILLIMETRES_REVISION)
+        async with fx_empty_database.engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    text("SELECT name, active FROM recipes WHERE stage = 'geometry' ORDER BY created_at")
+                )
+            ).all()
+            tables = await connection.run_sync(lambda sync: inspect(sync).get_table_names())
+            stage_columns = await connection.run_sync(
+                lambda sync: {column['name'] for column in inspect(sync).get_columns('page_stages')}
+            )
+        expect(
+            [(row.name, bool(row.active)) for row in rows]
+            == [(label, kind == 'text') for kind, label in RECIPE_KIND_LABELS]
+        )
+        expect('recipe_rules' in tables and 'pinned' in stage_columns)
+        assert_expectations()
+
+
+class TestStepValuesRevision:
+    """Tests for the revision that adds the values of the steps for the odd pages, the even pages and the groups."""
+
+    async def test_old_changes_are_for_the_pages_themselves_and_a_reset_becomes_the_user(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify a change written before names the pages themselves, a reset change is the user's, and the table works.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, KINDS_REVISION)
+        project = make_project(owner_id=await commit_account(fx_empty_database))
+        page = make_page(project_id=project.id)
+        async with fx_empty_database.sessions() as session:
+            await SqlAlchemyUnitOfWork(session).projects.add(project)
+            await session.commit()
+            await session.execute(
+                text(INSERT_PAGE), {'id': page.id.bytes, 'project_id': project.id.bytes, 'order_key': page.order_key}
+            )
+            await session.execute(
+                text(INSERT_RESET_CHANGE), {'id': uuid4().bytes, 'page_id': page.id.bytes, 'step_id': uuid4().bytes}
+            )
+            await session.commit()
+        await _migrate(fx_empty_database, migrations.upgrade, VALUES_REVISION)
+        async with fx_empty_database.sessions() as session:
+            change = (await session.execute(text('SELECT scope, group_label, source FROM page_step_changes'))).one()
+            stored = await SqlAlchemyUnitOfWork(session).step_values.list_for_stage(project.id, Stage.GEOMETRY)
+        expect(tuple(change) == ('pages', '', 'user'))
+        expect(stored == [])
+        assert_expectations()
+
+    async def test_downgrade_drops_the_table_and_the_columns_and_keeps_the_changes(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify the values of the parts of the pages and the columns of the history go, and the changes stay.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, VALUES_REVISION)
+        await _migrate(fx_empty_database, migrations.downgrade, KINDS_REVISION)
+        async with fx_empty_database.engine.connect() as connection:
+            tables = await connection.run_sync(lambda sync: inspect(sync).get_table_names())
+            columns = await connection.run_sync(
+                lambda sync: [column['name'] for column in inspect(sync).get_columns('page_step_changes')]
+            )
+        expect('step_values' not in tables and 'page_step_changes' in tables)
+        expect('scope' not in columns and 'group_label' not in columns and 'batch_id' in columns)
         assert_expectations()

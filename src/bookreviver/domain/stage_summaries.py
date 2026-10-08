@@ -15,11 +15,19 @@ from typing import TYPE_CHECKING, Self
 
 from attrs import evolve, field, frozen, validators
 
-from bookreviver.domain.enums import FigureState, PageStageStatus, ResultMark, StageStatus, StepFlag, VersionData
+from bookreviver.domain.enums import (
+    FigureState,
+    PageStageStatus,
+    RecipeKind,
+    ResultMark,
+    StageStatus,
+    StepFlag,
+    VersionData,
+)
 from bookreviver.domain.step_measures import departs, read_measure
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
     from bookreviver.domain.entities import PageVersion, Recipe
     from bookreviver.domain.enums import ReviewReason, Stage, StepMeasure
@@ -71,17 +79,17 @@ class StepTally:
 
 
 @frozen(kw_only=True)
-class VariantTally:
-    """The pages of one stage of one book that a recipe processed, as a repository counts them.
+class KindRecipe:
+    """The recipe of one kind of a stage of a book, with the pages of the book that are of the kind.
 
-    :ivar stage: The stage.
-    :ivar recipe_id: Recipe that processed the pages.
-    :ivar pages: Pages with an image whose record of the stage names the recipe.
+    :ivar kind: The kind of page the recipe processes.
+    :ivar recipe_id: The recipe.
+    :ivar pages: Pages with an image that are of the kind, which are the pages the recipe processes.
     """
 
-    stage: Stage
+    kind: RecipeKind
     recipe_id: RecipeId
-    pages: int = field(validator=validators.ge(1))
+    pages: int = field(validator=validators.ge(0))
 
 
 @frozen(kw_only=True)
@@ -101,10 +109,9 @@ class StageSummary:
     :ivar check: Pages the strip lists under Check: stale, failed or marked for review, each counted once.
     :ivar partial: Pages, not failed, that were run through some of the steps of their recipe only, so the stage after
                    this one cannot read them yet.
-    :ivar active_recipe_id: The recipe the stage runs by, or None when the stage has none yet, since the default recipes
-                            are made the first time a stage is asked for.
-    :ivar variants: How many pages each recipe of the stage processed, the recipe with the most pages first. A recipe
-                    that processed none is left out, and so is the list of a book list, which does not read it.
+    :ivar recipes: The recipe of each kind of page the stage has, in the order of the kinds, each with the number of
+                   pages of the kind. Empty while the stage has none yet, since the default recipes are made the first
+                   time a stage is asked for, and in the list of books, which does not read them.
     :ivar stopped: How many pages stopped at each step, the first step first. The list of a book list leaves it out.
     """
 
@@ -119,8 +126,7 @@ class StageSummary:
     review: int = field(default=0, validator=validators.ge(0))
     check: int = field(default=0, validator=validators.ge(0))
     partial: int = field(default=0, validator=validators.ge(0))
-    active_recipe_id: RecipeId | None = None
-    variants: tuple[VariantTally, ...] = ()
+    recipes: tuple[KindRecipe, ...] = ()
     stopped: tuple[StepTally, ...] = ()
 
     @classmethod
@@ -131,7 +137,6 @@ class StageSummary:
         available: bool,
         pages: int,
         tally: StageTally | None,
-        active_recipe_id: RecipeId | None,
     ) -> Self:
         """Sum a stage from the tally of its records.
 
@@ -143,13 +148,11 @@ class StageSummary:
         :type pages: int
         :param tally: Counts of the records of the stage, or None when no page has one.
         :type tally: StageTally | None
-        :param active_recipe_id: The active recipe of the stage, or None.
-        :type active_recipe_id: RecipeId | None
         :returns: The summary. A stage done by hand has no counts, whatever the tally says.
         :rtype: Self
         """
         if stage.manual:
-            return cls(stage=stage, available=available, manual=True, pages=pages, active_recipe_id=active_recipe_id)
+            return cls(stage=stage, available=available, manual=True, pages=pages)
         fresh, stale, failed, review, check, partial = (
             (0, 0, 0, 0, 0, 0)
             if tally is None
@@ -167,20 +170,29 @@ class StageSummary:
             review=review,
             check=check,
             partial=partial,
-            active_recipe_id=active_recipe_id,
         )
 
-    def with_variants(self, variants: Sequence[VariantTally]) -> Self:
-        """Add how many pages each recipe of the stage processed, the recipe with the most pages first.
+    def with_recipes(self, recipes: Sequence[Recipe], pages: Mapping[RecipeKind, int]) -> Self:
+        """Add the recipe of each kind of page the stage has, with the number of pages of the kind.
 
-        :param variants: The counts of the recipes of this stage.
-        :type variants: Sequence[VariantTally]
-        :returns: The summary with its variants. A stage done by hand has none, whatever the counts say.
+        :param recipes: The recipes of this stage.
+        :type recipes: Sequence[Recipe]
+        :param pages: How many pages with an image each kind has in the book, none for a kind with no page.
+        :type pages: Mapping[RecipeKind, int]
+        :returns: The summary with its recipes in the order of the kinds. A stage done by hand has none.
         :rtype: Self
         """
         if self.manual:
             return self
-        return evolve(self, variants=tuple(sorted(variants, key=lambda one: (-one.pages, str(one.recipe_id)))))
+        by_kind = {recipe.kind: recipe for recipe in recipes}
+        return evolve(
+            self,
+            recipes=tuple(
+                KindRecipe(kind=kind, recipe_id=by_kind[kind].id, pages=pages.get(kind, 0))
+                for kind in RecipeKind
+                if kind in by_kind
+            ),
+        )
 
     def with_stopped(self, stopped: Sequence[StepTally]) -> Self:
         """Add how many pages stopped at each step, the first step first.
@@ -355,7 +367,7 @@ class StepRow:
         :rtype: Self
         """
         read, made, preceding = cls.place(step_id, recipe, chain, before)
-        skipped = made is not None and made.data.get(VersionData.SKIPPED_BY_CONDITION) is True
+        skipped = made is not None and made.data.get(VersionData.SKIPPED_LEAF) is True
         if skipped:
             state = FigureState.SKIPPED
         elif edited:
@@ -393,8 +405,8 @@ class StepRow:
         :type measure: StepMeasure
         :param median: The median of the book for the measure, or None when the book is too small to compare with.
         :type median: Reading | None
-        :returns: The row, marked unusual when the page departs. A page the step left as it was, skipped by its
-                  condition or not run through it never does, since the step found nothing on it.
+        :returns: The row, marked unusual when the page departs. A page the step left as it was, skipped as a leaf
+                  or not run through it never does, since the step found nothing on it.
         :rtype: Self
         """
         if median is None or self.version is None:
@@ -410,7 +422,7 @@ class StageRow:
     :ivar page_id: The page.
     :ivar status: The state of the stage on the page, or that the stage has not run on it.
     :ivar recipe_id: Recipe the page was processed by, or None.
-    :ivar pinned: Whether the recipe is pinned to the page.
+    :ivar kind: The kind of the page, by which the recipe that processes it in the stage is chosen.
     :ivar head_version: The current version of the stage on the page, or None when there is none.
     :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
                         that is on, or None.
@@ -427,7 +439,7 @@ class StageRow:
     page_id: PageId
     status: PageStageStatus = PageStageStatus.NOT_RUN
     recipe_id: RecipeId | None = None
-    pinned: bool = False
+    kind: RecipeKind
     head_version: PageVersion | None = None
     through_step: int | None = None
     review_processor: str | None = None

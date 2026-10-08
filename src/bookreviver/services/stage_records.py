@@ -49,7 +49,6 @@ class StageRecords:
         *,
         head_version_id: PageVersionId,
         recipe_id: RecipeId | None,
-        pin: bool | None = None,
         through_step: int | None = None,
     ) -> Sequence[PageStage]:
         """Make a version the current one of a stage, and mark the later stages of the page stale if it changed.
@@ -60,9 +59,6 @@ class StageRecords:
         :type head_version_id: PageVersionId
         :param recipe_id: Recipe the page was processed by, or None for a version no recipe made.
         :type recipe_id: RecipeId | None
-        :param pin: Whether the recipe is pinned to the page, or None to keep the pin the record has, which holds only
-                    while the record names the same recipe.
-        :type pin: bool | None
         :param through_step: Index in the recipe of the step the version is the result of when the run stopped before
                              the last step that is on, or None when it went through all of them.
         :type through_step: int | None
@@ -76,7 +72,6 @@ class StageRecords:
             recipe_id=recipe_id,
             head_version_id=head_version_id,
             state=StageState.FRESH,
-            pinned=self._pinned(previous, recipe_id, pin=pin),
             through_step=through_step,
             updated_at=self._clock.now(),
         )
@@ -122,10 +117,10 @@ class StageRecords:
     async def mark_content_stale(self, page_id: PageId) -> list[PageStage]:
         """Mark every stage of a page after the page order stale, because what the page shows changed.
 
-        The condition of a step reads what a page shows, so a page that is text now and was a picture is processed by
-        other steps than the ones that made its current versions.
+        A page is processed by the recipe of its kind, so a page whose kind changed is processed by other steps than the
+        ones that made its current versions.
 
-        :param page_id: Page whose content type changed.
+        :param page_id: Page whose kind changed.
         :type page_id: PageId
         :returns: The records that became stale, none for a page that has not been through such a stage or whose stages
                   are stale or failed already.
@@ -138,9 +133,9 @@ class StageRecords:
         return stale
 
     async def mark_recipe_stale(self, recipe_id: RecipeId) -> list[PageStage]:
-        """Mark the stage of every page a recipe processed stale, because the recipe changed or stopped being active.
+        """Mark the stage of every page a recipe processed stale, because the recipe changed.
 
-        :param recipe_id: Recipe that changed or stopped being active.
+        :param recipe_id: Recipe that changed.
         :type recipe_id: RecipeId
         :returns: The records that became stale.
         :rtype: list[PageStage]
@@ -150,9 +145,7 @@ class StageRecords:
             stale.extend(await self.mark_stale(record.page_id, record.stage))
         return stale
 
-    async def mark_failed(
-        self, page_id: PageId, stage: Stage, *, recipe_id: RecipeId | None, pin: bool | None = None
-    ) -> PageStage:
+    async def mark_failed(self, page_id: PageId, stage: Stage, *, recipe_id: RecipeId | None) -> PageStage:
         """Record that a stage failed on a page, keeping the version that was current before.
 
         :param page_id: Page whose stage failed.
@@ -161,9 +154,6 @@ class StageRecords:
         :type stage: Stage
         :param recipe_id: Recipe that failed.
         :type recipe_id: RecipeId | None
-        :param pin: Whether the recipe is pinned to the page, or None to keep the pin the record has, which holds only
-                    while the record names the same recipe.
-        :type pin: bool | None
         :returns: The record in its new state.
         :rtype: PageStage
         """
@@ -174,52 +164,11 @@ class StageRecords:
             recipe_id=recipe_id,
             head_version_id=None if previous is None else previous.head_version_id,
             state=StageState.FAILED,
-            pinned=self._pinned(previous, recipe_id, pin=pin),
             through_step=None if previous is None else previous.through_step,
             updated_at=self._clock.now(),
         )
         await self._uow.page_stages.save(record)
         return record
-
-    async def unpin(self, page_id: PageId, stage: Stage) -> list[PageStage]:
-        """Take the pin off a stage of a page, so the next run without a recipe chooses the recipe by the rules.
-
-        The result stays, and is marked stale when it is up to date, since the rules may choose another recipe.
-
-        :param page_id: Page whose stage is unpinned.
-        :type page_id: PageId
-        :param stage: The stage.
-        :type stage: Stage
-        :returns: The record if it changed, and none for a stage that has no record or is not pinned.
-        :rtype: list[PageStage]
-        """
-        record = await self._uow.page_stages.find(PageStageKey(page_id, stage))
-        if record is None or not record.pinned:
-            return []
-        state = StageState.STALE if record.state is StageState.FRESH else record.state
-        unpinned = evolve(record, pinned=False, state=state, updated_at=self._clock.now())
-        await self._uow.page_stages.save(unpinned)
-        return [unpinned]
-
-    @staticmethod
-    def _pinned(previous: PageStage | None, recipe_id: RecipeId | None, *, pin: bool | None) -> bool:
-        """Decide whether the record being written pins its recipe.
-
-        :param previous: The record before, or None.
-        :type previous: PageStage | None
-        :param recipe_id: Recipe the new record names.
-        :type recipe_id: RecipeId | None
-        :param pin: What the caller says, or None to keep the pin of the record before.
-        :type pin: bool | None
-        :returns: Whether the new record is pinned. A pin holds a recipe, and a pin that was made on another recipe is
-                  no longer there.
-        :rtype: bool
-        """
-        if recipe_id is None:
-            return False
-        if pin is not None:
-            return pin
-        return previous is not None and previous.pinned and previous.recipe_id == recipe_id
 
     async def announce(self, project_id: ProjectId, records: Sequence[PageStage]) -> None:
         """Publish one event for each record that changed, after the transaction that wrote them committed.

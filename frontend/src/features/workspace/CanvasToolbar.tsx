@@ -7,6 +7,7 @@ import {
   GitCompareIcon,
   Grid3x3Icon,
   MaximizeIcon,
+  UndoIcon,
   ZoomInIcon,
   ZoomOutIcon,
 } from 'lucide-react';
@@ -27,7 +28,8 @@ import {
  * and the place of the before-and-after mode.
  *
  * A stage whose steps are laid out against a grid adds the "Grid" button, which shows the grid over the page and hides it
- * again, as the key G does.
+ * again, as the key G does. The actions on the open page stand next to it: the button of what the page shows, which the
+ * caller draws, and "Auto", which brings back the shape the step found while the page has one set by hand.
  *
  * The compare button is drawn and disabled for a stage that does not process pages. A stage that does gives it the mode
  * and the way to change it, and it becomes a menu of the ways to compare.
@@ -51,6 +53,8 @@ export function CanvasToolbar({
   onZoomIn,
   onZoomOut,
   grid,
+  contentType,
+  auto,
   compare,
 }: {
   /** The label and place of the open page, such as `p. 14 · 18 of 126`. */
@@ -68,6 +72,15 @@ export function CanvasToolbar({
   grid?: {
     on: boolean;
     onToggle: () => void;
+  };
+  /** The button of what the open page shows, with its menu, or nothing for a stage that has none. */
+  contentType?: React.ReactNode;
+  /**
+   * "Auto" for the shape of the open step on the open page, or nothing while the step has no shape set by hand there.
+   */
+  auto?: {
+    busy: boolean;
+    onClick: () => void;
   };
   /**
    * The before-and-after control of a stage that processes pages. Absent for a stage that does not, which draws the
@@ -166,6 +179,20 @@ export function CanvasToolbar({
         >
           <Grid3x3Icon />
           {labels.grid}
+        </Button>
+      )}
+      {contentType}
+      {auto === undefined ? null : (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={auto.busy}
+          title={MESSAGES.editors.autoTitle}
+          data-testid="canvas-auto"
+          onClick={auto.onClick}
+        >
+          <UndoIcon />
+          {MESSAGES.editors.auto}
         </Button>
       )}
       {compare === undefined ? (

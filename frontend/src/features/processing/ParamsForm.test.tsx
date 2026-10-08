@@ -6,6 +6,7 @@ import {
   deskew,
   deskewMethods,
   margins,
+  processor,
   spread,
   whole,
 } from '@/features/processing/fixtures';
@@ -232,6 +233,47 @@ describe('ParamsForm', () => {
 
       const thumbs = [...container.querySelectorAll('[role="slider"]')];
       expect(thumbs.map((thumb) => thumb.getAttribute('aria-label'))).toContain('Stroke thickness');
+    });
+  });
+
+  // A form hands back its defaults for a field the parameters lack, so the server lists a recipe with every field
+  describe('on opening', () => {
+    // The parameter model of `geometry.crop`, which refuses names it does not know
+    const CROP = processor('geometry.crop', {
+      parameters: {
+        $defs: {
+          Binarization: { enum: ['otsu', 'adaptive'], title: 'Binarization', type: 'string' },
+        },
+        additionalProperties: false,
+        properties: {
+          method: { const: 'ink-blocks', default: 'ink-blocks', title: 'Method', type: 'string' },
+          binarization: { $ref: '#/$defs/Binarization', default: 'otsu', title: 'Black and white' },
+          noise_min_area: {
+            default: 4,
+            maximum: 10000,
+            minimum: 0,
+            title: 'Smallest speck',
+            type: 'integer',
+          },
+        },
+        title: 'CropParams',
+        type: 'object',
+      },
+    });
+    const SAVED = { method: 'ink-blocks', binarization: 'otsu', noise_min_area: 4 };
+
+    it.each([
+      ['whole parameters', CROP, SAVED],
+      ['a parameter the schema no longer has', CROP, { ...SAVED, margin_percent: 8 }],
+      [
+        'whole parameters of a step with methods',
+        binarize(),
+        { mode: 'bw', thickness: 0, smooth: false, method: 'su', window: 31 },
+      ],
+    ])('hands nothing back for %s', (_name, processorOf, params) => {
+      const onChange = render(processorOf, params);
+
+      expect(onChange).not.toHaveBeenCalled();
     });
   });
 

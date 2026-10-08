@@ -118,7 +118,8 @@ export interface EditorDefinition<S> {
    */
   mask?: (shape: S, size: Size) => Promise<Blob>;
   Canvas: ComponentType<CanvasProps<S>>;
-  Panel: ComponentType<PanelProps<S>>;
+  /** The part in the panel, or absent for an editor that has nothing there beyond the shape on the canvas. */
+  Panel?: ComponentType<PanelProps<S>>;
 }
 
 /** What the canvas part of a registered editor gets: the geometry of the edit in place of a typed shape. */

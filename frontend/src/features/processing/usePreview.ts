@@ -19,6 +19,7 @@ import { usePreviewStep } from '@/features/processing/queries';
 import { isActiveJob } from '@/features/projects/events';
 import { type VersionReady, versionReadyKey } from '@/features/projects/queries';
 import { useActiveJobs } from '@/features/workspace/queries';
+import { useDebouncedCallback } from '@/shared/hooks/useDebouncedCallback';
 import { describeError, ProblemError } from '@/shared/http/problem';
 import { HttpStatus } from '@/shared/http/status';
 
@@ -114,15 +115,14 @@ function reduce(state: State, action: Action): State {
 function useSettled(request: PreviewRequest | null, key: string | null): PreviewRequest | null {
   // Nothing has stood still yet when the screen is first drawn
   const [settled, setSettled] = useState<PreviewRequest | null>(null);
-  const latest = useRef(request);
-  latest.current = request;
+  const settle = useDebouncedCallback(
+    (settledKey: string | null) => setSettled(settledKey === null ? null : request),
+    PREVIEW_DELAY_MS,
+    { flushOnUnmount: false },
+  );
   useEffect(() => {
-    const timer = setTimeout(
-      () => setSettled(key === null ? null : latest.current),
-      PREVIEW_DELAY_MS,
-    );
-    return () => clearTimeout(timer);
-  }, [key]);
+    settle(key);
+  }, [key, settle]);
   return settled;
 }
 

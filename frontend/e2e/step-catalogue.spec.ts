@@ -15,8 +15,7 @@ import {
 /**
  * The catalogue of steps and the window of the gear in the step bar, and the carrying of a shape over to other pages.
  *
- * The plus button of the bar lists the processors of Geometry and adds the one chosen to the recipe, so a second Deskew stands in the bar
- * with its own condition. The gear opens the steps of the recipe as a list, where a step is removed. A shape set by hand
+ * The plus button of the bar lists the processors of Geometry and adds the one chosen to the recipe, so a second Deskew stands in the bar. The gear opens the steps of the recipe as a list, where a step is removed. A shape set by hand
  * on the first page goes to the following pages in one action, and one undo takes it back from all of them. Exact values
  * come from the field and never from a drag, so no screen distance depends on the size of the page on the canvas.
  */
@@ -80,41 +79,22 @@ test('a step is added from the catalogue twice, removed in the window of the gea
     expect(await stepIdsOf(page, 'geometry', 'geometry.deskew')).toHaveLength(2);
   });
 
-  await test.step('the second Deskew takes its own condition and the first keeps its own', async () => {
-    await page.getByTestId('step-panel-condition').selectOption('pictures');
-    await page.getByTestId('recipe-save').click();
-    await expect(deskews.nth(1).getByTestId('bar-step-mark')).toHaveAttribute(
-      'data-mark',
-      'picture',
-    );
-    // The Deskew of the first recipe straightens the pages of text only, which it keeps
-    await expect(deskews.nth(0).getByTestId('bar-step-mark')).toHaveAttribute('data-mark', 'text');
-    await snap(page, 'second-deskew-for-pictures');
-  });
-
   await test.step('the gear opens the steps of the recipe as a list, with the way to keep them as a profile', async () => {
     await page.getByTestId('steps-gear').click();
     await expect(windowOfSteps).toBeVisible();
-    await expect(windowOfSteps.getByTestId('window-step')).toHaveCount(stepsBefore + 1);
-    await expect(
-      windowOfSteps
-        .getByTestId('window-step')
-        .filter({ hasText: 'Deskew' })
-        .nth(1)
-        .getByTestId('window-step-condition'),
-    ).toHaveValue('pictures');
+    await expect(windowOfSteps.getByTestId('recipe-step')).toHaveCount(stepsBefore + 1);
     await expect(windowOfSteps.getByRole('button', { name: 'Save as profile' })).toBeVisible();
     await snap(page, 'steps-window');
   });
 
   await test.step('removing the second Deskew in the window and saving leaves the first one', async () => {
     await windowOfSteps
-      .getByTestId('window-step')
+      .getByTestId('recipe-step')
       .filter({ hasText: 'Deskew' })
       .nth(1)
-      .getByTestId('window-step-remove')
+      .getByTestId('step-remove')
       .click();
-    await expect(windowOfSteps.getByTestId('window-step')).toHaveCount(stepsBefore);
+    await expect(windowOfSteps.getByTestId('recipe-step')).toHaveCount(stepsBefore);
     await windowOfSteps.getByTestId('recipe-save').click();
     await expect(windowOfSteps.getByTestId('recipe-save-bar')).toHaveCount(0);
     await page.keyboard.press('Escape');

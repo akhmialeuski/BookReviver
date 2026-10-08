@@ -1,18 +1,18 @@
-"""The settings a page has for a step of a recipe: one field of its parameters that only this page uses.
+"""The values a setting of a step has for a part of the pages, set and taken back one field at a time.
 
-A field is set or taken back one at a time. Setting or taking back a field marks the stage of the page stale and
-processes nothing, and the value is checked against the parameters of the processor of the step before the route
-answers, so a field the processor does not have, or a value out of its range, is a 422. The value a page has for a
-field may be carried over to other pages in one batch, which one undo takes back from every page. The settings and the
-manual edits of the steps of a stage are taken away from one page or from every page by a reset, which is one batch as
-well.
+The part is the open page, the pages the user selected, the odd pages, the even pages, or a group. Setting or taking
+back a value marks the stage of each page whose parameters change stale, and processes nothing, and the value is checked
+against the parameters of the processor of the step on each page it reaches before the route answers, so a field the
+processor does not have, or a value out of its range, is a 422. A page takes each field from its own value, else from
+the value of its group, else from the value of the odd or the even pages, else from the step of the recipe. The changes
+are one batch of the history, so one undo takes the value back from every page it reached.
 """
 
 from dataclasses import dataclass
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
-from fastapi import APIRouter, Depends, Path, status
+from fastapi import APIRouter, Depends, Path, Query
 from fastapi_pagination import Page, Params
 
 from bookreviver.api.auth import ActorDep
@@ -20,21 +20,19 @@ from bookreviver.api.pagination import Pager
 from bookreviver.api.routers.processing import StagePath
 from bookreviver.api.schemas.page_history import PageStepChangeSchema
 from bookreviver.api.schemas.page_settings import (
-    CarryForm,
-    CarryOverSchema,
-    PageSettingForm,
     PageStepSettingsSchema,
-    ResetBody,
-    ResetImpactSchema,
-    StepResetSchema,
+    ValueChangesSchema,
+    ValueForm,
+    ValueTargetModel,
 )
-from bookreviver.domain.entities import PageStepState
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import PageId, ProjectId, StepId
-from bookreviver.domain.values import PageStepKey, Slice
-from bookreviver.services.page_carry import CarryOverService
+from bookreviver.domain.step_values import PageStepSettings, ValueField
+from bookreviver.domain.values import Slice
 from bookreviver.services.page_settings import PageSettingsService
-from bookreviver.services.step_resets import StepResetService
+
+if TYPE_CHECKING:
+    from bookreviver.domain.step_values import ValueTarget
 
 router = APIRouter(prefix='/projects', tags=['page-settings'], route_class=DishkaRoute)
 
@@ -50,12 +48,12 @@ class SettingsPath:
 
     project_id: Annotated[ProjectId, Path(description='Identifier of the project')]
     page_id: Annotated[PageId, Path(description='Identifier of the page')]
-    stage: Annotated[Stage, Path(description='Stage of the step the settings are for')]
+    stage: Annotated[Stage, Path(description='Stage of the steps the settings are for')]
 
 
 @dataclass(frozen=True)
-class FieldPath(SettingsPath):
-    """The identifiers in the address of one field of one step of a recipe on one page.
+class FieldPath(StagePath):
+    """The identifiers in the address of one field of one step of a recipe.
 
     :ivar step_id: Identifier of the step.
     :ivar name: Name of the field in the parameters of the step.
@@ -64,10 +62,15 @@ class FieldPath(SettingsPath):
     step_id: Annotated[StepId, Path(description='Identifier of the step of a recipe')]
     name: Annotated[str, Path(description='Name of the field in the parameters of the step', min_length=1)]
 
-    @property
-    def key(self) -> PageStepKey:
-        """The key the state of the step on the page is stored under."""
-        return PageStepKey(self.page_id, self.stage, self.step_id)
+    def of(self, target: ValueTarget) -> ValueField:
+        """Name the field together with the pages a value of it is for.
+
+        :param target: The pages the value is for.
+        :type target: ValueTarget
+        :returns: The field the service works on.
+        :rtype: ValueField
+        """
+        return ValueField(stage=self.stage, step_id=self.step_id, name=self.name, target=target)
 
 
 @router.get('/{project_id}/pages/{page_id}/settings/{stage}')
@@ -77,7 +80,10 @@ async def list_settings(
     actor: ActorDep,
     settings: FromDishka[PageSettingsService],
 ) -> Page[PageStepSettingsSchema]:
-    """List the steps of one stage of a page that have settings of the page, with the fields the page changes.
+    """List the steps of one stage of a page that have values of the page or of a part of the pages.
+
+    Each step comes with the fields the page changes for itself, with the values of the odd pages, the even pages and
+    the groups for the step, and with the parameters the step runs with on the page.
 
     \N{FORM FEED}
     :param address: Identifiers of the project, the page and the stage.
@@ -92,161 +98,79 @@ async def list_settings(
     :rtype: Page[PageStepSettingsSchema]
     """
 
-    def to_schema(state: PageStepState) -> PageStepSettingsSchema:
+    def to_schema(entry: PageStepSettings) -> PageStepSettingsSchema:
         """Build the schema of the settings of one step.
 
-        :param state: The state of the step on the page.
-        :type state: PageStepState
+        :param entry: What the page runs the step with.
+        :type entry: PageStepSettings
         :returns: The schema.
         :rtype: PageStepSettingsSchema
         """
-        return PageStepSettingsSchema.model_validate(state)
+        return PageStepSettingsSchema.model_validate(entry)
 
-    pager = Pager[PageStepState, PageStepSettingsSchema](params, to_schema)
+    pager = Pager[PageStepSettings, PageStepSettingsSchema](params, to_schema)
     found = await settings.list(actor, address.project_id, address.page_id, address.stage)
     window = found[pager.request.offset : pager.request.offset + pager.request.limit]
     return pager.page(Slice(items=window, total=len(found)))
 
 
-@router.put('/{project_id}/pages/{page_id}/settings/{stage}/{step_id}/{name}')
-async def put_setting(
+@router.put('/{project_id}/stages/{stage}/steps/{step_id}/values/{name}')
+async def put_value(
     address: Annotated[FieldPath, Depends()],
-    form: PageSettingForm,
+    form: ValueForm,
     actor: ActorDep,
     settings: FromDishka[PageSettingsService],
-) -> PageStepSettingsSchema:
-    """Set the value one page uses for one field of a step, and mark the stage of the page stale.
+) -> ValueChangesSchema:
+    """Set the value pages use for one field of a step, and mark the stage of each page whose parameters change stale.
 
-    The other pages keep the value of the step of the recipe, and so does this page for every other field. The answer is
-    422 for a field the processor of the step does not have and for a value out of its range, and nothing is processed
-    by this request.
+    The pages are the open page or the pages the user selected, the odd pages, the even pages, or the pages of a group.
+    The other pages keep what they had, and so do these pages for every other field. A page that takes the field from
+    a stronger part, which is its own value or its group, is left as it is. The answer is 422 for a field the processor
+    of the step does not have and for a value out of its range, and 404 for a step no recipe of the stage has, and
+    nothing is processed by this request.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page, the stage, the step and the field.
+    :param address: Identifiers of the project, the stage, the step and the field.
     :type address: FieldPath
-    :param form: The value.
-    :type form: PageSettingForm
+    :param form: The pages and the value.
+    :type form: ValueForm
     :param actor: The signed-in account.
     :type actor: Actor
     :param settings: Page settings service of the request.
     :type settings: PageSettingsService
-    :returns: The settings of the step on the page, with the field set.
-    :rtype: PageStepSettingsSchema
+    :returns: The batch and the changes written, one on each page whose parameters change.
+    :rtype: ValueChangesSchema
     """
-    state = await settings.change(actor, address.project_id, address.key, address.name, form.value)
-    return PageStepSettingsSchema.model_validate(state)
+    done = await settings.change(actor, address.project_id, address.of(form.to_target()), form.value)
+    return ValueChangesSchema(
+        batch_id=done.batch_id, changes=[PageStepChangeSchema.model_validate(change) for change in done.changes]
+    )
 
 
-@router.delete(
-    '/{project_id}/pages/{page_id}/settings/{stage}/{step_id}/{name}', status_code=status.HTTP_204_NO_CONTENT
-)
-async def delete_setting(
-    address: Annotated[FieldPath, Depends()], actor: ActorDep, settings: FromDishka[PageSettingsService]
-) -> None:
-    """Take a field back from the page, so it runs with the value of the step of the recipe, and mark the stage stale.
-
-    \N{FORM FEED}
-    :param address: Identifiers of the project, the page, the stage, the step and the field.
-    :type address: FieldPath
-    :param actor: The signed-in account.
-    :type actor: Actor
-    :param settings: Page settings service of the request.
-    :type settings: PageSettingsService
-    """
-    await settings.reset(actor, address.project_id, address.key, address.name)
-
-
-@router.post('/{project_id}/pages/{page_id}/settings/{stage}/{step_id}/{name}/carry-over')
-async def carry_over_setting(
+@router.delete('/{project_id}/stages/{stage}/steps/{step_id}/values/{name}')
+async def delete_value(
     address: Annotated[FieldPath, Depends()],
-    form: CarryForm,
+    target: Annotated[ValueTargetModel, Query()],
     actor: ActorDep,
-    carry: FromDishka[CarryOverService],
-) -> CarryOverSchema:
-    """Carry the value this page has for a field of a step over to other pages, as one batch, and mark them stale.
+    settings: FromDishka[PageSettingsService],
+) -> ValueChangesSchema:
+    """Take a field back from the pages, so they take it from the next part, and mark their stages stale.
 
-    The pages are the following ones, the selected ones, or every page of the condition of the step. A page that has a
-    value of its own for the field is left as it is and listed as skipped, unless the form asks to write over it. Each
-    page that takes the value changes this one field and no other, and the changes share a batch, so one undo takes the
-    value back from every page. The answer is 404 when this page does not change the field, and 422 for a carry-over to
-    the selected pages that names none, or a value out of range for another field of a page.
+    The answer is 404 when none of the pages has a value of its own for the field, or the step is not one of the stage.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the source page, the stage, the step and the field.
+    :param address: Identifiers of the project, the stage, the step and the field.
     :type address: FieldPath
-    :param form: The pages to carry the value to, and whether to write over a value of their own.
-    :type form: CarryForm
+    :param target: The pages, the odd pages, the even pages or the group the value was set for.
+    :type target: ValueTargetModel
     :param actor: The signed-in account.
     :type actor: Actor
-    :param carry: Carry-over service of the request.
-    :type carry: CarryOverService
-    :returns: The batch, the changes written and the pages skipped.
-    :rtype: CarryOverSchema
+    :param settings: Page settings service of the request.
+    :type settings: PageSettingsService
+    :returns: The batch and the changes written, one on each page whose parameters change.
+    :rtype: ValueChangesSchema
     """
-    carried = await carry.carry(actor, address.project_id, form.to_request(address.key, address.name))
-    return CarryOverSchema(
-        batch_id=carried.batch_id,
-        changes=[PageStepChangeSchema.model_validate(change) for change in carried.changes],
-        skipped=list(carried.skipped),
+    done = await settings.reset(actor, address.project_id, address.of(target.to_target()))
+    return ValueChangesSchema(
+        batch_id=done.batch_id, changes=[PageStepChangeSchema.model_validate(change) for change in done.changes]
     )
-
-
-@router.post('/{project_id}/stages/{stage}/reset')
-async def reset_steps(
-    address: Annotated[StagePath, Depends()],
-    body: ResetBody,
-    actor: ActorDep,
-    resets: FromDishka[StepResetService],
-) -> StepResetSchema:
-    """Take the settings and the manual edits of steps away from one page or from every page, and mark the stages stale.
-
-    The scope is the step on the open page, every step of the stage on the open page, the step on every page, or every
-    step of the stage on every page. The pages use the values of the recipe again, which stays as it is, and the next
-    run of the stage finds the shapes anew. The changes of the history share a batch from a reset, so one undo gives
-    the work back on every page. A reset that reaches other pages and takes work from some of them answers 409 until the
-    body confirms it. The answer is 404 for a step that no recipe of the stage has, and 422 for a scope without the page
-    or the step it needs.
-
-    \N{FORM FEED}
-    :param address: Identifiers of the project and the stage.
-    :type address: StagePath
-    :param body: The scope, the page and the step it needs, and the confirmation.
-    :type body: ResetBody
-    :param actor: The signed-in account.
-    :type actor: Actor
-    :param resets: Step reset service of the request.
-    :type resets: StepResetService
-    :returns: The batch and the changes written.
-    :rtype: StepResetSchema
-    """
-    done = await resets.reset(actor, address.project_id, body.to_request(address.stage))
-    return StepResetSchema(
-        batch_id=done.batch_id, changes=[PageStepChangeSchema.model_validate(c) for c in done.changes]
-    )
-
-
-@router.post('/{project_id}/stages/{stage}/reset-impact')
-async def reset_impact(
-    address: Annotated[StagePath, Depends()],
-    body: ResetBody,
-    actor: ActorDep,
-    resets: FromDishka[StepResetService],
-) -> ResetImpactSchema:
-    """Count the pages a reset would take work from, so the user can confirm it before it is sent.
-
-    The body is the one of the reset. Nothing is written.
-
-    \N{FORM FEED}
-    :param address: Identifiers of the project and the stage.
-    :type address: StagePath
-    :param body: The reset.
-    :type body: ResetBody
-    :param actor: The signed-in account.
-    :type actor: Actor
-    :param resets: Step reset service of the request.
-    :type resets: StepResetService
-    :returns: The pages that have an edit, the pages that have settings, and the pages that lose work.
-    :rtype: ResetImpactSchema
-    """
-    counted = await resets.impact(actor, address.project_id, body.to_request(address.stage))
-    return ResetImpactSchema.model_validate(counted)

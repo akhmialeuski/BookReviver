@@ -17,9 +17,9 @@ import { dragFrom } from './support/layer';
 import { runAllPages } from './support/page-work';
 
 /**
- * The Cleanup stage on scans of a sheet of paper: the default recipe of a new book has three variants and four steps in the bar,
- * the form of the binarization shows the fields of the method that is chosen, a run on all pages sends the plate to its
- * own variant by the rule of the book, the picture zones and the brush of the eraser are set by hand on one page, and the
+ * The Cleanup stage on scans of a sheet of paper: the default recipe of a new book has four steps in the bar and one
+ * recipe for each kind of page, the form of the binarization shows the fields of the method that is chosen, a run on all
+ * pages processes the plate by the recipe of the pictures, the picture zones and the brush of the eraser are set by hand on one page, and the
  * erased page is what the stage stands on.
  */
 
@@ -82,7 +82,7 @@ async function versionsOf(page: Page, pageId: string, processor: string): Promis
   );
 }
 
-test('the Cleanup stage binarizes, despeckles and erases, with a variant for plates and the editors set by hand', async ({
+test('the Cleanup stage binarizes, despeckles and erases, with a recipe for plates and the editors set by hand', async ({
   page,
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
@@ -90,7 +90,7 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
   const folder = await writeSheetsFolder(PAGES, { scale: SCAN_SCALE, dust: DUST_SPECKS });
   const layer = page.getByTestId('editor-layer');
   const strip = page.getByTestId('strip-page');
-  const marks = page.getByTestId('strip-variant');
+  const marks = page.getByTestId('strip-content');
   const barSteps = page.getByTestId('bar-step');
   const settled = async (): Promise<void> => {
     await expect(page.getByTestId('editor-busy')).toHaveCount(0);
@@ -129,18 +129,18 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
     await expect(page.getByTestId('stage-title')).toHaveText('Cleanup');
     await expect(strip).toHaveCount(PAGES);
     await expect(page.getByTestId('recipe-select')).toContainText('Text');
-    await expect(page.getByTestId('recipe-active')).toBeVisible();
     // The steps are in the bar only, and the panel of the recipe lists none
     await expect(page.getByTestId('recipe-steps')).toHaveCount(0);
     await expect(barSteps).toHaveCount(STEP_TITLES.length);
     for (const [index, title] of STEP_TITLES.entries()) {
       await expect(barSteps.nth(index)).toContainText(title);
     }
-    const variants = await page.getByTestId('recipe-select').locator('option').allTextContents();
-    // The options say how many pages each variant has processed, and the active one is named
-    expect(variants.map((name) => name.split(' · ')[0]?.trim()).sort()).toEqual([
-      'Mixed',
-      'Plates',
+    const kinds = await page.getByTestId('recipe-select').locator('option').allTextContents();
+    // The options name the kinds of page and say how many pages of the book are of each
+    expect(kinds.map((name) => name.split(' · ')[0]?.trim()).sort()).toEqual([
+      'Black-and-white picture',
+      'Blank page',
+      'Colour picture',
       'Text',
     ]);
   });
@@ -185,17 +185,17 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
   });
 
-  await test.step('a run on all pages sends the plate to Plates by the rule of the book and keeps the text pages on Text', async () => {
+  await test.step('a run on all pages processes the plate by the recipe of the pictures and the text pages by the recipe of text', async () => {
     await runAll();
     await expect(marks).toHaveCount(PAGES, { timeout: RUN_TIMEOUT_MS });
-    await expect(page.locator('[data-testid="strip-variant"][data-variant="Plates"]')).toHaveCount(
-      1,
-    );
-    await expect(page.locator('[data-testid="strip-variant"][data-variant="Text"]')).toHaveCount(
+    await expect(page.locator('[data-testid="strip-content"][data-content="text"]')).toHaveCount(
       PAGES - 1,
     );
-    await expect(page.getByTestId('variant-counts')).toContainText(`Text ${PAGES - 1}`);
-    await expect(page.getByTestId('variant-counts')).toContainText('Plates 1');
+    await expect(
+      page.locator('[data-testid="strip-content"][data-content="color-picture"]'),
+    ).toHaveCount(1);
+    await expect(page.getByTestId('recipe-select')).toContainText(`Text · ${PAGES - 1} pages`);
+    await expect(page.getByTestId('recipe-select')).toContainText('Colour picture · 1 page');
     await strip.first().click();
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
     await expect(page.getByTestId('this-page-facts')).toContainText('Sauvola', {
@@ -204,7 +204,7 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
     await snap(page, 'cleanup-binarized');
   });
 
-  await test.step('the despeckling wrote the mask of what it removed, which the page of the Text variant has', async () => {
+  await test.step('the despeckling wrote the mask of what it removed, which the page of text has', async () => {
     const pageId = await currentPageId(page);
     const [made] = await versionsOf(page, pageId, 'cleanup.despeckle');
     expect(made?.data.specks).toBeGreaterThan(0);
@@ -297,11 +297,11 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
     await snap(page, 'cleanup-erased');
   });
 
-  await test.step('a run on all pages keeps the stroke of the reader and the variants of the pages', async () => {
+  await test.step('a run on all pages keeps the stroke of the reader and the kinds of the pages', async () => {
     await runAll();
-    await expect(page.locator('[data-testid="strip-variant"][data-variant="Plates"]')).toHaveCount(
-      1,
-    );
+    await expect(
+      page.locator('[data-testid="strip-content"][data-content="color-picture"]'),
+    ).toHaveCount(1);
     await page.getByTestId('compare-menu').click();
     await page.getByTestId('compare-off').click();
     await expect(barSteps.nth(ERASER_INDEX)).toHaveAttribute('data-state', 'by-hand');

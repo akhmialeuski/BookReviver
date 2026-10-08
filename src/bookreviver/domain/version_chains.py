@@ -1,8 +1,8 @@
-"""Which old page versions nothing needs any more, worked out from the inputs the versions read.
+"""Which page versions nothing needs any more, worked out from the inputs the versions read.
 
 A page version reads the version before it, its input, so the versions of a page form chains, and the current version
 of a stage, its head, needs every version in its chain to show where its image came from and to be remade from. A
-version that is not old enough to go, or is a base version, stays, and so does every version it reads. A version that
+version that is not eligible to go, or is a base version, stays, and so does every version it reads. A version that
 stays keeps the versions of its chain whatever their age, because deleting an input would leave the version that reads
 it without one: the database sets the input of the survivor to none, and the survivor would look like a base version
 that nothing may ever delete.
@@ -36,7 +36,7 @@ def collectable_versions(
 
     :param inputs: The input of every version of a project, or None for a base version, which has none.
     :type inputs: Mapping[PageVersionId, PageVersionId | None]
-    :param eligible: The versions that are old enough to go and are not base versions.
+    :param eligible: The versions that may go, which are not base versions and, for a preview, are old enough.
     :type eligible: Collection[PageVersionId]
     :param heads: The versions that are the current version of a stage of a page, which stay.
     :type heads: Collection[PageVersionId]
@@ -85,8 +85,6 @@ def stage_depths(versions: Sequence[PageVersion]) -> dict[PageVersionId, int]:
 
 def step_places(recipes: Iterable[Recipe], step_id: StepId) -> frozenset[tuple[str, int]]:
     """Give the places a step has in the recipes of its stage, as the processor and the number of steps before it.
-
-    A step copied into a variant keeps its identifier, so one step can stand in several recipes at several places.
 
     :param recipes: The recipes of the stage.
     :type recipes: Iterable[Recipe]

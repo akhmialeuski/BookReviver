@@ -7,16 +7,9 @@ import { useManifest } from '@/features/pages/manifest';
 import { PageEditDialog } from '@/features/pages/PageEditDialog';
 import { PageCanvas, type PageCanvasHandle } from '@/features/viewer/PageCanvas';
 import type { ViewerSearch } from '@/features/viewer/params';
-import {
-  lastViewStart,
-  nextViewStart,
-  previousViewStart,
-  viewIndexes,
-  viewStart,
-} from '@/features/viewer/spread';
 import { FitMode, type StagePage } from '@/features/viewer/stage';
 import { ThumbnailPanel } from '@/features/viewer/ThumbnailPanel';
-import { useViewerKeys } from '@/features/viewer/useViewerKeys';
+import { usePageNavigation } from '@/features/viewer/usePageNavigation';
 import { ViewerToolbar } from '@/features/viewer/ViewerToolbar';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
@@ -35,8 +28,8 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 
 const NO_PAGES: readonly PageSchema[] = [];
 
-function stagePage(page: PageSchema | undefined): StagePage[] {
-  return page === undefined ? [] : [{ id: page.id, infoUrl: page.images?.iiif_info ?? null }];
+function stagePage(page: PageSchema): StagePage {
+  return { id: page.id, infoUrl: page.images?.iiif_info ?? null };
 }
 
 export function ViewerPage({
@@ -60,41 +53,18 @@ export function ViewerPage({
   const pages = manifest.data ?? NO_PAGES;
   const count = pages.length;
   const spread = search.spread === true;
-  const foundIndex = search.page === undefined ? 0 : pages.findIndex((p) => p.id === search.page);
-  const currentIndex = Math.max(foundIndex, 0);
-  const unknownPage = manifest.data !== undefined && search.page !== undefined && foundIndex < 0;
-
-  const indexes = viewIndexes(currentIndex, count, spread);
-  const first = indexes[0] ?? 0;
-  const previous = previousViewStart(first, count, spread);
-  const next = nextViewStart(first, count, spread);
-  const shown = indexes.flatMap((index) => pages[index] ?? []);
-
-  const view = shown.flatMap((page) => stagePage(page));
-  const around = [next, previous].flatMap((start) =>
-    start === null ? [] : [viewIndexes(start, count, spread).flatMap((i) => stagePage(pages[i]))],
+  const navigation = usePageNavigation(
+    pages,
+    (page) => page.id,
+    search.page,
+    spread,
+    (id) => onSearchChange({ page: id, ...(spread ? { spread: true } : {}) }),
   );
+  const { currentIndex, first, shown, openIndex } = navigation;
+
+  const view = shown.map(stagePage);
+  const around = navigation.around.map((group) => group.map(stagePage));
   const canvas = useRef<PageCanvasHandle>(null);
-
-  const openIndex = (index: number): void => {
-    const clamped = Math.min(Math.max(index, 0), Math.max(count - 1, 0));
-    const target = pages[viewStart(clamped, spread)];
-    if (target !== undefined) {
-      onSearchChange({ page: target.id, ...(spread ? { spread: true } : {}) });
-    }
-  };
-  const openStart = (start: number | null): void => {
-    if (start !== null) {
-      openIndex(start);
-    }
-  };
-
-  useViewerKeys({
-    previous: () => openStart(previous),
-    next: () => openStart(next),
-    first: () => openIndex(0),
-    last: () => openStart(lastViewStart(count, spread)),
-  });
 
   if (manifest.isError) {
     return <ErrorAlert message={describeError(manifest.error)} />;
@@ -161,11 +131,11 @@ export function ViewerPage({
             spread={spread}
             fitMode={fitMode}
             panelOpen={panelOpen}
-            hasPrevious={previous !== null}
-            hasNext={next !== null}
+            hasPrevious={navigation.hasPrevious}
+            hasNext={navigation.hasNext}
             onOpenIndex={openIndex}
-            onPrevious={() => openStart(previous)}
-            onNext={() => openStart(next)}
+            onPrevious={navigation.openPrevious}
+            onNext={navigation.openNext}
             onFitMode={(mode) => {
               setFitMode(mode);
               canvas.current?.fit(mode);
@@ -180,7 +150,7 @@ export function ViewerPage({
             }}
             onTogglePanel={() => setPanelOpen((open) => !open)}
           />
-          {unknownPage ? (
+          {navigation.unknownPage ? (
             <p className="px-3 pt-2 text-sm text-muted-foreground">{MESSAGES.viewer.unknownPage}</p>
           ) : null}
           <div className="flex min-h-0 flex-1">

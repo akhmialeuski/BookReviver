@@ -11,7 +11,7 @@ import {
   invalidateScans,
   invalidateSections,
   invalidateSources,
-  invalidateStageRows,
+  invalidateStageRowsFrom,
   invalidateStageSummary,
   invalidateVersions,
   pageChangesInFlight,
@@ -157,7 +157,8 @@ export function applyProjectEvent(
       if (stage !== null) {
         bursts.schedule(`${projectId}/stage/${stage}`, () => {
           void invalidateStageSummary(queryClient, projectId);
-          void invalidateStageRows(queryClient, projectId, stage);
+          // The rows of the later stages draw the current version of this one
+          void invalidateStageRowsFrom(queryClient, projectId, stage);
           // The status of each stage and the next stage are part of the book, and its card in the library
           void invalidateProject(queryClient, projectId);
           void invalidateProjectList(queryClient);

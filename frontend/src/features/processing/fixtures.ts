@@ -376,7 +376,6 @@ export function step(processorKey: string, overrides: Partial<StepSchema> = {}):
     params: {},
     enabled: true,
     step_id: `id-${processorKey}`,
-    applies_to: 'all',
     ...overrides,
   };
 }
@@ -387,9 +386,8 @@ export function recipe(id: string, overrides: Partial<RecipeSchema> = {}): Recip
     id,
     project_id: 'project',
     stage: 'geometry',
-    name: 'Deskew',
+    kind: 'text',
     steps: [step('geometry.deskew', { params: { max_angle: 5, min_confidence: 0.3 } })],
-    active: true,
     profile_id: null,
     created_at: '2026-10-01T00:00:00Z',
     updated_at: '2026-10-01T00:00:00Z',
@@ -479,18 +477,8 @@ export function processing(overrides: Partial<Processing> = {}): Processing {
     toggle: () => undefined,
     remove: () => undefined,
     change: () => undefined,
-    condition: () => undefined,
     add: () => undefined,
     discard: () => undefined,
-    preview: {
-      on: false,
-      toggle: () => undefined,
-      blocked: null,
-      shown: null,
-      working: false,
-      waiting: false,
-      error: null,
-    },
     ...overrides,
   };
 }

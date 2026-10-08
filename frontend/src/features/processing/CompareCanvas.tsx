@@ -1,4 +1,3 @@
-import { LoaderCircleIcon } from 'lucide-react';
 import {
   type ReactNode,
   type Ref,
@@ -44,7 +43,6 @@ export function CompareCanvas({
   mode,
   beforeLabel,
   afterLabel,
-  notice,
   pageIds,
   handle,
   overlay,
@@ -57,11 +55,6 @@ export function CompareCanvas({
   /** What stands under the picture before, such as `Before · result of Order`. */
   beforeLabel: string;
   afterLabel: string;
-  /**
-   * What the preview is doing or why it failed, or null for nothing to say. While a preview is being made, or waits for
-   * another job, the picture after is not the newest.
-   */
-  notice: { text: string; working: boolean } | null;
   pageIds: readonly string[];
   handle?: Ref<PageCanvasHandle>;
   /** Draws a page editor over the canvas, or is left out when no editor is open. */
@@ -253,21 +246,6 @@ export function CompareCanvas({
           {afterLabel}
         </p>
       ) : null}
-      {notice === null ? null : (
-        <p
-          role="status"
-          className={cn(
-            'absolute top-3 right-3 flex max-w-80 items-center gap-2 rounded-md bg-background/90 px-3 py-1 text-sm shadow',
-            notice.working ? '' : 'text-destructive',
-          )}
-          data-testid={notice.working ? 'preview-working' : 'preview-error'}
-        >
-          {notice.working ? (
-            <LoaderCircleIcon className="size-4 shrink-0 animate-spin" aria-hidden="true" />
-          ) : null}
-          {notice.text}
-        </p>
-      )}
       {state === 'failed' || (pairs.before === null && pairs.after === null) ? (
         <p className="absolute inset-x-0 top-3 mx-auto w-fit rounded-md bg-background/90 px-3 py-1 text-sm shadow">
           {state === 'failed' ? MESSAGES.viewer.loadFailed : MESSAGES.viewer.noImage}

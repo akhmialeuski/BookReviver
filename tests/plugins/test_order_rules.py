@@ -103,9 +103,9 @@ class TestOrderRules:
         """
         order = RecipeOrder(fx_catalogue)
         marked = [
-            f'{stage}: {template.name}'
+            f'{stage}: {kind}'
             for stage, templates in DefaultRecipes.TEMPLATES.items()
-            for template in templates
+            for kind, template in templates.items()
             if order.issues([Step(processor_key=key) for key in template.processor_keys])
         ]
         assert marked == []

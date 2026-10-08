@@ -5,7 +5,6 @@ import {
   createBook,
   openProjectId,
   registerAndSignIn,
-  stepIdsOf,
   uploadFolder,
   waitForIdleJobs,
   writePagesFolder,
@@ -16,8 +15,7 @@ import { runAllPages } from './support/page-work';
 
 /**
  * The page editors on the canvas: the rotation handles of the Geometry stage with its field, its wheel, its undo and its
- * "Auto", and the split line of the Split stage with its arrow keys, its handles and the same undo and "Auto", for a
- * book on the automatic split and for a book on the older recipe that cuts every spread.
+ * "Auto", and the split line of the Split stage with its arrow keys, its handles and the same undo and "Auto".
  *
  * A save is followed by a run of the stage on the one page, so each step waits for the panel to show the result of that
  * run: the method `By hand` and the number the edit gave. The pages are solid colours, so the step finds nothing on its
@@ -236,63 +234,6 @@ test('a reader moves the split line of the automatic split with the keys and the
     await expect(facts).toContainText('Automatic', { timeout: RUN_TIMEOUT_MS });
     await expect(facts).toContainText(`${found} px`);
     await expect(page.getByTestId('editor-auto')).toBeDisabled();
-  });
-
-  await rm(path.dirname(folder), { recursive: true, force: true });
-});
-
-test('a book on the older recipe that cuts every spread keeps its split line editor', async ({
-  page,
-}) => {
-  test.setTimeout(SCENARIO_TIMEOUT_MS);
-  const folder = await writeScansFolder(WIDE_SCANS);
-  const total = WIDE_SCANS + 1;
-  const strip = page.getByTestId('strip-page');
-  const layer = page.getByTestId('editor-layer');
-  const facts = page.getByTestId('this-page-facts');
-  const saved: string[] = [];
-  page.on('request', (request) => {
-    if (request.method() === 'PUT' && request.url().includes('/edits/page-split/')) {
-      saved.push(request.url());
-    }
-  });
-  let found = 0;
-
-  await test.step('the book is cut by the import, and then takes the recipe that cuts every spread', async () => {
-    await registerAndSignIn(page);
-    await createBook(page, 'A book on the older recipe');
-    await uploadFolder(page, folder, total);
-    const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
-    await page.goto(`${bookPath}/stages/page-split`);
-    await expect(strip).toHaveCount(WIDE_SCANS * 2 + 1, { timeout: RUN_TIMEOUT_MS });
-
-    const spread = await page
-      .getByTestId('recipe-select')
-      .locator('option', { hasText: /^Spread/ })
-      .getAttribute('value');
-    expect(spread).not.toBeNull();
-    await page.getByTestId('recipe-select').selectOption(spread ?? '');
-    await page.getByTestId('recipe-use').click();
-    await expect(page.getByTestId('recipe-active')).toBeVisible();
-    await expect(page.getByTestId('recipe-step')).toContainText('Spread');
-  });
-
-  await test.step('the line is moved and saved for the recipe, and the halves are cut by it', async () => {
-    await page.getByTestId('strip-filter-wide').click();
-    await strip.first().click();
-    await expect(layer).toBeVisible();
-    await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
-    found = (await pairOf(layer, 'data-line-start')).x;
-
-    await layer.focus();
-    await page.keyboard.press('Shift+ArrowRight');
-    const moved = found + NUDGE_SHIFT_PX;
-    await expect(layer).toHaveAttribute('data-line-start', new RegExp(`^${moved},`));
-    await expect(facts).toContainText(`${moved} px`, { timeout: RUN_TIMEOUT_MS });
-    await expect(facts).toContainText('By hand');
-    expect(saved).toHaveLength(1);
-    const [spreadStep] = await stepIdsOf(page, 'page-split', 'split.spread');
-    expect(saved[0]).toContain(`/edits/page-split/${spreadStep}`);
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

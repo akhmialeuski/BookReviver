@@ -18,25 +18,14 @@ import numpy as np
 from pydantic import Field
 
 from bookreviver.domain.enums import ProcessorScope, Stage, VersionData, VersionOutput
-from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.values import OrderRule, ProcessorSpec
-from bookreviver.plugins.base import ModelProcessor, Params
-from bookreviver.plugins.cv_image import (
-    BLACK,
-    COLOR_PLANES,
-    NO_IMAGE,
-    WHITE,
-    color_mode_of,
-    content_frame_of,
-    image_data,
-    read_samples,
-    settle_review,
-    write_png,
-)
-from bookreviver.ports.processing import StepOutput, StepResult
+from bookreviver.plugins.base import Params
+from bookreviver.plugins.cv_image import BLACK, WHITE, write_png
+from bookreviver.plugins.ink import InkProcessor
 
 if TYPE_CHECKING:
-    from bookreviver.ports.processing import StepInput
+    from bookreviver.plugins.cv_image import Samples
+    from bookreviver.ports.processing import StepInput, StepResult
 
 THICKENED_IMAGE_NAME: str = 'thickness.png'
 # The most pixels an edge of a stroke moves by, either way
@@ -58,7 +47,7 @@ class ThicknessParams(Params):
     )
 
 
-class Thickness(ModelProcessor):
+class Thickness(InkProcessor):
     """Makes the strokes of the text of a black and white page thinner or thicker."""
 
     params_model = ThicknessParams
@@ -93,31 +82,20 @@ class Thickness(ModelProcessor):
     )
 
     @override
-    def run(self, step_input: StepInput) -> StepResult:
+    def process(self, step_input: StepInput, image: Samples) -> StepResult:
         """Move the edge of every stroke by the amount.
 
         :param step_input: The image of the page and the parameters.
         :type step_input: StepInput
+        :param image: The samples of the page.
+        :type image: Samples
         :returns: One output holding the page with the strokes changed, or the page as it was for an amount of 0.
         :rtype: StepResult
-        :raises ConflictError: If there is no image, or it cannot be read.
         """
-        if step_input.image is None:
-            raise ConflictError(NO_IMAGE.format(key=self.spec.key))
         params = ThicknessParams.model_validate(step_input.params)
-        image = read_samples(step_input.image)
-        facts = step_input.input_data
-        color_mode = color_mode_of(image, facts)
-        data = image_data(image, facts, color_mode)
-        if frame := content_frame_of(facts):
-            data[VersionData.CONTENT_FRAME] = frame.to_data()
         if params.amount == 0:
-            data[VersionData.SKIPPED] = True
-            review = settle_review(data, None, facts)
-            return StepResult(
-                outputs=[StepOutput(image=step_input.image, color_mode=color_mode, data=data, review=review)]
-            )
-        ink = np.all(image == BLACK, axis=2) if image.ndim == COLOR_PLANES else image == BLACK
+            return self.finish(step_input, shown=step_input.image, samples=image, data={VersionData.SKIPPED: True})
+        ink = self.ink_of(image)
         # A preview reads a smaller picture, so the reach is scaled to it, and is at least a pixel to show the change
         reach = max(1, round(abs(params.amount) * step_input.scale))
         size = 2 * reach + 1
@@ -129,6 +107,4 @@ class Thickness(ModelProcessor):
             changed[ink & (cv2.erode(ink.astype(np.uint8), kernel) == 0)] = WHITE
         target = step_input.workdir / THICKENED_IMAGE_NAME
         write_png(changed, target)
-        data[VersionData.SKIPPED] = False
-        review = settle_review(data, None, facts)
-        return StepResult(outputs=[StepOutput(image=target, color_mode=color_mode, data=data, review=review)])
+        return self.finish(step_input, shown=target, samples=image, data={VersionData.SKIPPED: False})

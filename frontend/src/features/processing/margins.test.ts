@@ -19,9 +19,7 @@ const MEASURED = {
 };
 
 function draft(processorKey: string, params: Record<string, unknown>): StepDraft[] {
-  return [
-    { id: 'step-0', stepId: 'id-step', processorKey, params, enabled: true, appliesTo: 'all' },
-  ];
+  return [{ id: 'step-0', stepId: 'id-step', processorKey, params, enabled: true }];
 }
 
 describe('withMarginsSource', () => {

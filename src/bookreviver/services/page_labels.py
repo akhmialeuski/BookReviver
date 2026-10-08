@@ -20,7 +20,7 @@ from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.events import PagesChanged
 from bookreviver.domain.pagination import Pagination
 from bookreviver.domain.values import SliceRequest
-from bookreviver.services.recipe_picks import PAGE_WINDOW
+from bookreviver.services.projects import PAGE_WINDOW
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence

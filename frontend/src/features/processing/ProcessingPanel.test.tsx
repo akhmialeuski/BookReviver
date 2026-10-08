@@ -24,9 +24,6 @@ const { stub } = vi.hoisted(() => ({
 vi.mock('@/features/processing/StepPanel', () => ({ StepPanel: stub('step-panel') }));
 vi.mock('@/features/processing/SplitSection', () => ({ SplitSection: stub('split-section') }));
 vi.mock('@/features/processing/RecipeSection', () => ({ RecipeSection: stub('recipe-section') }));
-vi.mock('@/features/processing/ContentTypeSection', () => ({
-  ContentTypeSection: stub('content-type'),
-}));
 vi.mock('@/features/processing/ThisPageSection', () => ({ ThisPageSection: stub('this-page') }));
 vi.mock('@/features/processing/RunControls', () => ({ RunControls: stub('run-controls') }));
 vi.mock('@/features/profiles/ProfileLibraryPanel', () => ({ ProfileLibraryPanel: () => null }));
@@ -125,7 +122,7 @@ describe('ProcessingPanel', () => {
   it('ends the scrolling area with the history of the step open in the bar, after every section', () => {
     render(processing({ recipes: [SAVED], recipe: SAVED }), true);
 
-    expect(sectionIds()).toEqual(['step-panel', 'recipe-section', 'content-type', 'this-page']);
+    expect(sectionIds()).toEqual(['step-panel', 'recipe-section', 'this-page']);
     expect(areaIds()).toEqual(['', 'page-history']);
     expect(history()?.getAttribute('data-step')).toBe(BAR[0]?.stepId);
     expect(history()?.getAttribute('data-page-id')).toBe('p1');

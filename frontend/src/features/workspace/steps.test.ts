@@ -7,7 +7,6 @@ import {
   countStep,
   defaultStepOf,
   hasStepBar,
-  markOfCondition,
   openStepOf,
 } from '@/features/workspace/steps';
 
@@ -21,8 +20,8 @@ const CATALOGUE = [
 const RECIPE = recipe('r', {
   steps: [
     step('geometry.perspective', { step_id: 'a' }),
-    step('geometry.deskew', { step_id: 'b', applies_to: 'text' }),
-    step('geometry.deskew', { step_id: 'c', applies_to: 'pictures', enabled: false }),
+    step('geometry.deskew', { step_id: 'b' }),
+    step('geometry.deskew', { step_id: 'c', enabled: false }),
     step('x.gone', { step_id: 'd' }),
   ],
 });
@@ -35,7 +34,7 @@ function placed(
 }
 
 describe('barStepsOf', () => {
-  it('lists the saved steps in order with their numbers, titles and conditions', () => {
+  it('lists the saved steps in order with their numbers and titles', () => {
     const steps = barStepsOf(RECIPE, CATALOGUE);
 
     expect(steps.map(({ stepId, number, index, title }) => [stepId, number, index, title])).toEqual(
@@ -46,24 +45,11 @@ describe('barStepsOf', () => {
         ['d', 4, 3, 'x.gone'],
       ],
     );
-    expect(steps.map((entry) => entry.appliesTo)).toEqual(['all', 'text', 'pictures', 'all']);
     expect(steps.map((entry) => entry.enabled)).toEqual([true, true, false, true]);
   });
 
   it('lists nothing while the recipe is read', () => {
     expect(barStepsOf(undefined, CATALOGUE)).toEqual([]);
-  });
-});
-
-describe('markOfCondition', () => {
-  it.each([
-    ['all', null],
-    ['text', 'text'],
-    ['pictures', 'picture'],
-    ['color-pictures', 'picture'],
-    ['bw-pictures', 'picture'],
-  ] as const)('marks the condition %s as %s', (condition, mark) => {
-    expect(markOfCondition(condition)).toBe(mark);
   });
 });
 
