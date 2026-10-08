@@ -122,10 +122,15 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await snap(page, 'first-deskew-open-on-a-page-of-text');
   });
 
-  await test.step('the step stays open as the page changes', async () => {
+  await test.step('the plate shows the recipe of its kind, with the step of the same processor open', async () => {
     await page.getByTestId('strip-page').nth(PLATE_POSITION).click();
     await expect(page).toHaveURL(STEP_ADDRESS);
     await expect(page).toHaveURL(/page=/);
+    // The second Deskew was added to the recipe of text, so the recipe of the plate has the steps it had at first
+    await expect(barSteps).toHaveCount(stepCount);
+    await expect(page.getByTestId('step-panel-title')).toHaveText(
+      `${FIRST_DESKEW_INDEX + 1} · Deskew`,
+    );
     await snap(page, 'step-open-on-the-plate');
   });
 
@@ -143,7 +148,7 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
       `${FIRST_DESKEW_INDEX + 1} · Deskew`,
     );
     await expect(page.getByTestId('this-page')).toBeVisible();
-    await expect(barSteps).toHaveCount(stepCount + 1);
+    await expect(barSteps).toHaveCount(stepCount);
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

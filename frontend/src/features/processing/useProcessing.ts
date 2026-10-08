@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { OrderMode, ProcessorSchema, RecipeSchema, Stage } from '@/api';
+import type { OrderMode, ProcessorSchema, RecipeKind, RecipeSchema, Stage } from '@/api';
 import {
   issuesByStep,
   type OrderIssue,
@@ -73,18 +73,69 @@ export interface Processing {
   discard: () => void;
 }
 
+/** A recipe the reader chose in the picker, with the place it was chosen at. */
+export interface RecipeChoice {
+  stage: Stage;
+  id: string;
+  /** The step the address named when the choice was made. */
+  stepId: string | undefined;
+  /** The kind of the page that was open when the choice was made. */
+  kind: RecipeKind | undefined;
+}
+
+/**
+ * Pick the recipe the panel shows.
+ *
+ * A page is processed by the recipe of its kind, so the panel shows the recipe of the open page, and an edit of a step
+ * lands in the recipe that processes the page. A recipe chosen in the picker outranks it until a page of another kind
+ * is opened, and while the address names a step of that recipe or the step it named when the choice was made. Before
+ * the rows of the pages are read, the recipe that owns the step of the address is shown, and without one the first.
+ *
+ * @param recipes Every recipe of the stage.
+ * @param stage The stage.
+ * @param stepId The step the address names, or undefined.
+ * @param pageKind The kind of the open page, or undefined while it is not known.
+ * @param choice The recipe chosen in the picker, or null.
+ * @returns The recipe shown, or undefined when the stage has none.
+ */
+export function shownRecipe(
+  recipes: readonly RecipeSchema[],
+  stage: Stage,
+  stepId: string | undefined,
+  pageKind: RecipeKind | undefined,
+  choice: RecipeChoice | null,
+): RecipeSchema | undefined {
+  const owner =
+    stepId === undefined
+      ? undefined
+      : recipes.find((entry) => entry.steps.some((step) => step.step_id === stepId));
+  const chosen =
+    choice?.stage === stage &&
+    choice.kind === pageKind &&
+    (owner === undefined || owner.id === choice.id || choice.stepId === stepId)
+      ? recipes.find((entry) => entry.id === choice.id)
+      : undefined;
+  const ofKind =
+    pageKind === undefined ? undefined : recipes.find((entry) => entry.kind === pageKind);
+  return chosen ?? ofKind ?? owner ?? recipes[0];
+}
+
 /**
  * Read the processing state of a stage.
  *
- * The recipe shown is the one the reader chose in the picker while the address named the step it names now, and
- * otherwise the recipe that owns the step of the address, so a link to a step of any recipe opens that recipe. Without
- * either it is the first recipe of the stage.
+ * The recipe shown is picked by `shownRecipe`: the recipe of the open page's kind, unless the reader chose another.
  *
  * @param projectId The book.
  * @param stage The stage.
  * @param stepId The step the address names, or undefined when it names none.
+ * @param pageKind The kind of the open page, or undefined while it is not known.
  */
-export function useProcessing(projectId: string, stage: Stage, stepId?: string): Processing {
+export function useProcessing(
+  projectId: string,
+  stage: Stage,
+  stepId?: string,
+  pageKind?: RecipeKind,
+): Processing {
   const processors = useProcessors();
   const catalogue = useMemo(
     () => (processors.data ?? []).filter((processor) => processor.stage === stage),
@@ -93,22 +144,9 @@ export function useProcessing(projectId: string, stage: Stage, stepId?: string):
   const available = catalogue.length > 0;
   const recipes = useRecipes(projectId, stage, available);
 
-  // The choice of the picker remembers the step the address named when it was made, since a later step outranks it
-  const [chosenId, setChosenId] = useState<{
-    stage: Stage;
-    id: string;
-    stepId: string | undefined;
-  } | null>(null);
+  const [choice, setChoice] = useState<RecipeChoice | null>(null);
   const list = recipes.data ?? [];
-  const owner =
-    stepId === undefined
-      ? undefined
-      : list.find((entry) => entry.steps.some((step) => step.step_id === stepId));
-  const chosen =
-    chosenId?.stage === stage && (owner === undefined || chosenId.stepId === stepId)
-      ? list.find((entry) => entry.id === chosenId.id)
-      : undefined;
-  const recipe = chosen ?? owner ?? list[0];
+  const recipe = shownRecipe(list, stage, stepId, pageKind, choice);
 
   const draftOwner = recipe === undefined ? '' : `${recipe.id}@${recipe.updated_at}`;
   const [edit, setEdit] = useState<{ owner: string; steps: StepDraft[] } | null>(null);
@@ -162,7 +200,7 @@ export function useProcessing(projectId: string, stage: Stage, stepId?: string):
     catalogue,
     recipes: list,
     recipe,
-    chooseRecipe: (id) => setChosenId({ stage, id, stepId }),
+    chooseRecipe: (id) => setChoice({ stage, id, stepId, kind: pageKind }),
     steps,
     openId,
     open: (id) => setOpenChoice({ owner: recipe?.id, id }),

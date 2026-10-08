@@ -171,7 +171,12 @@ export function StageScreen({
   // A stage built from processors adds its recipe and its before-and-after compare to the frame
   const compareChoice = search.compare ?? CompareMode.Off;
   const currentItem = items[currentIndex];
-  const processing = useProcessing(projectId, stage, barStage ? stepId : undefined);
+  const processing = useProcessing(
+    projectId,
+    stage,
+    barStage ? stepId : undefined,
+    currentItem?.row?.kind,
+  );
   const workspace = useStepWorkspace(processing, barStage ? stepId : undefined, currentItem);
   const openStep = workspace.open;
   // A stage with a bar always has a step open: the one a run has brought the pages of the recipe furthest to
@@ -188,15 +193,21 @@ export function StageScreen({
       onDefaultStep(defaultStepId);
     }
   }, [barStage, stepId, defaultStepId, onDefaultStep]);
-  // A step that was removed from the recipe leaves the address for the default step, so no workspace stays open for a step
-  // that is gone
+  // A step that left the recipe shown leaves the address, so no workspace stays open for a step that is gone. A page of
+  // another kind shows another recipe, and the step of the same processor in it is opened, so the reader stays on the
+  // step they were at; a step that was removed gives way to the default step
   useCloseRemovedStep(
     barStage ? stepId : undefined,
     openStep,
     processing.ready && processing.recipe !== undefined,
     () => {
-      if (defaultStepId !== undefined) {
-        onDefaultStep(defaultStepId);
+      const processorKey = processing.recipes
+        .flatMap((entry) => entry.steps)
+        .find((step) => step.step_id === stepId)?.processor_key;
+      const next =
+        workspace.steps.find((step) => step.processorKey === processorKey)?.stepId ?? defaultStepId;
+      if (next !== undefined) {
+        onDefaultStep(next);
       }
     },
   );
