@@ -29,7 +29,7 @@ import {
  * that step open and checked, then through its last step, and the first step is found in the cache of versions and not
  * computed again.
  *
- * The same book then shows what the footer of the panel runs. A run that leaves out the pages with work of their own passes
+ * A second book shows what the footer of the panel runs. A run that leaves out the pages with work of their own passes
  * the page with a hand edit by, and a run on this page, on the pages from it on, on the selected pages, on the pages that
  * are out of date, on all pages and on the pages of one kind changes exactly the pages it names, which the rows of the
  * stage tell by the state and the version of each page.
@@ -71,6 +71,23 @@ async function geometryVersions(page: Page): Promise<StoredVersion[]> {
   return items.toSorted((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
+/**
+ * Sign in, make a book of the pages of a folder and open it on the Geometry stage.
+ *
+ * @param page The page of the browser.
+ * @param folder The folder of the pages of the book.
+ * @param title The title of the book.
+ */
+async function openGeometryBook(page: Page, folder: string, title: string): Promise<void> {
+  await registerAndSignIn(page);
+  await createBook(page, title);
+  await uploadFolder(page, folder, PAGES);
+  const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
+  await page.goto(`${bookPath}/stages/geometry`);
+  await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
+  await expect(page.getByTestId('page-strip').getByTestId('strip-page')).toHaveCount(PAGES);
+}
+
 test('the Geometry recipe is run through its first step on all pages, checked, and then through the last step without computing the first again', async ({
   page,
 }) => {
@@ -95,13 +112,7 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
   };
 
   await test.step('a book opens on the Geometry stage, whose recipe has several steps', async () => {
-    await registerAndSignIn(page);
-    await createBook(page, 'A book run step by step');
-    await uploadFolder(page, folder, PAGES);
-    const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
-    await page.goto(`${bookPath}/stages/geometry`);
-    await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
-    await expect(page.getByTestId('page-strip').getByTestId('strip-page')).toHaveCount(PAGES);
+    await openGeometryBook(page, folder, 'A book run step by step');
     // The bar draws the steps once the recipe of the stage is read, so they are counted after the first one shows
     await expect(steps.first()).toBeVisible();
     stepCount = await steps.count();
@@ -148,6 +159,22 @@ test('the Geometry recipe is run through its first step on all pages, checked, a
     await expect(page.getByTestId('this-page-stopped')).toHaveCount(0);
     await page.getByTestId('this-page').scrollIntoViewIfNeeded();
     await snap(page, 'run-through-the-last-step');
+  });
+
+  await rm(path.dirname(folder), { recursive: true, force: true });
+});
+
+// A scenario of its own, so that each of the two keeps within its time on a machine busy with the other workers
+test('the footer runs exactly the pages it names, and leaves the pages with work of their own as they were', async ({
+  page,
+}) => {
+  test.setTimeout(SCENARIO_TIMEOUT_MS);
+  const folder = await writePagesFolder(PAGES);
+
+  await test.step('a book whose pages have all been run once opens on the Geometry stage', async () => {
+    await openGeometryBook(page, folder, 'A book run from the footer');
+    await runPages(page);
+    await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date');
   });
 
   let ids: string[] = [];
