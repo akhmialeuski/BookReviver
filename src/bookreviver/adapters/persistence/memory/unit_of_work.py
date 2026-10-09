@@ -19,9 +19,12 @@ transaction isolation:
   without their head, and a deleted recipe leaves the stage records it processed without their recipe.
 - Isolation: a unit of work reads and writes a private copy of the tables, and ``commit`` merges only the rows it
   added, replaced or removed, so two units of work touching different rows do not overwrite each other.
-- Locks: the database holds one ``anyio.Lock`` for each book and one for the blocks outside a book. A block of the
-  port takes its lock under the wait limit, and takes a fresh copy of the tables once it holds it, so it reads what
-  the previous change of the book committed. Nothing writes outside a block, which the repositories enforce.
+- Locks: the database holds one single-holder semaphore for each book and one for the blocks outside a book. A block
+  of the port takes its semaphore under the wait limit, and takes a fresh copy of the tables once it holds it, so it
+  reads what the previous change of the book committed. Nothing writes outside a block, which the repositories enforce.
+  A semaphore and not an ``anyio.Lock``, because a lock belongs to the task that took it and refuses that task a
+  second time at once, while the holder here is the unit of work, as a database holds its lock for a connection: a
+  second unit of work waits for the wait limit whichever task opens it.
 
 Each repository states its table's keys in two hooks of the generic repository, ``_check`` before a row is stored and
 ``_cascade`` after one is removed, so the generic operations stay in one place.
@@ -183,23 +186,23 @@ class InMemoryDatabase:
 
     :ivar tables: Committed rows of every table.
     :ivar wait_seconds: How long a block of the port waits for its lock before it gives up with ``BookBusyError``.
-    :ivar change_lock: Lock of the blocks that write outside the content of a book.
+    :ivar change_lock: Single-holder semaphore of the blocks that write outside the content of a book.
     """
 
     tables: InMemoryTables = field(factory=InMemoryTables)
     wait_seconds: float = DEFAULT_CHANGE_WAIT_SECONDS
-    change_lock: anyio.Lock = field(factory=anyio.Lock, init=False)
-    _book_locks: dict[ProjectId, anyio.Lock] = field(factory=dict, init=False)
+    change_lock: anyio.Semaphore = field(factory=lambda: anyio.Semaphore(1), init=False)
+    _book_locks: dict[ProjectId, anyio.Semaphore] = field(factory=dict, init=False)
 
-    def book_lock(self, project_id: ProjectId) -> anyio.Lock:
-        """Return the lock of one book, made when the book is first changed.
+    def book_lock(self, project_id: ProjectId) -> anyio.Semaphore:
+        """Return the single-holder semaphore of one book, made when the book is first changed.
 
         :param project_id: Project whose book is changed.
         :type project_id: ProjectId
-        :returns: The lock every change of that book takes.
-        :rtype: anyio.Lock
+        :returns: The semaphore every change of that book takes.
+        :rtype: anyio.Semaphore
         """
-        return self._book_locks.setdefault(project_id, anyio.Lock())
+        return self._book_locks.setdefault(project_id, anyio.Semaphore(1))
 
 
 @define
@@ -2183,14 +2186,14 @@ class InMemoryUnitOfWork(UnitOfWork):
             yield
 
     @asynccontextmanager
-    async def _block(self, lock: anyio.Lock) -> AsyncIterator[None]:
+    async def _block(self, lock: anyio.Semaphore) -> AsyncIterator[None]:
         """Hold a lock for a transaction that commits on exit and is discarded on an exception.
 
         The copy of the tables is taken after the lock is held, so the block reads what the change that held the lock
         before it committed.
 
-        :param lock: Lock of the book or of the changes outside books.
-        :type lock: anyio.Lock
+        :param lock: Single-holder semaphore of the book or of the changes outside books.
+        :type lock: anyio.Semaphore
         :returns: Iterator yielding once the lock is held and the copy of the tables taken.
         :rtype: AsyncIterator[None]
         :raises BookBusyError: If the lock was not free within the wait limit.
