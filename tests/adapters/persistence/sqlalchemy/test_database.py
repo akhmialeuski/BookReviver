@@ -4,8 +4,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 from attrs import evolve
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
+from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from tests.helpers.builders import make_project
 from tests.helpers.seeding import store_project
@@ -26,6 +27,8 @@ COMMIT_STATEMENT: str = 'COMMIT'
 ROLLBACK_STATEMENT: str = 'ROLLBACK'
 # What a statement of SQLite that starts or ends a transaction begins with
 TRANSACTION_WORDS: tuple[str, ...] = ('BEGIN', COMMIT_STATEMENT, ROLLBACK_STATEMENT)
+# The title a test gives a stored project
+NEW_TITLE: str = 'Renamed'
 
 
 @pytest.fixture
@@ -57,7 +60,7 @@ class TestSqlDatabase:
         :type fx_owner_id: AccountId
         """
         project = make_project(owner_id=fx_owner_id)
-        renamed = evolve(project, details=evolve(project.details, title='Renamed'))
+        renamed = evolve(project, details=evolve(project.details, title=NEW_TITLE))
         async with fx_database.sessions() as session:
             await store_project(SqlAlchemyUnitOfWork(session), project)
         async with fx_database.sessions() as session:
@@ -153,3 +156,51 @@ class TestSqliteTransactions:
             await store_project(SqlAlchemyUnitOfWork(writing), written)
             assert await SqlAlchemyUnitOfWork(reading).projects.get(written.id) == written
         assert [statement for statement in log.statements if statement.startswith(TRANSACTION_WORDS)] == []
+
+    async def test_block_reads_a_row_another_session_changed_after_the_session_loaded_it(
+        self, fx_database: SqlDatabase, fx_owner_id: AccountId
+    ) -> None:
+        """Verify a block reads the committed row, not the copy an earlier read left in the session.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
+        """
+        project = make_project(owner_id=fx_owner_id)
+        renamed = evolve(project, details=evolve(project.details, title=NEW_TITLE))
+        async with fx_database.sessions() as session:
+            await store_project(SqlAlchemyUnitOfWork(session), project)
+        async with fx_database.sessions() as reading, fx_database.sessions() as writing:
+            uow = SqlAlchemyUnitOfWork(reading)
+            await uow.projects.get(project.id)
+            other = SqlAlchemyUnitOfWork(writing)
+            async with other.change():
+                await other.projects.update(renamed)
+            async with uow.change_book(project.id) as held:
+                pass
+        assert held.details.title == renamed.details.title
+
+    async def test_block_keeps_the_account_row_the_session_loaded(
+        self, fx_database: SqlDatabase, fx_owner_id: AccountId
+    ) -> None:
+        """Verify a block leaves the account row of the request loaded, so reading it after the block needs no query.
+
+        fastapi-users loads the account of the request into the same session before the route runs, and reads it
+        again after the route, for example to delete it after its books. An expired row would need a lazy load there,
+        which an async session refuses.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
+        """
+        project = make_project(owner_id=fx_owner_id)
+        async with fx_database.sessions() as session:
+            await store_project(SqlAlchemyUnitOfWork(session), project)
+        async with fx_database.sessions() as session:
+            account = await session.get_one(AccountTable, fx_owner_id)
+            uow = SqlAlchemyUnitOfWork(session)
+            async with uow.change_book(project.id):
+                pass
+            assert inspect(account).expired_attributes == set()
