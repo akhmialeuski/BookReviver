@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { XIcon } from 'lucide-react';
+import { EraserIcon, XIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { ProjectSchema } from '@/api';
 import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-query.gen';
@@ -10,6 +10,7 @@ import { SaveStatus } from '@/features/about/SaveStatus';
 import { SuggestionBanners } from '@/features/about/SuggestionBanners';
 import { SECTIONS, type Section, sectionId } from '@/features/about/sections';
 import { useAutosave } from '@/features/about/useAutosave';
+import { ClearOldResults } from '@/features/processing/ClearOldResults';
 import { DeleteProjectDialog } from '@/features/projects/DeleteProjectDialog';
 import { describeError } from '@/shared/http/problem';
 import { cn } from '@/shared/lib/utils';
@@ -19,7 +20,8 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
  * The About tab of a book: the sections of its description on the left, the forms on the right, the choice of the
- * cover above them, and the deletion of the book last on the left, apart from the rest.
+ * cover above them, and the actions on the whole book last on the left, apart from the rest: the clearing of its old
+ * results and its deletion.
  *
  * The forms save by themselves, and the line at the bottom says where the saving stands.
  */
@@ -53,6 +55,12 @@ function AboutForm({ project }: { project: ProjectSchema }): React.JSX.Element {
           </Button>
         ))}
         <div className="my-2 border-t" />
+        <ClearOldResults projectId={project.id}>
+          <Button type="button" variant="ghost" className="justify-start">
+            <EraserIcon />
+            {MESSAGES.about.clearResults.open}
+          </Button>
+        </ClearOldResults>
         <DeleteProjectDialog project={project} onDeleted={() => void navigate({ to: '/projects' })}>
           <Button
             type="button"

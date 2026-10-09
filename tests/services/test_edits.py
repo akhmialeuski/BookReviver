@@ -174,8 +174,8 @@ class TestSave:
         """
         actor, project, page = await prepared(fx_kit)
         first, second = Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)
-        twice = RecipeDraft(name='Twice', steps=[first, second])
-        await fx_kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, twice)
+        twice = RecipeDraft(steps=[first, second])
+        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, twice)
         key = PageStepKey(page.id, Stage.GEOMETRY, first.step_id)
         saved = await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
         listed = await fx_kit.edits().list(actor, project.id, page.id, Stage.GEOMETRY)

@@ -3,6 +3,7 @@
 from http import HTTPStatus
 from typing import TYPE_CHECKING, NamedTuple
 
+import httpx
 import pytest
 from delayed_assert import assert_expectations, expect
 
@@ -16,11 +17,11 @@ from bookreviver.domain.errors import (
     UnsupportedSourceError,
     UploadRejectedError,
 )
+from tests.conftest import TEST_BASE_URL
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import httpx
     from fastapi import FastAPI
 
 pytestmark = pytest.mark.anyio
@@ -29,6 +30,7 @@ PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 FAILING_PATH: str = '/test/fail'
 SECRET_DETAIL: str = 'password=hunter2 in connection string'
 CONTENT_TYPE_HEADER: str = 'content-type'
+DETAIL_KEY: str = 'detail'
 # Messages of domain errors, which reach the client unchanged as the problem detail
 FORBIDDEN_MESSAGE: str = 'not yours'
 CONFLICT_MESSAGE: str = 'import running'
@@ -104,7 +106,6 @@ class TestProblemHandler:
                 HTTPStatus.CONTENT_TOO_LARGE,
                 UploadProblem.TOO_MANY_FILES.label,
             ),
-            ProblemCase(RuntimeError(SECRET_DETAIL), HTTPStatus.INTERNAL_SERVER_ERROR, UNEXPECTED_DETAIL),
         ],
         ids=[
             'not-found',
@@ -115,7 +116,6 @@ class TestProblemHandler:
             'upload-rule',
             'too-large',
             'too-many-files',
-            'unhandled',
         ],
     )
     async def test_error_becomes_problem(
@@ -136,7 +136,30 @@ class TestProblemHandler:
         expect(response.status_code == case.status)
         expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
         expect(body['status'] == case.status)
-        expect(body['detail'] == case.detail)
+        expect(body[DETAIL_KEY] == case.detail)
+        expect(SECRET_DETAIL not in response.text)
+        assert_expectations()
+
+    async def test_unexpected_error_is_a_problem_that_hides_its_message(
+        self, fx_app: FastAPI, fx_failing_route: Callable[[Exception], None]
+    ) -> None:
+        """Verify an error the API does not expect answers 500 with a detail that hides the message of the error.
+
+        Starlette answers such an error and raises it again for the server to log, which the shared client turns into a
+        failed request, so this one lets it pass and reads the answer.
+
+        :param fx_app: The running application.
+        :type fx_app: FastAPI
+        :param fx_failing_route: Function making ``FAILING_PATH`` raise a given error.
+        :type fx_failing_route: Callable[[Exception], None]
+        """
+        fx_failing_route(RuntimeError(SECRET_DETAIL))
+        transport = httpx.ASGITransport(app=fx_app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url=TEST_BASE_URL) as client:
+            response = await client.get(FAILING_PATH)
+        expect(response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR)
+        expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
+        expect(response.json()[DETAIL_KEY] == UNEXPECTED_DETAIL)
         expect(SECRET_DETAIL not in response.text)
         assert_expectations()
 

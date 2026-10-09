@@ -13,16 +13,15 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import VERSION_ID_PATTERN, PageEdit, PageStepChange, VersionInputs
 from bookreviver.domain.enums import (
-    AppliesTo,
     BlankFill,
     ChangeSource,
-    ColorMode,
     ContentSource,
     ContentType,
     JobKind,
     PageKind,
     PageOrigin,
     PageSide,
+    RecipeKind,
     Rendition,
     ResultMark,
     Stage,
@@ -220,17 +219,23 @@ class TestStep:
         stored: dict[str, Any] = {StepField.PROCESSOR_KEY: DESKEW_KEY, StepField.PARAMS: {}}
         assert Step.from_map(stored).enabled is True
 
-    def test_step_stored_before_the_identifier_and_the_condition_existed_gets_both(self) -> None:
-        """Verify an old object gets a new identifier, and processes every page as it did."""
+    def test_step_stored_before_the_identifier_existed_gets_one(self) -> None:
+        """Verify an old object gets a new identifier."""
         stored: dict[str, Any] = {StepField.PROCESSOR_KEY: DESKEW_KEY, StepField.PARAMS: {}}
         first, second = Step.from_map(stored), Step.from_map(stored)
-        expect(first.applies_to is AppliesTo.ALL)
-        expect(first.step_id != second.step_id)
+        assert first.step_id != second.step_id
+
+    def test_a_step_has_no_condition(self) -> None:
+        """Verify a step is stored without a condition, and one stored with a condition before is read without it."""
+        step = Step(processor_key=DESKEW_KEY)
+        legacy: dict[str, Any] = {**step.to_map(), 'applies_to': 'pictures'}
+        expect(set(step.to_map()) == {StepField.PROCESSOR_KEY, StepField.PARAMS, StepField.ENABLED, StepField.STEP_ID})
+        expect(Step.from_map(legacy) == step)
         assert_expectations()
 
-    def test_identifier_and_condition_survive_a_copy_of_the_step(self) -> None:
+    def test_identifier_survives_a_copy_of_the_step(self) -> None:
         """Verify a step moved or copied with ``evolve`` keeps its identifier, and a new step gets its own."""
-        step = Step(processor_key=DESKEW_KEY, applies_to=AppliesTo.PICTURES)
+        step = Step(processor_key=DESKEW_KEY)
         expect(evolve(step, enabled=False).step_id == step.step_id)
         expect(Step(processor_key=DESKEW_KEY).step_id != step.step_id)
         assert_expectations()
@@ -241,74 +246,45 @@ class TestStep:
             Step.from_map({StepField.PARAMS: {}})
 
 
-class TestAppliesTo:
-    """Tests for the condition of a step, which reads what a page shows."""
-
-    @pytest.mark.parametrize(
-        ('content', 'matching'),
-        [
-            (ContentType.TEXT, {AppliesTo.ALL, AppliesTo.TEXT}),
-            (ContentType.COLOR_PICTURE, {AppliesTo.ALL, AppliesTo.PICTURES, AppliesTo.COLOR_PICTURES}),
-            (ContentType.BW_PICTURE, {AppliesTo.ALL, AppliesTo.PICTURES, AppliesTo.BW_PICTURES}),
-        ],
-        ids=['text', 'colour-picture', 'bw-picture'],
-    )
-    def test_condition_matches_a_page_by_what_it_shows(self, content: ContentType, matching: set[AppliesTo]) -> None:
-        """Verify which of the conditions meet a page that shows text, or a picture of a colour.
-
-        :param content: What the page shows.
-        :type content: ContentType
-        :param matching: The conditions the page meets.
-        :type matching: set[AppliesTo]
-        """
-        assert {condition for condition in AppliesTo if condition.matches(content)} == matching
-
-
 class TestPageContent:
     """Tests for what a page shows, which comes from the user, from the detection, or from the kind of the page."""
 
     @pytest.mark.parametrize(
-        ('kind', 'color_mode', 'expected'),
+        ('kind', 'expected'),
         [
-            (PageKind.TEXT, ColorMode.GRAY, ContentType.TEXT),
-            (PageKind.COVER, ColorMode.COLOR, ContentType.TEXT),
-            (PageKind.PLATE, ColorMode.COLOR, ContentType.COLOR_PICTURE),
-            (PageKind.PLATE, ColorMode.GRAY, ContentType.BW_PICTURE),
-            (PageKind.FRONTISPIECE, ColorMode.BILEVEL, ContentType.BW_PICTURE),
-            (PageKind.PLATE, ColorMode.UNKNOWN, ContentType.COLOR_PICTURE),
+            (PageKind.TEXT, ContentType.TEXT),
+            (PageKind.COVER, ContentType.TEXT),
+            (PageKind.PLATE, ContentType.COLOR_PICTURE),
+            (PageKind.FRONTISPIECE, ContentType.COLOR_PICTURE),
         ],
-        ids=['text', 'cover', 'colour-plate', 'gray-plate', 'bilevel-frontispiece', 'unknown-plate'],
+        ids=['text', 'cover', 'plate', 'frontispiece'],
     )
-    def test_a_page_not_detected_is_what_its_kind_and_the_colour_of_its_image_say(
-        self, kind: PageKind, color_mode: ColorMode, expected: ContentType
-    ) -> None:
-        """Verify plates and frontispieces are pictures in the colour of the image, and every other kind is text.
+    def test_a_page_not_detected_is_what_its_kind_says(self, kind: PageKind, expected: ContentType) -> None:
+        """Verify plates and frontispieces are pictures in colour, since nobody found their colour, and others text.
 
         :param kind: Role of the page.
         :type kind: PageKind
-        :param color_mode: Colour mode of the image the stage starts from.
-        :type color_mode: ColorMode
         :param expected: What the page shows.
         :type expected: ContentType
         """
         page = make_page(project_id=make_project(owner_id=new_account_id()).id, kind=kind)
-        expect(page.content_of(color_mode) is expected)
+        expect(page.content is expected)
         expect(page.content_source is ContentSource.KIND)
         assert_expectations()
 
     @pytest.mark.parametrize(
-        ('kind', 'detected', 'color_mode', 'expected'),
+        ('kind', 'detected', 'expected'),
         [
-            (PageKind.TEXT, ContentType.COLOR_PICTURE, ColorMode.GRAY, ContentType.COLOR_PICTURE),
-            (PageKind.TEXT, ContentType.BW_PICTURE, ColorMode.COLOR, ContentType.BW_PICTURE),
-            (PageKind.TEXT, ContentType.TEXT, ColorMode.COLOR, ContentType.TEXT),
-            (PageKind.PLATE, ContentType.TEXT, ColorMode.GRAY, ContentType.BW_PICTURE),
-            (PageKind.PLATE, ContentType.COLOR_PICTURE, ColorMode.GRAY, ContentType.COLOR_PICTURE),
+            (PageKind.TEXT, ContentType.COLOR_PICTURE, ContentType.COLOR_PICTURE),
+            (PageKind.TEXT, ContentType.BW_PICTURE, ContentType.BW_PICTURE),
+            (PageKind.TEXT, ContentType.TEXT, ContentType.TEXT),
+            (PageKind.PLATE, ContentType.TEXT, ContentType.COLOR_PICTURE),
+            (PageKind.PLATE, ContentType.BW_PICTURE, ContentType.BW_PICTURE),
         ],
-        ids=['picture-on-a-text-page', 'bw-picture-in-a-colour-scan', 'text', 'plate-found-as-text', 'colour-plate'],
+        ids=['picture-on-a-text-page', 'bw-picture', 'text', 'plate-found-as-text', 'bw-plate'],
     )
     def test_what_the_detection_found_decides_unless_the_kind_makes_the_page_a_picture(
-        self, kind: PageKind, detected: ContentType, color_mode: ColorMode, expected: ContentType
+        self, kind: PageKind, detected: ContentType, expected: ContentType
     ) -> None:
         """Verify a picture the detection found is one on any kind, and a plate it found no picture on stays one.
 
@@ -316,15 +292,13 @@ class TestPageContent:
         :type kind: PageKind
         :param detected: What the detection found.
         :type detected: ContentType
-        :param color_mode: Colour mode of the image the stage starts from.
-        :type color_mode: ColorMode
         :param expected: What the page shows.
         :type expected: ContentType
         """
         page = evolve(
             make_page(project_id=make_project(owner_id=new_account_id()).id, kind=kind), content_type=detected
         )
-        assert page.content_of(color_mode) is expected
+        assert page.content is expected
 
     @pytest.mark.parametrize('kind', [PageKind.TEXT, PageKind.PLATE])
     @pytest.mark.parametrize('chosen', list(ContentType))
@@ -343,10 +317,48 @@ class TestPageContent:
             content_type=chosen,
             content_by_hand=True,
         )
-        expect(page.is_picture is chosen.is_picture)
-        expect(page.content_of(ColorMode.UNKNOWN) is (chosen if chosen.is_picture else ContentType.TEXT))
+        expect(page.content is chosen)
         expect(page.content_source is ContentSource.HAND)
         assert_expectations()
+
+    @pytest.mark.parametrize(
+        ('kind', 'content_type', 'by_hand', 'expected'),
+        [
+            (PageKind.TEXT, None, False, RecipeKind.TEXT),
+            (PageKind.COVER, ContentType.TEXT, False, RecipeKind.TEXT),
+            (PageKind.PLATE, None, False, RecipeKind.COLOR_PICTURE),
+            (PageKind.TEXT, ContentType.BW_PICTURE, False, RecipeKind.BW_PICTURE),
+            (PageKind.TEXT, ContentType.COLOR_PICTURE, True, RecipeKind.COLOR_PICTURE),
+            (PageKind.PLATE, ContentType.TEXT, True, RecipeKind.TEXT),
+            (PageKind.BLANK, None, False, RecipeKind.BLANK),
+            (PageKind.BLANK, ContentType.BW_PICTURE, True, RecipeKind.BLANK),
+        ],
+        ids=['text', 'cover', 'plate', 'found-bw', 'set-colour', 'plate-set-text', 'blank', 'blank-beats-content'],
+    )
+    def test_the_kind_of_a_page_is_blank_for_a_blank_page_and_otherwise_what_it_shows(
+        self, kind: PageKind, content_type: ContentType | None, expected: RecipeKind, *, by_hand: bool
+    ) -> None:
+        """Verify the recipe kind of a page that is blank, a picture in either colour, or text.
+
+        :param kind: Role of the page.
+        :type kind: PageKind
+        :param content_type: The content type the page has, or None.
+        :type content_type: ContentType | None
+        :param by_hand: Whether the user set the content type.
+        :type by_hand: bool
+        :param expected: The kind of the page.
+        :type expected: RecipeKind
+        """
+        page = evolve(
+            make_page(project_id=make_project(owner_id=new_account_id()).id, kind=kind),
+            content_type=content_type,
+            content_by_hand=by_hand,
+        )
+        assert page.recipe_kind is expected
+
+    def test_every_kind_of_recipe_has_a_label(self) -> None:
+        """Verify no kind is left without the name the interface shows, which is also the name of its recipe."""
+        assert all(kind.label for kind in RecipeKind)
 
     def test_a_detected_page_says_it_was_found(self) -> None:
         """Verify the source of a detected type on a page that is no plate is the detection."""
@@ -489,15 +501,6 @@ class TestPageEditHashOf:
 
 class TestPageStepState:
     """Tests for the settings and the edit a page keeps for a step."""
-
-    def test_settings_are_laid_over_the_parameters_and_the_rest_stays(self) -> None:
-        """Verify a field the page changes wins, a field it does not change is the recipe's, and nothing is mutated."""
-        recipe_params = {'max_angle': 5, 'min_confidence': 0.3}
-        state = make_page_step_state(page_id=PAGE_ID, params={'max_angle': 3})
-        assert (state.apply_to(recipe_params), recipe_params) == (
-            {'max_angle': 3, 'min_confidence': 0.3},
-            {'max_angle': 5, 'min_confidence': 0.3},
-        )
 
     def test_a_state_with_no_setting_and_no_edit_is_empty(self) -> None:
         """Verify a state is empty only while it holds neither of its two layers."""

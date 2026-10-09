@@ -204,7 +204,6 @@ describe('restoreUsualOrder', () => {
       ...entry,
       params: { index },
       enabled: index === 0,
-      appliesTo: 'text' as const,
     }));
 
     const restored = restoreUsualOrder(steps, CATALOGUE);

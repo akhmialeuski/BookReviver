@@ -1,11 +1,10 @@
 """The recipes of a project: the ones every stage starts with, and the check of the steps a user puts into one.
 
-A stage has exactly one active recipe, by which a page without a choice of its own is processed. The first time a
-stage is asked for, ``RecipeBook`` creates its recipes from ``DefaultRecipes``: the first of the stage is active and
-the others are variants the user may try. A template whose processor the catalogue does not offer, such as one that
-needs OpenCV on a machine that has none, is left out, and a stage with no template left has no recipe at all. When the
-owner of the project has chosen a default profile for the stage, the active recipe is made from the profile and the
-templates follow it as variants.
+A stage that has recipes has exactly one for each kind of page (``RecipeKind``), and a page is processed by the recipe
+of its kind. The first time a stage is asked for, ``RecipeBook`` creates all of them from ``DefaultRecipes``. A kind
+whose template the catalogue cannot build, such as one that needs OpenCV on a machine that has none, takes the steps of
+the recipe of text pages, and a stage with no template of text pages and no default profile has no recipe at all. When
+the owner of the project has chosen a default profile for the stage, the recipe of text pages is made from the profile.
 
 Every step is checked before it is saved: its processor must exist, belong to the stage of the recipe, and accept its
 parameters, which are stored in the form ``validate_params`` returns, defaults filled in, so two recipes that differ in
@@ -20,27 +19,25 @@ from uuid import uuid4
 
 from attrs import evolve, field, frozen
 
-from bookreviver.domain.entities import Recipe, RecipeRule
+from bookreviver.domain.entities import Recipe
 from bookreviver.domain.enums import (
-    AppliesTo,
     BinarizationMethod,
     DeskewMethod,
     DewarpMethod,
     OrderMode,
     OutputMode,
-    RuleCondition,
+    RecipeKind,
     Stage,
 )
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
-from bookreviver.domain.ids import RecipeId, RecipeRuleId
+from bookreviver.domain.ids import RecipeId
 from bookreviver.domain.values import RecipeDraft, Step
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from datetime import datetime
 
-    from bookreviver.domain.entities import RecipeProfile
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.entities import Page, RecipeProfile
+    from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.domain.values import MetadataMap, PageStepKey
     from bookreviver.ports.persistence import RecipeRepository, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
@@ -52,7 +49,7 @@ ALL_STEPS_OFF: str = 'A recipe needs at least one step that is switched on.'
 WRONG_STAGE: str = 'The processor {key} belongs to the {actual} stage, not to the {expected} stage.'
 UNKNOWN_PROCESSOR: str = 'There is no processor {key}.'
 NO_RECIPE: str = 'The {stage} stage has no recipe, since no processor for it is installed.'
-# The steps of every geometry recipe a project starts with, which its variants switch and tune differently
+# The steps of every geometry recipe a project starts with, which the recipes switch and tune differently
 GEOMETRY_STEPS: tuple[str, ...] = (
     'geometry.perspective',
     'geometry.deskew',
@@ -71,7 +68,7 @@ async def find_step(recipes: RecipeRepository, project_id: ProjectId, key: PageS
     :type project_id: ProjectId
     :param key: The page, the stage and the step.
     :type key: PageStepKey
-    :returns: The step as the first recipe of the stage that has it, the active one first, holds it.
+    :returns: The step as the first recipe of the stage that has it holds it.
     :rtype: Step
     :raises NotFoundError: If no recipe of the stage has the step.
     """
@@ -84,25 +81,17 @@ async def find_step(recipes: RecipeRepository, project_id: ProjectId, key: PageS
 
 @frozen(kw_only=True)
 class RecipeTemplate:
-    """A recipe a stage starts with.
+    """The steps of a recipe a stage starts with for one kind of page.
 
-    :ivar name: Name the user sees.
     :ivar processor_keys: Keys of the processors of the steps, which run with their default parameters unless the
                           template gives others.
     :ivar params: Parameters of some of the steps, by the key of the processor, which the defaults fill out.
     :ivar off: Keys of the processors whose steps are in the recipe but switched off.
-    :ivar applies_to: The condition of some of the steps, by the key of the processor, which processes the pages it
-                      names and passes the others unchanged. A step with no entry processes every page.
-    :ivar condition: The pages that are sent to this recipe from the start, by a rule of the stage, or None for a recipe
-                     no rule sends pages to.
     """
 
-    name: str
     processor_keys: tuple[str, ...]
     params: Mapping[str, MetadataMap] = field(factory=dict)
     off: frozenset[str] = frozenset()
-    applies_to: Mapping[str, AppliesTo] = field(factory=dict)
-    condition: RuleCondition | None = None
 
 
 # The steps of the Cleanup stage in the order they run: the page is made black and white first, so that what is left
@@ -117,89 +106,73 @@ MODE_PARAM: str = 'mode'
 METHOD_PARAM: str = 'method'
 STRENGTH_PARAM: str = 'strength'
 
+# The recipes of a page of each kind. A page of text is followed along its lines, and a blank page is processed as one
+# of text, since a scan of a blank page has the paper and the specks of a page of text. A picture is not followed along
+# lines of text and keeps its tones.
+AUTOMATIC_SPLIT = RecipeTemplate(processor_keys=('split.auto',))
+TEXT_GEOMETRY = RecipeTemplate(
+    processor_keys=GEOMETRY_STEPS,
+    params={
+        'geometry.deskew': {'method': DeskewMethod.PROJECTION},
+        'geometry.dewarp': {'method': DewarpMethod.TEXT_LINES},
+    },
+)
+PICTURE_GEOMETRY = RecipeTemplate(
+    processor_keys=GEOMETRY_STEPS,
+    params={
+        'geometry.deskew': {'method': DeskewMethod.HOUGH},
+        'geometry.dewarp': {'method': DewarpMethod.PAGE_EDGES},
+    },
+)
+TEXT_CLEANUP = RecipeTemplate(
+    processor_keys=(BINARIZE_KEY, DESPECKLE_KEY, THICKNESS_KEY, ERASER_KEY),
+    params={
+        BINARIZE_KEY: {MODE_PARAM: OutputMode.BW, METHOD_PARAM: BinarizationMethod.SAUVOLA},
+        DESPECKLE_KEY: {STRENGTH_PARAM: 2},
+    },
+)
+PICTURE_CLEANUP = RecipeTemplate(
+    processor_keys=(BINARIZE_KEY, ERASER_KEY),
+    params={BINARIZE_KEY: {MODE_PARAM: OutputMode.GRAY, METHOD_PARAM: BinarizationMethod.SAUVOLA}},
+)
+
 
 class DefaultRecipes:
-    """The recipes of each stage that a project starts with, the first of a stage being its active one."""
+    """The templates of the recipes each stage starts with, one for each kind of page."""
 
-    TEMPLATES: ClassVar[Mapping[Stage, tuple[RecipeTemplate, ...]]] = {
-        Stage.PAGE_SPLIT: (
-            RecipeTemplate(name='Automatic', processor_keys=('split.auto',)),
-            RecipeTemplate(name='Whole scan', processor_keys=('split.none',)),
-            RecipeTemplate(name='Spread', processor_keys=('split.spread',)),
-        ),
-        Stage.GEOMETRY: (
-            RecipeTemplate(
-                name='Text',
-                processor_keys=GEOMETRY_STEPS,
-                params={
-                    'geometry.deskew': {'method': DeskewMethod.PROJECTION},
-                    'geometry.dewarp': {'method': DewarpMethod.TEXT_LINES},
-                },
-                # The lines of text are what these two follow, so a picture that meets this recipe passes them
-                applies_to={'geometry.deskew': AppliesTo.TEXT, 'geometry.dewarp': AppliesTo.TEXT},
-            ),
-            RecipeTemplate(
-                name='Plates',
-                processor_keys=GEOMETRY_STEPS,
-                params={
-                    'geometry.deskew': {'method': DeskewMethod.HOUGH},
-                    'geometry.dewarp': {'method': DewarpMethod.PAGE_EDGES},
-                },
-                condition=RuleCondition.PLATES,
-            ),
-            RecipeTemplate(
-                name='Flat',
-                processor_keys=GEOMETRY_STEPS,
-                off=frozenset({'geometry.dewarp'}),
-            ),
-        ),
-        Stage.CLEANUP: (
-            RecipeTemplate(
-                name='Text',
-                processor_keys=(BINARIZE_KEY, DESPECKLE_KEY, THICKNESS_KEY, ERASER_KEY),
-                params={
-                    BINARIZE_KEY: {MODE_PARAM: OutputMode.BW, METHOD_PARAM: BinarizationMethod.SAUVOLA},
-                    DESPECKLE_KEY: {STRENGTH_PARAM: 2},
-                },
-                # The three make a page black and white, clean it of specks and change the strokes, which a picture in
-                # tones must not meet
-                applies_to={BINARIZE_KEY: AppliesTo.TEXT, DESPECKLE_KEY: AppliesTo.TEXT, THICKNESS_KEY: AppliesTo.TEXT},
-            ),
-            RecipeTemplate(
-                name='Plates',
-                processor_keys=(BINARIZE_KEY, ERASER_KEY),
-                params={BINARIZE_KEY: {MODE_PARAM: OutputMode.GRAY, METHOD_PARAM: BinarizationMethod.SAUVOLA}},
-                condition=RuleCondition.PLATES,
-            ),
-            RecipeTemplate(
-                name='Mixed',
-                processor_keys=(BINARIZE_KEY, DESPECKLE_KEY, ERASER_KEY),
-                params={
-                    BINARIZE_KEY: {MODE_PARAM: OutputMode.MIXED, METHOD_PARAM: BinarizationMethod.SAUVOLA},
-                    DESPECKLE_KEY: {STRENGTH_PARAM: 1},
-                },
-                condition=RuleCondition.ILLUSTRATED,
-            ),
-        ),
+    TEMPLATES: ClassVar[Mapping[Stage, Mapping[RecipeKind, RecipeTemplate]]] = {
+        Stage.PAGE_SPLIT: dict.fromkeys(RecipeKind, AUTOMATIC_SPLIT),
+        Stage.GEOMETRY: {
+            RecipeKind.TEXT: TEXT_GEOMETRY,
+            RecipeKind.COLOR_PICTURE: PICTURE_GEOMETRY,
+            RecipeKind.BW_PICTURE: PICTURE_GEOMETRY,
+            RecipeKind.BLANK: TEXT_GEOMETRY,
+        },
+        Stage.CLEANUP: {
+            RecipeKind.TEXT: TEXT_CLEANUP,
+            RecipeKind.COLOR_PICTURE: PICTURE_CLEANUP,
+            RecipeKind.BW_PICTURE: PICTURE_CLEANUP,
+            RecipeKind.BLANK: TEXT_CLEANUP,
+        },
     }
 
-    def __init__(self, templates: Mapping[Stage, tuple[RecipeTemplate, ...]] | None = None) -> None:
+    def __init__(self, templates: Mapping[Stage, Mapping[RecipeKind, RecipeTemplate]] | None = None) -> None:
         """Start from the given templates, or from the ones every project gets.
 
-        :param templates: Templates by stage, the first of a stage being its active recipe, or None for ``TEMPLATES``.
-        :type templates: Mapping[Stage, tuple[RecipeTemplate, ...]] | None
+        :param templates: Templates by stage and kind, or None for ``TEMPLATES``.
+        :type templates: Mapping[Stage, Mapping[RecipeKind, RecipeTemplate]] | None
         """
         self._templates = self.TEMPLATES if templates is None else templates
 
-    def for_stage(self, stage: Stage) -> Sequence[RecipeTemplate]:
-        """Return the templates of a stage, the active one first.
+    def for_stage(self, stage: Stage) -> Mapping[RecipeKind, RecipeTemplate]:
+        """Return the templates of a stage by the kind of page they are for.
 
         :param stage: The stage.
         :type stage: Stage
         :returns: The templates, none for a stage that has no recipe by default.
-        :rtype: Sequence[RecipeTemplate]
+        :rtype: Mapping[RecipeKind, RecipeTemplate]
         """
-        return self._templates.get(stage, ())
+        return self._templates.get(stage, dict[RecipeKind, RecipeTemplate]())
 
 
 class RecipeBook:
@@ -233,92 +206,117 @@ class RecipeBook:
         self._clock = clock
         self._order = order
 
-    async def active(self, project_id: ProjectId, stage: Stage) -> Recipe:
-        """Return the active recipe of a stage, creating the default recipes of the stage the first time.
+    async def recipes(self, project_id: ProjectId, stage: Stage) -> list[Recipe]:
+        """Return the recipes of a stage, one for each kind of page, creating them when the stage is first asked for.
 
-        :param project_id: Project owning the recipe.
+        :param project_id: Project owning the recipes.
         :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
-        :returns: The active recipe.
-        :rtype: Recipe
+        :returns: The recipes in the order of the kinds.
+        :rtype: list[Recipe]
         :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
         """
-        if (found := await self._uow.recipes.find_active(project_id, stage)) is not None:
-            return found
+        if found := await self._uow.recipes.list_for_stage(project_id, stage):
+            return [await self._current(recipe) for recipe in found]
         moment = self._clock.now()
-        buildable = self._buildable(stage)
-        preferred = await self._default_profile_recipe(project_id, stage, moment)
-        if not buildable and preferred is None:
-            raise NotFoundError(NO_RECIPE.format(stage=stage.label))
+        steps, profile = await self._starting_steps(project_id, stage)
         built = [
             Recipe(
                 id=RecipeId(uuid4()),
                 project_id=project_id,
                 stage=stage,
-                name=template.name,
-                steps=self._template_steps(template),
-                active=index == 0 and preferred is None,
-                # A microsecond apart and after the recipe of a default profile, so the recipes are listed in the order
-                # of their templates
-                created_at=moment + timedelta(microseconds=index + 1),
+                kind=kind,
+                steps=steps[kind],
+                profile_id=profile.id if profile is not None and kind is RecipeKind.TEXT else None,
+                # A microsecond apart, so the recipes are listed in the order of the kinds
+                created_at=moment + timedelta(microseconds=index),
                 updated_at=moment,
             )
-            for index, template in enumerate(buildable)
+            for index, kind in enumerate(RecipeKind)
         ]
-        recipes = built if preferred is None else [preferred, *built]
         try:
-            await self._uow.recipes.add_many(recipes)
-            targeted = [
-                (recipe, template.condition)
-                for recipe, template in zip(built, buildable, strict=True)
-                if template.condition is not None
-            ]
-            for order, (recipe, condition) in enumerate(targeted):
-                rule = RecipeRule(
-                    id=RecipeRuleId(uuid4()),
-                    project_id=project_id,
-                    stage=stage,
-                    condition=condition,
-                    recipe_id=recipe.id,
-                    order=order,
-                )
-                await self._uow.recipe_rules.add(rule)
+            await self._uow.recipes.add_many(built)
             await self._uow.commit()
         except ConflictError:
             # A request that ran at the same time stored the recipes first, and its recipes are the ones to use
             await self._uow.rollback()
-            if (found := await self._uow.recipes.find_active(project_id, stage)) is None:
+            if not (found := await self._uow.recipes.list_for_stage(project_id, stage)):
                 raise
-            return found
-        return recipes[0]
+            return [await self._current(recipe) for recipe in found]
+        return built
 
-    async def default_draft(self, project_id: ProjectId, stage: Stage, name: str) -> RecipeDraft:
-        """Return the draft of the steps a stage starts with for a book, which ``active`` would make the recipe of.
+    async def _current(self, recipe: Recipe) -> Recipe:
+        """Give a stored recipe with the parameters of every step as their processors write them now.
 
-        The default profile of the book's owner comes first, when there is a usable one, and the draft names it, so a
-        recipe made from the draft can be linked to it. Without one the steps are those of the built-in template named
-        ``name``, or of the first template the application can build when none has that name, and no profile is named.
+        A processor that gains a parameter after a recipe was saved leaves the stored step without it, while a form
+        opened on the step fills it in and so changes the draft, which no one made. The stored recipe is left as it is,
+        and a step whose processor is gone or refuses its stored parameters is given as stored, which a run reports.
+
+        :param recipe: The recipe as stored.
+        :type recipe: Recipe
+        :returns: The recipe with the checked parameters of each step it could check.
+        :rtype: Recipe
+        """
+        steps: list[Step] = []
+        for step in recipe.steps:
+            try:
+                steps.append(await self._check_step(recipe.stage, step))
+            except InvalidParametersError:
+                steps.append(step)
+        return evolve(recipe, steps=tuple(steps))
+
+    async def of_kind(self, project_id: ProjectId, stage: Stage, kind: RecipeKind) -> Recipe:
+        """Return the recipe of a stage for one kind of page.
+
+        :param project_id: Project owning the recipe.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :param kind: The kind of page.
+        :type kind: RecipeKind
+        :returns: The recipe.
+        :rtype: Recipe
+        :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
+        """
+        return next(recipe for recipe in await self.recipes(project_id, stage) if recipe.kind is kind)
+
+    async def for_pages(self, project_id: ProjectId, stage: Stage, pages: Sequence[Page]) -> dict[PageId, Recipe]:
+        """Choose the recipe of each page of a stage, which is the recipe of the kind of the page.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :param pages: The pages.
+        :type pages: Sequence[Page]
+        :returns: The recipe of each page, by page identifier.
+        :rtype: dict[PageId, Recipe]
+        :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
+        """
+        by_kind = {recipe.kind: recipe for recipe in await self.recipes(project_id, stage)}
+        return {page.id: by_kind[page.recipe_kind] for page in pages}
+
+    async def default_draft(self, project_id: ProjectId, stage: Stage, kind: RecipeKind) -> RecipeDraft:
+        """Return the draft of the steps the recipe of a kind starts with, which a reset puts back into the recipe.
+
+        The recipe of text pages takes the default profile of the book's owner first, when there is a usable one, and
+        the draft names it, so the recipe can be linked to it. Without one, and for any other kind, the steps are those
+        of the built-in template of the kind, or of the recipe of text pages when the template cannot be built here.
 
         :param project_id: Project the steps are for.
         :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
-        :param name: Name of the recipe the steps are meant for, which picks a built-in template and is the name of the
-                     draft.
-        :type name: str
+        :param kind: The kind of page the recipe is for.
+        :type kind: RecipeKind
         :returns: The draft, whose steps are checked and each have a new identifier, in the free order.
         :rtype: RecipeDraft
         :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
         """
-        if (found := await self._default_profile(project_id, stage)) is not None:
-            profile, steps = found
-            return RecipeDraft(name=name, steps=steps, order=OrderMode.FREE, profile_id=profile.id)
-        buildable = self._buildable(stage)
-        if not buildable:
-            raise NotFoundError(NO_RECIPE.format(stage=stage.label))
-        template = next((template for template in buildable if template.name == name), buildable[0])
-        return RecipeDraft(name=name, steps=self._template_steps(template), order=OrderMode.FREE)
+        steps, profile = await self._starting_steps(project_id, stage)
+        profile_id = profile.id if profile is not None and kind is RecipeKind.TEXT else None
+        return RecipeDraft(steps=steps[kind], order=OrderMode.FREE, profile_id=profile_id)
 
     async def get(self, project_id: ProjectId, recipe_id: RecipeId, *, stage: Stage | None = None) -> Recipe:
         """Return a recipe of the project, of the given stage when one is named.
@@ -338,43 +336,12 @@ class RecipeBook:
             raise NotFoundError(recipe_id)
         return recipe
 
-    async def add_variant(self, project_id: ProjectId, stage: Stage, draft: RecipeDraft) -> Recipe:
-        """Store a recipe of a stage that is not active.
-
-        :param project_id: Project owning the recipe.
-        :type project_id: ProjectId
-        :param stage: The stage.
-        :type stage: Stage
-        :param draft: Name and steps of the variant, which are checked against their processors and their order, and
-                      the profile it is linked to.
-        :type draft: RecipeDraft
-        :returns: The variant as stored, not yet committed.
-        :rtype: Recipe
-        :raises NotFoundError: If the stage has no recipe.
-        :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
-                                        usual order.
-        """
-        await self.active(project_id, stage)
-        moment = self._clock.now()
-        variant = Recipe(
-            id=RecipeId(uuid4()),
-            project_id=project_id,
-            stage=stage,
-            name=draft.name,
-            steps=await self.check(stage, draft.steps, order=draft.order),
-            profile_id=draft.profile_id,
-            created_at=moment,
-            updated_at=moment,
-        )
-        await self._uow.recipes.add(variant)
-        return variant
-
     async def rewrite(self, recipe: Recipe, draft: RecipeDraft) -> Recipe:
-        """Store a new name and new steps of a recipe.
+        """Store new steps of a recipe.
 
         :param recipe: The recipe to change.
         :type recipe: Recipe
-        :param draft: New name and steps, which are checked against their processors and their order.
+        :param draft: New steps, which are checked against their processors and their order.
         :type draft: RecipeDraft
         :returns: The recipe as stored, not yet committed.
         :rtype: Recipe
@@ -383,30 +350,11 @@ class RecipeBook:
         """
         changed = evolve(
             recipe,
-            name=draft.name,
             steps=await self.check(recipe.stage, draft.steps, order=draft.order),
             updated_at=self._clock.now(),
         )
         await self._uow.recipes.update(changed)
         return changed
-
-    async def switch_active(self, previous: Recipe, chosen: Recipe) -> Recipe:
-        """Make a variant the active recipe of its stage, deactivating the active one first.
-
-        The old recipe is deactivated before the variant is activated, so a stage never has two active recipes.
-
-        :param previous: The active recipe of the stage.
-        :type previous: Recipe
-        :param chosen: The variant of the same stage to activate.
-        :type chosen: Recipe
-        :returns: The recipe as active, not yet committed.
-        :rtype: Recipe
-        """
-        moment = self._clock.now()
-        await self._uow.recipes.update(evolve(previous, active=False, updated_at=moment))
-        activated = evolve(chosen, active=True, updated_at=moment)
-        await self._uow.recipes.update(activated)
-        return activated
 
     async def check(
         self, stage: Stage, steps: Sequence[Step], *, order: OrderMode = OrderMode.USUAL
@@ -469,19 +417,19 @@ class RecipeBook:
         missing = dict.fromkeys(step.processor_key for step in steps if not self._offers(step.processor_key))
         return kept, tuple(missing)
 
-    def _buildable(self, stage: Stage) -> list[RecipeTemplate]:
-        """List the built-in templates of a stage whose processors are all installed, the active one first.
+    def _buildable(self, stage: Stage) -> dict[RecipeKind, RecipeTemplate]:
+        """List the built-in templates of a stage whose processors are all installed.
 
         :param stage: The stage.
         :type stage: Stage
-        :returns: The templates the application can build.
-        :rtype: list[RecipeTemplate]
+        :returns: The templates the application can build, by the kind of page.
+        :rtype: dict[RecipeKind, RecipeTemplate]
         """
-        return [
-            template
-            for template in self._defaults.for_stage(stage)
+        return {
+            kind: template
+            for kind, template in self._defaults.for_stage(stage).items()
             if all(self._offers(key) for key in template.processor_keys)
-        ]
+        }
 
     def _template_steps(self, template: RecipeTemplate) -> tuple[Step, ...]:
         """Build the steps of a built-in template, each with a new identifier.
@@ -496,10 +444,40 @@ class RecipeBook:
                 processor_key=key,
                 params=self._catalogue.get(key).validate_params(template.params.get(key, {})),
                 enabled=key not in template.off,
-                applies_to=template.applies_to.get(key, AppliesTo.ALL),
             )
             for key in template.processor_keys
         )
+
+    async def _starting_steps(
+        self, project_id: ProjectId, stage: Stage
+    ) -> tuple[dict[RecipeKind, tuple[Step, ...]], RecipeProfile | None]:
+        """Give the steps the recipe of each kind of a stage starts with, each step with an identifier of its own.
+
+        The recipe of text pages starts with the steps of the default profile of the book's owner when there is a usable
+        one, and otherwise with the steps of its template. A kind whose template the catalogue cannot build starts with
+        the steps of text pages, which a copy of a step keeps the identifier of.
+
+        :param project_id: Project the steps are for.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The steps of each kind, and the profile the steps of text pages come from, or None.
+        :rtype: tuple[dict[RecipeKind, tuple[Step, ...]], RecipeProfile | None]
+        :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
+        """
+        templates = self._buildable(stage)
+        preferred = await self._default_profile(project_id, stage)
+        if preferred is None and RecipeKind.TEXT not in templates:
+            raise NotFoundError(NO_RECIPE.format(stage=stage.label))
+        profile, text_steps = (
+            (None, self._template_steps(templates[RecipeKind.TEXT])) if preferred is None else preferred
+        )
+        others = [kind for kind in RecipeKind if kind is not RecipeKind.TEXT]
+        steps = {RecipeKind.TEXT: text_steps}
+        steps.update(
+            (kind, self._template_steps(templates[kind]) if kind in templates else text_steps) for kind in others
+        )
+        return steps, profile
 
     async def _default_profile(
         self, project_id: ProjectId, stage: Stage
@@ -525,33 +503,6 @@ class RecipeBook:
         except InvalidParametersError:
             return None
         return profile, steps
-
-    async def _default_profile_recipe(self, project_id: ProjectId, stage: Stage, moment: datetime) -> Recipe | None:
-        """Build the active recipe of a stage from the default profile of the project's owner, if there is a usable one.
-
-        :param project_id: Project the recipe is for.
-        :type project_id: ProjectId
-        :param stage: The stage.
-        :type stage: Stage
-        :param moment: The time the recipe is created at.
-        :type moment: datetime
-        :returns: The recipe, not stored yet, or None.
-        :rtype: Recipe | None
-        """
-        if (found := await self._default_profile(project_id, stage)) is None:
-            return None
-        profile, steps = found
-        return Recipe(
-            id=RecipeId(uuid4()),
-            project_id=project_id,
-            stage=stage,
-            name=profile.name,
-            steps=steps,
-            active=True,
-            profile_id=profile.id,
-            created_at=moment,
-            updated_at=moment,
-        )
 
     def _offers(self, key: str) -> bool:
         """Tell whether the catalogue has a processor.

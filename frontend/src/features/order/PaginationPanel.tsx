@@ -4,12 +4,14 @@ import type { PageSchema, PaginationSectionSchema } from '@/api';
 import { SectionDialog } from '@/features/order/SectionDialog';
 import { draftOf, newSectionDraft } from '@/features/order/sectionDraft';
 import { isSeries, type SectionSpan, sectionName } from '@/features/order/sections';
+import { PanelHeading } from '@/features/workspace/PanelHeading';
 import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 
 /**
- * The pagination of the book on the Order stage: its sections in book order, each with the bar of the colour its pages
+ * The pagination of the book on the Order stage, which stands in the settings frame of the panel with no border of its
+ * own: its sections in book order, each with the bar of the colour its pages
  * carry on the grid, where it stands in the book, what it does to the numbers and the numbers it gives.
  *
  * A click on a section opens its form, and "Section" opens the form of a new one that starts at the first selected page.
@@ -60,13 +62,9 @@ export function PaginationPanel({
   const startsAt = pages.find((page) => page.id === selectedId)?.id ?? pages[0]?.id;
 
   return (
-    <section
-      className="grid gap-2 rounded-lg border p-3"
-      aria-label={text.title}
-      data-testid="pagination-panel"
-    >
+    <section className="grid gap-3" aria-label={text.title} data-testid="pagination-panel">
       <header className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold">{text.title}</h3>
+        <PanelHeading>{text.title}</PanelHeading>
         <Button
           variant="outline"
           size="sm"

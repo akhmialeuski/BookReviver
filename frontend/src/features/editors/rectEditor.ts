@@ -1,9 +1,8 @@
+import { INPUT_EDITOR } from '@/features/editors/inputEditor';
 import { RectCanvas } from '@/features/editors/RectCanvas';
-import { RectPanel } from '@/features/editors/RectPanel';
 import { rectOf } from '@/features/editors/rect';
 import { type RectShape, readRect, writeRect } from '@/features/editors/shapes';
-import { type EditorDefinition, Picture } from '@/features/editors/types';
-import { sourceSize } from '@/features/processing/results';
+import type { EditorDefinition } from '@/features/editors/types';
 import { MESSAGES } from '@/shared/messages';
 
 /**
@@ -15,12 +14,7 @@ import { MESSAGES } from '@/shared/messages';
  */
 
 export const rectEditor: EditorDefinition<RectShape> = {
-  picture: Picture.Input,
-  alwaysOn: false,
-  needsResult: true,
-  owner: ({ current }) => current.page,
-  size: ({ result, pictureSize }) => sourceSize(result) ?? pictureSize,
-  runsAfterEdit: () => true,
+  ...INPUT_EDITOR,
   fallback: ({ size, result }) => rectOf(result, size),
   read: readRect,
   write: writeRect,
@@ -32,5 +26,4 @@ export const rectEditor: EditorDefinition<RectShape> = {
       Math.round(height),
     ),
   Canvas: RectCanvas,
-  Panel: RectPanel,
 };

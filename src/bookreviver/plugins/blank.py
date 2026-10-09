@@ -10,9 +10,11 @@ unknown.
 With the fill ``paper`` the leaf takes the colour of the paper of the neighbouring pages, whose images the step is given
 as its references. The paper of a page is the median colour of the pixels on the bright side of the split of Otsu, as
 ``cv_image.paper_colour`` finds it for the steps of the geometry, and the leaf takes the median of the pages. It is
-measured here on a thumbnail with libvips, since a leaf is made on a machine without the OpenCV extra too. A page with
-no paper to part from its ink, such as an empty scan, says nothing, and a leaf with no paper to take is white. A leaf
-whose paper is gray is a gray page, and one whose paper is white is the white bilevel page.
+measured here on a sample of the page with libvips, since a leaf is made on a machine without the OpenCV extra too. The
+sample is large enough to keep the text of a scan apart from its paper: a smaller one blurs the words into a grey that
+lies too near the paper for the split to find any ink. A page with no paper to part from its ink, such as an empty
+scan, says nothing, and a leaf with no paper to take is white. A leaf whose paper is gray is a gray page, and one whose
+paper is white is the white bilevel page.
 """
 
 import statistics
@@ -38,8 +40,9 @@ WHITE: int = 255
 # The depth of a pixel of a bilevel PNG in bits
 BILEVEL_BIT_DEPTH: int = 1
 BLANK_IMAGE_NAME: str = 'blank.png'
-# The longer side of the thumbnail the paper of a page is measured on, and the planes of a colour image
-PAPER_SAMPLE_PX: int = 128
+# The longer side of the sample the paper of a page is measured on, which keeps the words of a scan from blurring into
+# the paper, and the planes of a colour image
+PAPER_SAMPLE_PX: int = 512
 COLOR_PLANES: int = 3
 # Difference of the mean tones of the two classes of the split, below which the page has no paper to part from its ink
 MIN_TONE_CONTRAST: float = 40.0
@@ -86,7 +89,7 @@ class BlankPage(ModelProcessor):
     params_model = BlankParams
     spec = ProcessorSpec(
         key='pages.blank',
-        version='1',
+        version='2',
         title='Blank leaf',
         summary='Makes an empty leaf in place of a missing page',
         stage=Stage.PAGE_ORDER,

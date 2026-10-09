@@ -10,6 +10,7 @@ import {
   uploadFolder,
   writeSheetsFolder,
 } from './support/account';
+import { runPages } from './support/page-work';
 
 /**
  * The compare of a step that puts its input on another page: on Margins, the block of text that the step read lies on the
@@ -57,23 +58,20 @@ test('the compare of Margins draws the block of text inside the page at the plac
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
-    await page.getByTestId('run-menu').click();
-    await page.getByTestId('run-all').click();
+    await runPages(page);
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });
     await expect(page.getByTestId('this-page-facts')).toContainText('Confidence', {
       timeout: RUN_TIMEOUT_MS,
     });
-    // The sheet is taken for a colour picture, so the page was made by the recipe of Plates, which the stage shows once it is in use
-    const plates = await page
+    // The sheet is taken for a colour picture, so the page was made by the recipe of the colour pictures
+    const pictures = await page
       .getByTestId('recipe-select')
-      .locator('option', { hasText: /^Plates/ })
+      .locator('option', { hasText: /^Colour picture/ })
       .getAttribute('value');
-    await page.getByTestId('recipe-select').selectOption(plates ?? '');
-    await page.getByTestId('recipe-use').click();
-    await expect(page.getByTestId('recipe-active')).toBeVisible();
-    const [stepId = ''] = await stepIdsOf(page, 'geometry', NORMALIZE);
+    await page.getByTestId('recipe-select').selectOption(pictures ?? '');
+    const [stepId = ''] = await stepIdsOf(page, 'geometry', NORMALIZE, 'color-picture');
     const stepRow = async () => {
       const listed = await page.request.get(
         `/api/v1/projects/${openProjectId(page)}/stages/geometry/pages?step=${stepId}&size=10`,

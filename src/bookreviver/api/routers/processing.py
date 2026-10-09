@@ -1,7 +1,7 @@
-"""Recipes, variants, runs, previews, the stages of a page and its versions.
+"""Recipes, runs, previews, the stages of a page and its versions.
 
-A stage is processed by a recipe, and the stage has one active recipe and any number of variants. Editing the active
-recipe or switching to a variant marks the pages it processed stale and runs nothing. A run and a preview are jobs:
+A stage has one recipe for each kind of page, and a page is processed by the recipe of its kind. Editing a recipe marks
+the pages it processed stale and runs nothing. A run and a preview are jobs:
 the route records the job and answers 202 with it, and the result reaches the browser as events, since a request
 handler never blocks on CPU-bound work. A page keeps every version it was ever given, a stage points at the current
 one, and the user may make another ready version the current one.
@@ -19,6 +19,7 @@ from bookreviver.api.pagination import Pager
 from bookreviver.api.routers.pages import PagePath
 from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.processing import (
+    CollectionReportSchema,
     HeadChoice,
     PageStageSchema,
     PageVersionSchema,
@@ -60,7 +61,7 @@ class StagePath:
 
 
 @dataclass(frozen=True)
-class VariantPath:
+class RecipePath:
     """The identifiers in the address of one recipe of a stage of a project.
 
     :ivar project_id: Identifier of the project.
@@ -101,74 +102,15 @@ class VersionPath:
     version_id: Annotated[PageVersionId, Path(description=VERSION_ID_DESCRIPTION, pattern=r'^[0-9a-f]{16}$')]
 
 
-@router.get('/{project_id}/stages/{stage}/recipe')
-async def get_recipe(
-    address: Annotated[StagePath, Depends()],
-    actor: ActorDep,
-    processing: FromDishka[ProcessingService],
-    order: FromDishka[RecipeOrder],
-) -> RecipeSchema:
-    """Return the active recipe of a stage, which a project creates the first time the stage is asked for.
-
-    \N{FORM FEED}
-    :param address: Identifiers of the project and the stage.
-    :type address: StagePath
-    :param actor: The signed-in account.
-    :type actor: Actor
-    :param processing: Processing service of the request.
-    :type processing: ProcessingService
-    :param order: Finder of the steps that stand off the place their processors ask for.
-    :type order: RecipeOrder
-    :returns: The active recipe, with the steps that are out of their place.
-    :rtype: RecipeSchema
-    """
-    recipe = await processing.recipe(actor, address.project_id, address.stage)
-    return RecipeSchema.of(recipe, order.issues(recipe.steps))
-
-
-@router.put('/{project_id}/stages/{stage}/recipe')
-async def put_recipe(
-    address: Annotated[StagePath, Depends()],
-    body: RecipeBody,
-    actor: ActorDep,
-    processing: FromDishka[ProcessingService],
-    order: FromDishka[RecipeOrder],
-) -> RecipeSchema:
-    """Replace the name and the steps of the active recipe, which marks the pages it processed stale.
-
-    No page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown
-    or of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it cannot
-    work, unless the body asks for the free order. A step that stands off its usual place is saved and named in the
-    answer.
-
-    \N{FORM FEED}
-    :param address: Identifiers of the project and the stage.
-    :type address: StagePath
-    :param body: The name, the steps and the order to keep.
-    :type body: RecipeBody
-    :param actor: The signed-in account.
-    :type actor: Actor
-    :param processing: Processing service of the request.
-    :type processing: ProcessingService
-    :param order: Finder of the steps that stand off the place their processors ask for.
-    :type order: RecipeOrder
-    :returns: The recipe as stored, with the defaults of each processor filled in, and the steps that are out of their
-              place.
-    :rtype: RecipeSchema
-    """
-    saved = await processing.save_recipe(actor, address.project_id, address.stage, body.to_draft())
-    return RecipeSchema.of(saved, order.issues(saved.steps))
-
-
-@router.get('/{project_id}/stages/{stage}/variants')
-async def list_variants(
+@router.get('/{project_id}/stages/{stage}/recipes')
+async def list_recipes(
     address: Annotated[StagePath, Depends()],
     params: Annotated[Params, Depends()],
     actor: ActorDep,
     processing: FromDishka[ProcessingService],
     order: FromDishka[RecipeOrder],
 ) -> Page[RecipeSchema]:
-    """List the recipes of a stage, the active one first and then the variants, oldest first.
+    """List the recipes of a stage, one for each kind of page, which a project creates the first time it is asked.
 
     \N{FORM FEED}
     :param address: Identifiers of the project and the stage.
@@ -181,59 +123,32 @@ async def list_variants(
     :type processing: ProcessingService
     :param order: Finder of the steps that stand off the place their processors ask for.
     :type order: RecipeOrder
-    :returns: One page of the recipes of the stage.
+    :returns: One page of the recipes of the stage, in the order of the kinds.
     :rtype: Page[RecipeSchema]
     """
     pager = Pager[Recipe, RecipeSchema](params, lambda recipe: RecipeSchema.of(recipe, order.issues(recipe.steps)))
-    return pager.page(await processing.variants(actor, address.project_id, address.stage, pager.request))
+    return pager.page(await processing.recipes(actor, address.project_id, address.stage, pager.request))
 
 
-@router.post('/{project_id}/stages/{stage}/variants', status_code=status.HTTP_201_CREATED)
-async def create_variant(
-    address: Annotated[StagePath, Depends()],
+@router.put('/{project_id}/stages/{stage}/recipes/{recipe_id}')
+async def put_recipe(
+    address: Annotated[RecipePath, Depends()],
     body: RecipeBody,
     actor: ActorDep,
     processing: FromDishka[ProcessingService],
     order: FromDishka[RecipeOrder],
 ) -> RecipeSchema:
-    """Add a variant of a stage, which is not active until it is activated.
+    """Replace the steps of a recipe of a stage, which marks the pages it processed stale.
 
-    The order of the steps is kept as for ``PUT .../recipe``.
-
-    \N{FORM FEED}
-    :param address: Identifiers of the project and the stage.
-    :type address: StagePath
-    :param body: The name, the steps and the order to keep.
-    :type body: RecipeBody
-    :param actor: The signed-in account.
-    :type actor: Actor
-    :param processing: Processing service of the request.
-    :type processing: ProcessingService
-    :param order: Finder of the steps that stand off the place their processors ask for.
-    :type order: RecipeOrder
-    :returns: The variant as stored, with the steps that are out of their place.
-    :rtype: RecipeSchema
-    """
-    variant = await processing.add_variant(actor, address.project_id, address.stage, body.to_draft())
-    return RecipeSchema.of(variant, order.issues(variant.steps))
-
-
-@router.put('/{project_id}/stages/{stage}/variants/{recipe_id}')
-async def put_variant(
-    address: Annotated[VariantPath, Depends()],
-    body: RecipeBody,
-    actor: ActorDep,
-    processing: FromDishka[ProcessingService],
-    order: FromDishka[RecipeOrder],
-) -> RecipeSchema:
-    """Replace the name and the steps of a recipe of a stage, which marks the pages it processed stale.
-
-    The order of the steps is kept as for ``PUT .../recipe``.
+    No page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown
+    or of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it cannot
+    work, unless the body asks for the free order. A step that stands off its usual place is saved and named in the
+    answer.
 
     \N{FORM FEED}
     :param address: Identifiers of the project, the stage and the recipe.
-    :type address: VariantPath
-    :param body: The name, the steps and the order to keep.
+    :type address: RecipePath
+    :param body: The steps and the order to keep.
     :type body: RecipeBody
     :param actor: The signed-in account.
     :type actor: Actor
@@ -241,31 +156,32 @@ async def put_variant(
     :type processing: ProcessingService
     :param order: Finder of the steps that stand off the place their processors ask for.
     :type order: RecipeOrder
-    :returns: The recipe as stored, with the steps that are out of their place.
+    :returns: The recipe as stored, with the defaults of each processor filled in, and the steps that are out of their
+              place.
     :rtype: RecipeSchema
     """
-    saved = await processing.save_variant(
+    saved = await processing.save_recipe(
         actor, address.project_id, RecipeKey(address.stage, address.recipe_id), body.to_draft()
     )
     return RecipeSchema.of(saved, order.issues(saved.steps))
 
 
-@router.post('/{project_id}/stages/{stage}/variants/{recipe_id}/reset')
-async def reset_variant(
-    address: Annotated[VariantPath, Depends()],
+@router.post('/{project_id}/stages/{stage}/recipes/{recipe_id}/reset')
+async def reset_recipe(
+    address: Annotated[RecipePath, Depends()],
     actor: ActorDep,
     profiles: FromDishka[RecipeProfiles],
     order: FromDishka[RecipeOrder],
 ) -> RecipeSchema:
     """Put the steps a stage starts with back into a recipe, which marks the pages it processed stale.
 
-    The steps are those of the account's default profile for the stage when it has a usable one, and otherwise those of
-    the built-in template of the recipe. The recipe keeps its identifier, its name, whether it is active and the pages
-    pinned to it, and every step in it is new. The answer is 404 for a stage that has no steps by default.
+    The steps are those of the account's default profile for the stage when the recipe is the one of text pages and the
+    account has a usable profile, and otherwise those of the built-in template of the kind. The recipe keeps its
+    identifier and its kind, and every step in it is new. The answer is 404 for a stage that has no steps by default.
 
     \N{FORM FEED}
     :param address: Identifiers of the project, the stage and the recipe.
-    :type address: VariantPath
+    :type address: RecipePath
     :param actor: The signed-in account.
     :type actor: Actor
     :param profiles: Recipe profile service of the request, which also puts the default steps back.
@@ -279,31 +195,6 @@ async def reset_variant(
     return RecipeSchema.of(reset, order.issues(reset.steps))
 
 
-@router.post('/{project_id}/stages/{stage}/variants/{recipe_id}/activate')
-async def activate_variant(
-    address: Annotated[VariantPath, Depends()],
-    actor: ActorDep,
-    processing: FromDishka[ProcessingService],
-    order: FromDishka[RecipeOrder],
-) -> RecipeSchema:
-    """Make a variant the active recipe of its stage, which marks the pages the old one processed stale.
-
-    \N{FORM FEED}
-    :param address: Identifiers of the project, the stage and the recipe.
-    :type address: VariantPath
-    :param actor: The signed-in account.
-    :type actor: Actor
-    :param processing: Processing service of the request.
-    :type processing: ProcessingService
-    :param order: Finder of the steps that stand off the place their processors ask for.
-    :type order: RecipeOrder
-    :returns: The recipe as active, with the steps that are out of their place.
-    :rtype: RecipeSchema
-    """
-    activated = await processing.activate(actor, address.project_id, address.stage, address.recipe_id)
-    return RecipeSchema.of(activated, order.issues(activated.steps))
-
-
 @router.post('/{project_id}/stages/{stage}/run', status_code=status.HTTP_202_ACCEPTED)
 async def run_stage(
     address: Annotated[StagePath, Depends()],
@@ -311,7 +202,7 @@ async def run_stage(
     actor: ActorDep,
     processing: FromDishka[ProcessingService],
 ) -> JobSchema:
-    """Run a stage over some pages by a recipe, in the background, and answer with the queued job.
+    """Run a stage over some pages, each by the recipe of its kind, in the background, and answer with the queued job.
 
     The job makes a version for every step on every page and reports one step of progress for each page. A project runs
     one stage at a time, and another run while one is queued or running answers 409. A run keeps the settings the pages
@@ -321,7 +212,7 @@ async def run_stage(
     \N{FORM FEED}
     :param address: Identifiers of the project and the stage.
     :type address: StagePath
-    :param body: The recipe, or the active one, the pages, or every page with an image, and the mode.
+    :param body: The pages, or every page with an image, and the mode.
     :type body: StageRunBody
     :param actor: The signed-in account.
     :type actor: Actor
@@ -344,8 +235,8 @@ async def run_impact(
     """Count the pages a run would take work from, so the user can confirm the run before it is sent.
 
     The body is the one of the run. A run that keeps the settings and edits of the pages takes work from none. A run
-    that replaces the hand settings takes the manual edits of the steps it goes over, and a run that resets the page
-    settings takes the fields the pages changed for them. Nothing is written and nothing is queued.
+    that drops the work of the pages takes the manual edits of the steps it goes over and the fields the pages changed
+    for them. Nothing is written and nothing is queued.
 
     \N{FORM FEED}
     :param address: Identifiers of the project and the stage.
@@ -401,8 +292,8 @@ async def measure_book(
 
     The job reads the line height and the frame of the block of text that ``geometry.crop`` recorded on every page, and
     writes the median line height and a page size of the median block with its margins into the parameters of the
-    ``geometry.normalize`` step of the active Geometry recipe, which marks the pages of that recipe stale. A run, a
-    preview, a tile cutting or a collection of the project that is queued or running answers 409.
+    ``geometry.normalize`` step of every Geometry recipe, which marks the pages of those recipes stale. A preview of the
+    project is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.
 
     \N{FORM FEED}
     :param project_id: Identifier of the project.
@@ -467,29 +358,6 @@ async def choose_version(
     """
     chosen = await processing.choose_version(actor, address.project_id, address.page_id, address.stage, body.version_id)
     return PageStageSchema.of(chosen)
-
-
-@router.delete('/{project_id}/pages/{page_id}/stages/{stage}/pin')
-async def unpin_stage(
-    address: Annotated[PageStagePath, Depends()], actor: ActorDep, processing: FromDishka[ProcessingService]
-) -> PageStageSchema:
-    """Take the recipe pinned to a stage of a page off it, so a run without a recipe chooses by the rules again.
-
-    The current version stays and the stage is marked stale, since the rules may choose another recipe. The answer is
-    409 while the project is processing something, and 404 for a stage that has not run on the page.
-
-    \N{FORM FEED}
-    :param address: Identifiers of the project, the page and the stage.
-    :type address: PageStagePath
-    :param actor: The signed-in account.
-    :type actor: Actor
-    :param processing: Processing service of the request.
-    :type processing: ProcessingService
-    :returns: The record of the stage in its new state.
-    :rtype: PageStageSchema
-    """
-    unpinned = await processing.unpin(actor, address.project_id, address.page_id, address.stage)
-    return PageStageSchema.of(unpinned)
 
 
 @router.get('/{project_id}/pages/{page_id}/versions')
@@ -580,29 +448,27 @@ async def cut_version_tiles(
     return JobSchema.model_validate(job)
 
 
-@router.post('/{project_id}/pages/{page_id}/versions/{version_id}/remake', status_code=status.HTTP_202_ACCEPTED)
-async def remake_version(
-    address: Annotated[VersionPath, Depends()], actor: ActorDep, processing: FromDishka[ProcessingService]
-) -> JobSchema:
-    """Make the picture of a version again, whose files a collection removed, and make the version current.
+@router.get('/{project_id}/versions/collectable')
+async def collectable_versions(
+    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    actor: ActorDep,
+    processing: FromDishka[ProcessingService],
+) -> CollectionReportSchema:
+    """Count the versions a collection would delete now and the space their files take, and change nothing.
 
-    The job runs the step with the parameters and the edit the version stored, over the current version of the earlier
-    stage, and finds the version under its own identifier. It fails with its reason, and makes nothing, when the earlier
-    stage has another current version than the one this version was made from, or the edit changed. The answer is 409
-    for a version that has its files, is not ready or is a preview.
+    The versions are the ones ``POST /projects/{project_id}/versions/collect`` deletes, chosen by the same rule.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page and the version.
-    :type address: VersionPath
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
     :param actor: The signed-in account.
     :type actor: Actor
     :param processing: Processing service of the request.
     :type processing: ProcessingService
-    :returns: The queued job; the end of the version is announced as ``page-version-ready``.
-    :rtype: JobSchema
+    :returns: The number of versions and the bytes their files take.
+    :rtype: CollectionReportSchema
     """
-    job = await processing.start_remake(actor, address.project_id, address.page_id, address.version_id)
-    return JobSchema.model_validate(job)
+    return CollectionReportSchema.model_validate(await processing.collection_report(actor, project_id))
 
 
 @router.post('/{project_id}/versions/collect', status_code=status.HTTP_202_ACCEPTED)
@@ -611,11 +477,12 @@ async def collect_versions(
     actor: ActorDep,
     processing: FromDishka[ProcessingService],
 ) -> JobSchema:
-    """Remove the files of the old versions nothing needs, in the background, and answer with the queued job.
+    """Delete the versions nothing needs, in the background, and answer with the queued job.
 
-    A version goes when it is not current, not in the chain of inputs of a current version, not a base version, and
-    older than the retention period of its scale. A preview loses its row, and any other version keeps its row and
-    loses its files, so it can be made again. A collection that is queued or running already is the answer.
+    A version goes when it is not current, not in the chain of inputs of a current version, not a base version, not
+    marked Good and without a comment, and, for a preview, older than its retention period. It goes with its files, its
+    row and the log of its marks. A collection that is queued or running already is the answer. A run queues one by
+    itself when it ends.
 
     \N{FORM FEED}
     :param project_id: Identifier of the project.

@@ -1,10 +1,16 @@
-import type { KonvaEventObject } from 'konva/lib/Node';
-import { useEffect, useRef } from 'react';
 import { Line, Rect } from 'react-konva';
 import { EditorLayer } from '@/features/editors/EditorLayer';
+import { SQUARE_HANDLE } from '@/features/editors/handles';
 import { boundsOf, moveCorner } from '@/features/editors/regions';
 import { useSceneFrame } from '@/features/editors/scene';
-import { type Point, type RegionsShape, ZoneMode, type ZoneShape } from '@/features/editors/shapes';
+import { useShapeEditing } from '@/features/editors/shapeEditing';
+import {
+  type Point,
+  pairOf,
+  type RegionsShape,
+  ZoneMode,
+  type ZoneShape,
+} from '@/features/editors/shapes';
 import type { CanvasProps } from '@/features/editors/types';
 import { MESSAGES } from '@/shared/messages';
 
@@ -23,11 +29,6 @@ const ADD_COLOR = '#16a34a';
 const REMOVE_COLOR = '#dc2626';
 const FILL_ALPHA = '33';
 const OUTLINE_WIDTH_PX = 2;
-const HANDLE_SIDE_PX = 12;
-const HANDLE_BORDER_PX = 2;
-const HANDLE_BORDER_COLOR = '#ffffff';
-const HIT_EXTRA_PX = 8;
-const HALF = 2;
 
 function colorOf(zone: ZoneShape): string {
   return zone.mode === ZoneMode.Add ? ADD_COLOR : REMOVE_COLOR;
@@ -40,13 +41,10 @@ export function RegionsCanvas({
   context,
   onChange,
   onCommit,
+  onCommitLater,
 }: CanvasProps<RegionsShape>): React.JSX.Element | null {
   const frame = useSceneFrame(scene, size);
-  // The drag handlers run between renders, so the shape they build on is the latest one and not the one they closed over
-  const latest = useRef(shape);
-  useEffect(() => {
-    latest.current = shape;
-  }, [shape]);
+  const editing = useShapeEditing(frame, shape, onChange, onCommit, onCommitLater);
 
   const { mapping } = frame;
   const flat = (points: readonly Point[]): number[] =>
@@ -61,17 +59,6 @@ export function RegionsCanvas({
     zone,
   }));
 
-  const drag = (zone: number, corner: number) => (event: KonvaEventObject<DragEvent>) => {
-    const at = mapping.toImage({ x: event.target.x(), y: event.target.y() });
-    const next = moveCorner(latest.current, zone, corner, at, frame.size);
-    latest.current = next;
-    onChange(next);
-    const moved = next.zones[zone]?.points[corner];
-    if (moved !== undefined) {
-      event.target.position(mapping.toScreen(moved));
-    }
-  };
-
   // A handle is named by the zone and the corner it moves, and its place on the screen is what the scenarios read
   const handles: { key: string; zone: ZoneShape; place: number; corner: number; at: Point }[] = [];
   const data: Record<string, string> = { zones: String(shape.zones.length) };
@@ -80,7 +67,7 @@ export function RegionsCanvas({
     for (const [corner, point] of zone.points.entries()) {
       const at = mapping.toScreen(point);
       handles.push({ key: `${id}-handle-${corner}`, zone, place, corner, at });
-      data[`handle-${place}-${corner}`] = `${Math.round(at.x)},${Math.round(at.y)}`;
+      data[`handle-${place}-${corner}`] = pairOf(at);
     }
   }
 
@@ -124,18 +111,14 @@ export function RegionsCanvas({
           key={key}
           x={at.x}
           y={at.y}
-          offsetX={HANDLE_SIDE_PX / HALF}
-          offsetY={HANDLE_SIDE_PX / HALF}
-          width={HANDLE_SIDE_PX}
-          height={HANDLE_SIDE_PX}
+          {...SQUARE_HANDLE}
           fill={colorOf(zone)}
-          stroke={HANDLE_BORDER_COLOR}
-          strokeWidth={HANDLE_BORDER_PX}
-          hitStrokeWidth={HIT_EXTRA_PX}
-          draggable
           name={labels.handle(place + 1, corner + 1)}
-          onDragMove={drag(place, corner)}
-          onDragEnd={() => onCommit(latest.current)}
+          onDragMove={editing.drag(
+            (current, to) => moveCorner(current, place, corner, to, frame.size),
+            (next) => next.zones[place]?.points[corner],
+          )}
+          onDragEnd={editing.release}
         />
       ))}
     </EditorLayer>

@@ -1,4 +1,12 @@
-import type { PageSchema, StagePageSchema, StepFlag } from '@/api';
+import type {
+  PageSchema,
+  PageVersionSchema,
+  RecipeKind,
+  StagePageSchema,
+  StageSummarySchema,
+  StepFlag,
+} from '@/api';
+import { SourceKind, sourceOfResult } from '@/features/processing/compare';
 import { PageFilter } from '@/features/workspace/params';
 
 /**
@@ -21,33 +29,21 @@ export interface StripItem {
 /** How many pages each filter of the strip would list. */
 export type FilterCounts = Record<PageFilter, number>;
 
-/** What a page shows of the variant of the recipe it was processed by. */
-export interface VariantMark {
-  name: string;
-  /** The class that paints the dot of the variant. */
-  tone: string;
-  /** Whether the variant is pinned to the page. */
-  pinned: boolean;
-}
-
-/** A variant the strip can be narrowed to, with the pages it processed. */
-export interface VariantOption {
-  id: string;
-  name: string;
+/** A kind of page the strip can be narrowed to, with the pages of the book that are of the kind. */
+export interface KindOption {
+  kind: RecipeKind;
   pages: number;
 }
 
 /**
- * The variants of a stage as the strip and the grid draw them: a mark on each page, and the choice of one variant to
- * list the pages of. A stage with a single recipe has no such view, since every mark would be the same.
+ * The kinds of page of a stage as the strip and the grid offer them: the choice of one kind to list the pages of. A stage
+ * with pages of a single kind has no such view, since it would list every page.
  */
-export interface VariantView {
-  /** The mark of a page, or null for a page no recipe processed. */
-  markOf: (item: StripItem) => VariantMark | null;
-  options: readonly VariantOption[];
-  /** The variant whose pages are listed, or null for every page. */
-  selected: string | null;
-  onSelect: (id: string | null) => void;
+export interface KindView {
+  options: readonly KindOption[];
+  /** The kind whose pages are listed, or null for every page. */
+  selected: RecipeKind | null;
+  onSelect: (kind: RecipeKind | null) => void;
 }
 
 /** A step the strip can be narrowed to, with the pages a run of the stage stopped at it. */
@@ -63,6 +59,8 @@ export interface StopOption {
  */
 export interface StopView {
   options: readonly StopOption[];
+  /** The title of the step at an index of the recipe, which names the step in the choice. */
+  titleOf: (step: number) => string;
   /** The step whose pages are listed, or null for every page. */
   selected: number | null;
   onSelect: (step: number | null) => void;
@@ -94,6 +92,31 @@ export interface FlagView {
   /** The flag whose pages are listed, or null for every page. */
   selected: StepFlag | null;
   onSelect: (flag: StepFlag | null) => void;
+}
+
+/** What a list of pages needs to be narrowed, which the toolbar, the strip and the grid all take. */
+export interface PageListFilters {
+  /** The pages of the book, which the filters narrow down. */
+  total: number;
+  counts: FilterCounts;
+  filter: PageFilter;
+  /** Whether the filter of the pages cut from wide scans is offered, which the Split stage has. */
+  withWide?: boolean;
+  /** The kinds of page, which narrow the pages to those of one kind. Absent for none to choose from. */
+  kinds?: KindView;
+  /** The steps a run stopped at, which narrow the pages to those stopped at one. Absent when no run stopped short. */
+  stopped?: StopView;
+  /** The reasons a page asks for a look at the open step, which narrow the pages to those with one. Absent for no step. */
+  flagged?: FlagView;
+  onFilter: (filter: PageFilter) => void;
+}
+
+/** What the strip and the grid take to list pages: the pages the filter lists, and the filters that narrowed them. */
+export interface PageListProps extends PageListFilters {
+  /** The pages the filter lists, in book order. */
+  items: readonly StripItem[];
+  /** Says why a page asks for a look; the Check filter writes it under the page. Absent for no reasons. */
+  reasonOf?: (item: StripItem) => string | null;
 }
 
 /** The flags each page carries at the open step, by the identifier of the page. */
@@ -158,6 +181,25 @@ export function isMarkedBad(item: StripItem): boolean {
   return item.row?.marked_bad === true;
 }
 
+/**
+ * List the kinds the strip can be narrowed to: the kinds of page the book has, with how many pages each has.
+ *
+ * @param summary The summary of the stage, or undefined while it is read.
+ * @returns The options in the order of the kinds, or none when the book has pages of one kind only.
+ */
+export function kindOptionsOf(summary: StageSummarySchema | undefined): KindOption[] {
+  const present = (summary?.recipes ?? []).filter((entry) => entry.pages > 0);
+  return present.length < 2 ? [] : present.map(({ kind, pages }) => ({ kind, pages }));
+}
+
+/** Keep the pages of a kind, or every page for no kind. */
+export function applyKind(
+  items: readonly StripItem[],
+  kind: RecipeKind | null,
+): readonly StripItem[] {
+  return kind === null ? items : items.filter((item) => item.row?.kind === kind);
+}
+
 /** Tell whether the result of a page was made through some of the steps of its recipe only. */
 function stoppedAt(item: StripItem): number | null {
   const { row } = item;
@@ -219,23 +261,65 @@ export function countFilters(items: readonly StripItem[]): FilterCounts {
 }
 
 /**
- * Give the picture that stands for a page in a stage: the thumbnail of the result of the stage, else the thumbnail of
- * the page itself.
+ * Choose the rows the strip, the canvas and the counts are read from.
  *
- * @returns The path of the thumbnail, or null when neither exists yet.
+ * A stage with a step bar always has a step open, and only the rows asked for that step carry the picture of the step, so
+ * while they load there are none, and the rows of the stage, whose picture is the result of the stage, never stand in.
+ *
+ * @param hasBar Whether the stage shows the bar of its steps.
+ * @param stepRows The rows asked for the open step, or undefined while they load or when no step is open.
+ * @param stageRows The rows of the stage, or undefined while they load.
+ * @returns The rows to join with the pages, or undefined while there are none to show.
  */
-export function thumbnailOf(item: StripItem): string | null {
-  return item.row?.version?.images?.thumbnail ?? item.page.images?.thumbnail ?? null;
+export function stripRowsOf(
+  hasBar: boolean,
+  stepRows: readonly StagePageSchema[] | undefined,
+  stageRows: readonly StagePageSchema[] | undefined,
+): readonly StagePageSchema[] | undefined {
+  return hasBar ? stepRows : stageRows;
 }
 
 /**
- * Give the info document of the pyramid the canvas draws for a page: the result of the stage once its tiles are cut,
- * else the image of the page itself, so the canvas never points at tiles that do not exist yet.
+ * Give the version that stands for a page on the strip and on the canvas: the server's `picture` of the row, and nothing
+ * else, so the two never disagree. It is what the open step reads, else the last version before it, else what the stage
+ * reads; with no step it is the result of the stage, else what the stage reads. Never a later stage, and never the
+ * latest result of the book, which `page.images` is.
+ *
+ * @returns The version, or null while the row loads or when the page has no picture.
+ */
+export function pictureOf(item: StripItem): PageVersionSchema | null {
+  return item.row?.picture ?? null;
+}
+
+/**
+ * Give the thumbnail of the picture of a page.
+ *
+ * @returns The path of the thumbnail, or null when the page has no picture yet.
+ */
+export function thumbnailOf(item: StripItem): string | null {
+  return pictureOf(item)?.images?.thumbnail ?? null;
+}
+
+/**
+ * Give the thumbnail of the picture of every page that has one, by the identifier of the page, for a screen that draws
+ * the pages in a grid of its own, such as the Order stage.
+ */
+export function thumbnailsOf(items: readonly StripItem[]): Map<string, string> {
+  const thumbnails = new Map<string, string>();
+  for (const item of items) {
+    const thumbnail = thumbnailOf(item);
+    if (thumbnail !== null) {
+      thumbnails.set(item.page.id, thumbnail);
+    }
+  }
+  return thumbnails;
+}
+
+/**
+ * Give the info document of the pyramid of the picture of a page, which the canvas of the reading layouts draws, or null
+ * until the tiles are cut, so the canvas never points at tiles that do not exist yet.
  */
 export function canvasSourceOf(item: StripItem): string | null {
-  const version = item.row?.version;
-  if (version?.tiles_ready && version.images !== null) {
-    return version.images.iiif_info;
-  }
-  return item.page.images?.iiif_info ?? null;
+  const source = sourceOfResult(pictureOf(item));
+  return source?.kind === SourceKind.Iiif ? source.url : null;
 }

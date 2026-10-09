@@ -21,7 +21,6 @@ from bookreviver.api.schemas.types import Dpi, GroupLabel, LongText, PageIdList,
 from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.enums import (
     BlankFill,
-    ColorMode,
     ContentSource,
     ContentType,
     LabelStyle,
@@ -352,7 +351,7 @@ class PageSchema(ResponseModel):
                       None for a page kept out of the book, a page before the first section and a book without
                       sections.
     :ivar kind: Role of the page in the book.
-    :ivar content_type: What the page shows for the conditions of the steps: text, or a picture in colour or in black
+    :ivar content_type: What the page shows: text, or a picture in colour or in black
                         and white. It is the one the user set, else the one the program found, else the one the kind
                         of the page gives, which counts a plate or a frontispiece as a picture in colour.
     :ivar content_source: Where ``content_type`` comes from, so the interface can say whether it was found or set.
@@ -416,7 +415,7 @@ class PageSchema(ResponseModel):
             label_manual=page.label_manual,
             section_id=overview.section_id,
             kind=page.kind,
-            content_type=page.content_of(ColorMode.UNKNOWN),
+            content_type=page.content,
             content_source=page.content_source,
             origin=page.origin,
             scan_id=page.scan_id,

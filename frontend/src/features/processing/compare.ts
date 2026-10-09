@@ -1,12 +1,13 @@
-import type { PageSchema, PageVersionSchema, StagePageSchema } from '@/api';
+import type { PageVersionSchema, StagePageSchema } from '@/api';
 import type { WorldRect } from '@/features/viewer/layout';
 
 /**
  * The two pictures a before-and-after compare puts side by side, and the arithmetic of the swipe.
  *
- * The picture before is the current result of the stage that came before on the page, and the picture after is the
- * current result of this stage or the preview. A result with its tile pyramid cut is drawn from the pyramid, and one
- * without is drawn from its plain preview image, so the canvas never points at tiles that do not exist yet.
+ * The picture before is the picture of the page that the server gives with its row, and the picture after is what the
+ * open step made, or the result of the stage. A result with its tile pyramid cut is drawn from the
+ * pyramid, and one without is drawn from its plain preview image, so the canvas never points at tiles that do not exist
+ * yet.
  */
 
 /** Where the pixels of a picture are read from. */
@@ -50,30 +51,29 @@ export function sourceOfPreview(version: PageVersionSchema | null | undefined): 
     : { kind: SourceKind.Image, url: version.preview };
 }
 
+/** Tell whether two sources draw the same image. */
+export function sameImage(a: ImageSource | null, b: ImageSource | null): boolean {
+  return a !== null && b !== null && a.kind === b.kind && a.url === b.url;
+}
+
 /**
- * Find the picture before a stage on a page: the result of the nearest earlier stage that has one, else, for a page the
- * stage has not made a picture of yet, the picture the page has now, which is what the stage would read.
+ * Give the two pictures of a compare for a page.
  *
- * @param page The page.
- * @param own The row of the page in the stage that is open.
- * @param earlier The rows of the earlier stages that have processors, the nearest first, each by page identifier.
- * @returns The picture, or null when nothing came before the stage, as on the Split stage.
+ * The picture before is the picture of the page, which is what the strip shows too: what the open step reads, else what
+ * the stage reads. The picture after is what the open step made, or, with no step open, the result of the stage.
+ *
+ * @param picture The picture of the page, which is the version the strip shows.
+ * @param row The row of the page, asked for the open step when one is open, or undefined while it loads.
  */
-export function beforeSourceOf(
-  page: PageSchema,
-  own: StagePageSchema | undefined,
-  earlier: ReadonlyArray<ReadonlyMap<string, StagePageSchema>>,
-): ImageSource | null {
-  for (const rows of earlier) {
-    const source = sourceOfResult(rows.get(page.id)?.version);
-    if (source !== null) {
-      return source;
-    }
-  }
-  if (earlier.length === 0 || sourceOfResult(own?.version) !== null) {
-    return null;
-  }
-  return page.images === null ? null : { kind: SourceKind.Iiif, url: page.images.iiif_info };
+export function comparePairOf(
+  picture: PageVersionSchema | null,
+  row: StagePageSchema | undefined,
+): ComparePair {
+  const made = row?.step === null || row?.step === undefined ? row?.version : row.step.version;
+  return {
+    before: sourceOfResult(picture),
+    after: sourceOfResult(made),
+  };
 }
 
 /**

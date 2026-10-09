@@ -13,6 +13,8 @@ function change(id: string, at: string): PageStepChangeSchema {
     stage: 'geometry',
     step_id: 'step',
     layer: 'settings',
+    scope: 'pages',
+    group_label: '',
     before: null,
     after: { max_angle: 3 },
     source: 'user',

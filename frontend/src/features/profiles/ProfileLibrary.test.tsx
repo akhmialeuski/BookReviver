@@ -6,13 +6,11 @@ import { deskew, processing, processor, recipe, step } from '@/features/processi
 import { profile, profilePage } from '@/features/profiles/fixtures';
 import { ProfileLibrary } from '@/features/profiles/ProfileLibrary';
 import { ProfileLibraryPanel } from '@/features/profiles/ProfileLibraryPanel';
-import { page, row } from '@/features/workspace/fixtures';
-import { joinRows } from '@/features/workspace/strip';
 import { parseProblem } from '@/shared/http/problem';
 
 /**
  * The library of profiles: a tab for each stage with profiles, a card for each profile with its books and its steps, the
- * application of a profile to the book and to the selected pages, the copy, the file that is saved and the file that is
+ * application of a profile to the recipe of a kind of page, the copy, the file that is saved and the file that is
  * read, and the same list without a book.
  *
  * The generated client is replaced by functions the test reads, so each request is seen as the server gets it.
@@ -40,7 +38,7 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   exportProfileApiV1RecipeProfilesProfileIdExportGet: sdk.exporter,
   importProfileApiV1RecipeProfilesImportPost: sdk.importer,
   listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
-  listVariantsApiV1ProjectsProjectIdStagesStageVariantsGet: sdk.recipes,
+  listRecipesApiV1ProjectsProjectIdStagesStageRecipesGet: sdk.recipes,
 }));
 
 // The browser is asked to save the file, which a test only needs to see being asked
@@ -61,29 +59,16 @@ const PROFILES = [
   profile('p2', {
     name: 'Old book with plates',
     books: 1,
-    steps: [
-      step('geometry.deskew', { applies_to: 'text' }),
-      step('geometry.deskew', { applies_to: 'pictures', enabled: false }),
-    ],
+    steps: [step('geometry.deskew', {}), step('geometry.deskew', { enabled: false })],
   }),
 ];
 
-const ITEMS = joinRows(
-  [
-    page('a', { position: 0 }),
-    page('b', { position: 1 }),
-    page('c', { position: 2, origin: 'placeholder' }),
-    page('d', { position: 3 }),
-  ],
-  [row('a'), row('b'), row('d')],
-);
-
 const EMPTY_PAGE = { data: { items: [], total: 0, page: 1, size: 100, pages: 1 } };
 
-function applied(name: string, missing: string[] = []): { data: unknown } {
+function applied(missing: string[] = []): { data: unknown } {
   return {
     data: {
-      recipe: recipe('made', { name, active: true }),
+      recipe: recipe('made'),
       missing_processors: missing,
       job: null,
     },
@@ -107,16 +92,12 @@ describe('ProfileLibrary', () => {
     });
   }
 
-  async function render(
-    options: { book?: boolean; selected?: string[]; dirty?: boolean } = {},
-  ): Promise<void> {
+  async function render(options: { book?: boolean; dirty?: boolean } = {}): Promise<void> {
     const book =
       options.book === false
         ? undefined
         : {
             processing: processing({ chooseRecipe, dirty: options.dirty ?? false }),
-            items: ITEMS,
-            selected: new Set(options.selected ?? []),
           };
     await act(async () => {
       root.render(
@@ -172,11 +153,11 @@ describe('ProfileLibrary', () => {
     });
     sdk.jobs.mockResolvedValue(EMPTY_PAGE);
     sdk.recipes.mockResolvedValue(EMPTY_PAGE);
-    sdk.apply.mockResolvedValue(applied('Clean flatbed scan'));
+    sdk.apply.mockResolvedValue(applied());
     sdk.duplicate.mockResolvedValue({ data: profile('p4', { name: 'Clean flatbed scan (copy)' }) });
     sdk.exporter.mockResolvedValue({
       data: {
-        version: 1,
+        version: 2,
         stage: 'geometry',
         name: 'Clean flatbed scan',
         order: 'usual',
@@ -224,12 +205,12 @@ describe('ProfileLibrary', () => {
       expect(inCard('Old book with plates', 'profile-default-badge')).toBeNull();
     });
 
-    it('names the steps by their titles, with the pages a step is limited to and the ones that are off', async () => {
+    it('names the steps by their titles, with the ones that are off', async () => {
       await render();
 
       expect(inCard('Clean flatbed scan', 'profile-steps')?.textContent).toBe('Deskew · Crop');
       expect(inCard('Old book with plates', 'profile-steps')?.textContent).toBe(
-        'Deskew (text pages) · Deskew (pictures, off)',
+        'Deskew · Deskew (off)',
       );
     });
 
@@ -260,7 +241,6 @@ describe('ProfileLibrary', () => {
         all('profile-tab').find((tab) => tab.getAttribute('aria-selected') === 'true')?.dataset.tab,
       ).toBe('all');
       expect(all('profile-apply-book')).toHaveLength(0);
-      expect(all('profile-apply-pages')).toHaveLength(0);
       expect(byId('profile-from-book')).toBeNull();
       expect(byId('profile-import')).not.toBeNull();
       expect(sdk.jobs).not.toHaveBeenCalled();
@@ -268,49 +248,52 @@ describe('ProfileLibrary', () => {
   });
 
   describe('applying to the book', () => {
-    it('makes the profile the active recipe and opens it in the panel', async () => {
+    it('puts the profile into the recipe of the kind chosen and opens it in the panel', async () => {
       await render();
       await click(inCard('Clean flatbed scan', 'profile-apply-book'));
 
       expect(sdk.apply).toHaveBeenCalledWith(
         expect.objectContaining({
           path: { project_id: 'project', profile_id: 'p1' },
-          body: { activate: true },
+          body: { kind: 'text' },
         }),
       );
       expect(chooseRecipe).toHaveBeenCalledWith('made');
       expect(inCard('Clean flatbed scan', 'profile-notice')?.textContent).toContain(
-        'Applied the profile “Clean flatbed scan”. It is the active recipe of this book now.',
+        'Applied the profile “Clean flatbed scan” to the recipe for text of this book.',
       );
     });
 
-    it('adds the profile as a variant only, when the choice to make it the active recipe is off', async () => {
+    it('applies the profile to the kind of page chosen above the list', async () => {
       sdk.apply.mockResolvedValue({
         data: {
-          recipe: recipe('made', { name: 'Clean flatbed scan', active: false }),
+          recipe: recipe('made', { kind: 'blank' }),
           missing_processors: [],
           job: null,
         },
       });
 
       await render();
-      expect(byId('profile-activate')).toHaveProperty('checked', true);
-      await click(byId('profile-activate'));
+      await act(async () => {
+        const select = byId('profile-kind') as HTMLSelectElement;
+        select.value = 'blank';
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      });
       await click(inCard('Clean flatbed scan', 'profile-apply-book'));
 
       expect(sdk.apply).toHaveBeenCalledWith(
         expect.objectContaining({
           path: { project_id: 'project', profile_id: 'p1' },
-          body: { activate: false },
+          body: { kind: 'blank' },
         }),
       );
       expect(inCard('Clean flatbed scan', 'profile-notice')?.textContent).toContain(
-        'as a variant of this book',
+        'to the recipe for blank page of this book',
       );
     });
 
     it('names the steps that were left out because their processor is not installed', async () => {
-      sdk.apply.mockResolvedValue(applied('Clean flatbed scan', ['geometry.gone']));
+      sdk.apply.mockResolvedValue(applied(['geometry.gone']));
 
       await render();
       await click(inCard('Clean flatbed scan', 'profile-apply-book'));
@@ -333,7 +316,6 @@ describe('ProfileLibrary', () => {
       await render({ dirty: true });
 
       expect(inCard('Clean flatbed scan', 'profile-apply-book')).toHaveProperty('disabled', true);
-      expect(inCard('Clean flatbed scan', 'profile-apply-pages')).toHaveProperty('disabled', true);
     });
 
     it('shows the answer of the server when the profile cannot be applied', async () => {
@@ -344,59 +326,6 @@ describe('ProfileLibrary', () => {
 
       expect(cardOf('Clean flatbed scan')?.textContent).toContain('No step can run');
       expect(chooseRecipe).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('applying to the selected pages', () => {
-    it('is not offered until pages are selected', async () => {
-      await render();
-
-      expect(inCard('Clean flatbed scan', 'profile-apply-pages')).toHaveProperty('disabled', true);
-      expect(inCard('Clean flatbed scan', 'profile-apply-pages')?.title).toBe(
-        'Select pages in the grid first',
-      );
-    });
-
-    it('pins the variant to the selected pages that have an image, and leaves the active recipe', async () => {
-      sdk.apply.mockResolvedValue({
-        data: {
-          recipe: recipe('made', { name: 'Clean flatbed scan', active: false }),
-          missing_processors: [],
-          job: { id: 'job' },
-        },
-      });
-
-      await render({ selected: ['d', 'c', 'a'] });
-      await click(inCard('Clean flatbed scan', 'profile-apply-pages'));
-
-      expect(sdk.apply).toHaveBeenCalledWith(
-        expect.objectContaining({
-          path: { project_id: 'project', profile_id: 'p1' },
-          body: { activate: false, page_ids: ['a', 'd'] },
-        }),
-      );
-      expect(inCard('Clean flatbed scan', 'profile-notice')?.textContent).toContain(
-        'Applied the profile “Clean flatbed scan” to 2 pages. The stage is running on them.',
-      );
-    });
-
-    it('waits while another job of the book is running', async () => {
-      sdk.jobs.mockResolvedValue({
-        data: { items: [{ id: 'busy' }], total: 1, page: 1, size: 20, pages: 1 },
-      });
-
-      await render({ selected: ['a'] });
-
-      // The running jobs come with their own query, which may answer after the first render
-      await vi.waitFor(() =>
-        expect(inCard('Clean flatbed scan', 'profile-apply-pages')).toHaveProperty(
-          'disabled',
-          true,
-        ),
-      );
-      expect(inCard('Clean flatbed scan', 'profile-apply-pages')?.title).toBe(
-        'The book is busy with another job',
-      );
     });
   });
 
@@ -423,7 +352,7 @@ describe('ProfileLibrary', () => {
       );
       expect(files.save).toHaveBeenCalledWith(
         'clean-flatbed-scan.bookreviver-profile.json',
-        expect.stringContaining('"version": 1'),
+        expect.stringContaining('"version": 2'),
       );
     });
 
@@ -501,7 +430,7 @@ describe('ProfileLibrary', () => {
 
   describe('the side panel', () => {
     it('holds the library of the book while it is open, and nothing while it is shut', async () => {
-      const book = { processing: processing(), items: ITEMS, selected: new Set<string>() };
+      const book = { processing: processing() };
       const draw = async (open: boolean): Promise<void> => {
         await act(async () => {
           root.render(

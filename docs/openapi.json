@@ -2648,7 +2648,7 @@
           "stages"
         ],
         "summary": "List Stage Pages",
-        "description": "List the pages of a book in book order, each with where it stands in a stage and the version that is its result.\n\nA page the stage has not run on has the status ``not-run`` and no version. A page holds up to a thousand rows, as\nthe page manifest does, so a strip of a whole book takes few requests. With ``step`` every row also says what that\nstep read and made on its page and where the shape of the step comes from; a step no recipe of the stage has is a\n404.",
+        "description": "List the pages of a book in book order, each with where it stands in a stage and the version that is its result.\n\nA page the stage has not run on has the status ``not-run`` and no version. A page holds up to a thousand rows, as\nthe page manifest does, so a strip of a whole book takes few requests. With ``step`` every row also says what that\nstep read and made on its page and where the shape of the step comes from; a step no recipe of the stage has is a\n404. Every row has a ``picture``, the version that stands for the page at the place asked for: the version the step\nreads, or the last version of the stage before it for a page that has not come as far, or else what the stage reads;\nwithout ``step`` the current version of the stage, else what the stage reads. A strip and a canvas draw it alike.",
         "operationId": "list_stage_pages_api_v1_projects__project_id__stages__stage__pages_get",
         "parameters": [
           {
@@ -2939,198 +2939,14 @@
         }
       }
     },
-    "/api/v1/projects/{project_id}/stages/{stage}/recipe": {
+    "/api/v1/projects/{project_id}/stages/{stage}/recipes": {
       "get": {
         "tags": [
           "processing"
         ],
-        "summary": "Get Recipe",
-        "description": "Return the active recipe of a stage, which a project creates the first time the stage is asked for.",
-        "operationId": "get_recipe_api_v1_projects__project_id__stages__stage__recipe_get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the project",
-              "title": "Project Id"
-            },
-            "description": "Identifier of the project"
-          },
-          {
-            "name": "stage",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the pipeline"
-            },
-            "description": "Stage of the pipeline"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RecipeSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "processing"
-        ],
-        "summary": "Put Recipe",
-        "description": "Replace the name and the steps of the active recipe, which marks the pages it processed stale.\n\nNo page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown\nor of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it cannot\nwork, unless the body asks for the free order. A step that stands off its usual place is saved and named in the\nanswer.",
-        "operationId": "put_recipe_api_v1_projects__project_id__stages__stage__recipe_put",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the project",
-              "title": "Project Id"
-            },
-            "description": "Identifier of the project"
-          },
-          {
-            "name": "stage",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the pipeline"
-            },
-            "description": "Stage of the pipeline"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RecipeBody"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RecipeSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/projects/{project_id}/stages/{stage}/variants": {
-      "get": {
-        "tags": [
-          "processing"
-        ],
-        "summary": "List Variants",
-        "description": "List the recipes of a stage, the active one first and then the variants, oldest first.",
-        "operationId": "list_variants_api_v1_projects__project_id__stages__stage__variants_get",
+        "summary": "List Recipes",
+        "description": "List the recipes of a stage, one for each kind of page, which a project creates the first time it is asked.",
+        "operationId": "list_recipes_api_v1_projects__project_id__stages__stage__recipes_get",
         "parameters": [
           {
             "name": "project_id",
@@ -3232,112 +3048,16 @@
             }
           }
         }
-      },
-      "post": {
-        "tags": [
-          "processing"
-        ],
-        "summary": "Create Variant",
-        "description": "Add a variant of a stage, which is not active until it is activated.\n\nThe order of the steps is kept as for ``PUT .../recipe``.",
-        "operationId": "create_variant_api_v1_projects__project_id__stages__stage__variants_post",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the project",
-              "title": "Project Id"
-            },
-            "description": "Identifier of the project"
-          },
-          {
-            "name": "stage",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the pipeline"
-            },
-            "description": "Stage of the pipeline"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RecipeBody"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RecipeSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
       }
     },
-    "/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}": {
+    "/api/v1/projects/{project_id}/stages/{stage}/recipes/{recipe_id}": {
       "put": {
         "tags": [
           "processing"
         ],
-        "summary": "Put Variant",
-        "description": "Replace the name and the steps of a recipe of a stage, which marks the pages it processed stale.\n\nThe order of the steps is kept as for ``PUT .../recipe``.",
-        "operationId": "put_variant_api_v1_projects__project_id__stages__stage__variants__recipe_id__put",
+        "summary": "Put Recipe",
+        "description": "Replace the steps of a recipe of a stage, which marks the pages it processed stale.\n\nNo page is processed again by this request; the stage is run by ``POST .../run``. A step whose processor is unknown\nor of another stage, or whose parameters do not fit, answers 422, and so does a step that stands where it cannot\nwork, unless the body asks for the free order. A step that stands off its usual place is saved and named in the\nanswer.",
+        "operationId": "put_recipe_api_v1_projects__project_id__stages__stage__recipes__recipe_id__put",
         "parameters": [
           {
             "name": "project_id",
@@ -3440,114 +3160,14 @@
         }
       }
     },
-    "/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}/reset": {
+    "/api/v1/projects/{project_id}/stages/{stage}/recipes/{recipe_id}/reset": {
       "post": {
         "tags": [
           "processing"
         ],
-        "summary": "Reset Variant",
-        "description": "Put the steps a stage starts with back into a recipe, which marks the pages it processed stale.\n\nThe steps are those of the account's default profile for the stage when it has a usable one, and otherwise those of\nthe built-in template of the recipe. The recipe keeps its identifier, its name, whether it is active and the pages\npinned to it, and every step in it is new. The answer is 404 for a stage that has no steps by default.",
-        "operationId": "reset_variant_api_v1_projects__project_id__stages__stage__variants__recipe_id__reset_post",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the project",
-              "title": "Project Id"
-            },
-            "description": "Identifier of the project"
-          },
-          {
-            "name": "stage",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the pipeline"
-            },
-            "description": "Stage of the pipeline"
-          },
-          {
-            "name": "recipe_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the recipe",
-              "title": "Recipe Id"
-            },
-            "description": "Identifier of the recipe"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RecipeSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}/activate": {
-      "post": {
-        "tags": [
-          "processing"
-        ],
-        "summary": "Activate Variant",
-        "description": "Make a variant the active recipe of its stage, which marks the pages the old one processed stale.",
-        "operationId": "activate_variant_api_v1_projects__project_id__stages__stage__variants__recipe_id__activate_post",
+        "summary": "Reset Recipe",
+        "description": "Put the steps a stage starts with back into a recipe, which marks the pages it processed stale.\n\nThe steps are those of the account's default profile for the stage when the recipe is the one of text pages and the\naccount has a usable profile, and otherwise those of the built-in template of the kind. The recipe keeps its\nidentifier and its kind, and every step in it is new. The answer is 404 for a stage that has no steps by default.",
+        "operationId": "reset_recipe_api_v1_projects__project_id__stages__stage__recipes__recipe_id__reset_post",
         "parameters": [
           {
             "name": "project_id",
@@ -3646,7 +3266,7 @@
           "processing"
         ],
         "summary": "Run Stage",
-        "description": "Run a stage over some pages by a recipe, in the background, and answer with the queued job.\n\nThe job makes a version for every step on every page and reports one step of progress for each page. A project runs\none stage at a time, and another run while one is queued or running answers 409. A run keeps the settings the pages\nchanged for its steps and the manual edits they read. A mode that takes the edits or the settings away answers 409\nuntil the body confirms it, when it would take them from any page.",
+        "description": "Run a stage over some pages, each by the recipe of its kind, in the background, and answer with the queued job.\n\nThe job makes a version for every step on every page and reports one step of progress for each page. A project runs\none stage at a time, and another run while one is queued or running answers 409. A run keeps the settings the pages\nchanged for its steps and the manual edits they read. A mode that takes the edits or the settings away answers 409\nuntil the body confirms it, when it would take them from any page.",
         "operationId": "run_stage_api_v1_projects__project_id__stages__stage__run_post",
         "parameters": [
           {
@@ -3744,7 +3364,7 @@
           "processing"
         ],
         "summary": "Run Impact",
-        "description": "Count the pages a run would take work from, so the user can confirm the run before it is sent.\n\nThe body is the one of the run. A run that keeps the settings and edits of the pages takes work from none. A run\nthat replaces the hand settings takes the manual edits of the steps it goes over, and a run that resets the page\nsettings takes the fields the pages changed for them. Nothing is written and nothing is queued.",
+        "description": "Count the pages a run would take work from, so the user can confirm the run before it is sent.\n\nThe body is the one of the run. A run that keeps the settings and edits of the pages takes work from none. A run\nthat drops the work of the pages takes the manual edits of the steps it goes over and the fields the pages changed\nfor them. Nothing is written and nothing is queued.",
         "operationId": "run_impact_api_v1_projects__project_id__stages__stage__run_impact_post",
         "parameters": [
           {
@@ -3940,7 +3560,7 @@
           "processing"
         ],
         "summary": "Measure Book",
-        "description": "Measure the book in the background, and answer with the queued job.\n\nThe job reads the line height and the frame of the block of text that ``geometry.crop`` recorded on every page, and\nwrites the median line height and a page size of the median block with its margins into the parameters of the\n``geometry.normalize`` step of the active Geometry recipe, which marks the pages of that recipe stale. A run, a\npreview, a tile cutting or a collection of the project that is queued or running answers 409.",
+        "description": "Measure the book in the background, and answer with the queued job.\n\nThe job reads the line height and the frame of the block of text that ``geometry.crop`` recorded on every page, and\nwrites the median line height and a page size of the median block with its margins into the parameters of the\n``geometry.normalize`` step of every Geometry recipe, which marks the pages of those recipes stale. A preview of the\nproject is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.",
         "operationId": "measure_book_api_v1_projects__project_id__stages_geometry_measure_post",
         "parameters": [
           {
@@ -4179,106 +3799,6 @@
             }
           }
         },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PageStageSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/projects/{project_id}/pages/{page_id}/stages/{stage}/pin": {
-      "delete": {
-        "tags": [
-          "processing"
-        ],
-        "summary": "Unpin Stage",
-        "description": "Take the recipe pinned to a stage of a page off it, so a run without a recipe chooses by the rules again.\n\nThe current version stays and the stage is marked stale, since the rules may choose another recipe. The answer is\n409 while the project is processing something, and 404 for a stage that has not run on the page.",
-        "operationId": "unpin_stage_api_v1_projects__project_id__pages__page_id__stages__stage__pin_delete",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the project",
-              "title": "Project Id"
-            },
-            "description": "Identifier of the project"
-          },
-          {
-            "name": "page_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the page",
-              "title": "Page Id"
-            },
-            "description": "Identifier of the page"
-          },
-          {
-            "name": "stage",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the pipeline"
-            },
-            "description": "Stage of the pipeline"
-          }
-        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -4717,14 +4237,14 @@
         }
       }
     },
-    "/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}/remake": {
-      "post": {
+    "/api/v1/projects/{project_id}/versions/collectable": {
+      "get": {
         "tags": [
           "processing"
         ],
-        "summary": "Remake Version",
-        "description": "Make the picture of a version again, whose files a collection removed, and make the version current.\n\nThe job runs the step with the parameters and the edit the version stored, over the current version of the earlier\nstage, and finds the version under its own identifier. It fails with its reason, and makes nothing, when the earlier\nstage has another current version than the one this version was made from, or the edit changed. The answer is 409\nfor a version that has its files, is not ready or is a preview.",
-        "operationId": "remake_version_api_v1_projects__project_id__pages__page_id__versions__version_id__remake_post",
+        "summary": "Collectable Versions",
+        "description": "Count the versions a collection would delete now and the space their files take, and change nothing.\n\nThe versions are the ones ``POST /projects/{project_id}/versions/collect`` deletes, chosen by the same rule.",
+        "operationId": "collectable_versions_api_v1_projects__project_id__versions_collectable_get",
         "parameters": [
           {
             "name": "project_id",
@@ -4737,39 +4257,15 @@
               "title": "Project Id"
             },
             "description": "Identifier of the project"
-          },
-          {
-            "name": "page_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the page",
-              "title": "Page Id"
-            },
-            "description": "Identifier of the page"
-          },
-          {
-            "name": "version_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{16}$",
-              "description": "Identifier of the page version",
-              "title": "Version Id"
-            },
-            "description": "Identifier of the page version"
           }
         ],
         "responses": {
-          "202": {
+          "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JobSchema"
+                  "$ref": "#/components/schemas/CollectionReportSchema"
                 }
               }
             }
@@ -4825,7 +4321,7 @@
           "processing"
         ],
         "summary": "Collect Versions",
-        "description": "Remove the files of the old versions nothing needs, in the background, and answer with the queued job.\n\nA version goes when it is not current, not in the chain of inputs of a current version, not a base version, and\nolder than the retention period of its scale. A preview loses its row, and any other version keeps its row and\nloses its files, so it can be made again. A collection that is queued or running already is the answer.",
+        "description": "Delete the versions nothing needs, in the background, and answer with the queued job.\n\nA version goes when it is not current, not in the chain of inputs of a current version, not a base version, not\nmarked Good and without a comment, and, for a preview, older than its retention period. It goes with its files, its\nrow and the log of its marks. A collection that is queued or running already is the answer. A run queues one by\nitself when it ends.",
         "operationId": "collect_versions_api_v1_projects__project_id__versions_collect_post",
         "parameters": [
           {
@@ -4851,414 +4347,6 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/projects/{project_id}/stages/{stage}/rules": {
-      "get": {
-        "tags": [
-          "rules"
-        ],
-        "summary": "List Rules",
-        "description": "List the rules of a stage in the order they are tried, which is the order they were added in.",
-        "operationId": "list_rules_api_v1_projects__project_id__stages__stage__rules_get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the project",
-              "title": "Project Id"
-            },
-            "description": "Identifier of the project"
-          },
-          {
-            "name": "stage",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the pipeline"
-            },
-            "description": "Stage of the pipeline"
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "default": 1,
-              "title": "Page"
-            }
-          },
-          {
-            "name": "size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 50,
-              "title": "Size"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Page_RecipeRuleSchema_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "rules"
-        ],
-        "summary": "Create Rule",
-        "description": "Add a rule after the others of the stage.\n\nA stage has one rule for each condition, and one for each label of a manual group, so a second rule for the same\ncondition answers 409. A recipe that is not a recipe of the stage answers 404.",
-        "operationId": "create_rule_api_v1_projects__project_id__stages__stage__rules_post",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the project",
-              "title": "Project Id"
-            },
-            "description": "Identifier of the project"
-          },
-          {
-            "name": "stage",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the pipeline"
-            },
-            "description": "Stage of the pipeline"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RecipeRuleBody"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RecipeRuleSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/projects/{project_id}/stages/{stage}/rules/{rule_id}": {
-      "put": {
-        "tags": [
-          "rules"
-        ],
-        "summary": "Put Rule",
-        "description": "Send the pages a rule matches to another recipe of the stage, keeping the place of the rule.",
-        "operationId": "put_rule_api_v1_projects__project_id__stages__stage__rules__rule_id__put",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the project",
-              "title": "Project Id"
-            },
-            "description": "Identifier of the project"
-          },
-          {
-            "name": "stage",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the pipeline"
-            },
-            "description": "Stage of the pipeline"
-          },
-          {
-            "name": "rule_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the rule",
-              "title": "Rule Id"
-            },
-            "description": "Identifier of the rule"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RecipeRuleTarget"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RecipeRuleSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "rules"
-        ],
-        "summary": "Delete Rule",
-        "description": "Remove a rule, so the pages it matched fall to the rules after it, or to the active recipe.",
-        "operationId": "delete_rule_api_v1_projects__project_id__stages__stage__rules__rule_id__delete",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the project",
-              "title": "Project Id"
-            },
-            "description": "Identifier of the project"
-          },
-          {
-            "name": "stage",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the pipeline"
-            },
-            "description": "Stage of the pipeline"
-          },
-          {
-            "name": "rule_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the rule",
-              "title": "Rule Id"
-            },
-            "description": "Identifier of the rule"
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -5488,13 +4576,28 @@
           "profiles"
         ],
         "summary": "Import Profile",
-        "description": "Save the profile a file holds, which is not the default until it is made one.\n\nThe file is checked as a saved profile is. A file of another version of the format, a step whose parameters do not\nfit, and a step that stands where it cannot work, unless the file asks for the free order, answer 422, and so does\na file that needs a processor that is not installed, which the answer names.",
+        "description": "Save the profile a file holds, which is not the default until it is made one.\n\nThe file is checked as a saved profile is. A file of the first version is read as well, and the condition its\nsteps name is dropped. A file of another version of the format, a step whose parameters do not\nfit, and a step that stands where it cannot work, unless the file asks for the free order, answer 422, and so does\na file that needs a processor that is not installed, which the answer names.",
         "operationId": "import_profile_api_v1_recipe_profiles_import_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ProfileFileSchema"
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ProfileFileV1"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ProfileFileSchema"
+                  }
+                ],
+                "title": "Body",
+                "discriminator": {
+                  "propertyName": "version",
+                  "mapping": {
+                    "1": "#/components/schemas/ProfileFileV1",
+                    "2": "#/components/schemas/ProfileFileSchema"
+                  }
+                }
               }
             }
           },
@@ -5739,7 +4842,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RecipeBody"
+                "$ref": "#/components/schemas/ProfileBody"
               }
             }
           }
@@ -6115,7 +5218,7 @@
           "profiles"
         ],
         "summary": "Apply Profile",
-        "description": "Add the steps of a profile to a book as a variant of the profile's stage, and optionally make it the active one.\n\nA step whose processor is not installed on the server is left out and the processor is named in the answer. A\nprofile with no step left to run answers 422. A profile of another account answers 404. With pages, the variant is\nalso pinned to them and the stage is run on them in the background, and the queued job is in the answer; a book\nthat is busy answers 409 then, and keeps the variant.",
+        "description": "Put the steps of a profile into the recipe of one kind of page of the profile's stage in a book.\n\nA step whose processor is not installed on the server is left out and the processor is named in the answer. A\nprofile with no step left to run answers 422. A profile of another account answers 404. The recipe is linked to the\nprofile, and the pages it processed become stale.",
         "operationId": "apply_profile_api_v1_projects__project_id__recipe_profiles__profile_id__apply_post",
         "parameters": [
           {
@@ -6209,14 +5312,14 @@
         }
       }
     },
-    "/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}/profile": {
+    "/api/v1/projects/{project_id}/stages/{stage}/recipes/{recipe_id}/profile": {
       "put": {
         "tags": [
           "profiles"
         ],
         "summary": "Put Recipe Profile",
         "description": "Record which profile a recipe of a book was made from, so the book can tell how its steps differ from it.\n\nThe steps do not change and no page goes stale. A profile of another account answers 404, and so does a recipe the\nproject does not have, and a profile of another stage answers 422.",
-        "operationId": "put_recipe_profile_api_v1_projects__project_id__stages__stage__variants__recipe_id__profile_put",
+        "operationId": "put_recipe_profile_api_v1_projects__project_id__stages__stage__recipes__recipe_id__profile_put",
         "parameters": [
           {
             "name": "project_id",
@@ -6673,7 +5776,7 @@
           "edits"
         ],
         "summary": "Carry Over Edit",
-        "description": "Carry the shape this page has set by hand for a step over to other pages, as one batch, and mark them stale.\n\nThe pages are the following ones, the selected ones, or every page of the condition of the step. The whole shape is\ncarried and not a part of it, and the settings of each page stay as they are. A page that has a shape of its own set\nby hand is left as it is and listed as skipped, unless the form asks to write over it, and a page that has the same\nshape is neither written nor listed. The changes share a batch, so one undo takes the shape back from every page.\nThe answer is 404 when this page has no shape set by hand for the step, and 422 for an edit that is a mask, which\nbelongs to one page, and for a carry-over to the selected pages that names none.",
+        "description": "Carry the shape this page has set by hand for a step over to other pages, as one batch, and mark them stale.\n\nThe pages are the following ones, the selected ones, or every page of the kind of the step. The whole shape is\ncarried and not a part of it, and the settings of each page stay as they are. A page that has a shape of its own set\nby hand is left as it is and listed as skipped, unless the form asks to write over it, and a page that has the same\nshape is neither written nor listed. The changes share a batch, so one undo takes the shape back from every page.\nThe answer is 404 when this page has no shape set by hand for the step, and 422 for an edit that is a mask, which\nbelongs to one page, and for a carry-over to the selected pages that names none.",
         "operationId": "carry_over_edit_api_v1_projects__project_id__pages__page_id__edits__stage___step_id__carry_over_post",
         "parameters": [
           {
@@ -6795,7 +5898,7 @@
           "page-settings"
         ],
         "summary": "List Settings",
-        "description": "List the steps of one stage of a page that have settings of the page, with the fields the page changes.",
+        "description": "List the steps of one stage of a page that have values of the page or of a part of the pages.\n\nEach step comes with the fields the page changes for itself, with the values of the odd pages, the even pages and\nthe groups for the step, and with the parameters the step runs with on the page.",
         "operationId": "list_settings_api_v1_projects__project_id__pages__page_id__settings__stage__get",
         "parameters": [
           {
@@ -6828,9 +5931,9 @@
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the step the settings are for"
+              "description": "Stage of the steps the settings are for"
             },
-            "description": "Stage of the step the settings are for"
+            "description": "Stage of the steps the settings are for"
           },
           {
             "name": "page",
@@ -6912,14 +6015,14 @@
         }
       }
     },
-    "/api/v1/projects/{project_id}/pages/{page_id}/settings/{stage}/{step_id}/{name}": {
+    "/api/v1/projects/{project_id}/stages/{stage}/steps/{step_id}/values/{name}": {
       "put": {
         "tags": [
           "page-settings"
         ],
-        "summary": "Put Setting",
-        "description": "Set the value one page uses for one field of a step, and mark the stage of the page stale.\n\nThe other pages keep the value of the step of the recipe, and so does this page for every other field. The answer is\n422 for a field the processor of the step does not have and for a value out of its range, and nothing is processed\nby this request.",
-        "operationId": "put_setting_api_v1_projects__project_id__pages__page_id__settings__stage___step_id___name__put",
+        "summary": "Put Value",
+        "description": "Set the value pages use for one field of a step, and mark the stage of each page whose parameters change stale.\n\nThe pages are the open page or the pages the user selected, the odd pages, the even pages, or the pages of a group.\nThe other pages keep what they had, and so do these pages for every other field. A page that takes the field from\na stronger part, which is its own value or its group, is left as it is. The answer is 422 for a field the processor\nof the step does not have and for a value out of its range, and 404 for a step no recipe of the stage has, and\nnothing is processed by this request.",
+        "operationId": "put_value_api_v1_projects__project_id__stages__stage__steps__step_id__values__name__put",
         "parameters": [
           {
             "name": "project_id",
@@ -6934,26 +6037,14 @@
             "description": "Identifier of the project"
           },
           {
-            "name": "page_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the page",
-              "title": "Page Id"
-            },
-            "description": "Identifier of the page"
-          },
-          {
             "name": "stage",
             "in": "path",
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the step the settings are for"
+              "description": "Stage of the pipeline"
             },
-            "description": "Stage of the step the settings are for"
+            "description": "Stage of the pipeline"
           },
           {
             "name": "step_id",
@@ -6985,7 +6076,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PageSettingForm"
+                "$ref": "#/components/schemas/ValueForm"
               }
             }
           }
@@ -6996,7 +6087,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PageStepSettingsSchema"
+                  "$ref": "#/components/schemas/ValueChangesSchema"
                 }
               }
             }
@@ -7049,9 +6140,9 @@
         "tags": [
           "page-settings"
         ],
-        "summary": "Delete Setting",
-        "description": "Take a field back from the page, so it runs with the value of the step of the recipe, and mark the stage stale.",
-        "operationId": "delete_setting_api_v1_projects__project_id__pages__page_id__settings__stage___step_id___name__delete",
+        "summary": "Delete Value",
+        "description": "Take a field back from the pages, so they take it from the next part, and mark their stages stale.\n\nThe answer is 404 when none of the pages has a value of its own for the field, or the step is not one of the stage.",
+        "operationId": "delete_value_api_v1_projects__project_id__stages__stage__steps__step_id__values__name__delete",
         "parameters": [
           {
             "name": "project_id",
@@ -7066,26 +6157,14 @@
             "description": "Identifier of the project"
           },
           {
-            "name": "page_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the page",
-              "title": "Page Id"
-            },
-            "description": "Identifier of the page"
-          },
-          {
             "name": "stage",
             "in": "path",
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the step the settings are for"
+              "description": "Stage of the pipeline"
             },
-            "description": "Stage of the step the settings are for"
+            "description": "Stage of the pipeline"
           },
           {
             "name": "step_id",
@@ -7110,338 +6189,56 @@
               "title": "Name"
             },
             "description": "Name of the field in the parameters of the step"
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
           },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
+          {
+            "name": "scope",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ValueScope"
             }
           },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
+          {
+            "name": "page_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "minItems": 1,
+                  "maxItems": 2000
                 },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
+                {
+                  "type": "null"
                 }
-              }
+              ],
+              "title": "Page Ids"
             }
           },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
+          {
+            "name": "group_label",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 50,
+              "default": "",
+              "title": "Group Label"
             }
-          }
-        }
-      }
-    },
-    "/api/v1/projects/{project_id}/pages/{page_id}/settings/{stage}/{step_id}/{name}/carry-over": {
-      "post": {
-        "tags": [
-          "page-settings"
-        ],
-        "summary": "Carry Over Setting",
-        "description": "Carry the value this page has for a field of a step over to other pages, as one batch, and mark them stale.\n\nThe pages are the following ones, the selected ones, or every page of the condition of the step. A page that has a\nvalue of its own for the field is left as it is and listed as skipped, unless the form asks to write over it. Each\npage that takes the value changes this one field and no other, and the changes share a batch, so one undo takes the\nvalue back from every page. The answer is 404 when this page does not change the field, and 422 for a carry-over to\nthe selected pages that names none, or a value out of range for another field of a page.",
-        "operationId": "carry_over_setting_api_v1_projects__project_id__pages__page_id__settings__stage___step_id___name__carry_over_post",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the project",
-              "title": "Project Id"
-            },
-            "description": "Identifier of the project"
-          },
-          {
-            "name": "page_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the page",
-              "title": "Page Id"
-            },
-            "description": "Identifier of the page"
-          },
-          {
-            "name": "stage",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the step the settings are for"
-            },
-            "description": "Stage of the step the settings are for"
-          },
-          {
-            "name": "step_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the step of a recipe",
-              "title": "Step Id"
-            },
-            "description": "Identifier of the step of a recipe"
-          },
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "description": "Name of the field in the parameters of the step",
-              "title": "Name"
-            },
-            "description": "Name of the field in the parameters of the step"
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CarryForm"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CarryOverSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/projects/{project_id}/stages/{stage}/reset": {
-      "post": {
-        "tags": [
-          "page-settings"
-        ],
-        "summary": "Reset Steps",
-        "description": "Take the settings and the manual edits of steps away from one page or from every page, and mark the stages stale.\n\nThe scope is the step on the open page, every step of the stage on the open page, the step on every page, or every\nstep of the stage on every page. The pages use the values of the recipe again, which stays as it is, and the next\nrun of the stage finds the shapes anew. The changes of the history share a batch from a reset, so one undo gives\nthe work back on every page. A reset that reaches other pages and takes work from some of them answers 409 until the\nbody confirms it. The answer is 404 for a step that no recipe of the stage has, and 422 for a scope without the page\nor the step it needs.",
-        "operationId": "reset_steps_api_v1_projects__project_id__stages__stage__reset_post",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the project",
-              "title": "Project Id"
-            },
-            "description": "Identifier of the project"
-          },
-          {
-            "name": "stage",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the pipeline"
-            },
-            "description": "Stage of the pipeline"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ResetBody"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StepResetSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/projects/{project_id}/stages/{stage}/reset-impact": {
-      "post": {
-        "tags": [
-          "page-settings"
-        ],
-        "summary": "Reset Impact",
-        "description": "Count the pages a reset would take work from, so the user can confirm it before it is sent.\n\nThe body is the one of the reset. Nothing is written.",
-        "operationId": "reset_impact_api_v1_projects__project_id__stages__stage__reset_impact_post",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the project",
-              "title": "Project Id"
-            },
-            "description": "Identifier of the project"
-          },
-          {
-            "name": "stage",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/Stage",
-              "description": "Stage of the pipeline"
-            },
-            "description": "Stage of the pipeline"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ResetBody"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResetImpactSchema"
+                  "$ref": "#/components/schemas/ValueChangesSchema"
                 }
               }
             }
@@ -7630,7 +6427,7 @@
           "page-history"
         ],
         "summary": "Clear History",
-        "description": "Return a step to its initial state on a page: delete its history, its settings, its edit and its results.\n\nThe results are the versions the step made on the page and the versions that read them, with their files and their\nmarks. The stage of the page stands on the version the step read, marked stale, and has no current version when the\nstep is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The\nchanges of a batch on other pages stay. The answer is 409 while a run, a preview, a tile cutting or a collection of\nthe project is queued or running, and 404 when no recipe of the stage has the step.",
+        "description": "Return a step to its initial state on a page: delete its history, its settings, its edit and its results.\n\nThe results are the versions the step made on the page and the versions that read them, with their files and their\nmarks. The stage of the page stands on the version the step read, marked stale, and has no current version when the\nstep is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The\nchanges of a batch on other pages stay. A preview of the project, queued or running, is cancelled first. The answer\nis 409 while a run, a measure of the book, a tile cutting or a collection of the project is queued or running, and\n404 when no recipe of the stage has the step.",
         "operationId": "clear_history_api_v1_projects__project_id__pages__page_id__history__stage___step_id__delete",
         "parameters": [
           {
@@ -9897,16 +8694,6 @@
             },
             "type": "array",
             "title": "Missing Processors"
-          },
-          "job": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/JobSchema"
-              },
-              {
-                "type": "null"
-              }
-            ]
           }
         },
         "type": "object",
@@ -9915,49 +8702,21 @@
           "missing_processors"
         ],
         "title": "AppliedProfileSchema",
-        "description": "The recipe a profile made in a book, and what was left out of it.\n\n:ivar recipe: The variant added to the book, which is the active recipe when the request asked for that.\n:ivar missing_processors: Keys of the processors of the profile that are not installed, whose steps were left out.\n:ivar job: The queued run of the stage on the pages the profile was applied to, or null when it was applied to the\n           book only."
-      },
-      "AppliesTo": {
-        "type": "string",
-        "enum": [
-          "all",
-          "text",
-          "pictures",
-          "color-pictures",
-          "bw-pictures"
-        ],
-        "title": "AppliesTo",
-        "description": "The condition of a step of a recipe: which pages the step processes, the others passing it unchanged.\n\nWhat makes a page text or a picture is decided by its content type (``Page.content_of``) and nowhere else. Until the\ncontent of a page is detected, the role the user gave the page decides: a plate or a frontispiece is a picture, and\nevery other kind of page is text. The colour of such a picture is the colour mode of the image the stage starts\nfrom, and an unknown mode counts as colour, since a step for black and white pictures must not touch a page that\nmay be a colour plate."
+        "description": "The recipe a profile changed in a book, and what was left out of it.\n\n:ivar recipe: The recipe that took the steps of the profile.\n:ivar missing_processors: Keys of the processors of the profile that are not installed, whose steps were left out."
       },
       "ApplyProfileBody": {
         "properties": {
-          "activate": {
-            "type": "boolean",
-            "title": "Activate",
-            "default": false
-          },
-          "page_ids": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                "type": "array",
-                "maxItems": 2000,
-                "minItems": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Page Ids"
+          "kind": {
+            "$ref": "#/components/schemas/RecipeKind"
           }
         },
         "additionalProperties": false,
         "type": "object",
+        "required": [
+          "kind"
+        ],
         "title": "ApplyProfileBody",
-        "description": "How to apply a profile to a book.\n\n:ivar activate: Whether the new variant also becomes the active recipe of the stage.\n:ivar page_ids: The pages to pin the new variant to and to run the stage on, or omitted to apply the profile to the\n                book only."
+        "description": "How to apply a profile to a book.\n\n:ivar kind: The kind of page whose recipe of the profile's stage takes the steps of the profile."
       },
       "BlankFill": {
         "type": "string",
@@ -10555,7 +9314,7 @@
           "scope"
         ],
         "title": "CarryForm",
-        "description": "The pages a setting of one page is carried over to.\n\n:ivar scope: The following pages, the selected pages, or every page of the condition of the step.\n:ivar page_ids: The selected pages, which the scope of the selected pages needs and the other scopes ignore.\n:ivar overwrite: Whether a page that has another value of its own for the field takes the value as well, instead of\n                 being skipped."
+        "description": "The pages the shape a page set by hand for a step is carried over to.\n\n:ivar scope: The following pages, the selected pages, or every page of the kind of the step.\n:ivar page_ids: The selected pages, which the scope of the selected pages needs and the other scopes ignore.\n:ivar overwrite: Whether a page that has a shape of its own takes the shape as well, instead of being skipped."
       },
       "CarryOverSchema": {
         "properties": {
@@ -10587,14 +9346,14 @@
           "skipped"
         ],
         "title": "CarryOverSchema",
-        "description": "What a carry-over did, which is one batch of the history.\n\n:ivar batch_id: The batch the changes share, which an undo of any of them takes back as a whole.\n:ivar changes: The changes written, one on each page that took the value.\n:ivar skipped: The pages left as they were because they have a value of their own for the field."
+        "description": "What a carry-over did, which is one batch of the history.\n\n:ivar batch_id: The batch the changes share, which an undo of any of them takes back as a whole.\n:ivar changes: The changes written, one on each page that took the shape.\n:ivar skipped: The pages left as they were because they have a shape of their own."
       },
       "CarryScope": {
         "type": "string",
         "enum": [
           "following",
           "selected",
-          "condition"
+          "kind"
         ],
         "title": "CarryScope",
         "description": "The pages a setting of one page is carried over to."
@@ -10605,7 +9364,6 @@
           "user",
           "run",
           "carry-over",
-          "reset",
           "undo"
         ],
         "title": "ChangeSource",
@@ -10629,6 +9387,25 @@
         ],
         "title": "ClearedSchema",
         "description": "What clearing a step on a page deleted.\n\n:ivar changes: How many changes of the history were deleted, which is none when the step had no history on the page.\n:ivar versions: How many versions were deleted: the results of the step on the page and the results that read them."
+      },
+      "CollectionReportSchema": {
+        "properties": {
+          "versions": {
+            "type": "integer",
+            "title": "Versions"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "versions",
+          "size_bytes"
+        ],
+        "title": "CollectionReportSchema",
+        "description": "What a collection would delete from a book now.\n\n:ivar versions: How many versions it would delete, with their rows and the log of their marks.\n:ivar size_bytes: How many bytes the files of those versions take, which the collection frees."
       },
       "ColorMode": {
         "type": "string",
@@ -10694,7 +9471,7 @@
           "bw-picture"
         ],
         "title": "ContentType",
-        "description": "What the image of a page is: text, or a picture in colour or in black and white.\n\nThe program proposes it from the share of the page that pictures cover and from the colour of the pictures, and the\nuser may change it. It is what the conditions of the steps of a recipe read, apart from the role the page has in the\nbook (``PageKind``), which says where the page stands and not what it shows."
+        "description": "What the image of a page is: text, or a picture in colour or in black and white.\n\nThe program proposes it from the share of the page that pictures cover and from the colour of the pictures, and the\nuser may change it. It decides, apart from the role the page has in the book (``PageKind``), which recipe of a stage\nprocesses the page."
       },
       "ContributorRole": {
         "type": "string",
@@ -10830,7 +9607,7 @@
           "skipped"
         ],
         "title": "FigureState",
-        "description": "Where the shape of one step on one page comes from, which the step bar paints as a dot.\n\nA page that was never run through the step holds the default shape, which computes nothing. A step that ran leaves\nthe shape it found, a manual edit puts the shape the user set and outlives the next run, and a page that did not\nmeet the condition of the step passes it with no shape at all."
+        "description": "Where the shape of one step on one page comes from, which the step bar paints as a dot.\n\nA page that was never run through the step holds the default shape, which computes nothing. A step that ran leaves\nthe shape it found, a manual edit puts the shape the user set and outlives the next run, and a leaf the program drew\npasses the step with no shape at all."
       },
       "FileType": {
         "type": "string",
@@ -11114,6 +9891,30 @@
         ],
         "title": "JobState",
         "description": "Lifecycle of a background job."
+      },
+      "KindRecipeSchema": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RecipeKind"
+          },
+          "recipe_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Recipe Id"
+          },
+          "pages": {
+            "type": "integer",
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "recipe_id",
+          "pages"
+        ],
+        "title": "KindRecipeSchema",
+        "description": "The recipe of one kind of page of a stage, with how many pages of the book are of the kind.\n\n:ivar kind: The kind of page, which is also the name of the recipe.\n:ivar recipe_id: The recipe.\n:ivar pages: Pages with an image that are of the kind, which are the pages the recipe processes."
       },
       "LabelRange": {
         "properties": {
@@ -11882,22 +10683,7 @@
           "updated_at"
         ],
         "title": "PageSchema",
-        "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except\n                in a manifest listing only the included pages, which numbers those.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar label_manual: Whether the label is an exception to the pagination sections: written by hand, or taken from\n                    the source of the scan, and so never changed when the numbers of the book are computed again.\n:ivar section_id: The pagination section that governs the page, which is the one whose rule gave it its number, or\n                  None for a page kept out of the book, a page before the first section and a book without\n                  sections.\n:ivar kind: Role of the page in the book.\n:ivar content_type: What the page shows for the conditions of the steps: text, or a picture in colour or in black\n                    and white. It is the one the user set, else the one the program found, else the one the kind\n                    of the page gives, which counts a plate or a frontispiece as a picture in colour.\n:ivar content_source: Where ``content_type`` comes from, so the interface can say whether it was found or set.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar blank_fill: What the image of a blank page is: its scan, or a white leaf or a leaf of the colour of the paper\n                  of the book drawn in its place. The scan stays linked either way.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar group_label: Label of the group the user put the page in, or empty for no group.\n:ivar images: Paths of the images of the page's current version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
-      },
-      "PageSettingForm": {
-        "properties": {
-          "value": {
-            "title": "Value",
-            "description": "The value the page uses for the field"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "value"
-        ],
-        "title": "PageSettingForm",
-        "description": "The value one page uses for one field of the parameters of a step.\n\n:ivar value: The value, as JSON, which the processor of the step checks against the field."
+        "description": "A page of a book.\n\n:ivar id: Identifier of the page, which stays the same when the page is moved.\n:ivar position: Place of the page in the book from zero, counted over every page, excluded ones included, except\n                in a manifest listing only the included pages, which numbers those.\n:ivar label: Printed number, such as ``xii`` or ``12``, or empty for an unnumbered page.\n:ivar label_manual: Whether the label is an exception to the pagination sections: written by hand, or taken from\n                    the source of the scan, and so never changed when the numbers of the book are computed again.\n:ivar section_id: The pagination section that governs the page, which is the one whose rule gave it its number, or\n                  None for a page kept out of the book, a page before the first section and a book without\n                  sections.\n:ivar kind: Role of the page in the book.\n:ivar content_type: What the page shows: text, or a picture in colour or in black\n                    and white. It is the one the user set, else the one the program found, else the one the kind\n                    of the page gives, which counts a plate or a frontispiece as a picture in colour.\n:ivar content_source: Where ``content_type`` comes from, so the interface can say whether it was found or set.\n:ivar origin: Where the image of the page comes from.\n:ivar scan_id: Scan the page was cut from, or None for a blank leaf, a placeholder, or a page whose source was\n               deleted.\n:ivar source_id: Source holding the page's scan, by which a client selects every page of one source, or None.\n:ivar slot: Part of the scan the page shows: 0 the whole scan, 1 and 2 the halves of a spread.\n:ivar blank_fill: What the image of a blank page is: its scan, or a white leaf or a leaf of the colour of the paper\n                  of the book drawn in its place. The scan stays linked either way.\n:ivar included: Whether the page is part of the book.\n:ivar notes: Notes of the user.\n:ivar group_label: Label of the group the user put the page in, or empty for no group.\n:ivar images: Paths of the images of the page's current version, or None while it has none.\n:ivar created_at: When the page was created.\n:ivar updated_at: When the page was last changed."
       },
       "PageStageSchema": {
         "properties": {
@@ -11935,10 +10721,6 @@
           "state": {
             "$ref": "#/components/schemas/StageState"
           },
-          "pinned": {
-            "type": "boolean",
-            "title": "Pinned"
-          },
           "through_step": {
             "anyOf": [
               {
@@ -11963,12 +10745,11 @@
           "recipe_id",
           "head_version_id",
           "state",
-          "pinned",
           "through_step",
           "updated_at"
         ],
         "title": "PageStageSchema",
-        "description": "The current version of a stage of a page and whether it is up to date; the data of a stage event too.\n\n:ivar page_id: Page the record belongs to.\n:ivar stage: The stage.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar head_version_id: The current version of the stage, or None.\n:ivar state: Whether the current version matches the inputs of the stage.\n:ivar pinned: Whether the recipe is pinned to the page, so a run without a recipe keeps it.\n:ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step\n                    that is on, so the page is not ready for the next stage, or None.\n:ivar updated_at: When the record last changed."
+        "description": "The current version of a stage of a page and whether it is up to date; the data of a stage event too.\n\n:ivar page_id: Page the record belongs to.\n:ivar stage: The stage.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar head_version_id: The current version of the stage, or None.\n:ivar state: Whether the current version matches the inputs of the stage.\n:ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step\n                    that is on, so the page is not ready for the next stage, or None.\n:ivar updated_at: When the record last changed."
       },
       "PageStageStatus": {
         "type": "string",
@@ -12003,6 +10784,13 @@
           },
           "layer": {
             "$ref": "#/components/schemas/StepLayer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ValueScope"
+          },
+          "group_label": {
+            "type": "string",
+            "title": "Group Label"
           },
           "before": {
             "anyOf": [
@@ -12077,6 +10865,8 @@
           "stage",
           "step_id",
           "layer",
+          "scope",
+          "group_label",
           "before",
           "after",
           "source",
@@ -12086,18 +10876,10 @@
           "sequence"
         ],
         "title": "PageStepChangeSchema",
-        "description": "One change of a layer of a step on a page.\n\n:ivar id: Identifier of the change.\n:ivar page_id: Page the change was made on.\n:ivar stage: Stage of the step.\n:ivar step_id: Identifier of the step.\n:ivar layer: The layer that changed.\n:ivar before: Content of the layer before the change, or None when it was empty.\n:ivar after: Content of the layer after the change, or None when the change emptied it.\n:ivar source: What made the change.\n:ivar batch_id: Identifier shared by the changes of one batch, which are undone together, or None.\n:ivar undoes: The change this one takes back, or None for a change that is not an undo.\n:ivar undone: Whether a later change took this one back, so it no longer stands.\n:ivar created_at: When the change was made.\n:ivar sequence: Place of the change in the history of its page."
+        "description": "One change of a layer of a step on a page.\n\n:ivar id: Identifier of the change.\n:ivar page_id: Page the change was made on.\n:ivar stage: Stage of the step.\n:ivar step_id: Identifier of the step.\n:ivar layer: The layer that changed.\n:ivar scope: Whose settings the layer holds: the page's own, or the odd pages, the even pages or a group it takes.\n:ivar group_label: Label of the group for the scope of a group, and empty for the others.\n:ivar before: Content of the layer before the change, or None when it was empty.\n:ivar after: Content of the layer after the change, or None when the change emptied it.\n:ivar source: What made the change.\n:ivar batch_id: Identifier shared by the changes of one batch, which are undone together, or None.\n:ivar undoes: The change this one takes back, or None for a change that is not an undo.\n:ivar undone: Whether a later change took this one back, so it no longer stands.\n:ivar created_at: When the change was made.\n:ivar sequence: Place of the change in the history of its page."
       },
       "PageStepSettingsSchema": {
         "properties": {
-          "page_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Page Id"
-          },
-          "stage": {
-            "$ref": "#/components/schemas/Stage"
-          },
           "step_id": {
             "type": "string",
             "format": "uuid",
@@ -12108,22 +10890,41 @@
             "type": "object",
             "title": "Params"
           },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/StepValuesSchema"
+            },
+            "type": "array",
+            "title": "Parts"
+          },
+          "effective": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Effective"
+          },
           "updated_at": {
-            "type": "string",
-            "format": "date-time",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Updated At"
           }
         },
         "type": "object",
         "required": [
-          "page_id",
-          "stage",
           "step_id",
           "params",
+          "parts",
+          "effective",
           "updated_at"
         ],
         "title": "PageStepSettingsSchema",
-        "description": "The fields of the parameters of a step that one page changes.\n\n:ivar page_id: Page the settings belong to.\n:ivar stage: Stage of the step.\n:ivar step_id: Identifier of the step.\n:ivar params: The fields the page changes, by name, each with the value the page uses. The others come from the\n              step of the recipe.\n:ivar updated_at: When the settings were last saved."
+        "description": "What one page runs a step with, and the values it comes from.\n\n:ivar step_id: Identifier of the step.\n:ivar params: The fields the page changes for itself, by name, each with the value the page uses.\n:ivar parts: The values of the odd pages, the even pages and the groups for the step, whichever of them the page\n             is in.\n:ivar effective: The parameters the step runs with on the page: the recipe, then the odd or the even pages, the\n                 group of the page, and the page itself, each field taken from the strongest part that has a value.\n:ivar updated_at: When the values of the page were last saved, or None for a page that changes no field itself."
       },
       "PageUpdate": {
         "properties": {
@@ -12279,22 +11080,6 @@
             "format": "date-time",
             "title": "Created At"
           },
-          "files_removed": {
-            "type": "boolean",
-            "title": "Files Removed"
-          },
-          "files_removed_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Files Removed At"
-          },
           "mark": {
             "anyOf": [
               {
@@ -12330,13 +11115,11 @@
           "images",
           "preview",
           "created_at",
-          "files_removed",
-          "files_removed_at",
           "mark",
           "comment"
         ],
         "title": "PageVersionSchema",
-        "description": "The result of one processing step on one page.\n\n:ivar id: Identifier of the version, the hash of what produced it.\n:ivar page_id: Page the version belongs to.\n:ivar stage: Stage of the step.\n:ivar processor: Processor that ran the step.\n:ivar input_id: Version the step read, or None for a base version.\n:ivar params: Parameters of the step.\n:ivar transform: Transform of coordinates from the input.\n:ivar data: Data the step found, such as an angle or a confidence.\n:ivar review: Why the step asks for a second look at the page though it finished, or None when it was sure.\n:ivar state: Where the version is in its life cycle.\n:ivar scale: Whether the step ran on the full image or on a preview.\n:ivar edit_hash: Hash of the manual edit the step read, or empty.\n:ivar origin: How the result came about: made by the step, or set by hand through a manual edit.\n:ivar tiles_ready: Whether the tile pyramid is cut, which a client asks for when it is not.\n:ivar error: Why the version failed, or empty.\n:ivar images: Paths of the images of a ready full run that has an image, or None.\n:ivar preview: Path of the preview image of a preview run, or None.\n:ivar created_at: When the version was created.\n:ivar files_removed: Whether a collection removed the files of the version, so it has no image until a run makes it\n                     again.\n:ivar files_removed_at: When the files were removed, or None while the version has them.\n:ivar mark: What the user judged of the result, or None while it is not judged.\n:ivar comment: What the user wrote about the result, or empty."
+        "description": "The result of one processing step on one page.\n\n:ivar id: Identifier of the version, the hash of what produced it.\n:ivar page_id: Page the version belongs to.\n:ivar stage: Stage of the step.\n:ivar processor: Processor that ran the step.\n:ivar input_id: Version the step read, or None for a base version.\n:ivar params: Parameters of the step.\n:ivar transform: Transform of coordinates from the input.\n:ivar data: Data the step found, such as an angle or a confidence.\n:ivar review: Why the step asks for a second look at the page though it finished, or None when it was sure.\n:ivar state: Where the version is in its life cycle.\n:ivar scale: Whether the step ran on the full image or on a preview.\n:ivar edit_hash: Hash of the manual edit the step read, or empty.\n:ivar origin: How the result came about: made by the step, or set by hand through a manual edit.\n:ivar tiles_ready: Whether the tile pyramid is cut, which a client asks for when it is not.\n:ivar error: Why the version failed, or empty.\n:ivar images: Paths of the images of a ready full run that has an image, or None.\n:ivar preview: Path of the preview image of a preview run, or None.\n:ivar created_at: When the version was created.\n:ivar mark: What the user judged of the result, or None while it is not judged.\n:ivar comment: What the user wrote about the result, or empty."
       },
       "Page_JobSchema_": {
         "properties": {
@@ -12737,46 +11520,6 @@
           "pages"
         ],
         "title": "Page[ProjectSchema]"
-      },
-      "Page_RecipeRuleSchema_": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/RecipeRuleSchema"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "total": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Total"
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Page"
-          },
-          "size": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Size"
-          },
-          "pages": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Pages"
-          }
-        },
-        "type": "object",
-        "required": [
-          "items",
-          "total",
-          "page",
-          "size",
-          "pages"
-        ],
-        "title": "Page[RecipeRuleSchema]"
       },
       "Page_RecipeSchema_": {
         "properties": {
@@ -13281,13 +12024,39 @@
         "title": "ProcessorScope",
         "description": "How many outputs a processor makes from its input."
       },
+      "ProfileBody": {
+        "properties": {
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/StepBody"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Steps"
+          },
+          "order": {
+            "$ref": "#/components/schemas/OrderMode",
+            "default": "usual"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "steps",
+          "name"
+        ],
+        "title": "ProfileBody",
+        "description": "The name and the steps of a profile.\n\n:ivar name: Name of the profile.\n:ivar steps: Its steps in the order they run, each checked against its processor.\n:ivar order: The order the profile is saved in, which a book opened from it starts in."
+      },
       "ProfileFileSchema": {
         "properties": {
-          "version": {
-            "type": "integer",
-            "const": 1,
-            "title": "Version"
-          },
           "stage": {
             "$ref": "#/components/schemas/Stage"
           },
@@ -13309,18 +12078,23 @@
             "maxItems": 50,
             "minItems": 1,
             "title": "Steps"
+          },
+          "version": {
+            "type": "integer",
+            "const": 2,
+            "title": "Version"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "version",
           "stage",
           "name",
-          "steps"
+          "steps",
+          "version"
         ],
         "title": "ProfileFileSchema",
-        "description": "A profile as a file that is exchanged between accounts: the answer of an export, and the body of an import.\n\n:ivar version: Version of the format of the file.\n:ivar stage: Stage whose recipes the profile can be applied to.\n:ivar name: Name of the profile.\n:ivar order: ``usual`` if the profile refuses a step off a required place, ``free`` if it lets it stand.\n:ivar steps: The steps in the order they run."
+        "description": "A profile as a file that is exchanged between accounts: the answer of an export, and a body of an import.\n\n:ivar version: Version of the format of the file, the second, whose steps have no condition.\n:ivar steps: The steps in the order they run."
       },
       "ProfileFileStep": {
         "properties": {
@@ -13338,10 +12112,6 @@
             "type": "boolean",
             "title": "Enabled",
             "default": true
-          },
-          "applies_to": {
-            "$ref": "#/components/schemas/AppliesTo",
-            "default": "all"
           }
         },
         "additionalProperties": false,
@@ -13350,7 +12120,85 @@
           "processor_key"
         ],
         "title": "ProfileFileStep",
-        "description": "One step of a profile file: a processor, its parameters, whether it is on, and the pages it runs on.\n\nThe step has no identifier, since the identifier belongs to the recipe a step is in, and an import gives each step a\nnew one.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which an import checks against the processor.\n:ivar enabled: Whether a run runs the step.\n:ivar applies_to: Which pages the step processes."
+        "description": "One step of a profile file: a processor, its parameters, and whether it is on.\n\nThe step has no identifier, since the identifier belongs to the recipe a step is in, and an import gives each step a\nnew one.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which an import checks against the processor.\n:ivar enabled: Whether a run runs the step."
+      },
+      "ProfileFileStepV1": {
+        "properties": {
+          "processor_key": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Processor Key"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "applies_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applies To"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "processor_key"
+        ],
+        "title": "ProfileFileStepV1",
+        "description": "One step of a profile file of the first version, which also named the pages the step processed.\n\nA page is processed by the recipe of its kind now, so there is no condition on a step, and an import drops it.\n\n:ivar applies_to: The pages the step processed, which no step has any longer."
+      },
+      "ProfileFileV1": {
+        "properties": {
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "order": {
+            "$ref": "#/components/schemas/OrderMode",
+            "default": "usual"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileFileStepV1"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Steps"
+          },
+          "version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "stage",
+          "name",
+          "steps",
+          "version"
+        ],
+        "title": "ProfileFileV1",
+        "description": "A profile file of the first version, which an import still reads: its steps may name the pages they processed.\n\n:ivar version: Version of the format of the file, the first.\n:ivar steps: The steps in the order they run."
       },
       "ProfileLinkBody": {
         "properties": {
@@ -14060,12 +12908,6 @@
       },
       "RecipeBody": {
         "properties": {
-          "name": {
-            "type": "string",
-            "maxLength": 300,
-            "minLength": 1,
-            "title": "Name"
-          },
           "steps": {
             "items": {
               "$ref": "#/components/schemas/StepBody"
@@ -14083,20 +12925,24 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "name",
           "steps"
         ],
         "title": "RecipeBody",
-        "description": "The name and the steps of a recipe, for the active recipe and for a variant alike.\n\n:ivar name: Name of the recipe.\n:ivar steps: Its steps in the order they run, each checked against its processor.\n:ivar order: ``usual`` refuses a step that stands where it cannot work, with the reason as the detail of a 422, and\n             ``free`` saves it and reports it in the answer. A step off its usual place is saved either way."
+        "description": "The steps of a recipe, for a recipe of a book and for a profile alike.\n\n:ivar steps: Its steps in the order they run, each checked against its processor.\n:ivar order: ``usual`` refuses a step that stands where it cannot work, with the reason as the detail of a 422, and\n             ``free`` saves it and reports it in the answer. A step off its usual place is saved either way."
+      },
+      "RecipeKind": {
+        "type": "string",
+        "enum": [
+          "text",
+          "color-picture",
+          "bw-picture",
+          "blank"
+        ],
+        "title": "RecipeKind",
+        "description": "The kind of page a recipe processes: every stage that has recipes has one for each kind.\n\nA page is processed by the recipe of its kind, which is a blank page for a page of the blank kind and otherwise what\nthe page shows (``ContentType``). Changing the kind of a page moves the page to another recipe."
       },
       "RecipeProfileBody": {
         "properties": {
-          "name": {
-            "type": "string",
-            "maxLength": 300,
-            "minLength": 1,
-            "title": "Name"
-          },
           "steps": {
             "items": {
               "$ref": "#/components/schemas/StepBody"
@@ -14109,6 +12955,12 @@
           "order": {
             "$ref": "#/components/schemas/OrderMode",
             "default": "usual"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Name"
           },
           "stage": {
             "$ref": "#/components/schemas/Stage"
@@ -14117,12 +12969,12 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "name",
           "steps",
+          "name",
           "stage"
         ],
         "title": "RecipeProfileBody",
-        "description": "The name and the steps of a profile to save, with the stage whose recipes it fits.\n\n:ivar name: Name of the profile.\n:ivar steps: Its steps in the order they run, each checked against its processor.\n:ivar order: The order the profile is saved in, which a book opened from it starts in.\n:ivar stage: Stage whose recipes the profile can be applied to."
+        "description": "The name and the steps of a profile to save, with the stage whose recipes it fits.\n\n:ivar stage: Stage whose recipes the profile can be applied to."
       },
       "RecipeProfileName": {
         "properties": {
@@ -14194,93 +13046,6 @@
         "title": "RecipeProfileSchema",
         "description": "A recipe profile of the signed-in account.\n\n:ivar id: Identifier of the profile.\n:ivar stage: Stage whose recipes the profile can be applied to.\n:ivar name: Name the user sees.\n:ivar steps: The steps in the order they run, each with its parameters and its switch.\n:ivar order: ``usual`` if the steps were saved with a step off a required place refused, ``free`` if it may stand.\n:ivar is_default: Whether a new book starts the stage with this profile.\n:ivar created_at: When the profile was saved.\n:ivar updated_at: When the profile was last changed."
       },
-      "RecipeRuleBody": {
-        "properties": {
-          "condition": {
-            "$ref": "#/components/schemas/RuleCondition"
-          },
-          "group_label": {
-            "type": "string",
-            "maxLength": 50,
-            "title": "Group Label",
-            "default": ""
-          },
-          "recipe_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Recipe Id"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "condition",
-          "recipe_id"
-        ],
-        "title": "RecipeRuleBody",
-        "description": "A rule to add after the others of the stage; the stage is in the address.\n\n:ivar condition: What a page must be for the rule to match it.\n:ivar group_label: The group a page must be in, given for the condition on a manual group and for no other.\n:ivar recipe_id: Recipe of the stage that processes the pages the rule matches."
-      },
-      "RecipeRuleSchema": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Id"
-          },
-          "project_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Project Id"
-          },
-          "stage": {
-            "$ref": "#/components/schemas/Stage"
-          },
-          "condition": {
-            "$ref": "#/components/schemas/RuleCondition"
-          },
-          "group_label": {
-            "type": "string",
-            "title": "Group Label"
-          },
-          "recipe_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Recipe Id"
-          },
-          "order": {
-            "type": "integer",
-            "title": "Order"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "project_id",
-          "stage",
-          "condition",
-          "group_label",
-          "recipe_id",
-          "order"
-        ],
-        "title": "RecipeRuleSchema",
-        "description": "A rule of a stage.\n\n:ivar id: Identifier of the rule.\n:ivar project_id: Project owning the rule.\n:ivar stage: Stage whose pages the rule sends to a recipe.\n:ivar condition: What a page must be for the rule to match it.\n:ivar group_label: The group a page must be in, for the condition on a manual group, and empty for any other.\n:ivar recipe_id: Recipe of the stage that processes the pages the rule matches.\n:ivar order: Place of the rule among the rules of the stage from zero, the lowest being tried first."
-      },
-      "RecipeRuleTarget": {
-        "properties": {
-          "recipe_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Recipe Id"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "recipe_id"
-        ],
-        "title": "RecipeRuleTarget",
-        "description": "The recipe a rule sends its pages to from now on.\n\n:ivar recipe_id: Recipe of the stage that processes the pages the rule matches."
-      },
       "RecipeSchema": {
         "properties": {
           "id": {
@@ -14296,9 +13061,8 @@
           "stage": {
             "$ref": "#/components/schemas/Stage"
           },
-          "name": {
-            "type": "string",
-            "title": "Name"
+          "kind": {
+            "$ref": "#/components/schemas/RecipeKind"
           },
           "steps": {
             "items": {
@@ -14306,10 +13070,6 @@
             },
             "type": "array",
             "title": "Steps"
-          },
-          "active": {
-            "type": "boolean",
-            "title": "Active"
           },
           "profile_id": {
             "anyOf": [
@@ -14346,15 +13106,14 @@
           "id",
           "project_id",
           "stage",
-          "name",
+          "kind",
           "steps",
-          "active",
           "profile_id",
           "created_at",
           "updated_at"
         ],
         "title": "RecipeSchema",
-        "description": "A recipe: the ordered steps of one stage, active or a variant.\n\n:ivar id: Identifier of the recipe.\n:ivar project_id: Project owning the recipe.\n:ivar stage: Stage the recipe processes.\n:ivar name: Name the user sees.\n:ivar steps: The steps in the order they run.\n:ivar active: Whether the recipe is the one the stage runs by default.\n:ivar profile_id: The profile of the account the recipe was made from, or null for a recipe that was not.\n:ivar created_at: When the recipe was created.\n:ivar updated_at: When the recipe was last changed.\n:ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual\n                    order. A required place appears here only for a recipe saved in the free order."
+        "description": "A recipe: the ordered steps of one stage for one kind of page.\n\n:ivar id: Identifier of the recipe.\n:ivar project_id: Project owning the recipe.\n:ivar stage: Stage the recipe processes.\n:ivar kind: Kind of the pages the recipe processes, which is also its name.\n:ivar steps: The steps in the order they run.\n:ivar profile_id: The profile of the account the recipe was made from, or null for a recipe that was not.\n:ivar created_at: When the recipe was created.\n:ivar updated_at: When the recipe was last changed.\n:ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual\n                    order. A required place appears here only for a recipe saved in the free order."
       },
       "RejectedFileSchema": {
         "properties": {
@@ -14389,88 +13148,6 @@
         ],
         "title": "RejectionReason",
         "description": "Why one file of an upload was not imported, while the other files of the upload were."
-      },
-      "ResetBody": {
-        "properties": {
-          "scope": {
-            "$ref": "#/components/schemas/ResetScope"
-          },
-          "page_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Page Id"
-          },
-          "step_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Step Id"
-          },
-          "confirm": {
-            "type": "boolean",
-            "title": "Confirm",
-            "default": false
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "scope"
-        ],
-        "title": "ResetBody",
-        "description": "What a reset of steps to their defaults goes over; the stage is in the address.\n\n:ivar scope: The step on the open page, every step of the stage on the open page, the step on every page, or every\n             step of the stage on every page.\n:ivar page_id: The open page, which the scopes of one page need and the others ignore.\n:ivar step_id: The step, which the scopes of one step need and the others ignore.\n:ivar confirm: Confirmation that a reset that reaches other pages takes the settings and the edits of the pages that\n               have any, without which such a reset is refused with 409. A reset of the open page needs none."
-      },
-      "ResetImpactSchema": {
-        "properties": {
-          "scope": {
-            "$ref": "#/components/schemas/ResetScope"
-          },
-          "hand_pages": {
-            "type": "integer",
-            "title": "Hand Pages"
-          },
-          "settings_pages": {
-            "type": "integer",
-            "title": "Settings Pages"
-          },
-          "affected": {
-            "type": "integer",
-            "title": "Affected"
-          }
-        },
-        "type": "object",
-        "required": [
-          "scope",
-          "hand_pages",
-          "settings_pages",
-          "affected"
-        ],
-        "title": "ResetImpactSchema",
-        "description": "How many pages a reset would take work from.\n\n:ivar scope: The scope of the reset.\n:ivar hand_pages: How many pages have a manual edit on a step the reset goes over.\n:ivar settings_pages: How many pages change at least one field of a step the reset goes over.\n:ivar affected: How many pages lose work, a page with both counted once."
-      },
-      "ResetScope": {
-        "type": "string",
-        "enum": [
-          "page-step",
-          "page",
-          "step",
-          "stage"
-        ],
-        "title": "ResetScope",
-        "description": "The pages and the steps a reset to the defaults goes over, which are the settings and the edits of the pages."
       },
       "ResultMark": {
         "type": "string",
@@ -14590,20 +13267,6 @@
         "title": "RightsStatus",
         "description": "Whether the result of the work on a book may be published."
       },
-      "RuleCondition": {
-        "type": "string",
-        "enum": [
-          "plates",
-          "covers",
-          "blanks",
-          "illustrated",
-          "odd",
-          "even",
-          "group"
-        ],
-        "title": "RuleCondition",
-        "description": "What a rule of a stage asks of a page, to give the page the variant of the rule.\n\nThe set is closed: a rule never carries a free-form test. ``GROUP`` is the one condition with an argument, the\nlabel of the group that the user wrote on the pages. ``ILLUSTRATED`` is declared so that rules and clients can name\nit, but it matches no page yet: the Layout stage, which finds the illustrations of a page, does not exist, and a\nrule on it takes effect the day that stage records them."
-      },
       "RunImpactSchema": {
         "properties": {
           "mode": {
@@ -14613,13 +13276,9 @@
             "type": "integer",
             "title": "Pages"
           },
-          "hand_pages": {
+          "own_pages": {
             "type": "integer",
-            "title": "Hand Pages"
-          },
-          "settings_pages": {
-            "type": "integer",
-            "title": "Settings Pages"
+            "title": "Own Pages"
           },
           "affected": {
             "type": "integer",
@@ -14630,22 +13289,21 @@
         "required": [
           "mode",
           "pages",
-          "hand_pages",
-          "settings_pages",
+          "own_pages",
           "affected"
         ],
         "title": "RunImpactSchema",
-        "description": "How many pages a run would take work from, by its mode.\n\n:ivar mode: The mode of the run.\n:ivar pages: How many pages the run goes over.\n:ivar hand_pages: How many of them have a manual edit on a step the run goes over.\n:ivar settings_pages: How many of them change at least one field of a step the run goes over.\n:ivar affected: How many pages lose work to the mode, which is none for a run that keeps the work."
+        "description": "How many pages a run would take work from, by its mode.\n\n:ivar mode: The mode of the run.\n:ivar pages: How many pages the run goes over.\n:ivar own_pages: How many of them have a manual edit or change at least one field on a step the run goes over,\n                 which are the pages with work of their own.\n:ivar affected: How many pages lose work to the mode, which is none for a run that keeps the work."
       },
       "RunMode": {
         "type": "string",
         "enum": [
           "keep",
-          "replace-hand",
-          "reset-page-settings"
+          "skip-own-work",
+          "drop-own-work"
         ],
         "title": "RunMode",
-        "description": "What a run of a stage does with the work the pages already have for its steps.\n\nThe work is the settings a page changes for a step and the manual edit a step reads on it. A run keeps both unless\nit is asked to take one of them away, which is written to the history of each page like any other change."
+        "description": "What a run of a stage does with the work the pages already have for its steps.\n\nThe work is the settings a page changes for a step and the manual edit a step reads on it. A run keeps both unless\nit is asked to take both away, which is written to the history of each page like any other change, or to leave the\npages that have either out of the run."
       },
       "ScanAttach": {
         "properties": {
@@ -15006,9 +13664,8 @@
             ],
             "title": "Recipe Id"
           },
-          "pinned": {
-            "type": "boolean",
-            "title": "Pinned"
+          "kind": {
+            "$ref": "#/components/schemas/RecipeKind"
           },
           "version": {
             "anyOf": [
@@ -15055,6 +13712,16 @@
           "marked_bad": {
             "type": "boolean",
             "title": "Marked Bad"
+          },
+          "picture": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PageVersionSchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -15063,15 +13730,16 @@
           "status",
           "review",
           "recipe_id",
-          "pinned",
+          "kind",
           "version",
           "through_step",
           "review_processor",
           "step",
-          "marked_bad"
+          "marked_bad",
+          "picture"
         ],
         "title": "StagePageSchema",
-        "description": "One page of a book in one stage: where it stands there and the version that is its result.\n\n:ivar page_id: The page.\n:ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.\n:ivar review: Why the result asks for a second look, or None.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar pinned: Whether the recipe is pinned to the page.\n:ivar version: The current version of the stage on the page with its data and images, or None.\n:ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step\n                    that is on, so the page is not ready for the next stage, or None.\n:ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.\n:ivar step: The page at the step the list was asked for, or None for a list of the stage alone.\n:ivar marked_bad: Whether the user marked bad the result the row stands on: the version of the step the list was\n                  asked for, else the current version of the stage."
+        "description": "One page of a book in one stage: where it stands there and the version that is its result.\n\n:ivar page_id: The page.\n:ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.\n:ivar review: Why the result asks for a second look, or None.\n:ivar recipe_id: Recipe the page was processed by, or None.\n:ivar kind: The kind of the page, by which the recipe that processes it in the stage is chosen.\n:ivar version: The current version of the stage on the page with its data and images, or None.\n:ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step\n                    that is on, so the page is not ready for the next stage, or None.\n:ivar review_processor: Key of the processor of the first step of this stage that marked the page, or None.\n:ivar step: The page at the step the list was asked for, or None for a list of the stage alone.\n:ivar marked_bad: Whether the user marked bad the result the row stands on: the version of the step the list was\n                  asked for, else the current version of the stage.\n:ivar picture: The version that stands for the page at the place the list was asked for, so the strip and the canvas\n               draw the same picture. With ``step`` it is the version the step reads on the page; a page that has\n               not come as far as the step has the last version of the stage before it, and one the stage has not\n               run on, or whose recipe has no such step switched on, has the version the stage reads. Without\n               ``step`` it is the current version of the stage, else the version the stage reads. It is never the\n               result of the step or of a later one, nor a version of a later stage. None when the page has no image\n               to draw, such as a placeholder."
       },
       "StageProgressSchema": {
         "properties": {
@@ -15092,18 +13760,6 @@
       },
       "StageRunBody": {
         "properties": {
-          "recipe_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Recipe Id"
-          },
           "page_ids": {
             "anyOf": [
               {
@@ -15124,11 +13780,6 @@
           "confirm_unsplit": {
             "type": "boolean",
             "title": "Confirm Unsplit",
-            "default": false
-          },
-          "pin": {
-            "type": "boolean",
-            "title": "Pin",
             "default": false
           },
           "through_step": {
@@ -15157,7 +13808,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "StageRunBody",
-        "description": "What a run of a stage is asked to do; the stage is in the address.\n\n:ivar recipe_id: Recipe to run it by, or omitted for the active recipe.\n:ivar page_ids: Pages to run it on, or omitted for every page with an image.\n:ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a\n                       run that would do so leaves that page failed.\n:ivar pin: Whether to pin the recipe to the pages of the run, so a later run without a recipe keeps it there. It is\n           given with a recipe, since a run that chooses the recipes pins nothing.\n:ivar through_step: Index in the recipe of the last step to run, from zero, or omitted to run through the last step\n                    that is on. The steps before it come from the cache of versions when their inputs did not\n                    change.\n:ivar mode: What the run does with the settings the pages changed for its steps and with the manual edits they\n            read: it keeps them, which is the usual run, or takes the edits or the settings away first.\n:ivar confirm_overwrite: Confirmation that a mode that takes work away does so on the pages it affects, without\n                         which such a run is refused with 409. A run that keeps the work needs none."
+        "description": "What a run of a stage is asked to do; the stage is in the address.\n\n:ivar page_ids: Pages to run it on, or omitted for every page with an image.\n:ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a\n                       run that would do so leaves that page failed.\n:ivar through_step: Index in the recipe of the last step to run, from zero, or omitted to run through the last step\n                    that is on. The steps before it come from the cache of versions when their inputs did not\n                    change.\n:ivar mode: What the run does with the settings the pages changed for its steps and with the manual edits they\n            read: it keeps them, which is the usual run, or takes the edits or the settings away first.\n:ivar confirm_overwrite: Confirmation that a mode that takes work away does so on the pages it affects, without\n                         which such a run is refused with 409. A run that keeps the work needs none."
       },
       "StageState": {
         "type": "string",
@@ -15226,24 +13877,12 @@
             "type": "integer",
             "title": "Partial"
           },
-          "active_recipe_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Active Recipe Id"
-          },
-          "variants": {
+          "recipes": {
             "items": {
-              "$ref": "#/components/schemas/VariantPagesSchema"
+              "$ref": "#/components/schemas/KindRecipeSchema"
             },
             "type": "array",
-            "title": "Variants"
+            "title": "Recipes"
           },
           "stopped": {
             "items": {
@@ -15266,12 +13905,11 @@
           "review",
           "check",
           "partial",
-          "active_recipe_id",
-          "variants",
+          "recipes",
           "stopped"
         ],
         "title": "StageSummarySchema",
-        "description": "One stage of a book summed over its pages.\n\n:ivar stage: The stage.\n:ivar available: Whether the stage can be worked in: a stage done by hand always can, and any other when a\n                 processor of the stage is installed.\n:ivar manual: Whether the user does the stage by hand, so it has no counts.\n:ivar pages: Number of pages of the book with an image, which a run of the stage goes over.\n:ivar fresh: Pages whose result of the stage is up to date.\n:ivar stale: Pages whose result is out of date.\n:ivar failed: Pages the stage failed on.\n:ivar not_run: Pages the stage has not run on.\n:ivar review: Pages, not failed, whose result asks for a second look.\n:ivar check: Pages the strip lists under Check: stale, failed or marked, each counted once.\n:ivar partial: Pages, not failed, that were run through some of the steps of their recipe only.\n:ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used.\n:ivar variants: How many pages each recipe of the stage processed, the recipe with the most pages first.\n:ivar stopped: How many pages stopped at each step, the first step first."
+        "description": "One stage of a book summed over its pages.\n\n:ivar stage: The stage.\n:ivar available: Whether the stage can be worked in: a stage done by hand always can, and any other when a\n                 processor of the stage is installed.\n:ivar manual: Whether the user does the stage by hand, so it has no counts.\n:ivar pages: Number of pages of the book with an image, which a run of the stage goes over.\n:ivar fresh: Pages whose result of the stage is up to date.\n:ivar stale: Pages whose result is out of date.\n:ivar failed: Pages the stage failed on.\n:ivar not_run: Pages the stage has not run on.\n:ivar review: Pages, not failed, whose result asks for a second look.\n:ivar check: Pages the strip lists under Check: stale, failed or marked, each counted once.\n:ivar partial: Pages, not failed, that were run through some of the steps of their recipe only.\n:ivar recipes: The recipe of each kind of page the stage has, in the order of the kinds, each with the number of\n               pages of the kind. Empty before the stage is first used.\n:ivar stopped: How many pages stopped at each step, the first step first."
       },
       "StepBody": {
         "properties": {
@@ -15302,10 +13940,6 @@
               }
             ],
             "title": "Step Id"
-          },
-          "applies_to": {
-            "$ref": "#/components/schemas/AppliesTo",
-            "default": "all"
           }
         },
         "additionalProperties": false,
@@ -15314,7 +13948,7 @@
           "processor_key"
         ],
         "title": "StepBody",
-        "description": "A step of a recipe or of a preview as the interface sends it.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which the processor checks and fills in.\n:ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.\n:ivar step_id: Identifier of a step that already exists, which the interface sends back to keep its edits, or\n               omitted for a step that is added, which gets a new one.\n:ivar applies_to: Which pages the step processes, all of them unless the interface says otherwise."
+        "description": "A step of a recipe or of a preview as the interface sends it.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, which the processor checks and fills in.\n:ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.\n:ivar step_id: Identifier of a step that already exists, which the interface sends back to keep its edits, or\n               omitted for a step that is added, which gets a new one."
       },
       "StepFlag": {
         "type": "string",
@@ -15384,7 +14018,7 @@
           "flags"
         ],
         "title": "StepPageSchema",
-        "description": "One page of a book at one step of a stage: what the step read and made, and where its shape comes from.\n\n:ivar step_id: The step of the recipe.\n:ivar state: Where the shape of the step on the page comes from: the default, found by the step, set by hand, or\n             skipped because the page does not meet the condition of the step.\n:ivar input_version: The version the step reads on the page, which the canvas of the step shows, or None when the\n                     page has not come as far as the step or is not run.\n:ivar version: The version the step made on the page, or None when the page was not run through the step.\n:ivar flags: Why the page asks for a look at the step: the step is unsure of it, what it found departs from the\n             book, it is set by hand, or the condition skipped it. The strip of the open step lists pages by these."
+        "description": "One page of a book at one step of a stage: what the step read and made, and where its shape comes from.\n\n:ivar step_id: The step of the recipe.\n:ivar state: Where the shape of the step on the page comes from: the default, found by the step, set by hand, or\n             skipped because the page is a leaf the program drew.\n:ivar input_version: The version the step reads on the page, which the canvas of the step shows, or None when the\n                     page has not come as far as the step or is not run.\n:ivar version: The version the step made on the page, or None when the page was not run through the step.\n:ivar flags: Why the page asks for a look at the step: the step is unsure of it, what it found departs from the\n             book, it is set by hand, or it is a leaf the program drew and was skipped. The strip of the open step\n             lists pages by these."
       },
       "StepPagesSchema": {
         "properties": {
@@ -15437,29 +14071,6 @@
         "title": "StepPreviewBody",
         "description": "The steps of a form to preview on one page, up to one of them; the stage is in the address.\n\n:ivar page_id: Page to preview on.\n:ivar steps: The steps as the form has them.\n:ivar step_index: Index of the last step whose result is wanted."
       },
-      "StepResetSchema": {
-        "properties": {
-          "batch_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Batch Id"
-          },
-          "changes": {
-            "items": {
-              "$ref": "#/components/schemas/PageStepChangeSchema"
-            },
-            "type": "array",
-            "title": "Changes"
-          }
-        },
-        "type": "object",
-        "required": [
-          "batch_id",
-          "changes"
-        ],
-        "title": "StepResetSchema",
-        "description": "What a reset did, which is one batch of the history.\n\n:ivar batch_id: The batch the changes share, which an undo of any of them takes back as a whole.\n:ivar changes: The changes written, one for each layer a page lost."
-      },
       "StepSchema": {
         "properties": {
           "processor_key": {
@@ -15479,9 +14090,6 @@
             "type": "string",
             "format": "uuid",
             "title": "Step Id"
-          },
-          "applies_to": {
-            "$ref": "#/components/schemas/AppliesTo"
           }
         },
         "type": "object",
@@ -15489,11 +14097,40 @@
           "processor_key",
           "params",
           "enabled",
-          "step_id",
-          "applies_to"
+          "step_id"
         ],
         "title": "StepSchema",
-        "description": "One step of a recipe: a processor and the parameters it runs with.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, with the defaults of the processor filled in.\n:ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters.\n:ivar step_id: Identifier of the step, which stays as the step is moved and saved and which its manual edits name.\n:ivar applies_to: Which pages the step processes; the others pass it unchanged."
+        "description": "One step of a recipe: a processor and the parameters it runs with.\n\n:ivar processor_key: Key of the processor.\n:ivar params: Parameters of the step, with the defaults of the processor filled in.\n:ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters.\n:ivar step_id: Identifier of the step, which stays as the step is moved and saved and which its manual edits name."
+      },
+      "StepValuesSchema": {
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/ValueScope"
+          },
+          "group_label": {
+            "type": "string",
+            "title": "Group Label"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "group_label",
+          "params",
+          "updated_at"
+        ],
+        "title": "StepValuesSchema",
+        "description": "The fields of the parameters of a step that the odd pages, the even pages or a group change.\n\n:ivar scope: The odd pages, the even pages or a group.\n:ivar group_label: Label of the group for the scope of a group, and empty for the others.\n:ivar params: The fields the pages change, by name, each with the value they use.\n:ivar updated_at: When the values were last saved."
       },
       "TransformKind": {
         "type": "string",
@@ -15650,25 +14287,81 @@
         ],
         "title": "ValidationError"
       },
-      "VariantPagesSchema": {
+      "ValueChangesSchema": {
         "properties": {
-          "recipe_id": {
+          "batch_id": {
             "type": "string",
             "format": "uuid",
-            "title": "Recipe Id"
+            "title": "Batch Id"
           },
-          "pages": {
-            "type": "integer",
-            "title": "Pages"
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/PageStepChangeSchema"
+            },
+            "type": "array",
+            "title": "Changes"
           }
         },
         "type": "object",
         "required": [
-          "recipe_id",
-          "pages"
+          "batch_id",
+          "changes"
         ],
-        "title": "VariantPagesSchema",
-        "description": "How many pages of a stage one recipe processed.\n\n:ivar recipe_id: The recipe.\n:ivar pages: Pages with an image whose result of the stage the recipe made."
+        "title": "ValueChangesSchema",
+        "description": "What setting a value for a part of the pages, or taking it back, did, which is one batch of the history.\n\n:ivar batch_id: The batch the changes share, which an undo of any of them takes back as a whole.\n:ivar changes: The changes written, one on each page whose parameters change."
+      },
+      "ValueForm": {
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/ValueScope"
+          },
+          "page_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array",
+                "maxItems": 2000,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Ids"
+          },
+          "group_label": {
+            "type": "string",
+            "maxLength": 50,
+            "title": "Group Label",
+            "default": ""
+          },
+          "value": {
+            "title": "Value",
+            "description": "The value the pages use for the field"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scope",
+          "value"
+        ],
+        "title": "ValueForm",
+        "description": "The value the pages use for one field of the parameters of a step.\n\n:ivar value: The value, as JSON, which the processor of the step checks against the field."
+      },
+      "ValueScope": {
+        "type": "string",
+        "enum": [
+          "pages",
+          "group",
+          "odd",
+          "even"
+        ],
+        "title": "ValueScope",
+        "description": "The part of the pages a value of a setting of a step is for, from the strongest to the weakest part.\n\nA value for pages names them one by one: the open page, or the pages the user selected. The odd pages and the even\npages are told apart by the place of the page in the book, an odd place being a right page, and a group is the pages\nthat carry one label of ``Page.group_label``. What the recipe holds is the value of every other page."
       },
       "VersionOrigin": {
         "type": "string",

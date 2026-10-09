@@ -15,14 +15,12 @@ import {
   projectApiV1ProjectsProjectIdGetOptions,
 } from '@/api/@tanstack/react-query.gen';
 import { projectWith } from '@/features/about/fixtures';
-import { job } from '@/features/import/fixtures';
 import { jobsOptions } from '@/features/workspace/queries';
 import { StageBar } from '@/features/workspace/StageBar';
 import { NARROW_QUERY } from '@/shared/hooks/useMediaQuery';
 
 /**
- * What the Import stage says under its name in the bar: the counts of files and scans, the progress of an import that
- * runs in their place, and that the book has no file.
+ * The bar of the stages in a narrow window: the open stage whole, the others in a menu.
  *
  * The queries the bar reads are filled in beforehand and never go stale, so it draws from them without a server.
  */
@@ -41,8 +39,7 @@ const IMPORT_SUMMARY: StageSummarySchema = {
   review: 0,
   check: 0,
   partial: 0,
-  active_recipe_id: null,
-  variants: [],
+  recipes: [],
   stopped: [],
 };
 
@@ -64,7 +61,12 @@ describe('StageBar, the Import stage', () => {
     vi.unstubAllGlobals();
   });
 
-  async function render(counts: { files: number; scans: number }, active: JobSchema[], path = '/') {
+  async function render(
+    counts: { files: number; scans: number },
+    active: JobSchema[],
+    path = '/',
+    summaries: StageSummarySchema[] = [IMPORT_SUMMARY],
+  ) {
     const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
     client.setQueryData(
       projectApiV1ProjectsProjectIdGetOptions({ path: { project_id: PROJECT_ID } }).queryKey,
@@ -72,12 +74,13 @@ describe('StageBar, the Import stage', () => {
         ...projectWith(),
         source_count: counts.files,
         scan_count: counts.scans,
+        page_count: counts.scans,
       },
     );
     client.setQueryData(
       listStagesApiV1ProjectsProjectIdStagesGetOptions({ path: { project_id: PROJECT_ID } })
         .queryKey,
-      { items: [IMPORT_SUMMARY], total: 1, page: 1, size: 100, pages: 1 },
+      { items: summaries, total: summaries.length, page: 1, size: 100, pages: 1 },
     );
     client.setQueryData(jobsOptions(PROJECT_ID, true).queryKey, active);
 
@@ -100,34 +103,6 @@ describe('StageBar, the Import stage', () => {
     });
   }
 
-  const note = (): string =>
-    container.querySelector('[data-testid="stage-import"]')?.textContent ?? '';
-
-  it('counts the files and the scans of a book that has them', async () => {
-    await render({ files: 3, scans: 122 }, []);
-
-    expect(note()).toContain('3 files · 122 scans');
-  });
-
-  it('says a book without files has none yet', async () => {
-    await render({ files: 0, scans: 0 }, []);
-
-    expect(note()).toContain('No files yet');
-  });
-
-  it('shows how far the running import has come in place of the counts', async () => {
-    await render({ files: 3, scans: 122 }, [job('j-1')]);
-
-    expect(note()).toContain('Importing 12 of 18');
-    expect(note()).not.toContain('122 scans');
-  });
-
-  it('ignores a running job that is not an import', async () => {
-    await render({ files: 3, scans: 122 }, [job('j-1', { kind: 'run-stage' })]);
-
-    expect(note()).toContain('3 files · 122 scans');
-  });
-
   describe('in a narrow window', () => {
     const IMPORT_PATH = `/projects/${PROJECT_ID}/stages/import`;
 
@@ -146,7 +121,6 @@ describe('StageBar, the Import stage', () => {
       const current = container.querySelector('[data-testid="stage-import"]');
       expect(current?.getAttribute('aria-current')).toBe('page');
       expect(current?.textContent).toContain('Import');
-      expect(current?.textContent).toContain('3 files · 122 scans');
       expect(container.querySelector('[data-testid="stage-page-split"]')).toBeNull();
       expect(container.querySelector('[data-testid="stage-menu"]')).not.toBeNull();
     });
@@ -196,6 +170,28 @@ describe('StageBar, the Import stage', () => {
 
       expect(container.querySelector('[data-testid="stage-page-split"]')).not.toBeNull();
       expect(container.querySelector('[data-testid="stage-menu"]')).toBeNull();
+    });
+
+    it('shows no counts under the stages, whatever the pages of the book are doing in them', async () => {
+      vi.stubGlobal('matchMedia', undefined);
+      const geometry: StageSummarySchema = {
+        ...IMPORT_SUMMARY,
+        stage: 'geometry',
+        manual: false,
+        pages: 120,
+        fresh: 100,
+        stale: 15,
+        failed: 5,
+        check: 7,
+        partial: 3,
+      };
+      await render({ files: 3, scans: 122 }, [], IMPORT_PATH, [IMPORT_SUMMARY, geometry]);
+
+      const bar = container.querySelector('[data-testid="stage-bar"]');
+      expect(bar?.textContent).toContain('Geometry');
+      expect(bar?.textContent).not.toMatch(
+        /\d{3}|\bfiles?\b|\bscans?\b|\bpages?\b|\bout of date\b|\bfailed\b/i,
+      );
     });
   });
 });

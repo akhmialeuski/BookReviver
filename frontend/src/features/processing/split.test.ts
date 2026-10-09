@@ -78,12 +78,8 @@ describe('offerFor', () => {
 });
 
 describe('recipeFor', () => {
-  const whole = recipe('r-whole', { name: 'Whole scan', steps: [step('split.none')] });
-  const spread = recipe('r-spread', {
-    name: 'Spread',
-    active: false,
-    steps: [step('split.spread')],
-  });
+  const whole = recipe('r-whole', { steps: [step('split.none')] });
+  const spread = recipe('r-spread', { steps: [step('split.spread')] });
 
   it('finds the recipe whose first step makes the choice', () => {
     expect(recipeFor([whole, spread], SplitChoice.Two)?.id).toBe('r-spread');
@@ -96,25 +92,26 @@ describe('recipeFor', () => {
 });
 
 describe('undoesSplit', () => {
-  const whole = recipe('r-whole', { steps: [step('split.none')] });
-  const spread = recipe('r-spread', { steps: [step('split.spread')] });
+  const whole = recipe('r-whole', { kind: 'blank', steps: [step('split.none')] });
+  const spread = recipe('r-spread', { kind: 'text', steps: [step('split.spread')] });
+  const recipes = [whole, spread];
 
-  it('is true when the recipe keeps scans whole and a page is the half of a spread', () => {
-    expect(undoesSplit(whole, [{ slot: 0 }, { slot: 1 }])).toBe(true);
+  it('is true when the recipe of the kind of a page keeps scans whole and the page is the half of a spread', () => {
+    expect(undoesSplit(recipes, [{ page: { slot: 1 }, row: { kind: 'blank' } }])).toBe(true);
   });
 
   it('is false when every page is a whole scan already', () => {
-    expect(undoesSplit(whole, [{ slot: 0 }])).toBe(false);
+    expect(undoesSplit(recipes, [{ page: { slot: 0 }, row: { kind: 'blank' } }])).toBe(false);
   });
 
-  it('is false for a recipe that cuts scans, whatever the pages are', () => {
-    expect(undoesSplit(spread, [{ slot: 1 }, { slot: 2 }])).toBe(false);
+  it('is false for a half of a spread whose kind has a recipe that cuts scans', () => {
+    expect(undoesSplit(recipes, [{ page: { slot: 2 }, row: { kind: 'text' } }])).toBe(false);
   });
 });
 
 describe('autoRecipeOf and cutterOf', () => {
   const auto = recipe('r-auto', { steps: [step('split.auto')] });
-  const spread = recipe('r-spread', { active: false, steps: [step('split.spread')] });
+  const spread = recipe('r-spread', { steps: [step('split.spread')] });
 
   it('finds the recipe whose first step is the automatic split', () => {
     expect(autoRecipeOf([spread, auto])?.id).toBe('r-auto');

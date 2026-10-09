@@ -8,8 +8,8 @@ a page of text or of pictures to be told apart. A job that names pages goes over
 have and whatever their kind, and a page the user had set by hand is given back to the detection.
 
 Detection never writes over a change it did not read. A page the user changed while the job was working on it is read
-again, and a type the user set meanwhile stays. A page whose content changed for the conditions of the steps has its
-stages after the page order marked stale, since the steps that made their versions were not the ones the page now meets.
+again, and a type the user set meanwhile stays. A page whose kind changed has its stages after the page order marked
+stale, since the recipe that made their versions is not the one the page now meets.
 A page that cannot be read fails for itself and the job goes on.
 """
 
@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, ClassVar
 from attrs import evolve
 
 from bookreviver.domain.enums import (
-    ColorMode,
     ContentType,
     PageChange,
     PageKind,
@@ -227,7 +226,7 @@ class ContentDetector:
                 return False
             try:
                 await self._uow.pages.update(after)
-                shown = before.content_of(ColorMode.UNKNOWN) is not after.content_of(ColorMode.UNKNOWN)
+                shown = before.recipe_kind is not after.recipe_kind
                 stale = await self._records.mark_content_stale(page_id) if shown else []
                 await self._uow.commit()
             except ConcurrentChangeError:

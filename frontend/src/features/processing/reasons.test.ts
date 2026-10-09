@@ -98,7 +98,7 @@ describe('reasonWithStep', () => {
       review_processor: 'geometry.crop',
     });
 
-    expect(reasonOfStep(marked)).toBe('Step 2 · Crop: Text may be cut by the edge of the scan');
+    expect(reasonOfStep(marked)).toBe('Crop: Text may be cut by the edge of the scan');
   });
 
   it('falls back to the key of a processor the catalogue does not have', () => {
@@ -108,7 +108,7 @@ describe('reasonWithStep', () => {
       review_processor: 'geometry.deskew',
     });
 
-    expect(reasonOfStep(marked)).toBe('Step 1 · geometry.deskew: Unsure');
+    expect(reasonOfStep(marked)).toBe('geometry.deskew: Unsure');
   });
 
   it('names no step in a recipe of one step, which has no other to tell it from', () => {

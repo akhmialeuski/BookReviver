@@ -78,12 +78,13 @@ export function row(id: string, overrides: Partial<StagePageSchema> = {}): Stage
     status: 'fresh',
     review: null,
     recipe_id: null,
-    pinned: false,
+    kind: 'text',
     version: null,
     through_step: null,
     review_processor: null,
     step: null,
     marked_bad: false,
+    picture: null,
     ...overrides,
   };
 }

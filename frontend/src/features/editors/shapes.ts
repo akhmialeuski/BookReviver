@@ -345,3 +345,8 @@ export function writeBrush(brush: BrushShape): Geometry {
 export function dashed(name: string): string {
   return name.replaceAll(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 }
+
+/** Write a point as the pair of rounded pixels an attribute holds: `12,40`. */
+export function pairOf(point: Point): string {
+  return `${Math.round(point.x)},${Math.round(point.y)}`;
+}

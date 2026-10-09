@@ -9,7 +9,8 @@ import { MESSAGES } from '@/shared/messages';
  * It takes the pages to show and the views to keep loaded next to them, and draws them on one OpenSeadragon stage.
  * What the pages are, their images and their order are the caller's, so the viewer passes the images of the book
  * and a stage passes the images of its own result. The caller moves the view through the handle, which holds the
- * fit and the zoom, and reads the loading state from the `data-state` of the element.
+ * fit and the zoom, and reads the loading state from the `data-state` of the element. The `data-sources` of the element
+ * lists the pyramids the view is drawn from.
  */
 
 /** The controls a screen drives the canvas with. */
@@ -49,6 +50,9 @@ export function PageCanvas({
         data-testid="viewer-canvas"
         data-state={stage.state}
         data-page-ids={view.map((page) => page.id).join(',')}
+        data-sources={view
+          .flatMap((page) => (page.infoUrl === null ? [] : [page.infoUrl]))
+          .join(' ')}
       />
       {missingImage || stage.state === StageState.Failed ? (
         <p className="absolute inset-x-0 top-3 mx-auto w-fit rounded-md bg-background/90 px-3 py-1 text-sm shadow">

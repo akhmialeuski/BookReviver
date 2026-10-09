@@ -22,13 +22,14 @@ from bookreviver.domain.enums import (
     ImagePolicy,
     JobKind,
     PageKind,
+    RecipeKind,
     Rendition,
     Stage,
     StageState,
     VersionState,
 )
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PageStepKey, RecipeKey, Renditions
+from bookreviver.domain.values import PageStepKey, RecipeKey, Renditions, SliceRequest
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.services.edits import EditService
@@ -38,7 +39,6 @@ from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
 from bookreviver.services.recipe_profiles import RecipeProfiles
-from bookreviver.services.recipe_rules import RecipeRules
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from bookreviver.services.stage_runs import StageRuntime
 from bookreviver.services.stage_summaries import StageSummaries
@@ -65,23 +65,21 @@ from tests.helpers.processors import CleanupProcessor, FakeProcessor
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Page, PageVersion, Project, Recipe, RecipeRule, Scan
-    from bookreviver.domain.enums import RuleCondition
+    from bookreviver.domain.entities import Page, PageVersion, Project, Recipe, Scan
     from bookreviver.domain.ids import PageVersionId
-    from bookreviver.domain.values import MetadataMap
+    from bookreviver.domain.values import MetadataMap, RecipeDraft
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobQueue
     from bookreviver.ports.storage import AssetStore
 
 IMAGE_CONTENT: bytes = b'image'
-RETENTION_DAYS: int = 30
 PREVIEW_RETENTION_HOURS: int = 24
 PREVIEW_LONG_SIDE_PX: int = 2048
 DEFAULTS: DefaultRecipes = DefaultRecipes(
     {
-        Stage.PAGE_SPLIT: (RecipeTemplate(name='Whole scan', processor_keys=(SPLIT_NONE.key,)),),
-        Stage.GEOMETRY: (RecipeTemplate(name='Fake', processor_keys=(FakeProcessor.spec.key,)),),
-        Stage.CLEANUP: (RecipeTemplate(name='Cleanup', processor_keys=(CleanupProcessor.spec.key,)),),
+        Stage.PAGE_SPLIT: dict.fromkeys(RecipeKind, RecipeTemplate(processor_keys=(SPLIT_NONE.key,))),
+        Stage.GEOMETRY: dict.fromkeys(RecipeKind, RecipeTemplate(processor_keys=(FakeProcessor.spec.key,))),
+        Stage.CLEANUP: dict.fromkeys(RecipeKind, RecipeTemplate(processor_keys=(CleanupProcessor.spec.key,))),
     }
 )
 
@@ -150,7 +148,6 @@ class ProcessingKit:
         """
         runtime = ProcessingRuntime(publisher=self.events, clock=self.clock, queue=self.queue)
         config = ProcessingConfig(
-            version_retention=timedelta(days=RETENTION_DAYS),
             preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
         )
@@ -163,16 +160,7 @@ class ProcessingKit:
         :rtype: ProcessingService
         """
         uow = InMemoryUnitOfWork(self.database)
-        return ProcessingService(uow=uow, catalogue=self.catalogue, parts=self.parts(uow))
-
-    def rules(self) -> RecipeRules:
-        """Build the service of the rules of the stages over a new unit of work.
-
-        :returns: The service.
-        :rtype: RecipeRules
-        """
-        uow = InMemoryUnitOfWork(self.database)
-        return RecipeRules(uow=uow, recipes=self.parts(uow).recipes)
+        return ProcessingService(uow=uow, assets=self.assets, catalogue=self.catalogue, parts=self.parts(uow))
 
     def profiles(self) -> RecipeProfiles:
         """Build the service of the recipe profiles over a new unit of work.
@@ -182,32 +170,48 @@ class ProcessingKit:
         """
         uow = InMemoryUnitOfWork(self.database)
         parts = self.parts(uow)
-        processing = ProcessingService(uow=uow, catalogue=self.catalogue, parts=parts)
+        processing = ProcessingService(uow=uow, assets=self.assets, catalogue=self.catalogue, parts=parts)
         return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing, clock=self.clock)
 
-    async def add_rule(
-        self, actor: Actor, recipe: Recipe, condition: RuleCondition, group_label: str = ''
-    ) -> RecipeRule:
-        """Add a rule that sends the pages meeting a condition to a recipe, after the rules the stage has.
+    async def recipe_of(
+        self, actor: Actor, project: Project, stage: Stage, kind: RecipeKind = RecipeKind.TEXT
+    ) -> Recipe:
+        """Read the recipe of one kind of a stage of a project, which the first read creates with the others.
 
-        :param actor: Account owning the project of the recipe.
+        :param actor: Account owning the project.
         :type actor: Actor
-        :param recipe: Recipe the rule names, whose project and stage the rule takes.
-        :type recipe: Recipe
-        :param condition: What a page must be for the rule to match it.
-        :type condition: RuleCondition
-        :param group_label: The group a page must be in, for the condition on a manual group.
-        :type group_label: str
-        :returns: The rule as stored.
-        :rtype: RecipeRule
+        :param project: Project whose recipe is read.
+        :type project: Project
+        :param stage: The stage.
+        :type stage: Stage
+        :param kind: The kind of page, text unless given.
+        :type kind: RecipeKind
+        :returns: The recipe.
+        :rtype: Recipe
         """
-        return await self.rules().add(
-            actor,
-            recipe.project_id,
-            RecipeKey(recipe.stage, recipe.id),
-            condition=condition,
-            group_label=group_label,
-        )
+        listed = await self.service().recipes(actor, project.id, stage, SliceRequest(limit=len(RecipeKind)))
+        return next(recipe for recipe in listed.items if recipe.kind is kind)
+
+    async def edit_recipe(
+        self, actor: Actor, project: Project, stage: Stage, draft: RecipeDraft, kind: RecipeKind = RecipeKind.TEXT
+    ) -> Recipe:
+        """Replace the steps of the recipe of one kind of a stage, which the first read of the stage creates.
+
+        :param actor: Account owning the project.
+        :type actor: Actor
+        :param project: Project whose recipe is changed.
+        :type project: Project
+        :param stage: The stage.
+        :type stage: Stage
+        :param draft: The new steps.
+        :type draft: RecipeDraft
+        :param kind: The kind of page, text unless given.
+        :type kind: RecipeKind
+        :returns: The recipe as stored.
+        :rtype: Recipe
+        """
+        recipe = await self.recipe_of(actor, project, stage, kind)
+        return await self.service().save_recipe(actor, project.id, RecipeKey(stage, recipe.id), draft)
 
     def stages(self) -> StageSummaries:
         """Build the sums of the stages of books over a new unit of work.
@@ -285,7 +289,7 @@ class ProcessingKit:
         )
 
     async def edit_key(self, page: Page, stage: Stage, processor_key: str) -> PageStepKey:
-        """Give the key of the edit of a step of the active recipe of a stage on a page, found by its processor.
+        """Give the key of the edit of a step of the recipe of the kind of a page in a stage, found by its processor.
 
         :param page: Page the edit belongs to.
         :type page: Page
@@ -296,7 +300,7 @@ class ProcessingKit:
         :returns: The key of the edit of that step.
         :rtype: PageStepKey
         """
-        recipe = await self.parts(self.uow()).recipes.active(page.project_id, stage)
+        recipe = await self.parts(self.uow()).recipes.of_kind(page.project_id, stage, page.recipe_kind)
         step = next(step for step in recipe.steps if step.processor_key == processor_key)
         return PageStepKey(page.id, stage, step.step_id)
 

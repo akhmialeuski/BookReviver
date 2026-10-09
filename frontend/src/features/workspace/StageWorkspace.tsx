@@ -19,8 +19,9 @@ import { Sheet, SheetContent, SheetTitle } from '@/shared/ui/sheet';
  * pressed, and is remembered in the browser, one record for the layout with the strip and one for the layout without
  * it. In a narrower window the canvas takes the whole width, and the same two buttons open the strip and the panel as
  * sheets over it. The wide layout is a component of its own, so it reads the remembered widths again whenever the window
- * grows back, and the narrow layout never writes them. The row above the canvas holds the two buttons and, between
- * them, whatever the stage says about the open page; the bar of the steps of the stage stands under that row.
+ * grows back, and the narrow layout never writes them. The two buttons stand in the bar of the steps of the stage, the
+ * one of the strip at its start and the one of the panel at its end; a stage without a bar of steps has a slim row above
+ * its canvas, with the two buttons and, between them, whatever the stage says in `canvasHeader`.
  */
 
 const PANEL_ID = { strip: 'strip', canvas: 'canvas', panel: 'panel' } as const;
@@ -30,18 +31,28 @@ const STRIP_SIZE = { default: '18%', min: '12%', max: '32%' } as const;
 const PANEL_SIZE = { default: '26%', min: '18%', max: '42%' } as const;
 const CANVAS_MIN = '30%';
 
+/** The two buttons that show and hide the side panels, for the bar of the steps to place. */
+export interface PanelToggles {
+  /** The button of the strip, or null for a stage that has none. */
+  strip: React.ReactNode;
+  panel: React.ReactNode;
+}
+
 interface WorkspaceParts {
   /** The strip of pages, or null for a stage that has none. */
   strip: React.ReactNode | null;
-  /** What stands in the row above the canvas, between the two buttons. */
+  /** What stands between the two buttons in the slim row of a stage without a bar of steps. */
   canvasHeader?: React.ReactNode;
-  /** The row of the steps of the stage, under the row above the canvas, or nothing for a stage that has none. */
-  stepBar?: React.ReactNode;
+  /**
+   * The row of the steps of the stage, given the two buttons to place at its start and its end, or null for a stage that
+   * has none, which then gets a row of the two buttons alone.
+   */
+  stepBar?: ((toggles: PanelToggles) => React.ReactNode) | null;
   canvas: React.ReactNode;
   panel: React.ReactNode;
 }
 
-/** The canvas under its row of the two buttons, which the wide and the narrow layout both draw. */
+/** The canvas under the bar of its steps, which the wide and the narrow layout both draw. */
 function CanvasColumn({
   hasStrip,
   canvasHeader,
@@ -52,39 +63,48 @@ function CanvasColumn({
 }: {
   hasStrip: boolean;
   canvasHeader: React.ReactNode;
-  stepBar: React.ReactNode;
+  stepBar: WorkspaceParts['stepBar'];
   canvas: React.ReactNode;
   onToggleStrip: () => void;
   onTogglePanel: () => void;
 }): React.JSX.Element {
+  const toggles: PanelToggles = {
+    strip: hasStrip ? (
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={MESSAGES.workspace.layout.toggleStrip}
+        title={MESSAGES.workspace.layout.toggleStrip}
+        data-testid="toggle-strip"
+        onClick={onToggleStrip}
+      >
+        <PanelLeftIcon />
+      </Button>
+    ) : null,
+    panel: (
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={MESSAGES.workspace.layout.togglePanel}
+        title={MESSAGES.workspace.layout.togglePanel}
+        data-testid="toggle-panel"
+        onClick={onTogglePanel}
+      >
+        <PanelRightIcon />
+      </Button>
+    ),
+  };
   return (
     <div className="flex size-full flex-col">
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b px-2">
-        {hasStrip ? (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={MESSAGES.workspace.layout.toggleStrip}
-            title={MESSAGES.workspace.layout.toggleStrip}
-            data-testid="toggle-strip"
-            onClick={onToggleStrip}
-          >
-            <PanelLeftIcon />
-          </Button>
-        ) : null}
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{canvasHeader}</div>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={MESSAGES.workspace.layout.togglePanel}
-          title={MESSAGES.workspace.layout.togglePanel}
-          data-testid="toggle-panel"
-          onClick={onTogglePanel}
-        >
-          <PanelRightIcon />
-        </Button>
-      </div>
-      {stepBar}
+      {stepBar === null || stepBar === undefined ? (
+        <div className="flex h-11 shrink-0 items-center gap-2 border-b px-2">
+          {toggles.strip}
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{canvasHeader}</div>
+          {toggles.panel}
+        </div>
+      ) : (
+        stepBar(toggles)
+      )}
       <div className="min-h-0 flex-1">{canvas}</div>
     </div>
   );

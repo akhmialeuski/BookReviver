@@ -10,7 +10,7 @@ import {
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
-import { openTimeline, RESULT_ROWS } from './support/page-work';
+import { openTimeline, RESULT_ROWS, runPages } from './support/page-work';
 
 /**
  * The results of a step on a page: the open step lists them in the history that ends the panel of the stage, a result
@@ -45,8 +45,7 @@ test('a result of a step is marked bad, which marks its page in the strip, and t
     await expect(strip.getByTestId('strip-page')).toHaveCount(PAGES);
     // The import leaves jobs behind it, and a run asked for while they last is refused
     await waitForIdleJobs(page, projectId);
-    await page.getByTestId('run-menu').click();
-    await page.getByTestId('run-all').click();
+    await runPages(page);
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });
@@ -57,8 +56,8 @@ test('a result of a step is marked bad, which marks its page in the strip, and t
     await expect(entry.getByTestId('page-history-origin')).toHaveText('Made by the step');
     // The history lists the results once, and neither the panel of the step nor the section of the page does
     await expect(page.getByTestId('page-history')).toHaveCount(1);
-    await expect(page.getByTestId('step-panel').locator(RESULT_ROWS)).toHaveCount(0);
-    await expect(page.getByTestId('this-page').locator(RESULT_ROWS)).toHaveCount(0);
+    await expect(page.getByTestId('panel-settings').locator(RESULT_ROWS)).toHaveCount(0);
+    await expect(page.getByTestId('panel-page').locator(RESULT_ROWS)).toHaveCount(0);
   });
 
   await test.step('no page is marked, and the strip filter offers the pages marked bad', async () => {

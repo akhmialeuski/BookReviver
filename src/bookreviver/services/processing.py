@@ -1,26 +1,27 @@
-"""Use cases of the processing framework a request makes: recipes, variants, runs, previews and page versions.
+"""Use cases of the processing framework a request makes: recipes, runs, previews and page versions.
 
-A stage is processed by a recipe, and a page by the recipe it was last processed by. The use cases here change a recipe
-or the current version of a stage, which writes rows, commits and marks the pages they affect stale, or start heavy
+A stage has one recipe for each kind of page, and a page is processed by the recipe of its kind. The use cases here
+change a recipe or the current version of a stage, which writes rows, commits and marks the pages they affect stale, or
+start heavy
 work, a run, a preview, a cut of tiles, a collection or a measure of the book, which records a job with its parameters,
 queues it and answers at once, since a request handler never blocks on CPU-bound work. Neither runs a processor. The
 workers do, through ``ProcessingJobs``, and the files of a step are written by ``steps.py``.
 
-Editing the active recipe does not process any page again. It marks the stage stale on every page the recipe processed,
-and the user starts the run. Changing the active variant does the same for the pages the old active recipe processed.
-The one active recipe of a stage is kept by the service in one transaction and by the database with a partial unique
-index.
+Editing a recipe does not process any page again. It marks the stage stale on every page the recipe processed, and the
+user starts the run. The one recipe of each kind of a stage is kept by the database with a unique key.
 
-Versions are not deleted when they stop being current, so going back to earlier parameters is instant. The job
-``collect-versions`` removes the files of the old ones that nothing needs, and keeps their rows, so a version outlives
-its picture and a run makes the picture again under the same identifier. Only a preview loses its row.
+Versions are not deleted when they stop being current, so going back to earlier parameters stays possible. The job
+``collect-versions``, which a run queues when it ends and the owner of the book starts by hand, deletes the ones that
+are no longer current and that nothing needs, with their files and the rows that describe them, so no row is left
+without its picture. A preview goes only once it is old.
 """
 
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import JobKind, OrderMode, ProcessorScope, RunMode, Stage, VersionScale, VersionState
+from bookreviver.domain.enums import JobKind, OrderMode, RunMode, Stage, VersionScale, VersionState
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
-from bookreviver.domain.values import PageStageKey, Slice, StageRun, StepPreview, TileCut
+from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.values import CollectionReport, PageStageKey, Slice, StepPreview, TileCut
 from bookreviver.domain.version_chains import stage_depths, step_places, versions_of_step
 from bookreviver.services.processing_parts import PROJECT_BUSY
 from bookreviver.services.projects import owned_project
@@ -31,44 +32,46 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Actor, Job, Page, PageStage, PageVersion, Recipe
     from bookreviver.domain.geometry import Point
-    from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
-    from bookreviver.domain.values import ProcessorSpec, RecipeDraft, RecipeKey, SliceRequest, VersionFilter
+    from bookreviver.domain.ids import PageId, PageVersionId, ProjectId
+    from bookreviver.domain.values import ProcessorSpec, RecipeDraft, RecipeKey, SliceRequest, StageRun, VersionFilter
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
+    from bookreviver.ports.storage import AssetStore
     from bookreviver.services.processing_parts import ProcessingParts
 
 NOT_CHOOSABLE: str = 'The version {version_id} cannot be made the current one: {reason}.'
 NOT_READY: str = 'it is not ready'
 NOT_FULL: str = 'it is a preview'
 OTHER_STAGE: str = 'it belongs to another stage'
-FILES_REMOVED: str = 'its picture was removed, so it has to be made again first'
-NOT_REMAKABLE: str = 'The picture of the version {version_id} cannot be made again: {reason}.'
-HAS_FILES: str = 'it still has its picture'
-SPLITS_A_SCAN: str = 'it was made by a step that splits a scan, which only a run of the whole stage applies'
 NO_IMAGE: str = 'The version {version_id} has no image.'
 NEEDS_CONFIRMATION: str = (
     'The mode {mode} takes the work of {pages} pages away, which the run does only when it is confirmed.'
 )
 STEP_NEEDS_STAGE: str = 'The versions of a step are listed with the stage of the step.'
 NO_STEP_TO_RUN_THROUGH: str = (
-    'Step {index} of the recipe {name} does not exist, or it and every step before it are switched off.'
+    'Step {index} of the recipe for {name} does not exist, or it and every step before it are switched off.'
 )
 
 
 class ProcessingService:
     """Recipes, runs, previews and page versions of the acting account's projects."""
 
-    def __init__(self, *, uow: UnitOfWork, catalogue: ProcessorCatalog, parts: ProcessingParts) -> None:
+    def __init__(
+        self, *, uow: UnitOfWork, assets: AssetStore, catalogue: ProcessorCatalog, parts: ProcessingParts
+    ) -> None:
         """Work over the ports of one request.
 
         :param uow: Unit of work of the request, whose commit ends every changing use case.
         :type uow: UnitOfWork
+        :param assets: Store of the derived files, whose size a report of a collection reads.
+        :type assets: AssetStore
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
         :param parts: The recipes, the stage records, the job tracker and the job starter over the unit of work.
         :type parts: ProcessingParts
         """
         self._uow = uow
+        self._assets = assets
         self._catalogue = catalogue
         self._recipes = parts.recipes
         self._records = parts.records
@@ -83,44 +86,8 @@ class ProcessingService:
         """
         return self._catalogue.specs()
 
-    async def recipe(self, actor: Actor, project_id: ProjectId, stage: Stage) -> Recipe:
-        """Return the active recipe of a stage, creating the recipes the stage starts with the first time.
-
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :param stage: The stage.
-        :type stage: Stage
-        :returns: The active recipe.
-        :rtype: Recipe
-        :raises NotFoundError: If the actor has no such project, or the stage has no recipe.
-        """
-        await owned_project(self._uow.projects, actor, project_id)
-        return await self._recipes.active(project_id, stage)
-
-    async def save_recipe(self, actor: Actor, project_id: ProjectId, stage: Stage, draft: RecipeDraft) -> Recipe:
-        """Replace the name and the steps of the active recipe, and mark the pages it processed stale.
-
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :param stage: The stage.
-        :type stage: Stage
-        :param draft: New name and steps, which are checked against their processors and their order.
-        :type draft: RecipeDraft
-        :returns: The recipe as stored.
-        :rtype: Recipe
-        :raises NotFoundError: If the actor has no such project, or the stage has no recipe.
-        :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
-                                        usual order.
-        """
-        await owned_project(self._uow.projects, actor, project_id)
-        return await self._rewrite(await self._recipes.active(project_id, stage), draft)
-
-    async def variants(self, actor: Actor, project_id: ProjectId, stage: Stage, request: SliceRequest) -> Slice[Recipe]:
-        """List the recipes of a stage, the active one first and then the variants by creation.
+    async def recipes(self, actor: Actor, project_id: ProjectId, stage: Stage, request: SliceRequest) -> Slice[Recipe]:
+        """List the recipes of a stage, one for each kind of page, creating them the first time the stage is asked for.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -130,39 +97,16 @@ class ProcessingService:
         :type stage: Stage
         :param request: Offset and limit of the window.
         :type request: SliceRequest
-        :returns: The recipes of the window and the number of all the stage's recipes.
+        :returns: The recipes of the window in the order of the kinds, and the number of all the stage's recipes.
         :rtype: Slice[Recipe]
         :raises NotFoundError: If the actor has no such project, or the stage has no recipe.
         """
         await owned_project(self._uow.projects, actor, project_id)
-        await self._recipes.active(project_id, stage)
-        recipes = await self._uow.recipes.list_for_stage(project_id, stage)
+        recipes = await self._recipes.recipes(project_id, stage)
         return Slice(items=recipes[request.offset : request.offset + request.limit], total=len(recipes))
 
-    async def add_variant(self, actor: Actor, project_id: ProjectId, stage: Stage, draft: RecipeDraft) -> Recipe:
-        """Add a recipe of a stage that is not active, to try on some pages or to compare with the active one.
-
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :param stage: The stage.
-        :type stage: Stage
-        :param draft: Name and steps of the variant, which are checked against their processors and their order.
-        :type draft: RecipeDraft
-        :returns: The variant as stored.
-        :rtype: Recipe
-        :raises NotFoundError: If the actor has no such project, or the stage has no recipe.
-        :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
-                                        usual order.
-        """
-        await owned_project(self._uow.projects, actor, project_id)
-        variant = await self._recipes.add_variant(project_id, stage, draft)
-        await self._uow.commit()
-        return variant
-
-    async def save_variant(self, actor: Actor, project_id: ProjectId, key: RecipeKey, draft: RecipeDraft) -> Recipe:
-        """Replace the name and the steps of a recipe of a stage, and mark the pages it processed stale.
+    async def save_recipe(self, actor: Actor, project_id: ProjectId, key: RecipeKey, draft: RecipeDraft) -> Recipe:
+        """Replace the steps of a recipe of a stage, and mark the pages it processed stale.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -170,7 +114,7 @@ class ProcessingService:
         :type project_id: ProjectId
         :param key: The stage the request names and the identifier of the recipe, which must belong to that stage.
         :type key: RecipeKey
-        :param draft: New name and steps, which are checked against their processors and their order.
+        :param draft: New steps, which are checked against their processors and their order.
         :type draft: RecipeDraft
         :returns: The recipe as stored.
         :rtype: Recipe
@@ -181,34 +125,8 @@ class ProcessingService:
         await owned_project(self._uow.projects, actor, project_id)
         return await self._rewrite(await self._recipes.get(project_id, key.recipe_id, stage=key.stage), draft)
 
-    async def activate(self, actor: Actor, project_id: ProjectId, stage: Stage, recipe_id: RecipeId) -> Recipe:
-        """Make a variant the active recipe of its stage, and mark the pages the old active recipe processed stale.
-
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :param stage: The stage.
-        :type stage: Stage
-        :param recipe_id: Identifier of the variant.
-        :type recipe_id: RecipeId
-        :returns: The recipe as active.
-        :rtype: Recipe
-        :raises NotFoundError: If the actor has no such project, or the project has no such recipe of the stage.
-        """
-        await owned_project(self._uow.projects, actor, project_id)
-        chosen = await self._recipes.get(project_id, recipe_id, stage=stage)
-        if chosen.active:
-            return chosen
-        previous = await self._recipes.active(project_id, stage)
-        activated = await self._recipes.switch_active(previous, chosen)
-        stale = await self._records.mark_recipe_stale(previous.id)
-        await self._uow.commit()
-        await self._records.announce(project_id, stale)
-        return activated
-
     async def start_run(self, actor: Actor, project_id: ProjectId, stage: Stage, run: StageRun) -> Job:
-        """Record a job that runs a stage over some pages by a recipe, and queue it.
+        """Record a job that runs a stage over some pages, each by the recipe of its kind, and queue it.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -216,28 +134,26 @@ class ProcessingService:
         :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
-        :param run: The recipe and the pages, with the stage the request names.
+        :param run: The pages and the mode, with the stage the request names.
         :type run: StageRun
-        :returns: The queued job.
+        :returns: The queued job; a preview of the project that is queued or running is cancelled for it.
         :rtype: Job
-        :raises NotFoundError: If the actor has no such project, or the project has no such recipe, stage recipe or
-                               page.
-        :raises ConflictError: If a run, a preview, a tile cutting, a collection or a measure of the project is queued
-                               or running, or the run goes through a step the recipe has no such step for, or whose
-                               steps up to it are all switched off, or its mode takes the work of pages away and it is
-                               not confirmed.
+        :raises NotFoundError: If the actor has no such project or page, or the stage has no recipe.
+        :raises ConflictError: If a run or a measure of the project is queued or running, or the run goes through a
+                               step that the recipe of a page has no such step for, or whose steps up to it are all
+                               switched off, or its mode takes the work of pages away and it is not confirmed.
         """
         await owned_project(self._uow.projects, actor, project_id)
-        if run.recipe_id is None:
-            recipe = await self._recipes.active(project_id, stage)
-        else:
-            recipe = await self._recipes.get(project_id, run.recipe_id, stage=stage)
-        if run.through_step is not None and (
-            run.through_step >= len(recipe.steps) or not recipe.indexed_steps_through(run.through_step)
-        ):
-            raise ConflictError(NO_STEP_TO_RUN_THROUGH.format(index=run.through_step + 1, name=recipe.name))
+        await self._recipes.recipes(project_id, stage)
         if run.page_ids is not None:
             await self._uow.pages.list_by_ids(project_id, run.page_ids)
+        if run.through_step is not None:
+            planned = {recipe.id: recipe for recipe in (await self._plan(project_id, run).recipes()).values()}
+            for recipe in planned.values():
+                if run.through_step >= len(recipe.steps) or not recipe.indexed_steps_through(run.through_step):
+                    raise ConflictError(
+                        NO_STEP_TO_RUN_THROUGH.format(index=run.through_step + 1, name=recipe.kind.label)
+                    )
         if run.mode is not RunMode.KEEP and not run.confirm_overwrite:
             affected = (await self._plan(project_id, run).impact()).affected
             if affected:
@@ -263,14 +179,14 @@ class ProcessingService:
         :type actor: Actor
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
-        :returns: The queued job.
+        :returns: The queued job; a preview of the project that is queued or running is cancelled for it.
         :rtype: Job
         :raises NotFoundError: If the actor has no such project, or the Geometry stage has no recipe.
-        :raises ConflictError: If a run, a preview, a tile cutting, a collection or a measure of the project is queued
-                               or running, which may be writing the versions that are measured or the recipe.
+        :raises ConflictError: If a run or a measure of the project is queued or running, which may be writing the
+                               versions that are measured or the recipe.
         """
         await owned_project(self._uow.projects, actor, project_id)
-        await self._recipes.active(project_id, Stage.GEOMETRY)
+        await self._recipes.recipes(project_id, Stage.GEOMETRY)
         return await self._starter.enqueue(project_id, JobKind.MEASURE_BOOK, {})
 
     async def start_preview(self, actor: Actor, project_id: ProjectId, preview: StepPreview) -> Job:
@@ -330,6 +246,11 @@ class ProcessingService:
         The version must be ready, made by a full run of this page in this stage. If its tile pyramid is not cut yet, a
         job is queued to cut it, since the viewer opens the current version.
 
+        A preview of the project, queued or running, is cancelled first, since the reader asked for the choice and a
+        preview is disposable: the editor of a step asks for one by itself, so a choice made a moment later would
+        otherwise be refused by a job the reader never started. A request for a version that cannot be chosen is
+        refused before any preview is cancelled.
+
         :param actor: Account acting in the current request.
         :type actor: Actor
         :param project_id: Identifier of the project.
@@ -345,16 +266,16 @@ class ProcessingService:
         :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no such
                                version.
         :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage, or a run, a
-                               preview, a tile cutting or a collection of the project is queued or running, which
-                               may be reading or deleting the versions the choice depends on.
+                               measure of the book, a tile cutting or a collection of the project is queued or
+                               running, which may be reading or deleting the versions the choice depends on.
         """
         await owned_project(self._uow.projects, actor, project_id)
         await self._page(project_id, page_id)
-        if await self._starter.busy(project_id) is not None:
-            raise ConflictError(PROJECT_BUSY)
         version = await self._version_of(page_id, version_id)
         if (reason := self._why_not_choosable(version, stage)) is not None:
             raise ConflictError(NOT_CHOOSABLE.format(version_id=version_id, reason=reason))
+        if await self._starter.free_of_previews(project_id):
+            raise ConflictError(PROJECT_BUSY)
         key = PageStageKey(page_id, stage)
         previous = await self._uow.page_stages.find(key)
         changed = await self._records.set_head(
@@ -365,37 +286,6 @@ class ProcessingService:
         if version.renditions is not None and not version.tiles_ready:
             await self._starter.enqueue_tiles(project_id, [version_id])
         return changed[0]
-
-    async def unpin(self, actor: Actor, project_id: ProjectId, page_id: PageId, stage: Stage) -> PageStage:
-        """Take the recipe pinned to a stage of a page off it, so a run without a recipe chooses by the rules again.
-
-        The result of the stage stays and is marked stale, since the rules may choose another recipe. A stage that is
-        not pinned is returned as it is.
-
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :param page_id: Identifier of the page.
-        :type page_id: PageId
-        :param stage: The stage.
-        :type stage: Stage
-        :returns: The record of the stage in its new state.
-        :rtype: PageStage
-        :raises NotFoundError: If the actor has no such project, the project has no such page, or the stage has not run
-                               on the page.
-        :raises ConflictError: If a run, a preview, a tile cutting or a collection of the project is queued or running,
-                               which may be writing the record.
-        """
-        await owned_project(self._uow.projects, actor, project_id)
-        await self._page(project_id, page_id)
-        if await self._starter.busy(project_id) is not None:
-            raise ConflictError(PROJECT_BUSY)
-        key = PageStageKey(page_id, stage)
-        changed = await self._records.unpin(page_id, stage)
-        await self._uow.commit()
-        await self._records.announce(project_id, changed)
-        return changed[0] if changed else await self._uow.page_stages.get(key)
 
     async def versions(
         self,
@@ -494,50 +384,32 @@ class ProcessingService:
         await owned_project(self._uow.projects, actor, project_id)
         await self._page(project_id, page_id)
         version = await self._version_of(page_id, version_id)
-        if version.renditions is None or version.files_removed:
+        if version.renditions is None:
             raise ConflictError(NO_IMAGE.format(version_id=version_id))
         if version.state is not VersionState.READY or version.scale is not VersionScale.FULL:
             raise ConflictError(NOT_CHOOSABLE.format(version_id=version_id, reason=NOT_READY))
         return await self._starter.enqueue(project_id, JobKind.CUT_TILES, TileCut(version_ids=(version_id,)).to_map())
 
-    async def start_remake(
-        self, actor: Actor, project_id: ProjectId, page_id: PageId, version_id: PageVersionId
-    ) -> Job:
-        """Record a job that makes the picture of a version again, whose files a collection removed, and queue it.
-
-        The job is a run of the stage over this page, with the parameters and the edit the version stored, over the
-        current version of the earlier stage, and it makes the version current when it ends. It finds the version under
-        the same identifier and gives its row the files again. When the earlier stage has another current version than
-        the one the version was made from, the job fails with that reason instead of making another version, since a
-        result that reads other pixels is not the result the user chose.
+    async def collection_report(self, actor: Actor, project_id: ProjectId) -> CollectionReport:
+        """Count the versions a collection would delete now and the size of their files, which it changes nothing of.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
-        :param page_id: Identifier of the page.
-        :type page_id: PageId
-        :param version_id: Identifier of the version.
-        :type version_id: PageVersionId
-        :returns: The queued job.
-        :rtype: Job
-        :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no such
-                               version.
-        :raises ConflictError: If the version has its files, is not ready, is a preview, or is made by a step that
-                               splits a scan.
+        :returns: The number of versions and the bytes their files take.
+        :rtype: CollectionReport
+        :raises NotFoundError: If the actor has no such project.
         """
         await owned_project(self._uow.projects, actor, project_id)
-        await self._page(project_id, page_id)
-        version = await self._version_of(page_id, version_id)
-        if (reason := self._why_not_remakable(version)) is not None:
-            raise ConflictError(NOT_REMAKABLE.format(version_id=version_id, reason=reason))
-        if self._catalogue.get(version.processor.key).spec.scope is ProcessorScope.SPLIT:
-            raise ConflictError(NOT_REMAKABLE.format(version_id=version_id, reason=SPLITS_A_SCAN))
-        run = StageRun(stage=version.stage, page_ids=(page_id,), remake=version_id)
-        return await self._starter.enqueue(project_id, JobKind.RUN_STAGE, run.to_map())
+        collection = self._starter.collection()
+        old = await self._uow.page_versions.collectable(project_id, collection.previews_older_than)
+        keys = ProjectKeys(project_id)
+        sizes = [await self._assets.size_of(keys.version_directory(version)) for version in old]
+        return CollectionReport(versions=len(old), size_bytes=sum(sizes))
 
     async def start_collection(self, actor: Actor, project_id: ProjectId) -> Job:
-        """Record a job that removes the files of the old versions nothing needs, and queue it.
+        """Record a job that deletes the old versions nothing needs, with their files, and queue it.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -546,7 +418,7 @@ class ProcessingService:
         :returns: The queued job, or the collection that is queued or running already.
         :rtype: Job
         :raises NotFoundError: If the actor has no such project.
-        :raises ConflictError: If a run, a preview or a tile cutting of the project is queued or running.
+        :raises ConflictError: If a run, a measure of the book or a tile cutting of the project is queued or running.
         """
         await owned_project(self._uow.projects, actor, project_id)
         if (job := await self._starter.enqueue_collection(project_id)) is None:
@@ -659,23 +531,4 @@ class ProcessingService:
             return NOT_READY
         if version.scale is not VersionScale.FULL:
             return NOT_FULL
-        if version.files_removed:
-            return FILES_REMOVED
-        return None
-
-    @staticmethod
-    def _why_not_remakable(version: PageVersion) -> str | None:
-        """Say why the picture of a version cannot be made again, or None when it can.
-
-        :param version: The version.
-        :type version: PageVersion
-        :returns: The reason, or None.
-        :rtype: str | None
-        """
-        if version.scale is not VersionScale.FULL:
-            return NOT_FULL
-        if version.state is not VersionState.READY:
-            return NOT_READY
-        if not version.files_removed:
-            return HAS_FILES
         return None

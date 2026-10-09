@@ -1,5 +1,4 @@
 import { LineCanvas } from '@/features/editors/LineCanvas';
-import { LinePanel } from '@/features/editors/LinePanel';
 import { cutLine } from '@/features/editors/line';
 import { type LineShape, readLine, writeLine } from '@/features/editors/shapes';
 import { type EditorDefinition, type PageContext, Picture } from '@/features/editors/types';
@@ -43,5 +42,4 @@ export const lineEditor: EditorDefinition<LineShape> = {
       Math.round(end.y),
     ),
   Canvas: LineCanvas,
-  Panel: LinePanel,
 };

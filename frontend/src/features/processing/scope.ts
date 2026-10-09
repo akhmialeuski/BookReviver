@@ -1,9 +1,8 @@
-import type { AppliesTo, ContentType } from '@/api';
+import type { ContentType } from '@/api';
 import type { StripItem } from '@/features/workspace/strip';
-import { MESSAGES } from '@/shared/messages';
 
 /**
- * The pages a run of a stage goes over, and the counts the panel and the menu of the run show.
+ * The pages a run of a stage goes over, and the counts the menu of the run shows.
  *
  * A page that is a placeholder for a scan to come has no image to process, so it is never counted and never sent.
  */
@@ -11,7 +10,9 @@ import { MESSAGES } from '@/shared/messages';
 /** Which pages a run goes over. */
 export const RunScope = {
   Page: 'page',
+  FromPage: 'from-page',
   Selected: 'selected',
+  Group: 'group',
   Attention: 'attention',
   All: 'all',
 } as const;
@@ -19,10 +20,22 @@ export const RunScope = {
 /** One scope of a run (derived from {@link RunScope}). */
 export type RunScope = (typeof RunScope)[keyof typeof RunScope];
 
-/** A scope with the number of pages it covers now. */
+/** The group of pages that shows blank paper, which the kind of the page tells and the content type does not. */
+export const BLANK_GROUP = 'blank';
+
+/** A kind of pages the menu of the run names: what the pages show, or the blank pages. */
+export type PageGroup = ContentType | typeof BLANK_GROUP;
+
+/** The groups in the order the menu lists them. */
+const GROUPS: readonly PageGroup[] = ['text', 'color-picture', 'bw-picture', BLANK_GROUP];
+
+/** A scope with the pages it covers now. */
 export interface ScopeChoice {
   scope: RunScope;
-  count: number;
+  /** The group of pages, for the scope of a group. */
+  group?: PageGroup;
+  /** The pages it covers, in book order, which have an image. */
+  items: readonly StripItem[];
 }
 
 /** What stands in the way of a stage on the pages: results out of date and runs that failed. */
@@ -48,13 +61,54 @@ export function troubleOf(items: readonly StripItem[]): Trouble {
   };
 }
 
+function inGroup(item: StripItem, group: PageGroup): boolean {
+  return group === BLANK_GROUP ? item.page.kind === 'blank' : item.page.content_type === group;
+}
+
 /**
- * Give the pages a scope covers.
+ * Give the pages a scope covers, in book order.
+ *
+ * @param scope The scope.
+ * @param items Every page of the book with where it stands in the stage, in book order.
+ * @param currentId The page open on the canvas.
+ * @param selectedIds The pages selected in the grid.
+ * @param group The group of pages the scope of a group goes over, which the other scopes ignore.
+ * @returns The pages that have an image.
+ */
+function itemsOf(
+  scope: RunScope,
+  items: readonly StripItem[],
+  currentId: string | undefined,
+  selectedIds: ReadonlySet<string>,
+  group?: PageGroup,
+): StripItem[] {
+  const processable = items.filter(hasImage);
+  switch (scope) {
+    case RunScope.Page:
+      return processable.filter((item) => item.page.id === currentId);
+    case RunScope.FromPage: {
+      const at = processable.findIndex((item) => item.page.id === currentId);
+      return at < 0 ? [] : processable.slice(at);
+    }
+    case RunScope.Selected:
+      return processable.filter((item) => selectedIds.has(item.page.id));
+    case RunScope.Group:
+      return group === undefined ? [] : processable.filter((item) => inGroup(item, group));
+    case RunScope.Attention:
+      return processable.filter(isTrouble);
+    case RunScope.All:
+      return processable;
+  }
+}
+
+/**
+ * Give the identifiers of the pages a scope covers.
  *
  * @param scope The scope.
  * @param items Every page of the book with where it stands in the stage.
  * @param currentId The page open on the canvas.
  * @param selectedIds The pages selected in the grid.
+ * @param group The group of pages the scope of a group goes over.
  * @returns The identifiers of the pages, or null for every page that has an image, which the server reads as an omitted
  * list and which stays right when pages are added while the run waits.
  */
@@ -63,79 +117,45 @@ export function pageIdsFor(
   items: readonly StripItem[],
   currentId: string | undefined,
   selectedIds: ReadonlySet<string>,
+  group?: PageGroup,
 ): string[] | null {
-  const processable = items.filter(hasImage);
-  switch (scope) {
-    case RunScope.Page:
-      return processable.filter((item) => item.page.id === currentId).map((item) => item.page.id);
-    case RunScope.Selected:
-      return processable
-        .filter((item) => selectedIds.has(item.page.id))
-        .map((item) => item.page.id);
-    case RunScope.Attention:
-      return processable.filter(isTrouble).map((item) => item.page.id);
-    case RunScope.All:
-      return null;
-  }
+  return scope === RunScope.All
+    ? null
+    : itemsOf(scope, items, currentId, selectedIds, group).map((item) => item.page.id);
+}
+
+/** Tell whether a result of the stage was made on a page, whether or not it is out of date now. */
+export function hasResult(item: StripItem): boolean {
+  return item.row?.status === 'fresh' || item.row?.status === 'stale';
 }
 
 /**
- * Give the pages a step with a condition goes over, which are the ones that have an image and show what the condition
- * names.
+ * List the choices of the menu of the run with the pages each covers now, in the order the menu has them: the
+ * open page, the pages from it on, the selected pages, one choice for each group of pages the book has, the pages that
+ * need a look and every page.
  *
- * What a page shows is the server's to say, since it follows what the reader set, what the program found and the kind
- * of the page, so the condition is read off the page as the manifest has it. The colour of a plate nobody detected is the
- * colour of the image its stage starts from, which the server reads when it runs, so a run over such a page may still
- * leave it as it was.
- *
- * @param items Every page of the book with where it stands in the stage.
- * @param condition The condition of the step.
+ * @param items Every page of the book with where it stands in the stage, in book order.
+ * @param currentId The page open on the canvas.
+ * @param selectedIds The pages selected in the grid.
  */
-export function pagesOfCondition(items: readonly StripItem[], condition: AppliesTo): StripItem[] {
-  const processable = items.filter(hasImage);
-  const shows = (item: StripItem, type: ContentType): boolean => item.page.content_type === type;
-  switch (condition) {
-    case 'all':
-      return processable;
-    case 'text':
-      return processable.filter((item) => shows(item, 'text'));
-    case 'pictures':
-      return processable.filter((item) => !shows(item, 'text'));
-    case 'color-pictures':
-      return processable.filter((item) => shows(item, 'color-picture'));
-    case 'bw-pictures':
-      return processable.filter((item) => shows(item, 'bw-picture'));
-  }
-}
-
-/**
- * Write a scope of the menu of the run, with the number of pages it covers.
- *
- * @param scope The scope.
- * @param count The pages it covers now.
- * @param pageLabel The printed label of the open page, which "This page" names.
- */
-export function describeScope(scope: RunScope, count: number, pageLabel: string): string {
-  const words = MESSAGES.processing.scope;
-  switch (scope) {
-    case RunScope.Page:
-      return words.page(pageLabel);
-    case RunScope.Selected:
-      return words.selected(count);
-    case RunScope.Attention:
-      return words.attention(count);
-    case RunScope.All:
-      return words.all(count);
-  }
-}
-
-/** List the scopes of the menu of the run with the number of pages each covers now, in the order the menu has them. */
 export function scopeChoices(
   items: readonly StripItem[],
   currentId: string | undefined,
   selectedIds: ReadonlySet<string>,
 ): ScopeChoice[] {
-  const count = (scope: RunScope): number =>
-    pageIdsFor(scope, items, currentId, selectedIds)?.length ?? items.filter(hasImage).length;
-  return Object.values(RunScope).map((scope) => ({ scope, count: count(scope) }));
+  const choiceOf = (scope: RunScope, group?: PageGroup): ScopeChoice => ({
+    scope,
+    group,
+    items: itemsOf(scope, items, currentId, selectedIds, group),
+  });
+  return [
+    choiceOf(RunScope.Page),
+    choiceOf(RunScope.FromPage),
+    choiceOf(RunScope.Selected),
+    ...GROUPS.map((group) => choiceOf(RunScope.Group, group)).filter(
+      ({ items }) => items.length > 0,
+    ),
+    choiceOf(RunScope.Attention),
+    choiceOf(RunScope.All),
+  ];
 }

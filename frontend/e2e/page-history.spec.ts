@@ -17,7 +17,7 @@ import {
   writeSheetsFolder,
 } from './support/account';
 import { dragFrom, pairOf } from './support/layer';
-import { CHANGE_ROWS, openTimeline, RESULT_ROWS } from './support/page-work';
+import { CHANGE_ROWS, openTimeline, RESULT_ROWS, runPages } from './support/page-work';
 
 /**
  * The history of a page, a collapsible section at the end of the panel of every stage that lists the changes of the open
@@ -39,10 +39,11 @@ const CROP = 'geometry.crop';
 const FIRST_PAGE = 0;
 const ANGLE_OF_THE_EDIT = 1.5;
 const SLANT_OF_THE_PAGE = '3';
-const CHANGES_WRITTEN = 2;
-const ROWS_AFTER_ONE_UNDO = 3;
-const CHANGES_AFTER_TWO_UNDOS = 4;
+// The edit by hand, the value added for the page with the value of the recipe, and the value typed into it
+const CHANGES_WRITTEN = 3;
+const CHANGES_AFTER_THE_UNDOS = 6;
 const ROWS_SHOWN = 3;
+const SLANT_OF_THE_RECIPE = '5';
 const SLANTS_OF_THE_PAGE = [1, 2, 3, 4];
 const OLDEST_SLANT = 1;
 const THIRD_ROW = 2;
@@ -95,11 +96,11 @@ async function changeHeaders(page: Page): Promise<Record<string, string>> {
   };
 }
 
-/** Set the value a page uses for the largest slant of the step, as the settings of a page do. */
+/** Set the value a page uses for the largest slant of the step, as a value for the open page does. */
 async function putSlant(page: Page, pageId: string, stepId: string, value: number): Promise<void> {
   const response = await page.request.put(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/settings/geometry/${stepId}/max_angle`,
-    { headers: await changeHeaders(page), data: { value } },
+    `/api/v1/projects/${openProjectId(page)}/stages/geometry/steps/${stepId}/values/max_angle`,
+    { headers: await changeHeaders(page), data: { scope: 'pages', page_ids: [pageId], value } },
   );
   expect(response.ok()).toBe(true);
 }
@@ -154,10 +155,11 @@ test('a reader sees what changed on a page, takes the last change back with the 
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
   // The settings of the page are in the panel of the open step, and the history ends the panel of the stage
-  const step = page.getByTestId('step-panel');
+  const step = page.getByTestId('panel-settings');
   const history = page.getByTestId('stage-panel').getByTestId('page-history');
   const rows = history.locator(CHANGE_ROWS);
-  const settings = step.getByTestId('page-settings');
+  // The values of the page for the largest slant are the chips under that setting, in the panel of the open step
+  const slant = step.getByTestId('field-values').and(page.locator('[data-field="max_angle"]'));
   let pageId = '';
   let stepId = '';
 
@@ -185,31 +187,37 @@ test('a reader sees what changed on a page, takes the last change back with the 
     await history.getByTestId('page-history-toggle').click();
     await expect(rows).toHaveCount(1);
     await expect(rows.first()).toContainText('Set by hand');
-    await settings.getByTestId('page-settings-edit').click();
-    await settings.locator('form input[type="number"]').first().fill(SLANT_OF_THE_PAGE);
+    await slant.getByTestId('value-add').click();
+    await page.getByTestId('value-choice-page').click();
+    // The value just added opens its field at once
+    await expect(slant.getByTestId('value-chip-edit')).toHaveAttribute('aria-expanded', 'true');
+    await slant.locator('input[type="number"]').fill(SLANT_OF_THE_PAGE);
     await expect(rows).toHaveCount(CHANGES_WRITTEN);
     await expect(rows.first()).toContainText('Settings of the page');
     await expect(rows.first()).toContainText(SLANT_OF_THE_PAGE);
-    await expect(settings.getByTestId('page-settings-list')).toBeVisible();
+    await expect(slant.getByTestId('value-chip')).toBeVisible();
     await history.scrollIntoViewIfNeeded();
     await snap(page, 'page-history-before-undo');
   });
 
   await test.step('the button takes back the newest change, writes the undo and marks the change it took back', async () => {
     await rows.first().getByTestId('page-history-undo-here').click();
-    await expect(rows).toHaveCount(ROWS_AFTER_ONE_UNDO);
+    await expect(rows).toHaveCount(ROWS_SHOWN);
     await expect(rows.nth(0)).toContainText('An undo');
     await expect(rows.nth(1)).toHaveAttribute('data-undone', 'true');
-    await expect(settings.getByTestId('page-settings-none')).toBeVisible();
+    // The value the page was given when it was added is left
+    await expect(slant.getByTestId('value-chip')).toContainText(SLANT_OF_THE_RECIPE);
     await history.scrollIntoViewIfNeeded();
     await snap(page, 'page-history-after-undo');
   });
 
-  await test.step('Ctrl+Z takes back the edit that is left, and the server keeps all four entries', async () => {
-    await step.getByTestId('step-panel-title').click();
+  await test.step('Ctrl+Z takes back the value and then the edit that are left, and the server keeps every entry', async () => {
+    await page.getByTestId('step-panel-title').click();
+    await page.keyboard.press('Control+z');
+    await expect(slant.getByTestId('value-chip')).toHaveCount(0);
     await page.keyboard.press('Control+z');
     await expect(history.getByTestId('page-history-count')).toHaveText(
-      `${CHANGES_AFTER_TWO_UNDOS} events`,
+      `${CHANGES_AFTER_THE_UNDOS} events`,
     );
     await expect(rows).toHaveCount(ROWS_SHOWN);
     await expect(history.getByTestId('page-history-undo-here')).toHaveCount(0);
@@ -217,6 +225,8 @@ test('a reader sees what changed on a page, takes the last change back with the 
     expect(stored.map((item) => [item.layer, item.source, item.undone])).toEqual([
       ['hand', 'undo', false],
       ['settings', 'undo', false],
+      ['settings', 'undo', false],
+      ['settings', 'user', true],
       ['settings', 'user', true],
       ['hand', 'user', true],
     ]);
@@ -289,6 +299,9 @@ test('a reader reads a long history three changes at a time, undoes back to an o
   });
 
   await test.step('a clear asks first, deletes the history and the settings, and leaves the section grey', async () => {
+    // The undo changed the settings, so the editor of the step asks for a preview of the page, and a clear is refused
+    // while that preview may read the versions the clear deletes
+    await waitForIdleJobs(page, openProjectId(page));
     await history.getByTestId('page-history-clear').click();
     await expect(dialog).toContainText('cannot be undone');
     await history.scrollIntoViewIfNeeded();
@@ -334,13 +347,13 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await waitForIdleJobs(page, projectId);
   };
 
-  await test.step('Auto on Select content makes a result, which the collapsed section counts', async () => {
+  await test.step('a run through Select content makes a result, which the collapsed section counts', async () => {
     await registerAndSignIn(page);
     await createBook(page, 'A book with a timeline');
     await uploadFolder(page, folder, 1);
     projectId = openProjectId(page);
     await waitForIdleJobs(page, projectId);
-    // The detection takes the sheet for a picture, which the rules send to the recipe for plates, and the step open here
+    // The detection takes the sheet for a picture, which the recipe for pictures processes, and the step open here
     // belongs to the recipe for text, so the page is said to be text
     await markPagesAsText(page);
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
@@ -352,11 +365,8 @@ test('a reader reads the changes and the results of a step in one timeline that 
     // The page has no result yet, so the section is grey and says so
     await expect(history).toHaveAttribute('aria-disabled', 'true');
     await expect(history.getByTestId('page-history-reason')).toContainText('Nothing has happened');
-    await page.getByTestId('step-auto').click();
-    await expect(history.getByTestId('page-history-count')).toHaveText('1 event', {
-      timeout: RUN_TIMEOUT_MS,
-    });
-    await waitForIdleJobs(page, projectId);
+    await runPages(page, { throughOpenStep: true });
+    await expect(history.getByTestId('page-history-count')).toHaveText('1 event');
     await expect(history).toHaveAttribute('aria-disabled', 'false');
     await expect(history.getByTestId('page-history-toggle')).toHaveAttribute(
       'data-state',
@@ -451,22 +461,7 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await expect.poll(() => fitsTheWidth(area)).toBe(true);
   });
 
-  await test.step('with the step closed the section lists the results of the stage, its Changes filter is off and it has no clear', async () => {
-    await page.getByTestId('step-close').click();
-    await expect(page.getByTestId('step-panel')).toHaveCount(0);
-    await expect(history).toHaveAttribute('aria-disabled', 'false');
-    await expect(history.getByTestId('page-history-filter-changes')).toBeDisabled();
-    await expect(history.getByTestId('page-history-changes-hint')).toHaveText(
-      'Open a step to see its changes',
-    );
-    await expect(history.getByTestId('page-history-clear')).toHaveCount(0);
-    await expect(changes).toHaveCount(0);
-    await expect(results.first()).toBeVisible();
-    await history.scrollIntoViewIfNeeded();
-    await snap(page, 'timeline-no-step');
-  });
-
-  await test.step('Cleanup with no step open lists the result of the stage, the current one, and keeps the Changes filter off', async () => {
+  await test.step('Cleanup opens on a step, and its history lists the changes of that step and the result of the stage', async () => {
     const started = await page.request.post(`/api/v1/projects/${projectId}/stages/cleanup/run`, {
       headers: await changeHeaders(page),
       data: {},
@@ -476,7 +471,8 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await page.goto(`${bookPath}/stages/cleanup`);
     await expect(page.getByTestId('stage-title')).toHaveText('Cleanup');
     await expect(page.getByTestId('strip-page')).toHaveCount(1);
-    await expect(page.getByTestId('step-panel')).toHaveCount(0);
+    await expect(page).toHaveURL(/\/stages\/cleanup\/steps\//);
+    await expect(page.getByTestId('panel-step')).toHaveCount(1);
     await expect(history).toHaveAttribute('aria-disabled', 'false');
     await expect(history.getByTestId('page-history-count')).toHaveText('1 event', {
       timeout: RUN_TIMEOUT_MS,
@@ -484,8 +480,9 @@ test('a reader reads the changes and the results of a step in one timeline that 
     await openTimeline(page);
     await expect(results).toHaveCount(1);
     await expect(results.first()).toHaveAttribute('data-current', 'true');
-    await expect(history.getByTestId('page-history-filter-changes')).toBeDisabled();
-    await expect(history.getByTestId('page-history-clear')).toHaveCount(0);
+    // With a step open the section is the history of that step, which has its Changes filter and its clear
+    await expect(history.getByTestId('page-history-filter-changes')).toBeEnabled();
+    await expect(history.getByTestId('page-history-clear')).toHaveCount(1);
   });
 
   await test.step('a stage that cannot be worked in yet shows the section grey, with the reason', async () => {

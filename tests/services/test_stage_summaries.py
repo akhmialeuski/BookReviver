@@ -8,11 +8,12 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import (
-    AppliesTo,
     EditorKind,
     FigureState,
     PageKind,
+    PageOrigin,
     PageStageStatus,
+    RecipeKind,
     ResultMark,
     ReviewReason,
     Stage,
@@ -24,8 +25,18 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import StepId
-from bookreviver.domain.values import NewPageEdit, PageStepKey, ProcessorRef, RecipeDraft, SliceRequest, StageRun, Step
-from tests.helpers.builders import make_page_stage, make_page_version
+from bookreviver.domain.values import (
+    NewPageEdit,
+    PageStepKey,
+    ProcessorRef,
+    RecipeDraft,
+    RecipeKey,
+    SliceRequest,
+    StageRun,
+    Step,
+)
+from tests.helpers.builders import make_page, make_page_stage, make_page_version
+from tests.helpers.page_batches import PageValues
 from tests.helpers.processors import MEASURING_KEY, STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.spreads import run_stage
 
@@ -251,18 +262,43 @@ class TestOfBook:
         geometry = (await summaries_of(fx_kit, project))[Stage.GEOMETRY]
         assert (geometry.partial, geometry.stopped) == (0, ())
 
-    async def test_the_active_recipe_is_named_once_the_stage_has_been_asked_for(self, fx_kit: ProcessingKit) -> None:
-        """Verify a stage has no recipe to name before it is used, and the recipe the default made after.
+    async def test_the_recipe_of_each_kind_is_named_once_the_stage_has_been_asked_for(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a stage has no recipe to name before it is used, and after it the four recipes with their pages.
+
+        The book has two text pages, a plate, a blank page and a placeholder, which has no image and is not counted.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, _ = await seed_book(fx_kit)
-        before = (await summaries_of(fx_kit, project))[Stage.GEOMETRY].active_recipe_id
-        recipe = await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
-        after = (await summaries_of(fx_kit, project))[Stage.GEOMETRY].active_recipe_id
-        expect(before is None)
-        expect(after == recipe.id)
+        actor, project, pages = await seed_book(fx_kit)
+        uow = fx_kit.uow()
+        await uow.pages.update(evolve(pages[1], kind=PageKind.PLATE))
+        await uow.pages.update(evolve(pages[2], kind=PageKind.BLANK))
+        await uow.commit()
+        await fx_kit.seed_scan_page(project, order_key='a3', kind=PageKind.TEXT)
+        placeholder = make_page(project_id=project.id, order_key='a4')
+        await uow.pages.add(placeholder)
+        await uow.commit()
+        before = (await summaries_of(fx_kit, project))[Stage.GEOMETRY].recipes
+        recipes = {
+            recipe.kind: recipe
+            for recipe in (
+                await fx_kit.service().recipes(actor, project.id, Stage.GEOMETRY, SliceRequest(limit=10))
+            ).items
+        }
+        after = (await summaries_of(fx_kit, project))[Stage.GEOMETRY].recipes
+        expect(before == ())
+        expect(
+            [(one.kind, one.recipe_id, one.pages) for one in after]
+            == [
+                (RecipeKind.TEXT, recipes[RecipeKind.TEXT].id, 2),
+                (RecipeKind.COLOR_PICTURE, recipes[RecipeKind.COLOR_PICTURE].id, 1),
+                (RecipeKind.BW_PICTURE, recipes[RecipeKind.BW_PICTURE].id, 0),
+                (RecipeKind.BLANK, recipes[RecipeKind.BLANK].id, 1),
+            ]
+        )
         assert_expectations()
 
 
@@ -427,31 +463,33 @@ class TestWithProgress:
         assert await fx_kit.stages().with_progress([]) == []
 
 
-async def seed_text_and_plate(kit: ProcessingKit) -> tuple[Actor, Project, Page, Page]:
-    """Seed a project of a text page and a plate, each with its base version, and save a recipe of two steps for them.
+async def seed_text_and_leaf(kit: ProcessingKit) -> tuple[Actor, Project, Page, Page]:
+    """Seed a project of a text page and a blank leaf the program drew, each with its base version, and save a recipe.
 
-    The first step processes the pages of text and the second the pictures, so each page passes one of them unchanged.
+    The recipe of text pages has two steps, which the text page passes through and the leaf passes unchanged.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The actor, the project, the text page and the plate.
+    :returns: The actor, the project, the text page and the leaf.
     :rtype: tuple[Actor, Project, Page, Page]
     """
     actor, project = await kit.seed_project()
     text, _ = await kit.seed_scan_page(project, order_key='a0')
-    plate, _ = await kit.seed_scan_page(project, order_key='a1', kind=PageKind.PLATE)
-    for page in (text, plate):
+    scanned, _ = await kit.seed_scan_page(project, order_key='a1')
+    leaf = evolve(scanned, origin=PageOrigin.BLANK, scan_id=None)
+    uow = kit.uow()
+    await uow.pages.update(leaf)
+    await uow.commit()
+    for page in (text, leaf):
         await kit.seed_base_version(page)
-    steps = [
-        Step(processor_key=FAKE_KEY, applies_to=AppliesTo.TEXT),
-        Step(processor_key=FAKE_KEY, applies_to=AppliesTo.PICTURES),
-    ]
-    await kit.service().save_recipe(actor, project.id, Stage.GEOMETRY, RecipeDraft(name='Two', steps=steps))
-    return actor, project, text, plate
+    steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)]
+    recipe = await kit.recipe_of(actor, project, Stage.GEOMETRY)
+    await kit.service().save_recipe(actor, project.id, RecipeKey(Stage.GEOMETRY, recipe.id), RecipeDraft(steps=steps))
+    return actor, project, text, leaf
 
 
 async def step_ids_of(kit: ProcessingKit, project: Project) -> list[StepId]:
-    """Read the identifiers of the steps of the active recipe of the geometry stage, in order.
+    """Read the identifiers of the steps of the recipe of text pages of the geometry stage, in order.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
@@ -460,8 +498,11 @@ async def step_ids_of(kit: ProcessingKit, project: Project) -> list[StepId]:
     :returns: The identifiers of the steps.
     :rtype: list[StepId]
     """
-    recipe = await kit.uow().recipes.find_active(project.id, Stage.GEOMETRY)
-    assert recipe is not None
+    recipe = next(
+        recipe
+        for recipe in await kit.uow().recipes.list_for_stage(project.id, Stage.GEOMETRY)
+        if recipe.kind is RecipeKind.TEXT
+    )
     return [step.step_id for step in recipe.steps]
 
 
@@ -476,7 +517,7 @@ class TestStepRows:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        _, project, _, _ = await seed_text_and_plate(fx_kit)
+        _, project, _, _ = await seed_text_and_leaf(fx_kit)
         first, _ = await step_ids_of(fx_kit, project)
         rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
         assert [(row.step.state, row.step.version) for row in rows.items if row.step is not None] == [
@@ -490,25 +531,25 @@ class TestStepRows:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        _, project, _, _ = await seed_text_and_plate(fx_kit)
+        _, project, _, _ = await seed_text_and_leaf(fx_kit)
         rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
         assert [row.step for row in rows.items] == [None, None]
 
-    async def test_each_page_has_found_the_shape_of_the_step_that_ran_on_it_and_skipped_the_other(
+    async def test_a_page_has_found_the_shape_of_the_step_that_ran_on_it_and_a_leaf_skipped_it(
         self, fx_kit: ProcessingKit
     ) -> None:
-        """Verify a step that ran is found, a step that passed the page by its condition is skipped, per step.
+        """Verify a step that ran on a text page is found, and the leaf the program drew passes every step skipped.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, _, _ = await seed_text_and_plate(fx_kit)
+        actor, project, _, _ = await seed_text_and_leaf(fx_kit)
         first, second = await step_ids_of(fx_kit, project)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         by_first = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
         by_second = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), second)
         expect([row.step.state for row in by_first.items if row.step] == [FigureState.FOUND, FigureState.SKIPPED])
-        expect([row.step.state for row in by_second.items if row.step] == [FigureState.SKIPPED, FigureState.FOUND])
+        expect([row.step.state for row in by_second.items if row.step] == [FigureState.FOUND, FigureState.SKIPPED])
         assert_expectations()
 
     async def test_the_second_step_reads_what_the_first_made_and_the_first_reads_the_stage_before(
@@ -519,7 +560,7 @@ class TestStepRows:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, text, _ = await seed_text_and_plate(fx_kit)
+        actor, project, text, _ = await seed_text_and_leaf(fx_kit)
         first, second = await step_ids_of(fx_kit, project)
         base = (await fx_kit.uow().page_versions.list_for_page(text.id))[0]
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
@@ -540,7 +581,7 @@ class TestStepRows:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, text, _ = await seed_text_and_plate(fx_kit)
+        actor, project, text, _ = await seed_text_and_leaf(fx_kit)
         first, second = await step_ids_of(fx_kit, project)
         await fx_kit.edits().save(actor, project.id, PageStepKey(text.id, Stage.GEOMETRY, first), ROTATION, None)
         by_first = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
@@ -555,7 +596,7 @@ class TestStepRows:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, _, _ = await seed_text_and_plate(fx_kit)
+        actor, project, _, _ = await seed_text_and_leaf(fx_kit)
         first, second = await step_ids_of(fx_kit, project)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         at_first = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
@@ -577,7 +618,7 @@ class TestStepRows:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        _, project, _, _ = await seed_text_and_plate(fx_kit)
+        _, project, _, _ = await seed_text_and_leaf(fx_kit)
         with pytest.raises(NotFoundError):
             await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), StepId(uuid4()))
 
@@ -589,10 +630,10 @@ class TestStepRows:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, text, _ = await seed_text_and_plate(fx_kit)
+        actor, project, text, _ = await seed_text_and_leaf(fx_kit)
         first, _ = await step_ids_of(fx_kit, project)
         key = PageStepKey(text.id, Stage.GEOMETRY, first)
-        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
         steps = [row.step for row in rows.items]
         assert [(step.state, step.flags) for step in steps if step] == [
@@ -600,13 +641,13 @@ class TestStepRows:
             (FigureState.DEFAULT, ()),
         ]
 
-    async def test_a_page_the_condition_skipped_is_flagged_as_skipped(self, fx_kit: ProcessingKit) -> None:
-        """Verify the skipped flag follows the condition, per step.
+    async def test_a_leaf_that_passed_the_step_unchanged_is_flagged_as_skipped(self, fx_kit: ProcessingKit) -> None:
+        """Verify the skipped flag follows the leaf the program drew.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, _, _ = await seed_text_and_plate(fx_kit)
+        actor, project, _, _ = await seed_text_and_leaf(fx_kit)
         first, _ = await step_ids_of(fx_kit, project)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
@@ -630,12 +671,16 @@ async def seed_measured_book(kit: ProcessingKit) -> tuple[Project, StepId]:
         page, _ = await kit.seed_scan_page(project, order_key=key)
         await kit.seed_base_version(page)
         pages.append(page)
+    recipe = await kit.recipe_of(actor, project, Stage.GEOMETRY)
     await kit.service().save_recipe(
-        actor, project.id, Stage.GEOMETRY, RecipeDraft(name='Measured', steps=[Step(processor_key=MEASURING_KEY)])
+        actor,
+        project.id,
+        RecipeKey(Stage.GEOMETRY, recipe.id),
+        RecipeDraft(steps=[Step(processor_key=MEASURING_KEY)]),
     )
     [step_id] = await step_ids_of(kit, project)
-    await kit.page_settings().change(
-        actor, project.id, PageStepKey(pages[-1].id, Stage.GEOMETRY, step_id), STRENGTH_PARAMETER, FAR_STRENGTH
+    await PageValues(kit, actor, project.id).set(
+        PageStepKey(pages[-1].id, Stage.GEOMETRY, step_id), STRENGTH_PARAMETER, FAR_STRENGTH
     )
     await run_stage(kit, actor, project, StageRun(stage=Stage.GEOMETRY))
     return project, step_id
@@ -677,7 +722,7 @@ class TestUnusualPages:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, _, _ = await seed_text_and_plate(fx_kit)
+        actor, project, _, _ = await seed_text_and_leaf(fx_kit)
         first, _ = await step_ids_of(fx_kit, project)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)

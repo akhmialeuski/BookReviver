@@ -2,14 +2,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { processing, recipe, step } from '@/features/processing/fixtures';
+import type { PageSchema, StagePageSchema } from '@/api';
+import { deskew, processing, processor, recipe, step, whole } from '@/features/processing/fixtures';
 import { RunControls } from '@/features/processing/RunControls';
 import { useStageRun } from '@/features/processing/useStageRun';
 import { page, row } from '@/features/workspace/fixtures';
+import type { BarStep } from '@/features/workspace/steps';
 import { joinRows } from '@/features/workspace/strip';
 
 /**
- * The foot of the panel: what it counts, and what the run sends for each of the pages it can go over.
+ * The foot of the panel: what it counts, what its one button says, and what the run sends for each choice of its menu.
  *
  * The generated client is replaced by a function the test reads, so the body of every run is seen as the server gets it.
  */
@@ -44,21 +46,29 @@ function Foot({
   state,
   items,
   selected,
+  openStep,
 }: {
   state: ReturnType<typeof processing>;
   items: typeof ITEMS;
   selected: ReadonlySet<string>;
+  openStep?: BarStep;
 }): React.JSX.Element {
   const run = useStageRun(state, items, items[1], selected);
-  return (
-    <>
-      <RunControls processing={state} items={items} run={run} />
-      <button type="button" data-testid="through" onClick={() => run.start('all', 1)}>
-        through
-      </button>
-    </>
-  );
+  return <RunControls processing={state} items={items} run={run} openStep={openStep} />;
 }
+
+const TWO_STEPS = recipe('r1', {
+  steps: [step('geometry.deskew'), step('geometry.normalize')],
+});
+
+const OPEN_SECOND_STEP: BarStep = {
+  stepId: 'second',
+  number: 2,
+  index: 1,
+  title: 'Normalize',
+  processorKey: 'geometry.normalize',
+  enabled: true,
+};
 
 describe('RunControls', () => {
   let container: HTMLDivElement;
@@ -69,15 +79,19 @@ describe('RunControls', () => {
     state = processing(),
     selected: ReadonlySet<string> = new Set(['c', 'd']),
     items = ITEMS,
+    openStep?: BarStep,
   ): void {
     act(() =>
       root.render(
         <QueryClientProvider client={client}>
-          <Foot state={state} items={items} selected={selected} />
+          <Foot state={state} items={items} selected={selected} openStep={openStep} />
         </QueryClientProvider>,
       ),
     );
   }
+
+  const text = (id: string): string | undefined =>
+    container.querySelector(`[data-testid="${id}"]`)?.textContent ?? undefined;
 
   /** Open the menu of the run the way a keyboard does, which Radix answers in jsdom as it does in a browser. */
   async function openMenu(): Promise<void> {
@@ -88,28 +102,30 @@ describe('RunControls', () => {
     });
   }
 
-  async function choose(scope: string): Promise<void> {
-    await openMenu();
-    const item = document.body.querySelector<HTMLElement>(`[data-testid="run-${scope}"]`);
+  /** Choose an entry of the menu, which stays open for the next choice. */
+  async function choose(testId: string): Promise<void> {
+    if (document.body.querySelector('[role="menu"]') === null) {
+      await openMenu();
+    }
     await act(async () => {
-      item?.click();
+      document.body.querySelector<HTMLElement>(`[data-testid="${testId}"]`)?.click();
     });
   }
 
-  /** Choose what a run does with the pages that have work of their own, in the select above the run. */
-  function chooseMode(mode: string): void {
-    const select = container.querySelector<HTMLSelectElement>('[data-testid="run-mode"]');
-    act(() => {
-      if (select !== null) {
-        select.value = mode;
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-      }
+  async function start(): Promise<void> {
+    await act(async () => {
+      container.querySelector<HTMLElement>('[data-testid="run-start"]')?.click();
     });
   }
 
-  function counts(mode: string, affected: number): void {
+  function owned(own: number, affected = own): void {
     sdk.impact.mockResolvedValue({
-      data: { mode, pages: 4, hand_pages: affected, settings_pages: affected, affected },
+      data: {
+        mode: 'keep',
+        pages: 4,
+        own_pages: own,
+        affected,
+      },
     });
   }
 
@@ -121,9 +137,7 @@ describe('RunControls', () => {
     sdk.stages.mockReset();
     sdk.stages.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 20, pages: 1 } });
     sdk.run.mockResolvedValue({ data: { id: 'job' } });
-    sdk.impact.mockResolvedValue({
-      data: { mode: 'replace-hand', pages: 4, hand_pages: 0, settings_pages: 0, affected: 0 },
-    });
+    owned(0);
     sdk.jobs.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 20, pages: 1 } });
     container = document.createElement('div');
     document.body.append(container);
@@ -199,70 +213,7 @@ describe('RunControls', () => {
     );
   });
 
-  it('runs the open page alone for this page', async () => {
-    render();
-
-    await choose('page');
-
-    expect(sdk.run).toHaveBeenCalledTimes(1);
-    expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
-      path: { project_id: 'project', stage: 'geometry' },
-      body: { page_ids: ['b'] },
-    });
-  });
-
-  it('runs the selected pages', async () => {
-    render();
-
-    await choose('selected');
-
-    expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ page_ids: ['c', 'd'] });
-  });
-
-  it('runs the pages out of date and the pages that failed, and no others', async () => {
-    render();
-
-    await choose('attention');
-
-    expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ page_ids: ['b', 'c'] });
-  });
-
-  it('runs every page by naming none, which the server reads as every page with an image', async () => {
-    render();
-
-    await choose('all');
-
-    expect(sdk.run.mock.calls[0]?.[0].body).toEqual({});
-  });
-
-  it('names no recipe for the active one, so each page gets the variant pinned to it or its rule', async () => {
-    render();
-
-    await choose('page');
-
-    expect(sdk.run.mock.calls[0]?.[0].body).not.toHaveProperty('recipe_id');
-  });
-
-  it('runs the variant the panel shows on every page of the scope, as a trial that pins nothing', async () => {
-    const variant = recipe('r2', { name: 'Gentle', active: false });
-    render(processing({ recipe: variant, recipes: [recipe('r1'), variant] }));
-
-    await choose('all');
-
-    expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ recipe_id: 'r2' });
-  });
-
-  it('sends the index of the last step to run beside the pages, and names no recipe for the active one', async () => {
-    render();
-
-    await act(async () => {
-      container.querySelector<HTMLElement>('[data-testid="through"]')?.click();
-    });
-
-    expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ through_step: 1 });
-  });
-
-  it('says how many pages stopped at each step, out of the steps of the recipe', async () => {
+  it('leaves the pages that stopped short out of the footer, which the strip filter and the page section name', async () => {
     const four = recipe('r1', { steps: [step('a'), step('b'), step('c'), step('d')] });
     sdk.stages.mockResolvedValue({
       data: {
@@ -279,8 +230,7 @@ describe('RunControls', () => {
             review: 0,
             check: 0,
             partial: 77,
-            active_recipe_id: 'r1',
-            variants: [],
+            recipes: [{ kind: 'text', recipe_id: 'r1', pages: 80 }],
             stopped: [
               { through_step: 0, pages: 1 },
               { through_step: 1, pages: 76 },
@@ -295,46 +245,370 @@ describe('RunControls', () => {
     });
     render(processing({ recipe: four, recipes: [four] }));
 
-    await vi.waitFor(() =>
-      expect(container.querySelector('[data-testid="run-stopped"]')?.textContent).toBe(
-        'Done through step 1 of 4: 1 pageDone through step 2 of 4: 76 pages',
-      ),
-    );
-  });
-
-  it('keeps the run off while the draft has changes that are not saved', () => {
-    render(processing({ dirty: true }));
-
-    expect(container.querySelector<HTMLButtonElement>('[data-testid="run-menu"]')?.disabled).toBe(
-      true,
-    );
-    expect(container.textContent).toContain('Save the recipe to run it.');
-  });
-
-  it('keeps the run off while another job of the book is going', async () => {
-    sdk.jobs.mockResolvedValue({
-      data: {
-        items: [
-          {
-            id: 'j',
-            state: 'running',
-            kind: 'run-stage',
-            progress: { done: 0, total: 1, fraction: 0 },
-          },
-        ],
-        total: 1,
-        page: 1,
-        size: 20,
-        pages: 1,
-      },
+    await vi.waitFor(() => expect(sdk.stages).toHaveBeenCalled());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    render();
-    // The jobs of the book are read, which takes a few turns of the queue, more of them on a busy machine
-    await vi.waitFor(() =>
-      expect(container.querySelector<HTMLButtonElement>('[data-testid="run-menu"]')?.disabled).toBe(
-        true,
+    expect(container.querySelector('[data-testid="run-stopped"]')).toBeNull();
+    expect(container.textContent).not.toContain('Done through');
+  });
+
+  describe('the button', () => {
+    it('runs the pages out of date and failed again by default, since the page that is out of date has a result', async () => {
+      render();
+
+      expect(text('run-start')).toBe('Run again on 2 out-of-date and failed pages through Deskew');
+
+      await start();
+
+      expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
+        path: { project_id: 'project', stage: 'geometry' },
+        body: { page_ids: ['b', 'c'] },
+      });
+    });
+
+    it('says Run, and not Run again, when none of the pages has a result yet', async () => {
+      render();
+
+      await choose('run-pages-selected');
+
+      expect(text('run-start')).toBe('Run on 2 selected pages through Deskew');
+    });
+
+    it('stands alone in the foot, with the menu beside it and no preview of the page or Auto', () => {
+      render();
+
+      const buttons = [...container.querySelectorAll('button')].map((button) =>
+        button.getAttribute('data-testid'),
+      );
+      expect(buttons).toEqual(['run-start', 'run-menu']);
+      expect(container.textContent).not.toMatch(/Preview|Auto/);
+      expect(container.querySelector('[data-testid="run-summary"]')).not.toBeNull();
+    });
+
+    it('is off while the draft has changes that are not saved', () => {
+      render(processing({ dirty: true }));
+
+      expect(
+        container.querySelector<HTMLButtonElement>('[data-testid="run-start"]')?.disabled,
+      ).toBe(true);
+      expect(container.textContent?.match(/Save the recipe to run it\./g)).toHaveLength(1);
+    });
+
+    it('is off while another job of the book is going', async () => {
+      sdk.jobs.mockResolvedValue({
+        data: {
+          items: [
+            {
+              id: 'j',
+              state: 'running',
+              kind: 'run-stage',
+              progress: { done: 0, total: 1, fraction: 0 },
+            },
+          ],
+          total: 1,
+          page: 1,
+          size: 20,
+          pages: 1,
+        },
+      });
+      render();
+      // The jobs of the book are read, which takes a few turns of the queue, more of them on a busy machine
+      await vi.waitFor(() =>
+        expect(
+          container.querySelector<HTMLButtonElement>('[data-testid="run-start"]')?.disabled,
+        ).toBe(true),
+      );
+    });
+
+    it('is off when the choice covers no page', async () => {
+      render(
+        processing(),
+        new Set(),
+        joinRows(
+          ITEMS.map((item) => item.page),
+          [row('a'), row('b')],
+        ),
+      );
+
+      expect(
+        container.querySelector<HTMLButtonElement>('[data-testid="run-start"]')?.disabled,
+      ).toBe(true);
+    });
+  });
+
+  describe('the text of the button', () => {
+    /** The four pages of the book, a to d, with the status each has in the stage. */
+    const withStatuses = (
+      statuses: readonly StagePageSchema['status'][],
+      overrides: Partial<PageSchema> = {},
+    ): typeof ITEMS =>
+      joinRows(
+        ['a', 'b', 'c', 'd'].map((id, position) => page(id, { position, ...overrides })),
+        ['a', 'b', 'c', 'd'].map((id, place) => row(id, { status: statuses[place] ?? 'not-run' })),
+      );
+
+    // Every page of these has a result, the second and the third out of date, and none of those has
+    const RESULTS = ['fresh', 'stale', 'stale', 'fresh'] as const;
+    const NO_RESULT = ['not-run', 'failed', 'failed', 'not-run'] as const;
+    const ONE_RESULT = ['fresh', 'not-run', 'not-run', 'not-run'] as const;
+
+    const BOTH = new Set(['c', 'd']);
+    const ONE = new Set(['c']);
+
+    // The page open is b, and the recipe has two steps, of which the open step in the bar is the first
+    const state = (): ReturnType<typeof processing> =>
+      processing({
+        recipe: TWO_STEPS,
+        recipes: [TWO_STEPS],
+        catalogue: [deskew(), processor('geometry.normalize', { title: 'Normalize' })],
+      });
+    const OPEN_FIRST_STEP: BarStep = { ...OPEN_SECOND_STEP, index: 0, number: 1, title: 'Deskew' };
+
+    // The pages of the choice, the statuses of the book, who is selected, and what the button says about the pages
+    const CHOICES = [
+      ['page', RESULTS, BOTH, 'Run again on this page'],
+      ['from-page', RESULTS, BOTH, 'Run again on 3 pages from this page on'],
+      ['selected', RESULTS, BOTH, 'Run again on 2 selected pages'],
+      ['selected', RESULTS, ONE, 'Run again on 1 selected page'],
+      ['group:text', RESULTS, BOTH, 'Run again on 4 pages of the kind Text'],
+      ['attention', RESULTS, BOTH, 'Run again on 2 out-of-date pages'],
+      ['all', RESULTS, BOTH, 'Run again on all 4 pages'],
+      ['page', NO_RESULT, BOTH, 'Run on this page'],
+      ['from-page', NO_RESULT, BOTH, 'Run on 3 pages from this page on'],
+      ['selected', NO_RESULT, BOTH, 'Run on 2 selected pages'],
+      ['group:text', NO_RESULT, BOTH, 'Run on 4 pages of the kind Text'],
+      ['attention', NO_RESULT, BOTH, 'Run on 2 failed pages'],
+      ['all', NO_RESULT, BOTH, 'Run on all 4 pages'],
+      // The words follow the pages the run goes over, and not the book: a is the only page with a result
+      ['all', ONE_RESULT, BOTH, 'Run again on all 4 pages'],
+      ['selected', ONE_RESULT, BOTH, 'Run on 2 selected pages'],
+    ] as const;
+
+    const THROUGH = [
+      ['up to the open step', 'run-through-open', 'Deskew'],
+      ['through the whole stage', 'run-through-stage', 'Normalize'],
+    ] as const;
+
+    it.each(
+      CHOICES.flatMap(([key, statuses, selected, pages]) =>
+        THROUGH.map(([how, through, step]) => ({
+          name: `${key} of ${statuses.join(', ')}, ${[...selected].join('')} selected, ${how}`,
+          key,
+          statuses,
+          selected,
+          through,
+          text: `${pages} through ${step}`,
+        })),
       ),
-    );
+    )('says $text for $name', async ({ key, statuses, selected, through, text: expected }) => {
+      render(state(), selected, withStatuses(statuses), OPEN_FIRST_STEP);
+
+      await choose(`run-pages-${key}`);
+      await choose(through);
+
+      expect(text('run-start')).toBe(expected);
+    });
+  });
+
+  describe('the pages of the menu', () => {
+    it.each([
+      ['page', { page_ids: ['b'] }],
+      ['from-page', { page_ids: ['b', 'c', 'd'] }],
+      ['selected', { page_ids: ['c', 'd'] }],
+      ['group:text', { page_ids: ['a', 'b', 'c', 'd'] }],
+      ['attention', { page_ids: ['b', 'c'] }],
+      ['all', {}],
+    ])('runs %s', async (key, body) => {
+      render();
+
+      await choose(`run-pages-${key}`);
+      await start();
+
+      expect(sdk.run.mock.calls[0]?.[0].body).toEqual(body);
+    });
+
+    it('lists a kind of pages only when the book has some, with its count', async () => {
+      render(processing(), new Set(), joinRows([page('a'), page('b', { kind: 'blank' })], []));
+
+      await openMenu();
+
+      expect(
+        document.body.querySelector('[data-testid="run-pages-group:blank"]')?.textContent,
+      ).toBe('Pages of a kind · Blank1');
+      expect(document.body.querySelector('[data-testid="run-pages-group:bw-picture"]')).toBeNull();
+    });
+
+    it('turns Selected pages off while no page is selected, and on once one is', async () => {
+      render(processing(), new Set());
+      await openMenu();
+
+      const entry = (): Element | null =>
+        document.body.querySelector('[data-testid="run-pages-selected"]');
+      expect(entry()?.getAttribute('aria-disabled')).toBe('true');
+      expect(entry()?.textContent).toBe('Selected pages0');
+
+      render(processing(), new Set(['c']));
+
+      expect(entry()?.getAttribute('aria-disabled')).toBeNull();
+      expect(entry()?.textContent).toBe('Selected pages1');
+    });
+
+    it('lists every kind of pages the book has, with its count, in the order of the menu', async () => {
+      render(
+        processing(),
+        new Set(),
+        joinRows(
+          [
+            page('a'),
+            page('b'),
+            page('c', { content_type: 'bw-picture' }),
+            page('d', { content_type: 'color-picture' }),
+            page('e', { kind: 'blank' }),
+          ],
+          [],
+        ),
+      );
+
+      await openMenu();
+
+      const kinds = [...document.body.querySelectorAll('[data-testid^="run-pages-group:"]')];
+      expect(kinds.map((kind) => kind.textContent)).toEqual([
+        'Pages of a kind · Text3',
+        'Pages of a kind · Colour picture1',
+        'Pages of a kind · Black-and-white picture1',
+        'Pages of a kind · Blank1',
+      ]);
+    });
+
+    it('names no recipe, so each page is run by the recipe of its kind', async () => {
+      render();
+
+      await start();
+
+      expect(sdk.run.mock.calls[0]?.[0].body).not.toHaveProperty('recipe_id');
+    });
+  });
+
+  describe('how far the run goes', () => {
+    const state = (): ReturnType<typeof processing> =>
+      processing({
+        recipe: TWO_STEPS,
+        recipes: [TWO_STEPS],
+        catalogue: [deskew(), whole()],
+      });
+
+    it('goes through the last step of the stage by default, which sends no step', async () => {
+      render(state(), new Set(), ITEMS, OPEN_SECOND_STEP);
+
+      await start();
+
+      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ page_ids: ['b', 'c'] });
+    });
+
+    it('stops at the step that is open when asked, counting the steps from zero', async () => {
+      render(state(), new Set(), ITEMS, { ...OPEN_SECOND_STEP, index: 0, number: 1 });
+
+      await choose('run-through-open');
+      await start();
+
+      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ page_ids: ['b', 'c'], through_step: 0 });
+    });
+
+    it('offers nothing to choose for a recipe of one step', async () => {
+      render(processing(), new Set(), ITEMS, OPEN_SECOND_STEP);
+
+      await openMenu();
+
+      expect(document.body.querySelector('[data-testid="run-through-open"]')).toBeNull();
+    });
+  });
+
+  describe('the pages with work of their own', () => {
+    it('is not in the menu while no page has any', async () => {
+      render();
+
+      await openMenu();
+
+      expect(document.body.querySelector('[data-testid="run-own-keep"]')).toBeNull();
+    });
+
+    it('counts the pages that have some, and keeps their work by default, which sends no mode', async () => {
+      owned(2);
+      render();
+      await openMenu();
+
+      await vi.waitFor(() =>
+        expect(document.body.querySelector('[data-testid="run-own-keep"]')).not.toBeNull(),
+      );
+      expect(document.body.textContent).toContain('Pages with work of their own · 2 among them');
+      expect(sdk.impact.mock.calls[0]?.[0].body).toEqual({ page_ids: ['b', 'c'] });
+
+      await start();
+
+      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ page_ids: ['b', 'c'] });
+    });
+
+    it('leaves them out with a mode of the run and no warning, since the run takes nothing away', async () => {
+      owned(2);
+      render();
+      await openMenu();
+      await vi.waitFor(() =>
+        expect(document.body.querySelector('[data-testid="run-own-skip-own-work"]')).not.toBeNull(),
+      );
+
+      await choose('run-own-skip-own-work');
+
+      expect(text('run-start')).toContain('0 out-of-date and failed pages');
+      expect(
+        container.querySelector<HTMLButtonElement>('[data-testid="run-start"]')?.disabled,
+      ).toBe(true);
+    });
+
+    it('warns with the number of pages that lose their work when it is dropped, and sends the run once it is accepted', async () => {
+      owned(2);
+      render();
+      await openMenu();
+      await vi.waitFor(() =>
+        expect(document.body.querySelector('[data-testid="run-own-drop-own-work"]')).not.toBeNull(),
+      );
+      await choose('run-own-drop-own-work');
+
+      await start();
+
+      expect(document.body.querySelector('[data-testid="overwrite-pages"]')?.textContent).toContain(
+        '2 pages lose',
+      );
+      expect(sdk.run).not.toHaveBeenCalled();
+
+      await act(async () => {
+        document.body.querySelector<HTMLElement>('[data-testid="overwrite-confirm"]')?.click();
+      });
+
+      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({
+        page_ids: ['b', 'c'],
+        mode: 'drop-own-work',
+        confirm_overwrite: true,
+      });
+    });
+
+    it('sends nothing when the warning is declined', async () => {
+      owned(2);
+      render();
+      await openMenu();
+      await vi.waitFor(() =>
+        expect(document.body.querySelector('[data-testid="run-own-drop-own-work"]')).not.toBeNull(),
+      );
+      await choose('run-own-drop-own-work');
+      await start();
+
+      await act(async () => {
+        const buttons = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"] button')];
+        buttons.find((button) => button.textContent === 'Cancel')?.click();
+      });
+
+      expect(sdk.run).not.toHaveBeenCalled();
+    });
   });
 
   describe('a run that would send a scan back to one page', () => {
@@ -351,7 +625,7 @@ describe('RunControls', () => {
         halves,
       );
 
-      await choose('all');
+      await start();
 
       expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain(
         'Go back to one page?',
@@ -365,13 +639,16 @@ describe('RunControls', () => {
         new Set(),
         halves,
       );
-      await choose('all');
+      await start();
 
       await act(async () => {
         document.body.querySelector<HTMLElement>('[data-testid="unsplit-confirm"]')?.click();
       });
 
-      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ confirm_unsplit: true });
+      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({
+        page_ids: ['l', 'r'],
+        confirm_unsplit: true,
+      });
     });
 
     it('sends nothing when the answer is no', async () => {
@@ -380,7 +657,7 @@ describe('RunControls', () => {
         new Set(),
         halves,
       );
-      await choose('all');
+      await start();
 
       await act(async () => {
         const buttons = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"] button')];
@@ -398,117 +675,10 @@ describe('RunControls', () => {
         halves,
       );
 
-      await choose('all');
+      await start();
 
       expect(document.body.querySelector('[role="dialog"]')).toBeNull();
-      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({});
-    });
-  });
-
-  describe('the mode of a run', () => {
-    it('keeps the work of the pages by default, which sends no mode and asks for no count', async () => {
-      render();
-
-      await choose('all');
-
-      expect(sdk.impact).not.toHaveBeenCalled();
-      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({});
-    });
-
-    it('offers the three modes, the usual one first', () => {
-      render();
-
-      const options = [
-        ...container.querySelectorAll<HTMLOptionElement>('[data-testid="run-mode"] option'),
-      ].map((option) => option.textContent);
-      expect(options).toEqual([
-        'Keep hand settings',
-        'Replace hand settings',
-        'Reset page settings',
-      ]);
-    });
-
-    it('counts the pages a mode takes work from with the pages of the run, before it sends anything', async () => {
-      counts('replace-hand', 3);
-      render();
-      chooseMode('replace-hand');
-
-      await choose('selected');
-
-      expect(sdk.impact.mock.calls[0]?.[0]).toMatchObject({
-        path: { project_id: 'project', stage: 'geometry' },
-        body: { mode: 'replace-hand', page_ids: ['c', 'd'] },
-      });
-      expect(sdk.run).not.toHaveBeenCalled();
-    });
-
-    it('warns with the number of pages that lose their hand settings', async () => {
-      counts('replace-hand', 3);
-      render();
-      chooseMode('replace-hand');
-
-      await choose('all');
-
-      const dialog = document.body.querySelector('[data-testid="overwrite-dialog"]');
-      expect(dialog?.textContent).toContain('Replace the hand settings?');
-      expect(dialog?.querySelector('[data-testid="overwrite-pages"]')?.textContent).toContain(
-        '3 pages lose the shape set by hand',
-      );
-      expect(dialog?.textContent).toContain('one undo gives it back');
-    });
-
-    it('warns with the number of pages that go back to the recipe when the settings are reset', async () => {
-      counts('reset-page-settings', 1);
-      render();
-      chooseMode('reset-page-settings');
-
-      await choose('all');
-
-      expect(document.body.querySelector('[data-testid="overwrite-pages"]')?.textContent).toContain(
-        '1 page goes back to the settings of the recipe',
-      );
-    });
-
-    it('sends the run with the mode and the confirmation once the warning is accepted', async () => {
-      counts('replace-hand', 3);
-      render();
-      chooseMode('replace-hand');
-      await choose('all');
-
-      await act(async () => {
-        document.body.querySelector<HTMLElement>('[data-testid="overwrite-confirm"]')?.click();
-      });
-
-      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({
-        mode: 'replace-hand',
-        confirm_overwrite: true,
-      });
-    });
-
-    it('sends nothing when the warning is declined', async () => {
-      counts('replace-hand', 3);
-      render();
-      chooseMode('replace-hand');
-      await choose('all');
-
-      await act(async () => {
-        const buttons = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"] button')];
-        buttons.find((button) => button.textContent === 'Cancel')?.click();
-      });
-
-      expect(sdk.run).not.toHaveBeenCalled();
-      expect(document.body.querySelector('[data-testid="overwrite-dialog"]')).toBeNull();
-    });
-
-    it('sends the run with the mode and no question when no page has anything to lose', async () => {
-      counts('replace-hand', 0);
-      render();
-      chooseMode('replace-hand');
-
-      await choose('all');
-
-      expect(document.body.querySelector('[role="dialog"]')).toBeNull();
-      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ mode: 'replace-hand' });
+      expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ page_ids: ['l', 'r'] });
     });
   });
 });

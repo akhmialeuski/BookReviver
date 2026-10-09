@@ -20,7 +20,6 @@ from bookreviver.domain.entities import (
     Project,
     Recipe,
     RecipeProfile,
-    RecipeRule,
     ResultMarkChange,
     Scan,
     Source,
@@ -34,11 +33,11 @@ from bookreviver.domain.ids import (
     ProjectId,
     RecipeId,
     RecipeProfileId,
-    RecipeRuleId,
     ResultMarkChangeId,
     ScanId,
     SourceId,
 )
+from bookreviver.domain.step_values import StepValues, StepValuesKey
 from bookreviver.domain.values import BookPlaceKey, PageStageKey, PageStepKey
 
 if TYPE_CHECKING:
@@ -46,10 +45,10 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.domain.entities import ProjectOverview
-    from bookreviver.domain.enums import JobState, ResultMark, Side, Stage, VersionScale
+    from bookreviver.domain.enums import JobState, RecipeKind, ResultMark, Side, Stage, VersionScale
     from bookreviver.domain.ids import AccountId, ChangeBatchId, StepId
-    from bookreviver.domain.stage_summaries import StageTally, StepTally, VariantTally
-    from bookreviver.domain.values import PageSize, Slice, SliceRequest
+    from bookreviver.domain.stage_summaries import StageTally, StepTally
+    from bookreviver.domain.values import PageSize, ProcessorRef, Slice, SliceRequest
 
 
 class Repository[EntityT, IdT](ABC):
@@ -364,6 +363,18 @@ class PageRepository(Repository[Page, PageId]):
         :rtype: str | None
         """
 
+    @abstractmethod
+    async def kind_tally(self, project_id: ProjectId) -> Mapping[RecipeKind, int]:
+        """Count the pages with an image of each kind of a project, in one grouped query.
+
+        The kind of a page is ``Page.recipe_kind``. A placeholder has no image and is never counted.
+
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
+        :returns: The number of pages of each kind that has any page.
+        :rtype: Mapping[RecipeKind, int]
+        """
+
 
 class PaginationSectionRepository(Repository[PaginationSection, PaginationSectionId]):
     """The pagination sections of the books, which a page of the book is numbered from.
@@ -485,22 +496,18 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         """
 
     @abstractmethod
-    async def collectable(
-        self, project_id: ProjectId, older_than: datetime, previews_older_than: datetime
-    ) -> Sequence[PageVersion]:
-        """Return the versions a collection may clear: old, not base, with files, and read by no version that stays.
+    async def collectable(self, project_id: ProjectId, previews_older_than: datetime) -> Sequence[PageVersion]:
+        """Return the versions a collection may delete: not base, and read by no version that stays.
 
         A version stays when a stage record names it as its head, when it is a base version, which has no input, when
-        it is too young to go, and when a version that stays reads it, directly or through the chain of inputs.
-        Deleting an input would leave the version that reads it with no input, which the database allows and which
-        would make it look like a base version for ever. A full run is old once it was created before ``older_than``,
-        and a preview once it was created before ``previews_older_than``. A version whose files were removed already is
-        not returned again, since there is nothing left to remove from it, but it still counts as a reader.
+        it is a preview too young to go, when the user marked it Good or wrote a comment on it, and when a version that
+        stays reads it, directly or through the chain of inputs. Deleting an input would leave the version that reads
+        it with no input, which the database allows and which would make it look like a base version for ever. A full
+        run goes as soon as it is none of these, with no age to wait for, and a preview once it was created before
+        ``previews_older_than``, since the editor that asked for it is still showing it.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
-        :param older_than: Full runs created before this moment may go.
-        :type older_than: datetime
         :param previews_older_than: Previews created before this moment may go.
         :type previews_older_than: datetime
         :returns: The versions that may be deleted, the earliest first, ties by identifier.
@@ -510,6 +517,8 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
     @abstractmethod
     async def delete_many(self, version_ids: Collection[PageVersionId]) -> None:
         """Remove the rows of several versions in the one transaction; a version that is not stored is left alone.
+
+        The log of the marks of each version goes with it.
 
         :param version_ids: Versions to remove.
         :type version_ids: Collection[PageVersionId]
@@ -574,6 +583,27 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
+    async def list_fresh(self) -> Sequence[PageStage]:
+        """Return the records of the pages of every book whose current version is up to date, by page and stage.
+
+        :returns: Every record in the fresh state, by page identifier and then in the order of the stages.
+        :rtype: Sequence[PageStage]
+        """
+
+    @abstractmethod
+    async def list_replaced(self, stage: Stage, processor: ProcessorRef) -> Sequence[PageStage]:
+        """Return the records of a stage of every book whose current version a replaced version of a processor made.
+
+        :param stage: The stage whose records are read.
+        :type stage: Stage
+        :param processor: The processor by key and installed version: a record is returned when its current version was
+                          made by the same key in another version, whatever the state of the record.
+        :type processor: ProcessorRef
+        :returns: The records, by page identifier.
+        :rtype: Sequence[PageStage]
+        """
+
+    @abstractmethod
     async def list_for_project_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[PageStage]:
         """Return the records of one stage over the pages of a project, by page identifier.
 
@@ -583,19 +613,6 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         :type stage: Stage
         :returns: Every record of the stage in the project.
         :rtype: Sequence[PageStage]
-        """
-
-    @abstractmethod
-    async def variant_tally(self, project_id: ProjectId) -> Sequence[VariantTally]:
-        """Count the pages each recipe processed, for every stage of a project, in one grouped query.
-
-        Only pages with an image are counted, so a placeholder never is, and a record whose recipe was deleted names no
-        recipe and is left out.
-
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
-        :returns: One tally for each recipe that processed a page, in no particular order.
-        :rtype: Sequence[VariantTally]
         """
 
     @abstractmethod
@@ -690,6 +707,55 @@ class PageStepStateRepository(Repository[PageStepState, PageStepKey]):
         """
 
 
+class StepValuesRepository(Repository[StepValues, StepValuesKey]):
+    """The values of the steps for the odd pages, the even pages and the groups; deleting a project removes them."""
+
+    @abstractmethod
+    async def save(self, values: StepValues) -> StepValues:
+        """Store values, replacing the ones the same part of the pages has for the same step.
+
+        :param values: Values to store.
+        :type values: StepValues
+        :returns: The values as stored.
+        :rtype: StepValues
+        :raises NotFoundError: If the project is not stored.
+        """
+
+    @abstractmethod
+    async def find(self, key: StepValuesKey) -> StepValues | None:
+        """Return the values one part of the pages has for one step.
+
+        :param key: The project, the step and the part of the pages.
+        :type key: StepValuesKey
+        :returns: The values, or None when the part changes no field of the step.
+        :rtype: StepValues | None
+        """
+
+    @abstractmethod
+    async def list_for_step(self, project_id: ProjectId, step_id: StepId) -> Sequence[StepValues]:
+        """Return the values every part of the pages of a project has for one step, by scope and group.
+
+        Books built from one profile share the identifiers of the steps, so the values are those of one project.
+
+        :param project_id: Project owning the step.
+        :type project_id: ProjectId
+        :param step_id: The step of a recipe.
+        :type step_id: StepId
+        :returns: The values of the step, which are none when no part changes a field of it.
+        :rtype: Sequence[StepValues]
+        """
+
+    @abstractmethod
+    async def list_for_project(self, project_id: ProjectId) -> Sequence[StepValues]:
+        """Return the values of every step of a project, by step, scope and group, which is one read for all stages.
+
+        :param project_id: Project owning the steps.
+        :type project_id: ProjectId
+        :returns: The values of the project, each naming its stage.
+        :rtype: Sequence[StepValues]
+        """
+
+
 class PageStepChangeRepository(Repository[PageStepChange, PageStepChangeId]):
     """The history of the layers of the steps of each page. A change is added once and never rewritten.
 
@@ -762,59 +828,31 @@ class ResultMarkChangeRepository(Repository[ResultMarkChange, ResultMarkChangeId
 
 
 class RecipeRepository(Repository[Recipe, RecipeId]):
-    """Recipes of the projects; a stage of a project has at most one active recipe, which the database keeps.
+    """Recipes of the projects; a stage of a project has at most one recipe for each kind, which the database keeps.
 
     Deleting a recipe leaves the page stages it processed without their recipe.
     """
 
     @abstractmethod
     async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[Recipe]:
-        """Return the recipes of one stage of a project, the active one first, then by creation, ties by identifier.
+        """Return the recipes of one stage of a project, by creation, ties by identifier.
 
         :param project_id: Project owning the recipes.
         :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
-        :returns: The active recipe and the variants of the stage.
+        :returns: The recipes of the stage, one for each kind, or none before the stage has been used.
         :rtype: Sequence[Recipe]
         """
 
     @abstractmethod
-    async def find_active(self, project_id: ProjectId, stage: Stage) -> Recipe | None:
-        """Return the active recipe of a stage of a project.
-
-        :param project_id: Project owning the recipe.
-        :type project_id: ProjectId
-        :param stage: The stage.
-        :type stage: Stage
-        :returns: The active recipe, or None before the stage has been used.
-        :rtype: Recipe | None
-        """
-
-    @abstractmethod
-    async def list_active(self, project_id: ProjectId) -> Sequence[Recipe]:
-        """Return the active recipe of every stage of a project that has one, in the order of the stages.
+    async def list_for_project(self, project_id: ProjectId) -> Sequence[Recipe]:
+        """Return the recipes of every stage of a project, in the order of the stages and then as ``list_for_stage``.
 
         :param project_id: Project owning the recipes.
         :type project_id: ProjectId
-        :returns: The active recipes, one for each stage that has been used.
+        :returns: The recipes of the stages that have been used.
         :rtype: Sequence[Recipe]
-        """
-
-
-class RecipeRuleRepository(Repository[RecipeRule, RecipeRuleId]):
-    """The rules that send pages to recipes of a stage; deleting a recipe or a project removes its rules."""
-
-    @abstractmethod
-    async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[RecipeRule]:
-        """Return the rules of one stage of a project in the order they are tried, ties by identifier.
-
-        :param project_id: Project owning the rules.
-        :type project_id: ProjectId
-        :param stage: The stage.
-        :type stage: Stage
-        :returns: The rules of the stage, the first to try first.
-        :rtype: Sequence[RecipeRule]
         """
 
 
@@ -931,14 +969,18 @@ class BookPlaceRepository(Repository[BookPlace, BookPlaceKey]):
 
     @abstractmethod
     async def save(self, place: BookPlace) -> BookPlace:
-        """Store the place of an account in a book, replacing the one stored.
+        """Store the place of an account in a book, replacing the one stored whole, unless that one is newer.
+
+        The write is atomic: of two transactions saving at once, the one with the later ``updated_at`` leaves its place
+        whole, and no field of the other is kept. A place whose ``updated_at`` is earlier than the stored one changes
+        nothing, so a request that arrives late never overwrites a newer one. The comparison sees the place as last
+        committed by anyone, not as this transaction read it.
 
         :param place: Place to store.
         :type place: BookPlace
-        :returns: The place as stored.
+        :returns: The place as stored, which is the stored place when it is newer than ``place``.
         :rtype: BookPlace
         :raises NotFoundError: If the book is not stored.
-        :raises ConflictError: If another transaction stored the first place of the account in the book meanwhile.
         """
 
     @abstractmethod
@@ -964,9 +1006,10 @@ class UnitOfWork(ABC):
     :ivar page_stages: Page stage repository of this transaction.
     :ivar page_step_states: Repository of the settings and manual edits of the steps of the pages, of this transaction.
     :ivar page_step_changes: Repository of the history of the steps of the pages, of this transaction.
+    :ivar step_values: Repository of the values of the steps for the odd pages, the even pages and the groups, of this
+                       transaction.
     :ivar result_mark_changes: Repository of the log of the marks and comments of the results, of this transaction.
     :ivar recipes: Recipe repository of this transaction.
-    :ivar recipe_rules: Repository of the rules that send pages to recipes, of this transaction.
     :ivar recipe_profiles: Repository of the recipe profiles of the accounts, of this transaction.
     :ivar jobs: Job repository of this transaction.
     :ivar book_places: Repository of the places accounts left books at, of this transaction.
@@ -981,9 +1024,9 @@ class UnitOfWork(ABC):
     page_stages: PageStageRepository
     page_step_states: PageStepStateRepository
     page_step_changes: PageStepChangeRepository
+    step_values: StepValuesRepository
     result_mark_changes: ResultMarkChangeRepository
     recipes: RecipeRepository
-    recipe_rules: RecipeRuleRepository
     recipe_profiles: RecipeProfileRepository
     jobs: JobRepository
     book_places: BookPlaceRepository

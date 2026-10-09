@@ -9,7 +9,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, StepId
 from bookreviver.domain.values import ProcessorRef, Step
-from bookreviver.domain.version_chains import StepVersions, stage_depths, step_places, versions_of_step
+from bookreviver.domain.version_chains import StepVersions, readers_first, stage_depths, step_places, versions_of_step
 from tests.helpers.builders import make_page_version, make_recipe
 
 if TYPE_CHECKING:
@@ -71,10 +71,39 @@ def made_by(page_id: PageId, key: str, stage: Stage, minutes: int, read: PageVer
     )
 
 
+class TestReadersFirst:
+    """Tests for readers_first."""
+
+    def test_a_reader_stands_in_a_group_before_the_version_it_reads(self) -> None:
+        """Verify the groups go from the version that reads the most down to the one that reads none."""
+        page_id = PageId(uuid4())
+        base = make_page_version(page_id=page_id)
+        first = evolve(make_page_version(page_id=page_id, minutes=1), input_id=base.id)
+        second = evolve(make_page_version(page_id=page_id, minutes=2), input_id=first.id)
+        sibling = evolve(make_page_version(page_id=page_id, minutes=3), input_id=base.id)
+        groups = readers_first([base, sibling, first, second])
+        assert [[version.id for version in group] for group in groups] == [
+            [second.id],
+            [sibling.id, first.id],
+            [base.id],
+        ]
+
+    def test_an_input_outside_the_set_does_not_count(self) -> None:
+        """Verify a version whose input is not among the versions stands with those that read none of them."""
+        page_id = PageId(uuid4())
+        kept = make_page_version(page_id=page_id)
+        reader = evolve(make_page_version(page_id=page_id, minutes=1), input_id=kept.id)
+        assert [[version.id for version in group] for group in readers_first([reader])] == [[reader.id]]
+
+    def test_no_versions_make_no_group(self) -> None:
+        """Verify an empty set gives no group."""
+        assert readers_first([]) == []
+
+
 class TestStepPlaces:
     """Tests for step_places."""
 
-    def test_a_step_copied_into_a_variant_has_a_place_in_each_recipe_that_has_it_on(self) -> None:
+    def test_a_step_copied_into_the_recipe_of_another_kind_has_a_place_in_each_recipe_that_has_it_on(self) -> None:
         """Verify one step identifier gives one place for each recipe, and none for a recipe that has it off."""
         project_id = ProjectId(uuid4())
         crop = Step(processor_key=CROP_KEY, step_id=CROP_STEP)

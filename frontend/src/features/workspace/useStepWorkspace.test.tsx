@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FigureState, StagePageSchema, StepFlag } from '@/api';
+import type { CarryOverSchema, FigureState, StagePageSchema, StepFlag } from '@/api';
 import { deskew, processing, processor, recipe, step } from '@/features/processing/fixtures';
 import { page, row, stepPage } from '@/features/workspace/fixtures';
 import type { StripItem } from '@/features/workspace/strip';
@@ -27,7 +27,7 @@ const SAVED = recipe('r1', {
   steps: [
     step('geometry.perspective', { step_id: 'a' }),
     step('geometry.deskew', { step_id: 'b' }),
-    step('geometry.deskew', { step_id: 'c', applies_to: 'pictures' }),
+    step('geometry.deskew', { step_id: 'c' }),
   ],
 });
 const STATE = processing({
@@ -63,19 +63,25 @@ describe('useStepWorkspace', () => {
   function Probe({
     stepId,
     state,
+    current,
   }: {
     stepId: string | undefined;
     state: ReturnType<typeof processing>;
+    current: StripItem;
   }): null {
-    seen = useStepWorkspace(state, stepId, CURRENT);
+    seen = useStepWorkspace(state, stepId, current);
     return null;
   }
 
-  async function render(stepId: string | undefined, state = STATE): Promise<void> {
+  async function render(
+    stepId: string | undefined,
+    state = STATE,
+    current = CURRENT,
+  ): Promise<void> {
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
-          <Probe stepId={stepId} state={state} />
+          <Probe stepId={stepId} state={state} current={current} />
         </QueryClientProvider>,
       );
     });
@@ -136,13 +142,11 @@ describe('useStepWorkspace', () => {
     ]);
   });
 
-  it('names the open step, the page it did on the open page and the steps either side', async () => {
+  it('names the open step and the page it did on the open page', async () => {
     await render('b');
 
     expect(seen?.open?.number).toBe(2);
     expect(seen?.page?.state).toBe('by-hand');
-    expect(seen?.neighbours.previous?.stepId).toBe('a');
-    expect(seen?.neighbours.next?.stepId).toBe('c');
   });
 
   it('counts the pages of the book at the open step', async () => {
@@ -229,8 +233,8 @@ describe('useStepWorkspace', () => {
     const cleanup = recipe('c1', {
       stage: 'cleanup',
       steps: [
-        step('cleanup.binarize', { step_id: 'a', applies_to: 'text' }),
-        step('cleanup.thickness', { step_id: 'b', applies_to: 'text' }),
+        step('cleanup.binarize', { step_id: 'a' }),
+        step('cleanup.thickness', { step_id: 'b' }),
       ],
     });
     await render('b', {
@@ -249,6 +253,51 @@ describe('useStepWorkspace', () => {
     expect(requests()).toEqual(
       expect.arrayContaining([expect.objectContaining({ step: 'b', size: 1000 })]),
     );
+  });
+
+  describe('what a carry-over did', () => {
+    // A carry-over that reached no page, which is enough to tell one result from another by identity
+    const DONE = { batch_id: 'one', changes: [], skipped: [] } satisfies CarryOverSchema;
+    const OTHER_PAGE: StripItem = { page: page('p3', { position: 2 }), row: row('p3') };
+
+    it('stays with its step when the open page changes and changes back', async () => {
+      await render('b');
+      act(() => seen?.setCarried(DONE));
+      expect(seen?.carried).toBe(DONE);
+
+      await render('b', STATE, OTHER_PAGE);
+      expect(seen?.carried).toBe(DONE);
+
+      await render('b', STATE, CURRENT);
+      expect(seen?.carried).toBe(DONE);
+    });
+
+    it('belongs to the step it was made on and to no other', async () => {
+      await render('b');
+      act(() => seen?.setCarried(DONE));
+
+      await render('c');
+      expect(seen?.carried).toBeNull();
+
+      await render('b');
+      expect(seen?.carried).toBe(DONE);
+    });
+
+    it('is forgotten once it is taken back', async () => {
+      await render('b');
+      act(() => seen?.setCarried(DONE));
+      act(() => seen?.setCarried(null));
+
+      expect(seen?.carried).toBeNull();
+    });
+
+    it('is not kept while no step is open', async () => {
+      await render(undefined);
+      act(() => seen?.setCarried(DONE));
+      await render('b');
+
+      expect(seen?.carried).toBeNull();
+    });
   });
 
   it('reads nothing for a stage that has no bar of steps', async () => {

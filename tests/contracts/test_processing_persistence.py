@@ -12,16 +12,18 @@ from uuid import uuid4
 
 import pytest
 from attrs import evolve
+from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import (
-    AppliesTo,
     ChangeSource,
     PageOrigin,
+    RecipeKind,
     ResultMark,
     ReviewReason,
     Stage,
     StageState,
+    ValueScope,
     VersionScale,
     VersionState,
 )
@@ -29,7 +31,7 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.geometry import Line, Point
 from bookreviver.domain.ids import ChangeBatchId, PageId, PageStepChangeId, PageVersionId, ProjectId, StepId
 from bookreviver.domain.stage_summaries import StepTally
-from bookreviver.domain.values import PageStageKey, PageStepKey, SliceRequest, Step
+from bookreviver.domain.values import PageStageKey, PageStepKey, ProcessorRef, SliceRequest, Step
 from tests.helpers.builders import (
     DESKEW_STEP_ID,
     EPOCH,
@@ -42,6 +44,7 @@ from tests.helpers.builders import (
     make_page_version,
     make_project,
     make_recipe,
+    make_step_values,
     new_account_id,
 )
 
@@ -55,11 +58,9 @@ pytestmark = pytest.mark.anyio
 # A version created long before the moment a collection looks back to, and one created after it
 OLD: timedelta = timedelta(days=60)
 RECENT: timedelta = timedelta(days=1)
-VARIANT_NAME: str = 'Variant'
 # Order key of a second page of the same book, after the 'a0' a stored page gets
 SECOND_ORDER_KEY: str = 'a1'
 NOW = EPOCH + timedelta(days=100)
-FULL_CUTOFF = NOW - timedelta(days=30)
 PREVIEW_CUTOFF = NOW - timedelta(hours=1)
 
 
@@ -149,10 +150,10 @@ def _version(
 class TestRecipeRepository:
     """Tests for the recipes of a project."""
 
-    async def test_stage_has_one_active_recipe(
+    async def test_stage_has_one_recipe_for_each_kind(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Reject a second active recipe of a stage, which two requests switching the recipe could both store.
+        """Reject a second recipe of a kind in a stage, which two requests making the recipes could both store.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -162,14 +163,14 @@ class TestRecipeRepository:
         uow = await fx_uow_factory()
         project = make_project(owner_id=await fx_new_owner())
         await uow.projects.add(project)
-        await uow.recipes.add(make_recipe(project_id=project.id, active=True))
+        await uow.recipes.add(make_recipe(project_id=project.id, kind=RecipeKind.BLANK))
         with pytest.raises(ConflictError):
-            await uow.recipes.add(make_recipe(project_id=project.id, name='Other', active=True))
+            await uow.recipes.add(make_recipe(project_id=project.id, kind=RecipeKind.BLANK, minutes=1))
 
-    async def test_variants_and_other_stages_may_be_added_beside_the_active_recipe(
+    async def test_every_kind_and_other_stages_may_be_added_beside_a_recipe(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the one active recipe is per stage, and any number of variants stand beside it.
+        """Verify the one recipe of a kind is per stage, and the recipes of the stage are listed by creation.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -179,38 +180,19 @@ class TestRecipeRepository:
         uow = await fx_uow_factory()
         project = make_project(owner_id=await fx_new_owner())
         await uow.projects.add(project)
-        active = make_recipe(project_id=project.id, active=True)
-        variant = make_recipe(project_id=project.id, name=VARIANT_NAME, minutes=1)
-        other_stage = make_recipe(project_id=project.id, stage=Stage.CLEANUP, active=True)
-        await uow.recipes.add_many([variant, active, other_stage])
+        recipes = [
+            make_recipe(project_id=project.id, kind=kind, minutes=index) for index, kind in enumerate(RecipeKind)
+        ]
+        other_stage = make_recipe(project_id=project.id, stage=Stage.CLEANUP)
+        await uow.recipes.add_many([*reversed(recipes), other_stage])
         await uow.commit()
         listed = await (await fx_uow_factory()).recipes.list_for_stage(project.id, Stage.GEOMETRY)
-        assert [recipe.id for recipe in listed] == [active.id, variant.id]
+        assert [recipe.id for recipe in listed] == [recipe.id for recipe in recipes]
 
-    async def test_find_active_returns_the_active_recipe_or_none(
+    async def test_list_for_project_returns_the_recipes_of_each_stage_in_pipeline_order(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the active recipe of a stage is found, and a stage without one gives None.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        uow = await fx_uow_factory()
-        project = make_project(owner_id=await fx_new_owner())
-        await uow.projects.add(project)
-        active = make_recipe(project_id=project.id, active=True)
-        await uow.recipes.add(active)
-        assert (
-            await uow.recipes.find_active(project.id, Stage.GEOMETRY),
-            await uow.recipes.find_active(project.id, Stage.CLEANUP),
-        ) == (active, None)
-
-    async def test_list_active_returns_the_active_recipe_of_each_stage_in_pipeline_order(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify variants and the recipes of another project are left out, and the stages keep the pipeline order.
+        """Verify the recipes of another project are left out, and the stages keep the pipeline order.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -219,24 +201,24 @@ class TestRecipeRepository:
         """
         owner_id = await fx_new_owner()
         project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
-        cleanup = make_recipe(project_id=project.id, stage=Stage.CLEANUP, active=True)
-        geometry = make_recipe(project_id=project.id, active=True)
+        cleanup = make_recipe(project_id=project.id, stage=Stage.CLEANUP)
+        geometry = make_recipe(project_id=project.id)
+        picture = make_recipe(project_id=project.id, kind=RecipeKind.BW_PICTURE, minutes=1)
         uow = await fx_uow_factory()
         for owned in (project, other):
             await uow.projects.add(owned)
-        for recipe in (
-            cleanup,
-            geometry,
-            make_recipe(project_id=project.id, name=VARIANT_NAME, minutes=1),
-            make_recipe(project_id=other.id, active=True),
-        ):
+        for recipe in (cleanup, picture, geometry, make_recipe(project_id=other.id)):
             await uow.recipes.add(recipe)
         await uow.commit()
         recipes = (await fx_uow_factory()).recipes
-        assert [recipe.id for recipe in await recipes.list_active(project.id)] == [geometry.id, cleanup.id]
+        assert [recipe.id for recipe in await recipes.list_for_project(project.id)] == [
+            geometry.id,
+            picture.id,
+            cleanup.id,
+        ]
 
     async def test_steps_survive_the_store(self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
-        """Verify a recipe reads back with its steps, their parameters, identifiers and conditions, and the switches.
+        """Verify a recipe reads back with its steps, their parameters, identifiers and switches.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -246,7 +228,7 @@ class TestRecipeRepository:
         uow = await fx_uow_factory()
         project = make_project(owner_id=await fx_new_owner())
         plain = make_recipe(project_id=project.id)
-        other = Step(processor_key='geometry.other', params={}, enabled=False, applies_to=AppliesTo.PICTURES)
+        other = Step(processor_key='geometry.other', params={}, enabled=False)
         recipe = evolve(plain, steps=(*plain.steps, other, evolve(plain.steps[0], step_id=StepId(uuid4()))))
         await uow.projects.add(project)
         await uow.recipes.add(recipe)
@@ -275,7 +257,7 @@ class TestRecipeRepository:
         """
         project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
-        recipe = make_recipe(project_id=project_id, active=True)
+        recipe = make_recipe(project_id=project_id)
         await uow.recipes.add(recipe)
         await uow.page_stages.save(make_page_stage(page_id=page_id, recipe_id=recipe.id))
         await uow.commit()
@@ -428,7 +410,7 @@ class TestPageStageRepository:
         project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         other_project_id, other_page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
-        recipe = make_recipe(project_id=project_id, active=True)
+        recipe = make_recipe(project_id=project_id)
         await uow.recipes.add(recipe)
         mine = make_page_stage(page_id=page_id, recipe_id=recipe.id)
         await uow.page_stages.save(mine)
@@ -441,6 +423,77 @@ class TestPageStageRepository:
             await uow.page_stages.list_for_project_stage(project_id, Stage.GEOMETRY),
             await uow.page_stages.list_for_project_stage(other_project_id, Stage.CLEANUP),
         ) == ([mine], [mine], [])
+
+    async def test_list_fresh_returns_the_fresh_records_of_every_project(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the fresh records of all the projects are listed by page and stage, and no stale or failed one.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        _, other_page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        uow = await fx_uow_factory()
+        fresh = [
+            make_page_stage(page_id=page_id, stage=Stage.CLEANUP),
+            make_page_stage(page_id=page_id, stage=Stage.GEOMETRY),
+            make_page_stage(page_id=other_page_id, stage=Stage.GEOMETRY),
+        ]
+        for record in fresh:
+            await uow.page_stages.save(record)
+        await uow.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.PAGE_SPLIT, state=StageState.STALE))
+        await uow.page_stages.save(make_page_stage(page_id=other_page_id, stage=Stage.CLEANUP, state=StageState.FAILED))
+        await uow.commit()
+        order = list(Stage)
+        expected = sorted(fresh, key=lambda record: (str(record.page_id), order.index(record.stage)))
+
+        assert await (await fx_uow_factory()).page_stages.list_fresh() == expected
+
+    async def test_list_replaced_returns_the_records_made_by_another_version_of_the_processor_in_any_state(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a stage's records of every project are listed when their version is of the key but not the given one.
+
+        A record of the installed version, one of another processor and one of another stage are left out, and the
+        state of the record does not matter.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        installed = ProcessorRef(key='pages.blank', version='2')
+        pages = [(await _store_page(fx_uow_factory, fx_new_owner))[1] for _ in range(4)]
+        made_by = [
+            ProcessorRef(key='pages.blank', version='1'),
+            installed,
+            ProcessorRef(key='geometry.crop', version='1'),
+            ProcessorRef(key='pages.blank', version='1'),
+        ]
+        uow = await fx_uow_factory()
+        records = []
+        for page_id, processor in zip(pages, made_by, strict=True):
+            version = evolve(make_page_version(page_id=page_id), stage=Stage.PAGE_ORDER, processor=processor)
+            await uow.page_versions.add(version)
+            state = StageState.STALE if page_id == pages[0] else StageState.FRESH
+            records.append(
+                make_page_stage(page_id=page_id, stage=Stage.PAGE_ORDER, head_version_id=version.id, state=state)
+            )
+        for record in records:
+            await uow.page_stages.save(record)
+        other_stage = evolve(make_page_version(page_id=pages[3]), stage=Stage.GEOMETRY, processor=made_by[0])
+        await uow.page_versions.add(other_stage)
+        await uow.page_stages.save(
+            make_page_stage(page_id=pages[3], stage=Stage.GEOMETRY, head_version_id=other_stage.id)
+        )
+        await uow.commit()
+
+        found = await (await fx_uow_factory()).page_stages.list_replaced(Stage.PAGE_ORDER, installed)
+
+        assert found == sorted([records[0], records[3]], key=attrgetter('page_id'))
 
     async def test_head_ids_lists_the_current_versions_of_a_project(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -788,6 +841,175 @@ class TestPageStepStateRepository:
             await uow.page_step_states.delete(state.key)
 
 
+class TestStepValuesRepository:
+    """Tests for the values of the steps for the odd pages, the even pages and the groups."""
+
+    async def test_save_stores_values_and_replaces_them(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a second save for the same step and part of the pages replaces the values, and they read back.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
+        uow = await fx_uow_factory()
+        await uow.step_values.save(make_step_values(project_id=project_id, params={'max_angle_deg': 3}))
+        replacement = make_step_values(project_id=project_id, params={'max_angle_deg': 7, 'method': 'projection'})
+        await uow.step_values.save(replacement)
+        await uow.commit()
+        found = await (await fx_uow_factory()).step_values.find(replacement.key)
+        assert found == replacement
+
+    async def test_every_part_of_the_pages_keeps_its_own_values_of_a_step(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the odd pages, the even pages and two groups are four rows, listed by scope and group label.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
+        parts = [
+            make_step_values(project_id=project_id, scope=ValueScope.GROUP, group_label='Index'),
+            make_step_values(project_id=project_id, scope=ValueScope.EVEN, params={'max_angle_deg': 4}),
+            make_step_values(project_id=project_id, scope=ValueScope.ODD, params={'max_angle_deg': 5}),
+            make_step_values(project_id=project_id, scope=ValueScope.GROUP, group_label='Appendix'),
+        ]
+        uow = await fx_uow_factory()
+        for values in parts:
+            await uow.step_values.save(values)
+        await uow.commit()
+        listed = await (await fx_uow_factory()).step_values.list_for_step(project_id, DESKEW_STEP_ID)
+        assert [(values.scope, values.group_label) for values in listed] == [
+            (ValueScope.GROUP, 'Appendix'),
+            (ValueScope.GROUP, 'Index'),
+            (ValueScope.ODD, ''),
+            (ValueScope.EVEN, ''),
+        ]
+
+    async def test_lists_keep_the_steps_and_the_projects_apart(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the values of another step and another book are not listed, and a project lists every stage.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
+        other_project_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
+        mine = make_step_values(project_id=project_id)
+        other_step = make_step_values(project_id=project_id, step_id=StepId(uuid4()))
+        other_stage = evolve(make_step_values(project_id=project_id, step_id=StepId(uuid4())), stage=Stage.CLEANUP)
+        other_book = make_step_values(project_id=other_project_id, step_id=StepId(uuid4()))
+        uow = await fx_uow_factory()
+        for values in (mine, other_step, other_stage, other_book):
+            await uow.step_values.save(values)
+        await uow.commit()
+        reading = (await fx_uow_factory()).step_values
+        assert (
+            await reading.list_for_step(project_id, DESKEW_STEP_ID),
+            await reading.list_for_project(project_id),
+        ) == (
+            [mine],
+            sorted([mine, other_step, other_stage], key=lambda values: str(values.step_id)),
+        )
+
+    async def test_two_projects_sharing_a_step_keep_separate_values(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify books built from one profile, which share a step id, keep, replace and delete their values apart.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        first_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
+        second_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
+        first = make_step_values(project_id=first_id, params={'max_angle_deg': 3})
+        second = make_step_values(project_id=second_id, params={'max_angle_deg': 9})
+        uow = await fx_uow_factory()
+        await uow.step_values.save(first)
+        await uow.step_values.save(second)
+        await uow.commit()
+        reading = (await fx_uow_factory()).step_values
+        expect(await reading.list_for_step(first_id, DESKEW_STEP_ID) == [first])
+        expect(await reading.list_for_step(second_id, DESKEW_STEP_ID) == [second])
+        expect(await reading.find(first.key) == first)
+        expect(await reading.find(second.key) == second)
+        uow = await fx_uow_factory()
+        await uow.step_values.delete(first.key)
+        await uow.commit()
+        reading = (await fx_uow_factory()).step_values
+        expect(await reading.find(first.key) is None)
+        expect(await reading.find(second.key) == second)
+        assert_expectations()
+
+    async def test_delete_removes_one_part_and_a_missing_one_is_not_found(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a deleted part is gone, the other part stays, and deleting what is not stored is refused.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
+        even = make_step_values(project_id=project_id)
+        odd = make_step_values(project_id=project_id, scope=ValueScope.ODD)
+        uow = await fx_uow_factory()
+        await uow.step_values.save(even)
+        await uow.step_values.save(odd)
+        await uow.commit()
+        uow = await fx_uow_factory()
+        await uow.step_values.delete(even.key)
+        with pytest.raises(NotFoundError):
+            await uow.step_values.delete(even.key)
+        await uow.commit()
+        reading = (await fx_uow_factory()).step_values
+        assert (await reading.find(even.key), await reading.find(odd.key)) == (None, odd)
+
+    async def test_values_of_a_project_that_is_not_stored_are_refused(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify values need their project, which is what removes them with it.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        """
+        uow = await fx_uow_factory()
+        with pytest.raises(NotFoundError):
+            await uow.step_values.save(make_step_values(project_id=ProjectId(uuid4())))
+
+    async def test_deleting_the_project_deletes_its_values(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the values of a project are removed with it and those of another project stay.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
+        other_project_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
+        uow = await fx_uow_factory()
+        await uow.step_values.save(make_step_values(project_id=project_id))
+        kept = make_step_values(project_id=other_project_id, scope=ValueScope.ODD)
+        await uow.step_values.save(kept)
+        await uow.commit()
+        uow = await fx_uow_factory()
+        await uow.projects.delete(project_id)
+        await uow.commit()
+        assert await (await fx_uow_factory()).step_values.list_for_step(other_project_id, DESKEW_STEP_ID) == [kept]
+
+
 class TestPageStepChangeRepository:
     """Tests for the history of the layers of the steps of the pages."""
 
@@ -804,6 +1026,8 @@ class TestPageStepChangeRepository:
         _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         change = evolve(
             make_page_step_change(page_id=page_id, before=None, after={'method': 'otsu'}),
+            scope=ValueScope.GROUP,
+            group_label='Index',
             source=ChangeSource.CARRY_OVER,
             batch_id=ChangeBatchId(uuid4()),
             undoes=PageStepChangeId(uuid4()),
@@ -1136,13 +1360,13 @@ class TestPageVersionProcessing:
             [version.id for version in listed_all.items],
         ) == ([bad.id], [good.id], [bad.id, good.id, unmarked.id])
 
-    async def test_collectable_is_old_non_base_and_outside_the_current_chains(
+    async def test_collectable_is_non_base_and_outside_the_current_chains(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify a collection may delete old versions that no page shows and no chain of a shown version needs.
+        """Verify a collection may delete versions that no page shows and no chain of a shown version needs.
 
-        The base version stays, a head and the version it was computed from stay, a recent version stays, and an old
-        full run and an old preview that nothing refers to may go.
+        The base version stays, a head and the version it was computed from stay, and a young preview stays. A full
+        run that nothing refers to goes however recent it is, and so does an old preview.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -1160,17 +1384,41 @@ class TestPageVersionProcessing:
         young_preview = evolve(_version(base, scale=VersionScale.PREVIEW), created_at=NOW - timedelta(minutes=5))
         await uow.page_versions.add_many([base, feeder, head, orphan, recent, old_preview, young_preview])
         await uow.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.CLEANUP, head_version_id=head.id))
-        found = await uow.page_versions.collectable(project_id, FULL_CUTOFF, PREVIEW_CUTOFF)
-        assert {version.id for version in found} == {orphan.id, old_preview.id}
+        found = await uow.page_versions.collectable(project_id, PREVIEW_CUTOFF)
+        assert {version.id for version in found} == {orphan.id, recent.id, old_preview.id}
+
+    async def test_collectable_keeps_a_version_marked_good_or_commented_with_its_inputs(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a collection leaves a version the user marked Good or wrote on, and the inputs it reads.
+
+        A version marked Bad with no comment is no different from an unjudged one, and goes.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        uow = await fx_uow_factory()
+        base = evolve(make_page_version(page_id=page_id), created_at=EPOCH)
+        input_of_good = _version(base)
+        good = evolve(_version(base), input_id=input_of_good.id, mark=ResultMark.GOOD)
+        commented = evolve(_version(base), comment='The margins are right.')
+        commented_bad = evolve(_version(base), mark=ResultMark.BAD, comment='Too dark.')
+        plain_bad = evolve(_version(base), mark=ResultMark.BAD)
+        unjudged = _version(base)
+        await uow.page_versions.add_many([base, input_of_good, good, commented, commented_bad, plain_bad, unjudged])
+        found = await uow.page_versions.collectable(project_id, PREVIEW_CUTOFF)
+        assert {version.id for version in found} == {plain_bad.id, unjudged.id}
 
     async def test_collectable_keeps_the_inputs_of_every_version_that_stays(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify an old input goes only with the versions that read it, and not from under one that stays.
+        """Verify an input goes only with the versions that read it, and not from under one that stays.
 
-        A recent version that no page shows still reads its old input, which the database would leave it without if the
-        input were deleted, and the old input of that input stays too. A chain of old versions that nothing outside it
-        reads goes whole.
+        The current version of a stage reads an input, which the database would leave it without if the input were
+        deleted, and the input of that input stays too. A chain of versions that nothing outside it reads goes whole.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -1182,11 +1430,12 @@ class TestPageVersionProcessing:
         base = evolve(make_page_version(page_id=page_id), created_at=EPOCH)
         first = _version(base)
         second = evolve(_version(base), input_id=first.id)
-        reader = evolve(_version(base), input_id=second.id, created_at=NOW - RECENT)
+        reader = evolve(_version(base, stage=Stage.CLEANUP), input_id=second.id)
         chain_start = _version(base)
         chain_end = evolve(_version(base), input_id=chain_start.id)
         await uow.page_versions.add_many([base, first, second, reader, chain_start, chain_end])
-        found = await uow.page_versions.collectable(project_id, FULL_CUTOFF, PREVIEW_CUTOFF)
+        await uow.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.CLEANUP, head_version_id=reader.id))
+        found = await uow.page_versions.collectable(project_id, PREVIEW_CUTOFF)
         assert {version.id for version in found} == {chain_start.id, chain_end.id}
 
     async def test_delete_many_removes_the_versions_and_ignores_missing_ones(

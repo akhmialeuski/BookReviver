@@ -2,9 +2,9 @@ import { useState } from 'react';
 import type { RunImpactSchema, RunMode, StageRunBody } from '@/api';
 import { useRunImpact, useRunInFlight, useRunStage } from '@/features/processing/queries';
 import {
-  describeScope,
+  type PageGroup,
   pageIdsFor,
-  type RunScope,
+  RunScope,
   type ScopeChoice,
   scopeChoices,
 } from '@/features/processing/scope';
@@ -14,19 +14,33 @@ import { useActiveJobs } from '@/features/workspace/queries';
 import type { StripItem } from '@/features/workspace/strip';
 
 /**
- * The run of a stage as the panel asks for it, whole or up to one step: the scopes with the pages each covers, whether a
- * run can be asked for now, and the request that goes to the server.
+ * The run of a stage as the foot of the panel asks for it, whole or up to one step: the scopes with the pages each
+ * covers, whether a run can be asked for now, and the request that goes to the server.
  *
- * One instance serves the foot of the panel and the steps of the recipe, so the two share what is pending, what failed
- * and the question a run that would send a scan back to one page asks first.
+ * One instance serves the foot of the panel, which is the only place a run starts from, and the step panel, which reads
+ * how many pages the book has. They share what is pending, what failed and the question a run that would send a scan back
+ * to one page asks first.
  */
+
+/** What a run is asked to do: over which pages, up to which step, and with what to do with the pages' own work. */
+export interface RunRequest {
+  scope: RunScope;
+  /** The group of pages the scope of a group goes over. */
+  group?: PageGroup;
+  /** Index in the recipe of the last step to run, or undefined to run through the last step that is on. */
+  throughStep?: number;
+  /** What the run does with the work of the pages, which is to keep it unless it is asked otherwise. */
+  mode?: RunMode;
+}
 
 /** What the panel reads of the run of the stage and calls to start one. */
 export interface StageRun {
-  /** The scopes of the menu with the number of pages each covers now. */
+  /** The printed label of the open page, or an empty text when no page is open. */
+  pageLabel: string;
+  /** How many pages the book has that a run can go over, which are those with an image. */
+  total: number;
+  /** The choices of the menu with the pages each covers now. */
   choices: readonly ScopeChoice[];
-  /** Write a scope of the menu with the number of pages it covers. */
-  describe: (scope: RunScope, count: number) => string;
   /** Whether a run cannot be asked for: there is no recipe, the draft has changes, or the request is on its way. */
   disabled: boolean;
   /** Whether the draft has changes, so the run waits for them to be saved. */
@@ -37,22 +51,19 @@ export interface StageRun {
   /** What the server answered when it refused the last run, or null. */
   error: unknown;
   /**
-   * Run the saved recipe over a scope.
+   * Give the body of a request for a run, which the count of the pages with work of their own is asked with.
    *
-   * @param scope The pages to run it on.
-   * @param throughStep Index in the recipe of the last step to run, or undefined to run through the last step that is on.
-   * @param mode What the run does with the settings and the hand edits of the pages, which is to keep them unless it is
-   * asked to take them away. A mode that takes them away counts the pages that lose work first, and a run that would
-   * take some waits for the answer of the reader.
+   * @param request What the run is asked to do.
+   * @returns The body, or null when there is no recipe or the request covers no page.
    */
-  start: (scope: RunScope, throughStep?: number, mode?: RunMode) => void;
+  bodyOf: (request: RunRequest) => StageRunBody | null;
   /**
-   * Run the saved recipe over the pages named, up to a step.
+   * Run the saved recipe as asked. A mode that takes work away counts the pages that lose work first, and a run that
+   * would take some waits for the answer of the reader. A run that would send a scan back to one page waits for it too.
    *
-   * @param pageIds The pages to run it on.
-   * @param throughStep Index in the recipe of the last step to run.
+   * @param request What the run is asked to do.
    */
-  startPages: (pageIds: readonly string[], throughStep: number) => void;
+  start: (request: RunRequest) => void;
   /** Whether a run that would delete the right half of a spread waits for the answer of the reader. */
   confirming: boolean;
   confirm: () => void;
@@ -89,38 +100,49 @@ export function useStageRun(
   } | null>(null);
   const busy = (activeJobs.data?.length ?? 0) > 0 || runInFlight;
 
+  const choices = scopeChoices(items, current?.page.id, selected);
+
   const send = (body: StageRunBody): void =>
     run.mutate({ path: { project_id: projectId, stage }, body });
 
-  // Pages are named by identifier, or by null for every page that has an image
-  const begin = (
-    ids: readonly string[] | null,
-    throughStep?: number,
-    mode: RunMode = 'keep',
-  ): void => {
+  const bodyOf = ({
+    scope,
+    group,
+    throughStep,
+    mode = 'keep',
+  }: RunRequest): StageRunBody | null => {
     if (recipe === undefined) {
-      return;
+      return null;
     }
-    // The active recipe is the book's own: each page then gets the variant it is pinned to or the rules choose. Any
-    // other variant is a trial, and goes to every page of the scope
-    const body: StageRunBody = {
-      ...(recipe.active ? {} : { recipe_id: recipe.id }),
-      ...(ids === null ? {} : { page_ids: [...ids] }),
+    // Pages are named by identifier, or by null for every page that has an image
+    const ids = pageIdsFor(scope, items, current?.page.id, selected, group);
+    if (ids !== null && ids.length === 0) {
+      return null;
+    }
+    // Each page of the scope is run by the recipe of its kind
+    return {
+      ...(ids === null ? {} : { page_ids: ids }),
       ...(throughStep === undefined ? {} : { through_step: throughStep }),
       ...(mode === 'keep' ? {} : { mode }),
     };
+  };
+
+  const start = (request: RunRequest): void => {
+    const body = bodyOf(request);
+    if (recipe === undefined || body === null) {
+      return;
+    }
     const affected =
-      ids === null
-        ? items.map((item) => item.page)
-        : items.filter((item) => ids.includes(item.page.id)).map((item) => item.page);
+      choices.find((entry) => entry.scope === request.scope && entry.group === request.group)
+        ?.items ?? [];
     const proceed = (sent: StageRunBody): void => {
-      if (undoesSplit(recipe, affected)) {
+      if (undoesSplit(processing.recipes, affected)) {
         setConfirming(sent);
       } else {
         send(sent);
       }
     };
-    if (mode === 'keep') {
+    if (body.mode === undefined || body.mode === 'keep') {
       proceed(body);
       return;
     }
@@ -142,19 +164,17 @@ export function useStageRun(
     );
   };
 
-  const start = (scope: RunScope, throughStep?: number, mode?: RunMode): void =>
-    begin(pageIdsFor(scope, items, current?.page.id, selected), throughStep, mode);
-
   return {
-    choices: scopeChoices(items, current?.page.id, selected),
-    describe: (scope, count) => describeScope(scope, count, current?.page.label ?? ''),
+    pageLabel: current?.page.label ?? '',
+    total: choices.find((entry) => entry.scope === RunScope.All)?.items.length ?? 0,
+    choices,
     disabled: recipe === undefined || processing.dirty || run.isPending || impact.isPending || busy,
     dirty: processing.dirty,
     busy,
     pending: run.isPending,
     error: run.error ?? impact.error,
+    bodyOf,
     start,
-    startPages: begin,
     confirming: confirming !== null,
     confirm: () => {
       if (confirming !== null) {

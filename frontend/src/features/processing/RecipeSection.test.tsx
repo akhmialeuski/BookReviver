@@ -9,27 +9,22 @@ import { profilePage } from '@/features/profiles/fixtures';
 import { row } from '@/features/workspace/fixtures';
 
 /**
- * The recipe in the panel: its steps with their settings on a stage that has no step bar, what a change of them costs, and
- * the buttons that save it, copy it and make it the one the stage runs by. A stage with a bar lists no steps here.
+ * The content of the recipe slot of the panel: the steps as cards on a stage that has no step bar, with the plus button of
+ * the bar to add one, what a change of them costs, and the bar that saves it. A stage with a bar lists no steps here, and
+ * no form of settings stands in a card on any stage, since the settings are in the frame of the panel.
  *
  * Radix measures the thumb of a slider, which jsdom cannot, so the observer it asks for is given a stand-in.
  */
 
 const sdk = vi.hoisted(() => ({
   save: vi.fn(),
-  create: vi.fn(),
-  activate: vi.fn(),
-  rules: vi.fn(),
   stages: vi.fn(),
   profiles: vi.fn(),
 }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPut: sdk.save,
-  createVariantApiV1ProjectsProjectIdStagesStageVariantsPost: sdk.create,
-  activateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePost: sdk.activate,
-  listRulesApiV1ProjectsProjectIdStagesStageRulesGet: sdk.rules,
+  putRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPut: sdk.save,
   listStagesApiV1ProjectsProjectIdStagesGet: sdk.stages,
   listProfilesApiV1RecipeProfilesGet: sdk.profiles,
 }));
@@ -44,7 +39,6 @@ class SizeObserverStandIn {
 const LISTED = 'page-split';
 
 const SAVED = recipe('r1', {
-  name: 'Deskew',
   steps: [step('geometry.deskew', { params: { max_angle: 5, min_confidence: 0.3 } })],
 });
 
@@ -76,25 +70,6 @@ describe('RecipeSection', () => {
       fake.mockReset();
       fake.mockResolvedValue({ data: recipe('made') });
     }
-    sdk.rules.mockResolvedValue({
-      data: {
-        items: [
-          {
-            id: 'rule',
-            project_id: 'project',
-            stage: 'geometry',
-            condition: 'plates',
-            group_label: '',
-            recipe_id: 'r2',
-            order: 0,
-          },
-        ],
-        total: 1,
-        page: 1,
-        size: 100,
-        pages: 1,
-      },
-    });
     sdk.profiles.mockResolvedValue(profilePage([]));
     sdk.stages.mockResolvedValue({
       data: {
@@ -110,11 +85,7 @@ describe('RecipeSection', () => {
             not_run: 0,
             review: 0,
             check: 0,
-            active_recipe_id: 'r1',
-            variants: [
-              { recipe_id: 'r1', pages: 412 },
-              { recipe_id: 'r2', pages: 14 },
-            ],
+            recipes: [{ kind: 'text', recipe_id: 'r1', pages: 426 }],
           },
         ],
         total: 1,
@@ -136,15 +107,13 @@ describe('RecipeSection', () => {
     vi.unstubAllGlobals();
   });
 
-  it('shows the recipe, whether it is active, and how many pages it has made', () => {
+  it('lists the steps of the recipe', () => {
     render(processing({ stage: LISTED }));
 
-    expect(byId('recipe-select')?.textContent).toBe('Deskew · active · 1 page');
-    expect(byId('recipe-active')?.textContent).toBe('Active · 1 page');
     expect(container.querySelectorAll('[data-testid="recipe-step"]')).toHaveLength(1);
-    expect(container.querySelector('[data-testid="recipe-step"]')?.textContent).toContain(
-      '1 · Deskew',
-    );
+    const card = container.querySelector('[data-testid="recipe-step"]')?.textContent;
+    expect(card).toContain('Deskew');
+    expect(card).not.toMatch(/\d ·/);
   });
 
   it('puts the button of the profile above the recipes, naming none for a recipe made from no profile', () => {
@@ -159,15 +128,11 @@ describe('RecipeSection', () => {
     (stage) => {
       render(processing({ stage, orderMode: 'free' }));
 
-      expect(byId('recipe-select')).not.toBeNull();
-      expect(byId('recipe-new')).not.toBeNull();
-      expect(byId('used-for')).not.toBeNull();
+      expect(byId('recipe-select')).toBeNull();
       expect(byId('recipe-steps')).toBeNull();
       expect(byId('recipe-step')).toBeNull();
-      expect(byId('step-add')).toBeNull();
+      expect(byId('step-catalogue')).toBeNull();
       expect(byId('order-free')).toBeNull();
-      expect(byId('coming-steps')).toBeNull();
-      expect(container.textContent).not.toContain('Add a step');
     },
   );
 
@@ -177,39 +142,23 @@ describe('RecipeSection', () => {
     expect(byId('recipe-save')?.disabled).toBe(false);
   });
 
-  it('draws the settings of the open step from the schema, with the titles of its fields', () => {
-    const open = processing({ stage: LISTED, openId: 'step-0' });
-    render(open);
+  it('draws no form of settings in the open card, since the settings stand in the frame of the panel', () => {
+    render(processing({ stage: LISTED, openId: 'step-0' }));
 
-    expect(container.querySelector('form')?.textContent).toContain('Largest slant');
-    expect(container.querySelector('form')?.textContent).toContain('Least confidence');
+    expect(container.querySelector('form')).toBeNull();
+    expect(container.textContent).not.toContain('Largest slant');
+    expect(container.querySelector('h3')?.textContent).toBe('Steps');
   });
 
-  it('counts the pages of each variant in a line of the names, and shows what the variant is used for', async () => {
-    const plates = recipe('r2', { name: 'Plates', active: false });
-    await act(async () => {
-      root.render(
-        <QueryClientProvider client={client}>
-          <RecipeSection
-            processing={processing({ recipe: plates, recipes: [SAVED, plates] })}
-            rows={[row('a', { recipe_id: 'r1' }), row('b', { recipe_id: 'r2' })]}
-          />
-        </QueryClientProvider>,
-      );
-    });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+  it('draws the choice of the recipe in the panel only on a stage without a step bar, since the bar has it otherwise', () => {
+    const picture = recipe('r2', { kind: 'color-picture' });
+    const kinds = { recipes: [SAVED, picture] };
 
-    expect(byId('variant-counts')?.textContent).toBe('Deskew 412 · Plates 14');
-    expect(byId('used-for')?.textContent).toContain('Plates and frontispieces');
-    expect(byId('used-for-pages')?.textContent).toBe('Made 1 page');
-  });
+    render(processing({ stage: LISTED, ...kinds }));
+    expect(container.querySelectorAll('[data-testid="recipe-select"] option')).toHaveLength(2);
 
-  it('draws no line of counts for a stage with a single variant', () => {
-    render(processing());
-
-    expect(byId('variant-counts')).toBeNull();
+    render(processing({ stage: 'geometry', ...kinds }));
+    expect(byId('recipe-select')).toBeNull();
   });
 
   it('has no bar to save while the draft is the saved recipe', () => {
@@ -232,7 +181,7 @@ describe('RecipeSection', () => {
     expect(byId('recipe-stale-warning')?.textContent).toBe('Saving makes 2 pages out of date.');
   });
 
-  it('saves the recipe under its own name with the steps as the draft has them', async () => {
+  it('saves the recipe with the steps as the draft has them', async () => {
     const steps = toggleStep(
       setStepParams(processing().steps, 'step-0', { max_angle: 9, min_confidence: 0.3 }),
       'step-0',
@@ -247,7 +196,6 @@ describe('RecipeSection', () => {
     expect(sdk.save.mock.calls[0]?.[0]).toMatchObject({
       path: { project_id: 'project', stage: 'geometry', recipe_id: 'r1' },
       body: {
-        name: 'Deskew',
         steps: [
           {
             processor_key: 'geometry.deskew',
@@ -306,63 +254,36 @@ describe('RecipeSection', () => {
     expect(container.textContent).toContain('A value is outside its limits');
   });
 
-  it('offers the processors of the stage in the menu of the steps to add, and adds the one chosen', async () => {
-    const add = vi.fn();
-    render(processing({ stage: LISTED, add }));
+  it('adds a step with the plus button of the step bar, which has no word, and opens the new card', async () => {
+    sdk.save.mockResolvedValue({
+      data: recipe('r1', {
+        steps: [
+          step('geometry.deskew', { step_id: 'a' }),
+          step('geometry.deskew', { step_id: 'b' }),
+        ],
+      }),
+    });
+    const open = vi.fn();
+    render(processing({ stage: LISTED, open }));
+
+    const plus = byId('step-catalogue');
+    expect(plus?.textContent).toBe('');
+    expect(plus?.getAttribute('aria-label')).toBe('Add a step');
+    await act(async () => {
+      plus?.click();
+    });
+    const entries = [
+      ...document.body.querySelectorAll<HTMLElement>('[data-testid="catalogue-add"]'),
+    ];
+    expect(entries.map((entry) => entry.getAttribute('data-processor'))).toEqual([
+      'geometry.deskew',
+    ]);
 
     await act(async () => {
-      const trigger = byId('step-add');
-      trigger?.focus();
-      trigger?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      entries[0]?.click();
     });
-    const items = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')];
-    expect(items.map((item) => item.textContent)).toEqual(['Deskew']);
-
-    await act(async () => {
-      items[0]?.click();
-    });
-    expect(add).toHaveBeenCalledWith(expect.objectContaining({ key: 'geometry.deskew' }));
-  });
-
-  it('copies the recipe as shown, draft included, under a name of its own, and shows the copy', async () => {
-    const chooseRecipe = vi.fn();
-    const steps = setStepParams(processing().steps, 'step-0', {
-      max_angle: 9,
-      min_confidence: 0.3,
-    });
-    render(processing({ dirty: true, steps, chooseRecipe }));
-
-    await act(async () => {
-      byId('recipe-new')?.click();
-    });
-
-    expect(sdk.create.mock.calls[0]?.[0].body).toMatchObject({
-      name: 'Deskew (copy)',
-      steps: [{ processor_key: 'geometry.deskew', params: { max_angle: 9 } }],
-    });
-    expect(chooseRecipe).toHaveBeenCalledWith('made');
-  });
-
-  it('makes a variant the recipe the stage runs by', async () => {
-    const variant = recipe('r2', { name: 'Gentle', active: false });
-    render(processing({ recipe: variant, recipes: [SAVED, variant], steps: processing().steps }));
-    expect(byId('recipe-active')).toBeNull();
-
-    await act(async () => {
-      byId('recipe-use')?.click();
-    });
-
-    expect(sdk.activate.mock.calls[0]?.[0].path).toEqual({
-      project_id: 'project',
-      stage: 'geometry',
-      recipe_id: 'r2',
-    });
-  });
-
-  it('offers no way to activate the recipe that is active', () => {
-    render(processing());
-
-    expect(byId('recipe-use')).toBeNull();
+    expect(sdk.save).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith('step-1');
   });
 
   it('shows the answer of the server when a save is refused', async () => {

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 from attrs import evolve
 
-from bookreviver.domain.enums import OrderMode, Stage
+from bookreviver.domain.enums import OrderMode, RecipeKind, Stage
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.values import Step
 from tests.helpers.builders import make_project, make_recipe, make_recipe_profile
@@ -254,8 +254,8 @@ class TestRecipeProfileRepository:
         owner_id = await fx_new_owner()
         profile = make_recipe_profile(account_id=owner_id)
         project = make_project(owner_id=owner_id)
-        linked = evolve(make_recipe(project_id=project.id, active=True), profile_id=profile.id)
-        unlinked = make_recipe(project_id=project.id, name='Unlinked', stage=Stage.CLEANUP, active=True)
+        linked = evolve(make_recipe(project_id=project.id), profile_id=profile.id)
+        unlinked = make_recipe(project_id=project.id, stage=Stage.CLEANUP)
         uow = await fx_uow_factory()
         await uow.recipe_profiles.add(profile)
         await uow.projects.add(project)
@@ -279,7 +279,7 @@ class TestRecipeProfileRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         stray = evolve(
-            make_recipe(project_id=project.id, active=True),
+            make_recipe(project_id=project.id),
             profile_id=make_recipe_profile(account_id=project.owner_id).id,
         )
         uow = await fx_uow_factory()
@@ -301,7 +301,7 @@ class TestRecipeProfileRepository:
         owner_id = await fx_new_owner()
         profile = make_recipe_profile(account_id=owner_id)
         project = make_project(owner_id=owner_id)
-        recipe = evolve(make_recipe(project_id=project.id, active=True), profile_id=profile.id)
+        recipe = evolve(make_recipe(project_id=project.id), profile_id=profile.id)
         uow = await fx_uow_factory()
         await uow.recipe_profiles.add(profile)
         await uow.projects.add(project)
@@ -329,11 +329,11 @@ class TestRecipeProfileRepository:
         first_book = make_project(owner_id=owner_id)
         second_book = make_project(owner_id=owner_id, title='Second')
         recipes = [
-            evolve(make_recipe(project_id=first_book.id, active=True), profile_id=used.id),
-            evolve(make_recipe(project_id=first_book.id, name='Variant'), profile_id=used.id),
-            evolve(make_recipe(project_id=second_book.id, active=True), profile_id=used.id),
-            evolve(make_recipe(project_id=second_book.id, name='Other', stage=Stage.CLEANUP), profile_id=other.id),
-            make_recipe(project_id=second_book.id, name='Unlinked', stage=Stage.PAGE_SPLIT, active=True),
+            evolve(make_recipe(project_id=first_book.id), profile_id=used.id),
+            evolve(make_recipe(project_id=first_book.id, kind=RecipeKind.BLANK), profile_id=used.id),
+            evolve(make_recipe(project_id=second_book.id), profile_id=used.id),
+            evolve(make_recipe(project_id=second_book.id, stage=Stage.CLEANUP), profile_id=other.id),
+            make_recipe(project_id=second_book.id, stage=Stage.PAGE_SPLIT),
         ]
         uow = await fx_uow_factory()
         await uow.recipe_profiles.add_many([used, unused, other])

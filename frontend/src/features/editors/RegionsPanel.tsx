@@ -6,8 +6,8 @@ import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 
 /**
- * The part of the picture zone editor in the panel: the sentence that says how a zone is shaped, the two buttons that
- * put a new zone in the middle of the page, and the list of the zones the reader drew, each with a button that deletes it.
+ * The part of the picture zone editor in the panel: the two buttons that put a new zone in the middle of the page, and
+ * the list of the zones the reader drew, each with a button that deletes it.
  */
 
 const labels = MESSAGES.editors.regions;
@@ -30,9 +30,6 @@ export function RegionsPanel({
   }));
   return (
     <div className="grid basis-full gap-2" data-testid="regions-panel">
-      <p className="rounded-lg border bg-muted/40 p-3 text-sm" data-testid="regions-hint">
-        {labels.hint}
-      </p>
       <div className="flex flex-wrap gap-2">
         <Button
           variant="outline"

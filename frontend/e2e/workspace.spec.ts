@@ -18,6 +18,8 @@ import {
  */
 
 const PAGES = 6;
+// Geometry has a step bar, so its address always names a step
+const GEOMETRY_ADDRESS = /\/stages\/geometry\/steps\/[0-9a-f-]{36}$/;
 const STAGE_NAMES = [
   'Import',
   'Split',
@@ -62,13 +64,13 @@ test('a reader works through the stages of a book', async ({ page }) => {
     await expect(bar.getByRole('link', { name: /^Order/ })).toHaveAttribute('aria-current', 'page');
     // A stage without a processor says so, and still opens
     await expect(page.getByTestId('stage-layout')).toContainText('Soon');
-    await expect(page.getByTestId('stage-page-order')).toContainText('6 pages');
-    await expect(page.getByTestId('stage-import')).toContainText('6 files');
+    await expect(page.getByTestId('stage-page-order')).toContainText('Done');
+    await expect(page.getByTestId('stage-import')).toHaveAttribute('data-status', 'done');
   });
 
   await test.step('moving between stages changes the address', async () => {
     await bar.getByRole('link', { name: /^Geometry/ }).click();
-    await expect(page).toHaveURL(/\/stages\/geometry$/);
+    await expect(page).toHaveURL(GEOMETRY_ADDRESS);
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
     await expect(page.getByTestId('stage-summary')).toContainText('Straighten each page');
 
@@ -78,7 +80,7 @@ test('a reader works through the stages of a book', async ({ page }) => {
 
     // Alt and a digit go to a stage by its place in the bar
     await page.keyboard.press('Alt+4');
-    await expect(page).toHaveURL(/\/stages\/geometry$/);
+    await expect(page).toHaveURL(GEOMETRY_ADDRESS);
     await page.keyboard.press('Alt+0');
     await expect(page).toHaveURL(/\/stages\/typesetting$/);
   });
@@ -94,10 +96,10 @@ test('a reader works through the stages of a book', async ({ page }) => {
     await expect(page).not.toHaveURL(/\/stages\/typesetting/);
 
     await page.getByTestId('stage-geometry').click();
-    await expect(page).toHaveURL(/\/stages\/geometry$/);
+    await expect(page).toHaveURL(GEOMETRY_ADDRESS);
     await expect.poll(async () => (await readPlace(page, projectId)).place?.stage).toBe('geometry');
     await page.goto(bookPath);
-    await expect(page).toHaveURL(/\/stages\/geometry$/);
+    await expect(page).toHaveURL(GEOMETRY_ADDRESS);
   });
 
   await test.step('the strip lists the pages and turns the canvas', async () => {

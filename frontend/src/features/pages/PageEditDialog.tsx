@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from '@/shared/ui/dialog';
 import { ErrorAlert } from '@/shared/ui/error-alert';
+import { FormDialogFooter } from '@/shared/ui/form-dialog-footer';
 import { SelectField } from '@/shared/ui/select-field';
 import { TextField } from '@/shared/ui/text-field';
 import { TextareaField } from '@/shared/ui/textarea-field';
@@ -123,26 +124,23 @@ function EditForm({
         </div>
       ) : null}
       {update.isError ? <ErrorAlert message={describePageError(update.error)} /> : null}
-      <DialogFooter className="sm:justify-between">
-        <Button
-          type="button"
-          variant="ghost"
-          className="text-destructive"
-          onClick={() => onView(View.Remove)}
-          aria-label={`${MESSAGES.pages.edit.remove}: ${name}`}
-        >
-          <Trash2Icon />
-          {MESSAGES.pages.edit.remove}
-        </Button>
-        <div className="flex flex-col-reverse gap-2 sm:flex-row">
-          <Button type="button" variant="outline" onClick={onDone}>
-            {MESSAGES.common.cancel}
+      <FormDialogFooter
+        danger={
+          <Button
+            type="button"
+            variant="ghost"
+            className="text-destructive"
+            onClick={() => onView(View.Remove)}
+            aria-label={MESSAGES.pages.edit.removeNamed(name)}
+          >
+            <Trash2Icon />
+            {MESSAGES.pages.edit.remove}
           </Button>
-          <Button type="submit" disabled={update.isPending}>
-            {update.isPending ? MESSAGES.pages.edit.saving : MESSAGES.pages.edit.save}
-          </Button>
-        </div>
-      </DialogFooter>
+        }
+        onCancel={onDone}
+        submitLabel={update.isPending ? MESSAGES.pages.edit.saving : MESSAGES.pages.edit.save}
+        submitDisabled={update.isPending}
+      />
     </form>
   );
 }

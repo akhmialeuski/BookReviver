@@ -95,6 +95,11 @@ class Stage(LabeledStrEnum):
         return list(type(self)).index(self)
 
     @property
+    def earlier(self) -> tuple[Stage, ...]:
+        """The stages before this one, the nearest first, which is the order a stage looks for its input in."""
+        return tuple(reversed(list(type(self))[: self.position]))
+
+    @property
     def manual(self) -> bool:
         """Whether the user does the stage by hand, so it is available whatever plugins are installed."""
         return self in {Stage.IMPORT, Stage.PAGE_ORDER}
@@ -297,12 +302,16 @@ class PageKind(LabeledStrEnum):
     OTHER = 'other', 'Other'
 
 
+# The kinds of page that are pictures whatever the program finds in them
+PICTURE_KINDS: Final[frozenset[PageKind]] = frozenset({PageKind.PLATE, PageKind.FRONTISPIECE})
+
+
 class ContentType(LabeledStrEnum):
     """What the image of a page is: text, or a picture in colour or in black and white.
 
     The program proposes it from the share of the page that pictures cover and from the colour of the pictures, and the
-    user may change it. It is what the conditions of the steps of a recipe read, apart from the role the page has in the
-    book (``PageKind``), which says where the page stands and not what it shows.
+    user may change it. It decides, apart from the role the page has in the book (``PageKind``), which recipe of a stage
+    processes the page.
     """
 
     TEXT = 'text', 'Text'
@@ -314,6 +323,27 @@ class ContentType(LabeledStrEnum):
         """Whether the page shows a picture, in colour or not."""
         return self is not ContentType.TEXT
 
+    @classmethod
+    def shown_by(cls, kind: PageKind, content_type: ContentType | None, *, by_hand: bool) -> ContentType:
+        """Work out what a page shows from its kind and the content type the program found or the user set.
+
+        What the user set decides. Otherwise a plate or a frontispiece is a picture, since the user gave the page that
+        role, and any other page is a picture when the program found one on it. A picture whose colour nobody set counts
+        as a picture in colour, since a recipe for black and white pictures must not touch a page that may be a plate.
+
+        :param kind: Role of the page in the book.
+        :type kind: PageKind
+        :param content_type: The content type of the page, or None while it is not detected.
+        :type content_type: ContentType | None
+        :param by_hand: Whether the user set ``content_type``.
+        :type by_hand: bool
+        :returns: Text, or the picture in the colour it has.
+        :rtype: ContentType
+        """
+        if content_type is not None and content_type.is_picture:
+            return content_type
+        return cls.COLOR_PICTURE if kind in PICTURE_KINDS and not by_hand else cls.TEXT
+
 
 class ContentSource(LabeledStrEnum):
     """Where the content type of a page comes from, which tells the user how far to trust it."""
@@ -323,35 +353,30 @@ class ContentSource(LabeledStrEnum):
     KIND = 'kind', 'Given by the kind of the page'
 
 
-class RuleCondition(LabeledStrEnum):
-    """What a rule of a stage asks of a page, to give the page the variant of the rule.
+class RecipeKind(LabeledStrEnum):
+    """The kind of page a recipe processes: every stage that has recipes has one for each kind.
 
-    The set is closed: a rule never carries a free-form test. ``GROUP`` is the one condition with an argument, the
-    label of the group that the user wrote on the pages. ``ILLUSTRATED`` is declared so that rules and clients can name
-    it, but it matches no page yet: the Layout stage, which finds the illustrations of a page, does not exist, and a
-    rule on it takes effect the day that stage records them.
+    A page is processed by the recipe of its kind, which is a blank page for a page of the blank kind and otherwise what
+    the page shows (``ContentType``). Changing the kind of a page moves the page to another recipe.
     """
 
-    PLATES = 'plates', 'Plates and frontispieces'
-    COVERS = 'covers', 'Covers'
-    BLANKS = 'blanks', 'Blank pages'
-    ILLUSTRATED = 'illustrated', 'Pages with illustrations'
-    ODD = 'odd', 'Odd pages'
-    EVEN = 'even', 'Even pages'
-    GROUP = 'group', 'Manual group'
+    TEXT = 'text', 'Text'
+    COLOR_PICTURE = 'color-picture', 'Colour picture'
+    BW_PICTURE = 'bw-picture', 'Black-and-white picture'
+    BLANK = 'blank', 'Blank page'
 
-    @property
-    def kinds(self) -> frozenset[PageKind]:
-        """The kinds of page the condition matches, or none for a condition that does not test the kind."""
-        return _KINDS_OF_CONDITION.get(self, frozenset[PageKind]())
+    @classmethod
+    def of(cls, kind: PageKind, content: ContentType) -> RecipeKind:
+        """Give the kind of a page.
 
-
-# The kinds of page each condition on the kind matches
-_KINDS_OF_CONDITION: Final[dict[RuleCondition, frozenset[PageKind]]] = {
-    RuleCondition.PLATES: frozenset({PageKind.PLATE, PageKind.FRONTISPIECE}),
-    RuleCondition.COVERS: frozenset({PageKind.COVER, PageKind.BACK_COVER}),
-    RuleCondition.BLANKS: frozenset({PageKind.BLANK}),
-}
+        :param kind: Role of the page in the book.
+        :type kind: PageKind
+        :param content: What the page shows, as ``ContentType.shown_by`` works it out.
+        :type content: ContentType
+        :returns: The blank kind for a blank page, and otherwise the kind of what the page shows.
+        :rtype: RecipeKind
+        """
+        return cls.BLANK if kind is PageKind.BLANK else cls(content.value)
 
 
 class OrderMode(LabeledStrEnum):
@@ -366,9 +391,13 @@ class OrderMode(LabeledStrEnum):
 
 
 class ProfileFileVersion(enum.IntEnum):
-    """The versions of the format a recipe profile is written to a file in, so a later format can read an older file."""
+    """The versions of the format a recipe profile is written to a file in, so a later format can read an older file.
+
+    The second version has no condition on a step, which the first wrote as ``applies_to``.
+    """
 
     V1 = 1
+    V2 = 2
 
 
 class OrderRuleKind(LabeledStrEnum):
@@ -376,48 +405,6 @@ class OrderRuleKind(LabeledStrEnum):
 
     USUAL = 'usual', 'Usual place'
     REQUIRED = 'required', 'Required place'
-
-
-class AppliesTo(LabeledStrEnum):
-    """The condition of a step of a recipe: which pages the step processes, the others passing it unchanged.
-
-    What makes a page text or a picture is decided by its content type (``Page.content_of``) and nowhere else. Until the
-    content of a page is detected, the role the user gave the page decides: a plate or a frontispiece is a picture, and
-    every other kind of page is text. The colour of such a picture is the colour mode of the image the stage starts
-    from, and an unknown mode counts as colour, since a step for black and white pictures must not touch a page that
-    may be a colour plate.
-    """
-
-    ALL = 'all', 'All pages'
-    TEXT = 'text', 'Text pages'
-    PICTURES = 'pictures', 'Pictures'
-    COLOR_PICTURES = 'color-pictures', 'Colour pictures'
-    BW_PICTURES = 'bw-pictures', 'Black-and-white pictures'
-
-    def matches(self, content: ContentType) -> bool:
-        """Tell whether a step with this condition processes a page.
-
-        :param content: What the page shows, as ``Page.content_of`` works it out.
-        :type content: ContentType
-        :returns: True when the page is processed, False when it passes the step unchanged.
-        :rtype: bool
-        """
-        match self:
-            case AppliesTo.ALL:
-                return True
-            case AppliesTo.TEXT:
-                return content is ContentType.TEXT
-            case AppliesTo.PICTURES:
-                return content.is_picture
-            case AppliesTo.COLOR_PICTURES:
-                return content is ContentType.COLOR_PICTURE
-            case AppliesTo.BW_PICTURES:
-                return content is ContentType.BW_PICTURE
-
-
-# The kinds of page that are pictures whatever the program finds in them, which are those a rule on plates sends to the
-# plates recipe
-PICTURE_KINDS: Final[frozenset[PageKind]] = RuleCondition.PLATES.kinds
 
 
 class PageOrigin(LabeledStrEnum):
@@ -596,6 +583,7 @@ class NormalizeParam(LabeledStrEnum):
 
     MARGINS_SOURCE = 'margins_source', 'Who sets the margins'
     LINE_HEIGHT = 'line_height', 'Distance between the lines of text, in pixels'
+    MAX_SCALE_CHANGE = 'max_scale_change', 'Largest change of the size of the text, in percent'
     PAGE_WIDTH = 'page_width', 'Width of the page, in pixels'
     PAGE_HEIGHT = 'page_height', 'Height of the page, in pixels'
     MARGIN_TOP = 'margin_top', 'Margin at the top, in millimetres'
@@ -767,7 +755,11 @@ class VersionData(LabeledStrEnum):
     ANGLE = 'angle', 'Angle a page was turned by, in degrees'
     CONFIDENCE = 'confidence', 'How sure the step is of what it found, from 0 to 1'
     SKIPPED = 'skipped', 'Whether the step left the image as it was'
-    SKIPPED_BY_CONDITION = 'skipped_by_condition', 'Whether the page did not meet the condition of the step'
+    # The value is the key that versions stored while a step had a condition, which a leaf is skipped by now
+    SKIPPED_LEAF = (
+        'skipped_by_condition',
+        'Whether the page is a leaf the program drew, which the step passed unchanged',
+    )
     OVERLAP_PX = 'overlap_px', 'Width in pixels a half of a spread reaches over the cut'
     CUT_X = 'cut_x', 'Place of the cut in the scan, as the distance in pixels from its left edge'
     CUT_TOP_X = 'cut_top_x', 'Place of the cut at the top row of the scan, in pixels from its left edge'
@@ -849,14 +841,14 @@ class FigureState(LabeledStrEnum):
     """Where the shape of one step on one page comes from, which the step bar paints as a dot.
 
     A page that was never run through the step holds the default shape, which computes nothing. A step that ran leaves
-    the shape it found, a manual edit puts the shape the user set and outlives the next run, and a page that did not
-    meet the condition of the step passes it with no shape at all.
+    the shape it found, a manual edit puts the shape the user set and outlives the next run, and a leaf the program drew
+    passes the step with no shape at all.
     """
 
     DEFAULT = 'default', 'Default shape'
     FOUND = 'found', 'Found by the step'
     BY_HAND = 'by-hand', 'Set by hand'
-    SKIPPED = 'skipped', 'Skipped by the condition of the step'
+    SKIPPED = 'skipped', 'Skipped: the page is a leaf the program drew'
 
 
 class StepFlag(LabeledStrEnum):
@@ -868,7 +860,7 @@ class StepFlag(LabeledStrEnum):
     UNSURE = 'unsure', 'The step was not sure of its result'
     UNUSUAL = 'unusual', 'What the step found differs notably from the rest of the book'
     BY_HAND = 'by-hand', 'Set by hand: a setting of the page or a shape the user drew'
-    SKIPPED = 'skipped', 'Skipped by the condition of the step'
+    SKIPPED = 'skipped', 'Skipped: the page is a leaf the program drew'
 
 
 class StepMeasure(LabeledStrEnum):
@@ -953,7 +945,6 @@ class StepField(LabeledStrEnum):
     PARAMS = 'params', 'Parameters the processor runs with'
     ENABLED = 'enabled', 'Whether a run and a preview run the step'
     STEP_ID = 'step_id', 'Identifier of the step, which stays as the step moves and is saved'
-    APPLIES_TO = 'applies_to', 'Which pages the step processes'
 
 
 class EditorKind(LabeledStrEnum):
@@ -985,7 +976,6 @@ class ChangeSource(LabeledStrEnum):
     USER = 'user', 'The user'
     RUN = 'run', 'A run'
     CARRY_OVER = 'carry-over', 'A carry-over from another page'
-    RESET = 'reset', 'A reset to the defaults'
     UNDO = 'undo', 'An undo of an earlier change'
 
 
@@ -993,12 +983,13 @@ class RunMode(LabeledStrEnum):
     """What a run of a stage does with the work the pages already have for its steps.
 
     The work is the settings a page changes for a step and the manual edit a step reads on it. A run keeps both unless
-    it is asked to take one of them away, which is written to the history of each page like any other change.
+    it is asked to take both away, which is written to the history of each page like any other change, or to leave the
+    pages that have either out of the run.
     """
 
     KEEP = 'keep', 'Keep the settings and edits of the pages'
-    REPLACE_HAND = 'replace-hand', 'Replace hand settings'
-    RESET_SETTINGS = 'reset-page-settings', 'Reset page settings'
+    SKIP_OWN = 'skip-own-work', 'Leave out the pages with work of their own'
+    DROP_OWN = 'drop-own-work', 'Drop the settings and edits of the pages'
 
 
 class CarryScope(LabeledStrEnum):
@@ -1006,16 +997,26 @@ class CarryScope(LabeledStrEnum):
 
     FOLLOWING = 'following', 'The following pages'
     SELECTED = 'selected', 'The selected pages'
-    CONDITION = 'condition', 'All pages of the condition of the step'
+    KIND = 'kind', 'All pages of the kind of the step'
 
 
-class ResetScope(LabeledStrEnum):
-    """The pages and the steps a reset to the defaults goes over, which are the settings and the edits of the pages."""
+class ValueScope(LabeledStrEnum):
+    """The part of the pages a value of a setting of a step is for, from the strongest to the weakest part.
 
-    PAGE_STEP = 'page-step', 'This step on this page'
-    PAGE = 'page', 'Every step of the stage on this page'
-    STEP = 'step', 'This step on every page'
-    STAGE = 'stage', 'Every step of the stage on every page'
+    A value for pages names them one by one: the open page, or the pages the user selected. The odd pages and the even
+    pages are told apart by the place of the page in the book, an odd place being a right page, and a group is the pages
+    that carry one label of ``Page.group_label``. What the recipe holds is the value of every other page.
+    """
+
+    PAGES = 'pages', 'Pages'
+    GROUP = 'group', 'Group'
+    ODD = 'odd', 'Odd pages'
+    EVEN = 'even', 'Even pages'
+
+    @property
+    def is_part(self) -> bool:
+        """Whether the scope is a part of the pages the program tells apart, which is stored once for all of them."""
+        return self is not ValueScope.PAGES
 
 
 class TransformKind(LabeledStrEnum):
@@ -1064,6 +1065,20 @@ class JobKind(LabeledStrEnum):
         :rtype: frozenset[JobKind]
         """
         return frozenset({cls.RUN_STAGE, cls.PREVIEW_STEP, cls.MEASURE_BOOK})
+
+    @classmethod
+    def preemptive(cls) -> frozenset[JobKind]:
+        """Return the kinds of job that cancel a preview of the project instead of being refused by it.
+
+        A preview is a look at one page that the editor of a step asks for by itself and the reader asks for with a
+        switch, and it changes nothing that is current: it writes versions of the preview scale only, which no run and
+        no measure reads, under identifiers that name that scale. A run and a measure of the book are what the reader
+        pressed a button for, so a preview that happens to be in the way gives the project up, queued or running.
+
+        :returns: A run and a measure of the book.
+        :rtype: frozenset[JobKind]
+        """
+        return frozenset({cls.RUN_STAGE, cls.MEASURE_BOOK})
 
     @classmethod
     def housekeeping(cls) -> frozenset[JobKind]:

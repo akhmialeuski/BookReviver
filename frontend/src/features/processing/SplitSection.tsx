@@ -28,6 +28,7 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
  * The choice the Split stage offers for the scan of the open page: one page or two, or what the automatic split decides.
+ * It stands in the `page` slot of the panel, above the facts the split found on the page.
  *
  * A choice is kept as an edit of the automatic split on the page that shows the scan, whole or as its left half, so it
  * stays through every later run of the stage, and the page is made again at once by a run on that page alone. "Auto"
@@ -90,9 +91,7 @@ export function SplitSection({
     }
     run.mutate({
       path: { project_id: projectId, stage },
-      body: confirm
-        ? { recipe_id: recipe.id, page_ids: [driver.id], confirm_unsplit: true }
-        : { recipe_id: recipe.id, page_ids: [driver.id] },
+      body: confirm ? { page_ids: [driver.id], confirm_unsplit: true } : { page_ids: [driver.id] },
     });
   };
   const choose = async (value: SplitChoice, confirm: boolean): Promise<void> => {
@@ -133,10 +132,7 @@ export function SplitSection({
   const error = saveEdit.error ?? deleteEdit.error ?? run.error;
 
   return (
-    <section className="grid gap-3" aria-label={labels.scan} data-testid="split-section">
-      <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-        {labels.scan}
-      </h3>
+    <div className="grid gap-3" data-testid="split-section">
       <SegmentedRadio
         legend={labels.choice}
         hideLegend
@@ -173,6 +169,6 @@ export function SplitSection({
       )}
       {error === null ? null : <ErrorAlert message={describeError(error)} />}
       <UnsplitDialog question={asking} onCancel={() => setAsking(null)} onConfirm={answer} />
-    </section>
+    </div>
   );
 }

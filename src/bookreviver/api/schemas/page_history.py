@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import Field
 
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
-from bookreviver.domain.enums import ChangeSource, Stage, StepLayer
+from bookreviver.domain.enums import ChangeSource, Stage, StepLayer, ValueScope
 from bookreviver.domain.ids import ChangeBatchId, PageId, PageStepChangeId, StepId
 
 
@@ -30,6 +30,8 @@ class PageStepChangeSchema(ResponseModel):
     :ivar stage: Stage of the step.
     :ivar step_id: Identifier of the step.
     :ivar layer: The layer that changed.
+    :ivar scope: Whose settings the layer holds: the page's own, or the odd pages, the even pages or a group it takes.
+    :ivar group_label: Label of the group for the scope of a group, and empty for the others.
     :ivar before: Content of the layer before the change, or None when it was empty.
     :ivar after: Content of the layer after the change, or None when the change emptied it.
     :ivar source: What made the change.
@@ -45,6 +47,8 @@ class PageStepChangeSchema(ResponseModel):
     stage: Stage
     step_id: StepId
     layer: StepLayer
+    scope: ValueScope
+    group_label: str
     before: dict[str, Any] | None
     after: dict[str, Any] | None
     source: ChangeSource

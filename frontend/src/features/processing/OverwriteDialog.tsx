@@ -13,8 +13,8 @@ import {
 /**
  * Warns that a run in a mode that takes work away does so on a number of pages, before the run is sent.
  *
- * The run keeps the settings and the hand edits of the pages unless it is asked to replace the hand settings or reset
- * the page settings, and then it takes them from the pages it goes over. The dialog names how many pages lose work and
+ * The run keeps the settings and the hand edits of the pages unless it is asked to run them by the recipe and drop
+ * their work, and then it takes them from the pages it goes over. The dialog names how many pages lose work and
  * says the change is written to the history, so one undo gives it back. The caller sends the run when it is confirmed,
  * and the server refuses such a run without the confirmation.
  */
@@ -37,11 +37,9 @@ export function OverwriteDialog({
         {impact === null ? null : (
           <>
             <DialogHeader>
-              <DialogTitle>{labels.title(impact.mode)}</DialogTitle>
+              <DialogTitle>{labels.title}</DialogTitle>
               <DialogDescription>
-                <span data-testid="overwrite-pages">
-                  {labels.body(impact.mode, impact.affected)}
-                </span>{' '}
+                <span data-testid="overwrite-pages">{labels.body(impact.affected)}</span>{' '}
                 {labels.undo}
               </DialogDescription>
             </DialogHeader>

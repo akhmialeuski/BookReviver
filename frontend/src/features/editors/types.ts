@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import type { FigureState, PageSchema, PageVersionSchema, ScanSchema } from '@/api';
+import type { FigureState, PageSchema, ScanSchema } from '@/api';
 import type { EditorScene } from '@/features/editors/scene';
 import type { Geometry, RectShape, Size } from '@/features/editors/shapes';
 import type { PageResult } from '@/features/processing/results';
@@ -32,8 +32,6 @@ export interface PageContext {
   items: readonly StripItem[];
   /** The scan the open page was cut from, or null for a page without one. */
   scan: ScanSchema | null;
-  /** The version the step of the editor read, or null when the step reads the picture before the stage. */
-  stepInput: PageVersionSchema | null;
   /** What the step of the editor found on the open page, or null when it has not run. */
   result: PageResult | null;
   /** The key of the processor of the step the editor sets. */
@@ -64,6 +62,11 @@ export interface CanvasProps<S> {
   onChange: (shape: S) => void;
   /** The reader let go of the shape, so it is to be saved. */
   onCommit: (shape: S) => void;
+  /**
+   * The reader moved the shape in small steps, so it is to be saved once the steps pause. A shape saved by `onCommit`
+   * meanwhile is newer, and drops the one that waits.
+   */
+  onCommitLater: (shape: S) => void;
 }
 
 /** What the part of an editor in the panel gets. */
@@ -118,7 +121,8 @@ export interface EditorDefinition<S> {
    */
   mask?: (shape: S, size: Size) => Promise<Blob>;
   Canvas: ComponentType<CanvasProps<S>>;
-  Panel: ComponentType<PanelProps<S>>;
+  /** The part in the panel, or absent for an editor that has nothing there beyond the shape on the canvas. */
+  Panel?: ComponentType<PanelProps<S>>;
 }
 
 /** What the canvas part of a registered editor gets: the geometry of the edit in place of a typed shape. */
@@ -130,6 +134,7 @@ export interface GeometryCanvasProps {
   figure: FigureState;
   onChange: (geometry: Geometry) => void;
   onCommit: (geometry: Geometry) => void;
+  onCommitLater: (geometry: Geometry) => void;
 }
 
 /** What the part of a registered editor in the panel gets. */

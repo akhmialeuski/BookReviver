@@ -5,12 +5,11 @@ tell how its steps differ from the profile, but it is a recipe like any other: d
 link and changes no book. Another account's profile is reported exactly like a missing one, as another account's
 project is, so the identifiers of profiles cannot be probed.
 
-Applying a profile adds a variant to the book and, when asked, makes it the active recipe, through the use cases of
-``ProcessingService``, which also mark the pages the old active recipe processed stale. Applying it to some pages also
-pins the variant to them and runs the stage on them, as giving a variant to pages does. A processor that is not
-installed on the server is left out of the variant and named in the result, so one profile serves several machines.
-An account has at most one default profile for each stage, which the first opening of a stage in a new book reads
-through ``RecipeBook``.
+Applying a profile to a book puts its steps into the recipe of one kind of page of the stage and links the recipe to the
+profile, through the use cases of ``ProcessingService``, which also mark the pages the recipe processed stale. A
+processor that is not installed on the server is left out of the recipe and named in the result, so one profile serves
+several machines. An account has at most one default profile for each stage, whose steps the recipe of text pages
+starts with at the first opening of the stage in a new book, through ``RecipeBook``.
 
 A profile is exchanged as a file: the library exports one and imports another through the same checks that saving does.
 An import refuses a file whose processors are not all installed, since a profile that cannot be applied whole would
@@ -26,14 +25,14 @@ from bookreviver.domain.entities import RecipeProfile
 from bookreviver.domain.enums import OrderMode
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import RecipeProfileId
-from bookreviver.domain.values import RecipeDraft, Slice, StageRun
+from bookreviver.domain.values import RecipeDraft, RecipeKey, Slice
 from bookreviver.services.projects import owned_project
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, Job, Recipe
-    from bookreviver.domain.enums import Stage
-    from bookreviver.domain.ids import PageId, ProjectId
-    from bookreviver.domain.values import RecipeKey, SliceRequest
+    from bookreviver.domain.entities import Actor, Recipe
+    from bookreviver.domain.enums import RecipeKind, Stage
+    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.values import ProfileDraft, SliceRequest
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock
     from bookreviver.services.processing import ProcessingService
@@ -61,15 +60,12 @@ class ListedProfile:
 class AppliedProfile:
     """The recipe a profile made in a book, and what was left out of it.
 
-    :ivar recipe: The variant added to the book, which is active when the request asked for that.
+    :ivar recipe: The recipe of the book that took the steps of the profile.
     :ivar missing_processors: Keys of the processors of the profile that are not installed, whose steps were left out.
-    :ivar job: The queued run of the stage on the pages the profile was applied to, or None when it was applied to the
-               book only.
     """
 
     recipe: Recipe
     missing_processors: tuple[str, ...]
-    job: Job | None = None
 
 
 class RecipeProfiles:
@@ -82,7 +78,7 @@ class RecipeProfiles:
         :type uow: UnitOfWork
         :param recipes: The recipes of the project, which check the steps of a profile.
         :type recipes: RecipeBook
-        :param processing: The use cases that add a variant to a book and make it the active recipe.
+        :param processing: The use cases that put the steps of a profile into a recipe of a book.
         :type processing: ProcessingService
         :param clock: Clock stamping new and changed profiles.
         :type clock: Clock
@@ -167,7 +163,7 @@ class RecipeProfiles:
         await self._uow.commit()
         return copy
 
-    async def import_profile(self, actor: Actor, stage: Stage, draft: RecipeDraft) -> RecipeProfile:
+    async def import_profile(self, actor: Actor, stage: Stage, draft: ProfileDraft) -> RecipeProfile:
         """Save the profile a file holds, which gets new identifiers for its steps and is not the default.
 
         :param actor: Account acting in the current request.
@@ -175,7 +171,7 @@ class RecipeProfiles:
         :param stage: Stage whose recipes the profile can be applied to.
         :type stage: Stage
         :param draft: Name, steps and order read from the file, which are checked as ``save`` checks them.
-        :type draft: RecipeDraft
+        :type draft: ProfileDraft
         :returns: The profile as stored.
         :rtype: RecipeProfile
         :raises InvalidParametersError: If the file needs a processor that is not installed, a step does not fit its
@@ -185,7 +181,7 @@ class RecipeProfiles:
             raise InvalidParametersError(MISSING_IN_FILE.format(keys=', '.join(missing)))
         return await self.save(actor, stage, draft)
 
-    async def save(self, actor: Actor, stage: Stage, draft: RecipeDraft) -> RecipeProfile:
+    async def save(self, actor: Actor, stage: Stage, draft: ProfileDraft) -> RecipeProfile:
         """Save the steps of a recipe as a profile of the account.
 
         :param actor: Account acting in the current request.
@@ -193,7 +189,7 @@ class RecipeProfiles:
         :param stage: Stage whose recipes the profile can be applied to.
         :type stage: Stage
         :param draft: Name and steps of the profile, which are checked against their processors and their order.
-        :type draft: RecipeDraft
+        :type draft: ProfileDraft
         :returns: The profile as stored, which is not the default.
         :rtype: RecipeProfile
         :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
@@ -215,7 +211,7 @@ class RecipeProfiles:
         await self._uow.commit()
         return profile
 
-    async def replace(self, actor: Actor, profile_id: RecipeProfileId, draft: RecipeDraft) -> RecipeProfile:
+    async def replace(self, actor: Actor, profile_id: RecipeProfileId, draft: ProfileDraft) -> RecipeProfile:
         """Replace the name, the steps and the order of a profile, which is how a book saves its changes to its profile.
 
         The recipes made from the profile are not changed. They differ from it from now on, until each is saved to
@@ -227,7 +223,7 @@ class RecipeProfiles:
         :type profile_id: RecipeProfileId
         :param draft: New name, steps and order, which are checked against the processors of the profile's stage and
                       their order.
-        :type draft: RecipeDraft
+        :type draft: ProfileDraft
         :returns: The profile as stored, with the same stage and the same default mark.
         :rtype: RecipeProfile
         :raises NotFoundError: If the account has no such profile.
@@ -339,19 +335,11 @@ class RecipeProfiles:
         await self._uow.commit()
 
     async def apply(
-        self,
-        actor: Actor,
-        project_id: ProjectId,
-        profile_id: RecipeProfileId,
-        *,
-        activate: bool,
-        pages: tuple[PageId, ...] | None = None,
+        self, actor: Actor, project_id: ProjectId, profile_id: RecipeProfileId, *, kind: RecipeKind
     ) -> AppliedProfile:
-        """Add the steps of a profile to a book as a variant of the profile's stage, and optionally make it active.
+        """Put the steps of a profile into the recipe of one kind of page of the profile's stage, and link it.
 
-        With pages, the variant is also pinned to them and the stage is run on them, as the application of any variant
-        to some pages is. The variant is stored before the run is queued, so a run that is refused because the book is
-        busy leaves the variant in the book, and nothing pinned.
+        The pages the recipe processed become stale, as they do for any change of a recipe.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -359,40 +347,30 @@ class RecipeProfiles:
         :type project_id: ProjectId
         :param profile_id: Identifier of the profile.
         :type profile_id: RecipeProfileId
-        :param activate: Whether the variant becomes the active recipe of the stage.
-        :type activate: bool
-        :param pages: The pages to pin the variant to and to run the stage on, or None to apply it to the book only.
-        :type pages: tuple[PageId, ...] | None
-        :returns: The recipe, which is the variant linked to the profile, or the active recipe when ``activate`` is set,
-                  the processors whose steps were left out, and the queued run when there were pages.
+        :param kind: The kind of page whose recipe takes the steps.
+        :type kind: RecipeKind
+        :returns: The recipe, which is linked to the profile, and the processors whose steps were left out.
         :rtype: AppliedProfile
-        :raises NotFoundError: If the account has no such profile or project, the stage has no recipe, or a page is not
-                               in the project.
+        :raises NotFoundError: If the account has no such profile or project, or the stage has no recipe.
         :raises InvalidParametersError: If no step of the profile can run here, or a step no longer fits its processor.
-        :raises ConflictError: If pages were given and a run, a preview, a tile cutting, a collection or a measure of
-                               the project is queued or running.
         """
+        await owned_project(self._uow.projects, actor, project_id)
         profile = await self._owned(actor, profile_id)
         steps, missing = self._recipes.installed(profile.steps)
         if missing and not any(step.enabled for step in steps):
             raise InvalidParametersError(NOTHING_TO_APPLY.format(keys=', '.join(missing)))
+        recipe = await self._recipes.of_kind(project_id, profile.stage, kind)
         # The steps were checked when the profile was saved, and rules may have been added to the processors since
-        draft = RecipeDraft(name=profile.name, steps=steps, order=OrderMode.FREE, profile_id=profile.id)
-        recipe = await self._processing.add_variant(actor, project_id, profile.stage, draft)
-        if activate:
-            recipe = await self._processing.activate(actor, project_id, profile.stage, recipe.id)
-        job = None
-        if pages is not None:
-            run = StageRun(stage=profile.stage, recipe_id=recipe.id, page_ids=pages, pin=True)
-            job = await self._processing.start_run(actor, project_id, profile.stage, run)
-        return AppliedProfile(recipe=recipe, missing_processors=missing, job=job)
+        draft = RecipeDraft(steps=steps, order=OrderMode.FREE, profile_id=profile.id)
+        applied = await self._put(actor, project_id, RecipeKey(stage=profile.stage, recipe_id=recipe.id), draft)
+        return AppliedProfile(recipe=applied, missing_processors=missing)
 
     async def reset(self, actor: Actor, project_id: ProjectId, key: RecipeKey) -> Recipe:
-        """Put the steps a stage starts with back into a recipe, and mark the pages it processed stale.
+        """Put the steps a recipe starts with back into it, and mark the pages it processed stale.
 
-        The steps are those of the account's default profile for the stage when it has a usable one, and otherwise those
-        of the built-in template of the recipe, which are the steps the stage would have had on its first opening. The
-        recipe keeps its identifier, its name, whether it is active, and the pages pinned to it, while every step is
+        The steps are those of the account's default profile for the stage when the recipe is the one of text pages and
+        the account has a usable profile, and otherwise those of the built-in template of the kind, which are the steps
+        the stage would have had on its first opening. The recipe keeps its identifier and its kind, while every step is
         new, so the settings and edits the pages kept for the old steps no longer belong to any step. The recipe is
         linked to the default profile when its steps came from it, and to no profile when they came from a template.
 
@@ -409,11 +387,30 @@ class RecipeProfiles:
         """
         await owned_project(self._uow.projects, actor, project_id)
         recipe = await self._recipes.get(project_id, key.recipe_id, stage=key.stage)
-        draft = await self._recipes.default_draft(project_id, key.stage, recipe.name)
-        reset = await self._processing.save_variant(actor, project_id, key, draft)
-        # The steps now are the profile's, or the template's, so the recipe is linked to the profile or to none
-        if reset.profile_id == draft.profile_id:
-            return reset
+        draft = await self._recipes.default_draft(project_id, key.stage, recipe.kind)
+        return await self._put(actor, project_id, key, draft)
+
+    async def _put(self, actor: Actor, project_id: ProjectId, key: RecipeKey, draft: RecipeDraft) -> Recipe:
+        """Put the steps of a draft into a recipe, and link the recipe to the profile the draft names, or to none.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param key: The stage and the identifier of the recipe.
+        :type key: RecipeKey
+        :param draft: The steps, and the profile they come from.
+        :type draft: RecipeDraft
+        :returns: The recipe as stored.
+        :rtype: Recipe
+        :raises NotFoundError: If the actor has no such project, the project has no such recipe of the stage, or the
+                               account has no such profile.
+        :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
+                                        usual order.
+        """
+        stored = await self._processing.save_recipe(actor, project_id, key, draft)
+        if stored.profile_id == draft.profile_id:
+            return stored
         return await self.link(actor, project_id, key, draft.profile_id)
 
     async def _owned(self, actor: Actor, profile_id: RecipeProfileId) -> RecipeProfile:

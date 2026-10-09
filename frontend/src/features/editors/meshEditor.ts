@@ -1,9 +1,9 @@
+import { INPUT_EDITOR } from '@/features/editors/inputEditor';
 import { MeshCanvas } from '@/features/editors/MeshCanvas';
 import { MeshPanel } from '@/features/editors/MeshPanel';
 import { meshOf } from '@/features/editors/mesh';
 import { type MeshShape, readMesh, writeMesh } from '@/features/editors/shapes';
-import { type EditorDefinition, Picture } from '@/features/editors/types';
-import { sourceSize } from '@/features/processing/results';
+import type { EditorDefinition } from '@/features/editors/types';
 import { MESSAGES } from '@/shared/messages';
 
 /**
@@ -15,12 +15,7 @@ import { MESSAGES } from '@/shared/messages';
  */
 
 export const meshEditor: EditorDefinition<MeshShape> = {
-  picture: Picture.Input,
-  alwaysOn: false,
-  needsResult: true,
-  owner: ({ current }) => current.page,
-  size: ({ result, pictureSize }) => sourceSize(result) ?? pictureSize,
-  runsAfterEdit: () => true,
+  ...INPUT_EDITOR,
   fallback: ({ size, result }) => meshOf(result, size),
   read: readMesh,
   write: writeMesh,

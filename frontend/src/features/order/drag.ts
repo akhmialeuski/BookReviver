@@ -1,3 +1,4 @@
+import { type CollisionDetection, closestCenter } from '@dnd-kit/core';
 import type { PageSchema } from '@/api';
 import { AnchorSide, type PageAnchor } from '@/features/pages/order';
 
@@ -45,3 +46,29 @@ export function dropPlace(
   }
   return { pageId: overId, side: to > from ? AnchorSide.After : AnchorSide.Before };
 }
+
+/**
+ * Find the page a drop lands on by what is under the pointer on the screen right now.
+ *
+ * dnd-kit compares the held page with the rectangles it measured earlier, and on a long book that scrolls and is
+ * virtualized those rectangles are stale, so a drop lands a row off. The document knows where the tiles are at this
+ * moment: the topmost element under the pointer that sits in a cell (`data-cell`) names the page, and the droppable
+ * with that id is the collision. Without a pointer, as with the keyboard, or with no registered cell under it, such as
+ * a gap card or the space between tiles, the answer is that of dnd-kit's `closestCenter`.
+ *
+ * @param args What dnd-kit hands to every collision detection: the pointer and the droppables.
+ * @returns The collisions, the one under the pointer alone when there is one.
+ */
+export const collideUnderPointer: CollisionDetection = (args) => {
+  const { pointerCoordinates, droppableContainers } = args;
+  if (pointerCoordinates !== null) {
+    for (const element of document.elementsFromPoint(pointerCoordinates.x, pointerCoordinates.y)) {
+      const cellId = element.closest<HTMLElement>('[data-cell]')?.dataset.cell;
+      const droppable = droppableContainers.find((container) => String(container.id) === cellId);
+      if (droppable !== undefined) {
+        return [{ id: droppable.id }];
+      }
+    }
+  }
+  return closestCenter(args);
+};

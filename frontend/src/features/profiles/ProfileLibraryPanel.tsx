@@ -5,8 +5,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/shared/ui/sheet';
 
 /**
  * The side panel that holds the library of profiles while a book is open. The profile menu opens it, and it is closed
- * with its button or the Escape key. The pages selected in the grid stay selected behind it, so a profile can be applied
- * to them from here.
+ * with its button or the Escape key.
  */
 
 const labels = MESSAGES.profiles.library;

@@ -19,6 +19,7 @@ from bookreviver.domain.enums import (
     JobState,
     PageKind,
     PageOrigin,
+    RecipeKind,
     RejectionReason,
     Rendition,
     Side,
@@ -828,6 +829,47 @@ class TestPageRepository:
         expect(await pages.last_order_key(project.id) == 'a1')
         expect(await pages.last_order_key(empty.id) is None)
         assert_expectations()
+
+    async def test_kind_tally_counts_the_pages_with_an_image_of_each_kind(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify each page counts under the kind it is processed by, and a placeholder and another book do not count.
+
+        The kind is the blank kind for a blank page, and otherwise what the page shows: what the user set, else what the
+        program found, else a plate counts as a picture in colour.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        owner_id = await fx_new_owner()
+        project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        source = make_source(project_id=project.id)
+        scans = [make_scan(source=source, number=number) for number in range(5)]
+        text, plate, blank, found, by_hand = (
+            make_page(project_id=project.id, order_key=f'a{number}', scan=scan, kind=kind)
+            for number, (scan, kind) in enumerate(
+                zip(scans, (PageKind.TEXT, PageKind.PLATE, PageKind.BLANK, PageKind.TEXT, PageKind.PLATE), strict=True)
+            )
+        )
+        found = evolve(found, content_type=ContentType.BW_PICTURE)
+        by_hand = evolve(by_hand, content_type=ContentType.TEXT, content_by_hand=True)
+        uow = await fx_uow_factory()
+        for owned in (project, other):
+            await uow.projects.add(owned)
+        await uow.sources.add(source)
+        await uow.scans.add_many(scans)
+        await uow.pages.add_many([text, plate, blank, found, by_hand, make_page(project_id=project.id, order_key='b0')])
+        await uow.pages.add(make_page(project_id=other.id, order_key='a0'))
+        await uow.commit()
+        tally = await (await fx_uow_factory()).pages.kind_tally(project.id)
+        assert dict(tally) == {
+            RecipeKind.TEXT: 2,
+            RecipeKind.COLOR_PICTURE: 1,
+            RecipeKind.BW_PICTURE: 1,
+            RecipeKind.BLANK: 1,
+        }
 
     async def test_count_before_is_the_position_in_the_book(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory

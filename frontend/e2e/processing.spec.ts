@@ -3,12 +3,14 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import {
   createBook,
+  openProjectId,
   registerAndSignIn,
   uploadFolder,
+  waitForIdleJobs,
   writePagesFolder,
   writeScansFolder,
 } from './support/account';
-import { openTimeline, RESULT_ROWS } from './support/page-work';
+import { openTimeline, RESULT_ROWS, runPages } from './support/page-work';
 
 /**
  * The processing workspace on the Geometry stage: the recipe drawn from the schema of its processor, a preview of the
@@ -25,7 +27,7 @@ const PAGES = 4;
 const SCENARIO_TIMEOUT_MS = 240_000;
 const RUN_TIMEOUT_MS = 90_000;
 
-test('a reader previews, runs and checks the Geometry stage', async ({ page }) => {
+test('a reader runs and checks the Geometry stage', async ({ page }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
   const canvas = page.getByTestId('viewer-canvas');
@@ -46,11 +48,15 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
     await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
     await expect(canvas).toHaveAttribute('data-state', 'ready');
+    // A stage that never ran opens on its last step, whose editor looks at the page by a preview of its own, which the
+    // server answers before it takes another ask
+    await expect(page).toHaveURL(/\/stages\/geometry\/steps\/[0-9a-f-]{36}(\?|$)/);
+    await expect.poll(() => previews.length).toBe(1);
+    await waitForIdleJobs(page, openProjectId(page));
   });
 
   await test.step('the recipe is drawn from the processor and its schema', async () => {
     await expect(page.getByTestId('recipe-select')).toContainText('Text');
-    await expect(page.getByTestId('recipe-active')).toBeVisible();
     // A new book is straightened in five steps, the sheet first, the flattening after the turn and the page of the book
     // last. They are in the bar only, and the panel of the recipe lists none
     const barSteps = page.getByTestId('bar-step');
@@ -68,11 +74,9 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     // The settings of a step are in its panel, with the titles of the schema and no name of the code
     await barSteps.nth(0).click();
     await expect(
-      page.getByTestId('step-panel-settings').getByRole('slider', { name: 'Smallest sheet' }),
+      page.getByTestId('panel-settings').getByRole('slider', { name: 'Smallest sheet' }),
     ).toBeVisible();
     await expect(page.getByTestId('stage-panel')).not.toContainText('min_sheet_fraction');
-    // Every step of the stage is built, so none is listed as coming
-    await expect(page.getByTestId('coming-steps')).toHaveCount(0);
   });
 
   await test.step('the settings of the last step are opened, and a value outside its limits cannot be saved', async () => {
@@ -83,40 +87,26 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     await speck.fill('99999');
     await expect(speck).toHaveAttribute('aria-invalid', 'true');
     await expect(page.getByTestId('recipe-save')).toBeDisabled();
-    await expect(page.getByTestId('preview-toggle')).toBeDisabled();
     await speck.fill('4');
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
   });
 
-  await test.step('a preview is asked for once and not again for what is shown', async () => {
-    await page.getByTestId('preview-toggle').click();
-    // The picture after is the half of the compare that the preview fills
-    await expect(page).toHaveURL(/compare=swipe/);
-    await expect(page.getByTestId('compare-handle')).toBeVisible();
-    await expect(page.getByText('After · Geometry preview')).toBeVisible({
+  await test.step('a run on all pages goes over every page and the strip follows it', async () => {
+    await runPages(page);
+    await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });
-    expect(previews).toHaveLength(1);
-
-    const speck = page.getByRole('spinbutton', { name: 'Smallest speck' });
-    await speck.fill('12');
-    await expect(page.getByTestId('preview-working')).toBeVisible();
-    await expect(page.getByTestId('preview-working')).toBeHidden({ timeout: RUN_TIMEOUT_MS });
-    expect(previews).toHaveLength(2);
-
-    // Back to the settings that were shown first: the preview made for them is shown again
-    await speck.fill('4');
-    await expect(page.getByTestId('preview-working')).toBeHidden();
-    await page.waitForTimeout(1_000);
-    expect(previews).toHaveLength(2);
-    await page.getByTestId('preview-toggle').click();
+    // Every page has a result now, and the step was unsure of each
+    await page.getByTestId('strip-filter-check').click();
+    await expect(page).toHaveURL(/filter=check/);
+    await expect(page.getByTestId('strip-page')).toHaveCount(PAGES, { timeout: RUN_TIMEOUT_MS });
   });
 
   await test.step('the page before and after is compared by a swipe, side by side and with a key held', async () => {
-    // The open step compares its own input with its own result, so the step is closed to compare the stage
-    await page.getByTestId('step-close').click();
-    await expect(page.getByTestId('step-panel')).toHaveCount(0);
-    await expect(canvas).toHaveAttribute('data-mode', 'swipe');
+    // Margins puts the page it reads on a page of the book, so what it reads and what it made differ. The compare is off
+    // until the reader asks for one
+    await page.getByTestId('bar-step').filter({ hasText: 'Margins' }).click();
+    await expect(canvas).toHaveAttribute('data-mode', 'off');
     await page.getByTestId('compare-menu').click();
     await page.getByTestId('compare-side').click();
     await expect(page).toHaveURL(/compare=side/);
@@ -136,18 +126,11 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     await expect(canvas).toHaveAttribute('data-holding', 'true');
     await page.keyboard.up('Space');
     await expect(canvas).toHaveAttribute('data-holding', 'false');
-  });
 
-  await test.step('a run on all pages goes over every page and the strip follows it', async () => {
-    await page.getByTestId('run-menu').click();
-    await page.getByTestId('run-all').click();
-    await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
-      timeout: RUN_TIMEOUT_MS,
-    });
-    // Every page has a result now, and the step was unsure of each
-    await page.getByTestId('strip-filter-check').click();
-    await expect(page).toHaveURL(/filter=check/);
-    await expect(page.getByTestId('strip-page')).toHaveCount(PAGES, { timeout: RUN_TIMEOUT_MS });
+    // The compare is turned off again, which gives the canvas back to the editor of the open step
+    await page.getByTestId('compare-menu').click();
+    await page.getByTestId('compare-off').click();
+    await expect(canvas).toHaveAttribute('data-mode', 'off');
   });
 
   await test.step('the Check filter says why under each page and offers the way out on the page', async () => {
@@ -155,15 +138,21 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     await expect(page.getByTestId('strip-reason')).toHaveCount(PAGES);
     await page.getByTestId('strip-page').first().click();
     await expect(page.getByTestId('this-page-review')).toContainText('Left as it was');
-    await expect(page.getByRole('button', { name: 'Set by hand' })).toBeEnabled();
     await expect(page.getByTestId('this-page-facts')).toContainText('Confidence');
+    // The way out is in the step the page was left by: its shape stands on the page, ready to be set by hand
+    await expect(page.getByTestId('strip-reason').first()).toContainText('Perspective');
+    await page.getByTestId('bar-step').filter({ hasText: 'Perspective' }).click();
+    await expect(page.getByTestId('editor-layer')).toHaveAttribute(
+      'aria-label',
+      'Corners of the sheet',
+    );
   });
 
   await test.step('a changed recipe says how many pages it makes out of date and is saved by the button', async () => {
     // The result of the stage is the page the last step made, so its settings are the ones the history tells apart
     await page.getByTestId('bar-step').filter({ hasText: 'Margins' }).click();
     await page
-      .getByTestId('step-panel-settings')
+      .getByTestId('panel-settings')
       .getByRole('spinbutton', { name: 'Top margin, mm', exact: true })
       .fill('12');
     await expect(page.getByTestId('recipe-stale-warning')).toContainText(
@@ -171,24 +160,33 @@ test('a reader previews, runs and checks the Geometry stage', async ({ page }) =
     );
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
-    // The results of the stage are listed in the panel of the page, which the open step takes over for its own
-    await page.getByTestId('step-close').click();
-    await expect(page.getByTestId('stale-banner')).toContainText(
-      'Order changed after these pages were straightened',
-    );
-    await expect(page.getByTestId('stale-banner-run')).toContainText(`Run again on ${PAGES} pages`);
+    // The foot of the panel counts the pages the saved recipe made out of date, and its button runs them once the pages
+    // out of date are chosen again: the button keeps the pages chosen for the run before, which were all of them
+    await expect(page.getByTestId('run-summary')).toContainText(`${PAGES} pages out of date`);
+    await page.getByTestId('run-menu').click();
+    await page.getByTestId('run-pages-attention').click();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('run-start')).toContainText(`${PAGES} out-of-date pages`);
   });
 
-  await test.step('the stale pages are run again and the page keeps both of its results', async () => {
-    await page.getByTestId('stale-banner-run').click();
-    await expect(page.getByTestId('stale-banner')).toHaveCount(0, { timeout: RUN_TIMEOUT_MS });
-    // The results are in the history that ends the panel, which is collapsed until it is opened
+  await test.step('the stale pages are run again and the page keeps the result that was marked good beside the new one', async () => {
+    // A result the run replaces is deleted by the collection that follows it, unless it is marked good or commented
     await openTimeline(page);
+    await page.locator(RESULT_ROWS).first().getByTestId('result-mark-good').click();
+    await expect(page.locator(RESULT_ROWS).first().getByTestId('result-mark-good')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await page.getByTestId('run-start').click();
+    await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
+      timeout: RUN_TIMEOUT_MS,
+    });
     await expect(page.locator(RESULT_ROWS)).toHaveCount(2, { timeout: RUN_TIMEOUT_MS });
     await expect(page.locator(RESULT_ROWS).first()).toHaveAttribute('data-current', 'true');
   });
 
-  await test.step('an earlier result is chosen from the history and becomes the current one', async () => {
+  await test.step('the earlier result is chosen from the history and becomes the current one', async () => {
+    await waitForIdleJobs(page, openProjectId(page));
     const entries = page.locator(RESULT_ROWS);
     await expect(entries.nth(1)).toHaveAttribute('data-current', 'false');
     await entries.nth(1).getByTestId('page-history-use').click();
@@ -249,8 +247,7 @@ test('the choice of one page or two is kept through a run on all pages, and Auto
   const total = WIDE_SCANS * 2 + 1;
   const strip = page.getByTestId('strip-page');
   const runAll = async (): Promise<void> => {
-    await page.getByTestId('run-menu').click();
-    await page.getByTestId('run-all').click();
+    await runPages(page);
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });

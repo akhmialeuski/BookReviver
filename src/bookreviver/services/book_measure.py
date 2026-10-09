@@ -4,13 +4,17 @@
 lines of the box. The pages of one book are made alike by the same step, which needs a target for that distance and a
 size for the page, and no step sees more than one page. ``BookBlocks`` reads what the step recorded on the current
 version of every page, and ``BookSize`` works the target and the page out of it, in one place for the two ways it is
-used. The ``measure-book`` job writes them into the parameters of the normalize step of the active Geometry recipe,
-where the user sees them in the form and may change them. A run of the stage, and the preview of the step, lay them over
-the parameters that are 0, which is the size by the book, without writing them anywhere, so a book needs no press of the
-button to have one page size.
+used. The ``measure-book`` job writes them into the parameters of the normalize step of every Geometry recipe, since
+the pages of all kinds have one size, where the user sees them in the form and may change them. Each recipe is measured
+by its own margins and its own largest change of size, and the page written into all of them is the largest width and
+the largest height of those, so the sheet is one for the book while the margins of each kind stay its own. A run of the
+stage, and the preview of the step, lay them over the parameters that are 0, which is the size by the book, without
+writing them anywhere, so a book needs no press of the button to have one page size.
 
 A page whose lines were photographed larger than another's has a larger block too, so each block is brought to the
-median line height before the blocks are compared, as the normalize step will bring it. The page is the largest of those
+median line height before the blocks are compared, as the normalize step will bring it: by the same rule, which leaves a
+block whose line height is farther from the target than the step allows (``max_scale_change``) at its own size, since
+the step leaves its page so. The page is the largest of those
 blocks with the margins round it, so no page has a block that does not fit. The margins are lengths of the paper, in
 millimetres, which the step turns into pixels by the resolution of each page; the page is sized by the largest of those
 resolutions, or by the width of the block for pages that have none, as ``MarginScale`` works it out for the step too.
@@ -31,6 +35,7 @@ from bookreviver.domain.enums import MarginsSource, NormalizeParam, OrderMode, S
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Rect
 from bookreviver.domain.margins import DEFAULT_MARGINS_MM, MarginScale
+from bookreviver.domain.text_scale import DEFAULT_MAX_SCALE_CHANGE, scale_factor
 from bookreviver.domain.values import RecipeDraft
 
 if TYPE_CHECKING:
@@ -44,7 +49,7 @@ if TYPE_CHECKING:
     from bookreviver.services.stage_records import StageRecords
 
 NORMALIZE_KEY: str = 'geometry.normalize'
-NO_NORMALIZE_STEP: str = 'The active recipe of the Geometry stage has no {key} step to write the measures into.'
+NO_NORMALIZE_STEP: str = 'No recipe of the Geometry stage has a {key} step to write the measures into.'
 NOTHING_TO_MEASURE: str = (
     'Margins has not placed any page of the book yet, so there is nothing to measure. Run the Geometry stage first.'
 )
@@ -191,7 +196,7 @@ class BookSize:
                   measure sets them.
         :rtype: MetadataMap
         """
-        block = self._block(self._median_line_height)
+        block = self._block(self._median_line_height, current)
         along = {NormalizeParam.MARGIN_TOP: block.height, NormalizeParam.MARGIN_BOTTOM: block.height}
         # The margins are shares of the block, in the millimetres of the paper, to a tenth of a millimetre
         margins: dict[str, float] = {
@@ -237,7 +242,7 @@ class BookSize:
         margins: dict[str, float] = {
             name: float(current.get(name, default)) for name, default in DEFAULT_MARGINS_MM.items()
         }
-        page = self._page(self._block(line_height), margins)
+        page = self._page(self._block(line_height, current), margins)
         sizes: dict[str, object] = {
             NormalizeParam.PAGE_WIDTH: page[NormalizeParam.PAGE_WIDTH]
             if held is None
@@ -268,20 +273,27 @@ class BookSize:
             NormalizeParam.PAGE_HEIGHT: math.ceil(block.height + vertical),
         }
 
-    def _block(self, line_height: float | None) -> BookBlock:
-        """Give the largest content box of the book once every box is brought to a line height.
+    def _block(self, line_height: float | None, current: MetadataMap) -> BookBlock:
+        """Give the largest content box of the book once every box is brought to a line height, as the step does.
 
-        The pixels in a millimetre are those of the page that has the most of them, whose margins are the longest, so
-        no page of the book has a margin that does not fit the page. Pages that have no resolution take the width of
-        the box for ``NOMINAL_BLOCK_MM`` millimetres.
+        A box whose line height is too far from the target is left at its own size, since the step leaves its page so,
+        and its resolution stays as it is. The pixels in a millimetre are those of the page that has the most of them,
+        whose margins are the longest, so no page of the book has a margin that does not fit the page. Pages that have
+        no resolution take the width of the box for ``NOMINAL_BLOCK_MM`` millimetres.
 
         :param line_height: The distance between the lines the boxes are brought to, or None to leave them as they are.
         :type line_height: float | None
+        :param current: The parameters of the step, which hold the largest change of size it allows a page.
+        :type current: MetadataMap
         :returns: The box that holds every box, which has the width and the height of the largest of each.
         :rtype: BookBlock
         """
+        max_change = float(current.get(NormalizeParam.MAX_SCALE_CHANGE, DEFAULT_MAX_SCALE_CHANGE))
+        # A page the step leaves unscaled keeps its own size, which is the factor 1
         factors = [
-            1.0 if line_height is None or measure.line_height is None else line_height / measure.line_height
+            1.0
+            if line_height is None or measure.line_height is None
+            else scale_factor(measure.line_height, line_height, max_change) or 1.0
             for measure in self._measures
         ]
         width = max(measure.width * factor for measure, factor in zip(self._measures, factors, strict=True))
@@ -410,7 +422,7 @@ class BookMeasure:
 
         :param uow: Unit of work whose commit ends the job.
         :type uow: UnitOfWork
-        :param recipes: The recipes of the project, which supply the active recipe and rewrite it.
+        :param recipes: The recipes of the project, which supply the Geometry recipes and rewrite them.
         :type recipes: RecipeBook
         :param records: Writer of the stage records, which marks the stage of the pages stale.
         :type records: StageRecords
@@ -422,41 +434,60 @@ class BookMeasure:
     async def run(self, project_id: ProjectId) -> int:
         """Measure the pages of the book and write the result into the parameters of the normalize step.
 
+        The step is written into every recipe of the Geometry stage that has one. The margins and the line height of
+        each recipe are measured by its own parameters, since the margins of a kind are its own, but the sheet is one
+        for the book: the page size written into every recipe is the largest width and the largest height measured by
+        any of them, so the pages of every kind are placed on one page size and each still holds its content with its
+        own margins.
+
         :param project_id: Project whose pages are measured.
         :type project_id: ProjectId
         :returns: The number of pages that were measured.
         :rtype: int
         :raises NotFoundError: If the Geometry stage has no recipe.
-        :raises ConflictError: If the active recipe has no normalize step, or the step has placed no page yet.
+        :raises ConflictError: If no recipe has a normalize step, or the step has placed no page yet.
         :raises InvalidParametersError: If the measured page does not fit the bounds of the step.
         """
-        recipe = await self._recipes.active(project_id, Stage.GEOMETRY)
-        position = next((index for index, step in enumerate(recipe.steps) if step.processor_key == NORMALIZE_KEY), None)
-        if position is None:
+        holders: list[tuple[Recipe, int]] = []
+        for recipe in await self._recipes.recipes(project_id, Stage.GEOMETRY):
+            keys = [step.processor_key for step in recipe.steps]
+            if NORMALIZE_KEY in keys:
+                holders.append((recipe, keys.index(NORMALIZE_KEY)))
+        if not holders:
             raise ConflictError(NO_NORMALIZE_STEP.format(key=NORMALIZE_KEY))
         measures = list((await BookBlocks(self._uow).read(project_id, Stage.GEOMETRY)).values())
         if not measures:
             raise ConflictError(NOTHING_TO_MEASURE)
-        step = recipe.steps[position]
-        measured = evolve(step, params={**step.params, **BookSize(measures).measured(step.params)})
-        if measured.params != step.params:
-            await self._write(recipe, position, measured)
+        sizes = BookSize(measures)
+        steps = [recipe.steps[position] for recipe, position in holders]
+        measured = [sizes.measured(step.params) for step in steps]
+        page: dict[str, int] = {
+            name: max(int(own[name]) for own in measured)
+            for name in (NormalizeParam.PAGE_WIDTH, NormalizeParam.PAGE_HEIGHT)
+        }
+        stale: list[PageStage] = []
+        for (recipe, position), step, own in zip(holders, steps, measured, strict=True):
+            written = evolve(step, params={**step.params, **own, **page})
+            if written.params != step.params:
+                stale.extend(await self._write(recipe, position, written))
+        await self._uow.commit()
+        await self._records.announce(project_id, stale)
         return len(measures)
 
-    async def _write(self, recipe: Recipe, position: int, step: Step) -> None:
-        """Store the recipe with the measured step, mark the pages it processed stale, and commit.
+    async def _write(self, recipe: Recipe, position: int, step: Step) -> list[PageStage]:
+        """Store the recipe with the measured step, and mark the pages it processed stale.
 
-        :param recipe: The active recipe of the Geometry stage.
+        :param recipe: A recipe of the Geometry stage.
         :type recipe: Recipe
         :param position: Place of the normalize step among the steps of the recipe.
         :type position: int
         :param step: The normalize step with the measured parameters.
         :type step: Step
+        :returns: The records of the pages that became stale, which the caller announces after it commits.
+        :rtype: list[PageStage]
         :raises InvalidParametersError: If the measured page does not fit the bounds of the step.
         """
         steps = (*recipe.steps[:position], step, *recipe.steps[position + 1 :])
         # The steps keep the order they were saved in, whatever mode that was
-        await self._recipes.rewrite(recipe, RecipeDraft(name=recipe.name, steps=steps, order=OrderMode.FREE))
-        stale = await self._records.mark_recipe_stale(recipe.id)
-        await self._uow.commit()
-        await self._records.announce(recipe.project_id, stale)
+        await self._recipes.rewrite(recipe, RecipeDraft(steps=steps, order=OrderMode.FREE))
+        return await self._records.mark_recipe_stale(recipe.id)

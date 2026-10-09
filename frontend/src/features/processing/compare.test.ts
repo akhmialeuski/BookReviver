@@ -1,17 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
-  beforeSourceOf,
   clampDivider,
   clipWidth,
+  comparePairOf,
   innerRect,
   placementOf,
   Side,
   SourceKind,
+  sameImage,
   sourceOfPreview,
   sourceOfResult,
 } from '@/features/processing/compare';
 import { version } from '@/features/processing/fixtures';
-import { page, row } from '@/features/workspace/fixtures';
+import { row, stepPage } from '@/features/workspace/fixtures';
 
 describe('sourceOfResult', () => {
   it('draws a result from its pyramid once the tiles are cut', () => {
@@ -48,36 +49,51 @@ describe('sourceOfPreview', () => {
   });
 });
 
-describe('beforeSourceOf', () => {
-  const subject = page('a');
-  const earlier = new Map([['a', row('a', { version: version('split') })]]);
+describe('comparePairOf', () => {
+  const read = version('read');
+  const made = version('made');
+  const head = version('head');
 
-  it('is the result of the nearest earlier stage that has one', () => {
-    const nearest = new Map([['a', row('a', { version: version('near') })]]);
-
-    expect(beforeSourceOf(subject, undefined, [nearest, earlier])?.url).toBe(
-      '/version-near/info.json',
+  it('draws the picture of the page before and what the open step made after', () => {
+    const pair = comparePairOf(
+      read,
+      row('a', { version: head, picture: read, step: stepPage('s', 'found', { version: made }) }),
     );
+
+    expect(pair.before?.url).toBe('/version-read/info.json');
+    expect(pair.after?.url).toBe('/version-made/info.json');
   });
 
-  it('goes on to a stage further back when the nearest has no picture of the page', () => {
-    const empty = new Map([['a', row('a')]]);
-
-    expect(beforeSourceOf(subject, undefined, [empty, earlier])?.url).toBe(
-      '/version-split/info.json',
+  it('draws nothing after for a step the page has not been run through, not the result of the stage', () => {
+    const pair = comparePairOf(
+      read,
+      row('a', { version: head, picture: read, step: stepPage('s', 'default', { version: null }) }),
     );
+
+    expect(pair.before?.url).toBe('/version-read/info.json');
+    expect(pair.after).toBeNull();
   });
 
-  it('is the picture the page has now when no earlier stage made one and the stage has not either', () => {
-    expect(beforeSourceOf(subject, row('a'), [new Map()])?.url).toBe('/page-a/info.json');
+  it('draws the result of the stage after when no step is open', () => {
+    const pair = comparePairOf(head, row('a', { version: head, picture: head }));
+
+    expect(pair.after?.url).toBe('/version-head/info.json');
   });
 
-  it('is nothing on the first stage, which has no stage before it', () => {
-    expect(beforeSourceOf(subject, row('a'), [])).toBeNull();
+  it('draws nothing before while the row loads, never the image of the page', () => {
+    expect(comparePairOf(null, undefined)).toEqual({ before: null, after: null });
   });
+});
 
-  it('is nothing when the stage has a result and nothing came before it, since the page then shows that result', () => {
-    expect(beforeSourceOf(subject, row('a', { version: version('own') }), [new Map()])).toBeNull();
+describe('sameImage', () => {
+  it('is true for one picture and false for two, or for none', () => {
+    const a = sourceOfResult(version('a'));
+    const b = sourceOfResult(version('b'));
+
+    expect(sameImage(a, sourceOfResult(version('a')))).toBe(true);
+    expect(sameImage(a, b)).toBe(false);
+    expect(sameImage(a, null)).toBe(false);
+    expect(sameImage(null, null)).toBe(false);
   });
 });
 

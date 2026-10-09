@@ -1,6 +1,6 @@
 import type { WidgetProps } from '@rjsf/utils';
 import { useState } from 'react';
-import { sliderSpecOf, snapToSlider } from '@/features/processing/schema';
+import { BOUNDED_NUMBER_WIDGET, sliderSpecOf, snapToSlider } from '@/features/processing/schema';
 import { Input } from '@/shared/ui/input';
 import { Slider } from '@/shared/ui/slider';
 
@@ -70,3 +70,6 @@ export function BoundedNumberWidget({
     </div>
   );
 }
+
+/** The widgets every form of the settings of a step draws its fields with, by the name the `uiSchema` gives them. */
+export const FORM_WIDGETS = { [BOUNDED_NUMBER_WIDGET]: BoundedNumberWidget };

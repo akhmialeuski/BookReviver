@@ -91,12 +91,10 @@ export type AccountUpdate = {
 /**
  * AppliedProfileSchema
  *
- * The recipe a profile made in a book, and what was left out of it.
+ * The recipe a profile changed in a book, and what was left out of it.
  *
- * :ivar recipe: The variant added to the book, which is the active recipe when the request asked for that.
+ * :ivar recipe: The recipe that took the steps of the profile.
  * :ivar missing_processors: Keys of the processors of the profile that are not installed, whose steps were left out.
- * :ivar job: The queued run of the stage on the pages the profile was applied to, or null when it was applied to the
- * book only.
  */
 export type AppliedProfileSchema = {
     recipe: RecipeSchema;
@@ -104,40 +102,17 @@ export type AppliedProfileSchema = {
      * Missing Processors
      */
     missing_processors: Array<string>;
-    job?: JobSchema | null;
 };
-
-/**
- * AppliesTo
- *
- * The condition of a step of a recipe: which pages the step processes, the others passing it unchanged.
- *
- * What makes a page text or a picture is decided by its content type (``Page.content_of``) and nowhere else. Until the
- * content of a page is detected, the role the user gave the page decides: a plate or a frontispiece is a picture, and
- * every other kind of page is text. The colour of such a picture is the colour mode of the image the stage starts
- * from, and an unknown mode counts as colour, since a step for black and white pictures must not touch a page that
- * may be a colour plate.
- */
-export type AppliesTo = 'all' | 'text' | 'pictures' | 'color-pictures' | 'bw-pictures';
 
 /**
  * ApplyProfileBody
  *
  * How to apply a profile to a book.
  *
- * :ivar activate: Whether the new variant also becomes the active recipe of the stage.
- * :ivar page_ids: The pages to pin the new variant to and to run the stage on, or omitted to apply the profile to the
- * book only.
+ * :ivar kind: The kind of page whose recipe of the profile's stage takes the steps of the profile.
  */
 export type ApplyProfileBody = {
-    /**
-     * Activate
-     */
-    activate?: boolean;
-    /**
-     * Page Ids
-     */
-    page_ids?: Array<string> | null;
+    kind: RecipeKind;
 };
 
 /**
@@ -519,12 +494,11 @@ export type CanvasPositionSchema = {
 /**
  * CarryForm
  *
- * The pages a setting of one page is carried over to.
+ * The pages the shape a page set by hand for a step is carried over to.
  *
- * :ivar scope: The following pages, the selected pages, or every page of the condition of the step.
+ * :ivar scope: The following pages, the selected pages, or every page of the kind of the step.
  * :ivar page_ids: The selected pages, which the scope of the selected pages needs and the other scopes ignore.
- * :ivar overwrite: Whether a page that has another value of its own for the field takes the value as well, instead of
- * being skipped.
+ * :ivar overwrite: Whether a page that has a shape of its own takes the shape as well, instead of being skipped.
  */
 export type CarryForm = {
     scope: CarryScope;
@@ -544,8 +518,8 @@ export type CarryForm = {
  * What a carry-over did, which is one batch of the history.
  *
  * :ivar batch_id: The batch the changes share, which an undo of any of them takes back as a whole.
- * :ivar changes: The changes written, one on each page that took the value.
- * :ivar skipped: The pages left as they were because they have a value of their own for the field.
+ * :ivar changes: The changes written, one on each page that took the shape.
+ * :ivar skipped: The pages left as they were because they have a shape of their own.
  */
 export type CarryOverSchema = {
     /**
@@ -567,14 +541,14 @@ export type CarryOverSchema = {
  *
  * The pages a setting of one page is carried over to.
  */
-export type CarryScope = 'following' | 'selected' | 'condition';
+export type CarryScope = 'following' | 'selected' | 'kind';
 
 /**
  * ChangeSource
  *
  * What made a change of a layer of a step on a page.
  */
-export type ChangeSource = 'user' | 'run' | 'carry-over' | 'reset' | 'undo';
+export type ChangeSource = 'user' | 'run' | 'carry-over' | 'undo';
 
 /**
  * ClearedSchema
@@ -593,6 +567,25 @@ export type ClearedSchema = {
      * Versions
      */
     versions: number;
+};
+
+/**
+ * CollectionReportSchema
+ *
+ * What a collection would delete from a book now.
+ *
+ * :ivar versions: How many versions it would delete, with their rows and the log of their marks.
+ * :ivar size_bytes: How many bytes the files of those versions take, which the collection frees.
+ */
+export type CollectionReportSchema = {
+    /**
+     * Versions
+     */
+    versions: number;
+    /**
+     * Size Bytes
+     */
+    size_bytes: number;
 };
 
 /**
@@ -637,8 +630,8 @@ export type ContentSource = 'detected' | 'hand' | 'kind';
  * What the image of a page is: text, or a picture in colour or in black and white.
  *
  * The program proposes it from the share of the page that pictures cover and from the colour of the pictures, and the
- * user may change it. It is what the conditions of the steps of a recipe read, apart from the role the page has in the
- * book (``PageKind``), which says where the page stands and not what it shows.
+ * user may change it. It decides, apart from the role the page has in the book (``PageKind``), which recipe of a stage
+ * processes the page.
  */
 export type ContentType = 'text' | 'color-picture' | 'bw-picture';
 
@@ -714,8 +707,8 @@ export type ErrorModel = {
  * Where the shape of one step on one page comes from, which the step bar paints as a dot.
  *
  * A page that was never run through the step holds the default shape, which computes nothing. A step that ran leaves
- * the shape it found, a manual edit puts the shape the user set and outlives the next run, and a page that did not
- * meet the condition of the step passes it with no shape at all.
+ * the shape it found, a manual edit puts the shape the user set and outlives the next run, and a leaf the program drew
+ * passes the step with no shape at all.
  */
 export type FigureState = 'default' | 'found' | 'by-hand' | 'skipped';
 
@@ -907,6 +900,27 @@ export type JobSchema = {
  * Lifecycle of a background job.
  */
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+
+/**
+ * KindRecipeSchema
+ *
+ * The recipe of one kind of page of a stage, with how many pages of the book are of the kind.
+ *
+ * :ivar kind: The kind of page, which is also the name of the recipe.
+ * :ivar recipe_id: The recipe.
+ * :ivar pages: Pages with an image that are of the kind, which are the pages the recipe processes.
+ */
+export type KindRecipeSchema = {
+    kind: RecipeKind;
+    /**
+     * Recipe Id
+     */
+    recipe_id: string;
+    /**
+     * Pages
+     */
+    pages: number;
+};
 
 /**
  * LabelRange
@@ -1371,7 +1385,7 @@ export type PageOrigin = 'scan' | 'blank' | 'placeholder';
  * None for a page kept out of the book, a page before the first section and a book without
  * sections.
  * :ivar kind: Role of the page in the book.
- * :ivar content_type: What the page shows for the conditions of the steps: text, or a picture in colour or in black
+ * :ivar content_type: What the page shows: text, or a picture in colour or in black
  * and white. It is the one the user set, else the one the program found, else the one the kind
  * of the page gives, which counts a plate or a frontispiece as a picture in colour.
  * :ivar content_source: Where ``content_type`` comes from, so the interface can say whether it was found or set.
@@ -1451,22 +1465,6 @@ export type PageSchema = {
 };
 
 /**
- * PageSettingForm
- *
- * The value one page uses for one field of the parameters of a step.
- *
- * :ivar value: The value, as JSON, which the processor of the step checks against the field.
- */
-export type PageSettingForm = {
-    /**
-     * Value
-     *
-     * The value the page uses for the field
-     */
-    value: unknown;
-};
-
-/**
  * PageStageSchema
  *
  * The current version of a stage of a page and whether it is up to date; the data of a stage event too.
@@ -1476,7 +1474,6 @@ export type PageSettingForm = {
  * :ivar recipe_id: Recipe the page was processed by, or None.
  * :ivar head_version_id: The current version of the stage, or None.
  * :ivar state: Whether the current version matches the inputs of the stage.
- * :ivar pinned: Whether the recipe is pinned to the page, so a run without a recipe keeps it.
  * :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
  * that is on, so the page is not ready for the next stage, or None.
  * :ivar updated_at: When the record last changed.
@@ -1496,10 +1493,6 @@ export type PageStageSchema = {
      */
     head_version_id: string | null;
     state: StageState;
-    /**
-     * Pinned
-     */
-    pinned: boolean;
     /**
      * Through Step
      */
@@ -1527,6 +1520,8 @@ export type PageStageStatus = 'not-run' | 'fresh' | 'stale' | 'failed';
  * :ivar stage: Stage of the step.
  * :ivar step_id: Identifier of the step.
  * :ivar layer: The layer that changed.
+ * :ivar scope: Whose settings the layer holds: the page's own, or the odd pages, the even pages or a group it takes.
+ * :ivar group_label: Label of the group for the scope of a group, and empty for the others.
  * :ivar before: Content of the layer before the change, or None when it was empty.
  * :ivar after: Content of the layer after the change, or None when the change emptied it.
  * :ivar source: What made the change.
@@ -1551,6 +1546,11 @@ export type PageStepChangeSchema = {
      */
     step_id: string;
     layer: StepLayer;
+    scope: ValueScope;
+    /**
+     * Group Label
+     */
+    group_label: string;
     /**
      * Before
      */
@@ -1589,21 +1589,17 @@ export type PageStepChangeSchema = {
 /**
  * PageStepSettingsSchema
  *
- * The fields of the parameters of a step that one page changes.
+ * What one page runs a step with, and the values it comes from.
  *
- * :ivar page_id: Page the settings belong to.
- * :ivar stage: Stage of the step.
  * :ivar step_id: Identifier of the step.
- * :ivar params: The fields the page changes, by name, each with the value the page uses. The others come from the
- * step of the recipe.
- * :ivar updated_at: When the settings were last saved.
+ * :ivar params: The fields the page changes for itself, by name, each with the value the page uses.
+ * :ivar parts: The values of the odd pages, the even pages and the groups for the step, whichever of them the page
+ * is in.
+ * :ivar effective: The parameters the step runs with on the page: the recipe, then the odd or the even pages, the
+ * group of the page, and the page itself, each field taken from the strongest part that has a value.
+ * :ivar updated_at: When the values of the page were last saved, or None for a page that changes no field itself.
  */
 export type PageStepSettingsSchema = {
-    /**
-     * Page Id
-     */
-    page_id: string;
-    stage: Stage;
     /**
      * Step Id
      */
@@ -1615,9 +1611,19 @@ export type PageStepSettingsSchema = {
         [key: string]: unknown;
     };
     /**
+     * Parts
+     */
+    parts: Array<StepValuesSchema>;
+    /**
+     * Effective
+     */
+    effective: {
+        [key: string]: unknown;
+    };
+    /**
      * Updated At
      */
-    updated_at: string;
+    updated_at: string | null;
 };
 
 /**
@@ -1687,9 +1693,6 @@ export type PageUpdate = {
  * :ivar images: Paths of the images of a ready full run that has an image, or None.
  * :ivar preview: Path of the preview image of a preview run, or None.
  * :ivar created_at: When the version was created.
- * :ivar files_removed: Whether a collection removed the files of the version, so it has no image until a run makes it
- * again.
- * :ivar files_removed_at: When the files were removed, or None while the version has them.
  * :ivar mark: What the user judged of the result, or None while it is not judged.
  * :ivar comment: What the user wrote about the result, or empty.
  */
@@ -1746,14 +1749,6 @@ export type PageVersionSchema = {
      * Created At
      */
     created_at: string;
-    /**
-     * Files Removed
-     */
-    files_removed: boolean;
-    /**
-     * Files Removed At
-     */
-    files_removed_at: string | null;
     mark: ResultMark | null;
     /**
      * Comment
@@ -2003,32 +1998,6 @@ export type PageProjectSchema = {
      * Items
      */
     items: Array<ProjectSchema>;
-    /**
-     * Total
-     */
-    total: number;
-    /**
-     * Page
-     */
-    page: number;
-    /**
-     * Size
-     */
-    size: number;
-    /**
-     * Pages
-     */
-    pages: number;
-};
-
-/**
- * Page[RecipeRuleSchema]
- */
-export type PageRecipeRuleSchema = {
-    /**
-     * Items
-     */
-    items: Array<RecipeRuleSchema>;
     /**
      * Total
      */
@@ -2412,21 +2381,35 @@ export type ProcessorSchema = {
 export type ProcessorScope = 'page' | 'split';
 
 /**
+ * ProfileBody
+ *
+ * The name and the steps of a profile.
+ *
+ * :ivar name: Name of the profile.
+ * :ivar steps: Its steps in the order they run, each checked against its processor.
+ * :ivar order: The order the profile is saved in, which a book opened from it starts in.
+ */
+export type ProfileBody = {
+    /**
+     * Steps
+     */
+    steps: Array<StepBody>;
+    order?: OrderMode;
+    /**
+     * Name
+     */
+    name: string;
+};
+
+/**
  * ProfileFileSchema
  *
- * A profile as a file that is exchanged between accounts: the answer of an export, and the body of an import.
+ * A profile as a file that is exchanged between accounts: the answer of an export, and a body of an import.
  *
- * :ivar version: Version of the format of the file.
- * :ivar stage: Stage whose recipes the profile can be applied to.
- * :ivar name: Name of the profile.
- * :ivar order: ``usual`` if the profile refuses a step off a required place, ``free`` if it lets it stand.
+ * :ivar version: Version of the format of the file, the second, whose steps have no condition.
  * :ivar steps: The steps in the order they run.
  */
 export type ProfileFileSchema = {
-    /**
-     * Version
-     */
-    version: 1;
     stage: Stage;
     /**
      * Name
@@ -2437,12 +2420,16 @@ export type ProfileFileSchema = {
      * Steps
      */
     steps: Array<ProfileFileStep>;
+    /**
+     * Version
+     */
+    version: 2;
 };
 
 /**
  * ProfileFileStep
  *
- * One step of a profile file: a processor, its parameters, whether it is on, and the pages it runs on.
+ * One step of a profile file: a processor, its parameters, and whether it is on.
  *
  * The step has no identifier, since the identifier belongs to the recipe a step is in, and an import gives each step a
  * new one.
@@ -2450,7 +2437,6 @@ export type ProfileFileSchema = {
  * :ivar processor_key: Key of the processor.
  * :ivar params: Parameters of the step, which an import checks against the processor.
  * :ivar enabled: Whether a run runs the step.
- * :ivar applies_to: Which pages the step processes.
  */
 export type ProfileFileStep = {
     /**
@@ -2467,7 +2453,61 @@ export type ProfileFileStep = {
      * Enabled
      */
     enabled?: boolean;
-    applies_to?: AppliesTo;
+};
+
+/**
+ * ProfileFileStepV1
+ *
+ * One step of a profile file of the first version, which also named the pages the step processed.
+ *
+ * A page is processed by the recipe of its kind now, so there is no condition on a step, and an import drops it.
+ *
+ * :ivar applies_to: The pages the step processed, which no step has any longer.
+ */
+export type ProfileFileStepV1 = {
+    /**
+     * Processor Key
+     */
+    processor_key: string;
+    /**
+     * Params
+     */
+    params?: {
+        [key: string]: unknown;
+    };
+    /**
+     * Enabled
+     */
+    enabled?: boolean;
+    /**
+     * Applies To
+     */
+    applies_to?: string | null;
+};
+
+/**
+ * ProfileFileV1
+ *
+ * A profile file of the first version, which an import still reads: its steps may name the pages they processed.
+ *
+ * :ivar version: Version of the format of the file, the first.
+ * :ivar steps: The steps in the order they run.
+ */
+export type ProfileFileV1 = {
+    stage: Stage;
+    /**
+     * Name
+     */
+    name: string;
+    order?: OrderMode;
+    /**
+     * Steps
+     */
+    steps: Array<ProfileFileStepV1>;
+    /**
+     * Version
+     */
+    version: 1;
 };
 
 /**
@@ -2860,18 +2900,13 @@ export type QuadSchema = {
 /**
  * RecipeBody
  *
- * The name and the steps of a recipe, for the active recipe and for a variant alike.
+ * The steps of a recipe, for a recipe of a book and for a profile alike.
  *
- * :ivar name: Name of the recipe.
  * :ivar steps: Its steps in the order they run, each checked against its processor.
  * :ivar order: ``usual`` refuses a step that stands where it cannot work, with the reason as the detail of a 422, and
  * ``free`` saves it and reports it in the answer. A step off its usual place is saved either way.
  */
 export type RecipeBody = {
-    /**
-     * Name
-     */
-    name: string;
     /**
      * Steps
      */
@@ -2880,25 +2915,32 @@ export type RecipeBody = {
 };
 
 /**
+ * RecipeKind
+ *
+ * The kind of page a recipe processes: every stage that has recipes has one for each kind.
+ *
+ * A page is processed by the recipe of its kind, which is a blank page for a page of the blank kind and otherwise what
+ * the page shows (``ContentType``). Changing the kind of a page moves the page to another recipe.
+ */
+export type RecipeKind = 'text' | 'color-picture' | 'bw-picture' | 'blank';
+
+/**
  * RecipeProfileBody
  *
  * The name and the steps of a profile to save, with the stage whose recipes it fits.
  *
- * :ivar name: Name of the profile.
- * :ivar steps: Its steps in the order they run, each checked against its processor.
- * :ivar order: The order the profile is saved in, which a book opened from it starts in.
  * :ivar stage: Stage whose recipes the profile can be applied to.
  */
 export type RecipeProfileBody = {
-    /**
-     * Name
-     */
-    name: string;
     /**
      * Steps
      */
     steps: Array<StepBody>;
     order?: OrderMode;
+    /**
+     * Name
+     */
+    name: string;
     stage: Stage;
 };
 
@@ -2960,89 +3002,15 @@ export type RecipeProfileSchema = {
 };
 
 /**
- * RecipeRuleBody
- *
- * A rule to add after the others of the stage; the stage is in the address.
- *
- * :ivar condition: What a page must be for the rule to match it.
- * :ivar group_label: The group a page must be in, given for the condition on a manual group and for no other.
- * :ivar recipe_id: Recipe of the stage that processes the pages the rule matches.
- */
-export type RecipeRuleBody = {
-    condition: RuleCondition;
-    /**
-     * Group Label
-     */
-    group_label?: string;
-    /**
-     * Recipe Id
-     */
-    recipe_id: string;
-};
-
-/**
- * RecipeRuleSchema
- *
- * A rule of a stage.
- *
- * :ivar id: Identifier of the rule.
- * :ivar project_id: Project owning the rule.
- * :ivar stage: Stage whose pages the rule sends to a recipe.
- * :ivar condition: What a page must be for the rule to match it.
- * :ivar group_label: The group a page must be in, for the condition on a manual group, and empty for any other.
- * :ivar recipe_id: Recipe of the stage that processes the pages the rule matches.
- * :ivar order: Place of the rule among the rules of the stage from zero, the lowest being tried first.
- */
-export type RecipeRuleSchema = {
-    /**
-     * Id
-     */
-    id: string;
-    /**
-     * Project Id
-     */
-    project_id: string;
-    stage: Stage;
-    condition: RuleCondition;
-    /**
-     * Group Label
-     */
-    group_label: string;
-    /**
-     * Recipe Id
-     */
-    recipe_id: string;
-    /**
-     * Order
-     */
-    order: number;
-};
-
-/**
- * RecipeRuleTarget
- *
- * The recipe a rule sends its pages to from now on.
- *
- * :ivar recipe_id: Recipe of the stage that processes the pages the rule matches.
- */
-export type RecipeRuleTarget = {
-    /**
-     * Recipe Id
-     */
-    recipe_id: string;
-};
-
-/**
  * RecipeSchema
  *
- * A recipe: the ordered steps of one stage, active or a variant.
+ * A recipe: the ordered steps of one stage for one kind of page.
  *
  * :ivar id: Identifier of the recipe.
  * :ivar project_id: Project owning the recipe.
  * :ivar stage: Stage the recipe processes.
- * :ivar name: Name the user sees.
+ * :ivar kind: Kind of the pages the recipe processes, which is also its name.
  * :ivar steps: The steps in the order they run.
- * :ivar active: Whether the recipe is the one the stage runs by default.
  * :ivar profile_id: The profile of the account the recipe was made from, or null for a recipe that was not.
  * :ivar created_at: When the recipe was created.
  * :ivar updated_at: When the recipe was last changed.
@@ -3059,18 +3027,11 @@ export type RecipeSchema = {
      */
     project_id: string;
     stage: Stage;
-    /**
-     * Name
-     */
-    name: string;
+    kind: RecipeKind;
     /**
      * Steps
      */
     steps: Array<StepSchema>;
-    /**
-     * Active
-     */
-    active: boolean;
     /**
      * Profile Id
      */
@@ -3116,67 +3077,6 @@ export type RejectedFileSchema = {
  * Why one file of an upload was not imported, while the other files of the upload were.
  */
 export type RejectionReason = 'duplicate' | 'unreadable' | 'unsupported-type' | 'system-file';
-
-/**
- * ResetBody
- *
- * What a reset of steps to their defaults goes over; the stage is in the address.
- *
- * :ivar scope: The step on the open page, every step of the stage on the open page, the step on every page, or every
- * step of the stage on every page.
- * :ivar page_id: The open page, which the scopes of one page need and the others ignore.
- * :ivar step_id: The step, which the scopes of one step need and the others ignore.
- * :ivar confirm: Confirmation that a reset that reaches other pages takes the settings and the edits of the pages that
- * have any, without which such a reset is refused with 409. A reset of the open page needs none.
- */
-export type ResetBody = {
-    scope: ResetScope;
-    /**
-     * Page Id
-     */
-    page_id?: string | null;
-    /**
-     * Step Id
-     */
-    step_id?: string | null;
-    /**
-     * Confirm
-     */
-    confirm?: boolean;
-};
-
-/**
- * ResetImpactSchema
- *
- * How many pages a reset would take work from.
- *
- * :ivar scope: The scope of the reset.
- * :ivar hand_pages: How many pages have a manual edit on a step the reset goes over.
- * :ivar settings_pages: How many pages change at least one field of a step the reset goes over.
- * :ivar affected: How many pages lose work, a page with both counted once.
- */
-export type ResetImpactSchema = {
-    scope: ResetScope;
-    /**
-     * Hand Pages
-     */
-    hand_pages: number;
-    /**
-     * Settings Pages
-     */
-    settings_pages: number;
-    /**
-     * Affected
-     */
-    affected: number;
-};
-
-/**
- * ResetScope
- *
- * The pages and the steps a reset to the defaults goes over, which are the settings and the edits of the pages.
- */
-export type ResetScope = 'page-step' | 'page' | 'step' | 'stage';
 
 /**
  * ResultMark
@@ -3254,26 +3154,14 @@ export type ReviewReason = 'low-confidence' | 'not-applied' | 'unsure-gutter' | 
 export type RightsStatus = 'unknown' | 'public-domain' | 'in-copyright';
 
 /**
- * RuleCondition
- *
- * What a rule of a stage asks of a page, to give the page the variant of the rule.
- *
- * The set is closed: a rule never carries a free-form test. ``GROUP`` is the one condition with an argument, the
- * label of the group that the user wrote on the pages. ``ILLUSTRATED`` is declared so that rules and clients can name
- * it, but it matches no page yet: the Layout stage, which finds the illustrations of a page, does not exist, and a
- * rule on it takes effect the day that stage records them.
- */
-export type RuleCondition = 'plates' | 'covers' | 'blanks' | 'illustrated' | 'odd' | 'even' | 'group';
-
-/**
  * RunImpactSchema
  *
  * How many pages a run would take work from, by its mode.
  *
  * :ivar mode: The mode of the run.
  * :ivar pages: How many pages the run goes over.
- * :ivar hand_pages: How many of them have a manual edit on a step the run goes over.
- * :ivar settings_pages: How many of them change at least one field of a step the run goes over.
+ * :ivar own_pages: How many of them have a manual edit or change at least one field on a step the run goes over,
+ * which are the pages with work of their own.
  * :ivar affected: How many pages lose work to the mode, which is none for a run that keeps the work.
  */
 export type RunImpactSchema = {
@@ -3283,13 +3171,9 @@ export type RunImpactSchema = {
      */
     pages: number;
     /**
-     * Hand Pages
+     * Own Pages
      */
-    hand_pages: number;
-    /**
-     * Settings Pages
-     */
-    settings_pages: number;
+    own_pages: number;
     /**
      * Affected
      */
@@ -3302,9 +3186,10 @@ export type RunImpactSchema = {
  * What a run of a stage does with the work the pages already have for its steps.
  *
  * The work is the settings a page changes for a step and the manual edit a step reads on it. A run keeps both unless
- * it is asked to take one of them away, which is written to the history of each page like any other change.
+ * it is asked to take both away, which is written to the history of each page like any other change, or to leave the
+ * pages that have either out of the run.
  */
-export type RunMode = 'keep' | 'replace-hand' | 'reset-page-settings';
+export type RunMode = 'keep' | 'skip-own-work' | 'drop-own-work';
 
 /**
  * ScanAttach
@@ -3557,7 +3442,7 @@ export type Stage = 'import' | 'page-split' | 'page-order' | 'geometry' | 'clean
  * :ivar status: The state of the stage on the page, or ``not-run`` when the stage has not run on it.
  * :ivar review: Why the result asks for a second look, or None.
  * :ivar recipe_id: Recipe the page was processed by, or None.
- * :ivar pinned: Whether the recipe is pinned to the page.
+ * :ivar kind: The kind of the page, by which the recipe that processes it in the stage is chosen.
  * :ivar version: The current version of the stage on the page with its data and images, or None.
  * :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
  * that is on, so the page is not ready for the next stage, or None.
@@ -3565,6 +3450,13 @@ export type Stage = 'import' | 'page-split' | 'page-order' | 'geometry' | 'clean
  * :ivar step: The page at the step the list was asked for, or None for a list of the stage alone.
  * :ivar marked_bad: Whether the user marked bad the result the row stands on: the version of the step the list was
  * asked for, else the current version of the stage.
+ * :ivar picture: The version that stands for the page at the place the list was asked for, so the strip and the canvas
+ * draw the same picture. With ``step`` it is the version the step reads on the page; a page that has
+ * not come as far as the step has the last version of the stage before it, and one the stage has not
+ * run on, or whose recipe has no such step switched on, has the version the stage reads. Without
+ * ``step`` it is the current version of the stage, else the version the stage reads. It is never the
+ * result of the step or of a later one, nor a version of a later stage. None when the page has no image
+ * to draw, such as a placeholder.
  */
 export type StagePageSchema = {
     /**
@@ -3577,10 +3469,7 @@ export type StagePageSchema = {
      * Recipe Id
      */
     recipe_id: string | null;
-    /**
-     * Pinned
-     */
-    pinned: boolean;
+    kind: RecipeKind;
     version: PageVersionSchema | null;
     /**
      * Through Step
@@ -3595,6 +3484,7 @@ export type StagePageSchema = {
      * Marked Bad
      */
     marked_bad: boolean;
+    picture: PageVersionSchema | null;
 };
 
 /**
@@ -3615,12 +3505,9 @@ export type StageProgressSchema = {
  *
  * What a run of a stage is asked to do; the stage is in the address.
  *
- * :ivar recipe_id: Recipe to run it by, or omitted for the active recipe.
  * :ivar page_ids: Pages to run it on, or omitted for every page with an image.
  * :ivar confirm_unsplit: Confirmation that undoing a page split deletes the right half of a spread, without which a
  * run that would do so leaves that page failed.
- * :ivar pin: Whether to pin the recipe to the pages of the run, so a later run without a recipe keeps it there. It is
- * given with a recipe, since a run that chooses the recipes pins nothing.
  * :ivar through_step: Index in the recipe of the last step to run, from zero, or omitted to run through the last step
  * that is on. The steps before it come from the cache of versions when their inputs did not
  * change.
@@ -3631,10 +3518,6 @@ export type StageProgressSchema = {
  */
 export type StageRunBody = {
     /**
-     * Recipe Id
-     */
-    recipe_id?: string | null;
-    /**
      * Page Ids
      */
     page_ids?: Array<string> | null;
@@ -3642,10 +3525,6 @@ export type StageRunBody = {
      * Confirm Unsplit
      */
     confirm_unsplit?: boolean;
-    /**
-     * Pin
-     */
-    pin?: boolean;
     /**
      * Through Step
      */
@@ -3688,8 +3567,8 @@ export type StageStatus = 'done' | 'attention' | 'running' | 'waiting' | 'unavai
  * :ivar review: Pages, not failed, whose result asks for a second look.
  * :ivar check: Pages the strip lists under Check: stale, failed or marked, each counted once.
  * :ivar partial: Pages, not failed, that were run through some of the steps of their recipe only.
- * :ivar active_recipe_id: The recipe the stage runs by, or None before the stage is first used.
- * :ivar variants: How many pages each recipe of the stage processed, the recipe with the most pages first.
+ * :ivar recipes: The recipe of each kind of page the stage has, in the order of the kinds, each with the number of
+ * pages of the kind. Empty before the stage is first used.
  * :ivar stopped: How many pages stopped at each step, the first step first.
  */
 export type StageSummarySchema = {
@@ -3735,13 +3614,9 @@ export type StageSummarySchema = {
      */
     partial: number;
     /**
-     * Active Recipe Id
+     * Recipes
      */
-    active_recipe_id: string | null;
-    /**
-     * Variants
-     */
-    variants: Array<VariantPagesSchema>;
+    recipes: Array<KindRecipeSchema>;
     /**
      * Stopped
      */
@@ -3758,7 +3633,6 @@ export type StageSummarySchema = {
  * :ivar enabled: Whether a run and a preview run the step, on unless the interface switches it off.
  * :ivar step_id: Identifier of a step that already exists, which the interface sends back to keep its edits, or
  * omitted for a step that is added, which gets a new one.
- * :ivar applies_to: Which pages the step processes, all of them unless the interface says otherwise.
  */
 export type StepBody = {
     /**
@@ -3779,7 +3653,6 @@ export type StepBody = {
      * Step Id
      */
     step_id?: string | null;
-    applies_to?: AppliesTo;
 };
 
 /**
@@ -3805,12 +3678,13 @@ export type StepLayer = 'settings' | 'found' | 'hand';
  *
  * :ivar step_id: The step of the recipe.
  * :ivar state: Where the shape of the step on the page comes from: the default, found by the step, set by hand, or
- * skipped because the page does not meet the condition of the step.
+ * skipped because the page is a leaf the program drew.
  * :ivar input_version: The version the step reads on the page, which the canvas of the step shows, or None when the
  * page has not come as far as the step or is not run.
  * :ivar version: The version the step made on the page, or None when the page was not run through the step.
  * :ivar flags: Why the page asks for a look at the step: the step is unsure of it, what it found departs from the
- * book, it is set by hand, or the condition skipped it. The strip of the open step lists pages by these.
+ * book, it is set by hand, or it is a leaf the program drew and was skipped. The strip of the open step
+ * lists pages by these.
  */
 export type StepPageSchema = {
     /**
@@ -3870,25 +3744,6 @@ export type StepPreviewBody = {
 };
 
 /**
- * StepResetSchema
- *
- * What a reset did, which is one batch of the history.
- *
- * :ivar batch_id: The batch the changes share, which an undo of any of them takes back as a whole.
- * :ivar changes: The changes written, one for each layer a page lost.
- */
-export type StepResetSchema = {
-    /**
-     * Batch Id
-     */
-    batch_id: string;
-    /**
-     * Changes
-     */
-    changes: Array<PageStepChangeSchema>;
-};
-
-/**
  * StepSchema
  *
  * One step of a recipe: a processor and the parameters it runs with.
@@ -3897,7 +3752,6 @@ export type StepResetSchema = {
  * :ivar params: Parameters of the step, with the defaults of the processor filled in.
  * :ivar enabled: Whether a run and a preview run the step; a step that is off keeps its parameters.
  * :ivar step_id: Identifier of the step, which stays as the step is moved and saved and which its manual edits name.
- * :ivar applies_to: Which pages the step processes; the others pass it unchanged.
  */
 export type StepSchema = {
     /**
@@ -3918,7 +3772,34 @@ export type StepSchema = {
      * Step Id
      */
     step_id: string;
-    applies_to: AppliesTo;
+};
+
+/**
+ * StepValuesSchema
+ *
+ * The fields of the parameters of a step that the odd pages, the even pages or a group change.
+ *
+ * :ivar scope: The odd pages, the even pages or a group.
+ * :ivar group_label: Label of the group for the scope of a group, and empty for the others.
+ * :ivar params: The fields the pages change, by name, each with the value they use.
+ * :ivar updated_at: When the values were last saved.
+ */
+export type StepValuesSchema = {
+    scope: ValueScope;
+    /**
+     * Group Label
+     */
+    group_label: string;
+    /**
+     * Params
+     */
+    params: {
+        [key: string]: unknown;
+    };
+    /**
+     * Updated At
+     */
+    updated_at: string;
 };
 
 /**
@@ -4016,23 +3897,59 @@ export type ValidationError = {
 };
 
 /**
- * VariantPagesSchema
+ * ValueChangesSchema
  *
- * How many pages of a stage one recipe processed.
+ * What setting a value for a part of the pages, or taking it back, did, which is one batch of the history.
  *
- * :ivar recipe_id: The recipe.
- * :ivar pages: Pages with an image whose result of the stage the recipe made.
+ * :ivar batch_id: The batch the changes share, which an undo of any of them takes back as a whole.
+ * :ivar changes: The changes written, one on each page whose parameters change.
  */
-export type VariantPagesSchema = {
+export type ValueChangesSchema = {
     /**
-     * Recipe Id
+     * Batch Id
      */
-    recipe_id: string;
+    batch_id: string;
     /**
-     * Pages
+     * Changes
      */
-    pages: number;
+    changes: Array<PageStepChangeSchema>;
 };
+
+/**
+ * ValueForm
+ *
+ * The value the pages use for one field of the parameters of a step.
+ *
+ * :ivar value: The value, as JSON, which the processor of the step checks against the field.
+ */
+export type ValueForm = {
+    scope: ValueScope;
+    /**
+     * Page Ids
+     */
+    page_ids?: Array<string> | null;
+    /**
+     * Group Label
+     */
+    group_label?: string;
+    /**
+     * Value
+     *
+     * The value the pages use for the field
+     */
+    value: unknown;
+};
+
+/**
+ * ValueScope
+ *
+ * The part of the pages a value of a setting of a step is for, from the strongest to the weakest part.
+ *
+ * A value for pages names them one by one: the open page, or the pages the user selected. The odd pages and the even
+ * pages are told apart by the place of the page in the book, an odd place being a right page, and a group is the pages
+ * that carry one label of ``Page.group_label``. What the recipe holds is the value of every other page.
+ */
+export type ValueScope = 'pages' | 'group' | 'odd' | 'even';
 
 /**
  * VersionOrigin
@@ -5530,95 +5447,7 @@ export type PutPlaceApiV1ProjectsProjectIdPlacePutResponses = {
 
 export type PutPlaceApiV1ProjectsProjectIdPlacePutResponse = PutPlaceApiV1ProjectsProjectIdPlacePutResponses[keyof PutPlaceApiV1ProjectsProjectIdPlacePutResponses];
 
-export type GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetData = {
-    body?: never;
-    path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
-        /**
-         * Stage of the pipeline
-         */
-        stage: Stage;
-    };
-    query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/recipe';
-};
-
-export type GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetError = GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetErrors[keyof GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetErrors];
-
-export type GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: RecipeSchema;
-};
-
-export type GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetResponse = GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetResponses[keyof GetRecipeApiV1ProjectsProjectIdStagesStageRecipeGetResponses];
-
-export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutData = {
-    body: RecipeBody;
-    path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
-        /**
-         * Stage of the pipeline
-         */
-        stage: Stage;
-    };
-    query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/recipe';
-};
-
-export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutError = PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutErrors[keyof PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutErrors];
-
-export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponses = {
-    /**
-     * Successful Response
-     */
-    200: RecipeSchema;
-};
-
-export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponse = PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponses[keyof PutRecipeApiV1ProjectsProjectIdStagesStageRecipePutResponses];
-
-export type ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetData = {
+export type ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetData = {
     body?: never;
     path: {
         /**
@@ -5642,10 +5471,10 @@ export type ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetData = {
          */
         size?: number;
     };
-    url: '/api/v1/projects/{project_id}/stages/{stage}/variants';
+    url: '/api/v1/projects/{project_id}/stages/{stage}/recipes';
 };
 
-export type ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetErrors = {
+export type ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetErrors = {
     /**
      * Validation Error
      */
@@ -5660,62 +5489,18 @@ export type ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetErrors = {
     '5XX': Problem;
 };
 
-export type ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetError = ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetErrors[keyof ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetErrors];
+export type ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetError = ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetErrors[keyof ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetErrors];
 
-export type ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponses = {
+export type ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetResponses = {
     /**
      * Successful Response
      */
     200: PageRecipeSchema;
 };
 
-export type ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponse = ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponses[keyof ListVariantsApiV1ProjectsProjectIdStagesStageVariantsGetResponses];
+export type ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetResponse = ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetResponses[keyof ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetResponses];
 
-export type CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostData = {
-    body: RecipeBody;
-    path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
-        /**
-         * Stage of the pipeline
-         */
-        stage: Stage;
-    };
-    query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/variants';
-};
-
-export type CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostError = CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostErrors[keyof CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostErrors];
-
-export type CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponses = {
-    /**
-     * Successful Response
-     */
-    201: RecipeSchema;
-};
-
-export type CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponse = CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponses[keyof CreateVariantApiV1ProjectsProjectIdStagesStageVariantsPostResponses];
-
-export type PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutData = {
+export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutData = {
     body: RecipeBody;
     path: {
         /**
@@ -5736,10 +5521,10 @@ export type PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutData =
         recipe_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}';
+    url: '/api/v1/projects/{project_id}/stages/{stage}/recipes/{recipe_id}';
 };
 
-export type PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutErrors = {
+export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutErrors = {
     /**
      * Validation Error
      */
@@ -5754,18 +5539,18 @@ export type PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutErrors
     '5XX': Problem;
 };
 
-export type PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutError = PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutErrors[keyof PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutErrors];
+export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutError = PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutErrors[keyof PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutErrors];
 
-export type PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponses = {
+export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutResponses = {
     /**
      * Successful Response
      */
     200: RecipeSchema;
 };
 
-export type PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponse = PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponses[keyof PutVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPutResponses];
+export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutResponse = PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutResponses[keyof PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutResponses];
 
-export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostData = {
+export type ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostData = {
     body?: never;
     path: {
         /**
@@ -5786,10 +5571,10 @@ export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPo
         recipe_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}/reset';
+    url: '/api/v1/projects/{project_id}/stages/{stage}/recipes/{recipe_id}/reset';
 };
 
-export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostErrors = {
+export type ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostErrors = {
     /**
      * Validation Error
      */
@@ -5804,66 +5589,16 @@ export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPo
     '5XX': Problem;
 };
 
-export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostError = ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostErrors[keyof ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostErrors];
+export type ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostError = ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostErrors[keyof ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostErrors];
 
-export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostResponses = {
+export type ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostResponses = {
     /**
      * Successful Response
      */
     200: RecipeSchema;
 };
 
-export type ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostResponse = ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostResponses[keyof ResetVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdResetPostResponses];
-
-export type ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostData = {
-    body?: never;
-    path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
-        /**
-         * Stage of the pipeline
-         */
-        stage: Stage;
-        /**
-         * Recipe Id
-         *
-         * Identifier of the recipe
-         */
-        recipe_id: string;
-    };
-    query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}/activate';
-};
-
-export type ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostError = ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostErrors[keyof ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostErrors];
-
-export type ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostResponses = {
-    /**
-     * Successful Response
-     */
-    200: RecipeSchema;
-};
-
-export type ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostResponse = ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostResponses[keyof ActivateVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdActivatePostResponses];
+export type ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostResponse = ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostResponses[keyof ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostResponses];
 
 export type RunStageApiV1ProjectsProjectIdStagesStageRunPostData = {
     body: StageRunBody;
@@ -6142,56 +5877,6 @@ export type ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponse
 
 export type ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponse = ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponses[keyof ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponses];
 
-export type UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteData = {
-    body?: never;
-    path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
-        /**
-         * Page Id
-         *
-         * Identifier of the page
-         */
-        page_id: string;
-        /**
-         * Stage of the pipeline
-         */
-        stage: Stage;
-    };
-    query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/stages/{stage}/pin';
-};
-
-export type UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteError = UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteErrors[keyof UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteErrors];
-
-export type UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteResponses = {
-    /**
-     * Successful Response
-     */
-    200: PageStageSchema;
-};
-
-export type UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteResponse = UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteResponses[keyof UnpinStageApiV1ProjectsProjectIdPagesPageIdStagesStagePinDeleteResponses];
-
 export type ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData = {
     body?: never;
     path: {
@@ -6367,7 +6052,7 @@ export type CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTil
 
 export type CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponse = CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponses[keyof CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponses];
 
-export type RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostData = {
+export type CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetData = {
     body?: never;
     path: {
         /**
@@ -6376,24 +6061,12 @@ export type RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemak
          * Identifier of the project
          */
         project_id: string;
-        /**
-         * Page Id
-         *
-         * Identifier of the page
-         */
-        page_id: string;
-        /**
-         * Version Id
-         *
-         * Identifier of the page version
-         */
-        version_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}/remake';
+    url: '/api/v1/projects/{project_id}/versions/collectable';
 };
 
-export type RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostErrors = {
+export type CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetErrors = {
     /**
      * Validation Error
      */
@@ -6408,16 +6081,16 @@ export type RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemak
     '5XX': Problem;
 };
 
-export type RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostError = RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostErrors[keyof RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostErrors];
+export type CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetError = CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetErrors[keyof CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetErrors];
 
-export type RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostResponses = {
+export type CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetResponses = {
     /**
      * Successful Response
      */
-    202: JobSchema;
+    200: CollectionReportSchema;
 };
 
-export type RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostResponse = RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostResponses[keyof RemakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePostResponses];
+export type CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetResponse = CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetResponses[keyof CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetResponses];
 
 export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostData = {
     body?: never;
@@ -6458,203 +6131,6 @@ export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponses = 
 };
 
 export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponse = CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponses[keyof CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponses];
-
-export type ListRulesApiV1ProjectsProjectIdStagesStageRulesGetData = {
-    body?: never;
-    path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
-        /**
-         * Stage of the pipeline
-         */
-        stage: Stage;
-    };
-    query?: {
-        /**
-         * Page
-         */
-        page?: number;
-        /**
-         * Size
-         */
-        size?: number;
-    };
-    url: '/api/v1/projects/{project_id}/stages/{stage}/rules';
-};
-
-export type ListRulesApiV1ProjectsProjectIdStagesStageRulesGetErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type ListRulesApiV1ProjectsProjectIdStagesStageRulesGetError = ListRulesApiV1ProjectsProjectIdStagesStageRulesGetErrors[keyof ListRulesApiV1ProjectsProjectIdStagesStageRulesGetErrors];
-
-export type ListRulesApiV1ProjectsProjectIdStagesStageRulesGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: PageRecipeRuleSchema;
-};
-
-export type ListRulesApiV1ProjectsProjectIdStagesStageRulesGetResponse = ListRulesApiV1ProjectsProjectIdStagesStageRulesGetResponses[keyof ListRulesApiV1ProjectsProjectIdStagesStageRulesGetResponses];
-
-export type CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostData = {
-    body: RecipeRuleBody;
-    path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
-        /**
-         * Stage of the pipeline
-         */
-        stage: Stage;
-    };
-    query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/rules';
-};
-
-export type CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostError = CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostErrors[keyof CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostErrors];
-
-export type CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostResponses = {
-    /**
-     * Successful Response
-     */
-    201: RecipeRuleSchema;
-};
-
-export type CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostResponse = CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostResponses[keyof CreateRuleApiV1ProjectsProjectIdStagesStageRulesPostResponses];
-
-export type DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteData = {
-    body?: never;
-    path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
-        /**
-         * Stage of the pipeline
-         */
-        stage: Stage;
-        /**
-         * Rule Id
-         *
-         * Identifier of the rule
-         */
-        rule_id: string;
-    };
-    query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/rules/{rule_id}';
-};
-
-export type DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteError = DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteErrors[keyof DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteErrors];
-
-export type DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteResponses = {
-    /**
-     * Successful Response
-     */
-    204: void;
-};
-
-export type DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteResponse = DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteResponses[keyof DeleteRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdDeleteResponses];
-
-export type PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutData = {
-    body: RecipeRuleTarget;
-    path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
-        /**
-         * Stage of the pipeline
-         */
-        stage: Stage;
-        /**
-         * Rule Id
-         *
-         * Identifier of the rule
-         */
-        rule_id: string;
-    };
-    query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/rules/{rule_id}';
-};
-
-export type PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutError = PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutErrors[keyof PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutErrors];
-
-export type PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutResponses = {
-    /**
-     * Successful Response
-     */
-    200: RecipeRuleSchema;
-};
-
-export type PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutResponse = PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutResponses[keyof PutRuleApiV1ProjectsProjectIdStagesStageRulesRuleIdPutResponses];
 
 export type ListProfilesApiV1RecipeProfilesGetData = {
     body?: never;
@@ -6736,7 +6212,14 @@ export type CreateProfileApiV1RecipeProfilesPostResponses = {
 export type CreateProfileApiV1RecipeProfilesPostResponse = CreateProfileApiV1RecipeProfilesPostResponses[keyof CreateProfileApiV1RecipeProfilesPostResponses];
 
 export type ImportProfileApiV1RecipeProfilesImportPostData = {
-    body: ProfileFileSchema;
+    /**
+     * Body
+     */
+    body: ({
+        version: 1;
+    } & ProfileFileV1) | ({
+        version: 2;
+    } & ProfileFileSchema);
     path?: never;
     query?: never;
     url: '/api/v1/recipe-profiles/import';
@@ -6929,7 +6412,7 @@ export type RenameProfileApiV1RecipeProfilesProfileIdPatchResponses = {
 export type RenameProfileApiV1RecipeProfilesProfileIdPatchResponse = RenameProfileApiV1RecipeProfilesProfileIdPatchResponses[keyof RenameProfileApiV1RecipeProfilesProfileIdPatchResponses];
 
 export type PutProfileApiV1RecipeProfilesProfileIdPutData = {
-    body: RecipeBody;
+    body: ProfileBody;
     path: {
         /**
          * Profile Id
@@ -7094,7 +6577,7 @@ export type ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostRe
 
 export type ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostResponse = ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostResponses[keyof ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostResponses];
 
-export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutData = {
+export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutData = {
     body: ProfileLinkBody;
     path: {
         /**
@@ -7115,10 +6598,10 @@ export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPro
         recipe_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/variants/{recipe_id}/profile';
+    url: '/api/v1/projects/{project_id}/stages/{stage}/recipes/{recipe_id}/profile';
 };
 
-export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutErrors = {
+export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutErrors = {
     /**
      * Validation Error
      */
@@ -7133,16 +6616,16 @@ export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPro
     '5XX': Problem;
 };
 
-export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutError = PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutErrors[keyof PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutErrors];
+export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutError = PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutErrors[keyof PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutErrors];
 
-export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutResponses = {
+export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutResponses = {
     /**
      * Successful Response
      */
     200: RecipeSchema;
 };
 
-export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutResponse = PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutResponses[keyof PutRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutResponses];
+export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutResponse = PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutResponses[keyof PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutResponses];
 
 export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData = {
     body?: never;
@@ -7387,7 +6870,7 @@ export type ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetData = 
          */
         page_id: string;
         /**
-         * Stage of the step the settings are for
+         * Stage of the steps the settings are for
          */
         stage: Stage;
     };
@@ -7430,7 +6913,7 @@ export type ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetRespons
 
 export type ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetResponse = ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetResponses[keyof ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetResponses];
 
-export type DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteData = {
+export type DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteData = {
     body?: never;
     path: {
         /**
@@ -7440,13 +6923,7 @@ export type DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNam
          */
         project_id: string;
         /**
-         * Page Id
-         *
-         * Identifier of the page
-         */
-        page_id: string;
-        /**
-         * Stage of the step the settings are for
+         * Stage of the pipeline
          */
         stage: Stage;
         /**
@@ -7462,73 +6939,21 @@ export type DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNam
          */
         name: string;
     };
-    query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/settings/{stage}/{step_id}/{name}';
-};
-
-export type DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteError = DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteErrors[keyof DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteErrors];
-
-export type DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteResponses = {
-    /**
-     * Successful Response
-     */
-    204: void;
-};
-
-export type DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteResponse = DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteResponses[keyof DeleteSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameDeleteResponses];
-
-export type PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutData = {
-    body: PageSettingForm;
-    path: {
+    query: {
+        scope: ValueScope;
         /**
-         * Project Id
-         *
-         * Identifier of the project
+         * Page Ids
          */
-        project_id: string;
+        page_ids?: Array<string> | null;
         /**
-         * Page Id
-         *
-         * Identifier of the page
+         * Group Label
          */
-        page_id: string;
-        /**
-         * Stage of the step the settings are for
-         */
-        stage: Stage;
-        /**
-         * Step Id
-         *
-         * Identifier of the step of a recipe
-         */
-        step_id: string;
-        /**
-         * Name
-         *
-         * Name of the field in the parameters of the step
-         */
-        name: string;
+        group_label?: string;
     };
-    query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/settings/{stage}/{step_id}/{name}';
+    url: '/api/v1/projects/{project_id}/stages/{stage}/steps/{step_id}/values/{name}';
 };
 
-export type PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutErrors = {
+export type DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteErrors = {
     /**
      * Validation Error
      */
@@ -7543,81 +6968,19 @@ export type PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePu
     '5XX': Problem;
 };
 
-export type PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutError = PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutErrors[keyof PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutErrors];
+export type DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteError = DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteErrors[keyof DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteErrors];
 
-export type PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutResponses = {
+export type DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteResponses = {
     /**
      * Successful Response
      */
-    200: PageStepSettingsSchema;
+    200: ValueChangesSchema;
 };
 
-export type PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutResponse = PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutResponses[keyof PutSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNamePutResponses];
+export type DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteResponse = DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteResponses[keyof DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteResponses];
 
-export type CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostData = {
-    body: CarryForm;
-    path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
-        /**
-         * Page Id
-         *
-         * Identifier of the page
-         */
-        page_id: string;
-        /**
-         * Stage of the step the settings are for
-         */
-        stage: Stage;
-        /**
-         * Step Id
-         *
-         * Identifier of the step of a recipe
-         */
-        step_id: string;
-        /**
-         * Name
-         *
-         * Name of the field in the parameters of the step
-         */
-        name: string;
-    };
-    query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/settings/{stage}/{step_id}/{name}/carry-over';
-};
-
-export type CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostError = CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostErrors[keyof CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostErrors];
-
-export type CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostResponses = {
-    /**
-     * Successful Response
-     */
-    200: CarryOverSchema;
-};
-
-export type CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostResponse = CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostResponses[keyof CarryOverSettingApiV1ProjectsProjectIdPagesPageIdSettingsStageStepIdNameCarryOverPostResponses];
-
-export type ResetStepsApiV1ProjectsProjectIdStagesStageResetPostData = {
-    body: ResetBody;
+export type PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutData = {
+    body: ValueForm;
     path: {
         /**
          * Project Id
@@ -7629,56 +6992,24 @@ export type ResetStepsApiV1ProjectsProjectIdStagesStageResetPostData = {
          * Stage of the pipeline
          */
         stage: Stage;
-    };
-    query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/reset';
-};
-
-export type ResetStepsApiV1ProjectsProjectIdStagesStageResetPostErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type ResetStepsApiV1ProjectsProjectIdStagesStageResetPostError = ResetStepsApiV1ProjectsProjectIdStagesStageResetPostErrors[keyof ResetStepsApiV1ProjectsProjectIdStagesStageResetPostErrors];
-
-export type ResetStepsApiV1ProjectsProjectIdStagesStageResetPostResponses = {
-    /**
-     * Successful Response
-     */
-    200: StepResetSchema;
-};
-
-export type ResetStepsApiV1ProjectsProjectIdStagesStageResetPostResponse = ResetStepsApiV1ProjectsProjectIdStagesStageResetPostResponses[keyof ResetStepsApiV1ProjectsProjectIdStagesStageResetPostResponses];
-
-export type ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostData = {
-    body: ResetBody;
-    path: {
         /**
-         * Project Id
+         * Step Id
          *
-         * Identifier of the project
+         * Identifier of the step of a recipe
          */
-        project_id: string;
+        step_id: string;
         /**
-         * Stage of the pipeline
+         * Name
+         *
+         * Name of the field in the parameters of the step
          */
-        stage: Stage;
+        name: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/reset-impact';
+    url: '/api/v1/projects/{project_id}/stages/{stage}/steps/{step_id}/values/{name}';
 };
 
-export type ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostErrors = {
+export type PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutErrors = {
     /**
      * Validation Error
      */
@@ -7693,16 +7024,16 @@ export type ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostErrors = 
     '5XX': Problem;
 };
 
-export type ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostError = ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostErrors[keyof ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostErrors];
+export type PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutError = PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutErrors[keyof PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutErrors];
 
-export type ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostResponses = {
+export type PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutResponses = {
     /**
      * Successful Response
      */
-    200: ResetImpactSchema;
+    200: ValueChangesSchema;
 };
 
-export type ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostResponse = ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostResponses[keyof ResetImpactApiV1ProjectsProjectIdStagesStageResetImpactPostResponses];
+export type PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutResponse = PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutResponses[keyof PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutResponses];
 
 export type ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteData = {
     body?: never;

@@ -9,14 +9,24 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import EDIT_HASH_FIELD, Actor, PageStepChange
-from bookreviver.domain.enums import ChangeSource, EditorKind, JobKind, Stage, StageState, StepLayer
+from bookreviver.domain.enums import (
+    ChangeSource,
+    EditorKind,
+    JobKind,
+    JobState,
+    RecipeKind,
+    Stage,
+    StageState,
+    StepLayer,
+)
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.events import PageStageChanged
+from bookreviver.domain.events import JobChanged, PageStageChanged
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import ChangeBatchId, PageStepChangeId, StepId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, RecipeDraft, StageRun, Step, TileCut
 from tests.helpers.builders import make_page_step_state, make_result_mark_change, new_account_id
+from tests.helpers.page_batches import PageValues
 from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.spreads import run_stage
 from tests.services.test_processing_versions import ran_geometry, ran_two_steps
@@ -168,7 +178,7 @@ class TestUndo:
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
         key = await step_key(fx_kit, page)
-        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         [change] = await history_of(fx_kit, actor, project, key)
         [undo] = await fx_kit.page_history().undo(actor, project.id, key, None)
         history = await fx_kit.page_history().list(actor, project.id, key)
@@ -187,8 +197,8 @@ class TestUndo:
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
         key = await step_key(fx_kit, page)
-        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
-        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGEST)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGEST)
         await fx_kit.page_history().undo(actor, project.id, key, None)
         after_one = await fx_kit.uow().page_step_states.get(key)
         await fx_kit.page_history().undo(actor, project.id, key, None)
@@ -226,7 +236,7 @@ class TestUndo:
         key = await step_key(fx_kit, page)
         saved = await fx_kit.edits().save(actor, project.id, key, FIRST, None)
         await fx_kit.edits().delete(actor, project.id, key)
-        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         await fx_kit.page_history().undo(actor, project.id, key, None)
         expect(await fx_kit.uow().page_step_states.find(key) is None)
         await fx_kit.page_history().undo(actor, project.id, key, None)
@@ -242,7 +252,7 @@ class TestUndo:
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
         key = await step_key(fx_kit, page)
-        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         uow = fx_kit.uow()
         record = await uow.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         await uow.page_stages.save(evolve(record, state=StageState.FRESH))
@@ -262,7 +272,7 @@ class TestUndo:
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
         key = await step_key(fx_kit, page)
-        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         [change] = await history_of(fx_kit, actor, project, key)
         uow = fx_kit.uow()
         await uow.page_step_states.save(make_page_step_state(page_id=page.id, step_id=key.step_id, params={'x': 1}))
@@ -282,7 +292,7 @@ class TestUndo:
         actor, project, page, _ = await ran_geometry(fx_kit)
         _, other_project = await fx_kit.seed_project()
         key = await step_key(fx_kit, page)
-        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         attempts = (
             (actor, other_project, None),
             (Actor(account_id=new_account_id()), project, None),
@@ -305,9 +315,9 @@ class TestUndoBackTo:
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
         key = await step_key(fx_kit, page)
-        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         await fx_kit.edits().save(actor, project.id, key, FIRST, None)
-        await fx_kit.page_settings().change(actor, project.id, key, FAILING_PARAMETER, NOT_FAILING)
+        await PageValues(fx_kit, actor, project.id).set(key, FAILING_PARAMETER, NOT_FAILING)
         await fx_kit.edits().save(actor, project.id, key, SECOND, None)
         chosen = (await history_of(fx_kit, actor, project, key))[1]
         undone = await fx_kit.page_history().undo(actor, project.id, key, chosen.id)
@@ -327,7 +337,7 @@ class TestUndoBackTo:
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
         key = await step_key(fx_kit, page)
-        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         [change] = await history_of(fx_kit, actor, project, key)
         [undo] = await fx_kit.page_history().undo(actor, project.id, key, None)
         for gone in (change.id, undo.id):
@@ -415,7 +425,7 @@ class TestClear:
         """
         actor, project, page, version = await ran_geometry(fx_kit)
         key = await step_key(fx_kit, page)
-        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         await fx_kit.edits().save(actor, project.id, key, FIRST, None)
         await fx_kit.page_history().undo(actor, project.id, key, None)
         written = len(await history_of(fx_kit, actor, project, key))
@@ -478,7 +488,7 @@ class TestClear:
         expect(fx_kit.recording.enqueued[queued:] == [])
         assert_expectations()
 
-    async def test_a_page_run_by_a_variant_stands_on_the_step_before_in_the_recipe_that_ran_it(
+    async def test_a_page_run_by_another_recipe_stands_on_the_step_before_in_the_recipe_that_ran_it(
         self, fx_kit: ProcessingKit
     ) -> None:
         """Verify the index the record keeps is the one of the new head in the recipe of the page, which lacks the step.
@@ -487,15 +497,15 @@ class TestClear:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
-        draft = RecipeDraft(name='V', steps=[Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)])
-        variant = await fx_kit.service().add_variant(actor, project.id, Stage.GEOMETRY, draft)
+        draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)])
+        blank_recipe = await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, draft, RecipeKind.BLANK)
         uow = fx_kit.uow()
         record = await uow.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
-        await uow.page_stages.save(evolve(record, recipe_id=variant.id))
+        await uow.page_stages.save(evolve(record, recipe_id=blank_recipe.id))
         await uow.commit()
         await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
         stored = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
-        expect((stored.head_version_id, stored.recipe_id, stored.through_step) == (made[0].id, variant.id, 0))
+        expect((stored.head_version_id, stored.recipe_id, stored.through_step) == (made[0].id, blank_recipe.id, 0))
         assert_expectations()
 
     async def test_the_first_step_leaves_the_stage_with_no_current_version(self, fx_kit: ProcessingKit) -> None:
@@ -519,7 +529,7 @@ class TestClear:
         """
         actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
         key = PageStepKey(page.id, Stage.GEOMETRY, step_ids[0])
-        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         uow = fx_kit.uow()
         for version in made:
             await uow.result_mark_changes.add(make_result_mark_change(version_id=version.id))
@@ -662,7 +672,7 @@ class TestClear:
         actor, project, page, _ = await ran_geometry(fx_kit)
         _, other_project = await fx_kit.seed_project()
         key = await step_key(fx_kit, page)
-        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         for who, book in ((actor, other_project), (Actor(account_id=new_account_id()), project)):
             with pytest.raises(NotFoundError):
                 await fx_kit.page_history().clear(who, book.id, key)
@@ -678,7 +688,7 @@ class TestClear:
         """
         actor, project, page, version = await ran_geometry(fx_kit)
         key = await step_key(fx_kit, page)
-        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         written = len(await history_of(fx_kit, actor, project, key))
         await fx_kit.service().start_collection(actor, project.id)
         with pytest.raises(ConflictError, match='project is busy'):
@@ -690,6 +700,80 @@ class TestClear:
         expect(await has_files(fx_kit, project, version))
         assert_expectations()
 
+    @pytest.mark.parametrize('state', [JobState.QUEUED, JobState.RUNNING])
+    async def test_a_preview_of_the_project_is_cancelled_and_the_clear_goes_on(
+        self, fx_kit: ProcessingKit, state: JobState
+    ) -> None:
+        """Verify a clear takes the project from a preview, queued or running, instead of being refused by it.
+
+        The editor of a step asks for a preview when the step is opened, so a clear a moment later finds one. The
+        preview is cancelled and announced, as a run cancels it, and the clear deletes what it was asked to.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param state: Whether the preview is queued, or a worker has taken it and it is running.
+        :type state: JobState
+        """
+        actor, project, page, version = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, page)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
+        parts = fx_kit.parts(fx_kit.uow())
+        preview = await parts.starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
+        if state is JobState.RUNNING:
+            assert await parts.tracker.start(preview.id) is not None
+        cleared = await fx_kit.page_history().clear(actor, project.id, key)
+        stored = fx_kit.uow()
+        announced = [
+            (event.job.id, event.job.state) for event in fx_kit.events.published if isinstance(event, JobChanged)
+        ]
+        expect((await stored.jobs.get(preview.id)).state is JobState.CANCELLED)
+        expect((preview.id, JobState.CANCELLED) in announced)
+        expect([deleted.id for deleted in cleared.versions] == [version.id])
+        expect(await history_of(fx_kit, actor, project, key) == [])
+        expect(await stored.page_step_states.find(key) is None)
+        assert_expectations()
+
+    @pytest.mark.parametrize('active', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
+    async def test_a_clear_is_still_refused_while_a_run_or_a_measure_is_active_and_the_job_stays(
+        self, fx_kit: ProcessingKit, active: JobKind
+    ) -> None:
+        """Reject a clear while a run or a measure of the book is queued, which may read the versions it deletes.
+
+        This covers the refusal the fix keeps, and is not a test that fails without the fix.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param active: The kind of the job that is queued.
+        :type active: JobKind
+        """
+        actor, project, page, version = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, page)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
+        written = len(await history_of(fx_kit, actor, project, key))
+        job = await fx_kit.parts(fx_kit.uow()).starter.enqueue(
+            project.id, active, StageRun(stage=Stage.GEOMETRY).to_map()
+        )
+        with pytest.raises(ConflictError, match='project is busy'):
+            await fx_kit.page_history().clear(actor, project.id, key)
+        stored = fx_kit.uow()
+        expect((await stored.jobs.get(job.id)).state is JobState.QUEUED)
+        expect(len(await history_of(fx_kit, actor, project, key)) == written)
+        expect(await stored.page_versions.find(version.id) is not None)
+        assert_expectations()
+
+    async def test_a_step_that_is_in_no_recipe_does_not_cancel_the_preview(self, fx_kit: ProcessingKit) -> None:
+        """Reject a clear of an unknown step as not found before it takes the project from a preview.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, _ = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, page)
+        preview = await fx_kit.parts(fx_kit.uow()).starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
+        with pytest.raises(NotFoundError):
+            await fx_kit.page_history().clear(actor, project.id, evolve(key, step_id=StepId(uuid4())))
+        assert (await fx_kit.uow().jobs.get(preview.id)).state is JobState.QUEUED
+
     async def test_a_step_that_no_recipe_of_the_stage_has_is_not_found_and_deletes_nothing(
         self, fx_kit: ProcessingKit
     ) -> None:
@@ -700,7 +784,7 @@ class TestClear:
         """
         actor, project, page, version = await ran_geometry(fx_kit)
         key = await step_key(fx_kit, page)
-        await fx_kit.page_settings().change(actor, project.id, key, STRENGTH_PARAMETER, STRONGER)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         with pytest.raises(NotFoundError):
             await fx_kit.page_history().clear(actor, project.id, evolve(key, step_id=StepId(uuid4())))
         stored = fx_kit.uow()

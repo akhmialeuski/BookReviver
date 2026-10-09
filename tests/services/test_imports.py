@@ -26,6 +26,7 @@ from bookreviver.domain.enums import (
     NumberDisplay,
     PageChange,
     PageOrigin,
+    RecipeKind,
     RejectionReason,
     Rendition,
     SourceKind,
@@ -2055,7 +2056,9 @@ class TestRunImportSplit:
         :returns: The recipes.
         :rtype: DefaultRecipes
         """
-        return DefaultRecipes({Stage.PAGE_SPLIT: (RecipeTemplate(name='Split', processor_keys=(processor_key,)),)})
+        return DefaultRecipes(
+            {Stage.PAGE_SPLIT: dict.fromkeys(RecipeKind, RecipeTemplate(processor_keys=(processor_key,)))}
+        )
 
     async def _run_import(
         self, rig: ImportRig, actor: Actor, project_id: ProjectId, files: list[UploadFile], recipes: DefaultRecipes

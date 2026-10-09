@@ -1,7 +1,8 @@
+import { INPUT_EDITOR } from '@/features/editors/inputEditor';
 import { RegionsCanvas } from '@/features/editors/RegionsCanvas';
 import { RegionsPanel } from '@/features/editors/RegionsPanel';
 import { type RegionsShape, readRegions, writeRegions } from '@/features/editors/shapes';
-import { type EditorDefinition, Picture } from '@/features/editors/types';
+import type { EditorDefinition } from '@/features/editors/types';
 import { sourceSize } from '@/features/processing/results';
 import { MESSAGES } from '@/shared/messages';
 
@@ -14,12 +15,8 @@ import { MESSAGES } from '@/shared/messages';
  */
 
 export const regionsEditor: EditorDefinition<RegionsShape> = {
-  picture: Picture.Input,
-  alwaysOn: false,
-  needsResult: true,
-  owner: ({ current }) => current.page,
+  ...INPUT_EDITOR,
   size: ({ result }) => sourceSize(result),
-  runsAfterEdit: () => true,
   fallback: () => ({ zones: [] }),
   read: readRegions,
   write: writeRegions,

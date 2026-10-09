@@ -8,6 +8,7 @@ import {
   uploadFolder,
   writePagesFolder,
 } from './support/account';
+import { pageIds } from './support/page-work';
 
 /**
  * The Import stage of a book with files: the list with its counts, the panel of the chosen file, a scan opened large
@@ -29,9 +30,8 @@ test('the Import stage lists the files, opens their scans and leads on to Order'
     importPath = new URL(page.url()).pathname;
   });
 
-  await test.step('the list and the stage bar count the files and their scans', async () => {
+  await test.step('the list counts the files and their scans', async () => {
     await expect(page.getByTestId('files-summary')).toContainText('4 files · 4 scans');
-    await expect(page.getByTestId('stage-import')).toContainText('4 files · 4 scans');
     await expect(page.getByTestId('source-name')).toHaveText([
       'book/page-01.png',
       'book/page-02.png',
@@ -41,7 +41,7 @@ test('the Import stage lists the files, opens their scans and leads on to Order'
   });
 
   await test.step('the first file is chosen, and its panel states what it is', async () => {
-    const panel = page.getByTestId('file-panel');
+    const panel = page.getByTestId('stage-panel');
     await expect(page.getByTestId('source-row').first()).toHaveAttribute('aria-pressed', 'true');
     await expect(panel).toContainText('book/page-01.png');
     await expect(panel).toContainText('PNG image');
@@ -55,11 +55,11 @@ test('the Import stage lists the files, opens their scans and leads on to Order'
   await test.step('choosing a file is in the address and survives a reload', async () => {
     await page.getByTestId('source-row').nth(2).click();
     await expect(page).toHaveURL(/[?&]source=/);
-    await expect(page.getByTestId('file-panel')).toContainText('book/page-03.png');
+    await expect(page.getByTestId('stage-panel')).toContainText('book/page-03.png');
 
     await page.reload();
     await expect(page.getByTestId('source-row').nth(2)).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.getByTestId('file-panel')).toContainText('book/page-03.png');
+    await expect(page.getByTestId('stage-panel')).toContainText('book/page-03.png');
   });
 
   await test.step('a scan opens large on the canvas and the way back keeps the file', async () => {
@@ -69,7 +69,7 @@ test('the Import stage lists the files, opens their scans and leads on to Order'
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
     await expect(page.getByTestId('scan-caption')).toHaveText('Scan 1 of 1');
     // The panel of the file stays beside the large scan
-    await expect(page.getByTestId('file-panel')).toContainText('book/page-03.png');
+    await expect(page.getByTestId('stage-panel')).toContainText('book/page-03.png');
 
     await page.getByTestId('scan-back').click();
     await expect(page).not.toHaveURL(/[?&]scan=/);
@@ -106,9 +106,8 @@ test('the Import stage lists the files, opens their scans and leads on to Order'
     await page.getByRole('button', { name: 'Delete file' }).click();
     await expect(page.getByTestId('source-name')).toHaveCount(FILES - 1);
     await expect(page.getByTestId('files-summary')).toContainText('3 files · 3 scans');
-    await expect(page.getByTestId('stage-import')).toContainText('3 files · 3 scans');
     // The pages cut from the file stay in the book
-    await expect(page.getByTestId('stage-page-order')).toContainText('4 pages');
+    expect(await pageIds(page)).toHaveLength(FILES);
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

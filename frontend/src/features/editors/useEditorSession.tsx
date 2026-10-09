@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FigureState, ScanSchema } from '@/api';
 import { getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetOptions } from '@/api/@tanstack/react-query.gen';
-import { stepChain, stepVersions } from '@/features/editors/chain';
+import { stepChain, stepVersion } from '@/features/editors/chain';
 import { figureStateOf } from '@/features/editors/figure';
 import { pictureOf } from '@/features/editors/picture';
 import { editsKey, useEditChanges, useEdits } from '@/features/editors/queries';
@@ -21,13 +21,13 @@ import { useHeld } from '@/features/editors/useHeld';
 import { usePictureSize } from '@/features/editors/usePictureSize';
 import { type ImageSource, sourceOfPreview } from '@/features/processing/compare';
 import { invalidateHistory, useUndo } from '@/features/processing/historyQueries';
-import { effectiveParams, pageValuesOf } from '@/features/processing/pageSettings';
+import { settingsOf } from '@/features/processing/pageSettings';
 import type { PreviewRequest } from '@/features/processing/preview';
 import {
   usePageSettings,
   useRunInFlight,
   useRunStage,
-  useSetPageSetting,
+  useSetValue,
   useVersions,
 } from '@/features/processing/queries';
 import { bodyOf, draftOf } from '@/features/processing/recipe';
@@ -42,6 +42,7 @@ import {
 import { isTypingTarget } from '@/features/viewer/keys';
 import { useActiveJobs } from '@/features/workspace/queries';
 import type { StripItem } from '@/features/workspace/strip';
+import { useDebouncedCallback } from '@/shared/hooks/useDebouncedCallback';
 import { describeError, ProblemError } from '@/shared/http/problem';
 import { HttpStatus } from '@/shared/http/status';
 import { MESSAGES } from '@/shared/messages';
@@ -56,22 +57,45 @@ import { MESSAGES } from '@/shared/messages';
  * "Auto" deletes the edit and runs again, and Ctrl+Z asks the server to take back the newest change of the step on the
  * page, which the history of the page keeps: the edit it had before is put back, or deleted when it had none, and a
  * setting of the page changed after the edit is taken back first. The stage is run again when an edit was put back.
+ *
+ * A shape moved in small steps, such as by the arrow keys, is saved once the steps pause. That save and the one made when
+ * the reader lets go of a handle, types an angle or presses a button are two ways to write one shape, so the order between
+ * them is decided here and nowhere else: a save made now drops the save of the same step on the same page that still waits,
+ * since the waiting one holds an older shape and would write over the newer one.
  */
 
-/** The shape being moved, which stands in for the saved one until the server has the new one. */
+/**
+ * The shape being moved, which stands in for the saved one until the save that was made from it has settled.
+ *
+ * The saved edit changes whenever any save of the page settles, and the saves go to the server one after another, so a
+ * draft cannot tell by the saved edit whether the server has its shape yet. It is dropped by the save it started, and a
+ * save that settles after a newer shape was held leaves that shape alone.
+ */
 interface Draft {
   key: string;
-  /** The saved edit it was made from, as text; a draft is dropped when the saved edit is no longer that one. */
-  base: string;
+  /** Which hold of a shape made it, counted up for every shape the reader held. */
+  seq: number;
   geometry: Geometry;
 }
 
 /** The size an editor that paints a mask is given when the step has not said how large its picture is. */
 const EMPTY_SIZE = { width: 0, height: 0 };
 
+/** Quiet time after the last small step of a shape before it is saved. */
+const NUDGE_SAVE_DELAY_MS = 600;
+
+/**
+ * A save that waits for the reader to pause. It carries the save of the page and step it was asked for, since the canvas
+ * stays mounted when the reader turns the page, and a save read when the wait ends would go to the page then open.
+ */
+interface WaitingSave {
+  /** The page and step of the save. */
+  key: string;
+  save: () => void;
+}
+
 /** A run that waits for the book to be free. */
 interface WantedRun {
-  recipeId: string;
   pageId: string;
 }
 
@@ -130,39 +154,43 @@ export function useEditorSession({
       ? null
       : (scans.find((entry) => entry.id === current.page.scan_id) ?? null);
 
-  // Each step of the recipe made a version, and a step reads the one before: an editor lies on what its step read and
-  // starts from what its step found
+  // Each step of the recipe made a version, and an editor starts from what its step found. The picture it lies on is the
+  // one the server gives for the row of the page at the open step, which is what that step reads
   const head = current?.row?.version ?? null;
   const versions = useVersions(projectId, current?.page.id, stage);
   const listed = versions.data;
   const live = useMemo(() => stepChain(listed ?? [], head), [listed, head]);
   // The versions and the row of the page arrive apart. After a run the row can name a current version that the list does
-  // not hold yet, and the chain is then cut short, so the picture the step reads and what it found would be lost for a
-  // moment and the editor would draw its shape on another picture. The chain of before is kept for that moment, and while
-  // a run on the page has taken its current version away.
+  // not hold yet, and the chain is then cut short, so what the step found would be lost for a moment and the editor would
+  // start from another shape. The chain of before is kept for that moment, and while a run on the page has taken its
+  // current version away.
   const behind =
     head === null
       ? !idle || wanted !== null
       : listed !== undefined && !listed.some((version) => version.id === head.id);
   const chain = useHeld(`${current?.page.id}|${stage}`, live, behind);
-  const found =
+  const foundMade =
     entry === undefined || recipe === undefined
-      ? { made: null, read: null }
-      : stepVersions(chain, recipe.steps, entry.index);
+      ? null
+      : stepVersion(chain, recipe.steps, entry.index);
   // A page that did not meet the condition of the step passed it as it was, so the step found nothing on it
-  const skipped = found.made?.data.skipped_by_condition === true;
-  const made = skipped ? null : (found.made ?? (editable.length === 1 ? head : null));
+  const skipped = foundMade?.data.skipped_by_condition === true;
+  const made = skipped ? null : (foundMade ?? (editable.length === 1 ? head : null));
   const focused = focusStepId !== undefined;
   // The settings the open page has for the step, which the editor of the content box reads and sets besides its shape
   const sets = kind === 'content-box';
   const pageSettings = usePageSettings(projectId, current?.page.id, stage, sets);
-  const setting = useSetPageSetting(projectId, stage);
-  const pageValues = pageValuesOf(pageSettings.data, step?.step_id ?? null);
+  const setting = useSetValue(projectId, stage);
+  const pageSettingsOfStep = settingsOf(pageSettings.data, step?.step_id ?? null);
+  // Until the row of the page arrives it is not known whether the step has made a result on it, so nothing is shown or
+  // previewed for the page: a frame drawn from the fallback would be replaced by the one the step found
+  const rowKnown = current?.row !== undefined;
   // A page the step has not made a result on is looked at by a preview of the step, which finds what a run would find, so
   // the editor shows it as found without a run
   const wantsFound =
     sets &&
     focused &&
+    rowKnown &&
     made === null &&
     !skipped &&
     current !== undefined &&
@@ -172,13 +200,8 @@ export function useEditorSession({
     wantsFound && recipe !== undefined && entry !== undefined && current !== undefined
       ? {
           pageId: current.page.id,
-          steps: bodyOf(
-            draftOf(recipe).map((draft, index) =>
-              index === entry.index
-                ? { ...draft, params: effectiveParams(draft.params, pageValues) }
-                : draft,
-            ),
-          ),
+          // The server lays the values of the page and of the parts of the book it is in over the step of a preview
+          steps: bodyOf(draftOf(recipe)),
           stepIndex: entry.index,
         }
       : null;
@@ -203,7 +226,7 @@ export function useEditorSession({
   const picture =
     editor === undefined || current === undefined || processor === undefined
       ? null
-      : (foundPicture ?? pictureOf(editor.picture, scan, current.page, before, found.read, made));
+      : (foundPicture ?? pictureOf(editor.picture, scan, before, made));
   // A step open in the workspace shows its shape before it has run, so an editor that starts from the step's result
   // starts from the whole picture instead, and the picture is asked for its size
   const pictureSize = usePictureSize(
@@ -217,7 +240,6 @@ export function useEditorSession({
           current,
           items,
           scan,
-          stepInput: found.read,
           result,
           processorKey: processor.key,
           pictureSize,
@@ -225,6 +247,7 @@ export function useEditorSession({
   const owner = editor === undefined || context === undefined ? undefined : editor.owner(context);
   const available =
     processor !== undefined &&
+    rowKnown &&
     picture !== null &&
     !skipped &&
     (editor?.needsResult !== true || result !== null || (focused && pictureSize !== null));
@@ -232,13 +255,24 @@ export function useEditorSession({
   const edits = useEdits(projectId, owner?.id, stage, available);
   const saved = edits?.find((candidate) => candidate.step_id === step?.step_id);
   const savedGeometry: Geometry | null = saved?.geometry ?? null;
-  const savedText = JSON.stringify(savedGeometry);
 
   const [opened, setOpened] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const heldShapes = useRef(0);
   const [error, setError] = useState<string | null>(null);
 
   const key = `${owner?.id}|${step?.step_id}`;
+  // One save waits at a time. The delayed call makes it, and a shape still waiting when the editor goes away is saved at
+  // once, so a nudge is never lost
+  const waiting = useRef<WaitingSave | null>(null);
+  const saveWaiting = useDebouncedCallback(
+    (waited: WaitingSave) => {
+      waiting.current = null;
+      waited.save();
+    },
+    NUDGE_SAVE_DELAY_MS,
+    { flushOnUnmount: true },
+  );
   const openKey = `${current?.page.id}|${stage}`;
   // The shape of an open step is on the page whether or not the reader has pressed "Set by hand"
   const alwaysOn = editor?.alwaysOn === true || focused;
@@ -253,7 +287,7 @@ export function useEditorSession({
     startRun(
       {
         path: { project_id: projectId, stage },
-        body: { recipe_id: wanted.recipeId, page_ids: [wanted.pageId] },
+        body: { page_ids: [wanted.pageId] },
       },
       {
         onError: (failure) => {
@@ -269,7 +303,13 @@ export function useEditorSession({
     );
   }, [wanted, idle, startRun, projectId, stage]);
 
-  const write = async (next: Geometry | null): Promise<void> => {
+  /**
+   * Save the edit of the open step, or delete it for null, and read it again.
+   *
+   * @param next The shape to save, or null to delete the edit.
+   * @param seq The hold of the draft that stands in for the shape until the save has settled.
+   */
+  const write = async (next: Geometry | null, seq: number): Promise<void> => {
     if (
       editor === undefined ||
       context === undefined ||
@@ -279,12 +319,18 @@ export function useEditorSession({
     ) {
       return;
     }
+    // This is the newest shape of the step on the page, and a save that waits for a pause holds an older one
+    if (waiting.current?.key === key) {
+      saveWaiting.cancel();
+      waiting.current = null;
+    }
     const path = {
       project_id: projectId,
       page_id: owner.id,
       stage,
       step_id: step.step_id,
     };
+    let taken = false;
     try {
       if (next === null) {
         await remove.mutateAsync({ path });
@@ -297,9 +343,10 @@ export function useEditorSession({
           body: { kind: processor.editor, geometry: JSON.stringify(next), mask },
         });
       }
+      taken = true;
       setError(null);
       if (editor.runsAfterEdit(context) && recipe !== undefined) {
-        setWanted({ recipeId: recipe.id, pageId: owner.id });
+        setWanted({ pageId: owner.id });
       }
     } catch (failure) {
       setError(describeError(failure));
@@ -313,6 +360,11 @@ export function useEditorSession({
         invalidateStageRows(queryClient, projectId, stage),
         invalidateStageSummary(queryClient, projectId),
       ]);
+      // The server has the shape and the edit is read again, so the draft is no longer needed. A shape held meanwhile is
+      // another draft, and a save that did not go through keeps its draft on screen beside the error
+      if (taken) {
+        setDraft((held) => (held?.seq === seq ? null : held));
+      }
     }
   };
 
@@ -323,13 +375,13 @@ export function useEditorSession({
     }
     setting.mutate(
       {
-        path: { project_id: projectId, page_id: owner.id, stage, step_id: step.step_id, name },
-        body: { value },
+        path: { project_id: projectId, stage, step_id: step.step_id, name },
+        body: { scope: 'pages', page_ids: [owner.id], value },
       },
       {
         onSuccess: () => {
           setError(null);
-          setWanted({ recipeId: recipe.id, pageId: owner.id });
+          setWanted({ pageId: owner.id });
         },
         onError: (failure) => setError(describeError(failure)),
       },
@@ -358,7 +410,7 @@ export function useEditorSession({
             editor.runsAfterEdit(context) &&
             undone.changes.some((change) => change.layer === 'hand')
           ) {
-            setWanted({ recipeId: recipe.id, pageId: owner.id });
+            setWanted({ pageId: owner.id });
           }
         },
         onError: (failure) => setError(describeError(failure)),
@@ -403,9 +455,7 @@ export function useEditorSession({
 
   const fallback = editor.fallback({ ...context, size: editor.size(context) });
   const geometry =
-    draft !== null && draft.key === key && draft.base === savedText
-      ? draft.geometry
-      : (savedGeometry ?? fallback);
+    draft !== null && draft.key === key ? draft.geometry : (savedGeometry ?? fallback);
   // Inside the workspace the state is the one the server computed for the row of the step. Outside it there is no such row,
   // so the same rule is applied to what the screen has, which also covers the moment before the row arrives. A saved edit
   // is shown as set by hand at once, since the row is read again only after the save and would still say "found" until then
@@ -421,14 +471,25 @@ export function useEditorSession({
           ? serverFigure
           : figureStateOf(false, made !== null);
   const reachRect = editor.reach(context);
-  const hold = (next: Geometry): void => setDraft({ key, base: savedText, geometry: next });
+  const hold = (next: Geometry): number => {
+    heldShapes.current += 1;
+    setDraft({ key, seq: heldShapes.current, geometry: next });
+    return heldShapes.current;
+  };
   const commit = (next: Geometry): void => {
-    hold(next);
-    void write(next);
+    void write(next, hold(next));
+  };
+  const commitLater = (next: Geometry): void => {
+    // The delay holds one save, so a shape waiting for another page or step is saved now rather than replaced by this one
+    if (waiting.current !== null && waiting.current.key !== key) {
+      saveWaiting.flush();
+    }
+    waiting.current = { key, save: () => commit(next) };
+    saveWaiting(waiting.current);
   };
   const saving = save.isPending || remove.isPending;
   const stepSettings: StepSettings = {
-    values: effectiveParams(step?.params ?? {}, pageValues),
+    values: pageSettingsOfStep?.effective ?? step?.params ?? {},
     set: setSetting,
     busy: saving || setting.isPending || wanted !== null || run.isPending,
   };
@@ -437,18 +498,15 @@ export function useEditorSession({
     if (recipe === undefined) {
       return [];
     }
-    const stepVersion = stepVersions(chain, recipe.steps, candidate.index).made;
+    const candidateMade = stepVersion(chain, recipe.steps, candidate.index);
     const angle =
-      stepVersion === null || stepVersion.data.skipped_by_condition === true
+      candidateMade === null || candidateMade.data.skipped_by_condition === true
         ? null
-        : readResult(stepVersion).angle;
-    const title = titleOf(candidate);
-    // Two steps of one kind of editor are told apart by their place in the recipe
-    const twin = editable.some((other) => other !== candidate && titleOf(other) === title);
+        : readResult(candidateMade).angle;
     return [
       {
         key: candidate.step.step_id,
-        title: twin ? MESSAGES.editors.steps.numbered(candidate.index + 1, title) : title,
+        title: titleOf(candidate),
         manual: edits?.some((saved) => saved.step_id === candidate.step.step_id) ?? false,
         detail:
           candidate.kind === 'rotation' && angle !== null
@@ -478,8 +536,7 @@ export function useEditorSession({
     close: () => setOpened(null),
     auto: () => {
       if (savedGeometry !== null) {
-        setDraft({ key, base: savedText, geometry: fallback });
-        void write(null);
+        void write(null, hold(fallback));
       }
     },
     reach: reachRect === null ? null : { rect: reachRect, size: editor.size(context) },
@@ -493,6 +550,7 @@ export function useEditorSession({
           figure={figure}
           onChange={hold}
           onCommit={commit}
+          onCommitLater={commitLater}
         />
       </StepSettingsContext.Provider>
     ),

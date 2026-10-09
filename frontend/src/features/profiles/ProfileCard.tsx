@@ -1,7 +1,5 @@
 import { useState } from 'react';
-import type { AppliedProfileSchema, LibraryProfileSchema } from '@/api';
-import { useRunInFlight } from '@/features/processing/queries';
-import { pageIdsFor, RunScope } from '@/features/processing/scope';
+import type { AppliedProfileSchema, LibraryProfileSchema, RecipeKind } from '@/api';
 import type { Processing } from '@/features/processing/useProcessing';
 import { DeleteProfileDialog, RenameProfileDialog } from '@/features/profiles/ProfileDialogs';
 import { fileNameOf, saveTextFile, writeProfileFile } from '@/features/profiles/profileFile';
@@ -12,8 +10,6 @@ import {
   useSetDefaultProfile,
   useUnsetDefaultProfile,
 } from '@/features/profiles/queries';
-import { useActiveJobs } from '@/features/workspace/queries';
-import type { StripItem } from '@/features/workspace/strip';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
 import { Badge } from '@/shared/ui/badge';
@@ -23,10 +19,9 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 /**
  * One profile of the library: its name, the books that use it, the steps it holds, and what can be done with it.
  *
- * Inside a book the profile is applied to the book, which makes it the active recipe, or to the selected pages, which
- * makes it a variant pinned to them and runs the stage on them, as giving any variant to pages does. The rest works
- * without a book: copying the profile, saving it to a file, choosing it as the default of its stage, renaming and
- * deleting it. What an action did is written under the card, with the steps that had to be left out.
+ * Inside a book the profile is applied to the recipe of one kind of page, which the library lets the reader choose. The
+ * rest works without a book: copying the profile, saving it to a file, choosing it as the default of its stage, renaming
+ * and deleting it. What an action did is written under the card, with the steps that had to be left out.
  */
 
 const labels = MESSAGES.profiles.library;
@@ -35,82 +30,43 @@ const page = MESSAGES.profiles.page;
 /** The book the library is opened from, which is what makes applying a profile possible. */
 export interface LibraryBook {
   processing: Processing;
-  /** Every page of the book with where it stands in the stage, which the selection is read from. */
-  items: readonly StripItem[];
-  /** The pages selected in the grid. */
-  selected: ReadonlySet<string>;
 }
 
-/** Write the steps of a profile in one line, with the pages a step is limited to and the steps that are off. */
+/** Write the steps of a profile in one line, with the steps that are off. */
 function stepsLine(profile: LibraryProfileSchema, titles: ReadonlyMap<string, string>): string {
   if (profile.steps.length === 0) {
     return labels.steps.none;
   }
-  const conditions = MESSAGES.processing.steps.condition.options;
   return profile.steps
     .map((step) => {
-      const tags = [
-        ...(step.applies_to === 'all' ? [] : [conditions[step.applies_to].toLowerCase()]),
-        ...(step.enabled ? [] : [labels.steps.off]),
-      ];
       const title = titles.get(step.processor_key) ?? step.processor_key;
-      return tags.length === 0 ? title : `${title} (${tags.join(', ')})`;
+      return step.enabled ? title : labels.steps.titleOff(title);
     })
     .join(' · ');
 }
 
-/** What an action of a card did: a sentence, or the answer of an apply with the number of pages it was given. */
-type CardNotice = string | { applied: AppliedProfileSchema; pages: number | null };
+/** What an action of a card did: a sentence, or the answer of an apply. */
+type CardNotice = string | AppliedProfileSchema;
 
 /**
- * The two buttons that apply a profile inside a book. They are a component of their own because they read the jobs of
- * the book, which a library opened from the account has none of.
+ * The button that applies a profile inside a book. It is a component of its own because it reads the state of the
+ * recipe of the book, which a library opened from the account has none of.
  */
 function BookActions({
   profile,
   book,
-  activate,
+  kind,
   onApplied,
 }: {
   profile: LibraryProfileSchema;
   book: LibraryBook;
-  /** Whether applying to the book makes the profile the active recipe, or only a variant. */
-  activate: boolean;
+  /** The kind of page whose recipe takes the steps of the profile. */
+  kind: RecipeKind;
   onApplied: (notice: CardNotice) => void;
 }): React.JSX.Element {
   const { processing } = book;
   const apply = useApplyProfile(processing.projectId, profile.stage);
-  const activeJobs = useActiveJobs(processing.projectId);
-  const runInFlight = useRunInFlight(processing.projectId);
-  const selectedIds = pageIdsFor(RunScope.Selected, book.items, undefined, book.selected) ?? [];
-  const busy = apply.isPending || (activeJobs.data?.length ?? 0) > 0 || runInFlight;
   const dirty = processing.dirty && processing.stage === profile.stage;
-
-  const applyTo = (activate: boolean, pages: string[] | null): void => {
-    apply.mutate(
-      {
-        path: { project_id: processing.projectId, profile_id: profile.id },
-        body: pages === null ? { activate } : { activate, page_ids: pages },
-      },
-      {
-        onSuccess: (applied) => {
-          if (profile.stage === processing.stage) {
-            processing.chooseRecipe(applied.recipe.id);
-          }
-          onApplied({ applied, pages: pages === null ? null : pages.length });
-        },
-      },
-    );
-  };
-
-  let pagesBlock: string | undefined;
-  if (dirty) {
-    pagesBlock = labels.applyDirty;
-  } else if (busy) {
-    pagesBlock = labels.applyBusy;
-  } else if (selectedIds.length === 0) {
-    pagesBlock = labels.applyPagesNone;
-  }
 
   return (
     <>
@@ -120,19 +76,26 @@ function BookActions({
         title={dirty ? labels.applyDirty : labels.applyBookHint}
         disabled={dirty || apply.isPending}
         data-testid="profile-apply-book"
-        onClick={() => applyTo(activate, null)}
+        onClick={() =>
+          apply.mutate(
+            {
+              path: { project_id: processing.projectId, profile_id: profile.id },
+              body: { kind },
+            },
+            {
+              onSuccess: (applied) => {
+                if (profile.stage === processing.stage) {
+                  processing.chooseRecipe(applied.recipe.id);
+                }
+                onApplied(applied);
+              },
+            },
+          )
+        }
       >
-        {apply.isPending ? labels.applying : labels.applyBook}
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        title={pagesBlock ?? labels.applyPagesHint}
-        disabled={pagesBlock !== undefined}
-        data-testid="profile-apply-pages"
-        onClick={() => applyTo(false, selectedIds)}
-      >
-        {labels.applyPages}
+        {apply.isPending
+          ? labels.applying
+          : labels.applyBook(MESSAGES.processing.recipe.kinds[kind])}
       </Button>
       {apply.isError ? (
         <div className="basis-full">
@@ -147,15 +110,15 @@ export function ProfileCard({
   profile,
   titles,
   book,
-  activate = true,
+  kind = 'text',
 }: {
   profile: LibraryProfileSchema;
   /** Titles of the installed processors by key, for the steps of the profile. */
   titles: ReadonlyMap<string, string>;
   /** The book the library is opened from, or nothing when it is opened from the account. */
   book?: LibraryBook;
-  /** Whether applying to the book makes the profile the active recipe, which the library lets the reader choose. */
-  activate?: boolean;
+  /** The kind of page whose recipe applying to the book changes, which the library lets the reader choose. */
+  kind?: RecipeKind;
 }): React.JSX.Element {
   const duplicate = useDuplicateProfile();
   const exporter = useExportProfile();
@@ -196,7 +159,7 @@ export function ProfileCard({
       </p>
       <div className="flex flex-wrap gap-2">
         {book === undefined ? null : (
-          <BookActions profile={profile} book={book} activate={activate} onApplied={setNotice} />
+          <BookActions profile={profile} book={book} kind={kind} onApplied={setNotice} />
         )}
         <Button
           variant="outline"
@@ -266,14 +229,20 @@ export function ProfileCard({
           </Button>
         </DeleteProfileDialog>
       </div>
-      <Notice notice={notice} />
+      <Notice notice={notice} profileName={profile.name} />
       {error === null ? null : <ErrorAlert message={describeError(error)} />}
     </li>
   );
 }
 
 /** What the last action did: a sentence, or the answer of an apply, which names the steps that were left out. */
-function Notice({ notice }: { notice: CardNotice | null }): React.JSX.Element | null {
+function Notice({
+  notice,
+  profileName,
+}: {
+  notice: CardNotice | null;
+  profileName: string;
+}): React.JSX.Element | null {
   if (notice === null) {
     return null;
   }
@@ -284,19 +253,12 @@ function Notice({ notice }: { notice: CardNotice | null }): React.JSX.Element | 
       </p>
     );
   }
-  const { applied, pages } = notice;
   return (
     <div className="grid gap-1 text-xs text-muted-foreground" data-testid="profile-notice">
-      <p>
-        {pages === null
-          ? (applied.recipe.active ? labels.appliedBook : labels.appliedVariant)(
-              applied.recipe.name,
-            )
-          : labels.appliedPages(applied.recipe.name, pages)}
-      </p>
-      {applied.missing_processors.length === 0 ? null : (
+      <p>{labels.appliedBook(MESSAGES.processing.recipe.kinds[notice.recipe.kind], profileName)}</p>
+      {notice.missing_processors.length === 0 ? null : (
         <p className="text-status-attention" data-testid="profile-left-out">
-          {MESSAGES.profiles.apply.leftOut(applied.missing_processors)}
+          {MESSAGES.profiles.apply.leftOut(notice.missing_processors)}
         </p>
       )}
     </div>

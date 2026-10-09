@@ -197,7 +197,7 @@ test('a reader numbers a book by sections, sees them on the thumbnails and chang
 
   await test.step('"Number pages" makes a section that the panel lists', async () => {
     await page.getByRole('button', { name: 'Number pages' }).click();
-    await expect(page.getByTestId('numbering-panel')).toContainText('Makes a section');
+    await expect(page.getByTestId('panel-step')).toContainText('Makes a section');
     await page.getByRole('button', { name: 'Apply numbers' }).click();
     await expect(page.getByTestId('numbering-panel')).toHaveCount(0);
 

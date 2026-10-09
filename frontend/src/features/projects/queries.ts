@@ -1,16 +1,15 @@
-import type { QueryClient } from '@tanstack/react-query';
+import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import type { Stage } from '@/api';
 import {
-  getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey,
   listPagesApiV1ProjectsProjectIdPagesGetQueryKey,
   listPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetQueryKey,
   listProjectJobsApiV1ProjectsProjectIdJobsGetQueryKey,
   listProjectsApiV1ProjectsGetQueryKey,
+  listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetQueryKey,
   listScansApiV1ProjectsProjectIdScansGetQueryKey,
   listSourcesApiV1ProjectsProjectIdSourcesGetQueryKey,
   listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey,
   listStagesApiV1ProjectsProjectIdStagesGetQueryKey,
-  listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey,
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey,
   projectApiV1ProjectsProjectIdGetQueryKey,
 } from '@/api/@tanstack/react-query.gen';
@@ -22,6 +21,21 @@ import { STAGES } from '@/features/stages/stages';
  * The keys come from the generated client, and a key without parameters matches every query of its endpoint, so
  * one call refreshes all pages and filters of a list. The event stream and the mutations both call these.
  */
+
+/**
+ * Mark the queries of a key stale and read them again after a change the screen has just made.
+ *
+ * `invalidateQueries` on a query whose first read is still in flight joins that read instead of starting a new one, so
+ * the answer it brings was asked for before the change and lacks it. The reads in flight are cancelled first, which
+ * leaves the query without a read, and the invalidation then starts a read that comes after the change.
+ *
+ * @param queryClient The client that holds the queries.
+ * @param queryKey The key of the queries to refresh; a key that is a prefix matches every query that extends it.
+ */
+export async function refreshQueries(queryClient: QueryClient, queryKey: QueryKey): Promise<void> {
+  await queryClient.cancelQueries({ queryKey });
+  await queryClient.invalidateQueries({ queryKey });
+}
 
 /** Refresh the list of books, whose counts and order change when a book is created, deleted or imported into. */
 export function invalidateProjectList(queryClient: QueryClient): Promise<void> {
@@ -96,11 +110,28 @@ export function invalidateStageRows(
   projectId: string,
   stage: Stage,
 ): Promise<void> {
-  return queryClient.invalidateQueries({
-    queryKey: listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey({
+  return refreshQueries(
+    queryClient,
+    listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey({
       path: { project_id: projectId, stage },
     }),
-  });
+  );
+}
+
+/**
+ * Refresh the rows of a stage and of every stage after it. A row draws the version its stage reads, which is the
+ * current version of an earlier stage, so a change of a page in a stage changes the picture of the later stages too,
+ * even for the pages they have not run on and that no event of their own names.
+ */
+export async function invalidateStageRowsFrom(
+  queryClient: QueryClient,
+  projectId: string,
+  stage: Stage,
+): Promise<void> {
+  const first = STAGES.findIndex((entry) => entry.stage === stage);
+  await Promise.all(
+    STAGES.slice(first).map((entry) => invalidateStageRows(queryClient, projectId, entry.stage)),
+  );
 }
 
 /** Refresh the rows of every stage; only the stage on screen is read again at once, the others when it is opened. */
@@ -129,10 +160,24 @@ export function invalidateVersions(
   projectId: string,
   pageId: string,
 ): Promise<void> {
-  return queryClient.invalidateQueries({
-    queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
+  return refreshQueries(
+    queryClient,
+    listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
       path: { project_id: projectId, page_id: pageId },
     }),
+  );
+}
+
+/**
+ * Refresh the results of every page of a book, which a collection of old versions changes by taking the files of some
+ * away. The key names the book alone, so it matches the results of each of its pages.
+ */
+export function invalidateAllVersions(queryClient: QueryClient, projectId: string): Promise<void> {
+  const [{ _id, baseUrl }] = listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
+    path: { project_id: projectId, page_id: '' },
+  });
+  return queryClient.invalidateQueries({
+    queryKey: [{ _id, baseUrl, path: { project_id: projectId } }],
   });
 }
 
@@ -143,14 +188,9 @@ export function invalidateRecipes(
   stage: Stage,
 ): Promise<void> {
   const path = { project_id: projectId, stage };
-  return Promise.all([
-    queryClient.invalidateQueries({
-      queryKey: getRecipeApiV1ProjectsProjectIdStagesStageRecipeGetQueryKey({ path }),
-    }),
-    queryClient.invalidateQueries({
-      queryKey: listVariantsApiV1ProjectsProjectIdStagesStageVariantsGetQueryKey({ path }),
-    }),
-  ]).then(() => undefined);
+  return queryClient.invalidateQueries({
+    queryKey: listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetQueryKey({ path }),
+  });
 }
 
 /** Refresh the jobs of a book, those running and the latest of any state, which the activity shows. */

@@ -17,6 +17,9 @@ from bookreviver.app.container import build_container
 from bookreviver.app.providers.accounts import account_routes
 from bookreviver.app.security import install_security, sign_in_throttle
 from bookreviver.app.settings import Settings
+from bookreviver.domain.errors import DomainError
+from bookreviver.services.outdated_results import OutdatedResults
+from bookreviver.services.pages import PageService
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
@@ -51,10 +54,13 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        """Open the database, run the application and close the container when it shuts down.
+        """Open the database, mark the outdated results, run the application and close the container at shutdown.
 
         The container opens the database on first use, and opening it checks the schema revision, so the database is
         opened here: a database the migrations were not applied to stops the start instead of failing a request.
+        Then the stages whose result a replaced version of a processor made are marked stale, before the first request,
+        so the workspace never shows them as up to date, and the blank leaves among them are made again by the job that
+        makes leaves, which leaves their page order fresh. It runs in a request scope of its own, as a job does.
 
         :param _app: The application, required by FastAPI's lifespan signature and unused.
         :type _app: FastAPI
@@ -64,12 +70,20 @@ def create_app(
         """
         try:
             await container.get(SqlDatabase)
+            async with container() as request:
+                await (await request.get(OutdatedResults)).mark_stale()
+                await (await request.get(PageService)).remake_outdated_leaves()
             yield
         finally:
             await container.close()
 
     app = FastAPI(title='BookReviver', lifespan=lifespan)
-    add_exception_handler(app, problem_handler(logger))
+    problems = problem_handler(logger)
+    add_exception_handler(app, problems)
+    # fastapi-problem registers the handler for Exception, which Starlette runs in ServerErrorMiddleware: it answers and
+    # then raises the error again, and uvicorn closes the connection the answer went out on, so a client that reuses it
+    # fails with a reset. A domain error is an answer the API means to give, so ExceptionMiddleware handles it and stops
+    app.add_exception_handler(DomainError, problems)
     add_pagination(app)
     accounts = account_routes(resolved, sign_in_throttle(), social_clients)
     api = APIRouter(prefix=API_PREFIX)

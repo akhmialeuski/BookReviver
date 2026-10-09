@@ -53,6 +53,12 @@ MIN_TONE_CONTRAST: float = 40.0
 # the one the stage stands on, carries the reasons of all of them. The frame of the content is not among them, since a
 # step that moves the pixels would make it stale: a step that keeps the frame of its input records it itself
 CARRIED_DATA: tuple[VersionData, ...] = (VersionData.CUT_EDGES, VersionData.REVIEW)
+# Sizes of the squares that close the holes the text leaves in the paper of a scan and open the specks of its
+# background, as shares of the longer side of the scan
+SHEET_CLOSE_SHARE: float = 0.03
+SHEET_OPEN_SHARE: float = 0.01
+# The number of labels of an image whose regions are none, since the first label is the background
+BACKGROUND_ONLY_LABELS: int = 1
 # The fewest rows a block has to be measured for the distance between its lines, which is about three lines of a page
 MIN_PITCH_ROWS: int = 60
 # A peak of the autocorrelation of the rows counts as the first line when it reaches this share of the strongest peak,
@@ -109,6 +115,32 @@ def odd_size(size: float) -> int:
     :rtype: int
     """
     return max(1, round(size) // 2 * 2 + 1)
+
+
+def sheet_of(brightness: Samples, threshold: float) -> Samples | None:
+    """Take the sheet of paper of a scan as the largest bright region.
+
+    The holes the lines of text leave in the paper are closed and the specks on the background are opened first.
+
+    :param brightness: One plane of brightness, bright where the paper is.
+    :type brightness: Samples
+    :param threshold: Brightness above which a pixel is paper.
+    :type threshold: float
+    :returns: The sheet as 1 where a pixel is of it and 0 elsewhere, or None when nothing is brighter than the
+              threshold.
+    :rtype: Samples | None
+    """
+    paper = np.asarray(brightness > threshold, dtype=np.uint8) * WHITE
+    long_side = max(brightness.shape)
+    close = cv2.getStructuringElement(cv2.MORPH_RECT, (odd_size(SHEET_CLOSE_SHARE * long_side),) * 2)
+    speck = cv2.getStructuringElement(cv2.MORPH_RECT, (odd_size(SHEET_OPEN_SHARE * long_side),) * 2)
+    closed = cv2.morphologyEx(paper, cv2.MORPH_CLOSE, close)
+    opened = np.asarray(cv2.morphologyEx(closed, cv2.MORPH_OPEN, speck), dtype=np.uint8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(opened, connectivity=8)
+    if count <= BACKGROUND_ONLY_LABELS:
+        return None
+    largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    return np.asarray(labels == largest, dtype=np.uint8)
 
 
 def read_samples(path: Path) -> Samples:

@@ -53,13 +53,12 @@ from bookreviver.plugins.cv_image import (
     MANUAL_CONFIDENCE,
     MIN_TONE_CONTRAST,
     NO_IMAGE,
-    WHITE,
     OtsuSplit,
     color_mode_of,
     image_data,
-    odd_size,
     read_samples,
     settle_review,
+    sheet_of,
     source_size_data,
     to_bilevel,
     write_png,
@@ -78,15 +77,10 @@ type Hull = NDArray[np.int32]
 STRAIGHTENED_IMAGE_NAME: str = 'straightened.png'
 # The longer side in pixels the scan is shrunk to for the search of the sheet, since the paper shows at it
 SEARCH_LONG_SIDE_PX: int = 600
-# Sizes of the squares that close the holes of the lines of text and open the specks, as shares of the longer side
-CLOSE_SIDE_SHARE: float = 0.03
-OPEN_SIDE_SHARE: float = 0.01
 # How far the corners of the hull may stray from a quadrilateral, as shares of its perimeter, tried from the least up
 POLYGON_TOLERANCES: tuple[float, ...] = (0.01, 0.015, 0.02, 0.03, 0.04, 0.05)
 # The corners of a quadrilateral
 CORNER_COUNT: int = 4
-# The number of labels of a scan whose regions are none, since the first label is the background
-BACKGROUND_ONLY_LABELS: int = 1
 # How close a corner of the sheet is to an edge of the scan to lie on it, as a share of the size of the scan
 EDGE_TOLERANCE_SHARE: float = 0.01
 # Confidence below which the sheet is found but the page is marked for review
@@ -261,26 +255,15 @@ class SheetSearch:
     def _paper_hull(self, threshold: float) -> Hull | None:
         """Take the paper of the scan as the largest bright region and give its convex hull.
 
-        The holes the lines of text leave in the paper are closed and the specks on the background are opened first.
-
         :param threshold: Brightness above which a pixel is paper.
         :type threshold: float
         :returns: The hull, or None when nothing is brighter than the threshold.
         :rtype: Hull | None
         """
-        paper = np.asarray(self._brightness > threshold, dtype=np.uint8) * WHITE
-        long_side = max(self._brightness.shape)
-        close = cv2.getStructuringElement(cv2.MORPH_RECT, (odd_size(CLOSE_SIDE_SHARE * long_side),) * 2)
-        speck = cv2.getStructuringElement(cv2.MORPH_RECT, (odd_size(OPEN_SIDE_SHARE * long_side),) * 2)
-        closed = cv2.morphologyEx(paper, cv2.MORPH_CLOSE, close)
-        opened = np.asarray(cv2.morphologyEx(closed, cv2.MORPH_OPEN, speck), dtype=np.uint8)
-        count, labels, stats, _ = cv2.connectedComponentsWithStats(opened, connectivity=8)
-        if count <= BACKGROUND_ONLY_LABELS:
+        sheet = sheet_of(self._brightness, threshold)
+        if sheet is None:
             return None
-        largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-        contours, _ = cv2.findContours(
-            np.asarray(labels == largest, dtype=np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
+        contours, _ = cv2.findContours(sheet, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         outline = contours[int(np.argmax([cv2.contourArea(contour) for contour in contours]))]
         return np.asarray(cv2.convexHull(outline), dtype=np.int32)
 

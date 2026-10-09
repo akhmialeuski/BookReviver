@@ -43,6 +43,13 @@ class TestStage:
         stages = list(Stage)
         assert stages[stages.index(Stage.PAGE_SPLIT) + 1] is Stage.PAGE_ORDER
 
+    def test_earlier_stages_come_nearest_first_and_leave_out_the_stage_itself(self) -> None:
+        """Verify the stages a stage looks for its input in are the ones before it, the nearest one first."""
+        assert (Stage.CLEANUP.earlier, Stage.IMPORT.earlier) == (
+            (Stage.GEOMETRY, Stage.PAGE_ORDER, Stage.PAGE_SPLIT, Stage.IMPORT),
+            (),
+        )
+
 
 class TestFileType:
     """Tests for FileType.from_name()."""

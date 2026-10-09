@@ -259,7 +259,7 @@ class TestSecureCookie:
         :returns: Iterator yielding the client and closing it afterwards.
         :rtype: AsyncIterator[httpx.AsyncClient]
         """
-        transport = httpx.ASGITransport(app=fx_app, raise_app_exceptions=False)
+        transport = httpx.ASGITransport(app=fx_app)
         async with httpx.AsyncClient(transport=transport, base_url=HTTPS_BASE_URL) as client:
             yield client
 

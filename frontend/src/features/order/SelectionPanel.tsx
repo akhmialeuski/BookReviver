@@ -30,8 +30,9 @@ import { TextField } from '@/shared/ui/text-field';
 import { TextareaField } from '@/shared/ui/textarea-field';
 
 /**
- * The panel of the Order stage while no numbering is open: what the selected pages are, whether they are part of the
- * book, their notes, and the actions on them, with the places of the book that ask for a look at the foot.
+ * The panel of the Order stage while no numbering is open, in the slots of the `StagePanel`: the pagination, the kind of
+ * the selected pages, whether they are part of the book, their notes and the actions on them in the settings frame, and
+ * in the page section the selection with its thumbnails and, last, the places of the book that ask for a look.
  *
  * Kind, inclusion and notes are written to every selected page at once, and a field that the pages disagree on says
  * so instead of showing one page's value. The printed number of a single page is edited here too, since a number
@@ -89,6 +90,7 @@ function BlurField({
 export function SelectionPanel({
   projectId,
   selected,
+  thumbnails,
   gaps,
   missing,
   places,
@@ -105,6 +107,8 @@ export function SelectionPanel({
   projectId: string;
   /** The selected pages in book order. */
   selected: readonly PageSchema[];
+  /** The thumbnail of each page at the Order stage by the identifier of the page; a page without one has no entry. */
+  thumbnails: ReadonlyMap<string, string>;
   gaps: readonly LabelGap[];
   /** The pages of the book that wait for a scan. */
   missing: readonly PageSchema[];
@@ -190,151 +194,152 @@ export function SelectionPanel({
 
   if (selected.length === 0) {
     return (
-      <StagePanel stage="page-order" available>
-        <div className="grid gap-4">
-          {pagination}
-          <p className="text-sm text-muted-foreground">{text.nothing}</p>
-          {placesBox}
-        </div>
-      </StagePanel>
+      <StagePanel
+        stage="page-order"
+        available
+        settings={pagination}
+        page={{
+          title: MESSAGES.workspace.grid.selected(0),
+          children: <p className="text-sm text-muted-foreground">{text.nothing}</p>,
+          facts: placesBox,
+        }}
+      />
     );
   }
 
   return (
-    <StagePanel stage="page-order" available>
-      <div className="grid gap-4" data-testid="selection-panel">
-        {pagination}
-        <div className="flex items-center justify-between gap-2">
-          <h3
-            className="text-xs font-medium tracking-wide text-muted-foreground uppercase"
-            data-testid="selection-heading"
+    <StagePanel
+      stage="page-order"
+      available
+      settings={
+        <div className="grid gap-4" data-testid="selection-panel">
+          {pagination}
+          <SelectField
+            label={text.kind}
+            value={kind ?? ''}
+            onChange={(event) => {
+              const chosen: PageKind | undefined = asPageKind(event.target.value);
+              if (chosen !== undefined) {
+                save({ kind: chosen });
+              }
+            }}
           >
-            {text.selected(selected.length, spanOf(selected))}
-          </h3>
+            {kind === null ? (
+              <option value="" disabled>
+                {text.mixedKind}
+              </option>
+            ) : null}
+            {PAGE_KINDS.map((option) => (
+              <option key={option} value={option}>
+                {MESSAGES.pages.kinds[option]}
+              </option>
+            ))}
+          </SelectField>
+
+          {notice?.ids === ids.join(',') ? (
+            <p
+              className="rounded-md border border-status-attention bg-status-attention/10 p-2 text-sm"
+              role="status"
+              data-testid="leaf-replaced"
+            >
+              {notice.message}
+            </p>
+          ) : null}
+
+          {leafPages(selected).length === selected.length ? (
+            <BlankImageBlock projectId={projectId} selected={selected} blankPages={blankPages} />
+          ) : null}
+
+          <div className="grid gap-1">
+            <CheckboxField
+              label={text.included}
+              checked={included === true}
+              onChange={(event) => save({ included: event.target.checked })}
+            />
+            <p className="text-xs text-muted-foreground">
+              {included === null ? text.includedMixed : text.includedHint}
+            </p>
+          </div>
+
+          {only === undefined ? null : (
+            <BlurField
+              key={`label-${only.id}-${only.label}`}
+              label={text.label}
+              hint={text.labelHint}
+              value={only.label}
+              mixed={false}
+              multiline={false}
+              onSave={(value) => save({ label: value.trim() === '' ? null : value.trim() })}
+            />
+          )}
+
+          <BlurField
+            key={`notes-${ids.join(',')}-${notes ?? ''}`}
+            label={text.notes}
+            placeholder={notes === null ? text.notesMixed : undefined}
+            value={notes ?? ''}
+            mixed={notes === null}
+            multiline
+            onSave={(value) => save({ notes: value === '' ? null : value })}
+          />
+
+          {update.isError ? <ErrorAlert message={describePageError(update.error)} /> : null}
+
+          <div className="grid gap-2">
+            <Button variant="outline" className="justify-start" onClick={onMove}>
+              <ArrowDownUpIcon />
+              {text.move}
+            </Button>
+            <Button variant="outline" className="justify-start" onClick={onNumber}>
+              <HashIcon />
+              {text.number}
+            </Button>
+            <InsertMenu hasSelection onInsert={onInsert}>
+              <Button variant="outline" className="justify-start">
+                <PlusIcon />
+                {text.insert}
+              </Button>
+            </InsertMenu>
+            {only?.origin === 'placeholder' ? (
+              <Button variant="outline" className="justify-start" onClick={() => onAttach(only)}>
+                <ImagePlusIcon />
+                {text.attach}
+              </Button>
+            ) : null}
+            <Button
+              variant="outline"
+              className="justify-start border-destructive/40 text-destructive"
+              onClick={onDelete}
+            >
+              <XIcon />
+              {text.delete(selected.length)}
+            </Button>
+          </div>
+        </div>
+      }
+      page={{
+        title: text.selected(selected.length, spanOf(selected)),
+        action: (
           <Button variant="ghost" size="sm" onClick={onClear}>
             {MESSAGES.workspace.grid.clear}
           </Button>
-        </div>
-        <ul className="flex flex-wrap gap-1">
-          {selected.slice(0, THUMBNAILS_SHOWN).map((page) => (
-            <li key={page.id} className="w-14">
-              <PageThumbnail page={page} alt="" />
-            </li>
-          ))}
-          {selected.length > THUMBNAILS_SHOWN ? (
-            <li className="flex w-14 items-center justify-center text-sm text-muted-foreground">
-              {text.more(selected.length - THUMBNAILS_SHOWN)}
-            </li>
-          ) : null}
-        </ul>
-
-        <SelectField
-          label={text.kind}
-          value={kind ?? ''}
-          onChange={(event) => {
-            const chosen: PageKind | undefined = asPageKind(event.target.value);
-            if (chosen !== undefined) {
-              save({ kind: chosen });
-            }
-          }}
-        >
-          {kind === null ? (
-            <option value="" disabled>
-              {text.mixedKind}
-            </option>
-          ) : null}
-          {PAGE_KINDS.map((option) => (
-            <option key={option} value={option}>
-              {MESSAGES.pages.kinds[option]}
-            </option>
-          ))}
-        </SelectField>
-
-        {notice?.ids === ids.join(',') ? (
-          <p
-            className="rounded-md border border-status-attention bg-status-attention/10 p-2 text-sm"
-            role="status"
-            data-testid="leaf-replaced"
-          >
-            {notice.message}
-          </p>
-        ) : null}
-
-        {leafPages(selected).length === selected.length ? (
-          <BlankImageBlock projectId={projectId} selected={selected} blankPages={blankPages} />
-        ) : null}
-
-        <div className="grid gap-1">
-          <CheckboxField
-            label={text.included}
-            checked={included === true}
-            onChange={(event) => save({ included: event.target.checked })}
-          />
-          <p className="text-xs text-muted-foreground">
-            {included === null ? text.includedMixed : text.includedHint}
-          </p>
-        </div>
-
-        {only === undefined ? null : (
-          <BlurField
-            key={`label-${only.id}-${only.label}`}
-            label={text.label}
-            hint={text.labelHint}
-            value={only.label}
-            mixed={false}
-            multiline={false}
-            onSave={(value) => save({ label: value.trim() === '' ? null : value.trim() })}
-          />
-        )}
-
-        <BlurField
-          key={`notes-${ids.join(',')}-${notes ?? ''}`}
-          label={text.notes}
-          placeholder={notes === null ? text.notesMixed : undefined}
-          value={notes ?? ''}
-          mixed={notes === null}
-          multiline
-          onSave={(value) => save({ notes: value === '' ? null : value })}
-        />
-
-        {update.isError ? <ErrorAlert message={describePageError(update.error)} /> : null}
-
-        <section className="grid gap-2" aria-label={text.actions}>
-          <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            {text.actions}
-          </h3>
-          <Button variant="outline" className="justify-start" onClick={onMove}>
-            <ArrowDownUpIcon />
-            {text.move}
-          </Button>
-          <Button variant="outline" className="justify-start" onClick={onNumber}>
-            <HashIcon />
-            {text.number}
-          </Button>
-          <InsertMenu hasSelection onInsert={onInsert}>
-            <Button variant="outline" className="justify-start">
-              <PlusIcon />
-              {text.insert}
-            </Button>
-          </InsertMenu>
-          {only?.origin === 'placeholder' ? (
-            <Button variant="outline" className="justify-start" onClick={() => onAttach(only)}>
-              <ImagePlusIcon />
-              {text.attach}
-            </Button>
-          ) : null}
-          <Button
-            variant="outline"
-            className="justify-start border-destructive/40 text-destructive"
-            onClick={onDelete}
-          >
-            <XIcon />
-            {text.delete(selected.length)}
-          </Button>
-        </section>
-
-        {placesBox}
-      </div>
-    </StagePanel>
+        ),
+        children: (
+          <ul className="flex flex-wrap gap-1">
+            {selected.slice(0, THUMBNAILS_SHOWN).map((page) => (
+              <li key={page.id} className="w-14">
+                <PageThumbnail page={page} src={thumbnails.get(page.id) ?? null} alt="" />
+              </li>
+            ))}
+            {selected.length > THUMBNAILS_SHOWN ? (
+              <li className="flex w-14 items-center justify-center text-sm text-muted-foreground">
+                {text.more(selected.length - THUMBNAILS_SHOWN)}
+              </li>
+            ) : null}
+          </ul>
+        ),
+        facts: placesBox,
+      }}
+    />
   );
 }

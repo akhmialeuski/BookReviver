@@ -8,9 +8,10 @@ A job is recorded and committed before it is queued, so the worker finds it. A q
 stored as failed and announced, which tells the client it never ran, and the request that asked for it still answers,
 since the rows it wrote are committed. A project processes one thing at a time. The user asks for a run, a preview or a
 measure of the book, of which the project has one, and the application queues a tile cutting and a collection of old
-versions for itself, of which it has one too. A request for a second of the first kind is refused. A request that
-comes while a job of the other kind is active is stored as queued and waits, and the end of that job queues it to a
-worker, so the tile cutting of the viewer never refuses a run and a run never waits on a collection with a 409. The
+versions for itself, of which it has one too. A request for a second of the first kind is refused, except that a run or
+a measure takes the project from a preview by cancelling it, since a preview is a look that changes nothing. A request
+that comes while a job of the other kind is active is stored as queued and waits, and the end of that job queues it to
+a worker, so the tile cutting of the viewer never refuses a run and a run never waits on a collection with a 409. The
 collection that every run queues is stored with the end of the run, and is left out while another job waits.
 """
 
@@ -27,6 +28,7 @@ from bookreviver.domain.events import JobChanged
 from bookreviver.domain.ids import JobId
 from bookreviver.domain.values import TileCut, VersionCollection
 from bookreviver.services.job_runs import JobTracker
+from bookreviver.services.jobs import JobCancellation
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipes import RecipeBook
 from bookreviver.services.stage_records import StageRecords
@@ -69,12 +71,10 @@ class ProcessingRuntime:
 class ProcessingConfig:
     """The bounds of processing, from the settings.
 
-    :ivar version_retention: How long a full run that is not current is kept before a collection may delete it.
     :ivar preview_retention: How long a preview is kept before a collection may delete it.
     :ivar preview_long_side_px: Longer side of a preview in pixels.
     """
 
-    version_retention: timedelta
     preview_retention: timedelta
     preview_long_side_px: int
 
@@ -89,7 +89,7 @@ class JobStarter:
         :type uow: UnitOfWork
         :param runtime: The publisher, the clock and the queue.
         :type runtime: ProcessingRuntime
-        :param config: The retention periods, which a collection is started with.
+        :param config: The retention period of a preview, which a collection is started with.
         :type config: ProcessingConfig
         """
         self._uow = uow
@@ -97,17 +97,7 @@ class JobStarter:
         self._clock = runtime.clock
         self._queue = runtime.queue
         self._config = config
-
-    async def busy(self, project_id: ProjectId) -> Job | None:
-        """Return the job that is processing the versions of the project, if one is queued or running.
-
-        :param project_id: Project whose jobs are read.
-        :type project_id: ProjectId
-        :returns: The newest queued or running run, preview, tile cutting, collection or measure, or None.
-        :rtype: Job | None
-        """
-        active = await self._uow.jobs.list_for_project(project_id, JobState.active())
-        return next((job for job in active if job.kind in JobKind.processing()), None)
+        self._cancellation = JobCancellation(uow=uow, publisher=runtime.publisher, clock=runtime.clock)
 
     async def enqueue(self, project_id: ProjectId, kind: JobKind, params: MetadataMap) -> Job:
         """Record a job that processes the versions of the project, and queue it unless another job goes first.
@@ -119,6 +109,22 @@ class JobStarter:
         of the database decide when two requests pass the check together, and the one that loses is refused like the
         one that found its group taken.
 
+        A run or a measure of the book does not wait for a preview of the project, queued or running, nor is it refused
+        by one: the preview is cancelled the way an account holder cancels a job, committed and announced, and the
+        request goes on as if the project had been free of it. This is safe for the preview whose worker has begun,
+        because that worker never reads its own state before the end of its steps. It goes on to make the preview of the
+        steps it started, which are versions of the preview scale under identifiers that name that scale and which
+        nothing current or full-scale refers to, so it writes no version the run or the measure reads or writes. When it
+        ends, its final write finds the job cancelled and changes nothing, and ``hand_off`` queues only a job stored
+        before the cancellation, which the run, stored after it, is not, so the run is queued to a worker once, here. A
+        preview that was still queued is never started, since a worker that takes a finished job passes it by. A
+        preview asked for while a run or a measure is active, and a run or a measure asked for while another run or
+        measure is, are refused as before. A preview that another request stores after the check and before the insert
+        makes the insert fail on the unique index, and a run or a measure then reads the project again once, to cancel
+        that preview too, before it is refused like a request that lost the race to a run. A measure takes a preview's
+        place like a run does, as the measure is the other button the reader presses while the editor of the step is
+        looking at the page.
+
         :param project_id: Project the job works on.
         :type project_id: ProjectId
         :param kind: What the job does, one of the processing kinds.
@@ -127,11 +133,38 @@ class JobStarter:
         :type params: MetadataMap
         :returns: The job as stored, queued, waiting or failed.
         :rtype: Job
-        :raises ConflictError: If a run, a preview or a measure is asked for while one is queued or running, or a tile
+        :raises ConflictError: If a run, a preview or a measure is asked for while a run or a measure is queued or
+                               running, or while a preview is, unless the request is a run or a measure, or a tile
                                cutting or a collection while one is.
         """
+        try:
+            job, active = await self._store(project_id, kind, params)
+        except ConflictError:
+            if kind not in JobKind.preemptive():
+                raise
+            # A preview stored between the check and the insert took the place the insert needs, which the unique index
+            # tells, so the project is read once more, and the preview cancelled too
+            job, active = await self._store(project_id, kind, params)
+        if active:
+            await self._publisher.publish(JobChanged(project_id=project_id, job=job))
+            return job
+        return await self.dispatch(job)
+
+    async def _store(self, project_id: ProjectId, kind: JobKind, params: MetadataMap) -> tuple[Job, list[Job]]:
+        """Read the project, free it of the previews a run or a measure takes it from, and store the job.
+
+        :param project_id: Project the job works on.
+        :type project_id: ProjectId
+        :param kind: What the job does.
+        :type kind: JobKind
+        :param params: What the job was asked to do.
+        :type params: MetadataMap
+        :returns: The job as committed, and the jobs that were active when it was stored.
+        :rtype: tuple[Job, list[Job]]
+        :raises ConflictError: If a job of its group is active, or another request took the group before the insert.
+        """
         group = JobKind.requested() if kind in JobKind.requested() else JobKind.housekeeping()
-        active = await self._active(project_id)
+        active = await (self.free_of_previews(project_id) if kind in JobKind.preemptive() else self._active(project_id))
         if any(other.kind in group for other in active):
             raise ConflictError(PROJECT_BUSY)
         job = Job(id=JobId(uuid4()), project_id=project_id, kind=kind, params=params, created_at=self._clock.now())
@@ -141,10 +174,28 @@ class JobStarter:
         except ConflictError:
             await self._uow.rollback()
             raise ConflictError(PROJECT_BUSY) from None
-        if active:
-            await self._publisher.publish(JobChanged(project_id=project_id, job=job))
-            return job
-        return await self.dispatch(job)
+        return job, active
+
+    async def free_of_previews(self, project_id: ProjectId) -> list[Job]:
+        """Cancel the previews of the project that are queued or running, and return the jobs that are still active.
+
+        A preview is cancelled the way an account holder cancels a job, committed and announced, so a request that
+        would be refused by a preview alone, a run, a measure of the book or the clear of a page, goes on as if the
+        project had been free of it. A preview that has ended since it was read is not in the way either, so a
+        cancellation that finds it ended is no failure. The unit of work is committed by each cancellation, so a caller
+        has no change of its own pending when it calls this.
+
+        :param project_id: Project whose previews are cancelled.
+        :type project_id: ProjectId
+        :returns: The queued or running run, tile cutting, collection or measure of the project, newest first, which
+                  are none when the project was free of them.
+        :rtype: list[Job]
+        """
+        active = await self._active(project_id)
+        previews = [other for other in active if other.kind is JobKind.PREVIEW_STEP]
+        for preview in previews:
+            await self._cancellation.cancel(preview)
+        return [other for other in active if other not in previews]
 
     async def hand_off(self, ended: Job, collection: Job | None) -> None:
         """Queue to a worker the job the project goes on with after a job that processes its versions has ended.
@@ -205,6 +256,14 @@ class JobStarter:
                 return stored
         return job
 
+    def collection(self) -> VersionCollection:
+        """Say what a collection started now deletes: the versions nothing needs, and the previews old enough.
+
+        :returns: The collection, whose moment is the retention of a preview before now.
+        :rtype: VersionCollection
+        """
+        return VersionCollection(previews_older_than=self._clock.now() - self._config.preview_retention)
+
     def new_collection(self, project_id: ProjectId) -> Job:
         """Build the job that collects the old versions of a project, which is not stored yet.
 
@@ -213,20 +272,20 @@ class JobStarter:
         :returns: The queued job, to store with the end of the job that precedes it, or by ``enqueue``.
         :rtype: Job
         """
-        now = self._clock.now()
-        collection = VersionCollection(
-            older_than=now - self._config.version_retention, previews_older_than=now - self._config.preview_retention
-        )
         return Job(
             id=JobId(uuid4()),
             project_id=project_id,
             kind=JobKind.COLLECT_VERSIONS,
-            params=collection.to_map(),
-            created_at=now,
+            params=self.collection().to_map(),
+            created_at=self._clock.now(),
         )
 
     async def enqueue_collection(self, project_id: ProjectId) -> Job | None:
         """Queue a collection of the project's old versions, unless the project is processing something.
+
+        A preview, queued or running, does not count as processing: it is cancelled first, since the collection is what
+        the reader asked for and a preview is disposable. A preview younger than its retention is kept by the
+        collection itself.
 
         :param project_id: Project whose versions are collected.
         :type project_id: ProjectId
@@ -235,8 +294,8 @@ class JobStarter:
                   own end, through ``JobTracker.finish``, and not through this method.
         :rtype: Job | None
         """
-        if (active := await self.busy(project_id)) is not None:
-            return active if active.kind is JobKind.COLLECT_VERSIONS else None
+        if active := await self.free_of_previews(project_id):
+            return active[0] if active[0].kind is JobKind.COLLECT_VERSIONS else None
         try:
             return await self.enqueue(project_id, JobKind.COLLECT_VERSIONS, self.new_collection(project_id).params)
         except ConflictError:
@@ -301,7 +360,7 @@ class ProcessingParts:
         :type defaults: DefaultRecipes
         :param runtime: The publisher, the clock and the queue.
         :type runtime: ProcessingRuntime
-        :param config: The retention periods and the size of a preview.
+        :param config: The retention period and the size of a preview.
         :type config: ProcessingConfig
         :returns: The parts.
         :rtype: ProcessingParts

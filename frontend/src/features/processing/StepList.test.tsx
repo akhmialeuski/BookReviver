@@ -1,13 +1,16 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { deskew, processor, recipe, step, whole } from '@/features/processing/fixtures';
+import { deskew, processing, processor, recipe, step, whole } from '@/features/processing/fixtures';
 import type { OrderIssue } from '@/features/processing/order';
 import { draftOf } from '@/features/processing/recipe';
-import { OrderNotice, StepList, type StepOrder } from '@/features/processing/StepList';
+import { StepList } from '@/features/processing/StepList';
+import { OrderNotice } from '@/features/processing/StepSorter';
 
 /**
- * The list of steps of a recipe: each one with its title, a switch, a way to remove it and its settings when it is open.
+ * The list of steps of a recipe, which the panel of a stage without a step bar and the window of the gear both draw: each
+ * step with its title, a switch, a way to remove it and, when it is open, its settings.
  *
  * Radix measures the thumb of a slider, which jsdom cannot, so the observer it asks for is given a stand-in. Dragging a step
  * needs the geometry of a layout, which jsdom has none of, so the order is tested on `moveStep` and in a browser.
@@ -32,28 +35,33 @@ describe('StepList', () => {
   let container: HTMLDivElement;
   let root: Root;
   const handlers = {
-    onOpen: vi.fn(),
-    onMove: vi.fn(),
-    onToggle: vi.fn(),
-    onRemove: vi.fn(),
-    onChange: vi.fn(),
-    onCondition: vi.fn(),
+    open: vi.fn(),
+    move: vi.fn(),
+    toggle: vi.fn(),
+    remove: vi.fn(),
+    change: vi.fn(),
+    restoreOrder: vi.fn(),
+    setOrderMode: vi.fn(),
   };
 
   function render(
     steps = STEPS,
     openId: string | undefined = undefined,
-    pageValuesOf?: (step: (typeof STEPS)[number]) => Record<string, unknown>,
+    overrides: Parameters<typeof processing>[0] = {},
   ): void {
     act(() =>
       root.render(
-        <StepList
-          steps={steps}
-          catalogue={[deskew(), whole()]}
-          openId={openId}
-          pageValuesOf={pageValuesOf}
-          {...handlers}
-        />,
+        <QueryClientProvider client={new QueryClient()}>
+          <StepList
+            processing={processing({
+              steps,
+              catalogue: [deskew(), whole()],
+              openId,
+              ...handlers,
+              ...overrides,
+            })}
+          />
+        </QueryClientProvider>,
       ),
     );
   }
@@ -79,12 +87,12 @@ describe('StepList', () => {
     vi.unstubAllGlobals();
   });
 
-  it('numbers the steps and gives each the title of its processor', () => {
+  it('gives each step the title of its processor, with no number', () => {
     render();
 
     expect(
       steps().map((item) => item.querySelector('[data-testid="step-toggle"]')?.textContent),
-    ).toEqual(['1 · Deskew', '2 · x.gone']);
+    ).toEqual(['Deskew', 'x.gone']);
   });
 
   it('says so for a recipe with no steps', () => {
@@ -99,70 +107,21 @@ describe('StepList', () => {
     act(() => {
       steps()[0]?.querySelector<HTMLElement>('[data-testid="step-toggle"]')?.click();
     });
-    expect(handlers.onOpen).toHaveBeenLastCalledWith('step-0');
+    expect(handlers.open).toHaveBeenLastCalledWith('step-0');
 
     render(STEPS, 'step-0');
     act(() => {
       steps()[0]?.querySelector<HTMLElement>('[data-testid="step-toggle"]')?.click();
     });
-    expect(handlers.onOpen).toHaveBeenLastCalledWith(undefined);
+    expect(handlers.open).toHaveBeenLastCalledWith(undefined);
   });
 
-  it('offers the conditions of a step in its settings, and reports the one chosen', () => {
-    render(STEPS, 'step-0');
-    const select = steps()[0]?.querySelector<HTMLSelectElement>('[data-testid="step-condition"]');
-
-    expect(select?.value).toBe('all');
-    expect([...(select?.options ?? [])].map((option) => option.textContent)).toEqual([
-      'All pages',
-      'Text pages',
-      'Pictures',
-      'Colour pictures',
-      'Black-and-white pictures',
-    ]);
-    act(() => {
-      if (select !== null && select !== undefined) {
-        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(
-          select,
-          'pictures',
-        );
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-    });
-    expect(handlers.onCondition).toHaveBeenCalledWith('step-0', 'pictures');
-  });
-
-  it('shows the condition a step was saved with', () => {
-    render(
-      STEPS.map((entry) => ({ ...entry, appliesTo: 'text' })),
-      'step-0',
-    );
-
-    expect(
-      steps()[0]?.querySelector<HTMLSelectElement>('[data-testid="step-condition"]')?.value,
-    ).toBe('text');
-  });
-
-  it('draws the settings of the open step only', () => {
+  it('draws no form of settings in the open card, whose settings stand in the frame of the panel', () => {
     render(STEPS, 'step-0');
 
-    expect(steps()[0]?.querySelector('form')?.textContent).toContain('Largest slant');
-    expect(steps()[1]?.querySelector('form')).toBeNull();
-  });
-
-  it('marks in the form of the open step the fields the open page changes for itself', () => {
-    render(STEPS, 'step-0', () => ({ min_confidence: 0.6 }));
-
-    const labels = [...(steps()[0]?.querySelectorAll('form label') ?? [])].map(
-      (label) => label.textContent,
-    );
-    expect(labels).toEqual(['Largest slant', 'Least confidence · changed for this page']);
-  });
-
-  it('draws no mark when no page is open', () => {
-    render(STEPS, 'step-0');
-
-    expect(steps()[0]?.textContent).not.toContain('changed for this page');
+    expect(steps()[0]?.querySelector('form')).toBeNull();
+    expect(steps()[0]?.querySelector('[data-testid="field-values"]')).toBeNull();
+    expect(steps()[0]?.querySelector('[aria-expanded="true"]')).not.toBeNull();
   });
 
   it('switches a step off and on with its switch', () => {
@@ -172,7 +131,7 @@ describe('StepList', () => {
       steps()[0]?.querySelector<HTMLElement>('[data-testid="step-enabled"]')?.click();
     });
 
-    expect(handlers.onToggle).toHaveBeenCalledWith('step-0');
+    expect(handlers.toggle).toHaveBeenCalledWith('step-0');
   });
 
   it('removes a step', () => {
@@ -182,7 +141,7 @@ describe('StepList', () => {
       steps()[1]?.querySelector<HTMLElement>('[data-testid="step-remove"]')?.click();
     });
 
-    expect(handlers.onRemove).toHaveBeenCalledWith('step-1');
+    expect(handlers.remove).toHaveBeenCalledWith('step-1');
   });
 
   it('says a step is off, and that it is kept', () => {
@@ -208,49 +167,26 @@ describe('StepList', () => {
     expect(names).toEqual(['Move the Deskew step', 'Move the x.gone step']);
   });
 
-  describe('with a way to run the recipe up to a step', () => {
-    const run = {
-      choices: [
-        { scope: 'page', count: 1 },
-        { scope: 'all', count: 8 },
-      ] as const,
-      describe: (scope: string, count: number) => `${scope} ${count}`,
-      disabled: false,
+  describe('with the progress of the pages', () => {
+    const progress = {
       passed: (index: number) => 8 - index * 3,
       total: 8,
-      onRun: vi.fn(),
     };
 
-    function renderRunnable(steps = STEPS, control = run): void {
+    function renderRunnable(steps = STEPS): void {
       act(() =>
         root.render(
           <StepList
-            steps={steps}
-            catalogue={[deskew(), whole()]}
-            openId={undefined}
-            run={control}
-            {...handlers}
+            processing={processing({
+              steps,
+              catalogue: [deskew(), whole()],
+              ...handlers,
+            })}
+            progress={progress}
           />,
         ),
       );
     }
-
-    async function chooseOn(stepIndex: number, scope: string): Promise<void> {
-      const trigger = steps()[stepIndex]?.querySelector<HTMLElement>('[data-testid="step-run"]');
-      await act(async () => {
-        trigger?.focus();
-        trigger?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      });
-      await act(async () => {
-        document.body.querySelector<HTMLElement>(`[data-testid="step-run-${scope}"]`)?.click();
-      });
-    }
-
-    afterEach(() => {
-      document.body.querySelectorAll('[role="menu"]').forEach((node) => {
-        node.remove();
-      });
-    });
 
     it('says how many pages passed each step that is on', () => {
       renderRunnable();
@@ -266,39 +202,21 @@ describe('StepList', () => {
       expect(steps()[1]?.querySelector('[data-testid="step-passed"]')).toBeNull();
     });
 
-    it('runs up to the step over the scope chosen, counting the steps from zero', async () => {
-      run.onRun.mockReset();
-      renderRunnable();
-
-      await chooseOn(1, 'all');
-
-      expect(run.onRun).toHaveBeenCalledWith(1, 'all');
-    });
-
-    it('keeps the run off for a step when every step up to it is off', () => {
-      renderRunnable(STEPS.map((entry, index) => ({ ...entry, enabled: index === 1 })));
-
-      const triggers = steps().map((item) =>
-        item.querySelector<HTMLButtonElement>('[data-testid="step-run"]'),
-      );
-      expect(triggers.map((trigger) => trigger?.disabled)).toEqual([true, false]);
-    });
-
-    it('keeps the run off while the whole run is', () => {
-      renderRunnable(STEPS, { ...run, disabled: true });
-
-      expect(
-        steps().every(
-          (item) => item.querySelector<HTMLButtonElement>('[data-testid="step-run"]')?.disabled,
-        ),
-      ).toBe(true);
-    });
-
-    it('offers nothing for a recipe of a single step, which runs through it anyway', () => {
+    it('says nothing of the pages for a recipe of a single step', () => {
       renderRunnable(STEPS.slice(0, 1));
 
-      expect(container.querySelector('[data-testid="step-run"]')).toBeNull();
       expect(container.querySelector('[data-testid="step-passed"]')).toBeNull();
+    });
+
+    it('has no button that runs the pages up to a step, since a run starts only from the foot of the panel', () => {
+      renderRunnable();
+
+      const names = [...container.querySelectorAll('button')].map(
+        (button) => button.getAttribute('aria-label') ?? '',
+      );
+      expect(names.some((name) => name.startsWith('Run up to here'))).toBe(false);
+      expect(container.querySelector('[data-testid="step-run"]')).toBeNull();
+      expect(container.querySelector('[data-testid^="step-run-"]')).toBeNull();
     });
   });
 
@@ -314,36 +232,20 @@ describe('StepList', () => {
     const REASON =
       'Deskew reads the slant of the lines on an upright sheet, so it usually comes after Perspective.';
     const REQUIRED_REASON = 'Margins cannot come before Select content.';
-    const onRestore = vi.fn();
 
     function issue(kind: 'usual' | 'required', reason: string): OrderIssue {
       return { stepId: 'step-0', otherId: 'step-1', kind, reason };
     }
 
     function guarded(issues: OrderIssue[], openId: string | undefined = undefined): void {
-      const order: StepOrder = {
-        mode: 'usual',
-        issues: new Map(issues.length === 0 ? [] : [['step-0', issues]]),
-        refusalOf: () => undefined,
-        onRestore,
-      };
-      act(() =>
-        root.render(
-          <StepList
-            steps={STEPS}
-            catalogue={[deskew(), processor('x.gone')]}
-            openId={openId}
-            order={order}
-            {...handlers}
-          />,
-        ),
-      );
+      render(STEPS, openId, {
+        catalogue: [deskew(), processor('x.gone')],
+        orderIssues: new Map(issues.length === 0 ? [] : [['step-0', issues]]),
+      });
     }
 
     const mark = (index: number): HTMLElement | null | undefined =>
       steps()[index]?.querySelector<HTMLElement>('[data-testid="step-order-mark"]');
-
-    beforeEach(() => onRestore.mockReset());
 
     it('marks a step that is off its usual place, with the reason on the line below it', () => {
       guarded([issue('usual', REASON)]);
@@ -373,25 +275,51 @@ describe('StepList', () => {
       expect(container.querySelector('[data-testid="step-order-mark"]')).toBeNull();
     });
 
-    it('gives every reason in the settings of the step, with the button that restores the usual order', () => {
+    it('gives every reason in the settings of the step', () => {
       guarded([issue('usual', REASON), issue('required', REQUIRED_REASON)], 'step-0');
 
       const details = steps()[0]?.querySelector('[data-testid="step-order-details"]');
       expect(details?.textContent).toContain(REASON);
       expect(details?.textContent).toContain(REQUIRED_REASON);
       expect(steps()[0]?.querySelector('[data-testid="step-order-reason"]')).toBeNull();
-      const restore = steps()[0]?.querySelector<HTMLButtonElement>(
-        '[data-testid="step-restore-order"]',
+    });
+
+    it('offers one button that restores the usual order while a step is off its place', () => {
+      guarded([issue('usual', REASON)]);
+
+      const restore = container.querySelector<HTMLButtonElement>(
+        '[data-testid="steps-restore-order"]',
       );
       expect(restore?.textContent).toBe('Restore the usual order');
       act(() => restore?.click());
-      expect(onRestore).toHaveBeenCalledTimes(1);
+      expect(handlers.restoreOrder).toHaveBeenCalledTimes(1);
     });
 
-    it('offers no button to restore the order for a step that is in its place', () => {
-      guarded([], 'step-0');
+    it('offers no button to restore the order while every step is in its place', () => {
+      guarded([]);
 
-      expect(container.querySelector('[data-testid="step-restore-order"]')).toBeNull();
+      expect(container.querySelector('[data-testid="steps-restore-order"]')).toBeNull();
+    });
+  });
+
+  describe('the order of the steps', () => {
+    it('switches the order the draft is saved in', () => {
+      render();
+
+      act(() => container.querySelector<HTMLElement>('[data-testid="order-free"]')?.click());
+
+      expect(handlers.setOrderMode).toHaveBeenCalledWith('free');
+    });
+  });
+
+  describe('the open card', () => {
+    it('draws the summary of the processor in place of the form of its settings', () => {
+      render(STEPS, 'step-0', {
+        catalogue: [deskew({ summary: 'Straightens the lines' }), whole()],
+      });
+
+      expect(steps()[0]?.textContent).toContain('Straightens the lines');
+      expect(steps()[0]?.querySelector('input[type="range"], [role="slider"]')).toBeNull();
     });
   });
 

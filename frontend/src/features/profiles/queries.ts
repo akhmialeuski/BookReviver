@@ -12,7 +12,7 @@ import {
   listProfilesApiV1RecipeProfilesGetQueryKey,
   putDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutMutation,
   putProfileApiV1RecipeProfilesProfileIdPutMutation,
-  putRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutMutation,
+  putRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutMutation,
   renameProfileApiV1RecipeProfilesProfileIdPatchMutation,
 } from '@/api/@tanstack/react-query.gen';
 import { refreshStage } from '@/features/processing/queries';
@@ -77,7 +77,7 @@ export function useReplaceProfile() {
 export function useLinkProfile(projectId: string, stage: Stage) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...putRecipeProfileApiV1ProjectsProjectIdStagesStageVariantsRecipeIdProfilePutMutation(),
+    ...putRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutMutation(),
     onSettled: () => refreshStage(queryClient, projectId, stage),
   });
 }
@@ -119,8 +119,8 @@ export function useUnsetDefaultProfile() {
 }
 
 /**
- * Add the steps of a profile to a book as a variant of the stage, which may become the active recipe and may be given to
- * some pages, which queues a run of the stage on them.
+ * Put the steps of a profile into the recipe of one kind of page of a book. The pages that recipe made go out of date, and
+ * the profile is linked to the recipe.
  */
 export function useApplyProfile(projectId: string, stage: Stage) {
   const queryClient = useQueryClient();

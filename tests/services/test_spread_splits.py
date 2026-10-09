@@ -12,12 +12,13 @@ from delayed_assert import assert_expectations, expect
 from PIL import Image
 
 from bookreviver.domain.entities import Page
-from bookreviver.domain.enums import JobState, PageChange, Stage, StageState, VersionState
+from bookreviver.domain.enums import JobState, PageChange, Stage, StageState, ValueScope, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.events import PagesChanged, PageVersionReady
 from bookreviver.domain.geometry import Line, Point
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import NewPageEdit, StageRun, Step, StepPreview
+from tests.helpers.builders import make_page_stage, make_step_values
 from tests.helpers.samples import png_bytes, spread
 from tests.helpers.spreads import (
     HEIGHT_PX,
@@ -59,8 +60,38 @@ async def width_of(kit: ProcessingKit, project: Project, version: PageVersion) -
             return image.width
 
 
+async def give_odd_pages_a_value(kit: ProcessingKit, project: Project, page: Page) -> None:
+    """Give the odd pages a value for a step of the geometry stage, and the page a fresh record of that stage.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param project: Project owning the page.
+    :type project: Project
+    :param page: The page that has been through the geometry stage.
+    :type page: Page
+    """
+    uow = kit.uow()
+    await uow.step_values.save(make_step_values(project_id=project.id, scope=ValueScope.ODD))
+    await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.GEOMETRY))
+    await uow.commit()
+
+
 class TestSplit:
     """Tests for the run of a recipe whose step splits a scan."""
+
+    async def test_a_page_after_the_new_half_goes_stale_where_the_odd_pages_have_a_value(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify the new half moves the next spread from the second place to the third, an even page to an odd one.
+
+        :param fx_cv_kit: The processing kit with the OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project, [first, second] = await seed_spreads(fx_cv_kit, count=2)
+        await give_odd_pages_a_value(fx_cv_kit, project, second)
+        await use_recipe(fx_cv_kit, actor, project, Stage.PAGE_SPLIT, SPLIT_SPREAD)
+        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT, page_ids=(first.id,)))
+        assert (await stage_of(fx_cv_kit, second, Stage.GEOMETRY)).state is StageState.STALE
 
     async def test_the_page_stays_the_left_half_and_the_right_half_follows_it(self, fx_cv_kit: ProcessingKit) -> None:
         """Verify a new page is inserted right after the page that was split, and the pages after it keep their order.
@@ -258,6 +289,24 @@ class TestUnsplit:
         pages = await book_of(kit, project)
         await use_recipe(kit, actor, project, Stage.PAGE_SPLIT, 'split.none')
         return actor, project, pages
+
+    async def test_a_page_after_the_deleted_half_goes_stale_where_the_odd_pages_have_a_value(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify deleting the right half moves the next spread from the third place to the second.
+
+        :param fx_cv_kit: The processing kit with the OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project, [first, second] = await seed_spreads(fx_cv_kit, count=2)
+        await use_recipe(fx_cv_kit, actor, project, Stage.PAGE_SPLIT, SPLIT_SPREAD)
+        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT, page_ids=(first.id,)))
+        await give_odd_pages_a_value(fx_cv_kit, project, second)
+        await use_recipe(fx_cv_kit, actor, project, Stage.PAGE_SPLIT, 'split.none')
+        await run_stage(
+            fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT, page_ids=(first.id,), confirm_unsplit=True)
+        )
+        assert (await stage_of(fx_cv_kit, second, Stage.GEOMETRY)).state is StageState.STALE
 
     async def test_without_a_confirmation_the_page_fails_and_nothing_is_deleted(self, fx_cv_kit: ProcessingKit) -> None:
         """Verify an unconfirmed run leaves the right half, and says on the stage of the left one that it failed.

@@ -1,15 +1,8 @@
-import type {
-  AppliesTo,
-  FigureState,
-  ProcessorSchema,
-  RecipeSchema,
-  Stage,
-  StagePageSchema,
-} from '@/api';
+import type { FigureState, ProcessorSchema, RecipeSchema, Stage, StagePageSchema } from '@/api';
 
 /**
  * The steps of the open recipe as the step bar and the step panel read them: the saved steps with their titles, the step
- * the address names, the steps on either side of it, and what a step did on the pages of the book.
+ * the address names, and what a step did on the pages of the book.
  *
  * The bar shows the saved recipe and not the draft, since a step is addressed by the identifier the server gave it, and a
  * step that was only added to the draft has none yet.
@@ -35,18 +28,7 @@ export interface BarStep {
   title: string;
   processorKey: string;
   enabled: boolean;
-  /** Which pages the step processes. */
-  appliesTo: AppliesTo;
 }
-
-/** The marks a condition has on the bar, in the order the select of a step lists the conditions. */
-export const ConditionMark = {
-  Text: 'text',
-  Picture: 'picture',
-} as const;
-
-/** One mark (derived from {@link ConditionMark}). */
-export type ConditionMark = (typeof ConditionMark)[keyof typeof ConditionMark];
 
 /**
  * List the saved steps of a recipe with the titles of their processors.
@@ -65,22 +47,7 @@ export function barStepsOf(
     title: catalogue.find((entry) => entry.key === step.processor_key)?.title ?? step.processor_key,
     processorKey: step.processor_key,
     enabled: step.enabled,
-    appliesTo: step.applies_to,
   }));
-}
-
-/** Give the mark a condition carries on the bar, or null for a step that processes every page. */
-export function markOfCondition(appliesTo: AppliesTo): ConditionMark | null {
-  switch (appliesTo) {
-    case 'all':
-      return null;
-    case 'text':
-      return ConditionMark.Text;
-    case 'pictures':
-    case 'color-pictures':
-    case 'bw-pictures':
-      return ConditionMark.Picture;
-  }
 }
 
 /** Find the step an address names among the steps of the recipe, or null when the recipe has none such. */
@@ -88,15 +55,35 @@ export function openStepOf(steps: readonly BarStep[], stepId: string | undefined
   return steps.find((step) => step.stepId === stepId) ?? null;
 }
 
-/** The steps either side of a step, which are the ones the panel offers to move to. */
-export interface Neighbours {
-  previous: BarStep | null;
-  next: BarStep | null;
-}
-
-/** Find the step before and the step after one, which count steps that are off too, since the bar lists them all. */
-export function neighboursOf(steps: readonly BarStep[], open: BarStep): Neighbours {
-  return { previous: steps[open.index - 1] ?? null, next: steps[open.index + 1] ?? null };
+/**
+ * Choose the step a stage with a bar opens on when its address names none: the furthest step of the recipe that a run
+ * has brought a page of that recipe to.
+ *
+ * When some page of the recipe went through every step that is on, it is the last step that is on. Otherwise it is the
+ * step the furthest run stopped at, and when no run has made a result of the recipe, the last step of the recipe.
+ *
+ * @param steps The saved steps of the recipe shown in the bar.
+ * @param rows The rows of the stage, without a step.
+ * @param recipeId The recipe shown in the bar.
+ * @returns The step, or null when the recipe has no steps.
+ */
+export function defaultStepOf(
+  steps: readonly BarStep[],
+  rows: readonly StagePageSchema[],
+  recipeId: string,
+): BarStep | null {
+  const last = steps[steps.length - 1] ?? null;
+  const ran = rows.filter(
+    (row) => row.recipe_id === recipeId && row.version !== null && row.status !== 'failed',
+  );
+  if (ran.length === 0) {
+    return last;
+  }
+  if (ran.some((row) => row.through_step === null)) {
+    return [...steps].reverse().find((step) => step.enabled) ?? last;
+  }
+  const furthest = Math.max(...ran.map((row) => row.through_step ?? 0));
+  return steps[furthest] ?? last;
 }
 
 /** How the pages of the book stand at one step. */
@@ -105,7 +92,7 @@ export interface StepCounts {
   found: number;
   /** Pages with a setting of their own for the step or a shape the reader set by hand. */
   byHand: number;
-  /** Pages the step passes by its condition. */
+  /** Pages the step passed unchanged, which are the leaves the program drew. */
   skipped: number;
   /** Pages the step has not run on and that hold the default shape. */
   notRun: number;

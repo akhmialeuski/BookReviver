@@ -1,18 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ContentMark,
   describeContent,
   markOfContent,
   pagesToChange,
-  sourcesOf,
 } from '@/features/workspace/content';
 import { page } from '@/features/workspace/fixtures';
-import { ConditionMark } from '@/features/workspace/steps';
 
 describe('markOfContent', () => {
   it('gives the mark of the pages of text to text, and the mark of the pictures to both pictures', () => {
-    expect(markOfContent('text')).toBe(ConditionMark.Text);
-    expect(markOfContent('color-picture')).toBe(ConditionMark.Picture);
-    expect(markOfContent('bw-picture')).toBe(ConditionMark.Picture);
+    expect(markOfContent('text')).toBe(ContentMark.Text);
+    expect(markOfContent('color-picture')).toBe(ContentMark.Picture);
+    expect(markOfContent('bw-picture')).toBe(ContentMark.Picture);
   });
 });
 
@@ -52,19 +51,5 @@ describe('pagesToChange', () => {
     expect(idsOf([])).toEqual([]);
     expect(idsOf(['hole', 'a'])).toEqual(['a']);
     expect(idsOf([], 'hole')).toEqual([]);
-  });
-});
-
-describe('sourcesOf', () => {
-  it('counts the pages whose type the program found and the pages whose type the reader set', () => {
-    const pages = [
-      page('a', { content_source: 'detected' }),
-      page('b', { content_source: 'detected' }),
-      page('c', { content_source: 'hand' }),
-      page('d', { content_source: 'kind' }),
-    ];
-
-    expect(sourcesOf(pages)).toEqual({ found: 2, hand: 1 });
-    expect(sourcesOf([])).toEqual({ found: 0, hand: 0 });
   });
 });

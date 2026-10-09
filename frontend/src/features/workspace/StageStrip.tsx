@@ -2,14 +2,9 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useEffect, useMemo, useRef } from 'react';
 import { PageTile } from '@/features/workspace/PageTile';
 import { PageFilter } from '@/features/workspace/params';
+import { StripEmpty } from '@/features/workspace/StripEmpty';
 import { StripToolbar } from '@/features/workspace/StripToolbar';
-import type {
-  FilterCounts,
-  FlagView,
-  StopView,
-  StripItem,
-  VariantView,
-} from '@/features/workspace/strip';
+import type { PageListProps } from '@/features/workspace/strip';
 import { useAfterPick } from '@/features/workspace/stripSheet';
 import { useStripPlace } from '@/features/workspace/useStripPlace';
 import { MESSAGES } from '@/shared/messages';
@@ -27,39 +22,15 @@ const OVERSCAN_ROWS = 6;
 
 export function StageStrip({
   items,
-  total,
-  counts,
-  filter,
   currentId,
-  onFilter,
   onOpen,
   onGrid,
   reasonOf,
-  withWide = false,
-  variants,
-  stopped,
-  flagged,
-}: {
-  /** The pages the filter lists, in book order. */
-  items: readonly StripItem[];
-  /** The pages of the book, which the filters narrow down. */
-  total: number;
-  counts: FilterCounts;
-  filter: PageFilter;
+  ...list
+}: PageListProps & {
   currentId: string | undefined;
-  onFilter: (filter: PageFilter) => void;
   onOpen: (pageId: string) => void;
   onGrid: () => void;
-  /** Says why a page asks for a look; the Check filter writes it under the page. Absent for no reasons. */
-  reasonOf?: (item: StripItem) => string | null;
-  /** Whether the filter of wide scans is offered, which only the Split stage has. */
-  withWide?: boolean;
-  /** The variants of the stage: a mark on each page, and the choice of one to list. Absent for none to choose from. */
-  variants?: VariantView;
-  /** The steps a run stopped at, which narrow the pages to those stopped at one. Absent when no run stopped short. */
-  stopped?: StopView;
-  /** The reasons a page asks for a look at the open step, which narrow the pages to those with one. Absent for no step. */
-  flagged?: FlagView;
 }): React.JSX.Element {
   const scroller = useRef<HTMLDivElement>(null);
   const afterPick = useAfterPick();
@@ -84,25 +55,9 @@ export function StageStrip({
 
   return (
     <div className="flex h-full flex-col" data-testid="page-strip">
-      <StripToolbar
-        total={total}
-        shown={items.length}
-        counts={counts}
-        filter={filter}
-        grid={false}
-        withWide={withWide}
-        variants={variants}
-        stopped={stopped}
-        flagged={flagged}
-        onFilter={onFilter}
-        onSwitchView={onGrid}
-      />
+      <StripToolbar {...list} shown={items.length} grid={false} onSwitchView={onGrid} />
       {items.length === 0 ? (
-        <p className="p-4 text-sm text-muted-foreground">
-          {flagged?.selected == null
-            ? MESSAGES.workspace.strip.empty[filter]
-            : MESSAGES.workspace.strip.flag.empty}
-        </p>
+        <StripEmpty filter={list.filter} flagged={list.flagged} />
       ) : (
         <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto" data-testid="strip-scroll">
           <ol
@@ -123,8 +78,7 @@ export function StageStrip({
                   <PageTile
                     item={item}
                     highlighted={item.page.id === currentId}
-                    caption={filter === PageFilter.Check ? (reasonOf?.(item) ?? null) : null}
-                    variant={variants?.markOf(item) ?? null}
+                    caption={list.filter === PageFilter.Check ? (reasonOf?.(item) ?? null) : null}
                     onClick={() => {
                       onOpen(item.page.id);
                       afterPick();

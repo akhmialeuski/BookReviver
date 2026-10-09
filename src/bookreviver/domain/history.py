@@ -3,8 +3,9 @@
 The history only grows. A change is taken back by a later change whose source is an undo and which names it, so the
 changes that still stand are those no undo names, and the undos themselves are never taken back. What can be undone is
 the newest change that stands, then the one before it, which is how a Ctrl+Z works, and a change of a batch is taken
-back together with the rest of its batch. A carry-over of a setting to other pages and a reset of steps to their
-defaults are such batches.
+back together with the rest of its batch. A value set for several pages, a value set for the odd pages, the even
+pages or a group, which every page they reach keeps a change of, and a carry-over of a shape to other pages are such
+batches.
 
 The one exception to the growth is an explicit clear of one step on one page, which deletes that history, takes the
 settings and the edit of the step away from the page, and deletes the results of the step on it with the results that
@@ -66,12 +67,12 @@ class StepHistory:
 
 @frozen
 class CarryOver:
-    """What carrying a setting of one page over to other pages did, which is one batch of the history.
+    """What carrying the shape a page set by hand over to other pages did, which is one batch of the history.
 
     :ivar batch_id: The batch the changes share, so taking back one of them takes back all of them.
-    :ivar changes: The changes written, one on each page that took the value, which are none when every page already
+    :ivar changes: The changes written, one on each page that took the shape, which are none when every page already
                    had it or was skipped.
-    :ivar skipped: The pages that were left as they were because they have a value of their own for the field.
+    :ivar skipped: The pages that were left as they were because they have a shape of their own.
     """
 
     batch_id: ChangeBatchId
@@ -80,11 +81,11 @@ class CarryOver:
 
 
 @frozen
-class StepReset:
-    """What a reset of steps to their defaults did, which is one batch of the history.
+class ValueChanges:
+    """What setting a value of a step for a part of the pages, or taking it back, did, as one batch of the history.
 
     :ivar batch_id: The batch the changes share, so taking back one of them takes back all of them.
-    :ivar changes: The changes written, one for each layer a page lost, which are none when nothing was set.
+    :ivar changes: The changes written, one on each page that the value reaches, which are none when no page changes.
     """
 
     batch_id: ChangeBatchId

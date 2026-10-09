@@ -23,9 +23,7 @@ const sdk = vi.hoisted(() => ({
   clear: vi.fn(),
   versions: vi.fn(),
   choose: vi.fn(),
-  remake: vi.fn(),
   mark: vi.fn(),
-  jobs: vi.fn(),
 }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
@@ -35,9 +33,7 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   clearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDelete: sdk.clear,
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet: sdk.versions,
   chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePut: sdk.choose,
-  remakeVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdRemakePost: sdk.remake,
   putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPut: sdk.mark,
-  listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
 }));
 
 const STEP_ID = 'id-geometry.deskew';
@@ -56,6 +52,8 @@ function change(overrides: Partial<PageStepChangeSchema>): PageStepChangeSchema 
     stage: 'geometry',
     step_id: STEP_ID,
     layer: 'settings',
+    scope: 'pages',
+    group_label: '',
     before: null,
     after: { max_angle: 3 },
     source: 'user',
@@ -205,9 +203,7 @@ describe('PageTimeline', () => {
     sdk.undo.mockResolvedValue({ data: { changes: [] } });
     sdk.clear.mockResolvedValue({ data: { changes: 2, versions: 2 } });
     sdk.choose.mockResolvedValue({ data: {} });
-    sdk.remake.mockResolvedValue({ data: { id: 'job' } });
     sdk.mark.mockResolvedValue({ data: {} });
-    sdk.jobs.mockResolvedValue(EMPTY_LIST);
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -411,6 +407,20 @@ describe('PageTimeline', () => {
       expect(hand?.textContent).not.toContain('{');
       expect(setting?.textContent).toContain('Settings of the page · You');
       expect(setting?.textContent).toContain('nothing → Largest slant: 3');
+    });
+
+    it('names the part of the pages a value was set for, which is not the settings of this page alone', async () => {
+      serve([
+        change({ id: 'group', scope: 'group', group_label: 'Index', sequence: 2 }),
+        change({ id: 'even', scope: 'even', sequence: 1 }),
+      ]);
+      open();
+      await render();
+
+      const [group, even] = rows();
+      expect(group?.textContent).toContain('Group · Index · You');
+      expect(even?.textContent).toContain('Even pages · You');
+      expect(even?.textContent).not.toContain('Settings of the page');
     });
 
     it('marks the changes an undo took back and offers no undo for them or for an undo', async () => {
@@ -688,7 +698,7 @@ describe('PageTimeline', () => {
       expect(byId('page-history-use')).toBeNull();
     });
 
-    it('tags nothing while the page stands on no result of the open step, as when a variant of the recipe ran it', async () => {
+    it('tags nothing while the page stands on no result of the open step, as when the recipe that ran it had other steps', async () => {
       const deskew = version('deskew', { created_at: at(10) });
       const crop = version('crop', { created_at: at(11), input_id: 'deskew' });
       const other = version('other', { created_at: at(12) });
@@ -766,26 +776,6 @@ describe('PageTimeline', () => {
         path: { project_id: 'project', page_id: 'page', stage: 'geometry' },
         body: { version_id: 'old' },
       });
-    });
-
-    it('makes the picture of a result again when a collection removed it, instead of choosing it', async () => {
-      const removed = version('old', {
-        created_at: at(11),
-        input_id: 'first',
-        files_removed: true,
-        files_removed_at: '2026-10-02T00:00:00Z',
-        images: null,
-      });
-      sdk.versions.mockResolvedValue(listed(FIRST, removed, NEW));
-      await render({ step: null });
-
-      expect(byId('page-history-removed')?.textContent).toBe('Picture removed · made again on use');
-      await act(async () => {
-        byId('page-history-use')?.click();
-      });
-
-      expect(sdk.choose).not.toHaveBeenCalled();
-      expect(sdk.remake.mock.calls[0]?.[0]).toMatchObject({ path: { version_id: 'old' } });
     });
 
     it('shows the answer of the server when a result cannot be chosen', async () => {

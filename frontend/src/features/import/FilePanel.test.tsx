@@ -168,4 +168,43 @@ describe('FilePanel', () => {
     expect(footer?.textContent).toContain('Delete this file…');
     expect(footer?.textContent).toContain('Its pages stay in the book with their images');
   });
+
+  describe('the slots of the layout', () => {
+    const find = (testId: string): HTMLElement | null =>
+      container.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+
+    it('puts the actions on the pages and the suggestion of the file in the settings frame', async () => {
+      await render(source('f-1', { suggestion: SUGGESTING }), [page('p-0', { source_id: 'f-1' })]);
+
+      const settings = find('panel-settings');
+      expect(settings?.contains(find('suggestion'))).toBe(true);
+      expect([...(settings?.querySelectorAll('a') ?? [])].map((link) => link.textContent)).toEqual([
+        'Show its pages in Order',
+        'Put its pages somewhere else…',
+      ]);
+      expect(find('panel-page')?.contains(settings)).toBe(false);
+    });
+
+    it('puts the file and its facts in the one page section, the facts last and right above the history', async () => {
+      await render(source('f-1', { file_name: 'Notes.pdf', scan_count: 96 }), [], [scan('s-1')]);
+
+      const section = find('panel-page');
+      expect(section?.querySelector('h3')?.textContent).toBe('File');
+      expect(section?.textContent).toContain('Notes.pdf');
+      expect(section?.contains(find('file-pages'))).toBe(true);
+      expect(section?.lastElementChild).toBe(find('panel-facts'));
+      expect(find('panel-facts')?.textContent).toContain('400 dpi');
+      expect(section?.nextElementSibling).toBe(find('page-history'));
+    });
+
+    it('draws the slots in the fixed order, with no recipe and no step', async () => {
+      await render(source('f-1'));
+
+      expect(
+        [...(find('stage-panel-scroll')?.children ?? [])].map((child) =>
+          child.getAttribute('data-testid'),
+        ),
+      ).toEqual(['panel-settings', 'panel-page', 'page-history']);
+    });
+  });
 });

@@ -232,6 +232,17 @@ describe('CompareStage', () => {
       expect(lastFit().x).toBeCloseTo(-0.08);
     });
 
+    it('leaves a view the reader zoomed where it is when the editor makes room round the page', async () => {
+      await stage.show(null, AFTER, 'p1');
+      const [first] = fake.viewers as { addHandler: { mock: { calls: [string, () => void][] } } }[];
+      const scroll = first?.addHandler.mock.calls.find(([name]) => name === 'canvas-scroll');
+      scroll?.[1]();
+      const before = lastFit();
+      stage.setPadding(0.08);
+
+      expect(lastFit()).toBe(before);
+    });
+
     it('leaves a view the reader moved where it is when the border changes', async () => {
       await stage.show(null, AFTER, 'p1');
       stage.setPadding(0.08);
@@ -242,6 +253,39 @@ describe('CompareStage', () => {
       stage.setReach({ rect: BORDER, size: { width: WIDTH, height: HEIGHT } });
 
       expect(lastFit()).toBe(before);
+    });
+  });
+
+  describe('the place of the reader', () => {
+    const PLACE = { zoom: 0.67, centre_x: 0.3, centre_y: 0.5 };
+
+    it('is restored on the first picture and not on a view with none, so the rows that are still read do not spend it', async () => {
+      const restore = vi.fn(() => PLACE);
+      stage = new CompareStage(element, document.createElement('div'), { restore });
+
+      await stage.show(null, null, 'p1');
+      expect(restore).not.toHaveBeenCalled();
+
+      await stage.show(BEFORE, AFTER, 'p1');
+      expect(restore).toHaveBeenCalledTimes(1);
+      // The stage of this test is the second viewer, the first being the one the other tests share
+      const restored = fake.viewers.at(-1) as {
+        viewport: { zoomTo: { mock: { calls: unknown[][] } } };
+      };
+      expect(restored.viewport.zoomTo.mock.calls).toHaveLength(1);
+    });
+
+    it('keeps the zoom of the reader across a view with no picture when the same pages come back', async () => {
+      await stage.show(BEFORE, AFTER, 'p1');
+      const [first] = fake.viewers as {
+        viewport: { fitBounds: { mock: { calls: unknown[][] } } };
+      }[];
+      const fitted = first?.viewport.fitBounds.mock.calls.length;
+
+      await stage.show(null, null, 'p1');
+      await stage.show(BEFORE, AFTER, 'p1');
+
+      expect(first?.viewport.fitBounds.mock.calls).toHaveLength(fitted ?? -1);
     });
   });
 

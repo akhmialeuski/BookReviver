@@ -1,8 +1,8 @@
-"""Which old page versions nothing needs any more, worked out from the inputs the versions read.
+"""Which page versions nothing needs any more, worked out from the inputs the versions read.
 
 A page version reads the version before it, its input, so the versions of a page form chains, and the current version
 of a stage, its head, needs every version in its chain to show where its image came from and to be remade from. A
-version that is not old enough to go, or is a base version, stays, and so does every version it reads. A version that
+version that is not eligible to go, or is a base version, stays, and so does every version it reads. A version that
 stays keeps the versions of its chain whatever their age, because deleting an input would leave the version that reads
 it without one: the database sets the input of the survivor to none, and the survivor would look like a base version
 that nothing may ever delete.
@@ -36,7 +36,7 @@ def collectable_versions(
 
     :param inputs: The input of every version of a project, or None for a base version, which has none.
     :type inputs: Mapping[PageVersionId, PageVersionId | None]
-    :param eligible: The versions that are old enough to go and are not base versions.
+    :param eligible: The versions that may go, which are not base versions and, for a preview, are old enough.
     :type eligible: Collection[PageVersionId]
     :param heads: The versions that are the current version of a stage of a page, which stay.
     :type heads: Collection[PageVersionId]
@@ -83,10 +83,37 @@ def stage_depths(versions: Sequence[PageVersion]) -> dict[PageVersionId, int]:
     return depths
 
 
+def readers_first(versions: Sequence[PageVersion]) -> list[list[PageVersion]]:
+    """Group versions by how many of them they read, the most first, so every group is read by none of the later ones.
+
+    A version that reads another of the set stands in a group before it, so deleting the groups in this order never
+    deletes an input before the version that reads it, and the versions of one group read none of each other.
+
+    :param versions: The versions to order, in any order.
+    :type versions: Sequence[PageVersion]
+    :returns: The groups from the versions that read the most of the others down to those that read none, each group in
+              the order the versions came in.
+    :rtype: list[list[PageVersion]]
+    """
+    members = {version.id: version for version in versions}
+    depths: dict[PageVersionId, int] = {}
+    for version in versions:
+        unresolved: list[PageVersion] = []
+        cursor: PageVersion | None = version
+        while cursor is not None and cursor.id not in depths:
+            unresolved.append(cursor)
+            cursor = None if cursor.input_id is None else members.get(cursor.input_id)
+        first = 0 if cursor is None else depths[cursor.id] + 1
+        for offset, member in enumerate(reversed(unresolved)):
+            depths[member.id] = first + offset
+    groups: defaultdict[int, list[PageVersion]] = defaultdict(list)
+    for version in versions:
+        groups[depths[version.id]].append(version)
+    return [groups[depth] for depth in sorted(groups, reverse=True)]
+
+
 def step_places(recipes: Iterable[Recipe], step_id: StepId) -> frozenset[tuple[str, int]]:
     """Give the places a step has in the recipes of its stage, as the processor and the number of steps before it.
-
-    A step copied into a variant keeps its identifier, so one step can stand in several recipes at several places.
 
     :param recipes: The recipes of the stage.
     :type recipes: Iterable[Recipe]

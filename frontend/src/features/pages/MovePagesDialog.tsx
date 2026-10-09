@@ -63,11 +63,13 @@ function findPage(pages: readonly PageSchema[], moving: ReadonlySet<string>, que
 function MoveForm({
   projectId,
   pages,
+  thumbnails,
   target,
   onDone,
 }: {
   projectId: string;
   pages: readonly PageSchema[];
+  thumbnails: ReadonlyMap<string, string> | undefined;
   target: MoveTarget;
   onDone: () => void;
 }): React.JSX.Element {
@@ -209,6 +211,7 @@ function MoveForm({
                 ) : null}
                 <PageThumbnail
                   page={page}
+                  src={thumbnails === undefined ? undefined : (thumbnails.get(page.id) ?? null)}
                   alt=""
                   className={cn('w-full', chosen ? 'ring-2 ring-foreground' : '')}
                 />
@@ -262,11 +265,17 @@ function MoveForm({
 export function MovePagesDialog({
   projectId,
   pages,
+  thumbnails,
   target,
   onClose,
 }: {
   projectId: string;
   pages: readonly PageSchema[];
+  /**
+   * The thumbnail of each page by its identifier, for a screen that draws the pages at one stage and not as the latest
+   * result of the book, which the pages carry. A page without an entry has no picture. Absent for the pages' own.
+   */
+  thumbnails?: ReadonlyMap<string, string>;
   /** What to move, or null while the dialog is closed. */
   target: MoveTarget | null;
   onClose: () => void;
@@ -285,7 +294,13 @@ export function MovePagesDialog({
           </DialogDescription>
         </DialogHeader>
         {target === null ? null : (
-          <MoveForm projectId={projectId} pages={pages} target={target} onDone={onClose} />
+          <MoveForm
+            projectId={projectId}
+            pages={pages}
+            thumbnails={thumbnails}
+            target={target}
+            onDone={onClose}
+          />
         )}
       </DialogContent>
     </Dialog>

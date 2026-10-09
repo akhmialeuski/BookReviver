@@ -1,8 +1,9 @@
 import type { KonvaEventObject } from 'konva/lib/Node';
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { Circle, Line, Text } from 'react-konva';
 import { EditorLayer } from '@/features/editors/EditorLayer';
 import { FIGURE_STYLE } from '@/features/editors/figure';
+import { HANDLE_STYLE } from '@/features/editors/handles';
 import {
   ANGLE_LIMIT,
   AxisEnd,
@@ -13,9 +14,9 @@ import {
   stepByWheel,
 } from '@/features/editors/rotation';
 import { useSceneFrame } from '@/features/editors/scene';
+import { useShapeEditing } from '@/features/editors/shapeEditing';
 import type { RotationShape } from '@/features/editors/shapes';
 import type { CanvasProps } from '@/features/editors/types';
-import { useDebouncedCommit } from '@/features/editors/useDebouncedCommit';
 import { MESSAGES } from '@/shared/messages';
 
 /**
@@ -35,13 +36,10 @@ const AXIS_WIDTH_PX = 2;
 const HANDLE_RADIUS_PX = 10;
 const HANDLE_BORDER_PX = 3;
 const HANDLE_FILL = '#ffffff';
-const HIT_EXTRA_PX = 8;
 /** How far a handle stands off the edge of the page. */
 const HANDLE_GAP_PX = 28;
 /** The room kept between a handle and the edge of the canvas. */
 const EDGE_ROOM_PX = 4;
-/** Quiet time after the last notch of the wheel or press of a key before the angle is saved. */
-const SAVE_DELAY_MS = 600;
 const LABEL_FONT_PX = 14;
 const LABEL_RISE_PX = 32;
 const LABEL_WIDTH_PX = 80;
@@ -56,14 +54,17 @@ export function RotationCanvas({
   figure,
   onChange,
   onCommit,
+  onCommitLater,
 }: CanvasProps<RotationShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
-  const saveLater = useDebouncedCommit(onCommit, SAVE_DELAY_MS);
   const { stroke, dash } = FIGURE_STYLE[figure];
-  const latest = useRef(shape);
-  useEffect(() => {
-    latest.current = shape;
-  }, [shape]);
+  const { latest, change, commitLater, release } = useShapeEditing(
+    frame,
+    shape,
+    onChange,
+    onCommit,
+    onCommitLater,
+  );
 
   // The picture is turned the way the step will turn it, counter-clockwise, while the view counts clockwise
   const { image, viewer } = scene;
@@ -99,17 +100,14 @@ export function RotationCanvas({
       viewRotation,
       end,
     );
-    const next = { degrees };
-    latest.current = next;
-    onChange(next);
+    change({ degrees });
     event.target.position(axisEndAt(centre, radius, degrees, viewRotation, end));
   };
 
   const turnTo = (degrees: number): void => {
     const next = { degrees };
-    latest.current = next;
-    onChange(next);
-    saveLater(next);
+    change(next);
+    commitLater(next);
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -164,14 +162,13 @@ export function RotationCanvas({
           x={handles[end].x}
           y={handles[end].y}
           radius={HANDLE_RADIUS_PX}
+          {...HANDLE_STYLE}
           fill={HANDLE_FILL}
           stroke={stroke}
           strokeWidth={HANDLE_BORDER_PX}
-          hitStrokeWidth={HIT_EXTRA_PX}
-          draggable
           name={`${labels.handle} ${end}`}
           onDragMove={drag(end)}
-          onDragEnd={() => onCommit(latest.current)}
+          onDragEnd={release}
         />
       ))}
     </EditorLayer>

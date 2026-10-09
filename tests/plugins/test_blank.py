@@ -4,13 +4,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 from delayed_assert import assert_expectations, expect
-from PIL import Image
+from PIL import Image, ImageOps
 
 from bookreviver.domain.enums import ColorMode, PaperFill, TransformKind
 from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.plugins.blank import BlankPage, median_paper
 from bookreviver.ports.processing import StepInput
-from tests.helpers.samples import pixel, ruled_page, same_colour
+from bookreviver.services.base_versions import PAGES_BLANK
+from tests.helpers.samples import pixel, ruled_page, same_colour, text_page
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -21,6 +22,9 @@ if TYPE_CHECKING:
 PAPER_COLOUR: tuple[int, int, int] = (205, 185, 140)
 INK: tuple[int, int, int] = (25, 20, 20)
 PAGE_PX: tuple[int, int] = (120, 160)
+# The size of a page scanned at 300 dpi, and the ink of a worn book, as dark as its paper allows
+SCAN_PX: tuple[int, int] = (1663, 2964)
+SCAN_INK: tuple[int, int, int] = (60, 50, 40)
 RGB: str = 'RGB'
 
 
@@ -161,6 +165,28 @@ class TestBlankPage:
 
         assert found is not None
         assert same_colour(found, PAPER_COLOUR)
+
+    def test_the_version_the_leaves_are_stored_with_is_the_version_the_catalogue_has(self) -> None:
+        """Verify a leaf made by this processor is not taken for the result of an outdated one when the book opens."""
+        assert BlankPage.spec.version == PAGES_BLANK.version
+
+    def test_a_scanned_page_of_text_gives_its_paper_not_white(self, tmp_path: Path) -> None:
+        """Verify the paper of a page of the size of a scan is found, not taken for a page with no ink or a darker one.
+
+        The pages of a scan are a thousand pixels wide or more, and a sample that is too small blurs their text into a
+        grey that is too near the paper for the split of Otsu to part them, so the leaf of such a book came out white.
+
+        :param tmp_path: Temporary directory of the test, holding the page.
+        :type tmp_path: Path
+        """
+        paper = (160, 145, 119)
+        page = tmp_path / 'scan.png'
+        ImageOps.colorize(text_page(*SCAN_PX), black=SCAN_INK, white=paper).save(page)
+
+        found = median_paper([page])
+
+        assert found is not None
+        assert same_colour(found, paper)
 
     @pytest.mark.parametrize(
         'pages',

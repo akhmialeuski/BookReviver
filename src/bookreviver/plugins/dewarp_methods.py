@@ -17,7 +17,7 @@ import numpy as np
 
 from bookreviver.domain.enums import ReviewReason
 from bookreviver.domain.geometry import Mesh, Point
-from bookreviver.plugins.cv_image import COLOR_PLANES, MIN_TONE_CONTRAST, WHITE, OtsuSplit, odd_size
+from bookreviver.plugins.cv_image import COLOR_PLANES, MIN_TONE_CONTRAST, OtsuSplit, sheet_of
 from bookreviver.plugins.mesh_warp import CURVE_DEGREE, Flattening, FlatteningField, Unfound
 from bookreviver.plugins.text_lines import BAND_WIDTH_PX, MIN_BANDS, SEARCH_WIDTH_PX, LineSample, TextLineSearch
 
@@ -38,14 +38,8 @@ EXTRAPOLATION_SHARE: float = 0.05
 RESIDUAL_WIDTH_PX: float = 1_000.0
 # A residual of this many times the limit gives the confidence 0
 RESIDUAL_CONFIDENCE_FACTOR: float = 2.0
-# Sizes of the squares that close the holes of the text in the paper and open the specks of the background, as shares
-# of the width of the shrunk page, in the search of the edges
-CLOSE_SHARE: float = 0.03
-OPEN_SHARE: float = 0.01
 # The share of the columns of a band that have to be paper for a row to be of the sheet
 PAPER_SHARE: float = 0.5
-# The number of labels of a page whose regions are none, since the first label is the background
-BACKGROUND_ONLY_LABELS: int = 1
 # The fewest curves a page is flattened between
 MIN_CURVES: int = 2
 
@@ -208,7 +202,7 @@ class PageEdgesMethod:
         split = OtsuSplit.of(self._brightness)
         if split.contrast < MIN_TONE_CONTRAST:
             return Unfound(lines=0, reason=ReviewReason.NOT_APPLIED)
-        sheet = self._sheet(split.threshold)
+        sheet = sheet_of(self._brightness, split.threshold)
         if sheet is None:
             return Unfound(lines=0, reason=ReviewReason.NOT_APPLIED)
         tops: list[tuple[float, float]] = []
@@ -224,27 +218,6 @@ class PageEdgesMethod:
             return Unfound(lines=0, reason=ReviewReason.NOT_APPLIED)
         edges = [self._edge(points) for points in (tops, bottoms)]
         return CurveSet(edges, self._width).flattening(self._max_residual)
-
-    def _sheet(self, threshold: float) -> Samples | None:
-        """Take the sheet of the page as the largest bright region.
-
-        :param threshold: Brightness above which a pixel is paper.
-        :type threshold: float
-        :returns: The sheet as 1 where a pixel is of it and 0 elsewhere, or None when nothing is brighter than the
-                  threshold.
-        :rtype: Samples | None
-        """
-        paper = np.asarray(self._brightness > threshold, dtype=np.uint8) * WHITE
-        long_side = max(self._brightness.shape)
-        close = cv2.getStructuringElement(cv2.MORPH_RECT, (odd_size(CLOSE_SHARE * long_side),) * 2)
-        speck = cv2.getStructuringElement(cv2.MORPH_RECT, (odd_size(OPEN_SHARE * long_side),) * 2)
-        closed = cv2.morphologyEx(paper, cv2.MORPH_CLOSE, close)
-        opened = np.asarray(cv2.morphologyEx(closed, cv2.MORPH_OPEN, speck), dtype=np.uint8)
-        count, labels, stats, _ = cv2.connectedComponentsWithStats(opened, connectivity=8)
-        if count <= BACKGROUND_ONLY_LABELS:
-            return None
-        largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-        return np.asarray(labels == largest, dtype=np.uint8)
 
     def _edge(self, points: Sequence[tuple[float, float]]) -> LineSample:
         """Turn the points of an edge in the shrunk page into the points of a line of the page.

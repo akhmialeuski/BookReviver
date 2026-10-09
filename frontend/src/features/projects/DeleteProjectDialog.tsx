@@ -5,18 +5,7 @@ import { deleteProjectApiV1ProjectsProjectIdDeleteMutation } from '@/api/@tansta
 import { invalidateProjectList } from '@/features/projects/queries';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
-import { Button } from '@/shared/ui/button';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/shared/ui/dialog';
-import { ErrorAlert } from '@/shared/ui/error-alert';
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 
 /**
  * A dialog that asks before it removes a book with all its files, scans and pages, which cannot be undone.
@@ -48,29 +37,18 @@ export function DeleteProjectDialog({
   const title = project.details.title || MESSAGES.projects.untitled;
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{children}</DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{MESSAGES.projects.delete.title}</DialogTitle>
-          <DialogDescription>{MESSAGES.projects.delete.description(title)}</DialogDescription>
-        </DialogHeader>
-        {remove.isError ? <ErrorAlert message={describeError(remove.error)} /> : null}
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button variant="outline">{MESSAGES.common.cancel}</Button>
-          </DialogClose>
-          <Button
-            variant="destructive"
-            disabled={remove.isPending}
-            onClick={() => remove.mutate({ path: { project_id: project.id } })}
-          >
-            {remove.isPending
-              ? MESSAGES.projects.delete.submitting
-              : MESSAGES.projects.delete.submit}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      open={open}
+      onOpenChange={setOpen}
+      trigger={children}
+      title={MESSAGES.projects.delete.title}
+      description={MESSAGES.projects.delete.description(title)}
+      error={remove.isError ? describeError(remove.error) : null}
+      submitLabel={
+        remove.isPending ? MESSAGES.projects.delete.submitting : MESSAGES.projects.delete.submit
+      }
+      submitDisabled={remove.isPending}
+      onConfirm={() => remove.mutate({ path: { project_id: project.id } })}
+    />
   );
 }

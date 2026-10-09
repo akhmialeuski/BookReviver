@@ -1,3 +1,5 @@
+import { type DebouncedFunc, throttle } from 'lodash-es';
+
 /**
  * Folds a burst of requests for the same work into one run a short while after the first of them.
  *
@@ -7,7 +9,7 @@
  */
 
 export class Coalescer {
-  private readonly pending = new Set<string>();
+  private readonly runners = new Map<string, DebouncedFunc<(work: () => void) => void>>();
   private readonly delayMs: number;
 
   /**
@@ -21,16 +23,22 @@ export class Coalescer {
    * Ask for some work to run soon.
    *
    * @param key What the work is for. Requests with the same key during one wait run the work once.
-   * @param work The work, taken from the first request of the wait.
+   * @param work The work of the request. Requests of one key are expected to carry the same work.
    */
   schedule(key: string, work: () => void): void {
-    if (this.pending.has(key)) {
-      return;
+    let runner = this.runners.get(key);
+    if (runner === undefined) {
+      // A throttle that skips the leading edge runs once at the end of the wait that the first call started
+      runner = throttle(
+        (run: () => void) => {
+          this.runners.delete(key);
+          run();
+        },
+        this.delayMs,
+        { leading: false },
+      );
+      this.runners.set(key, runner);
     }
-    this.pending.add(key);
-    setTimeout(() => {
-      this.pending.delete(key);
-      work();
-    }, this.delayMs);
+    runner(work);
   }
 }

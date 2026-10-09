@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { carriedBy, dropPlace } from '@/features/order/drag';
+import type { ClientRect, DroppableContainer } from '@dnd-kit/core';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { carriedBy, collideUnderPointer, dropPlace } from '@/features/order/drag';
 import { AnchorSide, movePages } from '@/features/pages/order';
 import { page } from '@/features/workspace/fixtures';
 
@@ -58,5 +59,65 @@ describe('dropPlace', () => {
     { carried: ['b', 'f'], active: 'f', over: 'd', expected: 'acbfdeg' },
   ])('reads $expected after dragging $carried by $active onto $over', (c) => {
     expect(reads(c.carried, c.active, c.over)).toBe(c.expected);
+  });
+});
+
+describe('collideUnderPointer', () => {
+  type Args = Parameters<typeof collideUnderPointer>[0];
+
+  function rect(left: number, top: number): ClientRect {
+    return { left, top, right: left + 100, bottom: top + 100, width: 100, height: 100 };
+  }
+
+  /** Two droppables whose measured rectangles are stale: `a` is measured at the top and `b` far below it. */
+  function argsWith(pointer: { x: number; y: number } | null): Args {
+    return {
+      active: { id: 'a' },
+      collisionRect: rect(0, 0),
+      droppableRects: new Map([
+        ['a', rect(0, 0)],
+        ['b', rect(0, 1000)],
+      ]),
+      droppableContainers: [{ id: 'a' }, { id: 'b' }] as unknown as DroppableContainer[],
+      pointerCoordinates: pointer,
+    } as unknown as Args;
+  }
+
+  /** The elements under the pointer, topmost first, as `document.elementsFromPoint` reports them. */
+  function pointerOver(...elements: Element[]): void {
+    document.elementsFromPoint = vi.fn(() => elements);
+  }
+
+  function cell(id: string): HTMLElement {
+    const element = document.createElement('div');
+    element.dataset.cell = id;
+    const inner = document.createElement('span');
+    element.append(inner);
+    return inner;
+  }
+
+  afterEach(() => {
+    // jsdom has no `elementsFromPoint`, so the stub of a test is removed rather than restored
+    Reflect.deleteProperty(document, 'elementsFromPoint');
+  });
+
+  it('names the page whose cell is under the pointer, whatever rectangles dnd-kit measured', () => {
+    pointerOver(document.createElement('div'), cell('b'));
+
+    expect(collideUnderPointer(argsWith({ x: 5, y: 5 }))).toEqual([{ id: 'b' }]);
+    expect(document.elementsFromPoint).toHaveBeenCalledWith(5, 5);
+  });
+
+  it('falls back to the closest center when the pointer is over no registered cell', () => {
+    pointerOver(document.createElement('div'), cell('gap-1'));
+
+    expect(collideUnderPointer(argsWith({ x: 5, y: 5 })).map((hit) => hit.id)).toEqual(['a', 'b']);
+  });
+
+  it('falls back to the closest center when there is no pointer', () => {
+    pointerOver(cell('b'));
+
+    expect(collideUnderPointer(argsWith(null)).map((hit) => hit.id)).toEqual(['a', 'b']);
+    expect(document.elementsFromPoint).not.toHaveBeenCalled();
   });
 });

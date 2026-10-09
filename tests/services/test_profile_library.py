@@ -1,20 +1,19 @@
-"""Tests for the library of profiles: the books that use a profile, copying, importing, and applying to some pages."""
+"""Tests for the library of profiles: the books that use a profile, copying, importing, and importing."""
 
 from typing import TYPE_CHECKING
 
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import JobKind, OrderMode, Stage
-from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
-from bookreviver.domain.values import PageStageKey, RecipeDraft, SliceRequest, Step
+from bookreviver.domain.enums import OrderMode, RecipeKind, Stage
+from bookreviver.domain.errors import InvalidParametersError, NotFoundError
+from bookreviver.domain.values import ProfileDraft, SliceRequest, Step
 from bookreviver.services.recipe_profiles import COPY_NAME
 from tests.helpers.builders import make_project
 from tests.helpers.processors import FakeProcessor, SecondProcessor, ThirdProcessor
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Project, RecipeProfile
-    from bookreviver.domain.ids import PageId
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -50,7 +49,7 @@ async def save_profile(kit: ProcessingKit, actor: Actor, *, stage: Stage = Stage
     :rtype: RecipeProfile
     """
     steps = STEPS if stage is Stage.GEOMETRY else (Step(processor_key=CLEANUP_KEY),)
-    return await kit.profiles().save(actor, stage, RecipeDraft(name=PROFILE_NAME, steps=steps))
+    return await kit.profiles().save(actor, stage, ProfileDraft(name=PROFILE_NAME, steps=steps))
 
 
 async def another_book(kit: ProcessingKit, actor: Actor) -> Project:
@@ -75,7 +74,7 @@ class TestBooksOfAProfile:
     async def test_a_book_counts_once_however_many_recipes_it_made_from_the_profile(
         self, fx_kit: ProcessingKit
     ) -> None:
-        """Verify two books count two, and a second variant of the same profile in one book adds none.
+        """Verify two books count two, and a second recipe of the same profile in one book adds none.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -84,7 +83,7 @@ class TestBooksOfAProfile:
         other = await another_book(fx_kit, actor)
         profile = await save_profile(fx_kit, actor)
         for target in (project, other, project):
-            await fx_kit.profiles().apply(actor, target.id, profile.id, activate=False)
+            await fx_kit.profiles().apply(actor, target.id, profile.id, kind=RecipeKind.TEXT)
         listed = await fx_kit.profiles().library(actor, None, EVERYTHING)
         assert [(item.profile.id, item.books) for item in listed.items] == [(profile.id, BOOKS_OF_ONE_PROFILE)]
 
@@ -97,7 +96,7 @@ class TestBooksOfAProfile:
         actor, project = await fx_kit.seed_project()
         used = await save_profile(fx_kit, actor)
         unused = await fx_kit.profiles().duplicate(actor, used.id)
-        await fx_kit.profiles().apply(actor, project.id, used.id, activate=False)
+        await fx_kit.profiles().apply(actor, project.id, used.id, kind=RecipeKind.TEXT)
         listed = await fx_kit.profiles().library(actor, None, EVERYTHING)
         assert {item.profile.id: item.books for item in listed.items} == {used.id: 1, unused.id: 0}
 
@@ -122,7 +121,7 @@ class TestBooksOfAProfile:
         """
         actor, project = await fx_kit.seed_project()
         profile = await save_profile(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(actor, project.id, profile.id, activate=False)
+        applied = await fx_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
         await fx_kit.profiles().remove(actor, profile.id)
         listed = await fx_kit.profiles().library(actor, None, EVERYTHING)
         kept = await fx_kit.uow().recipes.get(applied.recipe.id)
@@ -174,7 +173,7 @@ class TestImportProfile:
         """
         actor, _ = await fx_kit.seed_project()
         source = await save_profile(fx_kit, actor)
-        draft = RecipeDraft(
+        draft = ProfileDraft(
             name=FILE_NAME,
             steps=[Step(processor_key=FAKE_KEY, params={STRENGTH: 3}, enabled=False), Step(processor_key=FAKE_KEY)],
         )
@@ -195,7 +194,7 @@ class TestImportProfile:
         :type fx_kit: ProcessingKit
         """
         actor, _ = await fx_kit.seed_project()
-        draft = RecipeDraft(
+        draft = ProfileDraft(
             name='Foreign',
             steps=[Step(processor_key=FAKE_KEY), Step(processor_key=MISSING_KEY), Step(processor_key='geometry.also')],
         )
@@ -210,7 +209,7 @@ class TestImportProfile:
         :type fx_kit: ProcessingKit
         """
         actor, _ = await fx_kit.seed_project()
-        draft = RecipeDraft(name='Odd', steps=[Step(processor_key=FAKE_KEY, params={'unknown': 1})])
+        draft = ProfileDraft(name='Odd', steps=[Step(processor_key=FAKE_KEY, params={'unknown': 1})])
         with pytest.raises(InvalidParametersError):
             await fx_kit.profiles().import_profile(actor, Stage.GEOMETRY, draft)
 
@@ -221,7 +220,7 @@ class TestImportProfile:
         :type fx_kit: ProcessingKit
         """
         actor, _ = await fx_kit.seed_project()
-        draft = RecipeDraft(name='Misfiled', steps=[Step(processor_key=FAKE_KEY)])
+        draft = ProfileDraft(name='Misfiled', steps=[Step(processor_key=FAKE_KEY)])
         with pytest.raises(InvalidParametersError):
             await fx_kit.profiles().import_profile(actor, Stage.CLEANUP, draft)
 
@@ -232,7 +231,7 @@ class TestImportProfile:
         :type fx_kit: ProcessingKit
         """
         actor, _ = await fx_kit.seed_project()
-        draft = RecipeDraft(name='Idle', steps=[Step(processor_key=FAKE_KEY, enabled=False)])
+        draft = ProfileDraft(name='Idle', steps=[Step(processor_key=FAKE_KEY, enabled=False)])
         with pytest.raises(InvalidParametersError):
             await fx_kit.profiles().import_profile(actor, Stage.GEOMETRY, draft)
 
@@ -245,91 +244,13 @@ class TestImportProfile:
         :type fx_ordered_kit: ProcessingKit
         """
         actor, _ = await fx_ordered_kit.seed_project()
-        usual = RecipeDraft(name='Usual', steps=BROKEN_ORDER)
+        usual = ProfileDraft(name='Usual', steps=BROKEN_ORDER)
         with pytest.raises(InvalidParametersError):
             await fx_ordered_kit.profiles().import_profile(actor, Stage.GEOMETRY, usual)
-        free = RecipeDraft(name='Free', steps=BROKEN_ORDER, order=OrderMode.FREE)
+        free = ProfileDraft(name='Free', steps=BROKEN_ORDER, order=OrderMode.FREE)
         imported = await fx_ordered_kit.profiles().import_profile(actor, Stage.GEOMETRY, free)
         stored = await fx_ordered_kit.uow().recipe_profiles.get(imported.id)
         assert ([step.processor_key for step in stored.steps], stored.order) == (
             [THIRD_KEY, SECOND_KEY],
             OrderMode.FREE,
         )
-
-
-async def seed_book(kit: ProcessingKit) -> tuple[Actor, Project, list[PageId]]:
-    """Seed a project of two pages that have the base version the stage reads.
-
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
-    :returns: The actor, the project and the identifiers of the pages in book order.
-    :rtype: tuple[Actor, Project, list[PageId]]
-    """
-    actor, project = await kit.seed_project()
-    page_ids: list[PageId] = []
-    for index in range(2):
-        page, _ = await kit.seed_scan_page(project, order_key=f'a{index}')
-        await kit.seed_base_version(page)
-        page_ids.append(page.id)
-    return actor, project, page_ids
-
-
-class TestApplyProfileToPages:
-    """Tests for applying a profile to some pages of a book, which pins the variant and runs the stage on them."""
-
-    async def test_the_run_pins_the_variant_to_the_pages_and_leaves_the_active_recipe(
-        self, fx_kit: ProcessingKit
-    ) -> None:
-        """Verify the queued run names the variant, the pages and the pin, and the worker pins only those pages.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        actor, project, (first, second) = await seed_book(fx_kit)
-        profile = await save_profile(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(actor, project.id, profile.id, activate=False, pages=(first,))
-        assert applied.job is not None
-        await fx_kit.jobs().run_stage(applied.job.id)
-        pinned = await fx_kit.uow().page_stages.get(PageStageKey(first, Stage.GEOMETRY))
-        expect(applied.job.kind is JobKind.RUN_STAGE)
-        expect(applied.job.params['page_ids'] == [str(first)])
-        expect((pinned.recipe_id, pinned.pinned) == (applied.recipe.id, True))
-        expect(applied.recipe.active is False)
-        expect(applied.recipe.profile_id == profile.id)
-        expect(await fx_kit.uow().page_stages.find(PageStageKey(second, Stage.GEOMETRY)) is None)
-        assert_expectations()
-
-    async def test_without_pages_no_run_is_queued(self, fx_kit: ProcessingKit) -> None:
-        """Verify applying to the book alone answers no job and queues nothing.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        actor, project, _ = await seed_book(fx_kit)
-        profile = await save_profile(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(actor, project.id, profile.id, activate=False)
-        assert (applied.job, fx_kit.recording.enqueued) == (None, [])
-
-    async def test_a_page_of_another_book_is_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Reject pages that are not in the book, which is reported like missing ones.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        actor, project, _ = await seed_book(fx_kit)
-        _, _, (foreign, _) = await seed_book(fx_kit)
-        profile = await save_profile(fx_kit, actor)
-        with pytest.raises(NotFoundError):
-            await fx_kit.profiles().apply(actor, project.id, profile.id, activate=False, pages=(foreign,))
-
-    async def test_a_book_that_is_busy_refuses_the_run(self, fx_kit: ProcessingKit) -> None:
-        """Reject applying to pages while a run of the book is queued, with the variant already in the book.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        actor, project, (first, _) = await seed_book(fx_kit)
-        profile = await save_profile(fx_kit, actor)
-        await fx_kit.profiles().apply(actor, project.id, profile.id, activate=False, pages=(first,))
-        with pytest.raises(ConflictError):
-            await fx_kit.profiles().apply(actor, project.id, profile.id, activate=False, pages=(first,))

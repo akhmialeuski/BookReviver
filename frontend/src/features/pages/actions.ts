@@ -30,6 +30,7 @@ import {
   invalidateScans,
   invalidateSections,
   invalidateSources,
+  invalidateStageRowsFrom,
   pageChangesInFlight,
   pagesScope,
 } from '@/features/projects/queries';
@@ -208,7 +209,9 @@ export function useUpdatePages(projectId: string) {
  * Choose the image of blank pages: their scan, a white leaf or the paper of the book.
  *
  * The choice is shown on the pages at once. The leaf itself is drawn by a job, so the picture of a page changes when
- * the manifest is read after the job's event, and a page the server refuses leaves all of them as they were.
+ * the rows of the Order stage are read after the job's event, and a page the server refuses leaves all of them as they
+ * were. The rows are read again when the change ends too, since a leaf that was made before is found again at once and
+ * no job follows, and the picture of the page at the Order stage, which the grid draws, is what the leaf replaces.
  */
 export function useFillBlankPages(projectId: string) {
   const queryClient = useQueryClient();
@@ -223,7 +226,13 @@ export function useFillBlankPages(projectId: string) {
         );
       }),
     onError: (_error, _variables, snapshot) => restore(queryClient, projectId, snapshot),
-    onSettled: readWhenLast(queryClient, projectId),
+    onSettled: async () => {
+      await Promise.all([
+        readWhenLast(queryClient, projectId)(),
+        // A later stage reads the leaf too, so its rows draw it for the pages it has not run on
+        invalidateStageRowsFrom(queryClient, projectId, 'page-order'),
+      ]);
+    },
   });
 }
 

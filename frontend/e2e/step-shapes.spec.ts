@@ -1,6 +1,6 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import {
   createBook,
   openProjectId,
@@ -11,12 +11,13 @@ import {
   writePagesFolder,
 } from './support/account';
 import { numbersOf, pairOf } from './support/layer';
+import { runPages } from './support/page-work';
 
 /**
  * The shape of a step on the page, in its three states, and the grid over the page.
  *
  * A step that is open has its shape on the page from the start: the grey dashed default before the step has run, the green
- * line it found after "Auto on all pages", and the orange line the reader set, which the later runs keep. The angle of the
+ * line it found after a run of all pages, and the orange line the reader set, which the later runs keep. The angle of the
  * Deskew step is set with the field, the slider and the arrow keys, and all three states are still there when the open
  * step changes and comes back. The grid is a choice of the book that every step of Geometry shares, and the key G switches
  * it.
@@ -34,13 +35,6 @@ const STEP_ADDRESS = /\/stages\/geometry\/steps\/[0-9a-f-]{36}(\?|$)/;
 // Tall enough for the pictures of the key states to show the bar, the canvas and the section of the step in the panel
 test.use({ viewport: { width: 1280, height: 1000 } });
 
-/** Count the runs of a stage that ended well in the open book, which tells that a run the reader started is over. */
-async function finishedRuns(page: Page): Promise<number> {
-  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/jobs?size=50`);
-  const items = ((await listed.json()) as { items: { kind: string; state: string }[] }).items;
-  return items.filter((job) => job.kind === 'run-stage' && job.state === 'succeeded').length;
-}
-
 test('the shape of a step is on the page in its three states, they survive a change of step, and the grid is the book’s', async ({
   page,
 }) => {
@@ -50,8 +44,8 @@ test('the shape of a step is on the page in its three states, they survive a cha
   const layer = page.getByTestId('editor-layer');
   const grid = page.getByTestId('canvas-grid');
   const gridButton = page.getByTestId('canvas-grid-toggle');
-  const state = page.getByTestId('step-panel-state');
-  const hint = page.getByTestId('step-panel-hint');
+  // The open step names the state of its shape in the bar
+  const state = page.locator('[data-testid="bar-step"][aria-current="step"]');
   const angle = page.getByRole('textbox', { name: 'Angle in degrees' });
   const slider = page.getByRole('slider', { name: 'Angle of the page' });
   const stepOf = (title: string) => barSteps.filter({ hasText: title }).first();
@@ -87,7 +81,6 @@ test('the shape of a step is on the page in its three states, they survive a cha
     await expect(layer).toHaveAttribute('data-figure', 'default');
     await expect(layer).toHaveAttribute('data-degrees', '0');
     await expect(state).toContainText('Default shape');
-    await expect(hint).toContainText('Dashed grey');
     const right = await pairOf(layer, 'data-handle-rotation');
     const left = await pairOf(layer, 'data-handle-rotation-left');
     expect(right.x).toBeGreaterThan(left.x);
@@ -135,13 +128,10 @@ test('the shape of a step is on the page in its three states, they survive a cha
     await expect(grid).toBeVisible();
   });
 
-  await test.step('"Auto on all pages" gives the steps their found shape, green on the page and named in the panel', async () => {
-    const before = await finishedRuns(page);
-    await page.getByTestId('step-auto').click();
-    await expect.poll(() => finishedRuns(page), { timeout: RUN_TIMEOUT_MS }).toBe(before + 1);
+  await test.step('a run of all pages through the open step gives the steps their found shape, green on the page and named in the bar', async () => {
+    await runPages(page, { throughOpenStep: true });
     await expect(layer).toHaveAttribute('data-figure', 'found');
     await expect(state).toContainText('Found by the step');
-    await expect(hint).toContainText('Green');
     await expect(stepOf('Deskew')).toHaveAttribute('data-state', 'found');
     await snap(page, 'deskew-found-shape');
 
@@ -156,7 +146,6 @@ test('the shape of a step is on the page in its three states, they survive a cha
     await expect(layer).toHaveAttribute('data-degrees', '1.5');
     await settled();
     await expect(state).toContainText('Set by hand');
-    await expect(hint).toContainText('Orange');
     await expect(stepOf('Deskew')).toHaveAttribute('data-state', 'by-hand');
     await snap(page, 'deskew-set-by-hand');
   });
@@ -185,7 +174,7 @@ test('the shape of a step is on the page in its three states, they survive a cha
   });
 
   await test.step('Auto takes the shape set by hand away and gives back the one the step found', async () => {
-    await page.getByTestId('editor-auto').click();
+    await page.getByTestId('canvas-auto').click();
     await expect(layer).toHaveAttribute('data-figure', 'found', { timeout: RUN_TIMEOUT_MS });
     await expect(state).toContainText('Found by the step');
     await waitForIdleJobs(page, openProjectId(page));
@@ -211,11 +200,7 @@ test('the shape of a step is on the page in its three states, they survive a cha
   });
 
   await test.step('detecting again on the open page keeps the shape the reader set', async () => {
-    await waitForIdleJobs(page, openProjectId(page));
-    const before = await finishedRuns(page);
-    await expect(page.getByTestId('step-auto-page')).toBeEnabled();
-    await page.getByTestId('step-auto-page').click();
-    await expect.poll(() => finishedRuns(page), { timeout: RUN_TIMEOUT_MS }).toBe(before + 1);
+    await runPages(page, { pages: 'page', throughOpenStep: true });
     await expect(layer).toHaveAttribute('data-figure', 'by-hand');
     await expect(layer).toHaveAttribute('data-degrees', '2');
   });

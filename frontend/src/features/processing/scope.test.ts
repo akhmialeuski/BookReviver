@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type PageGroup,
   pageIdsFor,
-  pagesOfCondition,
   RunScope,
   scopeChoices,
   troubleOf,
@@ -50,6 +50,22 @@ describe('pageIdsFor', () => {
   });
 });
 
+describe('scopeChoices pages', () => {
+  const idsOf = (scope: RunScope, currentId: string, group?: PageGroup): string[] =>
+    scopeChoices(ITEMS, currentId, new Set())
+      .find((choice) => choice.scope === scope && choice.group === group)
+      ?.items.map((item) => item.page.id) ?? [];
+
+  it('takes the open page and the pages after it, in the order of the book, for the pages from this page on', () => {
+    expect(idsOf(RunScope.FromPage, 'c')).toEqual(['c', 'd']);
+  });
+
+  it('takes the pages of a group, and none without one', () => {
+    expect(idsOf(RunScope.Group, 'a', 'text')).toEqual(['a', 'b', 'c', 'd']);
+    expect(idsOf(RunScope.Group, 'a', 'blank')).toEqual([]);
+  });
+});
+
 describe('troubleOf', () => {
   it('counts the pages out of date and the pages that failed, without placeholders', () => {
     expect(troubleOf(ITEMS)).toEqual({ stale: 1, failed: 1 });
@@ -61,51 +77,31 @@ describe('troubleOf', () => {
 });
 
 describe('scopeChoices', () => {
+  const counts = (choices: ReturnType<typeof scopeChoices>) =>
+    choices.map(({ items, ...rest }) => ({ ...rest, count: items.length }));
+
   it('counts what each scope covers now, in the order of the menu', () => {
-    expect(scopeChoices(ITEMS, 'a', new Set(['b', 'c', 'd']))).toEqual([
+    expect(counts(scopeChoices(ITEMS, 'a', new Set(['b', 'c', 'd'])))).toEqual([
       { scope: 'page', count: 1 },
+      { scope: 'from-page', count: 4 },
       { scope: 'selected', count: 3 },
+      { scope: 'group', group: 'text', count: 4 },
       { scope: 'attention', count: 2 },
       { scope: 'all', count: 4 },
     ]);
   });
-});
 
-describe('pagesOfCondition', () => {
-  const MIXED = joinRows(
-    [
-      page('text', { position: 0 }),
-      page('cover', { position: 1, kind: 'cover' }),
-      page('plate', { position: 2, kind: 'plate', content_type: 'color-picture' }),
-      page('found', { position: 3, content_type: 'bw-picture', content_source: 'detected' }),
-      page('set', { position: 4, kind: 'plate', content_type: 'text', content_source: 'hand' }),
-      page('hole', {
-        position: 5,
-        kind: 'plate',
-        content_type: 'color-picture',
-        origin: 'placeholder',
-        images: null,
-      }),
-    ],
-    [],
-  );
-  const idsOf = (condition: Parameters<typeof pagesOfCondition>[1]): string[] =>
-    pagesOfCondition(MIXED, condition).map((item) => item.page.id);
+  it('lists a group of pages only when the book has pages of it', () => {
+    const items = joinRows(
+      [page('a', { position: 0 }), page('b', { position: 1, kind: 'blank' })],
+      [],
+    );
 
-  it('lists every page that has an image for a step with no condition', () => {
-    expect(idsOf('all')).toEqual(['text', 'cover', 'plate', 'found', 'set']);
-  });
-
-  it('lists the pages that show text, whatever their kind, for the pages of text', () => {
-    expect(idsOf('text')).toEqual(['text', 'cover', 'set']);
-  });
-
-  it('lists the pages that show a picture for the pictures, and never a placeholder', () => {
-    expect(idsOf('pictures')).toEqual(['plate', 'found']);
-  });
-
-  it('lists the pictures of one colour for the colour conditions', () => {
-    expect(idsOf('color-pictures')).toEqual(['plate']);
-    expect(idsOf('bw-pictures')).toEqual(['found']);
+    expect(
+      counts(scopeChoices(items, 'a', new Set()).filter(({ scope }) => scope === 'group')),
+    ).toEqual([
+      { scope: 'group', group: 'text', count: 2 },
+      { scope: 'group', group: 'blank', count: 1 },
+    ]);
   });
 });

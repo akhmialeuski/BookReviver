@@ -77,7 +77,9 @@ async def list_stage_pages(
     A page the stage has not run on has the status ``not-run`` and no version. A page holds up to a thousand rows, as
     the page manifest does, so a strip of a whole book takes few requests. With ``step`` every row also says what that
     step read and made on its page and where the shape of the step comes from; a step no recipe of the stage has is a
-    404.
+    404. Every row has a ``picture``, the version that stands for the page at the place asked for: the version the step
+    reads, or the last version of the stage before it for a page that has not come as far, or else what the stage reads;
+    without ``step`` the current version of the stage, else what the stage reads. A strip and a canvas draw it alike.
 
     \N{FORM FEED}
     :param address: Identifiers of the project and the stage, and the request.

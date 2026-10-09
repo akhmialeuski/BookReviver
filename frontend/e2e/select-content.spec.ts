@@ -3,6 +3,7 @@ import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
 import {
   createBook,
+  markPagesAsText,
   openProjectId,
   registerAndSignIn,
   snap,
@@ -11,7 +12,7 @@ import {
   writeSheetsFolder,
 } from './support/account';
 import { dragFrom, numbersOf, pairOf } from './support/layer';
-import { pageIds } from './support/page-work';
+import { pageIds, runPages } from './support/page-work';
 
 /**
  * The borders of the content on the Select content step: they are only placed. The step records the frame of the content
@@ -123,13 +124,6 @@ async function waitForQuietCanvas(page: Page): Promise<void> {
   throw new Error('The canvas did not settle.');
 }
 
-/** Count the runs of a stage that ended well in the open book, which tells that a run the reader started is over. */
-async function finishedRuns(page: Page): Promise<number> {
-  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/jobs?size=50`);
-  const items = ((await listed.json()) as { items: { kind: string; state: string }[] }).items;
-  return items.filter((job) => job.kind === 'run-stage' && job.state === 'succeeded').length;
-}
-
 // Tall enough for the pictures of the key states to show the bar, the canvas and the panel
 test.use({ viewport: { width: 1280, height: 1000 } });
 
@@ -149,10 +143,16 @@ test('a border of the content is dragged on Select content without the picture l
       saves.push(request.url());
     }
   });
-  // An edit starts a run of the stage on the page, and the next change waits until that run is over
+  const banner = page.getByTestId('stale-banner');
+  // An edit starts a run of the stage on the page, and the next change waits until that run is over: the server has no
+  // active job, and the screen itself shows no editor busy, no run in the summary and no page out of date
   const settled = async (): Promise<void> => {
     await expect(page.getByTestId('editor-busy')).toHaveCount(0, { timeout: RUN_TIMEOUT_MS });
     await waitForIdleJobs(page, projectId);
+    await expect(page.getByTestId('run-summary-running')).toHaveCount(0, {
+      timeout: RUN_TIMEOUT_MS,
+    });
+    await expect(banner).toHaveCount(0, { timeout: RUN_TIMEOUT_MS });
   };
 
   await test.step('the stage runs on a scan and Select content shows the borders it found', async () => {
@@ -161,17 +161,17 @@ test('a border of the content is dragged on Select content without the picture l
     await uploadFolder(page, folder, 1);
     projectId = openProjectId(page);
     await waitForIdleJobs(page, projectId);
+    // The detection takes the sheet for a picture, which the recipe for pictures processes, and the step open here
+    // belongs to the recipe for text, so the page is said to be text
+    await markPagesAsText(page);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('strip-page')).toHaveCount(1);
     await page.getByTestId('bar-step').filter({ hasText: 'Select content' }).click();
     await expect(page).toHaveURL(STEP_ADDRESS);
     await expect(layer).toHaveAttribute('aria-label', 'Frame of the content');
-    // "Auto on all pages" runs the stage, so the step has found the frame on the page
-    const before = await finishedRuns(page);
-    await page.getByTestId('step-auto').click();
-    await expect.poll(() => finishedRuns(page), { timeout: RUN_TIMEOUT_MS }).toBe(before + 1);
-    await waitForIdleJobs(page, projectId);
+    // A run of all pages through the open step makes the step find the frame on the page
+    await runPages(page, { throughOpenStep: true });
     await expect(layer).not.toHaveAttribute('data-figure', 'by-hand');
     await expect(canvas).toHaveAttribute('data-state', 'ready');
     await waitForQuietCanvas(page);
@@ -192,13 +192,25 @@ test('a border of the content is dragged on Select content without the picture l
     expect(crop?.data.frame).toBeDefined();
   });
 
-  await test.step('the first border set by hand is saved, and the stage runs by the recipe that is shown', async () => {
-    // The page the stage ran on was sent to the recipe of its kind, and an edit runs the one that is shown, so the first
-    // edit may change what the step reads. The next ones are the ones the reader works with
+  await test.step('the first border set by hand is saved, and the stage runs on the page again', async () => {
     const bottom = await pairOf(layer, 'data-handle-bottom');
+    // The top border is not touched by the drag, so it stands where it stood while the canvas keeps its size
+    const still = {
+      zoom: await canvas.getAttribute('data-zoom'),
+      top: await pairOf(layer, 'data-handle-top'),
+    };
+    const expectCanvasStill = async (): Promise<void> => {
+      expect(await canvas.getAttribute('data-zoom')).toBe(still.zoom);
+      expect(await pairOf(layer, 'data-handle-top')).toEqual(still.top);
+    };
     await dragFrom(page, layer, bottom, { x: 0, y: -DRAG_PX });
     await expect(layer).toHaveAttribute('data-figure', 'by-hand', { timeout: RUN_TIMEOUT_MS });
+    // The saved frame makes the page out of date, and the banner that says so lies over the canvas: neither its
+    // appearing nor its going away resizes the canvas or moves the border under the pointer
+    await expect(banner).toBeVisible({ timeout: RUN_TIMEOUT_MS });
+    await expectCanvasStill();
     await settled();
+    await expectCanvasStill();
     await expect(layer).toBeVisible();
     await waitForQuietCanvas(page);
     found = await numbersOf(layer, 'data-rect');

@@ -1,9 +1,8 @@
+import { INPUT_EDITOR } from '@/features/editors/inputEditor';
 import { QuadCanvas } from '@/features/editors/QuadCanvas';
-import { QuadPanel } from '@/features/editors/QuadPanel';
 import { quadOf } from '@/features/editors/quad';
 import { type QuadShape, readQuad, writeQuad } from '@/features/editors/shapes';
-import { type EditorDefinition, Picture } from '@/features/editors/types';
-import { sourceSize } from '@/features/processing/results';
+import type { EditorDefinition } from '@/features/editors/types';
 import { MESSAGES } from '@/shared/messages';
 
 /**
@@ -15,16 +14,10 @@ import { MESSAGES } from '@/shared/messages';
  */
 
 export const quadEditor: EditorDefinition<QuadShape> = {
-  picture: Picture.Input,
-  alwaysOn: false,
-  needsResult: true,
-  owner: ({ current }) => current.page,
-  size: ({ result, pictureSize }) => sourceSize(result) ?? pictureSize,
-  runsAfterEdit: () => true,
+  ...INPUT_EDITOR,
   fallback: ({ size, result }) => quadOf(result, size),
   read: readQuad,
   write: writeQuad,
   describe: () => MESSAGES.processing.timeline.hand.quad,
   Canvas: QuadCanvas,
-  Panel: QuadPanel,
 };

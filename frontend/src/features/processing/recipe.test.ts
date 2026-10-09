@@ -1,15 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { deskew, recipe, spread, step, whole } from '@/features/processing/fixtures';
+import { deskew, recipe, step } from '@/features/processing/fixtures';
 import {
   addStep,
   bodyOf,
-  canPreview,
   draftOf,
   moveStep,
   pagesToGoStale,
   removeStep,
   sameAsSaved,
-  setStepCondition,
   setStepParams,
   toggleStep,
 } from '@/features/processing/recipe';
@@ -23,7 +21,7 @@ const TWO_STEPS = recipe('r1', {
 });
 
 describe('draftOf and bodyOf', () => {
-  it('gives each step a place in the draft, and sends the identifier and the condition the server gave it', () => {
+  it('gives each step a place in the draft, and sends the identifier the server gave it', () => {
     const draft = draftOf(TWO_STEPS);
 
     expect(draft.map((entry) => entry.id)).toEqual(['step-0', 'step-1']);
@@ -33,14 +31,12 @@ describe('draftOf and bodyOf', () => {
         params: { max_angle: 5 },
         enabled: true,
         step_id: 'id-geometry.deskew',
-        applies_to: 'all',
       },
       {
         processor_key: 'geometry.crop',
         params: {},
         enabled: false,
         step_id: 'id-geometry.crop',
-        applies_to: 'all',
       },
     ]);
   });
@@ -98,22 +94,6 @@ describe('toggleStep, removeStep and setStepParams', () => {
 
     expect(changed[0]?.params).toEqual({ max_angle: 5 });
     expect(changed[1]?.params).toEqual({ margin: 3 });
-  });
-});
-
-describe('setStepCondition', () => {
-  it('changes which pages one step processes, and makes the draft differ from the saved recipe', () => {
-    const changed = setStepCondition(draftOf(TWO_STEPS), 'step-0', 'pictures');
-
-    expect(changed.map((entry) => entry.appliesTo)).toEqual(['pictures', 'all']);
-    expect(sameAsSaved(TWO_STEPS, changed)).toBe(false);
-  });
-
-  it('reads the condition a step was saved with', () => {
-    const saved = recipe('r', { steps: [step('geometry.deskew', { applies_to: 'text' })] });
-
-    expect(draftOf(saved)[0]?.appliesTo).toBe('text');
-    expect(sameAsSaved(saved, draftOf(saved))).toBe(true);
   });
 });
 
@@ -180,29 +160,5 @@ describe('pagesToGoStale', () => {
     ];
 
     expect(pagesToGoStale(rows, 'r1')).toBe(2);
-  });
-});
-
-describe('canPreview', () => {
-  const catalogue = [deskew(), spread(), whole()];
-
-  it('allows the steps of a processor that makes one image of a page', () => {
-    expect(canPreview(draftOf(TWO_STEPS).slice(0, 1), catalogue, 0)).toBe(true);
-  });
-
-  it('refuses a step that cuts a scan into pages', () => {
-    const steps = draftOf(recipe('s', { steps: [step('split.spread')] }));
-
-    expect(canPreview(steps, catalogue, 0)).toBe(false);
-  });
-
-  it('refuses when every step up to the one asked for is off', () => {
-    const steps = toggleStep(draftOf(recipe('s', { steps: [step('geometry.deskew')] })), 'step-0');
-
-    expect(canPreview(steps, catalogue, 0)).toBe(false);
-  });
-
-  it('refuses a step whose processor the catalogue does not know', () => {
-    expect(canPreview(draftOf(recipe('s', { steps: [step('x.y')] })), catalogue, 0)).toBe(false);
   });
 });

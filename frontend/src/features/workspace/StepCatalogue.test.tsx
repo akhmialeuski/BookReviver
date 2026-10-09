@@ -6,9 +6,10 @@ import { processing, processor, recipe, step } from '@/features/processing/fixtu
 import { draftOf } from '@/features/processing/recipe';
 import { row } from '@/features/workspace/fixtures';
 import { StepCatalogue } from '@/features/workspace/StepCatalogue';
+import { MESSAGES } from '@/shared/messages';
 
 /**
- * The catalogue the "+ Step" button opens: the processors of the stage with what each does, and the choice that adds a
+ * The catalogue the plus button of the bar opens: the processors of the stage with what each does, and the choice that adds a
  * step to the saved recipe where its processor usually stands, which is refused in the usual order when no place suits.
  *
  * The processors here declare the places the catalogue of the server does: B usually follows A, and D and E must each
@@ -19,7 +20,7 @@ const sdk = vi.hoisted(() => ({ save: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  putVariantApiV1ProjectsProjectIdStagesStageVariantsRecipeIdPut: sdk.save,
+  putRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPut: sdk.save,
 }));
 
 const A_REASON = 'B reads what A leaves, so it usually comes after A.';
@@ -108,6 +109,15 @@ describe('StepCatalogue', () => {
     vi.unstubAllGlobals();
   });
 
+  it('is a plus with no word beside it, named for readers of the screen', () => {
+    render();
+
+    const button = byId('step-catalogue');
+    expect(button?.textContent).toBe('');
+    expect(button?.getAttribute('aria-label')).toBe(MESSAGES.workspace.steps.catalogue.open);
+    expect(button?.getAttribute('title')).toBe(MESSAGES.workspace.steps.catalogue.openHint);
+  });
+
   it('lists every processor of the stage with its line, and names the stage in its title', async () => {
     render();
     await open();
@@ -156,8 +166,8 @@ describe('StepCatalogue', () => {
       null,
       'sb',
     ]);
-    expect(body).toMatchObject({ name: 'Deskew', order: 'usual' });
-    expect(onAdded).toHaveBeenCalledWith('new');
+    expect(body).toMatchObject({ order: 'usual' });
+    expect(onAdded).toHaveBeenCalledWith('new', 1);
     expect(byId('step-catalogue-list')).toBeNull();
   });
 

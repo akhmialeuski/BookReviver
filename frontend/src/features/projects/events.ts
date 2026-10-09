@@ -3,6 +3,7 @@ import type { JobKind, JobSchema, JobState, Stage } from '@/api';
 import { readJobApiV1JobsJobIdGetQueryKey } from '@/api/@tanstack/react-query.gen';
 import {
   invalidateAllStageRows,
+  invalidateAllVersions,
   invalidateJobs,
   invalidatePages,
   invalidateProject,
@@ -11,7 +12,7 @@ import {
   invalidateScans,
   invalidateSections,
   invalidateSources,
-  invalidateStageRows,
+  invalidateStageRowsFrom,
   invalidateStageSummary,
   invalidateVersions,
   pageChangesInFlight,
@@ -64,6 +65,8 @@ const ACTIVE_JOB_STATES: ReadonlySet<string> = new Set<JobState>(['queued', 'run
 /** The kind of the job that measures the book, and the stage whose recipe it writes into. */
 const MEASURE_BOOK_KIND: JobKind = 'measure-book';
 const GEOMETRY_STAGE: Stage = 'geometry';
+/** The kind of the job that takes the files of the old results of the pages away. */
+const COLLECT_VERSIONS_KIND: JobKind = 'collect-versions';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -124,6 +127,10 @@ export function applyProjectEvent(
             // The job wrote the line height and the page size into the recipe of the Geometry stage
             void invalidateRecipes(queryClient, projectId, GEOMETRY_STAGE);
           }
+          if (event.data.kind === COLLECT_VERSIONS_KIND) {
+            // The job deleted the old results with their files, so the lists of results must not offer them any more
+            void invalidateAllVersions(queryClient, projectId);
+          }
         }
       }
       break;
@@ -157,7 +164,8 @@ export function applyProjectEvent(
       if (stage !== null) {
         bursts.schedule(`${projectId}/stage/${stage}`, () => {
           void invalidateStageSummary(queryClient, projectId);
-          void invalidateStageRows(queryClient, projectId, stage);
+          // The rows of the later stages draw the current version of this one
+          void invalidateStageRowsFrom(queryClient, projectId, stage);
           // The status of each stage and the next stage are part of the book, and its card in the library
           void invalidateProject(queryClient, projectId);
           void invalidateProjectList(queryClient);

@@ -63,7 +63,6 @@ describe('CompareCanvas', () => {
   function render(
     mode: CompareMode,
     pairs: ComparePair = { before: BEFORE, after: AFTER },
-    notice: { text: string; working: boolean } | null = null,
     editor: Pick<
       React.ComponentProps<typeof CompareCanvas>,
       'overlay' | 'roomShare' | 'reach' | 'placement'
@@ -76,7 +75,6 @@ describe('CompareCanvas', () => {
           mode={mode}
           beforeLabel="Before · result of Order"
           afterLabel="After · Geometry"
-          notice={notice}
           pageIds={['p1']}
           {...editor}
         />,
@@ -91,7 +89,7 @@ describe('CompareCanvas', () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     stage.instances.length = 0;
     stage.show.mockReset();
-    stage.show.mockResolvedValue({ failed: [] });
+    stage.show.mockResolvedValue({ failed: [], loaded: [] });
     stage.setMode.mockReset();
     stage.setDivider.mockReset();
     stage.setHolding.mockReset();
@@ -132,17 +130,17 @@ describe('CompareCanvas', () => {
       width: 0.8,
       height: 0.9,
     };
-    render(CompareMode.Swipe, undefined, null, { placement: place });
+    render(CompareMode.Swipe, undefined, { placement: place });
     await act(async () => {
       await Promise.resolve();
     });
     expect(stage.show).toHaveBeenLastCalledWith(BEFORE, AFTER, 'p1', place);
 
     // The same numbers in a new object are the same place
-    render(CompareMode.Swipe, undefined, null, { placement: { ...place } });
+    render(CompareMode.Swipe, undefined, { placement: { ...place } });
     expect(stage.show).toHaveBeenCalledTimes(1);
 
-    render(CompareMode.Swipe, undefined, null, { placement: { ...place, left: 0.2 } });
+    render(CompareMode.Swipe, undefined, { placement: { ...place, left: 0.2 } });
     expect(stage.show).toHaveBeenCalledTimes(2);
   });
 
@@ -150,7 +148,7 @@ describe('CompareCanvas', () => {
     const overlay = vi.fn((scene: unknown) => (
       <p data-testid="editor-stand-in">{JSON.stringify(scene)}</p>
     ));
-    render(CompareMode.Off, { before: null, after: AFTER }, null, { overlay, roomShare: 0.08 });
+    render(CompareMode.Off, { before: null, after: AFTER }, { overlay, roomShare: 0.08 });
     expect(container.querySelector('[data-testid="editor-stand-in"]')).toBeNull();
 
     await act(async () => {
@@ -165,14 +163,14 @@ describe('CompareCanvas', () => {
 
   it('hands what the editor draws beyond the page to the stage, and nothing when there is none', async () => {
     const reach = { rect: { left: -10, top: -20, width: 120, height: 240 }, size: null };
-    render(CompareMode.Off, { before: null, after: AFTER }, null, { reach });
+    render(CompareMode.Off, { before: null, after: AFTER }, { reach });
     await act(async () => {
       await Promise.resolve();
     });
 
     expect(stage.setReach).toHaveBeenLastCalledWith(reach);
 
-    render(CompareMode.Off, { before: null, after: AFTER }, null, { reach: null });
+    render(CompareMode.Off, { before: null, after: AFTER }, { reach: null });
     await act(async () => {
       await Promise.resolve();
     });
@@ -213,7 +211,7 @@ describe('CompareCanvas', () => {
   });
 
   it('says a picture could not be loaded', async () => {
-    stage.show.mockResolvedValue({ failed: ['after'] });
+    stage.show.mockResolvedValue({ failed: ['after'], loaded: [] });
     render(CompareMode.Off);
     await act(async () => {
       await Promise.resolve();
@@ -223,6 +221,31 @@ describe('CompareCanvas', () => {
       container.querySelector('[data-testid="viewer-canvas"]')?.getAttribute('data-state'),
     ).toBe('failed');
     expect(container.textContent).toContain('could not be loaded');
+  });
+
+  it('loads the picture again, and drops the error, once the row says its tiles are cut', async () => {
+    // The row says the tiles are not cut, so the picture after is the plain preview, and it could not be read
+    const preview = { kind: SourceKind.Image, url: '/after.png' } as const;
+    const cut = { kind: SourceKind.Iiif, url: '/after/info.json' } as const;
+    stage.show.mockResolvedValueOnce({ failed: ['after'], loaded: [] });
+    render(CompareMode.Off, { before: BEFORE, after: preview });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const canvas = (): Element | null => container.querySelector('[data-testid="viewer-canvas"]');
+    expect(canvas()?.getAttribute('data-state')).toBe('failed');
+
+    // The cut-tiles job ends, the rows are read again, and the row now gives the pyramid
+    stage.show.mockResolvedValueOnce({ failed: [], loaded: [BEFORE.url, cut.url] });
+    render(CompareMode.Off, { before: BEFORE, after: cut });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(stage.show).toHaveBeenCalledTimes(2);
+    expect(stage.show).toHaveBeenLastCalledWith(BEFORE, cut, 'p1', null);
+    expect(canvas()?.getAttribute('data-state')).toBe('ready');
+    expect(container.textContent).not.toContain('could not be loaded');
   });
 
   it('draws the divider and both labels for a swipe, and no divider for the other modes', () => {
@@ -299,22 +322,6 @@ describe('CompareCanvas', () => {
     });
 
     expect(stage.setHolding).not.toHaveBeenCalledWith(true);
-  });
-
-  it('says what the preview is doing, and why it failed', () => {
-    render(CompareMode.Swipe, undefined, { text: 'Making the preview…', working: true });
-    expect(container.querySelector('[data-testid="preview-working"]')?.textContent).toBe(
-      'Making the preview…',
-    );
-
-    render(CompareMode.Swipe, undefined, {
-      text: 'The preview could not be made.',
-      working: false,
-    });
-    expect(container.querySelector('[data-testid="preview-error"]')?.textContent).toBe(
-      'The preview could not be made.',
-    );
-    expect(container.querySelector('[data-testid="preview-working"]')).toBeNull();
   });
 
   it('releases the stage when it leaves', () => {

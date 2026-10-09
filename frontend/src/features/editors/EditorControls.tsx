@@ -1,13 +1,13 @@
-import { HandIcon, LoaderCircleIcon, UndoIcon } from 'lucide-react';
+import { HandIcon, LoaderCircleIcon } from 'lucide-react';
 import type { EditorSession } from '@/features/editors/session';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
- * The controls of the page editor in the panel: the part the editor itself puts there, such as the field of the angle,
- * the button that opens the editor on the page, and "Auto", which takes the manual edit away and lets the step find the
- * result again.
+ * The controls of the page editor in the panel: the part the editor itself puts there, such as the field of the angle, and
+ * the button that opens the editor on the page. "Auto", which takes the manual edit away and lets the step find the
+ * result again, stands on the toolbar of the canvas.
  */
 
 const labels = MESSAGES.editors;
@@ -53,17 +53,6 @@ export function EditorControls({ session }: { session: EditorSession }): React.J
             {labels.setByHand}
           </Button>
         )}
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={!session.hasEdit || session.busy}
-          title={labels.autoTitle}
-          data-testid="editor-auto"
-          onClick={session.auto}
-        >
-          <UndoIcon />
-          {labels.auto}
-        </Button>
         {session.busy ? (
           <span
             className="flex items-center gap-1.5 text-sm text-muted-foreground"

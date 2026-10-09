@@ -10,11 +10,13 @@ import {
   waitForIdleJobs,
   writeMixedFolder,
 } from './support/account';
+import { readStageRows, runPages, selectPagesInGrid } from './support/page-work';
 
 /**
  * The content type of a page: the program finds text, a colour picture or a black-and-white one on each page as the
- * pages are made, the strip marks every page with it, the selected pages are changed at once and given back to the
- * program, and the steps of the first recipes process the pages they are for.
+ * pages are made, the strip marks every page with it, and the selected pages are changed at once from the menu of the
+ * canvas toolbar and given back to the program. A page that was run and is given another content type is out of date, and
+ * the strip draws a pencil on the mark of a page whose content type was set by hand.
  */
 
 const SCENARIO_TIMEOUT_MS = 240_000;
@@ -43,36 +45,17 @@ async function contentOf(page: Page): Promise<string[]> {
     .map((item) => `${item.content_type}:${item.content_source}`);
 }
 
-/** The steps of a recipe as the window of the gear lists them, with the pages each one processes. */
-interface StepConditions {
-  processors: (string | null)[];
-  conditions: string[];
-}
-
-/** Read the processors and the conditions of the steps of the recipe in the window of the gear, and close the window. */
-async function conditionsOf(page: Page): Promise<StepConditions> {
-  await page.getByTestId('steps-gear').click();
-  const window = page.getByTestId('steps-window');
-  await expect(window).toBeVisible();
-  const steps = window.getByTestId('window-step');
-  const processors = await steps.evaluateAll((items) =>
-    items.map((item) => item.getAttribute('data-processor')),
-  );
-  const conditions = await window
-    .getByTestId('window-step-condition')
-    .evaluateAll((selects) => selects.map((select) => (select as HTMLSelectElement).value));
-  await window.getByRole('button', { name: 'Close' }).click();
-  await expect(window).toHaveCount(0);
-  return { processors, conditions };
-}
-
 test('the program finds what each page shows, the strip marks it, and the selected pages are changed and given back at once', async ({
   page,
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writeMixedFolder();
   const marks = page.getByTestId('strip-content');
-  const select = page.getByTestId('content-type-select');
+  const tiles = page.getByTestId('strip-page');
+  // The pencil the strip draws on the mark of a page whose content type was set by hand
+  const pencil = (position: number) => marks.nth(position).locator('svg.lucide-pencil');
+  const menu = page.getByTestId('content-type-menu');
+  const selectedScope = page.getByTestId('content-scope-selected');
 
   await test.step('the pages made from the scans are detected without being asked', async () => {
     await registerAndSignIn(page);
@@ -101,53 +84,102 @@ test('the program finds what each page shows, the strip marks it, and the select
     await snap(page, 'content-type-marks-in-the-strip');
   });
 
-  await test.step('the steps of the first recipes process the pages they are for', async () => {
-    await expect(page.getByTestId('bar-step').first()).toBeVisible();
-    // Perspective, Deskew, Dewarp, Select content and Margins: the two that follow the lines of text are for text
-    expect((await conditionsOf(page)).conditions).toEqual(['all', 'text', 'text', 'all', 'all']);
+  await test.step('the stage runs on every page, so each page has a result that can go out of date', async () => {
+    await runPages(page);
+    expect((await readStageRows(page)).map((row) => row.status)).toEqual([
+      'fresh',
+      'fresh',
+      'fresh',
+      'fresh',
+    ]);
   });
 
   await test.step('two selected pages of different types are changed to text at once', async () => {
-    await page.getByTestId('strip-view-switch').click();
-    await expect(page).toHaveURL(/view=grid/);
-    const tiles = page.getByTestId('strip-page');
-    await tiles.nth(COLOUR_POSITION).click();
-    await tiles.nth(BW_POSITION).click({ modifiers: ['ControlOrMeta'] });
-    await expect(page.getByTestId('grid-selection')).toHaveText('2 pages selected');
-    await expect(select).toHaveValue('');
-    await expect(page.getByTestId('content-type-pages')).toHaveText('2 selected pages');
+    // The selection stays as the strip comes back, and the menu of the canvas toolbar reaches the selected pages
+    await selectPagesInGrid(page, [COLOUR_POSITION, BW_POSITION]);
+    await menu.click();
+    await expect(selectedScope).toContainText('2');
+    await selectedScope.click();
+    await expect(selectedScope).toHaveAttribute('aria-checked', 'true');
     await snap(page, 'content-type-two-pages-selected');
 
-    await select.selectOption('text');
+    await page.getByTestId('content-type-text').click();
     await expect
       .poll(() => contentOf(page))
       .toEqual(['text:detected', 'text:hand', 'text:hand', 'text:detected']);
     await expect(marks.nth(COLOUR_POSITION)).toHaveAttribute('data-content', 'text');
     await expect(marks.nth(COLOUR_POSITION)).toHaveAttribute('data-source', 'hand');
     await expect(marks.nth(BW_POSITION)).toHaveAttribute('data-source', 'hand');
-    await expect(select).toHaveValue('text');
-    await expect(page.getByTestId('content-type-sources')).toHaveText(
-      '0 found by the program · 2 set by hand',
-    );
     await snap(page, 'content-type-set-by-hand');
   });
 
   await test.step('the pages set by hand are given back to the program, which finds the pictures again', async () => {
+    await menu.click();
+    await expect(selectedScope).toHaveAttribute('aria-checked', 'true');
     await page.getByTestId('content-type-detect').click();
     await expect
       .poll(() => contentOf(page), { timeout: DETECT_TIMEOUT_MS })
       .toEqual(['text:detected', 'color-picture:detected', 'bw-picture:detected', 'text:detected']);
+    // The menu stays open while the program works, so it is shut once the pages are found again
+    await page.keyboard.press('Escape');
     await expect(marks.nth(COLOUR_POSITION)).toHaveAttribute('data-source', 'detected');
     await expect(marks.nth(BW_POSITION)).toHaveAttribute('data-content', 'bw-picture');
     await snap(page, 'content-type-detected-again');
   });
 
+  await test.step('two pages of text are changed to Colour picture at once, with a pencil on both marks and both out of date', async () => {
+    await selectPagesInGrid(page, [TEXT_POSITION, LAST_POSITION]);
+    await expect(pencil(TEXT_POSITION)).toHaveCount(0);
+    await expect(pencil(LAST_POSITION)).toHaveCount(0);
+    await menu.click();
+    await expect(selectedScope).toContainText('2');
+    await selectedScope.click();
+    await page.getByTestId('content-type-color-picture').click();
+    await expect
+      .poll(() => contentOf(page))
+      .toEqual([
+        'color-picture:hand',
+        'color-picture:detected',
+        'bw-picture:detected',
+        'color-picture:hand',
+      ]);
+    for (const position of [TEXT_POSITION, LAST_POSITION]) {
+      await expect(marks.nth(position)).toHaveAttribute('data-content', 'color-picture');
+      await expect(pencil(position)).toBeVisible();
+      await expect(tiles.nth(position)).toContainText('Out of date');
+    }
+    // The pages that were not changed have no pencil
+    await expect(pencil(COLOUR_POSITION)).toHaveCount(0);
+    await expect(pencil(BW_POSITION)).toHaveCount(0);
+    const rows = await readStageRows(page);
+    expect(rows[TEXT_POSITION]?.status).toBe('stale');
+    expect(rows[LAST_POSITION]?.status).toBe('stale');
+    await snap(page, 'content-type-colour-picture-by-hand');
+  });
+
+  await test.step('Detect again gives the two pages back to the program, which finds text and takes the pencil off', async () => {
+    await menu.click();
+    await expect(selectedScope).toHaveAttribute('aria-checked', 'true');
+    await page.getByTestId('content-type-detect').click();
+    await expect
+      .poll(() => contentOf(page), { timeout: DETECT_TIMEOUT_MS })
+      .toEqual(['text:detected', 'color-picture:detected', 'bw-picture:detected', 'text:detected']);
+    // The menu stays open while the program works, so it is shut once the pages are found again
+    await page.keyboard.press('Escape');
+    await expect(pencil(TEXT_POSITION)).toHaveCount(0);
+    await expect(pencil(LAST_POSITION)).toHaveCount(0);
+    await expect(marks.nth(TEXT_POSITION)).toHaveAttribute('data-source', 'detected');
+  });
+
   await test.step('a single open page is changed without a selection', async () => {
+    await page.getByTestId('strip-view-switch').click();
+    await expect(page).toHaveURL(/view=grid/);
     await page.getByRole('button', { name: 'Clear the selection' }).click();
     await page.getByTestId('strip-page').nth(LAST_POSITION).dblclick();
     await expect(page).not.toHaveURL(/view=grid/);
-    await expect(select).toHaveValue('text');
-    await select.selectOption('bw-picture');
+    await expect(menu).toHaveAttribute('data-content', 'text');
+    await menu.click();
+    await page.getByTestId('content-type-bw-picture').click();
     await expect
       .poll(() => contentOf(page))
       .toEqual([
@@ -157,35 +189,6 @@ test('the program finds what each page shows, the strip marks it, and the select
         'bw-picture:hand',
       ]);
   });
-
-  await rm(path.dirname(folder), { recursive: true, force: true });
-});
-
-test('the first recipe of the Cleanup stage keeps binarization, despeckling and thickness off the pictures', async ({
-  page,
-}) => {
-  test.setTimeout(SCENARIO_TIMEOUT_MS);
-  const folder = await writeMixedFolder();
-
-  await registerAndSignIn(page);
-  await createBook(page, 'A book to clean');
-  await uploadFolder(page, folder, PAGES);
-  // The split and the detection that follow the import read the recipes again, which closes an open step
-  await waitForIdleJobs(page, openProjectId(page));
-  const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
-  await page.goto(`${bookPath}/stages/cleanup`);
-  await expect(page.getByTestId('stage-title')).toHaveText('Cleanup');
-  await expect(page.getByTestId('bar-step').first()).toBeVisible();
-
-  const { processors, conditions } = await conditionsOf(page);
-  expect(processors).toEqual([
-    'cleanup.binarize',
-    'cleanup.despeckle',
-    'cleanup.thickness',
-    'cleanup.eraser',
-  ]);
-  expect(conditions).toEqual(['text', 'text', 'text', 'all']);
-  await snap(page, 'content-type-cleanup-conditions');
 
   await rm(path.dirname(folder), { recursive: true, force: true });
 });

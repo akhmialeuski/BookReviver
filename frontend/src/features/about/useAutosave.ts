@@ -14,6 +14,7 @@ import {
   toFields,
 } from '@/features/about/fields';
 import { invalidateProject, invalidateProjectList } from '@/features/projects/queries';
+import { useDebouncedCallback } from '@/shared/hooks/useDebouncedCallback';
 import { describeError } from '@/shared/http/problem';
 
 /**
@@ -88,16 +89,22 @@ export function useAutosave(project: ProjectSchema): Autosave {
   const failed = dirty && plan.key === failedKey;
   const projectId = project.id;
 
+  // The send of the tab is dropped at the unmount, because the effect below sends the last changes directly then
+  const send = useDebouncedCallback(
+    (patch: typeof plan.patch) => mutate({ path: { project_id: projectId }, body: patch }),
+    DEBOUNCE_MS,
+    { flushOnUnmount: false },
+  );
   useEffect(() => {
     if (!dirty || failed || isPending) {
+      send.cancel();
       return;
     }
-    const timer = setTimeout(
-      () => mutate({ path: { project_id: projectId }, body: plan.patch }),
-      immediate ? 0 : DEBOUNCE_MS,
-    );
-    return () => clearTimeout(timer);
-  }, [dirty, failed, isPending, immediate, mutate, plan, projectId]);
+    send(plan.patch);
+    if (immediate) {
+      send.flush();
+    }
+  }, [dirty, failed, isPending, immediate, plan.patch, send]);
 
   // The unmount of the tab cannot use the mutation, whose observer goes with it, so the last changes go directly
   const pending = useRef({ send: false, patch: plan.patch });

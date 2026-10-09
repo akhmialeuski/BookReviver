@@ -3,14 +3,9 @@ import { XIcon } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PageTile } from '@/features/workspace/PageTile';
 import { PageFilter } from '@/features/workspace/params';
+import { StripEmpty } from '@/features/workspace/StripEmpty';
 import { StripToolbar } from '@/features/workspace/StripToolbar';
-import type {
-  FilterCounts,
-  FlagView,
-  StopView,
-  StripItem,
-  VariantView,
-} from '@/features/workspace/strip';
+import type { PageListProps } from '@/features/workspace/strip';
 import { useStripPlace } from '@/features/workspace/useStripPlace';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
@@ -44,43 +39,21 @@ function useElementWidth(element: React.RefObject<HTMLElement | null>): number {
 
 export function StageGrid({
   items,
-  total,
-  counts,
-  filter,
   selected,
-  onFilter,
   onSelect,
   onClearSelection,
   onOpen,
   onList,
   reasonOf,
-  withWide = false,
-  variants,
-  stopped,
-  flagged,
-}: {
-  items: readonly StripItem[];
-  total: number;
-  counts: FilterCounts;
-  filter: PageFilter;
+  ...list
+}: PageListProps & {
   selected: ReadonlySet<string>;
-  onFilter: (filter: PageFilter) => void;
   /** Called with the page clicked and the modifier keys held, for the screen to work out the new selection. */
   onSelect: (pageId: string, modifiers: { range: boolean; toggle: boolean }) => void;
   onClearSelection: () => void;
   onOpen: (pageId: string) => void;
   /** Go back to the strip and the canvas. */
   onList: () => void;
-  /** Says why a page asks for a look; the Check filter writes it under the page. Absent for no reasons. */
-  reasonOf?: (item: StripItem) => string | null;
-  /** Whether the filter of the pages cut from wide scans is offered, which the Split stage has. */
-  withWide?: boolean;
-  /** The variants of the stage: a mark on each page, and the choice of one to list. Absent for none to choose from. */
-  variants?: VariantView;
-  /** The steps a run stopped at, which narrow the pages to those stopped at one. Absent when no run stopped short. */
-  stopped?: StopView;
-  /** The reasons a page asks for a look at the open step, which narrow the pages to those with one. Absent for no step. */
-  flagged?: FlagView;
 }): React.JSX.Element {
   const scroller = useRef<HTMLDivElement>(null);
   const width = useElementWidth(scroller);
@@ -97,19 +70,7 @@ export function StageGrid({
 
   return (
     <div className="flex size-full flex-col" data-testid="grid">
-      <StripToolbar
-        total={total}
-        shown={items.length}
-        counts={counts}
-        filter={filter}
-        grid
-        withWide={withWide}
-        variants={variants}
-        stopped={stopped}
-        flagged={flagged}
-        onFilter={onFilter}
-        onSwitchView={onList}
-      />
+      <StripToolbar {...list} shown={items.length} grid onSwitchView={onList} />
       <div className="flex min-h-9 items-center gap-2 border-b px-3 text-sm">
         <span data-testid="grid-selection">{MESSAGES.workspace.grid.selected(selected.size)}</span>
         {selected.size > 0 ? (
@@ -120,11 +81,7 @@ export function StageGrid({
         ) : null}
       </div>
       {items.length === 0 ? (
-        <p className="p-4 text-sm text-muted-foreground">
-          {flagged?.selected == null
-            ? MESSAGES.workspace.strip.empty[filter]
-            : MESSAGES.workspace.strip.flag.empty}
-        </p>
+        <StripEmpty filter={list.filter} flagged={list.flagged} />
       ) : (
         <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto p-2">
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
@@ -144,8 +101,7 @@ export function StageGrid({
                     key={item.page.id}
                     item={item}
                     highlighted={selected.has(item.page.id)}
-                    caption={filter === PageFilter.Check ? (reasonOf?.(item) ?? null) : null}
-                    variant={variants?.markOf(item) ?? null}
+                    caption={list.filter === PageFilter.Check ? (reasonOf?.(item) ?? null) : null}
                     onClick={(event) =>
                       onSelect(item.page.id, {
                         range: event.shiftKey,

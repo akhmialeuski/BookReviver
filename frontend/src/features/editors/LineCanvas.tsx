@@ -1,12 +1,11 @@
-import type { KonvaEventObject } from 'konva/lib/Node';
-import { useEffect, useRef } from 'react';
 import { Circle, Line } from 'react-konva';
 import { EditorLayer } from '@/features/editors/EditorLayer';
-import { crossingX, LineEnd, moveEnd, nudgeLine, nudgeOfKey } from '@/features/editors/line';
+import { HANDLE_STYLE } from '@/features/editors/handles';
+import { crossingX, LineEnd, moveEnd, nudgeLine } from '@/features/editors/line';
 import { useSceneFrame } from '@/features/editors/scene';
-import type { LineShape, Point } from '@/features/editors/shapes';
+import { useShapeEditing, widthValue } from '@/features/editors/shapeEditing';
+import { type LineShape, type Point, pairOf } from '@/features/editors/shapes';
 import type { CanvasProps } from '@/features/editors/types';
-import { useDebouncedCommit } from '@/features/editors/useDebouncedCommit';
 import { isSplit, pagesOfScan } from '@/features/processing/split';
 import { MESSAGES } from '@/shared/messages';
 
@@ -24,20 +23,11 @@ const LINE_COLOR = '#0ea5e9';
 const LINE_WIDTH_PX = 2;
 const LINE_DASH_PX = [8, 6];
 const HANDLE_RADIUS_PX = 8;
-const HANDLE_BORDER_PX = 2;
-const HANDLE_BORDER_COLOR = '#ffffff';
-const HIT_EXTRA_PX = 8;
-/** Quiet time after the last key before the line is saved. */
-const KEY_SAVE_DELAY_MS = 600;
 /** Room the labels keep from the edge of the canvas and from the scan. */
 const LABEL_EDGE_PX = 8;
 const LABEL_GAP_PX = 12;
 const LABEL_HEIGHT_PX = 28;
 const HALF = 2;
-
-function pairOf(point: Point): string {
-  return `${Math.round(point.x)},${Math.round(point.y)}`;
-}
 
 export function LineCanvas({
   scene,
@@ -46,39 +36,18 @@ export function LineCanvas({
   context,
   onChange,
   onCommit,
+  onCommitLater,
 }: CanvasProps<LineShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
-  const saveLater = useDebouncedCommit(onCommit, KEY_SAVE_DELAY_MS);
-  // The drag handlers run between renders, so the shape they build on is the latest one and not the one they closed over
-  const latest = useRef(shape);
-  useEffect(() => {
-    latest.current = shape;
-  }, [shape]);
+  const editing = useShapeEditing(frame, shape, onChange, onCommit, onCommitLater);
 
   const { mapping } = frame;
   const start = mapping.toScreen(shape.start);
   const end = mapping.toScreen(shape.end);
 
-  const drag = (which: LineEnd) => (event: KonvaEventObject<DragEvent>) => {
-    const at = mapping.toImage({ x: event.target.x(), y: event.target.y() });
-    const next = moveEnd(latest.current, which, at, frame.size);
-    latest.current = next;
-    onChange(next);
-    // The end follows the pointer only as far as the line may go
-    event.target.position(mapping.toScreen(which === LineEnd.Start ? next.start : next.end));
-  };
-
-  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
-    const step = nudgeOfKey(event.key, event.shiftKey);
-    if (step === null || event.altKey || event.ctrlKey || event.metaKey) {
-      return;
-    }
-    event.preventDefault();
-    const next = nudgeLine(latest.current, step.x, step.y, frame.size);
-    latest.current = next;
-    onChange(next);
-    saveLater(next);
-  };
+  const onKeyDown = editing.onKeyDown((current, step) =>
+    nudgeLine(current, step.x, step.y, frame.size),
+  );
 
   const scanId = context.current.page.scan_id;
   const scanPages =
@@ -105,15 +74,15 @@ export function LineCanvas({
     <Circle
       x={at.x}
       y={at.y}
+      {...HANDLE_STYLE}
       radius={HANDLE_RADIUS_PX}
       fill={LINE_COLOR}
-      stroke={HANDLE_BORDER_COLOR}
-      strokeWidth={HANDLE_BORDER_PX}
-      hitStrokeWidth={HIT_EXTRA_PX}
-      draggable
       name={name}
-      onDragMove={drag(which)}
-      onDragEnd={() => onCommit(latest.current)}
+      onDragMove={editing.drag(
+        (current, to) => moveEnd(current, which, to, frame.size),
+        (next) => (which === LineEnd.Start ? next.start : next.end),
+      )}
+      onDragEnd={editing.release}
     />
   );
 
@@ -122,12 +91,7 @@ export function LineCanvas({
       scene={scene}
       frame={frame}
       label={labels.name}
-      value={{
-        min: 0,
-        max: frame.size.width,
-        now: Math.round(cut),
-        text: MESSAGES.processing.thisPage.pixels(cut),
-      }}
+      value={widthValue(frame, cut)}
       data={{
         'line-start': pairOf(shape.start),
         'line-end': pairOf(shape.end),

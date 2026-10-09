@@ -13,11 +13,11 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/shared/ui/dialog';
 import { ErrorAlert } from '@/shared/ui/error-alert';
+import { FormDialogFooter } from '@/shared/ui/form-dialog-footer';
 import { SelectField } from '@/shared/ui/select-field';
 import { TextField } from '@/shared/ui/text-field';
 
@@ -180,34 +180,29 @@ export function SectionDialog({
             <p className="text-xs text-muted-foreground">{form.kindsHint}</p>
           </fieldset>
           {error === undefined ? null : <ErrorAlert message={describePageError(error)} />}
-          <DialogFooter className="sm:justify-between">
-            {section === undefined ? (
-              <span />
-            ) : (
-              <Button
-                type="button"
-                variant="outline"
-                className="border-destructive/40 text-destructive"
-                disabled={busy}
-                onClick={() =>
-                  remove.mutate(
-                    { path: { project_id: projectId, section_id: section.id } },
-                    { onSuccess: onClose },
-                  )
-                }
-              >
-                {remove.isPending ? form.removing : form.remove}
-              </Button>
-            )}
-            <div className="flex flex-col-reverse gap-2 sm:flex-row">
-              <Button type="button" variant="outline" onClick={onClose}>
-                {MESSAGES.common.cancel}
-              </Button>
-              <Button type="submit" disabled={busy}>
-                {create.isPending || put.isPending ? form.saving : form.save}
-              </Button>
-            </div>
-          </DialogFooter>
+          <FormDialogFooter
+            danger={
+              section === undefined ? undefined : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-destructive/40 text-destructive"
+                  disabled={busy}
+                  onClick={() =>
+                    remove.mutate(
+                      { path: { project_id: projectId, section_id: section.id } },
+                      { onSuccess: onClose },
+                    )
+                  }
+                >
+                  {remove.isPending ? form.removing : form.remove}
+                </Button>
+              )
+            }
+            onCancel={onClose}
+            submitLabel={create.isPending || put.isPending ? form.saving : form.save}
+            submitDisabled={busy}
+          />
         </form>
       </DialogContent>
     </Dialog>

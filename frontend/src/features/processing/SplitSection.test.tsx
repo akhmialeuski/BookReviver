@@ -32,7 +32,7 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
 }));
 
 const AUTO = recipe('auto', { stage: 'page-split', steps: [step('split.auto')] });
-const WHOLE = recipe('whole', { stage: 'page-split', active: false, steps: [step('split.none')] });
+const WHOLE = recipe('whole', { stage: 'page-split', kind: 'blank', steps: [step('split.none')] });
 const STATE = processing({ stage: 'page-split', recipes: [AUTO, WHOLE], recipe: AUTO });
 
 /** The edit of the automatic split a reader left on a page. */
@@ -64,7 +64,7 @@ describe('SplitSection', () => {
         onClick={() =>
           run.mutate({
             path: { project_id: 'project', stage: 'page-split' },
-            body: { recipe_id: 'auto' },
+            body: {},
           })
         }
       />
@@ -152,7 +152,7 @@ describe('SplitSection', () => {
       path: { page_id: 'w', stage: 'page-split', step_id: 'id-split.auto' },
       body: { kind: 'split', geometry: '{"pages":2}' },
     });
-    expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ recipe_id: 'auto', page_ids: ['w'] });
+    expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ page_ids: ['w'] });
   });
 
   it('asks before the scan goes back to one page and sends nothing until the answer', async () => {
@@ -200,7 +200,6 @@ describe('SplitSection', () => {
       body: { kind: 'split', geometry: '{"pages":1}' },
     });
     expect(sdk.run.mock.calls[0]?.[0].body).toEqual({
-      recipe_id: 'auto',
       page_ids: ['l'],
       confirm_unsplit: true,
     });
@@ -287,7 +286,7 @@ describe('SplitSection', () => {
     expect(sdk.remove.mock.calls[0]?.[0]).toMatchObject({
       path: { page_id: 'w', stage: 'page-split', step_id: 'id-split.auto' },
     });
-    expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ recipe_id: 'auto', page_ids: ['w'] });
+    expect(sdk.run.mock.calls[0]?.[0].body).toEqual({ page_ids: ['w'] });
   });
 
   it('asks before Auto is applied to a cut scan, since the automatic split may keep it whole', async () => {
@@ -310,7 +309,6 @@ describe('SplitSection', () => {
 
     expect(sdk.remove).toHaveBeenCalledTimes(1);
     expect(sdk.run.mock.calls[0]?.[0].body).toEqual({
-      recipe_id: 'auto',
       page_ids: ['l'],
       confirm_unsplit: true,
     });

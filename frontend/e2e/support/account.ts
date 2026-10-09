@@ -240,18 +240,45 @@ export function openProjectId(page: Page): string {
   return id;
 }
 
+/** A recipe of a stage as the API gives it: the kind of page it is for, its steps and what is wrong with their order. */
+export interface StoredRecipe {
+  kind: string;
+  steps: { processor_key: string; step_id: string }[];
+  order_issues: { kind: string; processor_key: string }[];
+}
+
 /**
- * Read the identifiers of the steps of the active recipe of a stage that run a processor, in the order of the recipe.
- * A manual edit is addressed by the identifier of its step, which the saves of a scenario are told apart by.
+ * Read the recipe of a kind of page of a stage of the open book. A stage has one recipe for each kind of page, each with
+ * steps of its own.
+ *
+ * @param kind The kind of page the recipe is for, `text` unless the scenario is about another kind.
  */
-export async function stepIdsOf(page: Page, stage: string, processor: string): Promise<string[]> {
+export async function recipeOf(page: Page, stage: string, kind = 'text'): Promise<StoredRecipe> {
   const response = await page.request.get(
-    `/api/v1/projects/${openProjectId(page)}/stages/${stage}/recipe`,
+    `/api/v1/projects/${openProjectId(page)}/stages/${stage}/recipes`,
   );
-  const recipe = (await response.json()) as {
-    steps: { processor_key: string; step_id: string }[];
-  };
-  return recipe.steps
+  const recipe = ((await response.json()) as { items: StoredRecipe[] }).items.find(
+    (entry) => entry.kind === kind,
+  );
+  if (recipe === undefined) {
+    throw new Error(`The stage ${stage} has no recipe for pages of the kind ${kind}.`);
+  }
+  return recipe;
+}
+
+/**
+ * Read the identifiers of the steps of the recipe of a kind of page of a stage that run a processor, in the order of the
+ * recipe. A manual edit is addressed by the identifier of its step, which the saves of a scenario are told apart by.
+ *
+ * @param kind The kind of page the recipe is for, `text` unless the scenario is about another kind.
+ */
+export async function stepIdsOf(
+  page: Page,
+  stage: string,
+  processor: string,
+  kind = 'text',
+): Promise<string[]> {
+  return (await recipeOf(page, stage, kind)).steps
     .filter((step) => step.processor_key === processor)
     .map((step) => step.step_id);
 }
@@ -307,8 +334,12 @@ export async function waitForIdleJobs(page: Page, projectId: string): Promise<vo
     .toBe(0);
 }
 
-/** Change the kind of the page at a position of the open book, as the Order stage does, straight through the API. */
-export async function setKind(page: Page, position: number, kind: string): Promise<void> {
+/** Change a field of the page at a position of the open book straight through the API, as the screen does. */
+async function patchPageAt(
+  page: Page,
+  position: number,
+  changes: Record<string, string>,
+): Promise<void> {
   const projectId = openProjectId(page);
   const listed = await page.request.get(`/api/v1/projects/${projectId}/pages?size=100`);
   const items = ((await listed.json()) as { items: { id: string; position: number }[] }).items;
@@ -320,16 +351,34 @@ export async function setKind(page: Page, position: number, kind: string): Promi
   const token = cookies.find((cookie) => cookie.name === CSRF_COOKIE_NAME)?.value ?? '';
   const response = await page.request.patch(`/api/v1/projects/${projectId}/pages/${target.id}`, {
     headers: { [CSRF_HEADER_NAME]: token },
-    data: { kind },
+    data: changes,
   });
   expect(response.ok()).toBe(true);
+}
+
+/** Change the kind of the page at a position of the open book, as the Order stage does, straight through the API. */
+export async function setKind(page: Page, position: number, kind: string): Promise<void> {
+  await patchPageAt(page, position, { kind });
+}
+
+/**
+ * Say by hand what the page at a position of the open book shows, as the menu of the canvas toolbar does.
+ *
+ * @param contentType What the page shows: `text`, `color-picture` or `bw-picture`.
+ */
+export async function setContentType(
+  page: Page,
+  position: number,
+  contentType: string,
+): Promise<void> {
+  await patchPageAt(page, position, { content_type: contentType });
 }
 
 /**
  * Say by hand that every page of the open book is a page of text, but the pages at the positions that are left out.
  *
  * The scans the sheet fixtures draw show a sheet on a dark table, which the detection of the content reads as a picture,
- * and a picture is sent to the variants for plates and passed by the steps of text. A scenario about the steps of a page of
+ * and a picture is processed by the recipe for pictures, not by the steps of text. A scenario about the steps of a page of
  * text says so, and the detection leaves a content type that was set by hand alone.
  */
 export async function markPagesAsText(page: Page, leftOut: readonly number[] = []): Promise<void> {

@@ -1,4 +1,4 @@
-import type { PageEditSchema, PageSchema, RecipeSchema, ScanSchema } from '@/api';
+import type { PageEditSchema, PageSchema, RecipeSchema, ScanSchema, StagePageSchema } from '@/api';
 
 /**
  * What the Split stage knows about the scans of a book: which of them are wider than tall and so look like an open book,
@@ -83,7 +83,7 @@ export function offerFor(pages: readonly PageSchema[], wide: ReadonlySet<string>
 /**
  * Find the recipe of the stage that makes a split of one kind: the one whose first step is that processor.
  *
- * @param recipes The recipes of the Split stage, the active one and the variants.
+ * @param recipes The recipes of the Split stage.
  * @param choice Whether the scan becomes one page or two.
  */
 export function recipeFor(
@@ -95,17 +95,21 @@ export function recipeFor(
 }
 
 /**
- * Tell whether running a recipe over some pages would undo a split, which deletes the right half of a spread.
+ * Tell whether running the stage over some pages would undo a split, which deletes the right half of a spread: a half of
+ * a spread whose recipe, the one of its kind, keeps the scan whole.
  *
- * @param recipe The recipe to run.
- * @param pages The pages the run goes over.
+ * @param recipes The recipes of the stage, one for each kind of page.
+ * @param pages The pages the run goes over, each with its row in the stage, which names its kind.
  */
 export function undoesSplit(
-  recipe: Pick<RecipeSchema, 'steps'>,
-  pages: readonly Pick<PageSchema, 'slot'>[],
+  recipes: readonly Pick<RecipeSchema, 'kind' | 'steps'>[],
+  pages: readonly { page: Pick<PageSchema, 'slot'>; row?: Pick<StagePageSchema, 'kind'> }[],
 ): boolean {
-  return (
-    recipe.steps[0]?.processor_key === SPLIT_PROCESSOR.whole && pages.some((page) => page.slot > 0)
+  return pages.some(
+    ({ page, row }) =>
+      page.slot > 0 &&
+      recipes.find((recipe) => recipe.kind === row?.kind)?.steps[0]?.processor_key ===
+        SPLIT_PROCESSOR.whole,
   );
 }
 

@@ -90,42 +90,45 @@ export function TextListField({
   );
 }
 
-/** The people who took part in the making of the book, one row each with the name as printed and the role. */
-export function ContributorsField({
+/** A field of rows that can be edited, removed and added to, which is what contributors and identifiers both are. */
+function RowsField<T extends object>({
+  legend,
   value,
   onChange,
+  columns,
+  testId,
+  addLabel,
+  removeLabel,
+  newRow,
+  cells,
 }: {
-  value: readonly ContributorSchema[];
-  onChange: (value: ContributorSchema[]) => void;
+  legend: string;
+  value: readonly T[];
+  onChange: (value: T[]) => void;
+  /** The classes that lay the cells of a row and its remove button in a grid. */
+  columns: string;
+  testId: string;
+  addLabel: string;
+  /** Give the name of the button that removes a row, which says whose row it is. */
+  removeLabel: (row: T) => string;
+  /** Give the row that "Add" appends, given the rows there are. */
+  newRow: (rows: readonly T[]) => T;
+  /** Draw the fields of a row, with the function that changes some of its values. */
+  cells: (row: T, change: (changes: Partial<T>) => void) => React.ReactNode;
 }): React.JSX.Element {
-  const messages = MESSAGES.about.contributors;
-  const change = (row: ContributorSchema, changes: Partial<ContributorSchema>): void =>
+  const change = (row: T, changes: Partial<T>): void =>
     onChange(value.map((entry) => (entry === row ? editedRow(row, changes) : entry)));
   return (
     <fieldset className="grid gap-3">
-      <legend className="mb-2 text-sm font-medium">{MESSAGES.about.fields.contributors}</legend>
+      <legend className="mb-2 text-sm font-medium">{legend}</legend>
       {value.map((row) => (
-        <div
-          key={rowKey(row)}
-          className="grid items-end gap-2 sm:grid-cols-[1fr_14rem_auto]"
-          data-testid="contributor"
-        >
-          <TextField
-            label={messages.name}
-            value={row.name}
-            onChange={(event) => change(row, { name: event.target.value })}
-          />
-          <EnumSelect
-            label={messages.role}
-            value={row.role}
-            options={MESSAGES.about.roles}
-            onChange={(role) => change(row, { role })}
-          />
+        <div key={rowKey(row)} className={`grid items-end gap-2 ${columns}`} data-testid={testId}>
+          {cells(row, (changes) => change(row, changes))}
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            aria-label={messages.remove(row.name)}
+            aria-label={removeLabel(row)}
             onClick={() => onChange(value.filter((entry) => entry !== row))}
           >
             <Trash2Icon />
@@ -137,12 +140,50 @@ export function ContributorsField({
         variant="outline"
         size="sm"
         className="w-fit"
-        onClick={() => onChange([...value, { name: '', role: value.length === 0 ? 'aut' : 'ctb' }])}
+        onClick={() => onChange([...value, newRow(value)])}
       >
         <PlusIcon />
-        {messages.add}
+        {addLabel}
       </Button>
     </fieldset>
+  );
+}
+
+/** The people who took part in the making of the book, one row each with the name as printed and the role. */
+export function ContributorsField({
+  value,
+  onChange,
+}: {
+  value: readonly ContributorSchema[];
+  onChange: (value: ContributorSchema[]) => void;
+}): React.JSX.Element {
+  const messages = MESSAGES.about.contributors;
+  return (
+    <RowsField<ContributorSchema>
+      legend={MESSAGES.about.fields.contributors}
+      value={value}
+      onChange={onChange}
+      columns="sm:grid-cols-[1fr_14rem_auto]"
+      testId="contributor"
+      addLabel={messages.add}
+      removeLabel={(row) => messages.remove(row.name)}
+      newRow={(rows) => ({ name: '', role: rows.length === 0 ? 'aut' : 'ctb' })}
+      cells={(row, change) => (
+        <>
+          <TextField
+            label={messages.name}
+            value={row.name}
+            onChange={(event) => change({ name: event.target.value })}
+          />
+          <EnumSelect
+            label={messages.role}
+            value={row.role}
+            options={MESSAGES.about.roles}
+            onChange={(role) => change({ role })}
+          />
+        </>
+      )}
+    />
   );
 }
 
@@ -155,49 +196,31 @@ export function IdentifiersField({
   onChange: (value: IdentifierSchema[]) => void;
 }): React.JSX.Element {
   const messages = MESSAGES.about.identifiers;
-  const change = (row: IdentifierSchema, changes: Partial<IdentifierSchema>): void =>
-    onChange(value.map((entry) => (entry === row ? editedRow(row, changes) : entry)));
   return (
-    <fieldset className="grid gap-3">
-      <legend className="mb-2 text-sm font-medium">{MESSAGES.about.fields.identifiers}</legend>
-      {value.map((row) => (
-        <div
-          key={rowKey(row)}
-          className="grid items-end gap-2 sm:grid-cols-[14rem_1fr_auto]"
-          data-testid="identifier"
-        >
+    <RowsField<IdentifierSchema>
+      legend={MESSAGES.about.fields.identifiers}
+      value={value}
+      onChange={onChange}
+      columns="sm:grid-cols-[14rem_1fr_auto]"
+      testId="identifier"
+      addLabel={messages.add}
+      removeLabel={(row) => messages.remove(row.value)}
+      newRow={() => ({ scheme: 'shelfmark', value: '' })}
+      cells={(row, change) => (
+        <>
           <EnumSelect
             label={messages.scheme}
             value={row.scheme}
             options={MESSAGES.about.schemes}
-            onChange={(scheme) => change(row, { scheme })}
+            onChange={(scheme) => change({ scheme })}
           />
           <TextField
             label={messages.value}
             value={row.value}
-            onChange={(event) => change(row, { value: event.target.value })}
+            onChange={(event) => change({ value: event.target.value })}
           />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label={messages.remove(row.value)}
-            onClick={() => onChange(value.filter((entry) => entry !== row))}
-          >
-            <Trash2Icon />
-          </Button>
-        </div>
-      ))}
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="w-fit"
-        onClick={() => onChange([...value, { scheme: 'shelfmark', value: '' }])}
-      >
-        <PlusIcon />
-        {messages.add}
-      </Button>
-    </fieldset>
+        </>
+      )}
+    />
   );
 }

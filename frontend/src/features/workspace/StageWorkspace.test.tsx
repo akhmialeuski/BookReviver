@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { StageWorkspace } from '@/features/workspace/StageWorkspace';
+import { type PanelToggles, StageWorkspace } from '@/features/workspace/StageWorkspace';
 import { useAfterPick } from '@/features/workspace/stripSheet';
 import { NARROW_QUERY } from '@/shared/hooks/useMediaQuery';
 
@@ -28,17 +28,28 @@ describe('StageWorkspace', () => {
     act(() => find(id)?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
   };
 
-  function render(): void {
+  function render(stepBar?: (toggles: PanelToggles) => React.ReactNode): void {
     act(() =>
       root.render(
         <StageWorkspace
           strip={<Strip />}
+          canvasHeader={<span data-testid="canvas-header">Header</span>}
+          stepBar={stepBar}
           canvas={<div data-testid="canvas">Canvas</div>}
           panel={<p data-testid="panel-body">Panel</p>}
         />,
       ),
     );
   }
+
+  /** A bar of steps that stands where the workspace puts it and holds the two buttons it is given. */
+  const bar = (toggles: PanelToggles): React.JSX.Element => (
+    <nav data-testid="step-bar">
+      {toggles.strip}
+      <span data-testid="steps">Steps</span>
+      {toggles.panel}
+    </nav>
+  );
 
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -69,6 +80,26 @@ describe('StageWorkspace', () => {
       expect(find('pick')).toBeNull();
       expect(find('panel-body')).toBeNull();
       expect(container.querySelector('[data-separator]')).toBeNull();
+    });
+
+    it('puts the two buttons at the ends of the bar of the steps and draws no row above it', () => {
+      render(bar);
+
+      const steps = find('step-bar');
+      expect(steps?.firstElementChild).toBe(find('toggle-strip'));
+      expect(steps?.lastElementChild).toBe(find('toggle-panel'));
+      expect(steps?.previousElementSibling).toBeNull();
+      expect(steps?.parentElement?.firstElementChild).toBe(steps);
+      expect(find('canvas-header')).toBeNull();
+    });
+
+    it('gives a stage without a bar of steps a slim row with the two buttons and its own header between them', () => {
+      render();
+
+      const row = find('toggle-strip')?.parentElement;
+      expect(row?.contains(find('canvas-header'))).toBe(true);
+      expect(row?.contains(find('toggle-panel'))).toBe(true);
+      expect(find('step-bar')).toBeNull();
     });
 
     it('opens the strip and the panel from the two buttons and closes them again', () => {

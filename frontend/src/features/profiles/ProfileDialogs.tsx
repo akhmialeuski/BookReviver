@@ -4,11 +4,10 @@ import { useDeleteProfile, useRenameProfile } from '@/features/profiles/queries'
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
 import {
   Dialog,
-  DialogClose,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -99,7 +98,7 @@ export function DeleteProfileDialog({
   const remove = useDeleteProfile();
 
   return (
-    <Dialog
+    <ConfirmDialog
       open={open}
       onOpenChange={(next) => {
         if (next) {
@@ -107,33 +106,16 @@ export function DeleteProfileDialog({
         }
         setOpen(next);
       }}
-    >
-      <DialogTrigger asChild>{children}</DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{labels.removeTitle}</DialogTitle>
-          <DialogDescription>{labels.removeDescription(profile.name)}</DialogDescription>
-        </DialogHeader>
-        {remove.isError ? <ErrorAlert message={describeError(remove.error)} /> : null}
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button variant="outline">{MESSAGES.common.cancel}</Button>
-          </DialogClose>
-          <Button
-            variant="destructive"
-            disabled={remove.isPending}
-            data-testid="profile-delete-submit"
-            onClick={() =>
-              remove.mutate(
-                { path: { profile_id: profile.id } },
-                { onSuccess: () => setOpen(false) },
-              )
-            }
-          >
-            {remove.isPending ? labels.removing : labels.removeSubmit}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      trigger={children}
+      title={labels.removeTitle}
+      description={labels.removeDescription(profile.name)}
+      error={remove.isError ? describeError(remove.error) : null}
+      submitLabel={remove.isPending ? labels.removing : labels.removeSubmit}
+      submitDisabled={remove.isPending}
+      submitTestId="profile-delete-submit"
+      onConfirm={() =>
+        remove.mutate({ path: { profile_id: profile.id } }, { onSuccess: () => setOpen(false) })
+      }
+    />
   );
 }

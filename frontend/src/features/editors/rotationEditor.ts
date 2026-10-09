@@ -1,7 +1,8 @@
+import { INPUT_EDITOR } from '@/features/editors/inputEditor';
 import { RotationCanvas } from '@/features/editors/RotationCanvas';
 import { RotationPanel } from '@/features/editors/RotationPanel';
 import { type RotationShape, readRotation, writeRotation } from '@/features/editors/shapes';
-import { type EditorDefinition, Picture } from '@/features/editors/types';
+import type { EditorDefinition } from '@/features/editors/types';
 import { MESSAGES } from '@/shared/messages';
 
 /**
@@ -13,12 +14,9 @@ import { MESSAGES } from '@/shared/messages';
  */
 
 export const rotationEditor: EditorDefinition<RotationShape> = {
-  picture: Picture.Input,
-  alwaysOn: false,
+  ...INPUT_EDITOR,
   needsResult: false,
-  owner: ({ current }) => current.page,
   size: () => null,
-  runsAfterEdit: () => true,
   fallback: ({ result }) => ({ degrees: result?.angle ?? 0 }),
   read: readRotation,
   write: writeRotation,

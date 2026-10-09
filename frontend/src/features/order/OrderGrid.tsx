@@ -1,6 +1,5 @@
 import {
   type Announcements,
-  closestCenter,
   DndContext,
   DragOverlay,
   type DragStartEvent,
@@ -20,7 +19,7 @@ import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
 import { MousePointerClickIcon } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PageSchema } from '@/api';
-import { carriedBy, dropPlace } from '@/features/order/drag';
+import { carriedBy, collideUnderPointer, dropPlace } from '@/features/order/drag';
 import { GapCard } from '@/features/order/GapCard';
 import { columnsOf, layoutOf, rowOfCells, rowsOf } from '@/features/order/layout';
 import { OrderTile, type TileClick } from '@/features/order/OrderTile';
@@ -46,6 +45,8 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * few around them are in the document, however long the book is. The sortable list still names every page, but only the
  * tiles in the document are registered with dnd-kit, so a drag works on what is drawn and the auto-scroll of dnd-kit
  * brings the next rows in. The row of the held page stays in the document while it is held, so the drag never loses it.
+ * The virtualizer moves the rows below a row once it has measured it, which dnd-kit does not notice, so a page lands on
+ * the tile the document shows under the pointer (see `collideUnderPointer`), not on one of the rectangles dnd-kit measured.
  */
 
 /** Pixels the pointer must travel before a press is a drag, so that a click still selects. */
@@ -72,6 +73,7 @@ export interface FocusRequest {
 
 export function OrderGrid({
   pages,
+  thumbnails,
   gaps,
   selected,
   spread,
@@ -89,6 +91,8 @@ export function OrderGrid({
   onAddMissing,
 }: {
   pages: readonly PageSchema[];
+  /** The thumbnail of each page at the Order stage by the identifier of the page; a page without one has no entry. */
+  thumbnails: ReadonlyMap<string, string>;
   gaps: readonly LabelGap[];
   selected: ReadonlySet<string>;
   spread: boolean;
@@ -232,6 +236,8 @@ export function OrderGrid({
   const activePage = activeId === null ? undefined : byId.get(activeId);
   const carriedCount = activeId === null ? 0 : carriedBy(selected, activeId).size;
 
+  const virtualRows = virtualizer.getVirtualItems();
+
   return (
     <div
       className="group/grid flex min-h-0 flex-1 flex-col"
@@ -259,7 +265,7 @@ export function OrderGrid({
         ) : (
           <DndContext
             sensors={sensors}
-            collisionDetection={closestCenter}
+            collisionDetection={collideUnderPointer}
             accessibility={{
               announcements,
               screenReaderInstructions: { draggable: MESSAGES.order.drag.instructions },
@@ -284,7 +290,7 @@ export function OrderGrid({
           >
             <SortableContext items={ids} strategy={KEEP_IN_PLACE}>
               <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
-                {virtualizer.getVirtualItems().map((row) => (
+                {virtualRows.map((row) => (
                   <div
                     key={row.key}
                     ref={virtualizer.measureElement}
@@ -318,6 +324,7 @@ export function OrderGrid({
                             <OrderTile
                               key={page.id}
                               page={page}
+                              thumbnail={thumbnails.get(page.id) ?? null}
                               selected={selected.has(page.id)}
                               dropSide={target?.pageId === page.id ? target.side : null}
                               previewLabel={previewLabels?.get(page.id)}
@@ -339,7 +346,12 @@ export function OrderGrid({
             <DragOverlay dropAnimation={null}>
               {activePage === undefined ? null : (
                 <div className="relative" style={{ width: size }}>
-                  <PageThumbnail page={activePage} alt="" className="shadow-lg" />
+                  <PageThumbnail
+                    page={activePage}
+                    src={thumbnails.get(activePage.id) ?? null}
+                    alt=""
+                    className="shadow-lg"
+                  />
                   {carriedCount > 1 ? (
                     <span
                       className="absolute -top-2 -right-2 rounded-full bg-foreground px-2 py-0.5 text-xs font-medium text-background"

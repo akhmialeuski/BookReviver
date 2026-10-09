@@ -1,7 +1,7 @@
 import { useIsMutating } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { useEffect, useMemo, useState } from 'react';
-import type { PageSchema, PaginationSectionSchema } from '@/api';
+import type { PageSchema, PaginationSectionSchema, StagePageSchema } from '@/api';
 import { AttachDialog } from '@/features/order/AttachDialog';
 import { DeletePagesDialog } from '@/features/order/DeletePagesDialog';
 import { insertBody, missingPageBodies } from '@/features/order/insert';
@@ -25,12 +25,14 @@ import { anchorBody, pageIdsOfSource } from '@/features/pages/order';
 import { useSections } from '@/features/pages/sections';
 import { pruneSelection } from '@/features/pages/selection';
 import { type StageSearch, ViewMode } from '@/features/workspace/params';
+import { useStageRows } from '@/features/workspace/queries';
 import { StageWorkspace } from '@/features/workspace/StageWorkspace';
 import {
   type ClickModifiers,
   type SelectionState,
   selectionAfterClick,
 } from '@/features/workspace/selection';
+import { joinRows, thumbnailsOf } from '@/features/workspace/strip';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
 import { ErrorAlert } from '@/shared/ui/error-alert';
@@ -44,9 +46,13 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * the grid colours each page by its section. The pages are read from the manifest the viewer shares, so the events of the
  * book and the reader's own changes redraw the grid without a reload. `?source=<id>` opens the stage with the pages of
  * that file selected, which is how the Import stage points at the pages it made. `?view=spread` shows spreads.
+ *
+ * Every picture on the screen is the page at this stage, from the rows of the stage, so a page that ran through a later
+ * stage still shows the leaf chosen for it.
  */
 
 const NO_PAGES: readonly PageSchema[] = [];
+const NO_ROWS: readonly StagePageSchema[] = [];
 const NO_SECTIONS: readonly PaginationSectionSchema[] = [];
 const NOTHING_SELECTED: SelectionState = { selected: new Set(), anchorId: null };
 
@@ -66,6 +72,12 @@ export function OrderScreen({
   const createPages = useCreatePages(projectId);
   const sections = useSections(projectId);
   const pages = manifest.data ?? NO_PAGES;
+  // Every picture of the screen is the page at this stage, which the rows give, and never the latest result of the book
+  const rows = useStageRows(projectId, 'page-order');
+  const thumbnails = useMemo(
+    () => thumbnailsOf(joinRows(pages, rows.data ?? NO_ROWS)),
+    [pages, rows.data],
+  );
 
   // What the reader picked, kept with the file the address named, so a new address starts from its own pages
   const [picked, setPicked] = useState<{ source?: string; state: SelectionState } | null>(null);
@@ -174,6 +186,7 @@ export function OrderScreen({
       )}
       <OrderGrid
         pages={pages}
+        thumbnails={thumbnails}
         gaps={gaps}
         selected={selection.selected}
         spread={spread}
@@ -212,6 +225,7 @@ export function OrderScreen({
       <SelectionPanel
         projectId={projectId}
         selected={selectedPages}
+        thumbnails={thumbnails}
         gaps={gaps}
         missing={missing}
         places={places}
@@ -256,6 +270,7 @@ export function OrderScreen({
       <MovePagesDialog
         projectId={projectId}
         pages={pages}
+        thumbnails={thumbnails}
         target={moveTarget}
         onClose={() => setMoveTarget(null)}
       />

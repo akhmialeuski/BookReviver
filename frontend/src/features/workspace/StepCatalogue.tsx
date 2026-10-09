@@ -14,7 +14,8 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 
 /**
- * The catalogue of the steps a stage can have, which the "+ Step" button of the bar opens: every processor of the stage
+ * The catalogue of the steps a stage can have, which the plus button opens, in the bar of a stage that has one and under
+ * the list of steps of a stage that has none: every processor of the stage
  * with what it does, and the steps that are planned and not built, marked "Soon".
  *
  * Choosing a step adds it to the saved recipe at once, and it is shown in the bar and opened. A step has no identifier
@@ -35,8 +36,8 @@ export function StepCatalogue({
   processing: Processing;
   /** The rows of the stage, which the number of pages the new step makes out of date is counted from. */
   rows: readonly StagePageSchema[];
-  /** Called with the identifier the server gave the new step, so the step can be opened. */
-  onAdded: (stepId: string) => void;
+  /** Called with the identifier the server gave the new step and its place from zero, so the step can be opened. */
+  onAdded: (stepId: string, index: number) => void;
 }): React.JSX.Element | null {
   const { projectId, stage, recipe, catalogue } = processing;
   const save = useSaveRecipe(projectId, stage);
@@ -63,18 +64,14 @@ export function StepCatalogue({
     save.mutate(
       {
         path: { project_id: projectId, stage, recipe_id: recipe.id },
-        body: {
-          name: recipe.name,
-          steps: bodyOf(addStep(saved, processor, index)),
-          order: processing.orderMode,
-        },
+        body: { steps: bodyOf(addStep(saved, processor, index)), order: processing.orderMode },
       },
       {
         onSuccess: (updated) => {
           setOpen(false);
           const stepId = updated.steps[index]?.step_id;
           if (stepId !== undefined) {
-            onAdded(stepId);
+            onAdded(stepId, index);
           }
         },
       },
@@ -93,13 +90,13 @@ export function StepCatalogue({
       <PopoverTrigger asChild>
         <Button
           variant="outline"
-          size="sm"
+          size="icon-sm"
           className="shrink-0 border-dashed"
-          title={labels.hint}
+          aria-label={labels.open}
+          title={labels.openHint}
           data-testid="step-catalogue"
         >
-          <PlusIcon />
-          {labels.open}
+          <PlusIcon aria-hidden="true" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[28rem] p-2" data-testid="step-catalogue-list">

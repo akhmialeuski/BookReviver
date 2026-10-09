@@ -268,6 +268,36 @@ describe('usePreview', () => {
     expect(sdk.preview).toHaveBeenCalledTimes(2);
   });
 
+  it('asks again for the same form once the run that cancelled its job has ended, and says nothing meanwhile', async () => {
+    sdk.job.mockImplementation(async ({ path }) => ({
+      data: jobOf(path.job_id, path.job_id === 'job-1' ? 'cancelled' : 'running'),
+    }));
+    const listing = (...items: JobSchema[]) => ({
+      data: { items, total: items.length, page: 1, size: 20, pages: 1 },
+    });
+
+    render(ask(5));
+    await elapse(400);
+    sdk.jobs.mockResolvedValue(listing(jobOf('run')));
+    await act(async () => {
+      await client.invalidateQueries();
+    });
+    await elapse(BUSY_RETRY_MS * 2);
+
+    expect(latest.error).toBeNull();
+    expect(latest.waiting).toBe(true);
+    expect(sdk.preview).toHaveBeenCalledTimes(1);
+
+    sdk.jobs.mockResolvedValue(listing());
+    await act(async () => {
+      await client.invalidateQueries();
+    });
+    await elapse(BUSY_RETRY_MS);
+
+    expect(sdk.preview).toHaveBeenCalledTimes(2);
+    expect(latest.working).toBe(true);
+  });
+
   it('waits while another job of the book is going, and asks when it has ended', async () => {
     sdk.jobs.mockResolvedValue({
       data: { items: [jobOf('run')], total: 1, page: 1, size: 20, pages: 1 },

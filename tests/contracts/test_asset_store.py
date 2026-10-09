@@ -34,8 +34,30 @@ TILE_NAME: str = 'info.json'
 CASE_ARG: str = 'case'
 KEY_ARG: str = 'key'
 OUTSIDE_ASSETS_MATCH: str = 'does not lie under the assets directory of a project'
+SOURCE_FILE_KEY: StorageKey = StorageKey(f'{KEYS.source(SourceId(uuid4()))}/book.pdf')
+# Keys that are not under the assets of a project, by the name of their case; the names are fixed so that every worker
+# of a parallel run collects the same tests, while some keys hold a new identifier on each import
+OUTSIDE_ASSETS_KEYS: dict[str, str] = {
+    'empty': '',
+    'absolute': '/etc/passwd',
+    'climbing': '../outside',
+    'root': 'projects',
+    'project': str(KEYS.prefix),
+    'incoming-area': KEYS.incoming_area,
+    'upload': KEYS.incoming(JobId(uuid4())),
+    'sources-area': KEYS.sources_area,
+    'source-file': SOURCE_FILE_KEY,
+    # The whole area is removed by delete_project alone
+    'assets-area': KEYS.assets_area,
+    'climbing-out-of-assets': f'{KEYS.assets_area}/../sources',
+    'empty-segment': f'{PAGE_PREFIX}//full.jpg',
+    'not-a-project': f'projects/book/assets/{Rendition.FULL_JPEG}',
+    'project-in-other-spelling': f'projects/{str(KEYS.project_id).upper()}/assets/book/typesetting',
+}
 OLD_CONTENT: bytes = b'old image'
 NEW_CONTENT: bytes = b'new image'
+# Longer than the other two, so a size that adds the wrong files up does not come out right by chance
+TILE_CONTENT: bytes = b'a tile of the pyramid of the image'
 
 
 def _fill_file(path: Path, content: bytes) -> None:
@@ -356,7 +378,7 @@ class TestCopy:
         await _store_file(fx_asset_store, key=FILE_KEY, content=NEW_CONTENT)
 
         with pytest.raises(ValueError, match=OUTSIDE_ASSETS_MATCH):
-            await fx_asset_store.copy(FILE_KEY, StorageKey(f'{KEYS.source(SourceId(uuid4()))}/book.pdf'))
+            await fx_asset_store.copy(FILE_KEY, SOURCE_FILE_KEY)
 
 
 class TestDeletePrefix:
@@ -402,42 +424,7 @@ class TestDeletePrefix:
 
         assert await _read_file(fx_asset_store, FILE_KEY) == NEW_CONTENT
 
-    @pytest.mark.parametrize(
-        KEY_ARG,
-        [
-            '',
-            '/etc/passwd',
-            '../outside',
-            'projects',
-            str(KEYS.prefix),
-            KEYS.incoming_area,
-            KEYS.incoming(JobId(uuid4())),
-            KEYS.sources_area,
-            f'{KEYS.source(SourceId(uuid4()))}/book.pdf',
-            # The whole area is removed by delete_project alone
-            KEYS.assets_area,
-            f'{KEYS.assets_area}/../sources',
-            f'{PAGE_PREFIX}//full.jpg',
-            f'projects/book/assets/{Rendition.FULL_JPEG}',
-            f'projects/{str(KEYS.project_id).upper()}/assets/book/typesetting',
-        ],
-        ids=[
-            'empty',
-            'absolute',
-            'climbing',
-            'root',
-            'project',
-            'incoming-area',
-            'upload',
-            'sources-area',
-            'source-file',
-            'assets-area',
-            'climbing-out-of-assets',
-            'empty-segment',
-            'not-a-project',
-            'project-in-other-spelling',
-        ],
-    )
+    @pytest.mark.parametrize(KEY_ARG, OUTSIDE_ASSETS_KEYS.values(), ids=OUTSIDE_ASSETS_KEYS.keys())
     async def test_refuses_keys_outside_assets(self, fx_asset_store: AssetStore, key: str) -> None:
         """Verify only keys under a project's ``assets/`` are accepted, so a wrong key cannot erase a source.
 
@@ -450,6 +437,60 @@ class TestDeletePrefix:
             await fx_asset_store.delete_prefix(StorageKey(key))
         with pytest.raises(ValueError, match=OUTSIDE_ASSETS_MATCH):
             await _store_file(fx_asset_store, key=StorageKey(key), content=NEW_CONTENT)
+
+
+class TestSizeOf:
+    """Contract of AssetStore.size_of()."""
+
+    async def test_adds_up_the_files_under_the_prefix_only(self, fx_asset_store: AssetStore) -> None:
+        """Verify a file, a directory and a prefix over both are measured, and a key that only shares the string is not.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        await _store_file(fx_asset_store, key=FILE_KEY, content=NEW_CONTENT)
+        await _store_directory(fx_asset_store, key=DIRECTORY_KEY, content=TILE_CONTENT)
+        await _store_file(fx_asset_store, key=SIBLING_KEY, content=NEW_CONTENT)
+
+        expect(await fx_asset_store.size_of(FILE_KEY) == len(NEW_CONTENT))
+        expect(await fx_asset_store.size_of(DIRECTORY_KEY) == len(TILE_CONTENT))
+        expect(await fx_asset_store.size_of(PAGE_PREFIX) == len(NEW_CONTENT) + len(TILE_CONTENT))
+        assert_expectations()
+
+    async def test_matches_what_deleting_the_prefix_frees(self, fx_asset_store: AssetStore) -> None:
+        """Verify a prefix that was measured is empty once it is deleted, and measures nothing then.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        await _store_directory(fx_asset_store, key=DIRECTORY_KEY, content=TILE_CONTENT)
+        measured = await fx_asset_store.size_of(PAGE_PREFIX)
+
+        await fx_asset_store.delete_prefix(PAGE_PREFIX)
+
+        expect(measured == len(TILE_CONTENT))
+        expect(await fx_asset_store.size_of(PAGE_PREFIX) == 0)
+        assert_expectations()
+
+    async def test_missing_prefix_takes_no_space(self, fx_asset_store: AssetStore) -> None:
+        """Verify a prefix with nothing under it measures 0 bytes, which is no error.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        """
+        assert await fx_asset_store.size_of(PAGE_PREFIX) == 0
+
+    @pytest.mark.parametrize(KEY_ARG, OUTSIDE_ASSETS_KEYS.values(), ids=OUTSIDE_ASSETS_KEYS.keys())
+    async def test_refuses_keys_outside_assets(self, fx_asset_store: AssetStore, key: str) -> None:
+        """Verify only keys under a project's ``assets/`` are measured, as only they are deleted.
+
+        :param fx_asset_store: Asset store of the storage backend under test.
+        :type fx_asset_store: AssetStore
+        :param key: Storage key under test.
+        :type key: str
+        """
+        with pytest.raises(ValueError, match=OUTSIDE_ASSETS_MATCH):
+            await fx_asset_store.size_of(StorageKey(key))
 
 
 class TestDeleteProject:

@@ -8,13 +8,15 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
-from bookreviver.domain.enums import ResultMark, VersionScale
+from bookreviver.domain.enums import ResultMark, Stage, VersionScale
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import PageVersionId
-from bookreviver.domain.values import ResultNote
+from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.values import RecipeDraft, ResultNote, StageRun, Step
 from bookreviver.services.result_marks import ResultMarksService
 from tests.helpers.builders import EPOCH
-from tests.services.test_processing_remake import collected_book
+from tests.helpers.processors import STRENGTH_PARAMETER
+from tests.helpers.spreads import run_stage
 from tests.services.test_processing_versions import ran_geometry
 
 if TYPE_CHECKING:
@@ -144,20 +146,18 @@ class TestSet:
         with pytest.raises(NotFoundError):
             await _marks(fx_kit).changes(stranger, project.id, page.id, version.id)
 
-    async def test_mark_and_comment_survive_the_collection_and_the_remake_of_the_picture(
-        self, fx_kit: ProcessingKit
-    ) -> None:
-        """Verify a collection and a run that makes the picture again keep the notes on the result.
+    async def test_a_comment_keeps_the_version_and_its_notes_through_a_collection(self, fx_kit: ProcessingKit) -> None:
+        """Verify a collection that follows a run deletes neither the version with a comment nor its mark and files.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, page, removed, _ = await collected_book(fx_kit)
-        assert removed.files_removed
-        await _marks(fx_kit).set(
-            actor, project.id, page.id, removed.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
-        )
-        job = await fx_kit.service().start_remake(actor, project.id, page.id, removed.id)
-        await fx_kit.jobs().run_stage(job.id)
-        remade = await fx_kit.stored_version(removed.id)
-        assert (remade.files_removed, remade.mark, remade.comment) == (False, ResultMark.BAD, COMMENT)
+        actor, project, page, first = await ran_geometry(fx_kit)
+        await _marks(fx_kit).set(actor, project.id, page.id, first.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT))
+        stronger = RecipeDraft(steps=[Step(processor_key=fx_kit.fake.spec.key, params={STRENGTH_PARAMETER: 2})])
+        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, stronger)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        kept = await fx_kit.stored_version(first.id)
+        async with fx_kit.assets.readable(ProjectKeys(project.id).version_directory(first)):
+            pass
+        assert (kept.mark, kept.comment) == (ResultMark.BAD, COMMENT)

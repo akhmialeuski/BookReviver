@@ -1,4 +1,4 @@
-"""Tests for the order of steps on the recipe, variant and profile endpoints, over processors that declare a place."""
+"""Tests for the order of steps on the recipe and profile endpoints, over processors that declare a place."""
 
 from typing import TYPE_CHECKING
 
@@ -9,7 +9,7 @@ from fastapi import status
 
 from bookreviver.api.schemas.processing import ProcessorSchema, RecipeSchema
 from bookreviver.api.schemas.profiles import AppliedProfileSchema
-from bookreviver.domain.enums import OrderMode, OrderRuleKind
+from bookreviver.domain.enums import OrderMode, OrderRuleKind, RecipeKind
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.services.recipes import DefaultRecipes
@@ -110,26 +110,48 @@ async def fx_project(fx_database: InMemoryDatabase, fx_actor: Actor) -> Project:
     return project
 
 
-def recipe_path(project: Project) -> str:
-    """Return the path of the active recipe of the geometry stage of a project.
+def recipes_path(project: Project) -> str:
+    """Return the path of the recipes of the geometry stage of a project.
 
     :param project: The project.
     :type project: Project
     :returns: The path of the request.
     :rtype: str
     """
-    return f'{API_PATH}/projects/{project.id}/stages/geometry/recipe'
+    return f'{API_PATH}/projects/{project.id}/stages/geometry/recipes'
 
 
-def variants_path(project: Project) -> str:
-    """Return the path of the variants of the geometry stage of a project.
+async def recipe_of(client: httpx.AsyncClient, project: Project, kind: RecipeKind = RecipeKind.TEXT) -> RecipeSchema:
+    """Read the recipe of a kind of the geometry stage of a project, which the first read creates.
 
+    :param client: Client of the running application.
+    :type client: httpx.AsyncClient
     :param project: The project.
     :type project: Project
+    :param kind: The kind of page, text unless given.
+    :type kind: RecipeKind
+    :returns: The recipe.
+    :rtype: RecipeSchema
+    """
+    listed = await client.get(recipes_path(project))
+    return next(
+        recipe for recipe in (RecipeSchema.model_validate(item) for item in listed.json()[ITEMS]) if recipe.kind is kind
+    )
+
+
+async def recipe_url(client: httpx.AsyncClient, project: Project, kind: RecipeKind = RecipeKind.TEXT) -> str:
+    """Give the path of the recipe of a kind of the geometry stage of a project.
+
+    :param client: Client of the running application.
+    :type client: httpx.AsyncClient
+    :param project: The project.
+    :type project: Project
+    :param kind: The kind of page, text unless given.
+    :type kind: RecipeKind
     :returns: The path of the request.
     :rtype: str
     """
-    return f'{API_PATH}/projects/{project.id}/stages/geometry/variants'
+    return f'{recipes_path(project)}/{(await recipe_of(client, project, kind)).id}'
 
 
 def body_of(*keys: str, order: OrderMode | None = None) -> dict[str, object]:
@@ -142,7 +164,7 @@ def body_of(*keys: str, order: OrderMode | None = None) -> dict[str, object]:
     :returns: The JSON body of a request.
     :rtype: dict[str, object]
     """
-    body: dict[str, object] = {'name': NAME, 'steps': [{'processor_key': key} for key in keys]}
+    body: dict[str, object] = {'steps': [{'processor_key': key} for key in keys]}
     if order is not None:
         body['order'] = order
     return body
@@ -183,7 +205,7 @@ class TestRecipeOrder:
         :param fx_project: Book of the signed-in account.
         :type fx_project: Project
         """
-        response = await fx_client.put(recipe_path(fx_project), json=body_of(SECOND_KEY, FIRST_KEY))
+        response = await fx_client.put(await recipe_url(fx_client, fx_project), json=body_of(SECOND_KEY, FIRST_KEY))
         recipe = RecipeSchema.model_validate_json(response.content)
         (issue,) = recipe.order_issues
         expect(response.status_code == status.HTTP_200_OK)
@@ -202,7 +224,9 @@ class TestRecipeOrder:
         :param fx_project: Book of the signed-in account.
         :type fx_project: Project
         """
-        response = await fx_client.put(recipe_path(fx_project), json=body_of(FIRST_KEY, SECOND_KEY, THIRD_KEY))
+        response = await fx_client.put(
+            await recipe_url(fx_client, fx_project), json=body_of(FIRST_KEY, SECOND_KEY, THIRD_KEY)
+        )
         assert RecipeSchema.model_validate_json(response.content).order_issues == []
 
     async def test_a_step_where_it_cannot_work_is_refused_with_its_reason_and_the_recipe_stays(
@@ -215,11 +239,11 @@ class TestRecipeOrder:
         :param fx_project: Book of the signed-in account.
         :type fx_project: Project
         """
-        refused = await fx_client.put(recipe_path(fx_project), json=body_of(THIRD_KEY, SECOND_KEY))
-        kept = await fx_client.get(recipe_path(fx_project))
+        refused = await fx_client.put(await recipe_url(fx_client, fx_project), json=body_of(THIRD_KEY, SECOND_KEY))
+        kept = await recipe_of(fx_client, fx_project)
         expect(refused.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
         expect(refused.json()[DETAIL] == THIRD_REASON)
-        expect([step['processor_key'] for step in kept.json()['steps']] == [FAKE_KEY])
+        expect([step.processor_key for step in kept.steps] == [FAKE_KEY])
         assert_expectations()
 
     async def test_the_free_order_saves_the_step_and_warns_of_it_on_every_later_read(
@@ -233,36 +257,35 @@ class TestRecipeOrder:
         :type fx_project: Project
         """
         body = body_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE)
-        saved = await fx_client.put(recipe_path(fx_project), json=body)
-        read = await fx_client.get(recipe_path(fx_project))
+        saved = await fx_client.put(await recipe_url(fx_client, fx_project), json=body)
+        read = await recipe_of(fx_client, fx_project)
         expect(saved.status_code == status.HTTP_200_OK)
-        for response in (saved, read):
-            issues = RecipeSchema.model_validate_json(response.content).order_issues
+        for issues in (RecipeSchema.model_validate_json(saved.content).order_issues, read.order_issues):
             expect([(issue.kind, issue.reason) for issue in issues] == [(OrderRuleKind.REQUIRED, THIRD_REASON)])
         assert_expectations()
 
-    async def test_a_variant_is_refused_and_saved_by_the_same_rule(
+    async def test_the_recipe_of_another_kind_is_refused_and_saved_by_the_same_rule(
         self, fx_client: httpx.AsyncClient, fx_project: Project
     ) -> None:
-        """Verify a variant that is added or saved keeps the order as the active recipe does.
+        """Verify the recipe of every kind keeps the order as the recipe of text pages does.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
         :param fx_project: Book of the signed-in account.
         :type fx_project: Project
         """
-        refused = await fx_client.post(variants_path(fx_project), json=body_of(THIRD_KEY, SECOND_KEY))
-        created = await fx_client.post(variants_path(fx_project), json=body_of(FIRST_KEY, SECOND_KEY))
-        variant = RecipeSchema.model_validate_json(created.content)
-        put_url = f'{variants_path(fx_project)}/{variant.id}'
-        put_refused = await fx_client.put(put_url, json=body_of(THIRD_KEY, SECOND_KEY))
-        put_free = await fx_client.put(put_url, json=body_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE))
-        listed = await fx_client.get(variants_path(fx_project))
+        url = await recipe_url(fx_client, fx_project, RecipeKind.BLANK)
+        refused = await fx_client.put(url, json=body_of(THIRD_KEY, SECOND_KEY))
+        saved = await fx_client.put(url, json=body_of(FIRST_KEY, SECOND_KEY))
+        free = await fx_client.put(url, json=body_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE))
+        read = await recipe_of(fx_client, fx_project, RecipeKind.BLANK)
         expect(refused.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
-        expect(created.status_code == status.HTTP_201_CREATED and variant.order_issues == [])
-        expect(put_refused.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
-        expect(put_free.status_code == status.HTTP_200_OK)
-        expect([len(item['order_issues']) for item in listed.json()[ITEMS] if item['id'] == str(variant.id)] == [1])
+        expect(
+            saved.status_code == status.HTTP_200_OK
+            and RecipeSchema.model_validate_json(saved.content).order_issues == []
+        )
+        expect(free.status_code == status.HTTP_200_OK)
+        expect(len(read.order_issues) == 1)
         assert_expectations()
 
 
@@ -300,7 +323,7 @@ class TestProfileOrder:
         created = await fx_client.post(PROFILES_PATH, json={'name': NAME, 'stage': 'geometry', 'steps': steps})
         profile_id = created.json()['id']
         applied = await fx_client.post(
-            f'{API_PATH}/projects/{fx_project.id}/recipe-profiles/{profile_id}/apply', json={}
+            f'{API_PATH}/projects/{fx_project.id}/recipe-profiles/{profile_id}/apply', json={'kind': 'text'}
         )
         answer = AppliedProfileSchema.model_validate_json(applied.content)
         expect(applied.status_code == status.HTTP_201_CREATED)

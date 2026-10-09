@@ -3,7 +3,7 @@ import type { PageStepChangeSchema, PageVersionSchema } from '@/api';
 import { stepChain } from '@/features/editors/chain';
 import { useClearHistory, usePageHistory, useUndo } from '@/features/processing/historyQueries';
 import { lastStanding, stands } from '@/features/processing/pageHistory';
-import { useChooseVersion, useRemakeVersion, useVersions } from '@/features/processing/queries';
+import { useChooseVersion, useVersions } from '@/features/processing/queries';
 import type { StepDraft } from '@/features/processing/recipe';
 import { historyOf } from '@/features/processing/results';
 import { fieldTitleOf, formSchemaOf } from '@/features/processing/schema';
@@ -12,7 +12,6 @@ import { TIMELINE_FILTERS, TimelineFilter, timelineOf } from '@/features/process
 import type { Processing } from '@/features/processing/useProcessing';
 import { useUndoKey } from '@/features/processing/useUndoKey';
 import { HistoryFrame } from '@/features/workspace/HistoryFrame';
-import { useActiveJobs } from '@/features/workspace/queries';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
 import { Button } from '@/shared/ui/button';
@@ -37,8 +36,8 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * are all read at once and a result older than the oldest change loaded could still have an unloaded change above it.
  *
  * A result is the current one when the page stands on it, which is when it is the current version of the stage or one that
- * version was made from. The versions of the whole stage tell that, so it holds for a page that a variant of the recipe
- * ran, whose steps are not the steps of the recipe on the screen.
+ * version was made from. The versions of the whole stage tell that, so it holds for a page that the recipe ran with
+ * other steps than it has now, which are not the steps of the recipe on the screen.
  *
  * A change that stands has its own "Undo to here", which takes back that change and every change after it and asks first
  * when that is more than one; Ctrl+Z takes back the newest. A result that is not the current one may be made so when it
@@ -90,15 +89,13 @@ export function PageTimeline({
     stage,
     stepId === null ? {} : { step: stepId },
   );
-  // The versions of the whole stage tell what the page stands on, whichever recipe ran it: the step row of the server
-  // follows the recipe the page was run by, which a variant that the rules chose is not the recipe of the open step
+  // The versions of the whole stage tell what the page stands on, whatever steps ran it: the step row of the server
+  // follows the recipe the page was run by, which may have had other steps than the recipe of the open step
   const ofStage = useVersions(projectId, unsaved ? undefined : pageId, stage);
   const versions = stepId === null ? ofStage : ofStep;
   const undo = useUndo(projectId, stage);
   const clear = useClearHistory(projectId, stage);
   const choose = useChooseVersion(projectId, stage);
-  const remake = useRemakeVersion(projectId);
-  const activeJobs = useActiveJobs(projectId);
   const [filter, setFilter] = useState<TimelineFilter>(TimelineFilter.All);
   const [shown, setShown] = useState(ROWS_AT_A_TIME);
   const [question, setQuestion] = useState<Question>(null);
@@ -150,13 +147,6 @@ export function PageTimeline({
     (name: string) => (schema === undefined ? name : fieldTitleOf(schema, name)),
     [schema],
   );
-  // The result whose picture is being made again, from the moment it was asked for until its job has ended
-  const remakingId =
-    remake.isPending ||
-    (remake.data !== undefined && activeJobs.data?.some((job) => job.id === remake.data.id))
-      ? remake.variables?.path.version_id
-      : undefined;
-
   // An undo of the newest change is never dropped while an earlier one settles: the requests of the book go to the server
   // one at a time in the order they were made, and each takes back the newest change that stands by then
   const takeBack = (changeId: string | null): void => {
@@ -189,14 +179,10 @@ export function PageTimeline({
     if (pageId === undefined) {
       return;
     }
-    if (version.files_removed) {
-      remake.mutate({ path: { project_id: projectId, page_id: pageId, version_id: version.id } });
-    } else {
-      choose.mutate({
-        path: { project_id: projectId, page_id: pageId, stage },
-        body: { version_id: version.id },
-      });
-    }
+    choose.mutate({
+      path: { project_id: projectId, page_id: pageId, stage },
+      body: { version_id: version.id },
+    });
   };
   const confirm = (): void => {
     if (question?.kind === 'undo') {
@@ -210,7 +196,7 @@ export function PageTimeline({
   };
   const asked = question?.kind === 'undo' ? labels.confirmUndo : labels.confirmClear;
   // A refused read of the history has its own paragraph below, so it is not an error of an action as well
-  const error = undo.error ?? clear.error ?? choose.error ?? remake.error;
+  const error = undo.error ?? clear.error ?? choose.error;
   const remaining = Math.min(ROWS_AT_A_TIME, timeline.total - rows.length);
 
   return (
@@ -288,11 +274,8 @@ export function PageTimeline({
                     (candidate) => candidate.key === row.entry.version.processor.key,
                   )}
                   canUse={canUse}
-                  disabled={choose.isPending || remakingId !== undefined}
-                  using={
-                    (choose.isPending && choose.variables?.body.version_id === row.id) ||
-                    remakingId === row.id
-                  }
+                  disabled={choose.isPending}
+                  using={choose.isPending && choose.variables?.body.version_id === row.id}
                   onUse={() => use(row.entry.version)}
                 />
               ),

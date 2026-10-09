@@ -19,6 +19,7 @@ import { Button } from '@/shared/ui/button';
 
 const labels = MESSAGES.processing.timeline;
 const resultLabels = MESSAGES.processing.history;
+const values = MESSAGES.processing.steps.values;
 
 const ROW = 'min-w-0 rounded-lg border px-3 py-2 text-sm';
 const META = 'flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground';
@@ -38,7 +39,14 @@ export function ChangeRow({
   /** Take back this change and every change after it. */
   onUndo: () => void;
 }): React.JSX.Element {
-  const what = labels.what(labels.layers[change.layer], labels.sources[change.source]);
+  // A value of a part of the pages is worded by the part, since it is not a setting of this page alone
+  const layer =
+    change.scope === 'pages'
+      ? labels.layers[change.layer]
+      : change.scope === 'group'
+        ? values.groupOf(change.group_label)
+        : values.scopes[change.scope];
+  const what = labels.what(layer, labels.sources[change.source]);
   const before = describeContent(change.layer, change.before, titleOf) ?? labels.nothing;
   const after = describeContent(change.layer, change.after, titleOf) ?? labels.nothing;
   return (
@@ -106,7 +114,7 @@ export function ResultRow({
   disabled: boolean;
   /** Whether this very result is being made the current one. */
   using: boolean;
-  /** Make this result the current one, or make its picture again when the picture was removed. */
+  /** Make this result the current one. */
   onUse: () => void;
 }): React.JSX.Element {
   const { version, current } = entry;
@@ -139,11 +147,6 @@ export function ResultRow({
               {facts.map((fact) => `${fact.label} ${fact.value}`).join(' · ')}
             </span>
           )}
-          {version.files_removed ? (
-            <span className="text-muted-foreground" data-testid="page-history-removed">
-              {resultLabels.pictureRemoved}
-            </span>
-          ) : null}
         </div>
         {current ? (
           <Badge variant="secondary">{resultLabels.current}</Badge>

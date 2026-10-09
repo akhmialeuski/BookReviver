@@ -22,17 +22,19 @@ from uuid import uuid4
 from attrs import evolve
 
 from bookreviver.domain.entities import PageStepChange, PageStepState
-from bookreviver.domain.enums import ChangeSource
+from bookreviver.domain.enums import ChangeSource, ValueScope
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.history import ClearedStep, StepHistory
 from bookreviver.domain.ids import ChangeBatchId
 from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.step_values import StepValues, StepValuesKey
 from bookreviver.domain.version_chains import StepVersions, step_places
 from bookreviver.services.processing_parts import PROJECT_BUSY
-from bookreviver.services.projects import owned_page
+from bookreviver.services.projects import book_pages, owned_page
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import datetime
 
     from bookreviver.domain.entities import Actor, PageStage
     from bookreviver.domain.ids import PageId, PageStepChangeId, PageVersionId, ProjectId
@@ -124,6 +126,8 @@ class PageHistoryService:
         working: dict[PageStepKey, PageStepState] = {}
         written: list[PageStepChange] = []
         for target in targets:
+            if target.scope is not ValueScope.PAGES:
+                continue
             if target.key not in working:
                 stored[target.key] = await self._uow.page_step_states.find(target.key)
                 working[target.key] = stored[target.key] or PageStepState(
@@ -146,8 +150,10 @@ class PageHistoryService:
                 await self._uow.page_step_states.save(final)
             elif stored[state_key] is not None:
                 await self._uow.page_step_states.delete(state_key)
+        undone, parts_stale = await self._take_parts_back(project_id, targets, moment, batch)
+        written.extend(undone)
         added = await self._uow.page_step_changes.add_many(written)
-        stale: list[PageStage] = []
+        stale = [*parts_stale]
         for page_id, stage in dict.fromkeys((change.page_id, change.stage) for change in added):
             stale.extend(await self._records.mark_stale(page_id, stage))
         await self._uow.commit()
@@ -168,6 +174,11 @@ class PageHistoryService:
         page is shown by the pyramid of the current version of its stage. So the cutting of that pyramid is queued once
         the clear is committed, which a project busy with another tile cutting or collection leaves undone.
 
+        A preview of the project, queued or running, is cancelled first, since the reader asked for the clear and a
+        preview is disposable: the editor of a step asks for one by itself when the step is opened, so a clear a moment
+        later would otherwise be refused by a job the reader never started. It writes versions of the preview scale
+        only, and its last write finds the job cancelled and changes nothing, as for a run.
+
         The files of the deleted versions are removed after the transaction committed, so a store that fails to remove
         them leaves them without a row for the next collection and does not fail the clear.
 
@@ -182,15 +193,15 @@ class PageHistoryService:
         :rtype: ClearedStep
         :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the stage
                                has the step.
-        :raises ConflictError: If a run, a preview, a tile cutting or a collection of the project is queued or running,
-                               which may be reading or deleting the versions the clear deletes.
+        :raises ConflictError: If a run, a measure of the book, a tile cutting or a collection of the project is queued
+                               or running, which may be reading or deleting the versions the clear deletes.
         """
         await owned_page(self._uow, actor, project_id, key.page_id)
-        if await self._starter.busy(project_id) is not None:
-            raise ConflictError(PROJECT_BUSY)
         recipes = await self._uow.recipes.list_for_stage(project_id, key.stage)
         if not any(step.step_id == key.step_id for recipe in recipes for step in recipe.steps):
             raise NotFoundError(key.step_id)
+        if await self._starter.free_of_previews(project_id):
+            raise ConflictError(PROJECT_BUSY)
         stored = await self._uow.page_step_states.find(key)
         if stored is not None:
             await self._uow.page_step_states.delete(key)
@@ -233,6 +244,80 @@ class PageHistoryService:
             except OSError:
                 logger.exception('The files of the version %s were not removed after its page was cleared', version.id)
         return ClearedStep(changes=changes, versions=deleted)
+
+    async def _take_parts_back(
+        self, project_id: ProjectId, targets: Sequence[PageStepChange], moment: datetime, batch: ChangeBatchId | None
+    ) -> tuple[Sequence[PageStepChange], Sequence[PageStage]]:
+        """Write back the values of the odd pages, the even pages and the groups that the targets changed.
+
+        The values of a part of the pages are stored once, and every page they reached has a change of them in its
+        history, the changes of one batch alike. The batches of one part are taken back from the newest, which is the
+        one that left the values as they are now, to the oldest, and the values are written once. Every change is then
+        taken back in the history of its page.
+
+        The pages the part covers now are marked stale in the stage of the step, which are not the pages its changes
+        name, since a page added, moved or put into the group after the change takes the values without a change in
+        its history. A page that takes the field from a stronger value of its own is marked as well, and a run finds
+        its version in the cache.
+
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param targets: The changes taken back, of any scope, of which those of pages are left to the caller.
+        :type targets: Sequence[PageStepChange]
+        :param moment: When the changes are taken back.
+        :type moment: datetime
+        :param batch: The batch the undos of one action share, or None.
+        :type batch: ChangeBatchId | None
+        :returns: The undos of the changes of the parts of the pages, and the stage records of the pages that went
+                  stale.
+        :rtype: tuple[Sequence[PageStepChange], Sequence[PageStage]]
+        :raises ConflictError: If the values of a part changed after the changes, by a change that is not taken back.
+        """
+        parts: dict[StepValuesKey, list[PageStepChange]] = {}
+        for target in targets:
+            if target.scope is not ValueScope.PAGES:
+                parts.setdefault(
+                    StepValuesKey(project_id, target.step_id, target.scope, target.group_label), []
+                ).append(target)
+        undone: list[PageStepChange] = []
+        stale: list[PageStage] = []
+        book = await book_pages(self._uow.pages, project_id) if parts else []
+        for key, changes in parts.items():
+            stored = await self._uow.step_values.find(key)
+            current = {} if stored is None else dict(stored.params)
+            # One before and after for each batch, since every page a batch reached holds the same pair
+            remaining = {change.batch_id or change.id: (change.before or {}, change.after or {}) for change in changes}
+            while remaining:
+                latest = next((batch_id for batch_id, (_, after) in remaining.items() if after == current), None)
+                if latest is None:
+                    raise ConflictError(CHANGED_SINCE.format(layer=changes[0].layer.label))
+                current = dict(remaining.pop(latest)[0])
+            stage = changes[0].stage
+            holder = stored or StepValues(
+                project_id=project_id,
+                stage=stage,
+                step_id=key.step_id,
+                scope=key.scope,
+                group_label=key.group_label,
+                updated_at=moment,
+            )
+            if current:
+                await self._uow.step_values.save(evolve(holder, params=current, updated_at=moment))
+            elif stored is not None:
+                await self._uow.step_values.delete(key)
+            undone.extend(change.taken_back(moment, batch) for change in changes)
+            kinds = {
+                recipe.kind
+                for recipe in await self._uow.recipes.list_for_stage(project_id, stage)
+                if any(step.step_id == key.step_id for step in recipe.steps)
+            }
+            covered = [
+                page.id
+                for place, page in enumerate(book, start=1)
+                if page.recipe_kind in kinds and holder.covers(group_label=page.group_label, position=place)
+            ]
+            stale.extend(await self._records.mark_pages_stale(covered, {stage}))
+        return undone, stale
 
     async def _with_batches(self, project_id: ProjectId, chosen: Sequence[PageStepChange]) -> Sequence[PageStepChange]:
         """Add the rest of the batch of each chosen change, and keep the changes that still stand.

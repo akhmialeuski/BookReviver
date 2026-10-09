@@ -7,10 +7,10 @@ import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import Actor
-from bookreviver.domain.enums import RuleCondition, Stage
+from bookreviver.domain.enums import RecipeKind, Stage, StageState
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
-from bookreviver.domain.values import RecipeDraft, SliceRequest, Step
-from tests.helpers.builders import make_project, make_recipe_profile, new_account_id
+from bookreviver.domain.values import PageStageKey, ProfileDraft, SliceRequest, Step
+from tests.helpers.builders import make_page_stage, make_project, make_recipe_profile, new_account_id
 from tests.helpers.processors import FakeProcessor
 
 if TYPE_CHECKING:
@@ -24,9 +24,8 @@ MISSING_KEY: str = 'geometry.gone'
 STRENGTH: str = 'strength'
 PROFILE_NAME: str = 'Photographed book'
 OTHER_NAME: str = 'Clean flatbed scan'
-BUILT_IN_NAME: str = 'Fake'
+BUILT_IN_STRENGTH: int = 1
 DESKEW_KEY: str = 'geometry.deskew'
-PLATES_NAME: str = 'Plates'
 EVERYTHING: SliceRequest = SliceRequest(limit=100)
 # Two steps of one processor that tell their place by their strength, the first of them switched off
 REORDERED: tuple[Step, ...] = (
@@ -79,7 +78,7 @@ async def saved(kit: ProcessingKit, actor: Actor, name: str = PROFILE_NAME) -> R
     :returns: The profile as stored.
     :rtype: RecipeProfile
     """
-    profile = await kit.profiles().save(actor, Stage.GEOMETRY, RecipeDraft(name=name, steps=REORDERED))
+    profile = await kit.profiles().save(actor, Stage.GEOMETRY, ProfileDraft(name=name, steps=REORDERED))
     # The next profile is saved a minute later, so the order of creation does not fall to the random identifiers
     kit.clock.moment += timedelta(minutes=1)
     return profile
@@ -107,7 +106,7 @@ class TestSaveProfile:
         :type fx_kit: ProcessingKit
         """
         actor, _ = await fx_kit.seed_project()
-        missing = RecipeDraft(name=PROFILE_NAME, steps=[Step(processor_key=MISSING_KEY)])
+        missing = ProfileDraft(name=PROFILE_NAME, steps=[Step(processor_key=MISSING_KEY)])
         with pytest.raises(InvalidParametersError):
             await fx_kit.profiles().save(actor, Stage.GEOMETRY, missing)
 
@@ -118,7 +117,7 @@ class TestSaveProfile:
         :type fx_kit: ProcessingKit
         """
         actor, _ = await fx_kit.seed_project()
-        off = RecipeDraft(name=PROFILE_NAME, steps=[Step(processor_key=FAKE_KEY, enabled=False)])
+        off = ProfileDraft(name=PROFILE_NAME, steps=[Step(processor_key=FAKE_KEY, enabled=False)])
         with pytest.raises(InvalidParametersError):
             await fx_kit.profiles().save(actor, Stage.GEOMETRY, off)
 
@@ -136,7 +135,7 @@ class TestChangeProfile:
         other, _ = await fx_kit.seed_project()
         mine = await saved(fx_kit, actor)
         await saved(fx_kit, other, OTHER_NAME)
-        cleaning = RecipeDraft(name=OTHER_NAME, steps=[Step(processor_key=fx_kit.cleanup.spec.key)])
+        cleaning = ProfileDraft(name=OTHER_NAME, steps=[Step(processor_key=fx_kit.cleanup.spec.key)])
         cleanup = await fx_kit.profiles().save(actor, Stage.CLEANUP, cleaning)
         everything = await fx_kit.profiles().profiles(actor, None, EVERYTHING)
         geometry = await fx_kit.profiles().profiles(actor, Stage.GEOMETRY, EVERYTHING)
@@ -189,9 +188,9 @@ class TestChangeProfile:
         """
         actor, project = await fx_kit.seed_project()
         profile = await saved(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(actor, project.id, profile.id, activate=False)
+        applied = await fx_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
         await fx_kit.profiles().remove(actor, profile.id)
-        assert (await fx_kit.uow().recipes.get(applied.recipe.id)).name == PROFILE_NAME
+        assert (await fx_kit.uow().recipes.get(applied.recipe.id)).steps == profile.steps
         assert (await fx_kit.profiles().profiles(actor, None, EVERYTHING)).total == 0
 
     async def test_a_profile_of_another_account_is_not_found(self, fx_kit: ProcessingKit) -> None:
@@ -211,15 +210,17 @@ class TestChangeProfile:
         with pytest.raises(NotFoundError):
             await service.remove(stranger, profile.id)
         with pytest.raises(NotFoundError):
-            await service.apply(stranger, stranger_project.id, profile.id, activate=False)
+            await service.apply(stranger, stranger_project.id, profile.id, kind=RecipeKind.TEXT)
         assert (await fx_kit.uow().recipe_profiles.get(profile.id)) == profile
 
 
 class TestApplyProfile:
     """Tests for applying a profile to a book."""
 
-    async def test_the_profile_is_reproduced_in_another_book_as_a_variant(self, fx_kit: ProcessingKit) -> None:
-        """Verify the steps arrive in their order, with their parameters and their switch, and the active recipe stays.
+    async def test_the_profile_is_reproduced_in_the_recipe_of_a_kind_of_another_book(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify the steps arrive in their order, with their parameters and their switch, in the recipe asked for only.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -227,29 +228,33 @@ class TestApplyProfile:
         actor, project = await fx_kit.seed_project()
         profile = await saved(fx_kit, actor)
         other = await second_project(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(actor, other.id, profile.id, activate=False)
-        assert applied.recipe.steps == profile.steps
-        assert (applied.recipe.name, applied.recipe.active, applied.recipe.project_id) == (
-            PROFILE_NAME,
-            False,
-            other.id,
-        )
-        assert applied.missing_processors == ()
-        assert (await fx_kit.service().recipe(actor, other.id, Stage.GEOMETRY)).name == BUILT_IN_NAME
-        assert (await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)).name == BUILT_IN_NAME
+        applied = await fx_kit.profiles().apply(actor, other.id, profile.id, kind=RecipeKind.BW_PICTURE)
+        picture = await fx_kit.recipe_of(actor, other, Stage.GEOMETRY, RecipeKind.BW_PICTURE)
+        text = await fx_kit.recipe_of(actor, other, Stage.GEOMETRY)
+        expect(applied.recipe.steps == profile.steps)
+        expect((applied.recipe.kind, applied.recipe.project_id) == (RecipeKind.BW_PICTURE, other.id))
+        expect(applied.missing_processors == ())
+        expect((picture.id, picture.profile_id) == (applied.recipe.id, profile.id))
+        expect(text.steps != profile.steps)
+        expect((await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)).steps != profile.steps)
+        assert_expectations()
 
-    async def test_the_variant_may_become_the_active_recipe(self, fx_kit: ProcessingKit) -> None:
-        """Verify applying with activation makes the profile's recipe the one the stage runs by.
+    async def test_applying_a_profile_marks_the_pages_of_the_recipe_stale(self, fx_kit: ProcessingKit) -> None:
+        """Verify a page the recipe processed is stale after the profile took its steps.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
         actor, project = await fx_kit.seed_project()
+        page, _ = await fx_kit.seed_scan_page(project)
+        recipe = await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)
+        uow = fx_kit.uow()
+        await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id))
+        await uow.commit()
         profile = await saved(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(actor, project.id, profile.id, activate=True)
-        active = await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
-        assert (applied.recipe.active, active.id) == (True, applied.recipe.id)
-        assert active.steps == profile.steps
+        await fx_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
+        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        assert record.state is StageState.STALE
 
     async def test_a_step_of_a_missing_processor_is_left_out_and_named(self, fx_kit: ProcessingKit) -> None:
         """Verify the steps that can run are applied and the processor that cannot is reported.
@@ -269,7 +274,7 @@ class TestApplyProfile:
                 ),
             ),
         )
-        applied = await fx_kit.profiles().apply(actor, project.id, profile.id, activate=False)
+        applied = await fx_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
         assert [step.processor_key for step in applied.recipe.steps] == [FAKE_KEY]
         assert applied.missing_processors == (MISSING_KEY,)
 
@@ -285,7 +290,7 @@ class TestApplyProfile:
             make_recipe_profile(account_id=actor.account_id, steps=(Step(processor_key=MISSING_KEY),)),
         )
         with pytest.raises(InvalidParametersError, match=MISSING_KEY):
-            await fx_kit.profiles().apply(actor, project.id, profile.id, activate=False)
+            await fx_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
 
     async def test_a_book_of_another_account_is_not_found(self, fx_kit: ProcessingKit) -> None:
         """Reject applying a profile to a book the account does not own.
@@ -297,16 +302,16 @@ class TestApplyProfile:
         _, foreign_project = await fx_kit.seed_project()
         profile = await saved(fx_kit, actor)
         with pytest.raises(NotFoundError):
-            await fx_kit.profiles().apply(actor, foreign_project.id, profile.id, activate=False)
+            await fx_kit.profiles().apply(actor, foreign_project.id, profile.id, kind=RecipeKind.TEXT)
 
 
 class TestDefaultProfileOfANewBook:
     """Tests for the profile a stage starts with when a book opens it the first time."""
 
-    async def test_the_default_profile_is_the_active_recipe_and_the_templates_follow(
+    async def test_the_default_profile_makes_the_recipe_of_text_pages_and_the_templates_the_others(
         self, fx_kit: ProcessingKit
     ) -> None:
-        """Verify the profile replaces the built-in recipe as the active one and keeps its steps.
+        """Verify the profile replaces the built-in recipe of text pages and keeps its steps, and links to it.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -315,36 +320,32 @@ class TestDefaultProfileOfANewBook:
         profile = await saved(fx_kit, actor)
         await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
         fresh = await second_project(fx_kit, actor)
-        active = await fx_kit.service().recipe(actor, fresh.id, Stage.GEOMETRY)
-        listed = await fx_kit.service().variants(actor, fresh.id, Stage.GEOMETRY, EVERYTHING)
-        assert (active.name, active.steps, active.active) == (PROFILE_NAME, profile.steps, True)
-        assert [(recipe.name, recipe.active) for recipe in listed.items] == [
-            (PROFILE_NAME, True),
-            (BUILT_IN_NAME, False),
+        listed = await fx_kit.service().recipes(actor, fresh.id, Stage.GEOMETRY, EVERYTHING)
+        assert [(recipe.kind, recipe.steps == profile.steps, recipe.profile_id) for recipe in listed.items] == [
+            (RecipeKind.TEXT, True, profile.id),
+            (RecipeKind.COLOR_PICTURE, False, None),
+            (RecipeKind.BW_PICTURE, False, None),
+            (RecipeKind.BLANK, False, None),
         ]
 
-    async def test_the_rule_of_a_built_in_variant_still_targets_it_after_a_default_profile(
+    async def test_the_picture_recipes_of_a_book_still_follow_the_templates_after_a_default_profile(
         self, fx_cv_kit: ProcessingKit
     ) -> None:
-        """Verify the built-in variants follow the default profile in their order, and the plates rule still names Plates.
+        """Verify the recipes of pictures keep their own methods when the default profile makes the text recipe.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
         actor, _ = await fx_cv_kit.seed_project()
-        deskew = RecipeDraft(name=PROFILE_NAME, steps=[Step(processor_key=DESKEW_KEY)])
+        deskew = ProfileDraft(name=PROFILE_NAME, steps=[Step(processor_key=DESKEW_KEY)])
         profile = await fx_cv_kit.profiles().save(actor, Stage.GEOMETRY, deskew)
         await fx_cv_kit.profiles().set_default(actor, profile.id, is_default=True)
         fresh = await second_project(fx_cv_kit, actor)
-        await fx_cv_kit.service().recipe(actor, fresh.id, Stage.GEOMETRY)
-        listed = await fx_cv_kit.service().variants(actor, fresh.id, Stage.GEOMETRY, EVERYTHING)
-        rules = await fx_cv_kit.rules().rules(actor, fresh.id, Stage.GEOMETRY, EVERYTHING)
-        plates = next(recipe for recipe in listed.items if recipe.name == PLATES_NAME)
-        expect(
-            [(recipe.name, recipe.active) for recipe in listed.items]
-            == [(PROFILE_NAME, True), ('Text', False), (PLATES_NAME, False), ('Flat', False)]
-        )
-        expect([(rule.condition, rule.recipe_id) for rule in rules.items] == [(RuleCondition.PLATES, plates.id)])
+        listed = await fx_cv_kit.service().recipes(actor, fresh.id, Stage.GEOMETRY, EVERYTHING)
+        picture = next(recipe for recipe in listed.items if recipe.kind is RecipeKind.COLOR_PICTURE)
+        expect([step.processor_key for step in listed.items[0].steps] == [DESKEW_KEY])
+        expect(len(picture.steps) > 1)
+        expect({step.processor_key: step.params.get('method') for step in picture.steps}['geometry.deskew'] == 'hough')
         assert_expectations()
 
     async def test_without_a_default_the_built_in_recipe_is_used(self, fx_kit: ProcessingKit) -> None:
@@ -356,7 +357,7 @@ class TestDefaultProfileOfANewBook:
         actor, _ = await fx_kit.seed_project()
         await saved(fx_kit, actor)
         fresh = await second_project(fx_kit, actor)
-        assert (await fx_kit.service().recipe(actor, fresh.id, Stage.GEOMETRY)).name == BUILT_IN_NAME
+        assert (await fx_kit.recipe_of(actor, fresh, Stage.GEOMETRY)).profile_id is None
 
     async def test_the_default_of_another_account_is_not_used(self, fx_kit: ProcessingKit) -> None:
         """Verify a book starts with the built-in recipe when only a stranger has a default.
@@ -368,7 +369,7 @@ class TestDefaultProfileOfANewBook:
         profile = await saved(fx_kit, stranger)
         await fx_kit.profiles().set_default(stranger, profile.id, is_default=True)
         actor, project = await fx_kit.seed_project()
-        assert (await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)).name == BUILT_IN_NAME
+        assert (await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)).profile_id is None
 
     async def test_a_book_that_has_opened_the_stage_keeps_its_recipe(self, fx_kit: ProcessingKit) -> None:
         """Verify choosing a default later does not change the recipes a book has.
@@ -377,10 +378,10 @@ class TestDefaultProfileOfANewBook:
         :type fx_kit: ProcessingKit
         """
         actor, project = await fx_kit.seed_project()
-        await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
+        await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)
         profile = await saved(fx_kit, actor)
         await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
-        assert (await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)).name == BUILT_IN_NAME
+        assert (await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)).profile_id is None
 
     async def test_a_default_with_nothing_that_can_run_falls_back_to_the_built_in_recipe(
         self, fx_kit: ProcessingKit
@@ -395,7 +396,7 @@ class TestDefaultProfileOfANewBook:
             fx_kit,
             make_recipe_profile(account_id=actor.account_id, steps=(Step(processor_key=MISSING_KEY),), is_default=True),
         )
-        assert (await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)).name == BUILT_IN_NAME
+        assert (await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)).profile_id is None
 
     async def test_a_missing_processor_is_left_out_of_the_default(self, fx_kit: ProcessingKit) -> None:
         """Verify the steps of a default that can run still start the stage.
@@ -412,5 +413,6 @@ class TestDefaultProfileOfANewBook:
                 is_default=True,
             ),
         )
-        active = await fx_kit.service().recipe(actor, project.id, Stage.GEOMETRY)
-        assert (active.name, [step.processor_key for step in active.steps]) == (PROFILE_NAME, [FAKE_KEY])
+        text = await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)
+        assert [step.processor_key for step in text.steps] == [FAKE_KEY]
+        assert text.profile_id is not None

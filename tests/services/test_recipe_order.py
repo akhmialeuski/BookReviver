@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import OrderMode, OrderRuleKind, Stage
+from bookreviver.domain.enums import OrderMode, OrderRuleKind, RecipeKind, Stage
 from bookreviver.domain.errors import InvalidParametersError
-from bookreviver.domain.values import RecipeDraft, RecipeKey, Step
+from bookreviver.domain.values import ProfileDraft, RecipeDraft, Step
 from bookreviver.services.recipe_order import RecipeOrder
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.processors import (
@@ -204,7 +204,20 @@ def draft_of(*keys: str, order: OrderMode = OrderMode.USUAL) -> RecipeDraft:
     :returns: The draft.
     :rtype: RecipeDraft
     """
-    return RecipeDraft(name=DRAFT_NAME, steps=steps_of(*keys), order=order)
+    return RecipeDraft(steps=steps_of(*keys), order=order)
+
+
+def profile_draft_of(*keys: str, order: OrderMode = OrderMode.USUAL) -> ProfileDraft:
+    """Build a draft of a profile of steps of the processors in the given order.
+
+    :param keys: Keys of the processors.
+    :type keys: str
+    :param order: The order to keep.
+    :type order: OrderMode
+    :returns: The draft.
+    :rtype: ProfileDraft
+    """
+    return ProfileDraft(name=DRAFT_NAME, steps=steps_of(*keys), order=order)
 
 
 @pytest.mark.anyio
@@ -220,30 +233,29 @@ class TestSavePaths:
         :type fx_ordered_kit: ProcessingKit
         """
         actor, project = await fx_ordered_kit.seed_project()
-        service = fx_ordered_kit.service()
         with pytest.raises(InvalidParametersError, match=THIRD_REASON):
-            await service.save_recipe(actor, project.id, Stage.GEOMETRY, draft_of(THIRD_KEY, SECOND_KEY))
-        saved = await service.save_recipe(
-            actor, project.id, Stage.GEOMETRY, draft_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE)
+            await fx_ordered_kit.edit_recipe(actor, project, Stage.GEOMETRY, draft_of(THIRD_KEY, SECOND_KEY))
+        saved = await fx_ordered_kit.edit_recipe(
+            actor, project, Stage.GEOMETRY, draft_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE)
         )
         assert [step.processor_key for step in saved.steps] == [THIRD_KEY, SECOND_KEY]
 
-    async def test_a_variant_is_refused_when_it_is_added_and_when_it_is_saved(
+    async def test_the_recipe_of_another_kind_is_refused_and_saved_by_the_same_rule(
         self, fx_ordered_kit: ProcessingKit
     ) -> None:
-        """Verify ProcessingService.add_variant and save_variant keep the order as the active recipe does.
+        """Verify ProcessingService.save_recipe keeps the order for the recipe of every kind.
 
         :param fx_ordered_kit: The kit over the processors that declare a place.
         :type fx_ordered_kit: ProcessingKit
         """
         actor, project = await fx_ordered_kit.seed_project()
-        service = fx_ordered_kit.service()
         wrong = draft_of(THIRD_KEY, SECOND_KEY)
         with pytest.raises(InvalidParametersError, match=THIRD_REASON):
-            await service.add_variant(actor, project.id, Stage.GEOMETRY, wrong)
-        variant = await service.add_variant(actor, project.id, Stage.GEOMETRY, draft_of(FIRST_KEY, SECOND_KEY))
-        with pytest.raises(InvalidParametersError, match=THIRD_REASON):
-            await service.save_variant(actor, project.id, RecipeKey(Stage.GEOMETRY, variant.id), wrong)
+            await fx_ordered_kit.edit_recipe(actor, project, Stage.GEOMETRY, wrong, RecipeKind.BLANK)
+        saved = await fx_ordered_kit.edit_recipe(
+            actor, project, Stage.GEOMETRY, draft_of(FIRST_KEY, SECOND_KEY), RecipeKind.BLANK
+        )
+        assert [step.processor_key for step in saved.steps] == [FIRST_KEY, SECOND_KEY]
 
     async def test_a_profile_is_refused_a_required_place_unless_the_order_is_free(
         self, fx_ordered_kit: ProcessingKit
@@ -256,7 +268,9 @@ class TestSavePaths:
         actor, project = await fx_ordered_kit.seed_project()
         profiles = fx_ordered_kit.profiles()
         with pytest.raises(InvalidParametersError, match=THIRD_REASON):
-            await profiles.save(actor, Stage.GEOMETRY, draft_of(THIRD_KEY, SECOND_KEY))
-        profile = await profiles.save(actor, Stage.GEOMETRY, draft_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE))
-        applied = await profiles.apply(actor, project.id, profile.id, activate=False)
+            await profiles.save(actor, Stage.GEOMETRY, profile_draft_of(THIRD_KEY, SECOND_KEY))
+        profile = await profiles.save(
+            actor, Stage.GEOMETRY, profile_draft_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE)
+        )
+        applied = await profiles.apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
         assert [step.processor_key for step in applied.recipe.steps] == [THIRD_KEY, SECOND_KEY]

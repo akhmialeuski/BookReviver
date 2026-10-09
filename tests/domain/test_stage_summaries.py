@@ -12,6 +12,7 @@ from bookreviver.domain.entities import Recipe
 from bookreviver.domain.enums import (
     FigureState,
     PageStageStatus,
+    RecipeKind,
     ResultMark,
     ReviewReason,
     Stage,
@@ -189,7 +190,7 @@ def summary_of(
     :rtype: StageSummary
     """
     tally = None if counts is None else StageTally(project_id=PROJECT_ID, stage=stage, **counts._asdict())
-    return StageSummary.of(stage, available=available, pages=pages, tally=tally, active_recipe_id=None)
+    return StageSummary.of(stage, available=available, pages=pages, tally=tally)
 
 
 def book_progress(
@@ -361,13 +362,13 @@ class TestStageRow:
 
     def test_a_row_with_no_version_has_no_review_mark(self) -> None:
         """Verify a page the stage has not run on asks for no second look."""
-        assert StageRow(page_id=PageId(uuid4())).review is None
+        assert StageRow(page_id=PageId(uuid4()), kind=RecipeKind.TEXT).review is None
 
     def test_the_review_mark_of_a_row_is_the_mark_of_its_current_version(self) -> None:
         """Verify the row shows what the version it holds says, so the strip and the version never disagree."""
         page_id = PageId(uuid4())
         version = evolve(make_page_version(page_id=page_id), review=ReviewReason.NOT_APPLIED)
-        assert StageRow(page_id=page_id, head_version=version).review is ReviewReason.NOT_APPLIED
+        assert StageRow(page_id=page_id, kind=RecipeKind.TEXT, head_version=version).review is ReviewReason.NOT_APPLIED
 
 
 def recipe_of(*steps: Step) -> Recipe:
@@ -383,9 +384,8 @@ def recipe_of(*steps: Step) -> Recipe:
         id=RecipeId(uuid4()),
         project_id=PROJECT_ID,
         stage=Stage.GEOMETRY,
-        name='Book',
+        kind=RecipeKind.TEXT,
         steps=steps,
-        active=True,
         created_at=moment,
         updated_at=moment,
     )
@@ -405,7 +405,7 @@ def made_by(
     :type page_id: PageId
     :param processor_key: Key of the processor of the step.
     :type processor_key: str
-    :param skipped: Whether the page did not meet the condition of the step, so the step passed it unchanged.
+    :param skipped: Whether the page passed the step unchanged, as a leaf the program drew does.
     :type skipped: bool
     :param review: The reason the version asks for a second look, or None.
     :type review: ReviewReason | None
@@ -418,7 +418,7 @@ def made_by(
         make_page_version(page_id=page_id),
         stage=Stage.GEOMETRY,
         processor=ProcessorRef(key=processor_key, version='1'),
-        data={**(data or {}), **({VersionData.SKIPPED_BY_CONDITION: True} if skipped else {})},
+        data={**(data or {}), **({VersionData.SKIPPED_LEAF: True} if skipped else {})},
         review=review,
     )
 
@@ -462,6 +462,31 @@ class TestStepRow:
         expect(row.input_version is chain[0])
         assert_expectations()
 
+    def test_a_step_a_page_has_not_come_to_is_preceded_by_the_last_version_the_page_has(self) -> None:
+        """Verify the version before a step is the last of a chain that stops short of it, and none when it is empty."""
+        page_id = PageId(uuid4())
+        first, second, third = (Step(processor_key=key) for key in (PERSPECTIVE_KEY, DESKEW_KEY, CROP_KEY))
+        recipe = recipe_of(first, second, third)
+        chain = [made_by(page_id, PERSPECTIVE_KEY)]
+        before = make_page_version(page_id=page_id)
+        stopped = StepRow.of(third.step_id, recipe, chain, before, edited=False)
+        empty = StepRow.of(third.step_id, recipe, [], None, edited=False)
+        at_first = StepRow.of(first.step_id, recipe, chain, before, edited=False)
+        expect((stopped.input_version, stopped.version) == (None, None))
+        expect(stopped.preceding is chain[0])
+        expect(empty.preceding is None)
+        expect(at_first.preceding is before)
+        assert_expectations()
+
+    def test_a_step_the_recipe_does_not_have_has_nothing_before_it(self) -> None:
+        """Verify a page whose recipe lacks the step, or that no recipe processed, has no version before the step."""
+        page_id = PageId(uuid4())
+        step, other = Step(processor_key=DESKEW_KEY), Step(processor_key=CROP_KEY)
+        chain = [made_by(page_id, CROP_KEY)]
+        lacking = StepRow.of(step.step_id, recipe_of(other), chain, None, edited=False)
+        unrun = StepRow.of(step.step_id, None, chain, None, edited=False)
+        assert (lacking.preceding, unrun.preceding) == (None, None)
+
     def test_a_step_that_is_switched_off_leaves_the_places_of_the_others(self) -> None:
         """Verify the place in the chain counts the steps that are on, as the run makes the versions."""
         page_id = PageId(uuid4())
@@ -480,7 +505,7 @@ class TestStepRow:
         row = StepRow.of(step.step_id, recipe_of(step), [made_by(page_id, CROP_KEY)], None, edited=False)
         assert row.version is None
 
-    def test_a_page_that_did_not_meet_the_condition_is_skipped_whatever_the_edit_is(self) -> None:
+    def test_a_page_that_passed_the_step_unchanged_is_skipped_whatever_the_edit_is(self) -> None:
         """Verify the skip wins over an edit, which a skipped step does not read."""
         page_id = PageId(uuid4())
         step = Step(processor_key=DESKEW_KEY)
@@ -530,7 +555,7 @@ class TestStepRowFlags:
         chain = [made_by(page_id, PERSPECTIVE_KEY, review=ReviewReason.CUT_BY_EDGE)]
         assert not StepRow.of(step.step_id, recipe_of(step), chain, before, edited=False).unsure
 
-    def test_a_page_the_condition_skipped_is_not_unsure_but_is_flagged_as_skipped(self) -> None:
+    def test_a_page_that_passed_the_step_unchanged_is_not_unsure_but_is_flagged_as_skipped(self) -> None:
         """Verify a skipped page carries the skipped flag alone, whatever mark it brought along."""
         page_id = PageId(uuid4())
         step = Step(processor_key=DESKEW_KEY)
@@ -605,9 +630,9 @@ class TestStageRowMarkedBad:
     def test_a_row_of_the_stage_stands_on_the_current_version(self) -> None:
         """Verify the flag is set by a bad current version only, not by a good one or by none."""
         page_id = PageId(uuid4())
-        expect(StageRow(page_id=page_id, head_version=self.BAD).marked_bad)
-        expect(not StageRow(page_id=page_id, head_version=self.GOOD).marked_bad)
-        expect(not StageRow(page_id=page_id).marked_bad)
+        expect(StageRow(page_id=page_id, kind=RecipeKind.TEXT, head_version=self.BAD).marked_bad)
+        expect(not StageRow(page_id=page_id, kind=RecipeKind.TEXT, head_version=self.GOOD).marked_bad)
+        expect(not StageRow(page_id=page_id, kind=RecipeKind.TEXT).marked_bad)
         assert_expectations()
 
     def test_a_row_at_a_step_stands_on_the_version_of_the_step(self) -> None:
@@ -615,12 +640,20 @@ class TestStageRowMarkedBad:
         page_id = PageId(uuid4())
         step_id = Step(processor_key=DESKEW_KEY).step_id
         marked_at_step = StageRow(
-            page_id=page_id, head_version=self.GOOD, step=StepRow(step_id=step_id, version=self.BAD)
+            page_id=page_id,
+            kind=RecipeKind.TEXT,
+            head_version=self.GOOD,
+            step=StepRow(step_id=step_id, version=self.BAD),
         )
         marked_at_head = StageRow(
-            page_id=page_id, head_version=self.BAD, step=StepRow(step_id=step_id, version=self.GOOD)
+            page_id=page_id,
+            kind=RecipeKind.TEXT,
+            head_version=self.BAD,
+            step=StepRow(step_id=step_id, version=self.GOOD),
         )
-        not_reached = StageRow(page_id=page_id, head_version=self.BAD, step=StepRow(step_id=step_id))
+        not_reached = StageRow(
+            page_id=page_id, kind=RecipeKind.TEXT, head_version=self.BAD, step=StepRow(step_id=step_id)
+        )
         expect(marked_at_step.marked_bad)
         expect(not marked_at_head.marked_bad)
         expect(not not_reached.marked_bad)

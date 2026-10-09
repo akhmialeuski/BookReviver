@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { StagePageSchema } from '@/api';
+import type { PageVersionSchema } from '@/api';
 import { images, page, row, stepPage } from '@/features/workspace/fixtures';
 import { PageFilter } from '@/features/workspace/params';
 import {
@@ -14,9 +14,11 @@ import {
   isMarkedBad,
   joinRows,
   needsCheck,
-  type StripItem,
+  pictureOf,
   stopOptions,
+  stripRowsOf,
   thumbnailOf,
+  thumbnailsOf,
 } from '@/features/workspace/strip';
 
 describe('joinRows', () => {
@@ -182,34 +184,79 @@ describe('filters', () => {
   });
 });
 
-describe('the picture of a page in a stage', () => {
-  function result(tilesReady: boolean): StripItem {
-    const version = {
-      images: images('result'),
-      tiles_ready: tilesReady,
-    } as StagePageSchema['version'];
-    return { page: page('a'), row: row('a', { version }) };
-  }
+describe('the picture of a page', () => {
+  const picture = { images: images('picture'), tiles_ready: true } as PageVersionSchema;
+  const head = { images: images('head'), tiles_ready: true } as PageVersionSchema;
+  const made = { images: images('made'), tiles_ready: true } as PageVersionSchema;
 
-  it('is the result of the stage when it has one', () => {
-    expect(thumbnailOf(result(true))).toBe('/result/thumb');
-    expect(canvasSourceOf(result(true))).toBe('/result/info.json');
+  it('is the picture of the row on the strip and on the canvas alike', () => {
+    const item = { page: page('a'), row: row('a', { picture }) };
+
+    expect(pictureOf(item)).toBe(picture);
+    expect(thumbnailOf(item)).toBe('/picture/thumb');
+    expect(canvasSourceOf(item)).toBe('/picture/info.json');
   });
 
-  it('draws the page itself on the canvas until the tiles of the result are cut', () => {
-    expect(thumbnailOf(result(false))).toBe('/result/thumb');
-    expect(canvasSourceOf(result(false))).toBe('/page-a/info.json');
+  it('is not the result of the stage nor what the step made when the picture differs from them', () => {
+    const item = {
+      page: page('a'),
+      row: row('a', { version: head, picture, step: stepPage('s', 'found', { version: made }) }),
+    };
+
+    expect(thumbnailOf(item)).toBe('/picture/thumb');
+    expect(canvasSourceOf(item)).toBe('/picture/info.json');
   });
 
-  it('is the page itself when the stage has made no image', () => {
-    const item = { page: page('a'), row: row('a') };
-    expect(thumbnailOf(item)).toBe('/page-a/thumb');
-    expect(canvasSourceOf(item)).toBe('/page-a/info.json');
-  });
+  it('is nothing while the row loads, never the image of the page', () => {
+    const item = { page: page('a'), row: undefined };
 
-  it('is nothing for a page without any image', () => {
-    const item = { page: page('a', { images: null }), row: row('a') };
     expect(thumbnailOf(item)).toBeNull();
     expect(canvasSourceOf(item)).toBeNull();
+  });
+
+  it('is nothing for a row with no picture, never the image of the page', () => {
+    const item = { page: page('a'), row: row('a', { version: head }) };
+
+    expect(thumbnailOf(item)).toBeNull();
+    expect(canvasSourceOf(item)).toBeNull();
+  });
+
+  it('is drawn on the canvas from a pyramid only once its tiles are cut', () => {
+    const uncut = { ...picture, tiles_ready: false } as PageVersionSchema;
+    const item = { page: page('a'), row: row('a', { picture: uncut }) };
+
+    expect(thumbnailOf(item)).toBe('/picture/thumb');
+    expect(canvasSourceOf(item)).toBeNull();
+  });
+});
+
+describe('the thumbnails of a grid of pages', () => {
+  const picture = { images: images('picture'), tiles_ready: true } as PageVersionSchema;
+
+  it('are the thumbnails of the pictures of the rows by page, never the images of the pages', () => {
+    const items = joinRows(
+      [page('a', { images: images('latest') }), page('b'), page('c')],
+      [row('a', { picture })],
+    );
+
+    expect(thumbnailsOf(items)).toEqual(new Map([['a', '/picture/thumb']]));
+  });
+});
+
+describe('the rows of the strip', () => {
+  const stepRows = [row('a', { picture: null })];
+  const stageRows = [row('a')];
+
+  it('are none while the rows of the open step load, never the rows of the stage', () => {
+    expect(stripRowsOf(true, undefined, stageRows)).toBeUndefined();
+  });
+
+  it('are the rows of the open step once they are read', () => {
+    expect(stripRowsOf(true, stepRows, stageRows)).toBe(stepRows);
+  });
+
+  it('are the rows of the stage when the stage has no bar', () => {
+    expect(stripRowsOf(false, undefined, stageRows)).toBe(stageRows);
+    expect(stripRowsOf(false, undefined, undefined)).toBeUndefined();
   });
 });

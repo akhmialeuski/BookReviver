@@ -41,13 +41,15 @@ function register<K extends EditableKind>(
         figure={props.figure}
         onChange={(next) => props.onChange(definition.write(next))}
         onCommit={(next) => props.onCommit(definition.write(next))}
+        onCommitLater={(next) => props.onCommitLater(definition.write(next))}
       />
     );
   }
   function Panel(props: GeometryPanelProps): React.JSX.Element | null {
     const shape = definition.read(props.geometry);
-    return shape === null ? null : (
-      <definition.Panel
+    const { Panel: Content } = definition;
+    return shape === null || Content === undefined ? null : (
+      <Content
         shape={shape}
         processorKey={props.processorKey}
         params={props.params}

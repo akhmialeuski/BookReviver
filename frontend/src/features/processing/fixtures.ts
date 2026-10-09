@@ -1,10 +1,12 @@
 import type {
+  PageStepSettingsSchema,
   PageVersionSchema,
   ProcessorSchema,
   RecipeSchema,
   ScanSchema,
   StepSchema,
 } from '@/api';
+import type { PageValues } from '@/features/processing/pageSettings';
 import { draftOf } from '@/features/processing/recipe';
 import type { Processing } from '@/features/processing/useProcessing';
 import { images } from '@/features/workspace/fixtures';
@@ -376,7 +378,6 @@ export function step(processorKey: string, overrides: Partial<StepSchema> = {}):
     params: {},
     enabled: true,
     step_id: `id-${processorKey}`,
-    applies_to: 'all',
     ...overrides,
   };
 }
@@ -387,9 +388,8 @@ export function recipe(id: string, overrides: Partial<RecipeSchema> = {}): Recip
     id,
     project_id: 'project',
     stage: 'geometry',
-    name: 'Deskew',
+    kind: 'text',
     steps: [step('geometry.deskew', { params: { max_angle: 5, min_confidence: 0.3 } })],
-    active: true,
     profile_id: null,
     created_at: '2026-10-01T00:00:00Z',
     updated_at: '2026-10-01T00:00:00Z',
@@ -418,8 +418,6 @@ export function version(id: string, overrides: Partial<PageVersionSchema> = {}):
     images: images(`version-${id}`),
     preview: null,
     created_at: '2026-10-01T00:00:00Z',
-    files_removed: false,
-    files_removed_at: null,
     mark: null,
     comment: '',
     ...overrides,
@@ -466,8 +464,6 @@ export function processing(overrides: Partial<Processing> = {}): Processing {
     steps: draftOf(saved),
     openId: undefined,
     open: () => undefined,
-    shownStep: null,
-    showStep: () => undefined,
     dirty: false,
     valid: true,
     orderMode: 'usual',
@@ -481,18 +477,45 @@ export function processing(overrides: Partial<Processing> = {}): Processing {
     toggle: () => undefined,
     remove: () => undefined,
     change: () => undefined,
-    condition: () => undefined,
-    add: () => undefined,
     discard: () => undefined,
-    preview: {
-      on: false,
-      toggle: () => undefined,
-      blocked: null,
-      shown: null,
-      working: false,
-      waiting: false,
-      error: null,
-    },
+    ...overrides,
+  };
+}
+
+/**
+ * The open page of a book of a hundred text pages, with what it and the parts of the pages have for the steps.
+ *
+ * @param overrides What a test changes of the values.
+ */
+export function pageValues(overrides: Partial<PageValues> = {}): PageValues {
+  return {
+    projectId: 'project',
+    stage: 'geometry',
+    page: { id: 'page-143', name: 'p. 143' },
+    settings: [],
+    selected: [],
+    sides: { odd: 50, even: 50 },
+    groups: [],
+    ...overrides,
+  };
+}
+
+/**
+ * The settings of one step as the server lists them for a page.
+ *
+ * @param stepId The step.
+ * @param overrides What a test changes of the entry.
+ */
+export function stepSettings(
+  stepId: string,
+  overrides: Partial<PageStepSettingsSchema> = {},
+): PageStepSettingsSchema {
+  return {
+    step_id: stepId,
+    params: {},
+    parts: [],
+    effective: {},
+    updated_at: null,
     ...overrides,
   };
 }

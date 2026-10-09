@@ -73,7 +73,9 @@ test('a reader returns to the stage, the page, the layout and the zoom of a book
     await page.getByTestId('strip-filter-check').click();
     await expect(page).toHaveURL(/filter=check/);
 
-    // The pages are tiny images, which the canvas will not enlarge, so the zoom that moves is the one out
+    // The pages are tiny images, which the canvas will not enlarge, so the zoom that moves is the one out. The canvas
+    // publishes its zoom when it has stopped moving, which a loaded page can be a moment before
+    await expect.poll(() => zoomOf(page)).toBeGreaterThan(0);
     const fitted = await zoomOf(page);
     await page.getByRole('button', { name: 'Zoom out' }).click();
     await expect.poll(() => zoomOf(page)).toBeLessThan(fitted * MOST_ZOOM_OUT);

@@ -13,7 +13,7 @@ import {
  */
 
 const FILE: ProfileFileSchema = {
-  version: 1,
+  version: 2,
   stage: 'geometry',
   name: 'Photographed book',
   order: 'usual',
@@ -22,9 +22,8 @@ const FILE: ProfileFileSchema = {
       processor_key: 'geometry.deskew',
       params: { max_angle: 9 },
       enabled: true,
-      applies_to: 'all',
     },
-    { processor_key: 'geometry.crop', params: {}, enabled: false, applies_to: 'text' },
+    { processor_key: 'geometry.crop', params: {}, enabled: false },
   ],
 };
 
@@ -39,7 +38,7 @@ describe('writeProfileFile and readProfileFile', () => {
     const text = writeProfileFile(FILE);
 
     expect(text.endsWith('}\n')).toBe(true);
-    expect(text).toContain('\n  "version": 1,');
+    expect(text).toContain('\n  "version": 2,');
   });
 });
 
@@ -60,8 +59,18 @@ describe('readProfileFile', () => {
     expect(readProfileFile(text)).toEqual({ ok: false, problem: FileProblem.NotProfile });
   });
 
+  it('passes on a file of the first version, whose steps may name the pages they process, for the server to read', () => {
+    const first = {
+      ...FILE,
+      version: 1,
+      steps: [{ processor_key: 'geometry.deskew', params: {}, enabled: true, applies_to: 'all' }],
+    };
+
+    expect(readProfileFile(JSON.stringify(first))).toEqual({ ok: true, file: first });
+  });
+
   it('turns away a version of the format it does not know', () => {
-    expect(readProfileFile(JSON.stringify({ ...FILE, version: 2 }))).toEqual({
+    expect(readProfileFile(JSON.stringify({ ...FILE, version: 9 }))).toEqual({
       ok: false,
       problem: FileProblem.Version,
     });

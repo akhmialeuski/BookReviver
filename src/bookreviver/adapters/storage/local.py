@@ -343,6 +343,18 @@ class LocalAssetStore(_LocalTree, AssetStore):
         await _remove(self._asset_path(prefix))
 
     @override
+    async def size_of(self, prefix: StorageKey) -> int:
+        """Add up the sizes of the files at ``prefix``, if there are any.
+
+        :param prefix: Key of the file or directory to measure, matched by whole path segments.
+        :type prefix: StorageKey
+        :returns: The total size of the files in bytes, 0 when nothing is stored there.
+        :rtype: int
+        :raises ValueError: If the prefix does not lie under ``projects/<id>/assets/``.
+        """
+        return await asyncify(_tree_size)(Path(self._asset_path(prefix)))
+
+    @override
     async def delete_project(self, project_id: ProjectId) -> None:
         """Remove the project's ``assets/`` directory, then the project's directory if empty.
 
@@ -489,6 +501,19 @@ def _copy_tree(origin: Path, destination: Path) -> None:
         shutil.copytree(origin, destination)
     else:
         shutil.copyfile(origin, destination)
+
+
+def _tree_size(path: Path) -> int:
+    """Add up the sizes of a file, or of every file under a directory; a missing path has none.
+
+    :param path: File or directory to measure.
+    :type path: Path
+    :returns: The total size in bytes.
+    :rtype: int
+    """
+    if path.is_file():
+        return path.stat().st_size
+    return sum(entry.stat().st_size for entry in path.rglob('*') if entry.is_file())
 
 
 async def _remove(path: anyio.Path) -> None:

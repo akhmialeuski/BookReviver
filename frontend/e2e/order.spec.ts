@@ -94,7 +94,7 @@ test('a reader selects, shows and drags the pages of a book', async ({ page }) =
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await openBook(page, 'A book to arrange');
   const tiles = page.getByTestId('order-tile');
-  const selected = page.getByTestId('selection-heading');
+  const selected = page.getByTestId('panel-page');
   let ids: string[] = [];
 
   await test.step('the grid shows every page with its place in the book', async () => {
@@ -400,7 +400,7 @@ test('a reader adds and deletes pages, and follows a link from a file', async ({
     expect(wanted).toBeDefined();
 
     await page.goto(`/projects/${projectId}/stages/page-order?source=${wanted?.source_id}`);
-    await expect(page.getByTestId('selection-heading')).toContainText('1 page selected');
+    await expect(page.getByTestId('panel-page')).toContainText('1 page selected');
     await expect(tile(page, wanted?.id ?? '')).toHaveAttribute('aria-pressed', 'true');
   });
 

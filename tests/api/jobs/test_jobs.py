@@ -272,7 +272,6 @@ class TestStreamProjectEvents:
                     'recipe_id': None,
                     'head_version_id': None,
                     'state': StageState.STALE.value,
-                    'pinned': False,
                     'through_step': None,
                 },
             ),

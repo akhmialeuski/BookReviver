@@ -4,7 +4,7 @@ import { expect, type Page, test } from '@playwright/test';
 import { MESSAGES } from '../src/shared/messages';
 import {
   createBook,
-  openProjectId,
+  recipeOf,
   registerAndSignIn,
   snap,
   uploadFolder,
@@ -88,7 +88,7 @@ test('a step off its usual place is marked and put back, a place where it cannot
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
   const window = stepsWindow(page);
-  const marks = window.getByTestId('window-step-order-mark');
+  const marks = window.getByTestId('step-order-mark');
 
   await test.step('a new book opens the Geometry stage with its steps in the usual order, none of them marked', async () => {
     await registerAndSignIn(page);
@@ -110,10 +110,11 @@ test('a step off its usual place is marked and put back, a place where it cannot
     await page.keyboard.press('Space');
     await announced(page, drag.dropped('Select content'));
     expect((await processorsInWindow(page))[0]).toBe(CROP);
-    const mark = windowStepOf(page, CROP).getByTestId('window-step-order-mark');
+    const mark = windowStepOf(page, CROP).getByTestId('step-order-mark');
     await expect(mark).toHaveText('Out of place');
     await expect(mark).toHaveAttribute('data-kind', 'usual');
-    await expect(windowStepOf(page, CROP).getByTestId('window-step-order-reason')).toContainText(
+    // The first step of the window is open, so its reasons are written out under it
+    await expect(windowStepOf(page, CROP).getByTestId('step-order-details')).toContainText(
       'Select content',
     );
     await expect(marks).toHaveCount(1);
@@ -150,7 +151,7 @@ test('a step off its usual place is marked and put back, a place where it cannot
   });
 
   await test.step('in the free order the same drop is allowed with a warning, and the recipe is saved with it', async () => {
-    await window.getByTestId('window-order-free').click();
+    await window.getByTestId('order-free').click();
     await liftAndMoveUp(page, NORMALIZE, 1);
     const notice = page.getByTestId('order-refusal');
     await expect(notice).toHaveAttribute('data-mode', 'free');
@@ -160,23 +161,18 @@ test('a step off its usual place is marked and put back, a place where it cannot
     const placed = [...BUILT_IN];
     placed.splice(CROP_PLACE, 2, NORMALIZE, CROP);
     expect(await processorsInWindow(page)).toEqual(placed);
-    await expect(
-      windowStepOf(page, NORMALIZE).getByTestId('window-step-order-mark'),
-    ).toHaveAttribute('data-kind', 'required');
+    await expect(windowStepOf(page, NORMALIZE).getByTestId('step-order-mark')).toHaveAttribute(
+      'data-kind',
+      'required',
+    );
     await window.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
 
-    const saved = await page.request.get(
-      `/api/v1/projects/${openProjectId(page)}/stages/geometry/recipe`,
-    );
-    const recipe = (await saved.json()) as {
-      steps: { processor_key: string }[];
-      order_issues: { kind: string; processor_key: string }[];
-    };
+    const recipe = await recipeOf(page, 'geometry');
     expect(recipe.steps.map((step) => step.processor_key)).toEqual(placed);
     expect(recipe.order_issues).toMatchObject([{ kind: 'required', processor_key: NORMALIZE }]);
     // A recipe saved in the free order is opened in it, so the next save is not refused
-    await expect(window.getByTestId('window-order-free')).toHaveAttribute('data-state', 'checked');
+    await expect(window.getByTestId('order-free')).toHaveAttribute('data-state', 'checked');
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });

@@ -19,10 +19,10 @@ from bookreviver.adapters.persistence.sqlalchemy.repositories import (
     SqlAlchemyProjectRepository,
     SqlAlchemyRecipeProfileRepository,
     SqlAlchemyRecipeRepository,
-    SqlAlchemyRecipeRuleRepository,
     SqlAlchemyResultMarkChangeRepository,
     SqlAlchemyScanRepository,
     SqlAlchemySourceRepository,
+    SqlAlchemyStepValuesRepository,
 )
 from bookreviver.ports.persistence import UnitOfWork
 
@@ -42,9 +42,9 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     :ivar page_stages: Page stage repository bound to the session.
     :ivar page_step_states: Page step state repository bound to the session.
     :ivar page_step_changes: Page step change repository bound to the session.
+    :ivar step_values: Step values repository bound to the session.
     :ivar result_mark_changes: Result mark change repository bound to the session.
     :ivar recipes: Recipe repository bound to the session.
-    :ivar recipe_rules: Recipe rule repository bound to the session.
     :ivar recipe_profiles: Recipe profile repository bound to the session.
     :ivar jobs: Job repository bound to the session.
     :ivar book_places: Book place repository bound to the session.
@@ -66,9 +66,9 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.page_stages = SqlAlchemyPageStageRepository(session)
         self.page_step_states = SqlAlchemyPageStepStateRepository(session)
         self.page_step_changes = SqlAlchemyPageStepChangeRepository(session)
+        self.step_values = SqlAlchemyStepValuesRepository(session)
         self.result_mark_changes = SqlAlchemyResultMarkChangeRepository(session)
         self.recipes = SqlAlchemyRecipeRepository(session)
-        self.recipe_rules = SqlAlchemyRecipeRuleRepository(session)
         self.recipe_profiles = SqlAlchemyRecipeProfileRepository(session)
         self.jobs = SqlAlchemyJobRepository(session)
         self.book_places = SqlAlchemyBookPlaceRepository(session)

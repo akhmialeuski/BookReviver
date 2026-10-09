@@ -19,6 +19,7 @@ import { usePreviewStep } from '@/features/processing/queries';
 import { isActiveJob } from '@/features/projects/events';
 import { type VersionReady, versionReadyKey } from '@/features/projects/queries';
 import { useActiveJobs } from '@/features/workspace/queries';
+import { useDebouncedCallback } from '@/shared/hooks/useDebouncedCallback';
 import { describeError, ProblemError } from '@/shared/http/problem';
 import { HttpStatus } from '@/shared/http/status';
 
@@ -69,6 +70,7 @@ type Action =
   | { type: 'resolved'; shown: Shown }
   | { type: 'recalled'; shown: Shown }
   | { type: 'failed'; key: string; error: string }
+  | { type: 'cancelled' }
   | { type: 'busy' }
   | { type: 'idle' };
 
@@ -95,6 +97,10 @@ function reduce(state: State, action: Action): State {
       return { ...state, shown: action.shown, failedKey: null, error: null };
     case 'failed':
       return { ...state, inflight: null, failedKey: action.key, error: action.error, busy: false };
+    case 'cancelled':
+      // A job that was cancelled was no fault of the form, so the ask waits for the book to be free as one that was turned
+      // away does
+      return { ...state, inflight: null, error: null, busy: true };
     case 'busy':
       return { ...state, busy: true };
     case 'idle':
@@ -111,15 +117,14 @@ function reduce(state: State, action: Action): State {
 function useSettled(request: PreviewRequest | null, key: string | null): PreviewRequest | null {
   // Nothing has stood still yet when the screen is first drawn
   const [settled, setSettled] = useState<PreviewRequest | null>(null);
-  const latest = useRef(request);
-  latest.current = request;
+  const settle = useDebouncedCallback(
+    (settledKey: string | null) => setSettled(settledKey === null ? null : request),
+    PREVIEW_DELAY_MS,
+    { flushOnUnmount: false },
+  );
   useEffect(() => {
-    const timer = setTimeout(
-      () => setSettled(key === null ? null : latest.current),
-      PREVIEW_DELAY_MS,
-    );
-    return () => clearTimeout(timer);
-  }, [key]);
+    settle(key);
+  }, [key, settle]);
   return settled;
 }
 
@@ -265,7 +270,13 @@ export function usePreview(
     if (inflight === null) {
       return;
     }
-    if (jobState === 'failed' || jobState === 'cancelled') {
+    // A run or a measure of the book takes the project from a preview by cancelling it, which is no failure of the preview,
+    // so the hook says nothing and asks again once that job has ended
+    if (jobState === 'cancelled') {
+      dispatch({ type: 'cancelled' });
+      return;
+    }
+    if (jobState === 'failed') {
       dispatch({ type: 'failed', key: inflight.key, error: jobError });
       return;
     }
@@ -291,7 +302,8 @@ export function usePreview(
   const matches = on && key !== null && state.shown?.key === key;
   return {
     shown: state.shown?.version ?? null,
-    working: on && key !== null && !matches && state.error === null,
+    // An ask that failed is no longer being made
+    working: on && key !== null && !matches && state.failedKey !== key,
     waiting: on && key !== null && !matches && inflight === null && (busy || anotherJobGoing),
     error: on && state.error !== null && state.failedKey === settledKey ? state.error : null,
   };

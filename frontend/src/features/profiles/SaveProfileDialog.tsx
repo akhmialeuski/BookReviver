@@ -47,7 +47,8 @@ export function SaveProfileDialog({
   const save = useSaveProfile();
   const link = useLinkProfile(projectId, stage);
   const saveRecipe = useSaveRecipe(projectId, stage);
-  const recipeName = recipe?.name;
+  const recipeName =
+    recipe === undefined ? undefined : MESSAGES.processing.recipe.kinds[recipe.kind];
   const { reset: resetSave } = save;
   const { reset: resetLink } = link;
   const { reset: resetSaveRecipe } = saveRecipe;
@@ -75,7 +76,7 @@ export function SaveProfileDialog({
       const kept = processing.dirty
         ? await saveRecipe.mutateAsync({
             path: { project_id: projectId, stage, recipe_id: recipe.id },
-            body: { name: recipe.name, steps: bodyOf(steps), order: processing.orderMode },
+            body: { steps: bodyOf(steps), order: processing.orderMode },
           })
         : { steps: bodyOf(steps) };
       const profile = await save.mutateAsync({

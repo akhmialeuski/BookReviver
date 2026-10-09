@@ -8,6 +8,7 @@ import {
 import {
   BOUNDED_NUMBER_WIDGET,
   defaultsOf,
+  fieldSchemaOf,
   fieldTitleOf,
   fitsSchema,
   formSchemaOf,
@@ -111,35 +112,31 @@ describe('uiSchemaOf', () => {
     expect(() => uiSchemaOf({ type: 'object' })).not.toThrow();
   });
 
-  it('labels a field the page changes with its title and the mark, and leaves the others alone', () => {
-    const ui = uiSchemaOf(
-      formSchemaOf(DESKEW_PARAMETERS),
-      new Set(['max_angle']),
-      (title) => `${title} (page)`,
-    );
-
-    expect(ui.max_angle).toMatchObject({ 'ui:title': 'Largest slant (page)' });
-    expect(ui.min_confidence).not.toHaveProperty('ui:title');
-  });
-
-  it('keeps the widget of a marked field and marks a field of the chosen method too', () => {
-    const marked = new Set(['max_angle', 'min_lines']);
-    const ui = uiSchemaOf(formSchemaOf(DESKEW_METHODS_PARAMETERS), marked, (title) => `${title}!`);
+  it('gives the fields of every method the widget of their bounds', () => {
+    const ui = uiSchemaOf(formSchemaOf(DESKEW_METHODS_PARAMETERS));
 
     // The fields of a processor with methods are in the branches of `oneOf`, not at the top of the ui schema
     const branches = ui.oneOf as Record<string, Record<string, unknown>>[];
     expect(branches.length).toBeGreaterThan(0);
     for (const branch of branches) {
-      expect(branch.max_angle).toMatchObject({
-        'ui:widget': BOUNDED_NUMBER_WIDGET,
-        'ui:title': 'Largest slant!',
-      });
-      expect(branch.min_confidence).not.toHaveProperty('ui:title');
+      expect(branch.max_angle).toMatchObject({ 'ui:widget': BOUNDED_NUMBER_WIDGET });
     }
-    const titles = branches.flatMap((branch) =>
-      Object.values(branch).map((entry) => entry['ui:title']),
+  });
+});
+
+describe('fieldSchemaOf', () => {
+  it('gives the schema of a field of the schema and of a field of one of its methods', () => {
+    expect(fieldSchemaOf(formSchemaOf(DESKEW_PARAMETERS), 'max_angle')).toMatchObject({
+      title: 'Largest slant',
+      type: 'number',
+    });
+    expect(fieldSchemaOf(formSchemaOf(DESKEW_METHODS_PARAMETERS), 'min_lines')?.title).toBe(
+      'Fewest lines',
     );
-    expect(titles).toContain('Fewest lines!');
+  });
+
+  it('gives nothing for a field no method has', () => {
+    expect(fieldSchemaOf(formSchemaOf(DESKEW_PARAMETERS), 'no_such_field')).toBeUndefined();
   });
 });
 

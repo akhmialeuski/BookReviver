@@ -14,11 +14,13 @@ import {
   writeSheetsFolder,
 } from './support/account';
 import { dragFrom } from './support/layer';
+import { runPages } from './support/page-work';
+import { waitForStepPicture } from './support/steps';
 
 /**
- * The Cleanup stage on scans of a sheet of paper: the default recipe of a new book has three variants and four steps in the bar,
- * the form of the binarization shows the fields of the method that is chosen, a run on all pages sends the plate to its
- * own variant by the rule of the book, the picture zones and the brush of the eraser are set by hand on one page, and the
+ * The Cleanup stage on scans of a sheet of paper: the default recipe of a new book has four steps in the bar and one
+ * recipe for each kind of page, the form of the binarization shows the fields of the method that is chosen, a run on all
+ * pages processes the plate by the recipe of the pictures, the picture zones and the brush of the eraser are set by hand on one page, and the
  * erased page is what the stage stands on.
  */
 
@@ -35,19 +37,11 @@ const BRUSH_FROM = { x: 120, y: 150 };
 const BRUSH_BY = { x: 160, y: 40 };
 const METHODS = ['Otsu', 'Sauvola', 'Wolf', 'ISauvola', 'Su', 'Gatos', 'NICK', 'Bradley'];
 
-const BINARIZE = 'Binarization';
-const ERASER = 'Eraser';
+const ERASER_INDEX = 3;
 const ZONES = 'Picture zones';
 
 // Tall enough for the pictures of the key states to show the form and the page together
 test.use({ viewport: { width: 1280, height: 1000 } });
-
-/** Count the runs of a stage that ended well in the open book, which tells that a run the reader started is over. */
-async function finishedRuns(page: Page): Promise<number> {
-  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/jobs?size=50`);
-  const items = ((await listed.json()) as { items: { kind: string; state: string }[] }).items;
-  return items.filter((job) => job.kind === 'run-stage' && job.state === 'succeeded').length;
-}
 
 /** The versions a stage made on a page, as the API lists them. */
 interface ListedVersion {
@@ -89,7 +83,7 @@ async function versionsOf(page: Page, pageId: string, processor: string): Promis
   );
 }
 
-test('the Cleanup stage binarizes, despeckles and erases, with a variant for plates and the editors set by hand', async ({
+test('the Cleanup stage binarizes, despeckles and erases, with a recipe for plates and the editors set by hand', async ({
   page,
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
@@ -97,19 +91,14 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
   const folder = await writeSheetsFolder(PAGES, { scale: SCAN_SCALE, dust: DUST_SPECKS });
   const layer = page.getByTestId('editor-layer');
   const strip = page.getByTestId('strip-page');
-  const marks = page.getByTestId('strip-variant');
+  const marks = page.getByTestId('strip-content');
   const barSteps = page.getByTestId('bar-step');
-  const steps = page.getByTestId('editor-step');
-  const stepOf = (title: string) => steps.filter({ hasText: title });
   const settled = async (): Promise<void> => {
     await expect(page.getByTestId('editor-busy')).toHaveCount(0);
     await waitForIdleJobs(page, openProjectId(page));
   };
   const runAll = async (): Promise<void> => {
-    const before = await finishedRuns(page);
-    await page.getByTestId('run-menu').click();
-    await page.getByTestId('run-all').click();
-    await expect.poll(() => finishedRuns(page), { timeout: RUN_TIMEOUT_MS }).toBe(before + 1);
+    await runPages(page);
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
     });
@@ -141,30 +130,30 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
     await expect(page.getByTestId('stage-title')).toHaveText('Cleanup');
     await expect(strip).toHaveCount(PAGES);
     await expect(page.getByTestId('recipe-select')).toContainText('Text');
-    await expect(page.getByTestId('recipe-active')).toBeVisible();
     // The steps are in the bar only, and the panel of the recipe lists none
     await expect(page.getByTestId('recipe-steps')).toHaveCount(0);
     await expect(barSteps).toHaveCount(STEP_TITLES.length);
     for (const [index, title] of STEP_TITLES.entries()) {
       await expect(barSteps.nth(index)).toContainText(title);
     }
-    const variants = await page.getByTestId('recipe-select').locator('option').allTextContents();
-    // The options say how many pages each variant has processed, and the active one is named
-    expect(variants.map((name) => name.split(' · ')[0]?.trim()).sort()).toEqual([
-      'Mixed',
-      'Plates',
+    const kinds = await page.getByTestId('recipe-select').locator('option').allTextContents();
+    // The options name the kinds of page and say how many pages of the book are of each
+    expect(kinds.map((name) => name.split(' · ')[0]?.trim()).sort()).toEqual([
+      'Black-and-white picture',
+      'Blank page',
+      'Colour picture',
       'Text',
     ]);
   });
 
   await test.step('the form of the binarization offers the methods and shows only the fields of the one that is chosen', async () => {
     await barSteps.nth(BINARIZE_INDEX).click();
-    await expect(page.getByTestId('step-panel-title')).toHaveText('1 · Binarization');
+    await expect(page.getByTestId('step-panel-title')).toHaveText('Binarization');
     await expect(page.getByRole('slider', { name: 'Window, px' })).toBeVisible();
     await expect(page.getByRole('slider', { name: 'Coefficient k' })).toBeVisible();
     await expect(page.getByTestId('stage-panel')).not.toContainText('output_dpi');
     const method = page
-      .getByTestId('step-panel-settings')
+      .getByTestId('panel-settings')
       .locator('button[aria-haspopup="listbox"]')
       .first();
     await expect(method).toHaveText('Sauvola');
@@ -188,29 +177,28 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
 
   await test.step('the despeckling is made stronger in the recipe, which the dust on the scans needs', async () => {
     await barSteps.nth(DESPECKLE_INDEX).click();
-    const strength = page.getByTestId('step-panel-settings').getByRole('spinbutton', {
+    const strength = page.getByTestId('panel-settings').getByRole('spinbutton', {
       name: 'Strength',
     });
     await expect(strength).toHaveValue('2');
     await strength.fill('3');
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
-    // The step is closed, so the controls of the page editor stand in the panel of the page again
-    await page.getByTestId('step-close').click();
-    await expect(page.getByTestId('step-panel')).toHaveCount(0);
   });
 
-  await test.step('a run on all pages sends the plate to Plates by the rule of the book and keeps the text pages on Text', async () => {
+  await test.step('a run on all pages processes the plate by the recipe of the pictures and the text pages by the recipe of text', async () => {
     await runAll();
     await expect(marks).toHaveCount(PAGES, { timeout: RUN_TIMEOUT_MS });
-    await expect(page.locator('[data-testid="strip-variant"][data-variant="Plates"]')).toHaveCount(
-      1,
-    );
-    await expect(page.locator('[data-testid="strip-variant"][data-variant="Text"]')).toHaveCount(
+    await expect(page.locator('[data-testid="strip-content"][data-content="text"]')).toHaveCount(
       PAGES - 1,
     );
-    await expect(page.getByTestId('variant-counts')).toContainText(`Text ${PAGES - 1}`);
-    await expect(page.getByTestId('variant-counts')).toContainText('Plates 1');
+    await expect(
+      page.locator('[data-testid="strip-content"][data-content="bw-picture"]'),
+    ).toHaveCount(1);
+    await expect(page.getByTestId('recipe-select')).toContainText(`Text · ${PAGES - 1} pages`);
+    await expect(page.getByTestId('recipe-select')).toContainText(
+      'Black-and-white picture · 1 page',
+    );
     await strip.first().click();
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
     await expect(page.getByTestId('this-page-facts')).toContainText('Sauvola', {
@@ -219,7 +207,7 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
     await snap(page, 'cleanup-binarized');
   });
 
-  await test.step('the despeckling wrote the mask of what it removed, which the page of the Text variant has', async () => {
+  await test.step('the despeckling wrote the mask of what it removed, which the page of text has', async () => {
     const pageId = await currentPageId(page);
     const [made] = await versionsOf(page, pageId, 'cleanup.despeckle');
     expect(made?.data.specks).toBeGreaterThan(0);
@@ -234,9 +222,9 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
   });
 
   await test.step('the picture zones are added by hand, and Auto takes them away', async () => {
-    await page.getByRole('button', { name: 'Set by hand' }).click();
+    // The shape of an open step is on the page from the start, so the step of the zones is opened and not a button pressed
+    await barSteps.nth(BINARIZE_INDEX).click();
     await expect(layer).toBeVisible();
-    await expect(stepOf(BINARIZE).or(stepOf(ZONES))).toBeVisible();
     await expect(layer).toHaveAttribute('aria-label', ZONES);
     await expect(layer).toHaveAttribute('data-zones', '0');
     await page.getByTestId('regions-add').click();
@@ -245,16 +233,18 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
     await expect.poll(() => saves.length).toBe(1);
     expect(saves[0]).toBe((await stepIdsOf(page, 'cleanup', 'cleanup.binarize'))[0]);
     await settled();
-    await page.getByTestId('editor-auto').click();
+    await page.getByTestId('canvas-auto').click();
     await expect(layer).toHaveAttribute('data-zones', '0', { timeout: RUN_TIMEOUT_MS });
     await settled();
   });
 
   await test.step('the brush paints a stroke over the page, which is saved with its mask and runs the stage again', async () => {
-    await stepOf(ERASER).click();
+    await barSteps.nth(ERASER_INDEX).click();
     await expect(layer).toHaveAttribute('aria-label', 'Eraser brush');
     await expect(layer).toHaveAttribute('data-strokes', '0');
     await expect(page.getByTestId('brush-size')).toContainText('% of the page width');
+    // The canvas swaps to the picture of the step after the editor opens, and the editor is mounted again with it
+    await waitForStepPicture(page, RUN_TIMEOUT_MS);
     await snap(page, 'cleanup-despeckled');
     const [eraserStep] = await stepIdsOf(page, 'cleanup', 'cleanup.eraser');
     const putBody = page.waitForRequest(
@@ -265,7 +255,7 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
     await expect(layer).toHaveAttribute('data-strokes', '1');
     const request = await putBody;
     expect(request.headers()['content-type']).toContain('multipart/form-data');
-    await expect(stepOf(ERASER)).toHaveAttribute('data-manual', 'true', {
+    await expect(barSteps.nth(ERASER_INDEX)).toHaveAttribute('data-state', 'by-hand', {
       timeout: RUN_TIMEOUT_MS,
     });
     await settled();
@@ -303,21 +293,23 @@ test('the Cleanup stage binarizes, despeckles and erases, with a variant for pla
     const tile = page.waitForResponse(
       (response) => response.url().includes('default.') && response.ok(),
     );
-    await page.getByRole('button', { name: 'Set by hand' }).click();
+    // The shape of the step gives way to the compare, which draws the picture the step read beside the picture it made
+    await page.getByTestId('compare-menu').click();
+    await page.getByTestId('compare-swipe').click();
     await expect(layer).toHaveCount(0);
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
     await tile;
     await snap(page, 'cleanup-erased');
   });
 
-  await test.step('a run on all pages keeps the stroke of the reader and the variants of the pages', async () => {
+  await test.step('a run on all pages keeps the stroke of the reader and the kinds of the pages', async () => {
     await runAll();
-    await expect(page.locator('[data-testid="strip-variant"][data-variant="Plates"]')).toHaveCount(
-      1,
-    );
-    await page.getByRole('button', { name: 'Set by hand' }).click();
-    await stepOf(ERASER).click();
-    await expect(stepOf(ERASER)).toHaveAttribute('data-manual', 'true');
+    await expect(
+      page.locator('[data-testid="strip-content"][data-content="bw-picture"]'),
+    ).toHaveCount(1);
+    await page.getByTestId('compare-menu').click();
+    await page.getByTestId('compare-off').click();
+    await expect(barSteps.nth(ERASER_INDEX)).toHaveAttribute('data-state', 'by-hand');
     await expect(layer).toHaveAttribute('data-strokes', '1');
   });
 
